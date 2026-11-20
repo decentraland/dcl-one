@@ -126,10 +126,10 @@ describe('when building the public Sites navigation', () => {
   })
 
   it('should select the publishing destination under Create', () => {
-    const { desktop } = decentralandPublicNavSections('create', '/create/wearables/item-editor')
+    const { desktop } = decentralandPublicNavSections('create', '/create/collections/editor')
     expect(desktop[2]?.items).toEqual([
       { label: 'Create in Decentraland', href: '/create', active: false },
-      { label: 'Publish Wearables & Emotes', href: '/create/wearables', active: true },
+      { label: 'Publish Wearables & Emotes', href: '/create/collections', active: true },
       { label: 'Publish LAND', href: '/download/creator-hub', active: false }
     ])
   })

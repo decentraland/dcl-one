@@ -42,7 +42,10 @@ use ipfs::IpfsAssetServer;
 #[cfg(feature = "explorer")]
 use scene_runner::{asset_preload::plugin::PreloadedGltf, permissions::Permission};
 
-use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
+use crate::{
+    hover_glow::{can_glow, set_hover_glows},
+    process_avatar, upload_cpu_mesh, AvatarDefinition,
+};
 
 #[derive(Component)]
 pub struct AvatarAnimPlayer(pub Entity);
@@ -1066,8 +1069,16 @@ struct PlayParams<'w, 's> {
     sounds: Res<'w, Assets<bevy_kira_audio::AudioSource>>,
     emitters: Query<'w, 's, &'static mut AudioEmitter>,
     prop_details: Query<'w, 's, (Option<&'static Name>, &'static Transform, &'static ChildOf)>,
-    prop_meshes: Query<'w, 's, &'static Mesh3d>,
+    prop_meshes: Query<
+        'w,
+        's,
+        (
+            &'static Mesh3d,
+            Option<&'static MeshMaterial3d<StandardMaterial>>,
+        ),
+    >,
     meshes: ResMut<'w, Assets<Mesh>>,
+    std_materials: Res<'w, Assets<StandardMaterial>>,
     #[cfg(feature = "explorer")]
     preloaded_gltfs: Query<'w, 's, &'static PreloadedGltf>,
     ipfas: IpfsAssetServer<'w, 's>,
@@ -1268,8 +1279,13 @@ fn ensure_prop(
     if fresh {
         for spawned_ent in params.scene_spawner.iter_instance_entities(instance) {
             // a scene's preloaded glb keeps its meshes cpu-side for GltfContainer to upload
-            if let Ok(mesh) = params.prop_meshes.get(spawned_ent) {
+            if let Ok((mesh, material)) = params.prop_meshes.get(spawned_ent) {
                 upload_cpu_mesh(&mut params.meshes, mesh);
+                // the hover glow follows the wearables' rule: blended meshes stay unlit
+                let glows = material
+                    .and_then(|material| params.std_materials.get(material))
+                    .is_some_and(|material| can_glow(material.alpha_mode));
+                set_hover_glows(&mut commands.entity(spawned_ent), glows);
             }
             if let Ok((maybe_name, transform, parent)) = params.prop_details.get(spawned_ent) {
                 // Reference, base and mask geometry is not part of the visible prop.

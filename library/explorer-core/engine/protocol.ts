@@ -1864,8 +1864,20 @@ export interface CommunityPresenceMessage {
   online: boolean
 }
 
-/** Play a UI sound (page → scene → engine): a chat line landing, or one that mentions the user. */
-export type UiSound = 'chatMessage' | 'chatMention'
+/** Play a UI sound (page → scene → engine). A chat line landing in the selected conversation
+ *  (`chatMessage`, or `chatMention` when it mentions the user) or in any other one
+ *  (`chatUnfocused`), a line sent, a change of the chat input's text, an emoji or suggestion
+ *  taken or the emoji panel opening, and the chat's buttons. */
+export type UiSound =
+  | 'chatMessage'
+  | 'chatMention'
+  | 'chatUnfocused'
+  | 'chatSend'
+  | 'chatInput'
+  | 'chatEmoji'
+  | 'buttonPress'
+  | 'buttonHover'
+  | 'buttonClose'
 export interface PlayUiSoundRequest {
   kind: 'playUiSound'
   sound: UiSound

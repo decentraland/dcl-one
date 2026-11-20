@@ -23,7 +23,7 @@ it("routes creator navigation through the existing app navigator", () => {
     <CreatorHubChrome active="collections" />
   </ChromeNavContext>);
   expect(fireEvent.click(screen.getByRole("link", { name: "Collections" }))).toBe(false);
-  expect(navigate).toHaveBeenLastCalledWith("/create/wearables");
+  expect(navigate).toHaveBeenLastCalledWith("/create/collections");
 });
 
 it("preserves custom actions, modified clicks, downloads, fragments and external targets", () => {

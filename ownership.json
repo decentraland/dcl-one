@@ -209,7 +209,8 @@
       "paths": [
         "/apps/sites/",
         "/apps/ui3/",
-        "/library/ui/"
+        "/library/ui/",
+        "/tooling/creators-e2e/"
       ]
     },
     {

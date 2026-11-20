@@ -60,6 +60,17 @@ and boot.js's crash watchdog calls `engine_crash_event` on the page thread, whic
 wasm memory, to build the request and post it with `keepalive`. Nothing before the terms are
 accepted. Natively the next run reports the previous one's log (`crash_report.rs`).
 
+The engine reads the session's rollout flags (`common::feature_flags`: Unleash's `explorer.json`
+under the `--ff` / `?ff=` overrides) and reports them once the read settles as `Feature Flags
+Resolved`: `feature_flags`, the flags that are on as an `ff` value that runs a session with the same
+flags; `feature_flags_override`, the launch option's own; `feature_flags_source`, `service`,
+`unavailable` (the read failed) or `ignored` (`ff` has `-*`). The service resolves like every
+other backend (`--feature-flags`, `--gateway`, a node's mirror, else `feature-flags.<base domain>`);
+the anonymous machine id and, natively, the `Referer` go only to a Decentraland host. Other events
+join to it on `session_id`. The
+web crash report carries `feature_flags` and `feature_flags_override` itself (`crash.rs`).
+`/feature_flags` and the debug panel's "Feature flags" section show the session's flags.
+
 The loading screen is reported as mobile's funnel names it (`loading.rs`): `Screen Viewed`
 LOADING_START {position, realm, when: on_explorer_ready | on_changerealm | on_moveto} when it
 shows, LOADING_END {position, status} when it hides (Failed, with `error`, when the player was let

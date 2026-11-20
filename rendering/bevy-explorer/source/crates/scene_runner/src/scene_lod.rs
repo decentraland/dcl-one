@@ -1,8 +1,11 @@
-//! A scene's stand-in while it is in range but not live, built from the asset pipeline's
-//! initial-scene-state descriptor, which places the scene's own glTF files. It has two parts with
-//! their own rules, each a glTF container per model on the live container path
-//! (`gltf_container`), which loads it under the scene's content path and processes it a slice a
-//! frame:
+//! A scene's stand-ins while it is in range but not live. Near: the scene's own glTF files,
+//! placed from the asset pipeline's initial-scene-state descriptor. Far: the pipeline's one
+//! simplified mesh for the scene, named by the Bevy variants client from the scene's hash and
+//! placed at the base parcel the realm listed, with no entity definition. Each model is a glTF
+//! container on the live container path (`gltf_container`), which loads it under the scene's
+//! content path and processes it a slice a frame.
+//!
+//! A near LOD has two parts with their own rules:
 //! - Colliders, for every scene within the start ring whatever the facing, so a player who
 //!   reaches a loading scene, backing in or walking in, is stopped by it. Each model loads a
 //!   second time under an asset path of its own with no textures (`GltfPart::Colliders`); its
@@ -14,9 +17,10 @@
 //!   the camera makes way for one in view; dropping it frees its textures and meshes once nothing
 //!   else holds the glTF, and coming back reloads from the disk cache the colliders part filled.
 //!
-//! The stand-in goes, both parts with it, in the frame the live scene's content is first on
-//! screen; the live scene's containers made before then name the same files and share the loaded
-//! glTFs.
+//! A far LOD has visuals only, under "Max Far LODs" by the same rule, and no colliders. It goes
+//! when the near one shows; any stand-in goes, all its parts with it, in the frame the live
+//! scene's content is first on screen. The live scene's containers made before then name the
+//! same files and share the loaded glTFs.
 
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext, LoadState},
@@ -39,7 +43,7 @@ use dcl_component::{
     SceneEntityId,
 };
 use dcl_types::SceneId;
-use ipfs::{EntityDefinition, IpfsAssetServer, IpfsResource};
+use ipfs::{bevy_variants::FarLodSource, EntityDefinition, IpfsAssetServer, IpfsResource};
 use scene_material::{BoundRegion, SceneBounds, SceneMaterial};
 use serde::Deserialize;
 use serde_json::json;
@@ -53,6 +57,7 @@ use crate::{
     update_world::{
         gltf_container::{
             GltfDefinition, GltfPart, GltfProcessed, SceneResourceLookup, StandInBounds,
+            StandInContent,
         },
         mesh_collider::SceneColliderData,
         ComponentTracker,
@@ -68,6 +73,99 @@ pub const NEAR_LOD_START_RING: u16 = 3;
 /// player walking along the edge does not start and drop it every few steps.
 pub const NEAR_LOD_KEEP_RING: u16 = 4;
 
+/// A scene that is not live gets a far LOD, the pipeline's one mesh for it, while its nearest
+/// parcel is past the near LOD's keep ring and within this ring (about 320 m), and every parcel
+/// of it lies where the imposters would draw tiles of at most `FAR_LOD_MAX_TILE_LEVEL`. Beyond
+/// either only the imposters remain.
+pub(crate) const FAR_LOD_RING: u16 = 20;
+
+/// The largest imposter tile level (tiles of 2^level parcels a side) a far LOD may sit in. The
+/// imposters split any tile with a stand-in's parcel in it down to single parcels; keeping far
+/// LODs out of larger tiles keeps that split to the small tiles near the player, so the edge
+/// between far LODs and imposters falls on a tile boundary. At the default imposter distances
+/// tiles of level 2 (4 parcels a side) start 200 m away, so far LODs end between about 200 m and
+/// 290 m, depending on how the tiles align. The edge has no hysteresis: holding a far LOD past it
+/// would split a level-2 tile, so a far LOD goes, and its tile is drawn, as soon as the focus
+/// parcel moves its tile out of level 1.
+pub(crate) const FAR_LOD_MAX_TILE_LEVEL: usize = 1;
+
+/// The imposters' tile layout around the focus, which they write when it changes.
+/// `SceneLodPlugin` registers it as `Off`, the fallback for an app without imposters; the
+/// imposter plugin replaces it with `Pending` and owns it from then on.
+#[derive(Resource, Default, PartialEq)]
+pub enum ImposterTiling {
+    /// no imposters: only the far ring bounds a far LOD
+    #[default]
+    Off,
+    /// the imposters run but have not laid their tiles out yet: no far LOD fits
+    Pending,
+    Known(Tiling),
+}
+
+/// The inputs of the imposters' choice of tile level. The imposters lay their tiles out with
+/// `tile_distance` and `level_allowed`, and far LODs keep to the same rule through `level`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Tiling {
+    /// the parcel whose centre the tile distances are measured from
+    pub origin_parcel: IVec2,
+    pub min_distance: f32,
+    pub distance_scale: f32,
+    /// the imposter distances setting: tiles of level `n` are drawn from `distances[n - 1]` on
+    pub distances: Vec<f32>,
+}
+
+impl Tiling {
+    /// How far away the imposters take a tile of `level` (2^level parcels a side, starting at
+    /// `tile_origin_parcel`) to be: from the focus parcel's centre to the tile's closest point,
+    /// scaled and offset as the imposter focus asks.
+    pub fn tile_distance(&self, tile_origin_parcel: IVec2, level: usize) -> f32 {
+        let origin = (self.origin_parcel.as_vec2() + 0.5) * PARCEL_SIZE;
+        let tile_min = tile_origin_parcel.as_vec2() * PARCEL_SIZE;
+        let tile_max = tile_min + (1 << level) as f32 * PARCEL_SIZE;
+        let closest = origin.clamp(tile_min, tile_max);
+        (closest - origin).length() * self.distance_scale + self.min_distance
+    }
+
+    /// Whether a tile of `level` at `distance` (`tile_distance`) is far enough away to be drawn
+    /// at that level rather than split; single parcels always are.
+    pub fn level_allowed(&self, level: usize, distance: f32) -> bool {
+        level == 0 || distance >= self.distances[level - 1]
+    }
+
+    /// The level of the imposter tile that covers `parcel` when no live scene or stand-in is near
+    /// it: the largest level whose tile around the parcel is far enough away for that level.
+    pub(crate) fn level(&self, parcel: IVec2) -> usize {
+        (1..self.distances.len())
+            .rev()
+            .find(|&level| {
+                let tile_origin_parcel = (parcel >> level as u32) * (1 << level);
+                self.level_allowed(level, self.tile_distance(tile_origin_parcel, level))
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// Whether a far LOD may cover these parcels: each lies in an imposter tile no larger than
+/// `FAR_LOD_MAX_TILE_LEVEL`, so no larger tile is split around it. Without imposters only the far
+/// ring bounds it; before they publish a layout none fits.
+fn far_lod_fits(tiling: &ImposterTiling, parcels: &[IVec2]) -> bool {
+    match tiling {
+        ImposterTiling::Off => true,
+        ImposterTiling::Pending => false,
+        ImposterTiling::Known(tiling) => parcels
+            .iter()
+            .all(|parcel| tiling.level(*parcel) <= FAR_LOD_MAX_TILE_LEVEL),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum LodLevel {
+    /// the scene's own models, placed from the descriptor
+    Near,
+    /// the pipeline's one mesh for the scene
+    Far,
+}
+
 /// The scene entity id of a stand-in's first container; the rest follow. A stand-in has no
 /// scene, so any id is free: they only keep its containers' colliders apart.
 const FIRST_CONTAINER_ID: u16 = 512;
@@ -77,6 +175,7 @@ pub struct SceneLodPlugin;
 impl Plugin for SceneLodPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LodTint>()
+            .init_resource::<ImposterTiling>()
             .init_asset::<Descriptor>()
             .register_asset_loader(DescriptorLoader)
             .add_console_command::<LodTintCommand, _>(set_lod_tint)
@@ -94,10 +193,21 @@ impl Plugin for SceneLodPlugin {
                     ),
                     ("Max Near LODs (setting)", "near.max"),
                     ("Scenes without a near LOD", "near.none"),
+                    ("Far LODs shown", "far.shown"),
+                    ("Far LODs loading", "far.loading"),
+                    (
+                        "Far LODs not drawn (behind, out of range or over the limit)",
+                        "far.waiting",
+                    ),
+                    ("Max Far LODs (setting)", "far.max"),
+                    ("Scenes without a far LOD", "far.none"),
+                    ("Far LODs the server has none for", "far.missing"),
+                    ("Far LOD requests failed in a row", "far.failures"),
+                    ("Far LODs paused (seconds to the next try)", "far.paused_s"),
                 ],
                 actions: &[],
                 inputs: &[DebugInput {
-                    label: "Tint stand-ins (near LOD green)",
+                    label: "Tint stand-ins (near LOD green, far LOD blue)",
                     field: "tint",
                     command: "/lod_tint {value}",
                     kind: DebugInputKind::Toggle,
@@ -127,9 +237,15 @@ pub struct LodTint(pub bool);
 /// The near LOD's debug tint, multiplied into each model's base colour.
 const NEAR_LOD_TINT: LinearRgba = LinearRgba::new(0.3, 1.0, 0.3, 1.0);
 
-fn tinted(color: Color) -> Color {
+/// The far LOD's debug tint.
+const FAR_LOD_TINT: LinearRgba = LinearRgba::new(0.3, 0.5, 1.0, 1.0);
+
+fn tinted(color: Color, level: LodLevel) -> Color {
     let color = color.to_linear();
-    let tint = NEAR_LOD_TINT;
+    let tint = match level {
+        LodLevel::Near => NEAR_LOD_TINT,
+        LodLevel::Far => FAR_LOD_TINT,
+    };
     Color::LinearRgba(LinearRgba::new(
         color.red * tint.red,
         color.green * tint.green,
@@ -142,6 +258,7 @@ fn tinted(color: Color) -> Color {
 /// (its `SceneResourceLookup`), each made from a glTF material that keeps the untinted colour.
 fn apply_tint(
     tint: bool,
+    level: LodLevel,
     lookup: &SceneResourceLookup,
     base_materials: &Assets<StandardMaterial>,
     materials: &mut Assets<SceneMaterial>,
@@ -152,7 +269,7 @@ fn apply_tint(
             continue;
         };
         material.base.base_color = if tint {
-            tinted(base.base_color)
+            tinted(base.base_color, level)
         } else {
             base.base_color
         };
@@ -167,8 +284,8 @@ fn tint_scene_lods(
     base_materials: Res<Assets<StandardMaterial>>,
     mut materials: ResMut<Assets<SceneMaterial>>,
 ) {
-    for (_, lookup) in lods.iter().filter(|(lod, _)| lod.shown()) {
-        apply_tint(tint.0, lookup, &base_materials, &mut materials);
+    for (lod, lookup) in lods.iter().filter(|(lod, _)| lod.shown()) {
+        apply_tint(tint.0, lod.level, lookup, &base_materials, &mut materials);
     }
 }
 
@@ -193,56 +310,75 @@ fn set_lod_tint(mut input: ConsoleCommand<LodTintCommand>, mut tint: ResMut<LodT
 #[command(name = "/scene_lod_state")]
 struct LodStateCommand;
 
-/// The stand-ins by state, for the Scene stand-ins debug section.
+/// The stand-ins by state, for the Scene stand-ins debug section, with the far LODs' missing
+/// meshes and breaker (`IpfsIo::bevy_far_lod`): `paused_s` is null unless far LODs are paused.
+/// `colliders` counts near LODs whose colliders part has started.
 fn lod_state(
     mut input: ConsoleCommand<LodStateCommand>,
     tint: Res<LodTint>,
     config: Res<AppConfig>,
+    ipfs: Res<IpfsResource>,
     lods: Query<&SceneLod>,
 ) {
     if input.take().is_none() {
         return;
     }
-    let (mut colliders, mut waiting, mut loading, mut shown, mut none) = (0, 0, 0, 0, 0);
+    // waiting, loading, shown, none, colliders; per level
+    let mut counts = [[0u32; 5]; 2];
     for lod in &lods {
-        match (&lod.state, &lod.visuals) {
-            (LodState::Ready(_), visuals) => {
-                colliders += 1;
-                match visuals {
-                    Visuals::Off => waiting += 1,
-                    Visuals::Loading => loading += 1,
-                    Visuals::Shown => shown += 1,
-                    Visuals::Nothing => none += 1,
-                }
-            }
-            (LodState::Nothing, _) => none += 1,
-            _ => waiting += 1,
+        let level = match lod.level {
+            LodLevel::Near => 0,
+            LodLevel::Far => 1,
+        };
+        let state = match (&lod.state, &lod.visuals) {
+            (LodState::Ready(_), Visuals::Off) => 0,
+            (LodState::Ready(_), Visuals::Loading) => 1,
+            (LodState::Ready(_), Visuals::Shown) => 2,
+            (LodState::Ready(_), Visuals::Nothing) | (LodState::Nothing, _) => 3,
+            _ => 0,
+        };
+        counts[level][state] += 1;
+        if matches!(lod.state, LodState::Ready(_)) {
+            counts[level][4] += 1;
         }
     }
-    input.reply_ok(
-        json!({
-            "tint": tint.0,
-            "near": {"colliders": colliders, "waiting": waiting, "loading": loading,
-                     "shown": shown, "none": none, "max": config.max_near_lods},
-        })
-        .to_string(),
-    );
+    let mut near = level_counts(counts[0]);
+    near["max"] = json!(config.max_near_lods);
+    near["colliders"] = json!(counts[0][4]);
+    let mut far = level_counts(counts[1]);
+    far["max"] = json!(config.max_far_lods);
+    let health = ipfs.far_lod_status();
+    far["missing"] = json!(health.missing);
+    far["failures"] = json!(health.failures);
+    far["paused_s"] = json!(health.paused_for.map(|left| left.as_secs()));
+    input.reply_ok(json!({"tint": tint.0, "near": near, "far": far}).to_string());
 }
 
-/// The stand-in of one scene: the root its visual containers and its colliders root
-/// ([`StandInColliders`]) hang from, at the scene's base parcel once its entity definition is
-/// loaded. While it exists the scene's hash ranks its downloads in the LOD tier (the hooks), below
-/// every live scene's; once the scene spawns, its own registration takes the hash to the scene
-/// tier.
+fn level_counts([waiting, loading, shown, none, _]: [u32; 5]) -> serde_json::Value {
+    json!({"waiting": waiting, "loading": loading, "shown": shown, "none": none})
+}
+
+/// One stand-in of one scene: the root its visual containers and, for a near LOD, its colliders
+/// root ([`StandInColliders`]) hang from, at the scene's base parcel (a near LOD's once its
+/// entity definition is loaded, a far LOD's as the realm listed it). While it exists the scene's
+/// hash ranks its downloads in the LOD tier (the hooks), below every live scene's; once the scene
+/// spawns, its own registration takes the hash to the scene tier. A scene may have a near and a
+/// far one at once; the priority registrations are counted.
 #[derive(Component)]
 #[component(on_insert = register_lod_hash, on_replace = release_lod_hash)]
 pub struct SceneLod {
     pub hash: String,
+    pub(crate) level: LodLevel,
     /// the realm's urn for the scene, when it gave one: a city loader's carries the content base
-    /// url
+    /// url. The near LOD loads the entity definition by it
     urn: Option<String>,
-    /// the scene's parcels: until its entity definition is loaded, those the realm's pointers
-    /// name within the keep ring, which are all its partition needs; then all of them
+    /// the base parcel the realm listed for the scene (`ScenePointers::base`), which a far LOD is
+    /// placed at: its mesh is relative to it
+    base: Option<IVec2>,
+    /// the scene's parcels: those the realm's pointers name within the level's ring (the near
+    /// LOD's keep ring, the far ring), which are all its partition needs; a near LOD's become all
+    /// of them once its entity definition is loaded. A far LOD's stay those within the far ring:
+    /// its bounds and the parcels the imposters leave to it
     pub parcels: Vec<IVec2>,
     pub state: LodState,
     pub visuals: Visuals,
@@ -256,25 +392,27 @@ impl SceneLod {
 }
 
 pub enum LodState {
-    /// not started: no partition yet, or the scene past the start ring
+    /// not started: no partition yet, (near) the scene past the start ring, or (far) no mesh
+    /// offered yet (the GPU's BC support not reported)
     Pending,
-    /// the scene's entity definition is loading, as the live scene loads it; the root holds the
-    /// handle too (`SceneEntityDefinitionHandle`), which the containers' loads read
+    /// (near) the scene's entity definition is loading, as the live scene loads it; the root holds
+    /// the handle too (`SceneEntityDefinitionHandle`), which the containers' loads read
     Definition(Handle<EntityDefinition>),
-    /// the descriptor is loading
+    /// (near) the descriptor is loading
     Descriptor {
         definition: Handle<EntityDefinition>,
         descriptor: Handle<Descriptor>,
     },
-    /// the models are known and their colliders part is loading or built; the visuals follow
-    /// their own rule ([`Visuals`])
+    /// the models are known: a near LOD's colliders part is loading or built, a far LOD's one
+    /// model is its mesh. The visuals follow their own rule ([`Visuals`])
     Ready(Vec<StandInModel>),
-    /// nothing to stand in: no descriptor, a definition or descriptor that could not load, or
-    /// no model the scene deployed. Not asked again while the scene stays within the keep ring
+    /// nothing to stand in: no descriptor, a definition or descriptor that could not load, no
+    /// model the scene deployed, or (far) no mesh offered. Not asked again while the scene stays
+    /// in the level's band
     Nothing,
 }
 
-/// A model the descriptor places, by the scene's file name for it.
+/// A model the descriptor places, by the scene's file name for it; a far LOD's mesh, by its url.
 #[derive(Clone)]
 pub struct StandInModel {
     file: String,
@@ -283,7 +421,7 @@ pub struct StandInModel {
 
 /// The visuals of a stand-in whose models are known ([`LodState::Ready`]).
 pub enum Visuals {
-    /// not drawn: not in view, or no free place
+    /// not drawn: not in view, outside the level's band, or no free place
     Off,
     /// the visual containers are loading and processing; the root stays hidden until each is
     /// done
@@ -420,11 +558,76 @@ fn mark_shown_scenes(
     }
 }
 
-/// Which scenes have a stand-in: every scene with a parcel within the keep ring whose content
-/// has not been on screen, in a realm (never in preview). Only one within the start ring starts
-/// (`start_scene_lods`); a stand-in between the two rings is kept, or waits. A stand-in goes
-/// when its scene's content is first shown, when the scene is past the keep ring, or when the
-/// realm's pointers no longer name it.
+/// The scenes within the far ring of the player's parcel, by hash, from the realm's pointers:
+/// the urn, the base parcel, the ring of the nearest parcel (the ring `scene_partition`
+/// measures), the parcels within the ring and whether a far LOD fits them. Read again only when
+/// the player's parcel, the pointers, the preview state or the imposters' tile layout changes.
+#[derive(Default)]
+struct ScenesInRange {
+    /// what the scenes were read for: the player's parcel, the pointers' generation and preview
+    read_for: Option<(IVec2, u64, bool)>,
+    scenes: HashMap<String, InRange>,
+}
+
+struct InRange {
+    urn: Option<String>,
+    base: Option<IVec2>,
+    ring: u16,
+    parcels: Vec<IVec2>,
+    /// a far LOD may stand in: the base parcel is known, which places its mesh, and the parcels
+    /// within the ring fit the imposter tiles (`far_lod_fits`)
+    far_fits: bool,
+}
+
+impl ScenesInRange {
+    fn read(
+        &mut self,
+        center: IVec2,
+        is_preview: bool,
+        pointers: &ScenePointers,
+        tiling: &ImposterTiling,
+    ) {
+        self.read_for = Some((center, pointers.generation(), is_preview));
+        self.scenes.clear();
+        if is_preview || pointers.min() == IVec2::MAX {
+            return;
+        }
+        let ring = IVec2::splat(FAR_LOD_RING as i32);
+        let min = (center - ring).max(pointers.min());
+        let max = (center + ring).min(pointers.max());
+        for x in min.x..=max.x {
+            for y in min.y..=max.y {
+                let parcel = IVec2::new(x, y);
+                if let Some(PointerResult::Exists { hash, urn }) = pointers.get(parcel) {
+                    let distance = (parcel - center).abs().max_element() as u16;
+                    let scene = self.scenes.entry(hash.clone()).or_insert_with(|| InRange {
+                        urn: urn.clone(),
+                        base: pointers.base(hash),
+                        ring: u16::MAX,
+                        parcels: Vec::new(),
+                        far_fits: false,
+                    });
+                    scene.ring = scene.ring.min(distance);
+                    scene.parcels.push(parcel);
+                }
+            }
+        }
+        for scene in self.scenes.values_mut() {
+            scene.far_fits = scene.base.is_some() && far_lod_fits(tiling, &scene.parcels);
+        }
+    }
+}
+
+/// Which scenes have which stand-in, in a realm (never in preview), for a scene whose content
+/// has not been on screen. A near LOD while a parcel of it is within the near keep ring; only one
+/// within the start ring starts (`start_scene_lods`), and one between the two rings is kept, or
+/// waits. A far LOD while the realm listed its base parcel and its parcels within the far ring
+/// fit the imposter tiles, whether or not a near LOD of the scene shows: its visuals stop while
+/// the near LOD's show, and inside the near keep ring they start only to stand in for a near LOD
+/// that is not drawn (`lod_visual_changes`). A stand-in goes when its scene's content is first
+/// shown, when the scene leaves its band, or when the realm's pointers no longer name it. A far
+/// LOD's parcels are those it was spawned with. The far LOD's edge follows the imposter tiles
+/// with no hysteresis: see `FAR_LOD_MAX_TILE_LEVEL`.
 fn update_scene_lods(
     mut commands: Commands,
     preview: Res<PreviewMode>,
@@ -433,32 +636,22 @@ fn update_scene_lods(
     live_scenes: Res<LiveScenes>,
     contexts: Query<(&RendererSceneContext, Has<ContentWasShown>)>,
     mut lods: Query<(Entity, &mut SceneLod)>,
+    tiling: Res<ImposterTiling>,
+    ipfs: Res<IpfsResource>,
+    mut in_range: Local<ScenesInRange>,
 ) {
     let Ok(focus) = focus.single() else {
         return;
     };
-
-    // each scene within the keep ring, with its urn and its parcels there
-    let mut wanted: HashMap<&str, (Option<&str>, Vec<IVec2>)> = HashMap::new();
-    if !preview.is_preview && pointers.min() != IVec2::MAX {
-        // the parcels within the keep ring of the player's, the ring `scene_partition` measures
-        let center = vec3_to_parcel(focus.translation());
-        let ring = IVec2::splat(NEAR_LOD_KEEP_RING as i32);
-        let min = (center - ring).max(pointers.min());
-        let max = (center + ring).min(pointers.max());
-        for x in min.x..=max.x {
-            for y in min.y..=max.y {
-                let parcel = IVec2::new(x, y);
-                if let Some(PointerResult::Exists { hash, urn }) = pointers.get(parcel) {
-                    wanted
-                        .entry(hash.as_str())
-                        .or_insert_with(|| (urn.as_deref(), Vec::new()))
-                        .1
-                        .push(parcel);
-                }
-            }
-        }
+    let center = vec3_to_parcel(focus.translation());
+    if in_range.read_for != Some((center, pointers.generation(), preview.is_preview))
+        || tiling.is_changed()
+    {
+        in_range.read(center, preview.is_preview, &pointers, &tiling);
     }
+    let scenes = &in_range.scenes;
+    // no far LOD can be offered this session: none is kept or spawned
+    let far_off = ipfs.far_lods_off();
 
     let shown = |hash: &str| {
         live_scenes
@@ -467,72 +660,121 @@ fn update_scene_lods(
             .and_then(|entity| contexts.get(*entity).ok())
             .is_some_and(|(context, was_shown)| was_shown || context.content_shown())
     };
-
-    let mut existing: HashSet<String> = HashSet::new();
+    let mut existing: HashSet<(&str, LodLevel)> = HashSet::new();
     for (entity, mut lod) in &mut lods {
-        if let Some((_, parcels)) = wanted.get(lod.hash.as_str()).filter(|_| !shown(&lod.hash)) {
-            // until its entity definition gives all of them, a stand-in's parcels are those
+        let scene = scenes.get_key_value(lod.hash.as_str());
+        let keep = !shown(&lod.hash)
+            && match lod.level {
+                LodLevel::Near => scene.is_some_and(|(_, scene)| scene.ring <= NEAR_LOD_KEEP_RING),
+                LodLevel::Far => !far_off && scene.is_some_and(|(_, scene)| scene.far_fits),
+            };
+        if let (true, Some((hash, scene))) = (keep, scene) {
+            // until its entity definition gives all of them, a near LOD's parcels are those
             // within the keep ring now: its partition, and so whether it starts, reads them
             let unknown = matches!(lod.state, LodState::Pending | LodState::Definition(_));
-            if unknown && lod.parcels != *parcels {
-                lod.parcels = parcels.clone();
+            if lod.level == LodLevel::Near && unknown {
+                let parcels = near_parcels(&scene.parcels, center);
+                if lod.parcels != parcels {
+                    lod.parcels = parcels;
+                }
             }
-            existing.insert(lod.hash.clone());
+            existing.insert((hash.as_str(), lod.level));
             continue;
         }
         // its containers go with it, and release their models (`gltf_container`'s observers)
         commands.entity(entity).despawn();
     }
 
-    for (hash, (urn, parcels)) in wanted {
-        if existing.contains(hash) || shown(hash) {
+    for (hash, scene) in scenes {
+        if shown(hash) {
             continue;
         }
-        commands.spawn((
-            SceneLod {
-                hash: hash.to_owned(),
-                urn: urn.map(ToOwned::to_owned),
-                parcels,
-                state: LodState::Pending,
-                visuals: Visuals::Off,
-            },
-            Transform::default(),
-            Visibility::Hidden,
-            // what the live container systems keep on a scene root
-            SceneResourceLookup::default(),
-            ComponentTracker::default(),
-        ));
+        let near = scene.ring <= NEAR_LOD_KEEP_RING;
+        for (level, wanted) in [
+            (LodLevel::Near, near),
+            (LodLevel::Far, scene.far_fits && !far_off),
+        ] {
+            if !wanted || existing.contains(&(hash.as_str(), level)) {
+                continue;
+            }
+            let parcels = match level {
+                LodLevel::Near => near_parcels(&scene.parcels, center),
+                LodLevel::Far => scene.parcels.clone(),
+            };
+            commands.spawn((
+                SceneLod {
+                    hash: hash.clone(),
+                    level,
+                    urn: scene.urn.clone(),
+                    base: scene.base,
+                    parcels,
+                    state: LodState::Pending,
+                    visuals: Visuals::Off,
+                },
+                Transform::default(),
+                Visibility::Hidden,
+                // what the live container systems keep on a scene root
+                SceneResourceLookup::default(),
+                ComponentTracker::default(),
+            ));
+        }
     }
+}
+
+/// A scene's parcels within the near keep ring of `center`: a near LOD's until its entity
+/// definition gives all of them.
+fn near_parcels(parcels: &[IVec2], center: IVec2) -> Vec<IVec2> {
+    parcels
+        .iter()
+        .copied()
+        .filter(|parcel| (*parcel - center).abs().max_element() <= NEAR_LOD_KEEP_RING as i32)
+        .collect()
 }
 
 type LodRow<'a> = (Entity, &'a SceneLod, Option<&'a Partition>);
 
-/// Whether a stand-in that has not started may start: its scene within the start ring, whatever
-/// the facing. The ring bounds how many start; each loads its colliders part and nothing drawn.
-fn may_start(partition: Option<&Partition>) -> bool {
-    partition.is_some_and(|partition| partition.0.parcel_distance <= NEAR_LOD_START_RING)
+/// Whether a stand-in that has not started may start. A near LOD within the start ring,
+/// whatever the facing: the ring bounds how many start, and each loads its colliders part and
+/// nothing drawn. A far LOD wherever it exists (`update_scene_lods` keeps it to its band): starting
+/// only names its mesh.
+fn may_start(level: LodLevel, partition: Option<&Partition>) -> bool {
+    partition.is_some_and(|partition| match level {
+        LodLevel::Near => partition.0.parcel_distance <= NEAR_LOD_START_RING,
+        LodLevel::Far => true,
+    })
 }
 
-/// Whether a stand-in's visuals may start: its models known, its scene within the start ring and
-/// not wholly behind the camera.
-fn may_draw(lod: &SceneLod, partition: Option<&Partition>) -> bool {
-    matches!(lod.state, LodState::Ready(_))
-        && matches!(lod.visuals, Visuals::Off)
-        && partition.is_some_and(|partition| {
-            partition.0.parcel_distance <= NEAR_LOD_START_RING && !partition.0.is_behind
-        })
+/// Whether a stand-in's visuals may start where its scene is, not wholly behind the camera: a
+/// near LOD's within the start ring; a far LOD's past the near keep ring, or nearer when its
+/// scene's near LOD is not drawn (`near_waiting`), which between the start and keep rings is
+/// whenever its visuals are not already shown: they cannot start there.
+fn in_draw_band(level: LodLevel, partition: &Partition, near_waiting: bool) -> bool {
+    !partition.0.is_behind
+        && match level {
+            LodLevel::Near => partition.0.parcel_distance <= NEAR_LOD_START_RING,
+            LodLevel::Far => partition.0.parcel_distance > NEAR_LOD_KEEP_RING || near_waiting,
+        }
 }
 
-/// The visuals to start and to stop this frame, keeping at most "Max Near LODs" started. Those
-/// that may start (`may_draw`) do, nearest first (by the download key: ring, then distance),
-/// while there is a free place. With none free, one started behind the camera makes way for each
-/// in view, the farthest first; one in view never does. Once the setting is lowered, the
-/// farthest over it stop, those behind the camera first. Visuals with no partition yet are kept.
-fn visual_changes(lods: &[LodRow<'_>], max: usize) -> (Vec<Entity>, Vec<Entity>) {
+/// The visuals of `level` to start and to stop this frame, keeping at most `max` started. Those
+/// whose models are known and that are in the level's band (`in_draw_band`) start, nearest first
+/// (by the download key: ring, then distance), while there is a free place. With none free, one
+/// started behind the camera makes way for each in view, the farthest first; one in view never
+/// does. Once the setting is lowered, the farthest over it stop, those behind the camera first.
+/// Visuals with no partition yet are kept. At most `max_starts` start, and those of the scenes in
+/// `blocked` never do.
+fn visual_changes(
+    lods: &[LodRow<'_>],
+    level: LodLevel,
+    max: usize,
+    near_waiting: &HashSet<&str>,
+    max_starts: usize,
+    blocked: &HashSet<&str>,
+) -> (Vec<Entity>, Vec<Entity>) {
     // started visuals, those behind the camera first, then the farthest first
     let mut started = lods
         .iter()
-        .filter(|(_, lod, _)| lod.visuals.started())
+        .filter(|(_, lod, _)| lod.level == level && lod.visuals.started())
         .map(|(entity, _, partition)| {
             let key = partition.map(|partition| partition.0.load_priority(Tier::Lod));
             (key, *entity)
@@ -550,9 +792,18 @@ fn visual_changes(lods: &[LodRow<'_>], max: usize) -> (Vec<Entity>, Vec<Entity>)
 
     let mut candidates = lods
         .iter()
-        .filter(|(_, lod, partition)| may_draw(lod, *partition))
-        .filter_map(|(entity, _, partition)| {
-            partition.map(|partition| (partition.0.load_priority(Tier::Lod), *entity))
+        .filter(|(_, lod, _)| {
+            lod.level == level
+                && matches!(lod.state, LodState::Ready(_))
+                && matches!(lod.visuals, Visuals::Off)
+                && !blocked.contains(lod.hash.as_str())
+        })
+        .filter_map(|(entity, lod, partition)| {
+            partition
+                .filter(|partition| {
+                    in_draw_band(level, partition, near_waiting.contains(lod.hash.as_str()))
+                })
+                .map(|partition| (partition.0.load_priority(Tier::Lod), *entity))
         })
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(key, _)| *key);
@@ -566,7 +817,7 @@ fn visual_changes(lods: &[LodRow<'_>], max: usize) -> (Vec<Entity>, Vec<Entity>)
         count -= 1;
     }
     let mut start = Vec::new();
-    for (_, entity) in candidates {
+    for (_, entity) in candidates.into_iter().take(max_starts) {
         if count < max {
             start.push(entity);
             count += 1;
@@ -584,10 +835,89 @@ fn visual_changes(lods: &[LodRow<'_>], max: usize) -> (Vec<Entity>, Vec<Entity>)
     (start, stop)
 }
 
-/// Starts a stand-in once its scene is within the start ring, whatever the facing: loads the
-/// scene's entity definition as the live scene does, then the descriptor, then gives each model
-/// the descriptor names among the scene's deployed files a colliders-part container under a
-/// colliders root ([`StandInColliders`]). The visuals start apart (`update_lod_visuals`).
+/// The visuals to start and to stop this frame: near LODs under "Max Near LODs", then far LODs
+/// under "Max Far LODs", at most `far_max_starts` of them starting. A scene in the near band whose near
+/// LOD is not drawn this frame (no free place, stopped, or nothing to show) may draw its far LOD
+/// instead; while its near LOD is shown, the scene's far visuals stop and none start.
+fn lod_visual_changes(
+    lods: &[LodRow<'_>],
+    config: &AppConfig,
+    far_max_starts: usize,
+) -> (Vec<Entity>, Vec<Entity>) {
+    let none = HashSet::new();
+    let (mut start, mut stop) = visual_changes(
+        lods,
+        LodLevel::Near,
+        config.max_near_lods,
+        &none,
+        usize::MAX,
+        &none,
+    );
+    let near_waiting: HashSet<&str> = lods
+        .iter()
+        .filter(|(entity, lod, partition)| {
+            let Some(partition) =
+                partition.filter(|p| lod.level == LodLevel::Near && !p.0.is_behind)
+            else {
+                return false;
+            };
+            if in_draw_band(LodLevel::Near, partition, false) {
+                match (&lod.state, &lod.visuals) {
+                    (LodState::Ready(_), Visuals::Off) => !start.contains(entity),
+                    (LodState::Ready(_), Visuals::Loading | Visuals::Shown) => {
+                        stop.contains(entity)
+                    }
+                    (LodState::Ready(_), Visuals::Nothing) | (LodState::Nothing, _) => true,
+                    _ => false,
+                }
+            } else {
+                // between the start and keep rings a near LOD's visuals cannot start: unless
+                // they already show, it is not drawn, so the far LOD may stand in there too
+                partition.0.parcel_distance <= NEAR_LOD_KEEP_RING
+                    && !(lod.visuals.started() && !stop.contains(entity))
+            }
+        })
+        .map(|(_, lod, _)| lod.hash.as_str())
+        .collect();
+    let near_drawn: HashSet<&str> = lods
+        .iter()
+        .filter(|(entity, lod, _)| {
+            lod.level == LodLevel::Near && lod.shown() && !stop.contains(entity)
+        })
+        .map(|(_, lod, _)| lod.hash.as_str())
+        .collect();
+    let (far_start, mut far_stop) = visual_changes(
+        lods,
+        LodLevel::Far,
+        config.max_far_lods,
+        &near_waiting,
+        far_max_starts,
+        &near_drawn,
+    );
+    for (entity, lod, _) in lods {
+        if lod.level == LodLevel::Far
+            && lod.visuals.started()
+            && near_drawn.contains(lod.hash.as_str())
+            && !far_stop.contains(entity)
+        {
+            far_stop.push(*entity);
+        }
+    }
+    start.extend(far_start);
+    stop.extend(far_stop);
+    (start, stop)
+}
+
+/// Starts a stand-in once it may (`may_start`). A far LOD names the mesh the variants client
+/// offers for the scene's hash and goes at the base parcel the realm listed, under the scene's
+/// hash so its download ranks with the scene's: one request, with no entity definition. One the
+/// client does not offer (none on the server this session, BC support or the content context not
+/// known yet, ...) waits or has nothing to show; while one is not known yet, the others wait
+/// for the next frame without asking. The download itself starts with the visuals
+/// (`update_lod_visuals`). A near LOD loads the scene's entity definition as the live scene does, then
+/// the descriptor, then gives each model the descriptor names among the scene's deployed files a
+/// colliders-part container under a colliders root ([`StandInColliders`]). The visuals start
+/// apart (`update_lod_visuals`).
 fn start_scene_lods(
     mut commands: Commands,
     mut lods: Query<(Entity, &mut SceneLod, Option<&Partition>)>,
@@ -599,11 +929,46 @@ fn start_scene_lods(
     // absent without the render storage-buffer assets (tests), as for the live scene's bounds
     mut storage_buffers: Option<ResMut<Assets<ShaderStorageBuffer>>>,
 ) {
+    // set once a far LOD's source is not known yet: the answer is the same for every scene
+    let mut far_not_yet = false;
     for (root, lod, partition) in lods.iter_mut() {
         let lod = lod.into_inner();
         match &lod.state {
             LodState::Pending => {
-                if !may_start(partition) {
+                if !may_start(lod.level, partition) {
+                    continue;
+                }
+                if lod.level == LodLevel::Far {
+                    // `update_scene_lods` makes a far LOD only for a scene with a listed base
+                    let Some(base) = lod.base else {
+                        lod.state = LodState::Nothing;
+                        continue;
+                    };
+                    if far_not_yet {
+                        continue;
+                    }
+                    let url = match ipfas.ipfs().bevy_far_lod(&lod.hash) {
+                        FarLodSource::Url(url) => url,
+                        FarLodSource::NotYet => {
+                            far_not_yet = true;
+                            continue;
+                        }
+                        FarLodSource::Unavailable(reason) => {
+                            debug!("{}: no far LOD: {reason}", lod.hash);
+                            lod.state = LodState::Nothing;
+                            continue;
+                        }
+                    };
+                    // the one mesh, a url loaded under the scene's hash so its download ranks
+                    // under it. Nothing walks on a far LOD: it has no colliders part
+                    commands.entity(root).insert((
+                        placement(base, &lod.parcels, storage_buffers.as_deref_mut()),
+                        StandInContent(lod.hash.clone()),
+                    ));
+                    lod.state = LodState::Ready(vec![StandInModel {
+                        file: url,
+                        transform: Transform::IDENTITY,
+                    }]);
                     continue;
                 }
                 // the live scene loads the same handle: the entity file is fetched once
@@ -663,14 +1028,10 @@ fn start_scene_lods(
                         definition.metadata.as_ref().map(ToString::to_string),
                     );
                 }
-                let regions = scene_regions(parcels.iter().copied())
-                    .into_iter()
-                    .map(|region| BoundRegion::new(region.min, region.max, region.count))
-                    .collect::<Vec<_>>();
-                let origin = base.as_vec2() * PARCEL_SIZE;
-                commands.entity(root).insert((
-                    Transform::from_translation(Vec3::new(origin.x, 0.0, -origin.y)),
-                    StandInBounds(SceneBounds::new(&regions, storage_buffers.as_deref_mut())),
+                commands.entity(root).insert(placement(
+                    base,
+                    &parcels,
+                    storage_buffers.as_deref_mut(),
                 ));
                 lod.parcels = parcels;
                 // a url the scene does not deploy, loaded under the scene's content path so it
@@ -819,10 +1180,13 @@ fn spawn_containers(
     }
 }
 
-/// Starts and stops stand-ins' visuals by `visual_changes`. Starting gives each model a visuals
+/// Starts and stops stand-ins' visuals by `lod_visual_changes`. Starting gives each model a visuals
 /// container under the stand-in's root; stopping despawns them, hides the root and empties its
 /// resource lookup, so the scene materials go and, once no live scene holds them, the glTFs with
-/// their textures and meshes. The colliders part stays.
+/// their textures and meshes. The colliders part stays. While far LODs are paused (the breaker of
+/// `IpfsIo::far_lod_may_request`) none start, and none stops to make way, except for the probe once
+/// per cool-down: then one far LOD may start, so at most one makes way for it. Those waiting keep
+/// their imposters and those shown stay.
 fn update_lod_visuals(
     mut commands: Commands,
     mut lods: Query<(
@@ -834,13 +1198,21 @@ fn update_lod_visuals(
     )>,
     parts: Query<&GltfPart>,
     config: Res<AppConfig>,
+    ipfs: Res<IpfsResource>,
 ) {
-    let (start, stop) = visual_changes(
+    // while paused no far LOD starts; once the cool-down has run out, one: the probe
+    let far_max_starts = match ipfs.far_lod_status().paused_for {
+        None => usize::MAX,
+        Some(left) if left.is_zero() => 1,
+        Some(_) => 0,
+    };
+    let (start, stop) = lod_visual_changes(
         &lods
             .iter()
             .map(|(entity, lod, partition, ..)| (entity, lod, partition))
             .collect::<Vec<_>>(),
-        config.max_near_lods,
+        &config,
+        far_max_starts,
     );
     for root in stop {
         let Ok((_, mut lod, _, children, mut lookup)) = lods.get_mut(root) else {
@@ -858,6 +1230,10 @@ fn update_lod_visuals(
         let LodState::Ready(models) = &lod.state else {
             continue;
         };
+        // the download starts here: the breaker's probe is spent only by one that does
+        if lod.level == LodLevel::Far && !ipfs.far_lod_may_request() {
+            continue;
+        }
         spawn_containers(&mut commands, root, models, GltfPart::Visuals);
         lod.visuals = Visuals::Loading;
     }
@@ -870,6 +1246,24 @@ fn despawn_visuals(commands: &mut Commands, children: Option<&Children>, parts: 
             commands.entity(child).despawn();
         }
     }
+}
+
+/// Where a stand-in's root goes: at the scene's base parcel, its models' materials clipped to
+/// `parcels`.
+fn placement(
+    base: IVec2,
+    parcels: &[IVec2],
+    storage_buffers: Option<&mut Assets<ShaderStorageBuffer>>,
+) -> (Transform, StandInBounds) {
+    let regions = scene_regions(parcels.iter().copied())
+        .into_iter()
+        .map(|region| BoundRegion::new(region.min, region.max, region.count))
+        .collect::<Vec<_>>();
+    let origin = base.as_vec2() * PARCEL_SIZE;
+    (
+        Transform::from_translation(Vec3::new(origin.x, 0.0, -origin.y)),
+        StandInBounds(SceneBounds::new(&regions, storage_buffers)),
+    )
 }
 
 /// The scene's base parcel and parcels, read from its `scene.json` as the live scene reads them.
@@ -890,8 +1284,8 @@ fn scene_placement(definition: &EntityDefinition) -> Option<(IVec2, Vec<IVec2>)>
 }
 
 /// Shows a stand-in's visuals in one frame once each of its visuals containers is processed:
-/// some model loaded, or nothing to show if none did (the parcels then stay the loading walls'
-/// and the imposters'; the colliders part stays).
+/// some model loaded, or nothing to show if none did (the parcels then stay the imposters'; the
+/// colliders part stays).
 fn show_scene_lods(
     mut commands: Commands,
     mut lods: Query<(
@@ -906,6 +1300,8 @@ fn show_scene_lods(
     base_materials: Res<Assets<StandardMaterial>>,
     mut materials: ResMut<Assets<SceneMaterial>>,
 ) {
+    // scenes whose near LOD is drawn from this frame on
+    let mut near_shown: Vec<String> = Vec::new();
     for (root, mut lod, children, lookup) in lods.iter_mut() {
         if !matches!(lod.visuals, Visuals::Loading) {
             continue;
@@ -929,13 +1325,29 @@ fn show_scene_lods(
         }
         if any_model {
             lod.visuals = Visuals::Shown;
+            if lod.level == LodLevel::Near {
+                near_shown.push(lod.hash.clone());
+            }
             commands.entity(root).insert(Visibility::Inherited);
             if tint.0 {
-                apply_tint(true, lookup, &base_materials, &mut materials);
+                apply_tint(true, lod.level, lookup, &base_materials, &mut materials);
             }
         } else {
             lod.visuals = Visuals::Nothing;
             despawn_visuals(&mut commands, Some(children), &parts);
+        }
+    }
+    // the far LOD of a scene whose near LOD just showed is hidden at once, not drawn under it
+    // until `update_lod_visuals` stops it next frame
+    if near_shown.is_empty() {
+        return;
+    }
+    for (root, lod, ..) in lods.iter() {
+        if lod.level == LodLevel::Far
+            && matches!(lod.visuals, Visuals::Loading | Visuals::Shown)
+            && near_shown.contains(&lod.hash)
+        {
+            commands.entity(root).insert(Visibility::Hidden);
         }
     }
 }
@@ -958,11 +1370,39 @@ mod tests {
     fn lod(state: LodState, visuals: Visuals) -> SceneLod {
         SceneLod {
             hash: "scene".to_owned(),
+            level: LodLevel::Near,
             urn: None,
+            base: None,
             parcels: Vec::new(),
             state,
             visuals,
         }
+    }
+
+    /// An ipfs client with no realm and nothing to read.
+    fn ipfs_resource() -> IpfsResource {
+        use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+        use ipfs::IpfsIo;
+
+        IpfsResource {
+            inner: std::sync::Arc::new(IpfsIo::new(
+                false,
+                Box::new(MemoryAssetReader {
+                    root: Dir::default(),
+                }),
+                None,
+                Default::default(),
+                1,
+                tokio::sync::mpsc::unbounded_channel().0,
+            )),
+        }
+    }
+
+    /// An ipfs client with a variants base, so far LODs can be offered.
+    fn ipfs_resource_with_base() -> IpfsResource {
+        let ipfs = ipfs_resource();
+        ipfs.set_bevy_variants_base("https://abgen.example");
+        ipfs
     }
 
     /// Stand-ins with their models known at the given rings, `true` behind the camera, their
@@ -994,13 +1434,205 @@ mod tests {
             .collect()
     }
 
-    /// A stand-in starts its colliders part whatever the facing, within the start ring only.
+    fn near_changes(
+        rows: &[(Entity, SceneLod, Partition)],
+        max: usize,
+    ) -> (Vec<Entity>, Vec<Entity>) {
+        visual_changes(
+            &as_rows(rows),
+            LodLevel::Near,
+            max,
+            &HashSet::new(),
+            usize::MAX,
+            &HashSet::new(),
+        )
+    }
+
+    /// A near LOD starts its colliders part whatever the facing, within the start ring only; a
+    /// far LOD starts wherever it exists.
     #[test]
     fn colliders_start_by_distance_alone() {
-        assert!(may_start(Some(&at_ring(1, true))));
-        assert!(may_start(Some(&at_ring(NEAR_LOD_START_RING, false))));
-        assert!(!may_start(Some(&at_ring(NEAR_LOD_KEEP_RING, false))));
-        assert!(!may_start(None));
+        let near = LodLevel::Near;
+        assert!(may_start(near, Some(&at_ring(1, true))));
+        assert!(may_start(near, Some(&at_ring(NEAR_LOD_START_RING, false))));
+        assert!(!may_start(near, Some(&at_ring(NEAR_LOD_KEEP_RING, false))));
+        assert!(!may_start(near, None));
+        assert!(may_start(LodLevel::Far, Some(&at_ring(9, true))));
+    }
+
+    /// Near visuals draw within ring 3; far visuals past ring 4, or nearer only when the scene's
+    /// near LOD is not drawn; neither when the scene is wholly behind the camera.
+    #[test]
+    fn visuals_draw_in_their_bands() {
+        assert!(in_draw_band(LodLevel::Near, &at_ring(3, false), false));
+        assert!(!in_draw_band(LodLevel::Near, &at_ring(4, false), false));
+        assert!(!in_draw_band(LodLevel::Near, &at_ring(2, true), false));
+        assert!(in_draw_band(LodLevel::Far, &at_ring(5, false), false));
+        assert!(!in_draw_band(LodLevel::Far, &at_ring(3, false), false));
+        assert!(in_draw_band(LodLevel::Far, &at_ring(3, false), true));
+        assert!(!in_draw_band(LodLevel::Far, &at_ring(6, true), false));
+    }
+
+    /// A scene whose near visuals find no place draws its far LOD in their stead, under the far
+    /// cap; one whose near visuals start does not.
+    #[test]
+    fn a_far_lod_stands_in_for_near_visuals_without_a_place() {
+        let mut world = World::new();
+        let mut rows = rows(&mut world, &[(1, false, false), (2, false, false)]);
+        rows[0].1.hash = "first".to_owned();
+        rows[1].1.hash = "second".to_owned();
+        let far = |world: &mut World, hash: &str| {
+            let mut lod = lod(LodState::Ready(Vec::new()), Visuals::Off);
+            lod.level = LodLevel::Far;
+            lod.hash = hash.to_owned();
+            (world.spawn_empty().id(), lod, at_ring(2, false))
+        };
+        rows.push(far(&mut world, "first"));
+        rows.push(far(&mut world, "second"));
+        let config = AppConfig {
+            max_near_lods: 1,
+            max_far_lods: 5,
+            ..Default::default()
+        };
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+            (vec![rows[0].0, rows[3].0], vec![])
+        );
+    }
+
+    /// While far LODs are paused none start; near LODs are unaffected.
+    #[test]
+    fn paused_far_lods_do_not_start() {
+        let mut world = World::new();
+        let mut lod = lod(LodState::Ready(Vec::new()), Visuals::Off);
+        lod.level = LodLevel::Far;
+        let rows = [(world.spawn_empty().id(), lod, at_ring(8, false))];
+        let config = AppConfig {
+            max_near_lods: 1,
+            max_far_lods: 5,
+            ..Default::default()
+        };
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, 0),
+            (vec![], vec![])
+        );
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+            (vec![rows[0].0], vec![])
+        );
+    }
+
+    /// Between the near LOD's start and keep rings its visuals cannot start, so the far LOD stands
+    /// in there unless the near LOD already shows.
+    #[test]
+    fn a_far_lod_stands_in_between_the_near_rings() {
+        let mut world = World::new();
+        let ring = NEAR_LOD_KEEP_RING;
+        let near = |world: &mut World, state, visuals| {
+            (
+                world.spawn_empty().id(),
+                lod(state, visuals),
+                at_ring(ring, false),
+            )
+        };
+        let far = |world: &mut World| {
+            let mut lod = lod(LodState::Ready(Vec::new()), Visuals::Off);
+            lod.level = LodLevel::Far;
+            (world.spawn_empty().id(), lod, at_ring(ring, false))
+        };
+        let config = AppConfig {
+            max_near_lods: 1,
+            max_far_lods: 5,
+            ..Default::default()
+        };
+        // a near LOD that never started (after a teleport) or whose visuals are off
+        for (state, visuals) in [
+            (LodState::Pending, Visuals::Off),
+            (LodState::Ready(Vec::new()), Visuals::Off),
+        ] {
+            let rows = [near(&mut world, state, visuals), far(&mut world)];
+            assert_eq!(
+                lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+                (vec![rows[1].0], vec![])
+            );
+        }
+        // one that already shows keeps the scene
+        let rows = [
+            near(&mut world, LodState::Ready(Vec::new()), Visuals::Shown),
+            far(&mut world),
+        ];
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+            (vec![], vec![])
+        );
+    }
+
+    /// At the probe one far LOD starts, so with every place taken one behind the camera makes way
+    /// for it, not one for each far LOD waiting in view.
+    #[test]
+    fn the_probe_starts_one_far_lod() {
+        let mut world = World::new();
+        let mut far = |visuals, ring, behind| {
+            let mut lod = lod(LodState::Ready(Vec::new()), visuals);
+            lod.level = LodLevel::Far;
+            (world.spawn_empty().id(), lod, at_ring(ring, behind))
+        };
+        let rows = [
+            far(Visuals::Shown, 8, true),
+            far(Visuals::Shown, 9, true),
+            far(Visuals::Off, 6, false),
+            far(Visuals::Off, 7, false),
+        ];
+        let config = AppConfig {
+            max_near_lods: 1,
+            max_far_lods: 2,
+            ..Default::default()
+        };
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, 1),
+            (vec![rows[2].0], vec![rows[1].0])
+        );
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+            (vec![rows[2].0, rows[3].0], vec![rows[1].0, rows[0].0])
+        );
+    }
+
+    /// A far LOD whose scene's near LOD is shown stops its visuals and does not start them.
+    #[test]
+    fn a_far_lod_steps_aside_for_the_shown_near_lod() {
+        let mut world = World::new();
+        let far = |world: &mut World, visuals| {
+            let mut lod = lod(LodState::Ready(Vec::new()), visuals);
+            lod.level = LodLevel::Far;
+            (world.spawn_empty().id(), lod, at_ring(2, false))
+        };
+        let rows = [
+            (
+                world.spawn_empty().id(),
+                lod(LodState::Ready(Vec::new()), Visuals::Shown),
+                at_ring(2, false),
+            ),
+            far(&mut world, Visuals::Shown),
+        ];
+        let config = AppConfig {
+            max_near_lods: 1,
+            max_far_lods: 5,
+            ..Default::default()
+        };
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+            (vec![], vec![rows[1].0])
+        );
+        // stopped, it is not started again while the near LOD shows
+        let rows = [
+            rows.into_iter().next().unwrap(),
+            far(&mut world, Visuals::Off),
+        ];
+        assert_eq!(
+            lod_visual_changes(&as_rows(&rows), &config, usize::MAX),
+            (vec![], vec![])
+        );
     }
 
     /// Visuals start in view, nearest first, while a place is free; every started one takes a
@@ -1019,18 +1651,12 @@ mod tests {
                 (1, true, true),
             ],
         );
+        assert_eq!(near_changes(&rows, 4), (vec![rows[2].0, rows[1].0], vec![]));
         assert_eq!(
-            visual_changes(&as_rows(&rows), 4),
-            (vec![rows[2].0, rows[1].0], vec![])
-        );
-        assert_eq!(
-            visual_changes(&as_rows(&rows), 3),
+            near_changes(&rows, 3),
             (vec![rows[2].0, rows[1].0], vec![rows[4].0])
         );
-        assert_eq!(
-            visual_changes(&as_rows(&rows), 2),
-            (vec![rows[2].0], vec![rows[4].0])
-        );
+        assert_eq!(near_changes(&rows, 2), (vec![rows[2].0], vec![rows[4].0]));
     }
 
     /// With every place taken, one started behind the camera makes way for one in view, the
@@ -1050,7 +1676,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            visual_changes(&as_rows(&rows), 3),
+            near_changes(&rows, 3),
             (vec![rows[4].0, rows[3].0], vec![rows[2].0, rows[1].0])
         );
     }
@@ -1069,7 +1695,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            visual_changes(&as_rows(&rows), 1),
+            near_changes(&rows, 1),
             (vec![], vec![rows[3].0, rows[2].0, rows[1].0])
         );
     }
@@ -1148,6 +1774,8 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<PreviewMode>();
         world.init_resource::<LiveScenes>();
+        world.init_resource::<ImposterTiling>();
+        world.insert_resource(ipfs_resource_with_base());
         let mut pointers = ScenePointers::default();
         pointers.set_realm(IVec2::splat(-20), IVec2::splat(20));
         for x in 0..=10 {
@@ -1245,10 +1873,13 @@ mod tests {
         );
     }
 
-    /// A world with the player in parcel (0,0) and one scene there, live but not yet shown.
+    /// A world with the player in parcel (0,0) and one scene there, based there, live but not
+    /// yet shown.
     fn world_with_live_scene() -> (World, Entity) {
         let mut world = World::new();
         world.init_resource::<PreviewMode>();
+        world.init_resource::<ImposterTiling>();
+        world.insert_resource(ipfs_resource_with_base());
         let mut pointers = ScenePointers::default();
         pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
         pointers.insert(
@@ -1258,6 +1889,7 @@ mod tests {
                 urn: None,
             },
         );
+        pointers.set_base("scene", IVec2::ZERO);
         world.insert_resource(pointers);
         world.spawn((
             PrimaryUser::default(),
@@ -1300,7 +1932,8 @@ mod tests {
     fn a_scene_once_shown_never_restarts_its_stand_in() {
         let (mut world, scene) = world_with_live_scene();
         world.run_system_once(update_scene_lods).unwrap();
-        assert_eq!(stand_ins(&mut world), 1);
+        // a near LOD, and a far LOD, which without imposters fits anywhere in the far ring
+        assert_eq!(stand_ins(&mut world), 2);
 
         world
             .get_mut::<RendererSceneContext>(scene)
@@ -1327,15 +1960,11 @@ mod tests {
     /// of the stand-in is drawn: a player backing into a loading scene is stopped by it.
     #[test]
     fn a_stand_in_collides_while_nothing_is_drawn() {
-        use std::sync::Arc;
-
         use bevy::{
-            asset::io::memory::{Dir, MemoryAssetReader},
             diagnostic::FrameCount,
             gltf::{Gltf, GltfMesh},
         };
         use dcl_component::proto_components::sdk::components::ColliderLayer;
-        use ipfs::{IpfsIo, IpfsResource};
 
         use crate::{
             update_world::mesh_collider::{update_colliders, CtCollider, MeshCollider},
@@ -1348,18 +1977,7 @@ mod tests {
             .init_asset::<Gltf>()
             .init_asset::<GltfMesh>()
             .init_resource::<FrameCount>()
-            .insert_resource(IpfsResource {
-                inner: Arc::new(IpfsIo::new(
-                    false,
-                    Box::new(MemoryAssetReader {
-                        root: Dir::default(),
-                    }),
-                    None,
-                    Default::default(),
-                    1,
-                    tokio::sync::mpsc::unbounded_channel().0,
-                )),
-            })
+            .insert_resource(ipfs_resource())
             .add_systems(Update, update_colliders::<CtCollider>);
 
         let stand_in = app
@@ -1407,5 +2025,152 @@ mod tests {
         assert!(!blocks(&mut app));
         app.update();
         assert!(blocks(&mut app));
+    }
+
+    /// the default imposter distances, focused on parcel (0,0)
+    fn default_tiling() -> Tiling {
+        Tiling {
+            origin_parcel: IVec2::ZERO,
+            min_distance: 0.0,
+            distance_scale: 1.0,
+            distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
+        }
+    }
+
+    /// The imposters' distance to a tile: from the focus parcel's centre (8, 8) to the tile's
+    /// closest point, here a 4x4 tile west of the focus, at negative coordinates.
+    #[test]
+    fn tile_distance_is_to_the_closest_point() {
+        let tiling = default_tiling();
+        assert_eq!(tiling.tile_distance(IVec2::new(-16, 0), 2), 200.0);
+        assert!(tiling.level_allowed(2, 200.0));
+        assert!(!tiling.level_allowed(2, 199.0));
+        assert!(tiling.level_allowed(0, 0.0));
+    }
+
+    #[test]
+    fn tile_level_follows_the_imposter_distances() {
+        let tiling = default_tiling();
+        // the 2x2 tile around the focus is too close for level 1
+        assert_eq!(tiling.level(IVec2::new(1, 0)), 0);
+        // 152 m: its 4x4 tile starts 120 m away, too close for level 2; its 2x2 tile is level 1
+        assert_eq!(tiling.level(IVec2::new(10, 0)), 1);
+        assert_eq!(tiling.level(IVec2::new(-10, 0)), 1);
+        // 248 m: its 4x4 tile is far enough for level 2
+        assert_eq!(tiling.level(IVec2::new(16, 0)), 2);
+    }
+
+    #[test]
+    fn far_lod_stays_out_of_larger_tiles() {
+        let tiling = ImposterTiling::Known(default_tiling());
+        assert!(far_lod_fits(
+            &tiling,
+            &[IVec2::new(10, 0), IVec2::new(12, 0)]
+        ));
+        // one parcel in a level-2 tile keeps the whole scene to the imposters
+        assert!(!far_lod_fits(
+            &tiling,
+            &[IVec2::new(12, 0), IVec2::new(16, 0)]
+        ));
+        // without imposters only the far ring bounds it
+        assert!(far_lod_fits(&ImposterTiling::Off, &[IVec2::new(16, 0)]));
+        // before they publish a layout nothing fits
+        assert!(!far_lod_fits(&ImposterTiling::Pending, &[IVec2::new(1, 0)]));
+        assert!(!far_lod_fits(&ImposterTiling::Pending, &[]));
+    }
+
+    /// A far LOD is placed from the base parcel the realm listed for its scene: a scene listed
+    /// without one gets only its near LOD. The far LOD keeps the parcels the pointers name.
+    #[test]
+    fn a_far_lod_needs_the_listed_base() {
+        let (mut world, _) = world_with_live_scene();
+        let mut pointers = world.resource_mut::<ScenePointers>();
+        pointers.insert(
+            IVec2::new(1, 0),
+            PointerResult::Exists {
+                hash: "scene".to_owned(),
+                urn: None,
+            },
+        );
+        world.run_system_once(update_scene_lods).unwrap();
+        let far = world
+            .query::<&SceneLod>()
+            .iter(&world)
+            .find(|lod| lod.level == LodLevel::Far)
+            .unwrap();
+        assert_eq!(far.base, Some(IVec2::ZERO));
+        let mut parcels = far.parcels.clone();
+        parcels.sort_by_key(|parcel| (parcel.x, parcel.y));
+        assert_eq!(parcels, vec![IVec2::ZERO, IVec2::new(1, 0)]);
+
+        // a new realm forgets the bases with the pointers
+        let mut pointers = world.resource_mut::<ScenePointers>();
+        pointers.set_realm(IVec2::splat(-10), IVec2::splat(10));
+        assert_eq!(pointers.base("scene"), None);
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "scene".to_owned(),
+                urn: None,
+            },
+        );
+        world.run_system_once(update_scene_lods).unwrap();
+        let levels = world
+            .query::<&SceneLod>()
+            .iter(&world)
+            .map(|lod| lod.level)
+            .collect::<Vec<_>>();
+        assert_eq!(levels, vec![LodLevel::Near]);
+    }
+
+    /// A far LOD starts from its scene's hash alone and never loads the entity definition. With
+    /// no mesh offered (variants off) it has nothing to show; while none can be offered yet (the
+    /// GPU not reported) it waits.
+    #[test]
+    fn a_far_lod_never_loads_the_entity_definition() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<EntityDefinition>()
+            .init_asset::<Descriptor>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<AppConfig>()
+            .insert_resource(ipfs_resource());
+        let far = |app: &mut App| {
+            app.world_mut()
+                .spawn((
+                    SceneLod {
+                        level: LodLevel::Far,
+                        base: Some(IVec2::new(2, 3)),
+                        ..lod(LodState::Pending, Visuals::Off)
+                    },
+                    at_ring(6, false),
+                ))
+                .id()
+        };
+        let untouched = |app: &mut App, root: Entity| {
+            let root = app.world().entity(root);
+            !root.contains::<SceneEntityDefinitionHandle>()
+                && !root.contains::<StandInContent>()
+                && !root.contains::<Children>()
+        };
+
+        let off = far(&mut app);
+        app.world_mut().run_system_once(start_scene_lods).unwrap();
+        assert!(matches!(
+            app.world().get::<SceneLod>(off).unwrap().state,
+            LodState::Nothing
+        ));
+        assert!(untouched(&mut app, off));
+
+        app.world()
+            .resource::<IpfsResource>()
+            .set_bevy_variants_base("https://abgen.example");
+        let waiting = far(&mut app);
+        app.world_mut().run_system_once(start_scene_lods).unwrap();
+        assert!(matches!(
+            app.world().get::<SceneLod>(waiting).unwrap().state,
+            LodState::Pending
+        ));
+        assert!(untouched(&mut app, waiting));
     }
 }

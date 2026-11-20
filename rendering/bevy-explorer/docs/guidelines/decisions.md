@@ -10,6 +10,31 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
+- **Toon avatars are fogged.** Like everything else; Unity's toon computes a fog factor its
+  fragment never applies.
+- **Toon avatars take only the sun.** No point or spot light reaches them, as in Unity, whose
+  toon additional-light loop is commented out.
+- **The toon ambient floor is the sky envmap's irradiance.** It stands in for Unity's
+  spherical harmonics, read up and down, and without the world's dielectric factor, as Unity reads
+  `ShadeSH9` raw. Avatars in shade sit about 4% above a white world surface; that matches Unity
+  and is not to be removed.
+- **Without the sky envmap, toon avatars take the view's flat ambient.** Such a view (the
+  Backpack preview, a photo booth) has no Trilight ambient. The Backpack is lit flat; a booth
+  carries a one-light-unit key light, or its avatars would sit at the night floor.
+- **Face features are lit by the ambient alone.** As Unity's facial shader: no sun and no bands,
+  so they are brighter than the body at noon and darker at night. A view without the sky envmap
+  takes the noon horizon colour, since its flat ambient would light them twentyfold. They keep
+  the body's outline, which Unity's face shader does not draw.
+- **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
+  width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
+  overlap shallower than the edge threshold gets no line, so a curved surface draws none on
+  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+- **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
+  and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
+  front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
+  alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
+  wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
 - **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
@@ -743,6 +768,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
   save almost nothing, and the water material draws without fog, so nothing would soften it
   appearing and disappearing.
+- **The wave ocean is not ported.** Unity's ocean (a wave grid, foam and an alpha-blended surface)
+  was ported and compared in the same views, and it looked worse than Bevy's current sea, so the
+  sea stays as it is.
+- **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
+  rings from URP's sample textures, which are not carried; Bevy draws bands of colour measured
+  from them (radius, width and brightness per channel, and the partial ring's arc). Unity places
+  the copies with its seeded random generator.
+- **The lens flare sees transparent surfaces only through depth of field.** Its occlusion test
+  reads the depth buffer and, where the view has depth of field's transparent focus texture, the
+  transparent coverage in it. A view without that texture (every MSAA view) is hidden only by
+  opaque geometry, not by imposters. The flare is off while a scene hides the sun and moon discs.
 - **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
   carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
   shadow quality, the Low and High shadow distances and scene lights; Medium is the default and

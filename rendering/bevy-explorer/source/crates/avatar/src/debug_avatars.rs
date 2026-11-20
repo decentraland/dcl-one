@@ -2,16 +2,94 @@ use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use collectibles::base_wearables;
-use common::structs::{AttachPoints, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser};
+use common::structs::{
+    AppConfig, AttachPoints, AvatarDynamicState, EmoteCommand, EmoteMask, PrimaryUser,
+    SessionGraphics,
+};
 use comms::profile::{name_color::name_color, ProfileManager, UserProfile};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
-use rand::{seq::IteratorRandom, Rng};
+use rand::{rngs::StdRng, seq::IteratorRandom, Rng, SeedableRng};
 use serde_json::json;
 
-use crate::{nametag::NametagContent, AvatarSelection, AvatarShape};
+use crate::{nametag::NametagContent, AvatarProcessed, AvatarSelection, AvatarShape};
 
-const MAX_DEMOS: usize = 128;
+/// Enough to find where frame time breaks down, well past the Max Avatars setting's range.
+const MAX_DEMOS: usize = 1024;
+/// The highest number `/avatar_demo cap` takes: every demo avatar and the player.
+const MAX_CAP: usize = MAX_DEMOS + 1;
+/// `/avatar_demo cap all`: no cap, so real players and scene avatars count against nothing.
+const UNCAPPED: usize = usize::MAX;
+const DEMO_LAYOUTS: &[(&str, &str)] = &[("Grid", "grid"), ("Around", "around")];
+
+/// `/avatar_demo cap`'s argument: a number, or `all` for no cap.
+fn parse_cap(value: &str) -> Result<usize, String> {
+    match value {
+        "all" => Ok(UNCAPPED),
+        _ => value
+            .parse::<usize>()
+            .ok()
+            .filter(|cap| (1..=MAX_CAP).contains(cap))
+            .ok_or_else(|| format!("choose a cap from 1 to {MAX_CAP}, or all")),
+    }
+}
+
+/// A cap as the reply gives it: `all` for no cap.
+fn cap_json(cap: usize) -> serde_json::Value {
+    if cap == UNCAPPED {
+        json!("all")
+    } else {
+        json!(cap)
+    }
+}
+/// Demo avatars stand in a square grid in front of the player, this many to a row. A row fills
+/// from its centre outwards, so the first avatar stands straight ahead.
+const GRID_COLUMNS: u64 = 32;
+const GRID_SPACING: f32 = 1.6;
+/// The turn between one demo avatar and the next in the `around` layout: the golden angle, which
+/// fills a disc evenly from its centre outwards.
+const AROUND_TURN: f32 = 2.399_963;
+
+/// Where the demo avatar in `slot` stands, relative to the player.
+fn demo_offset(layout: DemoLayout, slot: u64) -> Vec3 {
+    match layout {
+        DemoLayout::Grid => {
+            // columns 0, 1, -1, 2, -2, ... from straight ahead
+            let column = slot % GRID_COLUMNS;
+            let side = if column % 2 == 1 { 1.0 } else { -1.0 };
+            Vec3::new(
+                side * column.div_ceil(2) as f32 * GRID_SPACING,
+                0.0,
+                -((slot / GRID_COLUMNS) as f32) * GRID_SPACING - 2.0,
+            )
+        }
+        // one avatar per GRID_SPACING squared, the nearest first
+        DemoLayout::Around => {
+            let radius = GRID_SPACING * ((slot + 1) as f32 / std::f32::consts::PI).sqrt();
+            let (sin, cos) = (slot as f32 * AROUND_TURN).sin_cos();
+            Vec3::new(radius * cos, 0.0, radius * sin)
+        }
+    }
+}
+
+/// How demo avatars are placed.
+#[derive(clap::ValueEnum, Clone, Copy, Default, Debug, PartialEq, Eq)]
+enum DemoLayout {
+    /// a grid in front of the player, each row filled from its centre outwards
+    #[default]
+    Grid,
+    /// a disc centred on the player, filled from the centre: a crowd on every side
+    Around,
+}
+
+impl DemoLayout {
+    fn name(self) -> &'static str {
+        match self {
+            DemoLayout::Grid => "grid",
+            DemoLayout::Around => "around",
+        }
+    }
+}
 const BASE_AVATARS: &str = "urn:decentraland:off-chain:base-avatars:";
 const CREATOR_EMOTES: &[(&str, &str)] = &[
     ("None", "none"),
@@ -55,8 +133,17 @@ impl Plugin for DebugAvatarsPlugin {
             .add_debug_section(DebugSection {
                 title: "Avatar debug",
                 query: "/avatar_demo",
-                fields: &[("Spawned demo avatars", "count")],
+                fields: &[
+                    ("Spawned demo avatars", "count"),
+                    ("Built demo avatars", "built"),
+                    ("Shown (not hidden by the cap)", "shown"),
+                    ("Drawn in a view this frame", "drawn"),
+                    ("Max avatars this session", "cap"),
+                ],
                 actions: &[
+                    ("Show every avatar", "/avatar_demo cap all"),
+                    ("Use the Max Avatars setting", "/avatar_demo cap"),
+                    ("New crowd each time", "/avatar_demo seed"),
                     ("Destroy demo avatars", "/avatar_demo clear"),
                     ("Destroy random number", "/avatar_demo remove-random"),
                     ("Randomize demo wearables", "/avatar_demo randomize"),
@@ -67,6 +154,32 @@ impl Plugin for DebugAvatarsPlugin {
                         field: "maleOnly",
                         command: "/avatar_demo male-only {value}",
                         kind: DebugInputKind::Toggle,
+                    },
+                    DebugInput {
+                        label: "Max avatars this session (not saved)",
+                        field: "cap",
+                        command: "/avatar_demo cap {value}",
+                        kind: DebugInputKind::Number {
+                            min: 1.0,
+                            max: MAX_CAP as f64,
+                            step: 1.0,
+                        },
+                    },
+                    DebugInput {
+                        label: "Where new demo avatars stand",
+                        field: "layout",
+                        command: "/avatar_demo layout {value}",
+                        kind: DebugInputKind::Select(DEMO_LAYOUTS),
+                    },
+                    DebugInput {
+                        label: "Crowd seed (the same looks every session)",
+                        field: "seed",
+                        command: "/avatar_demo seed {value}",
+                        kind: DebugInputKind::Number {
+                            min: 0.0,
+                            max: 999_999_999_999_999.0,
+                            step: 1.0,
+                        },
                     },
                     DebugInput {
                         label: "Spawn random avatars",
@@ -147,7 +260,29 @@ struct Creator {
     male_only: bool,
     wearables: Vec<String>,
     emote: Option<String>,
+    layout: DemoLayout,
+    /// With a seed, the avatar at each index always gets the same look.
+    seed: Option<u64>,
     next: u64,
+}
+
+/// The seed of the look at `index` in the crowd `seed` names. The two are mixed, so one seed's
+/// crowd is not the next seed's moved along by one.
+fn look_seed(seed: u64, index: u64) -> u64 {
+    seed ^ index.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+/// A random demo avatar's look: whether it is male, and eight base wearables.
+fn random_look(rng: &mut impl Rng, male_only: bool) -> (bool, Vec<String>) {
+    let male = male_only || rng.gen_bool(0.5);
+    let wearables = base_wearables::base_wearable_urns()
+        .iter()
+        .skip(2)
+        .choose_multiple(rng, 8)
+        .into_iter()
+        .map(ToString::to_string)
+        .collect();
+    (male, wearables)
 }
 
 /// Create local rendered avatars, configure their look or remove only the test population.
@@ -174,6 +309,20 @@ enum DemoAction {
     Emote {
         name: String,
     },
+    /// Set Max Avatars for this session only, past the setting's range, to measure crowds; `all`
+    /// is no cap, and no value goes back to the setting.
+    Cap {
+        #[arg(value_parser = parse_cap)]
+        max: Option<usize>,
+    },
+    /// Where new demo avatars stand: `grid` in front of the player, or `around` them.
+    Layout {
+        layout: DemoLayout,
+    },
+    /// Give the avatar at each index the same random look in every session; no seed clears it.
+    Seed {
+        seed: Option<u64>,
+    },
     Male,
     Female,
     Clear,
@@ -187,9 +336,18 @@ fn demo_command(
     mut creator: ResMut<Creator>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut demos: Query<(Entity, &mut AvatarSelection), With<DemoAvatar>>,
+    config: Res<AppConfig>,
+    mut session: ResMut<SessionGraphics>,
+    (children, processed, drawn_meshes): (
+        Query<&Children>,
+        Query<&InheritedVisibility, With<AvatarProcessed>>,
+        Query<&ViewVisibility, With<Mesh3d>>,
+    ),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     let mut count = demos.iter().len();
+    // despawned at the end of the frame: not counted in this reply
+    let mut removed = Vec::new();
     let mut rng = rand::thread_rng();
     match args.action {
         Some(DemoAction::MaleOnly { enabled }) => creator.male_only = enabled,
@@ -201,6 +359,13 @@ fn demo_command(
             }
             creator.wearables = wearables;
         }
+        Some(DemoAction::Cap { max }) => {
+            // with the session's settings, not in the config: a change to the config is written
+            // to the stored one
+            session.max_avatars = max;
+        }
+        Some(DemoAction::Layout { layout }) => creator.layout = layout,
+        Some(DemoAction::Seed { seed }) => creator.seed = seed,
         Some(DemoAction::Emote { name }) => {
             if !CREATOR_EMOTES.iter().any(|(_, value)| *value == name) {
                 cmd.reply_failed("unknown creator emote");
@@ -214,10 +379,15 @@ fn demo_command(
             } else {
                 rng.gen_range(0..=count)
             };
-            for entity in demos.iter().map(|(e, _)| e).choose_multiple(&mut rng, n) {
-                commands.entity(entity).despawn();
+            removed = demos.iter().map(|(e, _)| e).choose_multiple(&mut rng, n);
+            for entity in &removed {
+                commands.entity(*entity).despawn();
             }
             count -= n;
+            if count == 0 {
+                // a population spawned after a clear stands where the first one stood
+                creator.next = 0;
+            }
         }
         Some(DemoAction::Randomize) => {
             let catalog = base_wearables::base_wearable_urns();
@@ -244,33 +414,25 @@ fn demo_command(
                 cmd.reply_failed("player unavailable");
                 return;
             };
-            let catalog = base_wearables::base_wearable_urns();
             for _ in 0..n {
-                let random = matches!(action, DemoAction::Spawn { .. });
-                let male = if random {
-                    creator.male_only || rng.gen_bool(0.5)
-                } else {
-                    matches!(action, DemoAction::Male)
-                };
-                let wearables = if random {
-                    catalog
-                        .iter()
-                        .skip(2)
-                        .choose_multiple(&mut rng, 8)
-                        .into_iter()
-                        .map(ToString::to_string)
-                        .collect()
-                } else {
-                    creator.wearables.clone()
-                };
                 let index = creator.next;
                 creator.next += 1;
+                let (male, wearables) = if matches!(action, DemoAction::Spawn { .. }) {
+                    match creator.seed {
+                        Some(seed) => random_look(
+                            &mut StdRng::seed_from_u64(look_seed(seed, index)),
+                            creator.male_only,
+                        ),
+                        None => random_look(&mut rng, creator.male_only),
+                    }
+                } else {
+                    (
+                        matches!(action, DemoAction::Male),
+                        creator.wearables.clone(),
+                    )
+                };
                 let slot = index % MAX_DEMOS as u64;
-                let offset = Vec3::new(
-                    (slot % 12) as f32 * 1.6 - 3.2,
-                    0.0,
-                    -((slot / 12) as f32) * 1.6 - 2.0,
-                );
+                let offset = demo_offset(creator.layout, slot);
                 let shape = AvatarShape(PbAvatarShape {
                     id: format!("debug-avatar-{index}"),
                     body_shape: Some(format!(
@@ -326,7 +488,30 @@ fn demo_command(
         }
         None => {}
     }
-    cmd.reply_ok(json!({"count":count, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
+    // demo avatars with a finished build: a measurement waits for these to reach the count.
+    // Of those, `shown` are not hidden (by the cap, say) and `drawn` have a mesh in some view
+    // this frame, the camera's or a shadow's
+    let (mut built, mut shown, mut drawn) = (0, 0, 0);
+    for (entity, _) in demos.iter().filter(|(entity, _)| !removed.contains(entity)) {
+        let Some(build) = children
+            .get(entity)
+            .ok()
+            .and_then(|children| children.iter().find(|child| processed.contains(*child)))
+        else {
+            continue;
+        };
+        built += 1;
+        if processed.get(build).is_ok_and(|shown| shown.get()) {
+            shown += 1;
+            if children
+                .iter_descendants(build)
+                .any(|mesh| drawn_meshes.get(mesh).is_ok_and(|drawn| drawn.get()))
+            {
+                drawn += 1;
+            }
+        }
+    }
+    cmd.reply_ok(json!({"count":count, "built":built, "shown":shown, "drawn":drawn, "cap":cap_json(session.max_avatars(&config)), "sessionCap":session.max_avatars.map(cap_json), "layout":creator.layout.name(), "seed":creator.seed, "maleOnly":creator.male_only, "wearables":creator.wearables.join(","), "emote":creator.emote.as_deref().unwrap_or("none")}).to_string());
 }
 
 /// Temporarily render a fetched profile's appearance on the local player.
@@ -430,6 +615,78 @@ fn fetch_look(
                     .remove::<PendingProfile>()
                     .insert(MissingProfile(pending.0));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_seed_gives_each_index_the_same_look() {
+        let look = |seed: u64| random_look(&mut StdRng::seed_from_u64(seed), false);
+        assert_eq!(look(7), look(7));
+        assert_eq!(look(7).1.len(), 8);
+        // and different indexes differ
+        assert!((0..20).any(|index| look(index) != look(7)));
+    }
+
+    #[test]
+    fn a_cap_is_a_number_in_range_or_all() {
+        assert_eq!(parse_cap("all"), Ok(UNCAPPED));
+        assert_eq!(parse_cap("20"), Ok(20));
+        assert_eq!(parse_cap(&MAX_CAP.to_string()), Ok(MAX_CAP));
+        assert!(parse_cap("0").is_err());
+        assert!(parse_cap(&(MAX_CAP + 1).to_string()).is_err());
+        assert_eq!(cap_json(UNCAPPED), json!("all"));
+        assert_eq!(cap_json(20), json!(20));
+    }
+
+    #[test]
+    fn neighbouring_seeds_are_different_crowds() {
+        assert_eq!(look_seed(1, 0), 1);
+        assert_ne!(look_seed(1, 1), look_seed(2, 0));
+        assert_ne!(look_seed(1, 2), look_seed(2, 1));
+    }
+
+    #[test]
+    fn the_grid_stands_in_front_of_the_player() {
+        for slot in 0..MAX_DEMOS as u64 {
+            assert!(demo_offset(DemoLayout::Grid, slot).z <= -2.0);
+        }
+    }
+
+    #[test]
+    fn a_grid_row_fills_from_straight_ahead_outwards() {
+        let row: Vec<_> = (0..GRID_COLUMNS)
+            .map(|slot| demo_offset(DemoLayout::Grid, slot).x)
+            .collect();
+        assert!(row[0].abs() < 0.01);
+        assert!(row[1] > 0.0 && row[2] < 0.0);
+        // no avatar stands closer to the centre than the one before it
+        assert!(row.windows(2).all(|pair| pair[0].abs() <= pair[1].abs()));
+        // and no two share a place
+        for (i, a) in row.iter().enumerate() {
+            assert!(row[i + 1..]
+                .iter()
+                .all(|b| (a - b).abs() > GRID_SPACING / 2.0));
+        }
+    }
+
+    #[test]
+    fn the_around_layout_surrounds_the_player_nearest_first() {
+        let offsets: Vec<_> = (0..200)
+            .map(|slot| demo_offset(DemoLayout::Around, slot))
+            .collect();
+        // each avatar stands further out than the one before
+        assert!(offsets
+            .windows(2)
+            .all(|pair| pair[0].length() < pair[1].length()));
+        // and they are on every side of the player
+        for side in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+            let on_side = offsets.iter().filter(|o| o.dot(side) > 0.0).count();
+            assert!((80..=120).contains(&on_side), "{on_side} towards {side}");
         }
     }
 }
