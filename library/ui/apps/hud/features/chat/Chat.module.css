@@ -208,6 +208,21 @@
   cursor: pointer;
   text-align: left;
 }
+/* The community's thumbnail and name open its menu: the button's look, tinted on hover and while open. */
+.communityTitle {
+  padding: 0 6px 0 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur-hover) var(--ease-outquad);
+}
+.communityTitle:hover,
+.communityTitle[aria-expanded='true'] {
+  background: var(--chat-hover);
+}
 .dmNames {
   display: flex;
   flex-direction: column;

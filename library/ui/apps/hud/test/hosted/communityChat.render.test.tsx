@@ -68,6 +68,18 @@ describe('community chat panel', () => {
     expect(screen.queryByRole('button', { name: 'View Cy' })).toBeNull()
   })
 
+  it("the community's thumbnail and name open a menu that views the community", async () => {
+    vi.mocked(openCommunityModal).mockClear()
+    render(<Chat chat={chatWith({ channel: 'community:c1', communities: [community()] })} />)
+    const title = screen.getByRole('button', { name: 'Decentraland Foundation options' })
+    expect(title).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(title)
+    expect(title).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(screen.getByRole('menuitem', { name: 'View Community' }))
+    expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c1', expect.any(Function))
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
   it('the menu views the community, sets the ping, deletes history or closes the chat', async () => {
     const chat = chatWith({ channel: 'community:c1', communities: [community()], deleteHistory: vi.fn(), closeCommunity: vi.fn() })
     render(<Chat chat={chat} />)
