@@ -43,21 +43,16 @@ fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// A notice's image: posters as the read projection serves them, other node paths on the asset mount.
+/// A notice's image as the read projection serves it: posters on their mount, the default on the asset mount.
 pub fn notice_image_url(
     image: &str,
     configured_public_base: Option<&str>,
     events_asset_base: &str,
 ) -> String {
-    let assets = events_asset_base.trim_end_matches('/');
     if poster_path(image).is_some() {
         return mounted_poster_url(image, configured_public_base);
     }
-    if image.starts_with('/') {
-        format!("{assets}{image}")
-    } else {
-        image.to_owned()
-    }
+    absolute_default_image(image, events_asset_base)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -399,6 +394,11 @@ mod tests {
         assert_eq!(
             super::notice_image_url(super::DEFAULT_EVENT_IMAGE, public.as_deref(), &assets),
             "https://node.example.org/prefix/events/assets/event-default.webp"
+        );
+        assert_eq!(
+            super::notice_image_url("/other/a.webp", public.as_deref(), &assets),
+            "/other/a.webp",
+            "other paths stay as stored, as on read"
         );
     }
 

@@ -30,7 +30,7 @@ pub struct Links {
 }
 
 impl Links {
-    /// A stored image as the absolute URL the node serves it on.
+    /// A stored image as the URL the node serves it on, absolute when `PUBLIC_URL` is set.
     fn image(&self, image: &str) -> String {
         crate::node_assets::notice_image_url(image, self.public_base.as_deref(), &self.asset_base)
     }
@@ -292,10 +292,11 @@ fn message(event_id: &str, kind: &str, event: &Value, links: &Links) -> Value {
                     }
                 ),
             );
-            let image = text(event, "image");
-            if !image.is_empty() {
+            let image = links.image(text(event, "image"));
+            // Slack refuses the whole message over a relative `image_url` (no `PUBLIC_URL`).
+            if image.starts_with("https://") || image.starts_with("http://") {
                 let scene = text(event, "scene_name");
-                details["accessory"] = json!({"type":"image","image_url":links.image(image),
+                details["accessory"] = json!({"type":"image","image_url":image,
                     "alt_text":if scene.is_empty(){"Decentraland"}else{scene}});
             }
             let mut at = vec![format!("at <{review}|Events page>")];
@@ -622,6 +623,17 @@ mod tests {
                 "{stored}"
             );
         }
+        // Without `PUBLIC_URL` a poster is root-relative: the notice goes out without the image.
+        let notice = message(
+            "ev-4",
+            "submitted",
+            &labels(&json!({"name":"Poster","image":"/poster/abc.webp"})),
+            &Links {
+                public_base: None,
+                ..links()
+            },
+        );
+        assert!(notice["blocks"][1].get("accessory").is_none());
     }
 
     /// `Slack/utils.ts:83-220`: approved (self-approval suffix), rejected and
