@@ -22,6 +22,8 @@ import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
 import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
+import { createNametagFeed } from './previewNametagFeed'
+import { SHOP_FRAMING, SHOP_NAMES_FRAMING, shiftWithin, steadyAnchor, windowPoint, type SceneOffset } from './previewView'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -50,9 +52,7 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
   bottom: { range: 3.96, centerY: 1.15 },
   shoes: { range: 3.03, centerY: 0.35 }
 }
-// The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
-// the stage's floor logo (~970px down the screen). The Shop frames nothing else.
-const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
+// The Shop frames the whole body only, as its page draws it: ./previewView's SHOP_FRAMING and SHOP_NAMES_FRAMING.
 // The sign-in screens' whole body: the head about 23% down the screen, the feet about 77%, on a podium
 // about a quarter of the screen wide.
 const SIGNIN_FRAMING = { range: 7.3, centerY: 1.95 }
@@ -60,6 +60,8 @@ const SIGNIN_PODIUM_SCALE = 1.38
 const FOCUS_SECONDS = 0.6
 const CAMERA_PITCH = 12
 const CAMERA_DISTANCE = 8
+// The Backpack's and the Shop's avatar stands with its feet at this height, in this scene's coordinates.
+const PREVIEW_FEET_Y = 0
 // The camera is pitched down, so its view centre sits this far below it at the avatar.
 const PITCH_DROP = CAMERA_DISTANCE * Math.tan((CAMERA_PITCH * Math.PI) / 180)
 // Drag-to-rotate sensitivity (from the SDK7 AvatarPreviewElement).
@@ -136,6 +138,8 @@ let cameraEntity: Entity | null = null
 let podiumEntities: Entity[] = []
 // The Shop's stage image on screen (previewStage), in place of the backdrop bands and the podium.
 let shopStage: Rect | null = null
+// Whether the Shop's page on that stage is a Names page, the only one that shows the avatar's nametag.
+let shopNames = false
 // Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
 let emoteTrigger = 0
 let lastShapeKey = ''
@@ -266,7 +270,7 @@ function createPreview(): void {
   // the default body, which the engine keeps on show until the real look has loaded
   CameraLayers.create(a, { layers: [layer] })
   Transform.create(a, {
-    position: Vector3.create(8, 0, 8),
+    position: Vector3.create(8, PREVIEW_FEET_Y, 8),
     rotation: FACING,
     scale: lobby ? Vector3.One() : Vector3.create(2, 2, 2)
   })
@@ -754,14 +758,54 @@ export function registerAvatarPreview(ctx: Ctx): void {
     applyFraming(framing)
   })
 
+  // The Shop's nametag stands at the height the engine puts its avatar's own, over the head and what it wears, and
+  // on the avatar's axis. It stays still while the head sways in the idle or turns with a drag (./previewView's
+  // steadyAnchor). While a Names page is on the Shop's stage the engine's anchor is read now and then and told to the
+  // page as a point in the avatar's window (./previewNametagFeed). The anchor is read rather than pushed: it moves
+  // with the head every frame, the hold keeps one place out of most of those moves, and only Names pages read it.
+  const aspect = (): number => (rect != null && rect.height > 0 ? rect.width / rect.height : 1)
+  const nametag = createNametagFeed<Entity, SceneOffset>({
+    read: (avatar) => BevyApi.avatarNametagAnchor?.(avatar) ?? Promise.resolve(null),
+    settle: steadyAnchor,
+    project: (anchor) => windowPoint(anchor, framing, zoom, zoomShift, CAMERA_PITCH, aspect(), PREVIEW_FEET_Y),
+    send: (anchor) => ctx.send({ kind: 'previewNametag', anchor })
+  })
+  // The view the tag was last placed by. Once it moves (the camera easing to another page's framing, a zoom, the
+  // window resized) the tag follows it from the last anchor read, without waiting for the next read.
+  let placedBy: number[] = []
+  ctx.push((dt) => {
+    nametag.tick(dt, shopStage != null && shopNames && stage === 'backpack' && BevyApi.avatarNametagAnchor != null ? avatarEntity : null)
+    const view = [framing.range, framing.centerY, zoom, zoomShift, aspect()]
+    if (view.some((v, i) => v !== placedBy[i])) {
+      placedBy = view
+      nametag.reproject()
+    }
+  })
+
   // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
-  // the floor the image has, so the Backpack's podium steps aside.
+  // the floor the image has, so the Backpack's podium steps aside. The avatar is framed as the page draws it.
   ctx.on('previewStage', (msg) => {
+    const page = msg.framing === 'names' ? SHOP_NAMES_FRAMING : SHOP_FRAMING
+    shopNames = msg.rect != null && msg.framing === 'names'
+    // The stage staying up (resized, or another page): its place moves, and the camera eases to the page's framing,
+    // from wherever it is, only when that framing changes. A resize midway leaves the ease running, and the nametag
+    // keeps its anchor and follows the view.
+    if (shopStage != null && msg.rect != null) {
+      shopStage = msg.rect
+      if (page !== framingTo) {
+        framingFrom = framing
+        framingTo = page
+        framingT = 0
+      }
+      return
+    }
+    // The stage coming up or going: the page's framing at once, and the nametag unknown until read.
     shopStage = msg.rect
     showPodium(shopStage == null)
-    framing = framingFrom = framingTo = shopStage != null ? SHOP_FRAMING : FRAMING.body
+    framing = framingFrom = framingTo = shopStage != null ? page : FRAMING.body
     framingT = 1
     applyFraming(framing)
+    nametag.restage()
   })
 
   // The page's drag over the preview turns the avatar, and its wheel zooms the camera: the page drives both,
@@ -789,6 +833,12 @@ export function registerAvatarPreview(ctx: Ctx): void {
   // empty trigger on a scene's avatar is the engine's stop).
   ctx.on('previewEmote', (msg) => {
     playEmote(msg.urn ?? '')
+    // the head moves on with the emote, or back from it: the tag takes its place afresh once that blend is over
+    nametag.release()
+  })
+  // A reloaded page knows no place for the tag: the feed starts over, so the next read is told to it.
+  ctx.on('hello', () => {
+    nametag.restage()
   })
 
   // Selecting an item in the Backpack previews it on the avatar without persisting (null reverts).
@@ -829,12 +879,6 @@ function showPodium(visible: boolean): void {
     const layer = PODIUM_LAYERS[i]
     Transform.getMutable(e).scale = visible ? podiumLayerScale(layer) : Vector3.Zero()
   })
-}
-
-// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
-function shiftWithin(f: { range: number }, z: number, shift: number): number {
-  const room = (f.range - f.range / z) / 2
-  return Math.max(-room, Math.min(room, shift))
 }
 
 // The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told

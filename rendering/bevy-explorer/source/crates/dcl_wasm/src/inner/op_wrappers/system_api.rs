@@ -310,6 +310,21 @@ pub async fn op_get_compact_profiles(
 }
 
 #[wasm_bindgen]
+pub async fn op_avatar_nametag_anchor(
+    state: &WorkerContext,
+    entity: u32,
+) -> Result<JsValue, WasmError> {
+    dcl_js::system_api::op_avatar_nametag_anchor(state.rc(), entity)
+        .await
+        .map(|anchor| {
+            anchor
+                .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub fn op_quit(state: &WorkerContext) {
     dcl_js::system_api::op_quit(state.rc());
 }

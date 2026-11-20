@@ -200,6 +200,15 @@ impl RpcOrigin {
     }
 }
 
+/// An avatar's nametag anchor from the avatar's origin, in metres in the world (the avatar's scale
+/// included), along a scene's axes: `x` east, `y` up, `z` north.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct NametagAnchorOffset {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
 #[derive(Event, Debug, Clone)]
 pub struct RpcCallEvent {
     pub origin: RpcOrigin,
@@ -267,6 +276,14 @@ pub enum RpcCall {
     GetUserData {
         user: Option<String>,
         response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// Where an avatar of the system scene (its `AvatarShape` entity) has its nametag: the nametag
+    /// anchor's offset from the avatar's origin. The engine sets that anchor over the head and what
+    /// it wears; None until the avatar's body is measured, for an entity that isn't such an avatar,
+    /// or for a call from any other scene (the engine checks the origin it stamped).
+    AvatarNametagAnchor {
+        entity: dcl_component::SceneEntityId,
+        response: RpcResultSender<Option<NametagAnchorOffset>>,
     },
     /// The compact profiles of a list of addresses, in request order; an address that can't
     /// be resolved is left out.

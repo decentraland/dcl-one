@@ -5610,6 +5610,10 @@
           "kind": "regular"
         },
         {
+          "name": "shopNametag.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "sidebar.test.tsx",
           "kind": "regular"
         },
@@ -5893,7 +5897,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "64e12a926063646e95611a800647d1c5a72c71638c5d44e12aa5d54005c256ee"
+      "sha256": "821389e601e2d45fa3f103d47099e199ac506a8e40c15b641a8a195a891f4dd9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bridge.ts",
@@ -5909,7 +5913,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarPreview.tsx",
-      "sha256": "85338dca73d8bcd9636bb1de35eeacd78708f421f1b7fd8941c8adc0a9d1a49c"
+      "sha256": "e797855c514bb838fc8f2efa32cf1ea0123eaa5c4dd73cee2f02ebc050a393c6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/chat.ts",
@@ -5978,6 +5982,14 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/places.ts",
       "sha256": "74d17cd39674e65fa7e3a98708738f3cfd40f8c77a8424ba0eaa145bea182007"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/previewNametagFeed.ts",
+      "sha256": "3daecbdce1a4b2036d25bd3519b8c151c559dc254101e7e0e461aa54b83e2deb"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/previewView.ts",
+      "sha256": "5dda2413bfb1990699b9a97833199fac0c9262ce1f41f2195febfe0e4c2828e9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
@@ -6152,6 +6164,10 @@
       "sha256": "02d834ceb539309241f6758b3ec4f0b9b525572606e18172a4eae5015e5fb5d9"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
+      "sha256": "267dafb520c2a7cb521a2d57aabefb27f2888edcecfa64f0f8d4c5dc34e7b5b4"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
       "sha256": "e31f966beb16b6792037354c990e48c8847bdc934a84b5ccb14cc6a9fd7286f0"
     },
@@ -6210,6 +6226,14 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
       "sha256": "6445a90de94e25b7801cfabf86bce94022ae27551f7d99b09f80d255b1827040"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewNametagFeed.test.ts",
+      "sha256": "890792637c2e63d16f885cda16077431feb2cbc2a74f61891d93464097d02700"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
+      "sha256": "4b625ec28cfe3324c78a63b86da29f3113f3f523aa1ddbb2d72f2bcb8c308986"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
@@ -6369,7 +6393,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "a5551a58354580d7e961bee44f8167c86c736c238eda6ce4ee05aa13e51517db"
+      "sha256": "16ed7dba977b13f76670aeece925b8c0977a2bcf825c977947fe80681332150a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -6411,6 +6435,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/benchmarkSwitches.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/bootWatchdog.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarDraft.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeAvatarPreviewShop.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -6426,6 +6451,8 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeNotifications.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeOutfits.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgePlaces.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewNametagFeed.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgePreviewView.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeProfileReads.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizer.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
@@ -6557,7 +6584,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "4809d12d4b9ee043db0cbdd48f166e9a101a97a1b74d07ad463144d7973ea45c"
+      "sha256": "46fe236b91aac2d33fb6e26af7371e2b6673034907f6d89c4f5431b8b375d71d"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -10089,7 +10116,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "a3f7da89efe121ec6486536ad7928dc04a5a19700ca19f0b7981c9f48b92a96c"
+      "sha256": "09740a5e50ef94e4e01771b0a449c540cb14cfc6e7844843831a930aee2afb0a"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10814,6 +10841,10 @@
     {
       "path": "library/ui/apps/hud/test/hosted/shop.test.tsx",
       "sha256": "85046b05b003befbf161f6b3c71cb8cdbee78cc3aacbc22233583a8111d57da0"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
+      "sha256": "29acf864949e7a5b34cfc5066a7336044ec1d9cd8506803eeb1db8a8d6d62bce"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
@@ -43074,6 +43105,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
       "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "native:runtime"
@@ -48351,6 +48397,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/shop.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/shopNametag.test.tsx",
       "kind": "type"
     },
     {

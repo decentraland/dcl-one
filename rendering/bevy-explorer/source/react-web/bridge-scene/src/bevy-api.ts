@@ -258,6 +258,11 @@ export type BevyApiInterface = {
    *  one call, through the engine's profile cache: what a list row shows. In request order; an
    *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
   getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
+  /** Where one of this scene's avatars (an AvatarShape entity) has its nametag: the anchor's offset from the avatar's
+   *  origin, in metres with its scale along the scene's axes (x east, y up, z north), where the engine sets it over
+   *  the head and what it wears. null until the avatar's body is measured. Optional: absent on runtimes that predate
+   *  it. */
+  avatarNametagAnchor?: (entity: number) => Promise<{ x: number; y: number; z: number } | null>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */

@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { PLATFORM_BANNED_REFUSAL, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus, type PreviewStageFraming } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -254,9 +254,10 @@ export interface BackpackState {
   preview: (urns: string[] | null) => void
   /** Frame part of the preview avatar (follows the selected category). */
   focus: (focus: PreviewFocus) => void
-  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar;
-   *  null gives the preview the Backpack's backdrop back. */
-  stage: (rect: { x: number; y: number; width: number; height: number } | null) => void
+  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar, and how its
+   *  page draws the avatar (the catalogue's framing, unless given); null gives the preview the Backpack's backdrop
+   *  back. */
+  stage: (rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => void
   /** Play an emote on the preview avatar (again for every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
@@ -555,6 +556,10 @@ export interface EventsState {
 export interface ShopState {
   open: boolean
   toggle: () => void
+  /** Where the engine puts the Shop avatar's nametag (previewNametag): over the head and what it wears, as a point
+   *  in the avatar's window (shares of its width from its left and of its height from its top). null or absent
+   *  while it isn't known. */
+  nametagAnchor?: { x: number; y: number } | null
 }
 
 // Unity's sidebar Skybox menu: time of day, driven through the engine's `/time <hours> <speed>`.
@@ -1315,6 +1320,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobbyStageReady, setLobbyStageReady] = useState(false)
   const [communitiesLoaded, setCommunitiesLoaded] = useState(false)
   const [signinStageReady, setSigninStageReady] = useState(false)
+  const [previewNametagAnchor, setPreviewNametagAnchor] = useState<{ x: number; y: number } | null>(null)
   lobbyRef.current = lobby
   // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
   const [welcome, setWelcome] = useState<{ terms: boolean; newProfile: boolean } | null>(null)
@@ -2481,6 +2487,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'signinStageReady':
           setSigninStageReady(true)
+          break
+        case 'previewNametag':
+          setPreviewNametagAnchor(msg.anchor)
           break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a
@@ -3895,8 +3904,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const focusPreview = useCallback((focus: PreviewFocus) => {
     driverRef.current?.send({ kind: 'previewFocus', focus })
   }, [])
-  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null) => {
-    driverRef.current?.send({ kind: 'previewStage', rect })
+  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null, framing?: PreviewStageFraming) => {
+    driverRef.current?.send(framing != null ? { kind: 'previewStage', rect, framing } : { kind: 'previewStage', rect })
   }, [])
   const emotePreview = useCallback((urn: string | null) => {
     driverRef.current?.send({ kind: 'previewEmote', urn })
@@ -5228,7 +5237,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace, worldAccess },
     events: { open: eventsOpen, toggle: toggleEvents, close: closeEvents, data: eventsData, memberOf: eventCommunities },
-    shop: { open: shopOpen, toggle: toggleShop },
+    shop: { open: shopOpen, toggle: toggleShop, nametagAnchor: previewNametagAnchor },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {
       snapshot: photoMode,

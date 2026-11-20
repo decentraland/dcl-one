@@ -23,7 +23,7 @@ import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
 import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
 import { addressSuffix } from '@explorer-core/engine/profileEdit'
-import type { EngineViewportRegion, PreviewFocus, Wearable } from '@explorer-core/engine/protocol'
+import type { EngineViewportRegion, PreviewFocus, PreviewStageFraming, Wearable } from '@explorer-core/engine/protocol'
 import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { splitName } from '@explorer-core/lib/identity'
 import { subscribeHudScale } from '@explorer-core/lib/hudScale'
@@ -69,6 +69,8 @@ const SEARCH_DEBOUNCE_MS = 350
 const THUMB_LENGTH = 203
 /** The stage image (assets/stage.jpg) is the design's 1920×1080 frame, its top 70px under the top bar. */
 const STAGE = { width: 1920, height: 1080, top: 70 }
+/** The avatar's window, the design's Avatar slot (.preview, at the left of .stage): 573×942px. */
+const AVATAR_WINDOW = { width: 573, height: 942 }
 /** How long "1 Item Added to Cart" stays up. */
 const TOAST_MS = 3000
 type Rect = { x: number; y: number; width: number; height: number }
@@ -84,9 +86,9 @@ export interface InWorldShopProps {
   preview: (urns: string[] | null) => void
   /** Frames the preview avatar, whose framing the Backpack shares. */
   focus: (focus: PreviewFocus) => void
-  /** Where the page draws its stage image, for the engine to draw the same behind the avatar; null restores
-   *  the Backpack's backdrop. */
-  stage: (rect: Rect | null) => void
+  /** Where the page draws its stage image, for the engine to draw the same behind the avatar, and how the page
+   *  draws the avatar; null restores the Backpack's backdrop. */
+  stage: (rect: Rect | null, framing?: PreviewStageFraming) => void
   /** Plays an emote on the preview avatar (again on every call); null stops it. */
   emote: (urn: string | null) => void
   /** Turns the preview avatar by these degrees (a drag over it). */
@@ -147,6 +149,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const [nameFocused, setNameFocused] = useState(false)
   // A zoomed preview hides the nametag: it would sit over the avatar's head.
   const [zoomed, setZoomed] = useState(false)
+  // Names' nametag: on the engine's nametag anchor once it is known, else where the design puts it.
+  const anchor = shop.nametagAnchor ?? null
+  const nametagClass = anchor != null ? `${styles.nametag} ${styles.nametagAnchored}` : styles.nametag
   // Each ADD TO CART shows the toast again (its key restarts it).
   const [toast, setToast] = useState(0)
   const cartArea = useRef<HTMLDivElement>(null)
@@ -318,6 +323,16 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   useEffect(() => restoreLook, [restoreLook])
   useEffect(() => stopEmote, [stopEmote])
 
+  // Names draws the avatar smaller and lower than the catalogue does, with room over its head for the nametag. A
+  // change of page tells the engine again, the stage staying up (the effect below would take it down and back).
+  const framing: PreviewStageFraming = section === 'names' ? 'names' : 'catalog'
+  const framingRef = useRef(framing)
+  const pushStage = useRef<(() => void) | null>(null)
+  useLayoutEffect(() => {
+    framingRef.current = framing
+    pushStage.current?.()
+  }, [framing])
+
   // The engine draws the stage image behind the avatar where the page draws it, so the avatar's window
   // shows no seam: the backdrop's top-left, the image 70px above it, at the reference canvas's scale.
   useLayoutEffect(() => {
@@ -326,13 +341,15 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     const push = (): void => {
       const r = el.getBoundingClientRect()
       const scale = el.offsetHeight > 0 ? r.height / el.offsetHeight : 1
-      stage({ x: r.left, y: r.top - STAGE.top * scale, width: STAGE.width * scale, height: STAGE.height * scale })
+      stage({ x: r.left, y: r.top - STAGE.top * scale, width: STAGE.width * scale, height: STAGE.height * scale }, framingRef.current)
     }
     push()
+    pushStage.current = push
     const ro = new ResizeObserver(push)
     ro.observe(el)
     const unsubscribe = subscribeHudScale(push)
     return () => {
+      pushStage.current = null
       ro.disconnect()
       unsubscribe()
       stage(null)
@@ -618,7 +635,15 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           {toast > 0 && <ShopCartToast key={toast}>1 Item Added to Cart</ShopCartToast>}
         </div>
 
-        <div className={styles.stage}>
+        <div
+          className={styles.stage}
+          // Where the engine puts the avatar's nametag, over its head and what it wears: Names' nametag stands on it.
+          style={
+            anchor != null
+              ? ({ '--nametag-x': `${anchor.x * AVATAR_WINDOW.width}px`, '--nametag-y': `${anchor.y * AVATAR_WINDOW.height}px` } as React.CSSProperties)
+              : undefined
+          }
+        >
           {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
           <div className={styles.preview}>
             <EngineViewport region="avatarPreview" report={setEngineViewport} />
@@ -637,13 +662,13 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
             !zoomed &&
             (namesTab === 'unique' ? (
               // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
-              <AvatarNametag className={styles.nametag} name={nameDraft} typing={nameFocused} color={userNameColor(nameDraft, ownAddress, true)} />
+              <AvatarNametag className={nametagClass} name={nameDraft} typing={nameFocused} color={userNameColor(nameDraft, ownAddress, true)} />
             ) : (
               // The player's own name, as it reads today. None until the profile has one: the empty nametag's
               // placeholder and badge would show a claimed NAME the player may not have.
               own.base !== '' && (
                 <AvatarNametag
-                  className={styles.nametag}
+                  className={nametagClass}
                   name={own.base}
                   claimed={ownClaimed}
                   suffix={own.tag || addressSuffix(ownAddress)}
