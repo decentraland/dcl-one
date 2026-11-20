@@ -538,7 +538,7 @@
   /* Preserve newlines so multi-line system messages (/help, /commands) read as a list. */
   white-space: pre-wrap;
 }
-/* <b> and <i> in a message; on a link too, whose own class sets no weight or slant. */
+/* <b> and <i> in a message; on a link too, as these outrank the links' own font: inherit. */
 .text .bold {
   font-weight: var(--fw-bold);
 }

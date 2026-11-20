@@ -71,7 +71,7 @@ describe('bold and italic tags', () => {
     ])
     expect(parseMessage('<i>italic</i>').map((t) => t.type)).toEqual(['tag', 'text', 'tag'])
     // anything after whitespace up to the `>`
-    expect(parseMessage('<b x=1>a</i\ty>')).toEqual([tag('<b x=1>', 'b'), { type: 'text', value: 'a' }, tag('</i\ty>', 'i', true)])
+    expect(parseMessage('<b x=1>a</b\ty>')).toEqual([tag('<b x=1>', 'b'), { type: 'text', value: 'a' }, tag('</b\ty>', 'b', true)])
   })
 
   it('a tag ends at its own >, within reach', () => {
@@ -80,7 +80,7 @@ describe('bold and italic tags', () => {
     const long = `<b ${'x'.repeat(33)}>`
     expect(parseMessage(long)).toEqual([{ type: 'text', value: long }])
     const fits = `<b ${'x'.repeat(32)}>`
-    expect(parseMessage(fits)).toEqual([tag(fits, 'b')])
+    expect(parseMessage(`${fits}a`)).toEqual([tag(fits, 'b'), { type: 'text', value: 'a' }])
     // many openings with no end are read once each
     const flood = '<b '.repeat(20000)
     const start = performance.now()
@@ -92,6 +92,32 @@ describe('bold and italic tags', () => {
     for (const text of ['<B>caps</B>', '<I>', 'This should be escaped: <br>', 'Multiple <br> and <hr>', "<font color='red'>", '<bold>', '< b>', '<>', 'a < b', '<b', '<u>x</u>']) {
       expect(parseMessage(text)).toEqual([{ type: 'text', value: text }])
     }
+  })
+
+  it('a tag that styles no text is text itself', () => {
+    // an empty pair, a closing tag with nothing open, an opening one with nothing after
+    for (const text of ['<b></b>', 'a</i>b', 'a <b>', '<b><i></b></i>', '<b><i></i></b>', '</b >']) {
+      expect(parseMessage(text)).toEqual([{ type: 'text', value: text }])
+    }
+    // so no hidden tag parts a link from the text beside it
+    expect(parseMessage('boe<i></i>do.dcl.eth')).toEqual([
+      { type: 'text', value: 'boe<i></i>' },
+      { type: 'world', value: 'do.dcl.eth' }
+    ])
+    expect(parseMessage('https://dcl.org/</b>https://x.org')).toEqual([
+      { type: 'url', value: 'https://dcl.org/' },
+      { type: 'text', value: '</b>' },
+      { type: 'url', value: 'https://x.org' }
+    ])
+    // a second opening inside the first, and the closing left over
+    expect(parseMessage('<b>a<b>b</b>c</b>')).toEqual([tag('<b>', 'b'), { type: 'text', value: 'a<b>b' }, tag('</b>', 'b', true), { type: 'text', value: 'c</b>' }])
+    // a tag of the other style between is no text
+    expect(parseMessage('<b><i>a</i></b>').map((t) => t.type)).toEqual(['tag', 'tag', 'text', 'tag', 'tag'])
+    // many tags are read once each
+    const flood = '<b><i>'.repeat(20000)
+    const start = performance.now()
+    expect(parseMessage(flood)).toEqual([{ type: 'text', value: flood }])
+    expect(performance.now() - start).toBeLessThan(500)
   })
 
   it('reads links between tags once a space parts them, and a URL up to a tag', () => {
@@ -132,7 +158,8 @@ describe('buildNameIndex + mentionsMe', () => {
       expect(mentionsMe(text, me)).toBe(true)
       expect(parseMessage(text).some((t) => t.type === 'mention')).toBe(true)
     }
-    for (const text of ['<u>@Me</u>', '<B>@Me</B>', '<I>@Me']) {
+    // text in a tag's brackets is hidden, and no mention
+    for (const text of ['<u>@Me</u>', '<B>@Me</B>', '<I>@Me', '<b @Me x>hello', 'hey <i @Me>', '<b @Me x>']) {
       expect(mentionsMe(text, me)).toBe(false)
       expect(parseMessage(text).some((t) => t.type === 'mention')).toBe(false)
     }

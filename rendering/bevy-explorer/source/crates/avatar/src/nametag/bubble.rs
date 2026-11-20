@@ -23,13 +23,22 @@ pub const MAX_NAME_CHARS: usize = 32;
 /// `text` on one line and at most `max` characters long, ending in an ellipsis when cut. What
 /// a peer sends is bounded here, before any of it is laid out.
 pub fn capped(text: &str, max: usize) -> String {
-    let mut chars = text.chars().map(|c| if c.is_control() { ' ' } else { c });
+    let mut chars = text.chars().map(one_line);
     let mut capped = chars.by_ref().take(max).collect::<String>();
     if chars.next().is_some() {
         capped.truncate(capped.trim_end().len());
         capped.push('…');
     }
     capped
+}
+
+/// A character as it stands on one line: a control character is a space.
+fn one_line(c: char) -> char {
+    if c.is_control() {
+        ' '
+    } else {
+        c
+    }
 }
 
 /// The most a bold or italic tag holds between the whitespace after its letter and its `>`,
@@ -70,33 +79,118 @@ fn style_tag_len(text: &str) -> Option<usize> {
     }
 }
 
-/// `message` with each bold and italic tag replaced by `with`.
-fn replace_style_tags(message: &str, with: &str) -> String {
-    let mut plain = String::with_capacity(message.len());
-    let mut rest = message;
-    while let Some(start) = rest.find('<') {
-        plain.push_str(&rest[..start]);
-        rest = &rest[start..];
-        let skipped = match style_tag_len(rest) {
-            Some(len) => {
-                plain.push_str(with);
-                len
-            }
-            None => {
-                plain.push('<');
-                1
-            }
-        };
-        rest = &rest[skipped..];
-    }
-    plain.push_str(rest);
-    plain
+/// A bold or italic tag of a message, or the text between two.
+enum Piece<'a> {
+    Text(&'a str),
+    Tag {
+        text: &'a str,
+        /// 0 for bold, 1 for italic.
+        style: usize,
+        close: bool,
+    },
 }
 
-/// `message` without its bold and italic tags: the HUD's chat styles the text between them, a
-/// bubble has one face and shows the words alone.
-pub(crate) fn without_style_tags(message: &str) -> String {
-    replace_style_tags(message, "")
+/// `message` as its bold and italic tags and the text between them, in order.
+fn pieces(message: &str) -> Vec<Piece<'_>> {
+    let mut pieces = Vec::new();
+    let mut text_start = 0;
+    let mut at = 0;
+    while let Some(found) = message[at..].find('<') {
+        let start = at + found;
+        let Some(len) = style_tag_len(&message[start..]) else {
+            at = start + 1;
+            continue;
+        };
+        if start > text_start {
+            pieces.push(Piece::Text(&message[text_start..start]));
+        }
+        let text = &message[start..start + len];
+        let close = text.starts_with("</");
+        let letter = if close { 2 } else { 1 };
+        pieces.push(Piece::Tag {
+            text,
+            style: usize::from(text.as_bytes()[letter] == b'i'),
+            close,
+        });
+        at = start + len;
+        text_start = at;
+    }
+    if text_start < message.len() {
+        pieces.push(Piece::Text(&message[text_start..]));
+    }
+    pieces
+}
+
+/// For each piece, whether it is a tag that styles text: an opening tag whose style is off,
+/// with text before that style's next closing tag, or the closing tag that ends such a one.
+/// Any other tag (`<b></b>`, a closing tag with nothing open, a second `<b>` inside bold)
+/// is shown as written. The HUD's chat reads the same (`styling` in `chatParse.ts`).
+fn styling(pieces: &[Piece]) -> Vec<bool> {
+    // from the end: whether text stands between each opening tag and its style's next
+    // closing tag
+    let mut styles = vec![false; pieces.len()];
+    let mut ahead = [false; 2];
+    for (index, piece) in pieces.iter().enumerate().rev() {
+        match *piece {
+            Piece::Text(_) => ahead = [true; 2],
+            Piece::Tag {
+                style, close: true, ..
+            } => ahead[style] = false,
+            Piece::Tag { style, .. } => styles[index] = ahead[style],
+        }
+    }
+    let mut on = [false; 2];
+    for (styles, piece) in styles.iter_mut().zip(pieces) {
+        if let Piece::Tag { style, close, .. } = *piece {
+            *styles = if close {
+                on[style]
+            } else {
+                !on[style] && *styles
+            };
+            if *styles {
+                on[style] = !close;
+            }
+        }
+    }
+    styles
+}
+
+/// A message as a bubble shows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BubbleText {
+    /// The words alone: the HUD's chat styles the text between bold and italic tags, a bubble
+    /// has one face.
+    pub text: String,
+    /// The byte offsets in `text` where a tag stood, in order. A tag ends a word as a space
+    /// does, so a link beside one is coloured as the HUD reads it.
+    breaks: Vec<usize>,
+}
+
+/// `message` on one line, without the bold and italic tags that style its text, and at most
+/// `max` characters long, ending in an ellipsis when cut. What a peer sends is bounded here,
+/// before any of it is laid out.
+pub(crate) fn bubble_text(message: &str, max: usize) -> BubbleText {
+    let pieces = pieces(message);
+    let mut text = String::with_capacity(message.len());
+    let mut breaks = Vec::new();
+    for (piece, styles) in pieces.iter().zip(styling(&pieces)) {
+        match *piece {
+            Piece::Text(piece) => text.extend(piece.chars().map(one_line)),
+            Piece::Tag { .. } if styles => breaks.push(text.len()),
+            Piece::Tag { text: tag, .. } => {
+                breaks.push(text.len());
+                text.extend(tag.chars().map(one_line));
+                breaks.push(text.len());
+            }
+        }
+    }
+    if let Some((cut, _)) = text.char_indices().nth(max) {
+        text.truncate(cut);
+        text.truncate(text.trim_end().len());
+        breaks.retain(|at| *at < text.len());
+        text.push('…');
+    }
+    BubbleText { text, breaks }
 }
 
 /// A chat message to show over its sender's nametag. Nothing is shown for a sender with no
@@ -144,15 +238,16 @@ fn boundary(c: Option<char>) -> bool {
     c.is_none_or(|c| c.is_whitespace() || matches!(c, '!' | '?' | '.' | ','))
 }
 
-/// The byte ranges of the words starting at a line's start or after whitespace.
-fn words(message: &str) -> impl Iterator<Item = Range<usize>> + '_ {
+/// The byte ranges of the words starting at a line's start, after whitespace or at one of
+/// `breaks`, which are in order.
+fn words<'a>(message: &'a str, breaks: &'a [usize]) -> impl Iterator<Item = Range<usize>> + 'a {
     let mut chars = message.char_indices().peekable();
     std::iter::from_fn(move || {
         while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
         let (start, _) = chars.next()?;
         let mut end = message.len();
         while let Some((index, c)) = chars.peek().copied() {
-            if c.is_whitespace() {
+            if c.is_whitespace() || breaks.binary_search(&index).is_ok() {
                 end = index;
                 break;
             }
@@ -225,8 +320,8 @@ fn is_url(word: &str) -> bool {
 }
 
 /// The message's links: URLs, parcel coordinates and @mentions.
-fn links(message: &str) -> impl Iterator<Item = Range<usize>> + '_ {
-    words(message).filter_map(move |word| {
+fn links<'a>(message: &'a str, breaks: &'a [usize]) -> impl Iterator<Item = Range<usize>> + 'a {
+    words(message, breaks).filter_map(move |word| {
         let text = &message[word.clone()];
         let len = if is_url(text) {
             text.len()
@@ -238,10 +333,14 @@ fn links(message: &str) -> impl Iterator<Item = Range<usize>> + '_ {
 }
 
 /// The message as coloured runs: its links stand out.
-pub fn message_spans(message: &str) -> Vec<Span> {
+pub(crate) fn message_spans(message: &BubbleText) -> Vec<Span> {
+    let BubbleText {
+        text: message,
+        breaks,
+    } = message;
     let mut spans = Vec::new();
     let mut at = 0;
-    for link in links(message) {
+    for link in links(message, breaks) {
         if link.start > at {
             spans.push(Span::new(&message[at..link.start], TEXT_COLOR));
         }
@@ -273,11 +372,18 @@ pub fn mention_name(name: &str, address: &str, claimed: bool) -> String {
 }
 
 /// Does the message @-mention exactly this mention name (case-insensitive)? A bold or italic
-/// tag ends a word as a space does, so a mention may stand right inside one (`<b>@Ada</b>`).
+/// tag ends a word as a space does, so a mention may stand right inside one (`<b>@Ada</b>`),
+/// and text in a tag's brackets is none.
 pub fn mentions(message: &str, mention: &str) -> bool {
-    let message = &replace_style_tags(message, " ");
+    let message = &pieces(message)
+        .iter()
+        .map(|piece| match *piece {
+            Piece::Text(text) => text,
+            Piece::Tag { .. } => " ",
+        })
+        .collect::<String>();
     !mention.is_empty()
-        && words(message).any(|word| {
+        && words(message, &[]).any(|word| {
             let text = &message[word];
             mention_len(text).is_some_and(|len| text[1..len].eq_ignore_ascii_case(mention))
         })
@@ -300,33 +406,45 @@ mod tests {
         assert!(!long.contains('\n'));
     }
 
+    fn plain(message: &str) -> String {
+        bubble_text(message, usize::MAX).text
+    }
+
+    #[test]
+    fn a_bubbles_text_is_cut_like_any_other() {
+        for message in ["hello there", "one\ntwo\r\nthree", "名前😀名前"] {
+            for max in [3, 5, 6, 100] {
+                assert_eq!(bubble_text(message, max).text, capped(message, max));
+            }
+        }
+        // the cap counts what is shown, and the tags are not
+        assert_eq!(bubble_text("<b>hello</b> there", 5).text, "hello…");
+        assert_eq!(bubble_text("<b>hello</b>", 5).text, "hello");
+        // a control character in a tag shown as written is a space too
+        assert_eq!(plain("a</b\tx>"), "a</b x>");
+    }
+
     #[test]
     fn bold_and_italic_tags_are_left_out() {
         // the tags `parseMessage` in library/explorer-core/features/chat/chatParse.ts reads
-        assert_eq!(
-            without_style_tags("<b>bold</b> and <i>italic</i>"),
-            "bold and italic"
-        );
-        assert_eq!(without_style_tags("<b x=1>open</b >"), "open");
-        assert_eq!(without_style_tags("<i><b>both"), "both");
+        assert_eq!(plain("<b>bold</b> and <i>italic</i>"), "bold and italic");
+        assert_eq!(plain("<b x=1>open</b >"), "open");
+        assert_eq!(plain("<i><b>both"), "both");
         // a tag ends at its own `>`, within reach: what follows another `<` is not its text
-        assert_eq!(without_style_tags("I <i really> mean it"), "I  mean it");
-        assert_eq!(
-            without_style_tags("x <b hello <i>world"),
-            "x <b hello world"
-        );
+        assert_eq!(plain("I <i really> mean it"), "I  mean it");
+        assert_eq!(plain("x <b hello <i>world"), "x <b hello world");
         // counted as the HUD counts: an emoji is two
-        let emoji = format!("<b {}>", "😀".repeat(MAX_STYLE_TAG_REST / 2 + 1));
-        assert_eq!(without_style_tags(&emoji), emoji);
-        let emoji = format!("<b {}>", "😀".repeat(MAX_STYLE_TAG_REST / 2));
-        assert_eq!(without_style_tags(&emoji), "");
+        let emoji = format!("<b {}>x", "😀".repeat(MAX_STYLE_TAG_REST / 2 + 1));
+        assert_eq!(plain(&emoji), emoji);
+        let emoji = format!("<b {}>x", "😀".repeat(MAX_STYLE_TAG_REST / 2));
+        assert_eq!(plain(&emoji), "x");
         // and whitespace as it reads it
-        assert_eq!(without_style_tags("<b\u{feff}x>"), "");
-        assert_eq!(without_style_tags("<b\u{85}x>"), "<b\u{85}x>");
-        let long = format!("<b {}>", "x".repeat(MAX_STYLE_TAG_REST + 1));
-        assert_eq!(without_style_tags(&long), long);
-        let fits = format!("<b {}>", "x".repeat(MAX_STYLE_TAG_REST));
-        assert_eq!(without_style_tags(&fits), "");
+        assert_eq!(plain("<b\u{feff}x>y"), "y");
+        assert_eq!(plain("<b\u{85}x>y"), "<b x>y");
+        let long = format!("<b {}>x", "x".repeat(MAX_STYLE_TAG_REST + 1));
+        assert_eq!(plain(&long), long);
+        let fits = format!("<b {}>x", "x".repeat(MAX_STYLE_TAG_REST));
+        assert_eq!(plain(&fits), "x");
         for kept in [
             "<B>caps</B>",
             "<br>",
@@ -338,8 +456,33 @@ mod tests {
             "<>",
             "名<前",
         ] {
-            assert_eq!(without_style_tags(kept), kept, "{kept}");
+            assert_eq!(plain(kept), kept, "{kept}");
         }
+    }
+
+    #[test]
+    fn a_tag_that_styles_no_text_is_shown_as_written() {
+        // the cases `styling` in chatParse.ts decides
+        for kept in [
+            "<b></b>",
+            "a</i>b",
+            "a <b>",
+            "<b><i></b></i>",
+            "<b><i></i></b>",
+            "</b >",
+            "boe<i></i>do.dcl.eth",
+        ] {
+            assert_eq!(plain(kept), kept, "{kept}");
+        }
+        // a second opening inside the first, and the closing left over
+        assert_eq!(plain("<b>a<b>b</b>c</b>"), "a<b>bc</b>");
+        // a tag of the other style between is no text
+        assert_eq!(plain("<b><i>a</i></b>"), "a");
+        // many tags are read once each
+        let flood = "<b><i>".repeat(20_000);
+        let start = std::time::Instant::now();
+        assert_eq!(plain(&flood), flood);
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
@@ -361,6 +504,9 @@ mod tests {
         assert!(mentions("<b>hi @Ada</b>", "Ada"));
         assert!(mentions("say<i>@Ada#12ab</i>now", "Ada#12ab"));
         assert!(!mentions("<u>@Ada</u>", "Ada"));
+        // text in a tag's brackets is hidden, and no mention
+        assert!(!mentions("<b @Ada x>hello", "Ada"));
+        assert!(!mentions("hey <i @Ada>", "Ada"));
     }
 
     #[test]
@@ -373,7 +519,7 @@ mod tests {
     }
 
     fn colours(message: &str) -> Vec<(String, bool)> {
-        message_spans(message)
+        message_spans(&bubble_text(message, MAX_MESSAGE_CHARS))
             .into_iter()
             .map(|span| (span.text, span.color == LINK_COLOR))
             .collect()
@@ -404,6 +550,40 @@ mod tests {
         for plain in ["decentraland.org", "https://localhost", "1234,5", "@Ada#1"] {
             assert_eq!(colours(plain), [(plain.to_owned(), false)], "{plain}");
         }
+    }
+
+    #[test]
+    fn a_tag_ends_a_link_as_a_space_does() {
+        // as `parseMessage` in chatParse.ts reads them: the tag is gone, its word break stays
+        assert_eq!(
+            colours("<b>@Ada</b>there"),
+            [("@Ada".to_owned(), true), ("there".to_owned(), false)]
+        );
+        assert_eq!(
+            colours("hi<b>@Ada</b>"),
+            [("hi".to_owned(), false), ("@Ada".to_owned(), true)]
+        );
+        assert_eq!(
+            colours("at<i>10,20</i>, then https://dcl.org/a<b>b"),
+            [
+                ("at".to_owned(), false),
+                ("10,20".to_owned(), true),
+                (", then ".to_owned(), false),
+                ("https://dcl.org/a".to_owned(), true),
+                ("b".to_owned(), false),
+            ]
+        );
+        // a tag shown as written is a break on both sides too
+        assert_eq!(
+            colours("hi</b>@Ada"),
+            [("hi</b>".to_owned(), false), ("@Ada".to_owned(), true)]
+        );
+        // a break past the cut is dropped with the text
+        let long = format!("{}<b>@Ada</b>", "x".repeat(MAX_MESSAGE_CHARS));
+        assert_eq!(
+            colours(&long),
+            [(format!("{}…", "x".repeat(MAX_MESSAGE_CHARS)), false)]
+        );
     }
 
     #[test]

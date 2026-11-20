@@ -191,7 +191,9 @@ tag (name, badges, distance, opacity, scale) and `/nametag_bubble` shows a test 
       head for your own); a **DM** shows a green `DM` tag after the name, and your own names who it is
       for when they are around. The Chat bubbles setting (All / Nearby only / None) picks which show.
       A translated message replaces the bubble's text. `<b>` and `<i>` tags are left out of the
-      bubble, which shows the words between them unstyled.
+      bubble, which shows the words between them unstyled; a tag that styles no text (`<b></b>`, a
+      closing tag with nothing open) is shown as typed, in the bubble and in chat, and a link next
+      to a tag is coloured as chat links it.
 - [ ] **Voice badges**: a talking player's tag shows three green bars swinging; your own shows three
       dots while your microphone is open and you are quiet. While a player whose nearby voice you muted
       (profile menu, Hush) is talking, their tag shows the red hushed icon in place of the bars, and

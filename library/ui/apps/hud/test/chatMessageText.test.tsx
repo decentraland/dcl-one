@@ -29,17 +29,20 @@ describe('bold and italic in a chat message', () => {
     ])
   })
 
-  it('an unclosed tag runs to the end; a closing tag alone does nothing', () => {
+  it('an unclosed tag runs to the end; a tag that styles nothing is shown as typed', () => {
     expect(runs('plain</b> then <i>slanted')).toEqual([
-      ['plain', ''],
-      [' then ', ''],
+      ['plain</b> then ', ''],
       ['slanted', 'italic']
     ])
     // opened twice, closed twice
     expect(runs('<b><b>a</b>b</b>c')).toEqual([
-      ['a', 'bold'],
-      ['b', 'bold'],
-      ['c', '']
+      ['<b>a', 'bold'],
+      ['b</b>c', '']
+    ])
+    // an empty pair does not part a link unseen
+    expect(runs('boe<b></b>do.dcl.eth')).toEqual([
+      ['boe<b></b>', ''],
+      ['do.dcl.eth', 'world']
     ])
   })
 

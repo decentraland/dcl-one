@@ -453,7 +453,7 @@ fn shown(app: &App, player: Entity) -> bool {
 fn bubble(message: &str) -> ChatBubble {
     ChatBubble {
         kind: BubbleKind::Nearby,
-        message: message.to_owned(),
+        message: bubble_text(message, MAX_MESSAGE_CHARS),
         message_id: "1".to_owned(),
         arrived: 0.0,
         mention: false,
@@ -862,7 +862,10 @@ fn nothing_to_read_opens_no_bubble() {
     app.update();
     retext(&mut app, "  ");
     app.update();
-    assert_eq!(app.world().get::<ChatBubble>(ada).unwrap().message, "hello");
+    assert_eq!(
+        app.world().get::<ChatBubble>(ada).unwrap().message.text,
+        "hello"
+    );
 }
 
 #[test]

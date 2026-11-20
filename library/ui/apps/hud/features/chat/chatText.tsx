@@ -26,19 +26,18 @@ export function MessageText({
   onWorld?: (name: string) => void
 }): React.JSX.Element {
   const index = buildNameIndex(members)
-  // An opening tag styles everything up to its closing tag, or to the message's end without one;
-  // a closing tag with nothing open does nothing.
-  let bold = 0
-  let italic = 0
+  // An opening tag styles everything up to its closing tag, or to the message's end without one.
+  // Every tag here styles some text: the parser leaves one that would not as text.
+  let bold = false
+  let italic = false
   const styled = (className?: string): string | undefined =>
-    [className, bold > 0 ? styles.bold : null, italic > 0 ? styles.italic : null].filter(Boolean).join(' ') || undefined
+    [className, bold ? styles.bold : null, italic ? styles.italic : null].filter(Boolean).join(' ') || undefined
   return (
     <>
       {parseMessage(text).map((t, i) => {
         if (t.type === 'tag') {
-          const step = t.close ? -1 : 1
-          if (t.style === 'b') bold = Math.max(0, bold + step)
-          else italic = Math.max(0, italic + step)
+          if (t.style === 'b') bold = !t.close
+          else italic = !t.close
           return null
         }
         if (t.type === 'url') {
