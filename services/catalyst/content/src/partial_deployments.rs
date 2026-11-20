@@ -525,19 +525,24 @@ impl EntityLock {
     /// Takes, on one session, the locks of those of `entity_ids` no other
     /// session holds ([`Self::entity_ids`]).
     async fn try_acquire_free(pool: &PgPool, entity_ids: &[String]) -> sqlx::Result<Self> {
-        let mut conn = pool.acquire().await?;
-        let taken: Vec<String> = sqlx::query_scalar(
+        // The guard exists before the query: an error or a cancellation closes the session.
+        let mut lock = Self {
+            conn: Some(pool.acquire().await?),
+            entity_ids: Vec::new(),
+        };
+        let conn = lock.conn.as_mut().expect("set above");
+        lock.entity_ids = sqlx::query_scalar(
             "SELECT id FROM unnest($1::text[]) AS id
              WHERE pg_try_advisory_lock(hashtextextended('partial_entity:' || id, 0))",
         )
         .bind(entity_ids)
-        .fetch_all(&mut *conn)
+        .fetch_all(&mut **conn)
         .await?;
-        // None taken: the connection goes back to the pool as it is.
-        Ok(Self {
-            conn: (!taken.is_empty()).then_some(conn),
-            entity_ids: taken,
-        })
+        if lock.entity_ids.is_empty() {
+            // None taken: the connection goes back to the pool as it is.
+            drop(lock.conn.take());
+        }
+        Ok(lock)
     }
 
     /// Waits up to [`ENTITY_LOCK_WAIT`], polling without holding a
