@@ -3,15 +3,17 @@ import type {
   DownloadAlternative,
   StoreBadgeProps,
 } from "@dcl/one-ui/apps/sites/download/DownloadActions";
-import { downloadActions, STORES } from "../download/actions";
+import { downloadActions, osName, STORES } from "../download/actions";
 import type { DetectedPlatform } from "../download/options";
 import { homeCopy } from "./locale";
 
-// The home page's download calls as decentraland.org renders them: "Download for" names the visitor's
-// OS, or keeps a blank slot and leads to /download when the user agent names no OS the installers
-// cover; Epic reads "Download on"; the stores are icon links beside the counter. The hero keeps each
-// platform in a group of its own (the first one empty without a second installer); Come Hang Out
-// puts the alternatives in one group at the counter's own width.
+// The home page's download calls: "Download for" always names an OS, the visitor's macOS or Windows and
+// Windows for anything else (unknown, Linux, phones), unlike decentraland.org, which leaves the slot
+// blank there. It starts that installer, or leads to /download when the deployment configures no
+// installer host or none runs there (32-bit Windows; phones keep /download too). Epic reads "Download
+// on"; the stores are icon links beside the counter. The hero keeps each platform in a group of its
+// own (the first one empty without a second installer); Come Hang Out puts the alternatives in one
+// group at the counter's own width.
 
 const STORE_LINKS: Record<"ios" | "android", DownloadAlternative> = {
   ios: {
@@ -43,18 +45,24 @@ export function homeDownloadActions(
   copy = homeCopy.en.download,
 ): HomeDownloadActions {
   const { actions, store } = downloadActions(platform, downloads);
-  const covered =
-    installers && platform.kind === "desktop" && platform.os !== "other";
+  const installer =
+    installers && platform.kind !== "mobile" ? actions.primary : undefined;
+  const os =
+    platform.kind === "desktop" && platform.os === "macos" ? "macos" : "windows";
   const shared: DownloadActionsProps = {
     ...actions,
     downloads: copy.total.replace("{downloads}", downloads),
-    primary:
-      covered && actions.primary
-        ? { ...actions.primary, label: copy.forPlatform }
-        : { label: copy.forPlatform, href: "/download" },
+    primary: installer
+      ? { ...installer, label: copy.forPlatform }
+      : {
+          label: copy.forPlatform,
+          os,
+          osName: osName(os),
+          href: "/download",
+        },
     epic: actions.epic && { ...actions.epic, label: copy.onStore },
   };
-  const otherOs = covered ? (actions.alternativeGroups?.[0] ?? []) : [];
+  const otherOs = installer ? (actions.alternativeGroups?.[0] ?? []) : [];
   return {
     hero: {
       ...shared,
