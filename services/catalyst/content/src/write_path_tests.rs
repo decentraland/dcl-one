@@ -2698,7 +2698,8 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
     attach(&node.state, true, None, None);
     node.state.sync.set_state(SyncState::Syncing);
     let router = node.router();
-    let (entity_bytes, entity_id, _) = signed_entity(&key(OWNER_KEY), scene(&["7,7"], &[])).await;
+    let (entity_bytes, entity_id, owner_chain) =
+        signed_entity(&key(OWNER_KEY), scene(&["7,7"], &[])).await;
     seed_local_scene(&db.pool, &entity_id, "7,7").await;
     let chain = serde_json::to_value(
         crate::sync_test_support::signed_chain_behind_contract(
@@ -2727,6 +2728,18 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
     );
     assert!(headers.contains_key(header::RETRY_AFTER));
     assert_eq!(node.state.deploy_quota.counted_for("203.0.113.17"), 1);
+    // The same re-post with the owner's chain is a replay this node answers.
+    let (status, _, body) = call(
+        &router,
+        deploy_request(
+            "/content/entities",
+            &entity_id,
+            &owner_chain,
+            &[(entity_id.as_str(), &entity_bytes)],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
 
     drop(node);
     db.drop_now().await;
