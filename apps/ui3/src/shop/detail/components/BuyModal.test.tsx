@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSplitPayment } from "@shop/payment/present";
 
 import type { CartAddInput } from "../../cart/store";
 import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
@@ -76,6 +77,15 @@ async function pressBuy(dialog: HTMLElement) {
   await waitFor(() => expect(buy).toBeEnabled());
   await act(async () => fireEvent.click(buy));
 }
+
+
+// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
+// runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPayment(true);
+});
+afterEach(() => undoSplit());
 
 describe("Buy now's dialog", () => {
   it("short on Credits with no MANA to pay: Buy Credits and Item, the shortfall, the packs that finish it, and Stripe", async () => {

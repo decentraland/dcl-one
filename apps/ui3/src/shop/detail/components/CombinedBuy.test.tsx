@@ -3,7 +3,8 @@
 // MANA gap checked against what was shown, and a declined signature releasing the credit.
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setSplitPayment } from "@shop/payment/present";
 
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization } from "../../checkout/fakes";
@@ -42,6 +43,15 @@ function setup(signedFor?: string, confirm?: "none") {
   const shown = render(shell());
   return { demo, mixed, line, unmount: shown.unmount, again: () => render(shell()) };
 }
+
+
+// The split (Credits and MANA together) is off in this deployment (present's SPLIT_PAYMENT): these tests cover it as it
+// runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPayment(true);
+});
+afterEach(() => undoSplit());
 
 describe("buying with Credits and MANA", () => {
   it("approves the Credits manager's MANA, authorizes one credit for the credits leg, and relays one useCredits", async () => {
