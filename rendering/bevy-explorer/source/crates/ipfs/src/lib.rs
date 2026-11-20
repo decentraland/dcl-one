@@ -665,8 +665,7 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
-        app.insert_resource(RealmInitialLocation::Base);
-        app.init_resource::<common::structs::LandingSpawnPoint>();
+        app.insert_resource(RealmInitialLocation::BASE);
 
         #[cfg(feature = "hot_reload")]
         app.register_asset_source(
@@ -734,12 +733,24 @@ impl Plugin for IpfsIoPlugin {
     }
 }
 
+/// Where the player lands in a realm being changed to. `spawn_point` is the name of the spawn
+/// point to be placed on there, which the landing hands to `OutOfWorld`.
 #[derive(Resource, PartialEq, Debug)]
 pub enum RealmInitialLocation {
     None,
-    Base,
+    Base {
+        spawn_point: Option<String>,
+    },
     /// Land on this parcel of the new realm (a teleport that named its realm).
-    Parcel(IVec2),
+    Parcel {
+        parcel: IVec2,
+        spawn_point: Option<String>,
+    },
+}
+
+impl RealmInitialLocation {
+    /// The realm's own spawn, on its default spawn points.
+    pub const BASE: Self = Self::Base { spawn_point: None };
 }
 
 /// Switch to a new realm
@@ -754,12 +765,10 @@ fn change_realm_command(
     mut input: ConsoleCommand<ChangeRealmCommand>,
     mut writer: EventWriter<ChangeRealmEvent>,
     mut target: ResMut<RealmInitialLocation>,
-    mut spawn_point: ResMut<common::structs::LandingSpawnPoint>,
     mut pending: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        *target = RealmInitialLocation::Base;
-        spawn_point.pending = None;
+        *target = RealmInitialLocation::BASE;
         debug!("change realm command -> base");
         let (response, rx) = RpcResultSender::channel();
         let realm = command.new_realm.clone();
@@ -813,11 +822,7 @@ pub fn change_realm(
     mut current_realm: ResMut<CurrentRealm>,
     mut print: EventWriter<PrintConsoleLine>,
     preview_mode: Res<PreviewMode>,
-    // one parameter of the sixteen a system takes
-    (mut target, mut spawn_point): (
-        ResMut<RealmInitialLocation>,
-        ResMut<common::structs::LandingSpawnPoint>,
-    ),
+    mut target: ResMut<RealmInitialLocation>,
     mut in_flight: Local<Vec<InFlightRealmChange>>,
     mut ids: Local<RealmChangeIds>,
     // the latest issued id and the refusal it carries
@@ -843,7 +848,6 @@ pub fn change_realm(
         // for the new one must not carry over to a later change. Only the latest request owns it.
         if result.is_err() && change.id == latest {
             *target = RealmInitialLocation::None;
-            spawn_point.pending = None;
         }
         if result.is_ok() {
             released = true;

@@ -47,6 +47,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_teleport(),
             op_set_lobby_stage(),
             op_get_service_urls(),
             op_get_welcome(),
@@ -358,6 +359,17 @@ pub fn op_set_home_scene(
     #[serde] parcel: Vector2,
 ) {
     dcl_js::system_api::op_set_home_scene(state, realm, parcel);
+}
+
+#[op2(async)]
+pub async fn op_teleport(
+    state: Rc<RefCell<OpState>>,
+    position_x: Option<i32>,
+    position_y: Option<i32>,
+    #[string] realm: Option<String>,
+    #[string] spawn_point: Option<String>,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_teleport(state, position_x, position_y, realm, spawn_point).await
 }
 
 #[op2(async)]

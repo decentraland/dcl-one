@@ -1,7 +1,7 @@
 module.exports.requestTeleport = async function (body) {
     const { destination } = body;
     if (destination === 'magic' || destination === 'crowd') {
-        await Deno.core.ops.op_teleport_to(0, 0, null, null);
+        await Deno.core.ops.op_teleport_to(0, 0, null);
         return {}
     } else if (!/^\-?\d+\,\-?\d+$/.test(destination)) {
         return await Promise.reject(`teleportTo: invalid destination ${destination}`)
@@ -13,6 +13,6 @@ module.exports.requestTeleport = async function (body) {
     let x = parseInt(coords[0], 10);
     let y = parseInt(coords[1], 10);
 
-    await Deno.core.ops.op_teleport_to(x, y, null, null);
+    await Deno.core.ops.op_teleport_to(x, y, null);
     return {}
 }

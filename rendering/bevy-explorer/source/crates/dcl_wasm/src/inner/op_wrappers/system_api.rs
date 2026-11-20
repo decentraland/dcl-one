@@ -222,6 +222,19 @@ pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) 
 }
 
 #[wasm_bindgen]
+pub async fn op_teleport(
+    state: &WorkerContext,
+    position_x: Option<i32>,
+    position_y: Option<i32>,
+    realm: Option<String>,
+    spawn_point: Option<String>,
+) -> Result<(), WasmError> {
+    dcl_js::system_api::op_teleport(state.rc(), position_x, position_y, realm, spawn_point)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_system_action_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_system_action_stream(state.rc()).await
 }

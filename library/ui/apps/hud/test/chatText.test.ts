@@ -67,6 +67,20 @@ describe('bold and italic tags', () => {
     expect(parseMessage('<b x=1>a</i\ty>')).toEqual([tag('<b x=1>', 'b'), { type: 'text', value: 'a' }, tag('</i\ty>', 'i', true)])
   })
 
+  it('a tag ends at its own >, within reach', () => {
+    // no further than another tag's start
+    expect(parseMessage('x <b hello <i>world')).toEqual([{ type: 'text', value: 'x <b hello ' }, tag('<i>', 'i'), { type: 'text', value: 'world' }])
+    const long = `<b ${'x'.repeat(33)}>`
+    expect(parseMessage(long)).toEqual([{ type: 'text', value: long }])
+    const fits = `<b ${'x'.repeat(32)}>`
+    expect(parseMessage(fits)).toEqual([tag(fits, 'b')])
+    // many openings with no end are read once each
+    const flood = '<b '.repeat(20000)
+    const start = performance.now()
+    expect(parseMessage(flood)).toEqual([{ type: 'text', value: flood }])
+    expect(performance.now() - start).toBeLessThan(500)
+  })
+
   it('leaves every other tag as text', () => {
     for (const text of ['<B>caps</B>', '<I>', 'This should be escaped: <br>', 'Multiple <br> and <hr>', "<font color='red'>", '<bold>', '< b>', '<>', 'a < b', '<b', '<u>x</u>']) {
       expect(parseMessage(text)).toEqual([{ type: 'text', value: text }])

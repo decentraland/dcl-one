@@ -7,7 +7,7 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import { type GotoTarget, randomParcel } from '@explorer-core/features/lobby/goto'
+import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
@@ -1647,6 +1647,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
   const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
   const [linkRealm, setLinkRealm] = useState<string | null>(null)
+  /** The realm the engine is in, as it names itself (a world's name in a world); null until it says. */
+  const [realmName, setRealmName] = useState<string | null>(null)
   /** The scene (realm and hash) Donate's place was last taken from. */
   const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
@@ -2477,15 +2479,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         }
         case 'realmInfo':
           setSatelliteView(msg.satelliteView)
+          setRealmName(msg.realm)
           break
         case 'homeScene':
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
           break
         case 'travelResult': {
+          // A travel chat's /goto asked for answers in chat, in place of the travel notice; a ban's
+          // refusal keeps its own dialog and has no line.
           const reply = gotoReplies.current.get(msg.travelId)
+          const banned = !msg.ok && msg.message === PLATFORM_BANNED_REFUSAL
           if (reply != null) {
             gotoReplies.current.delete(msg.travelId)
-            pushSystemMessageRef.current(msg.ok ? reply.ok : reply.failed(msg.message ?? 'unknown error'))
+            if (!banned) pushSystemMessageRef.current(msg.ok ? reply.ok : reply.failed(msg.message ?? 'unknown error'))
           }
           // a teleport inside the realm: no realm was left, and no loader shown
           if (msg.travelId < 0) break
@@ -2493,8 +2499,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
-            if (msg.message === PLATFORM_BANNED_REFUSAL) setBanRefusedTravel(true)
-            else setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
+            if (banned) setBanRefusedTravel(true)
+            else if (reply == null) setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
           }
           if (lobbyRef.current) {
             if (msg.ok) setLobby(false)
@@ -2900,10 +2906,22 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
 
   // Chat's /goto and /goto-local: the destination becomes one request to the
   // engine, and the command's answer is posted when that request ends.
-  const hereRef = useRef<GotoHere>({ genesis: true, realm: null, parcel: mapParcel })
-  hereRef.current = { genesis: isGenesisSatelliteView(satelliteView), realm: linkRealm, parcel: mapParcel }
+  // Genesis City advertises its map and a world goes by its name; any other realm (a scene
+  // preview, a realm of its own, one not reported yet) is neither.
+  const hereRef = useRef<GotoHere>({ kind: 'other', realm: null, parcel: mapParcel })
+  const world = realmName == null ? null : worldOfRealm(realmName)
+  hereRef.current = {
+    kind: isGenesisSatelliteView(satelliteView) ? 'genesis' : world != null ? 'world' : 'other',
+    realm: world,
+    parcel: mapParcel
+  }
   const goto = useCallback(
     async (target: GotoTarget, local: boolean) => {
+      // no engine to ask: nothing would answer
+      if (driverRef.current == null) {
+        pushSystemMessage('🔴 Error running command.')
+        return
+      }
       let destination = target
       if (target.random || target.crowd) {
         try {
@@ -2933,7 +2951,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         failed: (reason) => {
           // a later travel took this one's place (the bridge's own words)
           if (reason.startsWith('superseded')) return '🔴 Error: The operation was canceled!'
-          return world == null ? `🔴 Error: ${reason}` : `🔴 Error: The world ${world} doesn't exist or not reachable!`
+          // the worlds server has no such world; any other refusal is told in the engine's words
+          if (world != null && /\b404\b/.test(reason)) return `🔴 Error: The world ${world} doesn't exist or not reachable!`
+          return `🔴 Error: ${reason}`
         }
       })
     },
@@ -4308,6 +4328,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
+    // a /goto still waiting for its answer has no chat of this session to post it in
+    gotoReplies.current.clear()
     driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin

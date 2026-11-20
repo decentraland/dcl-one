@@ -31,10 +31,12 @@ function pushSystem(ctx: Ctx, message: string): void {
   ctx.send({ kind: 'chat', chat: { sender: '', message, channel: 'Nearby', messageId: '' } })
 }
 
-// The engine's teleportTo also reads `spawnPoint`, the name of the spawn point to land on, which
-// the SDK's request type does not declare.
-function destination<T extends object>(request: T, spawnPoint: string | undefined): T {
-  return spawnPoint == null ? request : { ...request, spawnPoint }
+// A teleport to a parcel, a realm or both. One that names a spawn point goes through the engine's
+// teleport for the HUD, which carries the name to the landing; the scene API's teleportTo has no
+// such argument. An engine without that call lands on the scene's default spawn.
+function teleport(to: { parcel?: { x: number; y: number }; realm?: string }, spawnPoint: string | undefined): Promise<unknown> {
+  if (spawnPoint != null && BevyApi.teleport != null) return BevyApi.teleport({ ...to, spawnPoint })
+  return teleportTo({ worldCoordinates: to.parcel, realm: to.realm })
 }
 
 export function registerWorld(ctx: Ctx): void {
@@ -70,7 +72,7 @@ export function registerWorld(ctx: Ctx): void {
 
   // A teleport inside the realm answers too when the page gave it an id (chat's /goto does).
   ctx.on('teleport', (msg) => {
-    const request = teleportTo(destination({ worldCoordinates: { x: msg.x, y: msg.y }, realm: msg.realm }, msg.spawnPoint))
+    const request = teleport({ parcel: { x: msg.x, y: msg.y }, realm: msg.realm }, msg.spawnPoint)
     travel(msg.realm ?? '', msg.travelId, request)
   })
 
@@ -78,7 +80,7 @@ export function registerWorld(ctx: Ctx): void {
   // realm and no parcel (changeRealm is deprecated). The engine auto-grants ChangeRealm for our
   // super-user scene, so the React HUD owns the confirmation prompt.
   ctx.on('changeRealm', (msg) => {
-    travel(msg.realm, msg.travelId, teleportTo(destination({ realm: msg.realm }, msg.spawnPoint)))
+    travel(msg.realm, msg.travelId, teleport({ realm: msg.realm }, msg.spawnPoint))
   })
 
   // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo;

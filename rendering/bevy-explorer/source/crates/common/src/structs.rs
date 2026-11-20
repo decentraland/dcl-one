@@ -1913,16 +1913,11 @@ pub struct PlayerTeleported {
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
 /// position — until the destination scene resolves and they're placed in-world. Lives here (rather
 /// than `scene_runner`) so lower-level crates like `comms` can read it; `scene_runner` re-exports it.
-#[derive(Component)]
-pub struct OutOfWorld;
-
-/// The spawn point a teleport asked to land on, by name, until the player lands. A realm change
-/// that fails, and a move that names none, clear `pending`.
-#[derive(Resource, Default, Debug)]
-pub struct LandingSpawnPoint {
-    pub pending: Option<String>,
-    /// The last name a landing looked for, and whether its scene had a spawn point of that name.
-    pub last: Option<(String, bool)>,
+#[derive(Component, Default, Debug)]
+pub struct OutOfWorld {
+    /// The name (any case) of the spawn point of the destination scene to be placed on. Without
+    /// one, or when the scene has none of that name, the scene's default spawn points are used.
+    pub spawn_point: Option<String>,
 }
 
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its

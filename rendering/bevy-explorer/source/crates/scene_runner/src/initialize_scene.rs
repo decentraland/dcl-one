@@ -1262,7 +1262,7 @@ pub fn process_realm_change(
             .ok()
             .and_then(|p| commands.get_entity(p).ok())
         {
-            commands.try_insert(OutOfWorld);
+            commands.try_insert(OutOfWorld::default());
         }
 
         info!(
@@ -1297,16 +1297,17 @@ fn load_active_entities(
     mut teleport_target: ResMut<RealmInitialLocation>,
     mut pending_teleport: Local<bool>,
 ) {
-    let teleport_components = |parcel: IVec2| -> (Transform, OutOfWorld) {
-        (
-            Transform::from_translation(Vec3::new(
-                (parcel.x as f32 + 0.5) * 16.0,
-                0.0,
-                (parcel.y as f32 + 0.5) * -16.0,
-            )),
-            OutOfWorld,
-        )
-    };
+    let teleport_components =
+        |parcel: IVec2, spawn_point: Option<String>| -> (Transform, OutOfWorld) {
+            (
+                Transform::from_translation(Vec3::new(
+                    (parcel.x as f32 + 0.5) * 16.0,
+                    0.0,
+                    (parcel.y as f32 + 0.5) * -16.0,
+                )),
+                OutOfWorld { spawn_point },
+            )
+        };
 
     if current_realm.is_changed() {
         *fetch_count = 100;
@@ -1348,11 +1349,16 @@ fn load_active_entities(
 
         // A teleport that named this realm: land on its parcel now that the realm is live. The
         // out-of-world sweep holds the player until the parcel resolves against the new realm.
-        if let RealmInitialLocation::Parcel(parcel) = *teleport_target {
+        if let RealmInitialLocation::Parcel {
+            parcel,
+            spawn_point,
+        } = &*teleport_target
+        {
+            let (parcel, spawn_point) = (*parcel, spawn_point.clone());
             if !current_realm.about_url.is_empty() {
                 if let Ok((player_entity, _)) = player.single() {
                     if let Ok(mut commands) = commands.get_entity(player_entity) {
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!("change to realm with target parcel -> none ({parcel})");
                         *teleport_target = RealmInitialLocation::None;
                     }
@@ -1360,7 +1366,10 @@ fn load_active_entities(
             }
         }
 
-        if !current_realm.about_url.is_empty() && *teleport_target == RealmInitialLocation::Base {
+        if let (false, RealmInitialLocation::Base { spawn_point }) =
+            (current_realm.about_url.is_empty(), &*teleport_target)
+        {
+            let spawn_point = spawn_point.clone();
             let has_scene_urns = current_realm.config.lists_scenes();
 
             if !has_scene_urns {
@@ -1374,7 +1383,7 @@ fn load_active_entities(
                         } else {
                             Default::default()
                         };
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!(
                             "change to no scene realm -> none ({} in {}/{} = {})",
                             vec3_to_parcel(player_transform.translation()),
@@ -1389,7 +1398,7 @@ fn load_active_entities(
                 // the world's manifest says where to land, as it does for unity-explorer
                 if let Ok((player_entity, _)) = player.single() {
                     if let Ok(mut commands) = commands.get_entity(player_entity) {
-                        commands.try_insert(teleport_components(parcel));
+                        commands.try_insert(teleport_components(parcel, spawn_point));
                         debug!("change to world with spawn parcel -> none ({parcel})");
                         *teleport_target = RealmInitialLocation::None;
                     }
@@ -1406,12 +1415,12 @@ fn load_active_entities(
         return;
     };
 
-    let teleport_on_resolve = match *teleport_target {
-        RealmInitialLocation::None | RealmInitialLocation::Parcel(_) => {
+    let teleport_on_resolve = match &*teleport_target {
+        RealmInitialLocation::None | RealmInitialLocation::Parcel { .. } => {
             *pending_teleport = false;
             None
         }
-        RealmInitialLocation::Base => {
+        RealmInitialLocation::Base { .. } => {
             if *pending_teleport {
                 error!("pending ...");
                 Some(
@@ -1623,7 +1632,11 @@ fn load_active_entities(
             {
                 if let Ok(mut commands) = commands.get_entity(player_entity) {
                     let parcel = parcels.first().copied().unwrap_or_default();
-                    commands.try_insert(teleport_components(parcel));
+                    let spawn_point = match &*teleport_target {
+                        RealmInitialLocation::Base { spawn_point } => spawn_point.clone(),
+                        _ => None,
+                    };
+                    commands.try_insert(teleport_components(parcel, spawn_point));
                     debug!("resolved the target -> none (@ {parcel})");
                 }
                 *teleport_target = RealmInitialLocation::None;

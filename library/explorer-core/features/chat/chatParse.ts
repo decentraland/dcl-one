@@ -13,13 +13,14 @@ export type Token =
   | { type: 'tag'; value: string; style: 'b' | 'i'; close: boolean }
 
 // Tag → URL → world name → location (x,y) → @mention, scanned in one pass to keep original order.
-// The tags are lowercase b and i, opening or closing, with anything after whitespace up to the
-// `>`: the two the Unity client's chat also styles, so a message reads alike in both. Any other
-// tag is text. Worlds are ENS
+// The tags are lowercase b and i, opening or closing, with up to 32 characters after whitespace
+// before the `>` (none of them `<`, so a tag never takes in the text up to a later tag's end):
+// the two the Unity client's chat also styles, so a message reads alike in both. Any other tag is
+// text. Worlds are ENS
 // names (e.g. boedo.dcl.eth) → clickable "jump to realm". Coords require both signs/commas so we
 // don't linkify every number; mentions use the shared MENTION_PATTERN.
 const TOKEN_RE = new RegExp(
-  String.raw`(?<tag><(?<close>\/)?(?<style>[bi])(?:\s[^>]*)?>)|(?<url>https?:\/\/[^\s<>"']+)|(?<world>[a-z0-9][\w-]*\.(?:dcl\.)?eth\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
+  String.raw`(?<tag><(?<close>\/)?(?<style>[bi])(?:\s[^<>]{0,32})?>)|(?<url>https?:\/\/[^\s<>"']+)|(?<world>[a-z0-9][\w-]*\.(?:dcl\.)?eth\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
   'gi'
 )
 

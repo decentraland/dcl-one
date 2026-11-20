@@ -442,7 +442,6 @@ fn automatic_testing(
             w.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
                 to: Some(to),
                 realm: None,
-                spawn_point: None,
                 response: RpcResultSender::default(),
             }));
         });

@@ -43,17 +43,10 @@ pub async fn op_teleport_to(
     position_x: Option<i32>,
     position_y: Option<i32>,
     realm: Option<String>,
-    spawn_point: Option<String>,
 ) -> Result<bool, WasmError> {
-    dcl_js::restricted_actions::op_teleport_to(
-        state.rc(),
-        position_x,
-        position_y,
-        realm,
-        spawn_point,
-    )
-    .await
-    .map_err(WasmError::from)
+    dcl_js::restricted_actions::op_teleport_to(state.rc(), position_x, position_y, realm)
+        .await
+        .map_err(WasmError::from)
 }
 
 #[wasm_bindgen]

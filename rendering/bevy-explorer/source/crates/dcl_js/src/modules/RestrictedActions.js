@@ -50,8 +50,7 @@ module.exports.walkPlayerTo = async function (body) {
 
 module.exports.teleportTo = async function (body) {
     const parcel = body.worldCoordinates;
-    // `spawnPoint`: the name of the destination scene's spawn point to land on
-    await Deno.core.ops.op_teleport_to(parcel ? Number(parcel.x) : null, parcel ? Number(parcel.y) : null, body.realm ?? null, body.spawnPoint ?? null);
+    await Deno.core.ops.op_teleport_to(parcel ? Number(parcel.x) : null, parcel ? Number(parcel.y) : null, body.realm ?? null);
     return {} 
 }
 

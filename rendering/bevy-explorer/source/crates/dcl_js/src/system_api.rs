@@ -456,6 +456,42 @@ pub fn op_set_lobby_stage(state: Rc<RefCell<impl State>>, stage: Option<LobbySta
         .unwrap();
 }
 
+/// The longest spawn point name a teleport may ask for, in bytes.
+const MAX_SPAWN_POINT_NAME: usize = 128;
+
+pub async fn op_teleport(
+    state: Rc<RefCell<impl State>>,
+    position_x: Option<i32>,
+    position_y: Option<i32>,
+    realm: Option<String>,
+    spawn_point: Option<String>,
+) -> Result<(), anyhow::Error> {
+    if spawn_point
+        .as_ref()
+        .is_some_and(|name| name.len() > MAX_SPAWN_POINT_NAME)
+    {
+        anyhow::bail!("spawn point name is longer than {MAX_SPAWN_POINT_NAME} bytes");
+    }
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::Teleport {
+            to: position_x
+                .zip(position_y)
+                .map(|(x, y)| bevy::math::IVec2::new(x, y)),
+            realm,
+            spawn_point,
+            response: sx,
+        })
+        .unwrap();
+
+    rx.await
+        .map_err(|e| anyhow::anyhow!(e))?
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
 pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: Vector2) {
     state
         .borrow_mut()

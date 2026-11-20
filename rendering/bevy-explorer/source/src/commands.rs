@@ -3,8 +3,7 @@ use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
     structs::{
-        AppConfig, LandingSpawnPoint, ParcelGrassSetting, PreviewMode, PrimaryUser,
-        SceneLoadDistance, SessionGraphics,
+        AppConfig, ParcelGrassSetting, PreviewMode, PrimaryUser, SceneLoadDistance, SessionGraphics,
     },
 };
 use console::PendingConsoleResponses;
@@ -12,6 +11,7 @@ use scene_runner::{
     initialize_scene::{parcels_in_range, ScenePointers},
     OutOfWorld,
 };
+use system_bridge::SystemApi;
 
 /// set location
 #[derive(clap::Parser, ConsoleCommand)]
@@ -33,15 +33,33 @@ pub fn change_location(
     mut input: ConsoleCommand<ChangeLocationCommand>,
     mut player: Query<(Entity, &mut Transform), With<PrimaryUser>>,
     mut pending: ResMut<PendingConsoleResponses>,
-    mut spawn_point: ResMut<LandingSpawnPoint>,
+    mut hud_teleports: EventWriter<SystemApi>,
 ) {
     if let Some(Ok(command)) = input.take() {
+        if let Some(spawn_point) = command.spawn {
+            // the HUD's teleport, which carries the name to the landing
+            let (response, rx) = RpcResultSender::channel();
+            let location = (command.x, command.y);
+            hud_teleports.write(SystemApi::Teleport {
+                to: Some(IVec2::new(command.x, command.y)),
+                realm: command.realm,
+                spawn_point: Some(spawn_point.clone()),
+                response,
+            });
+            pending.push_receiver(
+                rx,
+                move |result| {
+                    result.map(|()| format!("new location: {location:?} at {spawn_point}"))
+                },
+                input.take_responder(),
+            );
+            return;
+        }
         if let Some(realm) = command.realm {
             let (response, rx) = RpcResultSender::channel();
             commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
                 to: Some(IVec2::new(command.x, command.y)),
                 realm: Some(realm.clone()),
-                spawn_point: command.spawn,
                 response,
             }));
             let location = (command.x, command.y);
@@ -56,9 +74,8 @@ pub fn change_location(
             transform.translation.x = command.x as f32 * 16.0 + 8.0;
             transform.translation.z = -command.y as f32 * 16.0 - 8.0;
             if let Ok(mut commands) = commands.get_entity(ent) {
-                commands.try_insert(OutOfWorld);
+                commands.try_insert(OutOfWorld::default());
             }
-            spawn_point.pending = command.spawn;
             input.reply_ok(format!("new location: {:?}", (command.x, command.y)));
             return;
         }

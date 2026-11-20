@@ -8,7 +8,7 @@
 // Any other `/word args` is passed through to the engine console (`consoleCommand`), except the
 // HUD_HIDDEN_COMMANDS below; the engine itself only registers dev/cheat commands in preview mode.
 
-import { type GotoTarget, WORLD_PARCEL_LIMIT, isGenesisParcel, parseGotoTarget, worldName } from '../lobby/goto'
+import { type GotoTarget, WORLD_PARCEL_LIMIT, isGenesisParcel, isWorldName, parseGotoTarget, worldName } from '../lobby/goto'
 
 export type ChatCommand =
   /** Not a command (no leading `/`) — send as a normal chat message. */
@@ -30,7 +30,8 @@ export type ChatCommand =
 const GOTO_USAGE = '<b>/goto <i><x,y | x,y/spawn | random | crowd | world | world/x,y | world/spawn | world/x,y/spawn></i></b>\n  Teleport inside of Genesis or World'
 const GOTO_LOCAL_USAGE = '<b>/goto-local <i><x,y | x,y/spawn | spawn></i></b>\n  Teleport inside of the current realm'
 const WORLD_USAGE = '<b>/world <i><world></i></b>\n  Jump to a world (alias of /goto world)'
-const invalid = (usage: string): ChatCommand => ({ kind: 'system', message: `🔴 Invalid parameters, usage:\n${usage}` })
+const usageReply = (usage: string): string => `🔴 Invalid parameters, usage:\n${usage}`
+const invalid = (usage: string): ChatCommand => ({ kind: 'system', message: usageReply(usage) })
 
 /** The `/help` body: the client (DCL) commands. Chat renders its `<b>` and `<i>`. */
 export const HELP_TEXT = [
@@ -156,15 +157,16 @@ function parseWorld(rest: string): ChatCommand {
 
 /** Where the player is, for `resolveGoto`. */
 export interface GotoHere {
-  /** In Genesis City, as opposed to a world. */
-  genesis: boolean
-  /** The realm's name: a world's name in a world; null while unknown. */
+  /** The realm's kind: Genesis City, a world, or any other (a scene preview, a realm of its own,
+   *  or not known yet), which has no Genesis City to go back to and no known bounds. */
+  kind: 'genesis' | 'world' | 'other'
+  /** The world's name (`name.dcl.eth`, lowercase) in a world; null anywhere else. */
   realm: string | null
   parcel: { x: number; y: number }
 }
 
 /** What a `/goto` asks of the engine, or the line to answer with instead. `reply` is the answer
- *  once the request succeeds; `name` is the realm as the player typed it. */
+ *  once the request succeeds; `world` is the world as the player typed it. */
 export type GotoPlan =
   | { kind: 'reply'; message: string }
   /** A teleport inside the realm the player is in. */
@@ -174,10 +176,12 @@ export type GotoPlan =
 
 const outside = (p: { x: number; y: number }): GotoPlan => ({ kind: 'reply', message: `🔴 Error: Parcel (${p.x}, ${p.y}) is outside of the bounds.` })
 const teleported = (p: { x: number; y: number }): string => `🟢 You teleported to ${p.x},${p.y}.`
+const REALM_URL = /^https?:\/\//i
 
 /**
- * A parcel alone is a Genesis City parcel, reached by a realm
- * change from a world, unless `local`; a world the player is already in is a teleport inside it.
+ * A parcel alone is a Genesis City parcel, reached by a realm change from a world, unless `local`.
+ * In a realm of any other kind it is a parcel of that realm: a scene preview refuses realm changes,
+ * and its parcels are the creator's own. A world the player is already in is a teleport inside it.
  * `genesisRealm` is the Genesis City realm's address. `random` and `crowd` are resolved to a
  * parcel by the caller.
  */
@@ -185,17 +189,23 @@ export function resolveGoto(target: GotoTarget, local: boolean, here: GotoHere, 
   const spawnPoint = target.spawnPoint ?? undefined
   if (target.world == null) {
     const parcel = target.parcel ?? here.parcel
-    const toGenesis = !local && !here.genesis
-    const inside = here.genesis || toGenesis ? isGenesisParcel(parcel.x, parcel.y) : Math.abs(parcel.x) <= WORLD_PARCEL_LIMIT && Math.abs(parcel.y) <= WORLD_PARCEL_LIMIT
+    const toGenesis = !local && here.kind === 'world'
+    const inside =
+      here.kind === 'genesis' || toGenesis
+        ? isGenesisParcel(parcel.x, parcel.y)
+        : here.kind === 'other' || (Math.abs(parcel.x) <= WORLD_PARCEL_LIMIT && Math.abs(parcel.y) <= WORLD_PARCEL_LIMIT)
     if (target.parcel != null && !inside) return outside(parcel)
     if (toGenesis) return { kind: 'travel', realm: genesisRealm, parcel, spawnPoint, reply: teleported(parcel) }
     return { kind: 'teleport', ...parcel, spawnPoint, reply: teleported(parcel) }
   }
 
   const name = target.world
-  const toGenesis = name === 'genesis'
-  const realm = toGenesis ? genesisRealm : /^https/i.test(name) ? name : worldName(name)
-  const there = toGenesis ? here.genesis : !here.genesis && here.realm?.toLowerCase() === realm.toLowerCase()
+  const toGenesis = name.toLowerCase() === 'genesis'
+  const url = REALM_URL.test(name)
+  // a realm's address goes as it is; anything else has to be a world's name
+  if (!toGenesis && !url && !isWorldName(name)) return { kind: 'reply', message: usageReply(GOTO_USAGE) }
+  const realm = toGenesis ? genesisRealm : url ? name : worldName(name)
+  const there = toGenesis ? here.kind === 'genesis' : here.kind === 'world' && here.realm === realm.toLowerCase()
   if (there) {
     if (target.parcel == null && spawnPoint == null) return { kind: 'reply', message: `🟡 You are already in ${name}!` }
     const parcel = target.parcel ?? here.parcel

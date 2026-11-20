@@ -32,24 +32,33 @@ pub fn capped(text: &str, max: usize) -> String {
     capped
 }
 
+/// The most characters a bold or italic tag holds between the whitespace after its letter and
+/// its `>`.
+const MAX_STYLE_TAG_REST: usize = 32;
+
 /// The length of the bold or italic tag opening `text`: `<b>`, `</b>`, `<i>` or `</i>`, each
-/// also with anything after whitespace before its `>`. The HUD's chat reads the same tags
-/// (`TOKEN_RE` in `chatParse.ts`).
+/// also with whitespace and up to [`MAX_STYLE_TAG_REST`] characters, none of them `<`, before
+/// its `>`. The HUD's chat reads the same tags (`TOKEN_RE` in `chatParse.ts`).
 fn style_tag_len(text: &str) -> Option<usize> {
     let body = text.strip_prefix('<')?;
     let body = body.strip_prefix('/').unwrap_or(body);
     let after = body.strip_prefix(['b', 'i'])?;
     let name_end = text.len() - after.len();
-    match after.chars().next()? {
+    let mut chars = after.char_indices();
+    match chars.next()?.1 {
         '>' => Some(name_end + 1),
-        c if c.is_whitespace() => Some(name_end + after.find('>')? + 1),
+        c if c.is_whitespace() => chars
+            .take(MAX_STYLE_TAG_REST + 1)
+            .take_while(|(_, c)| *c != '<')
+            .find(|(_, c)| *c == '>')
+            .map(|(index, _)| name_end + index + 1),
         _ => None,
     }
 }
 
 /// `message` without its bold and italic tags: the HUD's chat styles the text between them, a
 /// bubble has one face and shows the words alone.
-pub fn without_style_tags(message: &str) -> String {
+pub(crate) fn without_style_tags(message: &str) -> String {
     let mut plain = String::with_capacity(message.len());
     let mut rest = message;
     while let Some(start) = rest.find('<') {
@@ -273,6 +282,16 @@ mod tests {
         );
         assert_eq!(without_style_tags("<b x=1>open</b >"), "open");
         assert_eq!(without_style_tags("<i><b>both"), "both");
+        // a tag ends at its own `>`, within reach: what follows another `<` is not its text
+        assert_eq!(without_style_tags("I <i really> mean it"), "I  mean it");
+        assert_eq!(
+            without_style_tags("x <b hello <i>world"),
+            "x <b hello world"
+        );
+        let long = format!("<b {}>", "x".repeat(MAX_STYLE_TAG_REST + 1));
+        assert_eq!(without_style_tags(&long), long);
+        let fits = format!("<b {}>", "x".repeat(MAX_STYLE_TAG_REST));
+        assert_eq!(without_style_tags(&fits), "");
         for kept in [
             "<B>caps</B>",
             "<br>",
