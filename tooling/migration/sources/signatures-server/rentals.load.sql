@@ -3,7 +3,8 @@
 -- asset (the node's one-open-per-asset rule; within a batch the latest wins).
 
 -- Listings leaving `open` first, so the open-per-asset check below sees them
--- closed when the same batch carries their open replacement.
+-- closed when the same batch carries their open replacement. Only open rows
+-- match, so the rent-over-cancellation rule of the upsert has no case here.
 UPDATE signatures.rentals r
    SET status = s.status::signatures.rental_status, updated_at = s.updated_at AT TIME ZONE 'UTC'
   FROM stage s
@@ -40,7 +41,12 @@ ON CONFLICT (id) DO UPDATE
        -- upstream also says cancelled, any other status clears it
        cancel_reason = CASE WHEN EXCLUDED.status = 'cancelled' THEN signatures.rentals.cancel_reason END
  WHERE signatures.rentals.signature = EXCLUDED.signature
-   AND signatures.rentals.updated_at <= EXCLUDED.updated_at
+   -- a newer node row is kept, except that a rent of the listing wins over a
+   -- cancellation: an upstream `executed` or `claimed` replaces a `cancelled`
+   -- row of any age, and the row takes the upstream `updated_at`, so later
+   -- upstream versions and the listing's periods still match it
+   AND (signatures.rentals.updated_at <= EXCLUDED.updated_at
+        OR (signatures.rentals.status = 'cancelled' AND EXCLUDED.status IN ('executed', 'claimed')))
 RETURNING id, signature
 )
 

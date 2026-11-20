@@ -1861,7 +1861,10 @@ Invariants:
   rent, the route decides nothing and the job's block comparison decides.
   While the `rentals` index is not published, neither path reads custody.
 - The signatures-server import keeps a node reason only while upstream also
-  says `cancelled`, and clears it otherwise. Its load SQL is
+  says `cancelled`, and clears it otherwise. It skips an upstream row older
+  than the stored one, except that an upstream `executed` or `claimed`
+  replaces a `cancelled` row of any age; the row then takes the upstream
+  `updated_at`, which can be older than the cancellation's. Its load SQL is
   `tooling/migration/sources/signatures-server/rentals.load.sql`.
 
 Step `0056_signatures_rental_cancel_reason` adds the nullable column and its
