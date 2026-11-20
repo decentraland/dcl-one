@@ -400,10 +400,10 @@ impl DecentralandArguments {
             .map(|parcel| parcel.0)
     }
 
-    /// `--portables` / `?portables=`, else the default set.
+    /// `--portables` / `?portables=`, else the default set (the editor and a preview run no quests).
     pub fn startup_scenes(&self) -> Vec<StartupScene> {
         self.launch
-            .portable_sources()
+            .portable_sources(self.client.editor || self.launch.preview)
             .map(|source| StartupScene {
                 source: source.to_owned(),
                 super_user: false,

@@ -61,8 +61,8 @@ pub struct LaunchOptions {
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub log_fps: Option<bool>,
 
-    /// `;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth`
-    /// (DEFAULT_PORTABLES)
+    /// `;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth;globalpx.dcl.eth`
+    /// (DEFAULT_PORTABLES), or only `basiccontroller.dcl.eth` in the editor or a preview
     #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
     pub portables: Option<String>,
 
@@ -78,13 +78,12 @@ pub struct LaunchOptions {
 }
 
 impl LaunchOptions {
-    /// The startup portable sources: `portables`, else [`DEFAULT_PORTABLES`].
-    ///
-    /// [`DEFAULT_PORTABLES`]: crate::web_params::DEFAULT_PORTABLES
-    pub fn portable_sources(&self) -> impl Iterator<Item = &str> {
+    /// The startup portable sources: `portables`, else the session's default set, which leaves
+    /// the quests out while `building` a scene (the editor, a preview).
+    pub fn portable_sources(&self, building: bool) -> impl Iterator<Item = &str> {
         self.portables
             .as_deref()
-            .unwrap_or(crate::web_params::DEFAULT_PORTABLES)
+            .unwrap_or(crate::web_params::default_portables(building))
             .split(';')
     }
 }
@@ -231,6 +230,27 @@ mod tests {
         launch: LaunchOptions,
         #[command(flatten)]
         client: ClientOptions,
+    }
+
+    #[test]
+    fn default_portables_run_the_quests_only_outside_scene_building() {
+        let none = LaunchOptions::default();
+        let play: Vec<_> = none.portable_sources(false).collect();
+        assert_eq!(play, ["basiccontroller.dcl.eth", "globalpx.dcl.eth"]);
+        let building: Vec<_> = none.portable_sources(true).collect();
+        assert_eq!(building, ["basiccontroller.dcl.eth"]);
+        let given = LaunchOptions {
+            portables: Some("a.dcl.eth".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            given.portable_sources(true).collect::<Vec<_>>(),
+            ["a.dcl.eth"]
+        );
+        assert_eq!(
+            given.portable_sources(false).collect::<Vec<_>>(),
+            ["a.dcl.eth"]
+        );
     }
 
     #[test]

@@ -661,9 +661,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
   icon. The title is cut to 100 characters. unity-explorer loads that icon only under
   `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
-  This explorer loads no global portable experience at startup: unity-explorer loads the quests'
-  one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
-  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
+  The quests' global portable experience (`globalpx.dcl.eth`) runs at startup in every session
+  that doesn't name its own portables, beside the movement controller. unity-explorer loads it
+  only under `alfa-global-portable-experiences`; here it needs no flag. The scene editor and a
+  preview run the movement controller alone, so no quest runs or pins the map while building a
+  scene. A deployment whose worlds server has no `globalpx.dcl.eth` leaves that portable failed and
+  the map without quest pins.
 - **Arrival is checked on every position report.** unity-explorer checks the route only after
   the player's squared distance from the map's origin has changed by 300 map units, which can
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never

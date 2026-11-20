@@ -921,8 +921,11 @@ fn update_url_params(
             realm: Some(server.to_owned()),
             position,
             preview: preview.is_preview,
-            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
-            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
+            // the session's default set is omitted so the canonical url stays clean (the page
+            // doesn't know it)
+            portables: portables.filter(|p| {
+                p != system_api_types::web_params::default_portables(editor.0 || preview.is_preview)
+            }),
             ..launched.launch
         },
         client: ClientOptions {

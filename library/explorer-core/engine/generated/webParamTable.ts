@@ -204,7 +204,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "portables",
     "kind": "string",
     "delivery": "launch",
-    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth` (DEFAULT_PORTABLES)"
+    "doc": "`;`-separated portable/startup scene sources; absent = `basiccontroller.dcl.eth;globalpx.dcl.eth` (DEFAULT_PORTABLES), or only `basiccontroller.dcl.eth` in the editor or a preview"
   },
   {
     "name": "contentServer",

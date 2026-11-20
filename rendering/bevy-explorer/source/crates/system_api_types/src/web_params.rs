@@ -64,8 +64,23 @@ pub struct WebParam {
     pub doc: String,
 }
 
-/// The portable scene set that runs when `--portables` / `?portables=` is absent.
-pub const DEFAULT_PORTABLES: &str = "basiccontroller.dcl.eth";
+/// The portable scene set that runs when `--portables` / `?portables=` is absent: the movement
+/// controller, and the quests' global portable experience, whose map pins the map shows.
+pub const DEFAULT_PORTABLES: &str = "basiccontroller.dcl.eth;globalpx.dcl.eth";
+
+/// The default set while building a scene (the editor, a preview): the movement controller only,
+/// so no quest runs or pins the map there.
+pub const BUILDING_PORTABLES: &str = "basiccontroller.dcl.eth";
+
+/// The default portable set for a session: [`BUILDING_PORTABLES`] in the editor or a preview,
+/// [`DEFAULT_PORTABLES`] otherwise.
+pub fn default_portables(building: bool) -> &'static str {
+    if building {
+        BUILDING_PORTABLES
+    } else {
+        DEFAULT_PORTABLES
+    }
+}
 
 /// The web-only half of a parameter's declaration, keyed by the [`LaunchOptions`] field.
 fn delivery(field: &str) -> Delivery {

@@ -424,7 +424,7 @@ fn main() -> AppExit {
             .insert_resource(StartupScenes {
                 scenes: args
                     .launch
-                    .portable_sources()
+                    .portable_sources(args.launch.preview)
                     .map(|source| StartupScene {
                         source: source.to_owned(),
                         super_user: false,
