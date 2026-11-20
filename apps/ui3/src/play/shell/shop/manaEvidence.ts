@@ -52,8 +52,11 @@ export interface ManaEvidence {
   nonceAt(chainId: number, venue: { address: string; metaTx: MetaTxStyle }, user: string, block: bigint): Promise<bigint>
   /** Every MetaTransactionExecuted of `venue` in [from, to], complete or a throw. */
   executions(chainId: number, venue: string, from: bigint, to: bigint): Promise<ManaExecution[]>
-  /** A transaction's target and input, or null when the chain doesn't know it. */
-  transaction(chainId: number, hash: string): Promise<{ to: string | null; input: Hex } | null>
+  /**
+   * A transaction's target, input and sender, or null when the chain doesn't know it. The sender is what tells whose a
+   * useCredits the buyer's own wallet sent is (a relayed one names its user inside the call).
+   */
+  transaction(chainId: number, hash: string): Promise<{ to: string | null; input: Hex; from?: string | null } | null>
   receipt(chainId: number, hash: string): Promise<TxReceipt | null>
 }
 
@@ -189,8 +192,8 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
       return out
     },
     transaction: async (chainId, hash) => {
-      const tx = await rpc<{ to: string | null; input: Hex } | null>(chainId, 'eth_getTransactionByHash', [hash])
-      return tx ? { to: tx.to, input: tx.input } : null
+      const tx = await rpc<{ from?: string | null; to: string | null; input: Hex } | null>(chainId, 'eth_getTransactionByHash', [hash])
+      return tx ? { to: tx.to, input: tx.input, from: tx.from ?? null } : null
     },
     receipt: (chainId, hash) => deadline(opts.reader.receipt(chainId as ChainId, hash, AbortSignal.timeout(readMs)), readMs)
   }

@@ -1021,12 +1021,13 @@ describe("a held split with no transaction to read", () => {
   /**
    * A split held for the store's Rainbow Hat, sent sixteen minutes ago, its credit expiring at `creditExpiresAt`. The node
    * lists its credit as `status` says; SETTLED by `SETTLED_BY`, which the chain shows as this split (`settledBy: "this"`,
-   * the default), as another purchase ("other") or not at all ("none").
+   * the default), as another purchase of this credit ("other"), as another account's useCredits ("stranger") or not at all
+   * ("none").
    */
   function heldSplit(
     status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null },
     creditExpiresAt: number,
-    opts: { userPurchases?: Listing; attempt?: string; txHash?: string; settledBy?: "this" | "other" | "none"; expiredSeenAt?: number; envelope?: Hex } = {},
+    opts: { userPurchases?: Listing; attempt?: string; txHash?: string; settledBy?: "this" | "other" | "stranger" | "none"; expiredSeenAt?: number; envelope?: Hex } = {},
   ) {
     const demo = createDemo({
       session: "web3",
@@ -1043,7 +1044,8 @@ describe("a held split with no transaction to read", () => {
     const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
     const settledBy = opts.settledBy ?? "this";
     if (settledBy !== "none") {
-      demo.chain.transactions.set(SETTLED_BY, splitSaleTransaction(settledBy === "this" ? SALE : { ...SALE, callData: "0x0bad" }));
+      const settling = { this: splitSaleTransaction(SALE), other: splitSaleTransaction({ ...SALE, callData: "0x0bad" }), stranger: splitSaleTransaction(SALE, { user: `0x${"cc".repeat(20)}` }) };
+      demo.chain.transactions.set(SETTLED_BY, settling[settledBy]);
       demo.chain.receipts.set(SETTLED_BY, "success");
     }
     // Sent sixteen minutes ago, past the hold; the relay lost its answer, so no hash (unless one is given).
@@ -1114,6 +1116,16 @@ describe("a held split with no transaction to read", () => {
     expect(screen.queryByText(/Purchase complete/)).toBeNull();
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
     expect(readSplitHold(BOOK.buyer, demo.lineId)).toBeNull();
+  });
+
+  it("SETTLED by a transaction that doesn't spend this credit for this buyer (another account's) says nothing: held, never spent elsewhere", async () => {
+    const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { settledBy: "stranger" });
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByText(/spent on another purchase/)).toBeNull();
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
   });
 
   it("SETTLED alone, with no transaction to read, proves the credit was spent, not on what: the split stays held", async () => {

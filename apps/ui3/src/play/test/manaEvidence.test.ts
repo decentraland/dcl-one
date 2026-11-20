@@ -230,6 +230,19 @@ describe('a MANA sale on chain', () => {
     expect(() => decodeExecution({ topics: ['0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'], data: '0x', transactionHash: HASH, blockNumber: '0x1' } as never)).toThrow(/place/)
   })
 
+  it('reads a transaction with its sender, so a useCredits the buyer’s own wallet sent can be told whose it is', async () => {
+    const answers: Record<string, unknown> = { [HASH]: { hash: HASH, from: BUYER, to: STORE, input: '0x1234', nonce: '0x1' }, [RELAY_HASH]: null }
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const { method, params, id } = JSON.parse(String(init?.body)) as { method: string; params: [string]; id: number }
+      expect(method).toBe('eth_getTransactionByHash')
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: answers[params[0]] }))
+    }
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    expect(await evidence.transaction(137, HASH)).toEqual({ from: BUYER, to: STORE, input: '0x1234' })
+    expect(await evidence.transaction(137, RELAY_HASH)).toBeNull()
+  })
+
   it('lets an error answer’s body go instead of leaving it open', async () => {
     let cancelled = false
     const body = new ReadableStream({ pull: () => new Promise(() => {}), cancel: () => void (cancelled = true) })

@@ -55,12 +55,15 @@ export interface SplitSale {
 /**
  * - `bought`: a mined, successful execution of exactly this purchase;
  * - `reverted`: the very bytes this purchase dispatched (`SplitSale.envelope`), mined and reverted: that invocation failed
- *   (the same execution may still run in another transaction: what the node's record of the credit says comes first);
- * - `other`: a useCredits this page can read that is provably not this purchase: another sender, another credit, or this
- *   credit with other terms (another venue, function, call, share or gap);
+ *   (the same execution may still run in another transaction: what the node's record of the credit says comes first).
+ *   Only the in-world Shop acts on it (an own revert there waits on the node's record by name); the web Shop's
+ *   `settleSplitHold` holds it as it holds `unknown`. The envelope is kept on both surfaces so that both can tell it;
+ * - `other`: the buyer's useCredits spending this very credit, alone or in a batch, on other terms (another venue,
+ *   function, call, share or gap): the credit went into another purchase;
  * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, a transaction whose
- *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), or a revert
- *   of these terms in bytes other than the ones dispatched (or with none kept to compare).
+ *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), a useCredits
+ *   by another account or of other credits (it doesn't spend this one), or a revert of these terms in bytes other than
+ *   the ones dispatched (or with none kept to compare).
  */
 export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'unknown'
 
@@ -97,8 +100,10 @@ export function isSplitSale(v: unknown): v is SplitSale {
 
 /**
  * What `tx` says of the sale: `match` (the buyer's useCredits at the sale's manager carrying exactly its terms, relayed or
- * sent by the buyer's own wallet), `other` (a readable useCredits that provably isn't it) or `unreadable` (another target
- * or wrapper, calldata this page can't decode, or a direct call whose sender the reader didn't give).
+ * sent by the buyer's own wallet), `other` (the buyer's useCredits spending this very credit, alone or in a batch, on
+ * other terms: the credit went into something else) or `unreadable`. That covers another target or wrapper, calldata
+ * this page can't decode, a direct call whose sender the reader didn't give, and a useCredits by another account or of
+ * other credits: such a call says nothing of where this credit went (a record that points at it is wrong, not proof).
  */
 export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'other' | 'unreadable' {
   if (lower(tx.to) !== lower(sale.manager)) return 'unreadable'
@@ -123,14 +128,14 @@ export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'othe
   } catch {
     return 'unreadable'
   }
+  const salt = lower(idToSalt(sale.creditId))
+  if (lower(user) !== lower(sale.buyer) || !args.credits.some((c) => lower(c.salt) === salt)) return 'unreadable'
   const creditWei = BigInt(sale.creditWei)
   const call = args.externalCall
   const [credit] = args.credits
   const same =
-    lower(user) === lower(sale.buyer) &&
     args.credits.length === 1 &&
     credit !== undefined &&
-    lower(credit.salt) === lower(idToSalt(sale.creditId)) &&
     credit.value === creditWei &&
     args.maxCreditedValue === creditWei &&
     args.maxUncreditedValue === BigInt(sale.gapWei) &&

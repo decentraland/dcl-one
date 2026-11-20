@@ -97,7 +97,7 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
   const chain = createFakeChain()
   if (opts.allowance != null) chain.allowances.set(`137:${BUYER}:${STORE}`, opts.allowance)
   // What the relay put on chain: each hash's target and signed input, as the chain would answer for it.
-  const txs = new Map<string, { to: string; input: Hex }>()
+  const txs = new Map<string, { to: string; input: Hex; from?: string }>()
   const relay = createFakeRelay({
     chain,
     confirm: 'success',
@@ -1091,6 +1091,82 @@ describe('the in-world purchase with MANA', () => {
       ;(await p.until('method')).handlers.onPay?.('split')
       // Published with the replay's hash, never the reverted one it sent.
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: B }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    /** The useCredits spending this split's credit (`creditId`, its share; the rest the gap) on the store's item `itemId`. */
+    const useCreditsFor = (itemId: string, creditId = `0x${'a1'.repeat(32)}`) => {
+      const share = (BigInt(PRICE) * 50n) / 120n
+      const credit = { id: creditId, amount: share.toString(), availableAmount: share.toString(), expiresAt: Math.floor(Date.now() / 1000) + 900, signature: `0x${'cc'.repeat(65)}`, contract: MANAGER }
+      return encodeUseCredits(buildStoreUseCreditsArgs(STORE, [{ collection: BOOK.collection, itemId, priceWei: PRICE }], BUYER, [credit], share.toString(), { maxUncreditedValue: BigInt(PRICE) - share }))
+    }
+    /** A successful transaction put on chain at `hash`. */
+    const minedAt = (w: World, hash: string, tx: { to: string; input: Hex; from?: string }) => {
+      w.txs.set(hash, tx)
+      w.chain.receipts.set(hash, 'success')
+      return hash
+    }
+    /** The useCredits this split relayed: its own call, unwrapped. */
+    const relayedCall = (w: World) => {
+      const body = w.relay.posts[0] as { transactionData: { params: [string, Hex] } }
+      return decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: body.transactionData.params[1] }).args[1] as Hex
+    }
+
+    it.each([
+      ['its answer lost', 'lost'],
+      ['its own bytes reverted', 'reverted']
+    ] as const)('keeps a split held, %s, when the node settles its credit in a transaction that doesn\'t spend it for this buyer', async (_, how) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      if (how === 'lost') Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      else w.relay.state.confirm = 'reverted'
+      // Another account's useCredits: a node record that points at it is wrong, not where this credit went.
+      const S = minedAt(w, `0x${'e'.repeat(63)}5`, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', `0x${'cc'.repeat(20)}`, useCreditsFor('8'), `0x${'11'.repeat(65)}` as Hex) })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => S) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('ends an own-reverted split as spent elsewhere when the node settles its credit in the buyer\'s own call for another item', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const E = minedAt(w, `0x${'e'.repeat(63)}6`, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', BUYER, useCreditsFor('8'), `0x${'11'.repeat(65)}` as Hex) })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => E) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      // Seen live, it ends the purchase with that said: nothing bought, and nothing to give back.
+      const ended = await p.until('failed')
+      expect(ended.view).toMatchObject({ message: expect.stringContaining('spent by another transaction') })
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it.each([
+      ['is this very sale: bought', 'this', 'succeeded'],
+      ['spends its credit on another item: spent elsewhere', 'other', 'failed']
+    ] as const)('reads a useCredits the buyer\'s own wallet sent, by its sender, when the node settles the credit in one that %s', async (_, which, state) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      const D = `0x${'d'.repeat(63)}7`
+      // Sent by the buyer's own wallet, not relayed: only its sender says whose it is.
+      const direct = () => minedAt(w, D, { to: MANAGER, input: which === 'this' ? relayedCall(w) : useCreditsFor('8'), from: BUYER })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(direct) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state }), { timeout: 5000 })
+      if (state === 'succeeded') expect(p.events.at(-1)).toMatchObject({ txHash: D })
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
     })
 
