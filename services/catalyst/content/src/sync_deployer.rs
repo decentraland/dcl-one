@@ -5,6 +5,17 @@
 //! function takes. A flush that fails re-reports every entity it carried to
 //! `content.failed_deployments`, where the retry worker owns it.
 //!
+//! A deployer built [`with_store`](LiveSyncDeployer::with_store) (every one
+//! `serve` runs) takes the store lock's shared side in the flush transaction
+//! ([`crate::storage::gc::lock_store_shared`]), as the local deploy does, and
+//! checks there that the files each entity's rows name (its entity file and
+//! content) are still stored, one existence probe per distinct hash of the
+//! batch. Whoever unlinks under the exclusive side (the collector, the
+//! history prune, the partial-upload cleanup) then either sees the committed
+//! rows or has already unlinked the file, and the flush finds it gone: that
+//! entity is left out of the batch and recorded as a failed deployment, so
+//! the retry worker downloads it again; the rest of the batch commits.
+//!
 //! [`LiveSyncDeployer::deploy_entity`] runs the content validator the local
 //! write path runs, in its synced form ([`crate::validator::synced`]): no
 //! request-recency, rate-limit or newer-entity checks, the auth chain and the
@@ -27,6 +38,8 @@ use std::sync::Arc;
 use serde_json::Value;
 use sqlx::PgPool;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+
+use crate::storage::Storage;
 
 use super::batch_deployer::DeploymentReport;
 use super::deploy_remote_entity::ByteBudget;
@@ -313,6 +326,9 @@ impl Default for SyncMemoryLimits {
 #[derive(Clone)]
 pub struct LiveSyncDeployer {
     pool: PgPool,
+    /// The store the flush checks under the shared store lock; `None` only in tests whose
+    /// fixtures store no files.
+    storage: Option<Arc<Storage>>,
     batch: Arc<Mutex<Vec<ParsedEntity>>>,
 
     flush_sem: Arc<Semaphore>,
@@ -336,6 +352,7 @@ pub struct LiveSyncDeployer {
 
 fn spawn_flush(
     pool: PgPool,
+    storage: Option<Arc<Storage>>,
     flush_sem: Arc<Semaphore>,
     in_flight: Arc<std::sync::atomic::AtomicUsize>,
     idle_notify: Arc<tokio::sync::Notify>,
@@ -348,54 +365,73 @@ fn spawn_flush(
     in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     tokio::spawn(async move {
         let _permit = flush_sem.acquire().await;
-        if let Err(e) = flush_batch(&pool, &entities).await {
-            tracing::error!(error = %e, count = entities.len(), "Batch flush failed");
-            let failed_store = LiveFailedDeploymentsStore::new(pool.clone());
-            let mut strongest = strongest_retry_state(&entities);
-            for entity in &entities {
-                let Some(retry) = strongest.remove(entity.entity_id.as_str()) else {
-                    continue;
-                };
-                let auth_chain: AuthChain = match serde_json::from_value(entity.auth_chain.clone())
-                {
-                    Ok(chain) => chain,
-                    Err(conv_err) => {
-                        lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        if let Some(report) = &entity.report {
-                            report.record_lost();
-                        }
-                        tracing::error!(
-                            entity_id = %entity.entity_id,
-                            error = %conv_err,
-                            "Entity dropped by a failed batch flush has an unconvertible auth \
-                             chain; counting it as lost instead of recording an un-retryable row"
-                        );
-                        continue;
-                    }
-                };
-                let failure = flush_failure_record(
-                    entity,
-                    auth_chain,
-                    format!("batch flush failed: {}", e),
-                    retry,
+        match flush_batch(&pool, storage.as_deref(), &entities).await {
+            Ok(dropped) if dropped.is_empty() => {}
+            Ok(dropped) => {
+                tracing::warn!(
+                    count = dropped.len(),
+                    "Batch flush left out entities whose files left the store; recorded for retry"
                 );
-                if let Err(record_err) = failed_store.report_failure(failure).await {
-                    lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    if let Some(report) = &entity.report {
-                        report.record_lost();
-                    }
-                    tracing::error!(
-                        entity_id = %entity.entity_id,
-                        error = %record_err,
-                        "Entity dropped by a failed batch flush could not be recorded as a \
-                         failed deployment; holding the sync frontier back"
-                    );
-                }
+                record_flush_failures(&pool, &lost, &entities, |id| dropped.get(id).cloned()).await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, count = entities.len(), "Batch flush failed");
+                let reason = format!("batch flush failed: {}", e);
+                record_flush_failures(&pool, &lost, &entities, |_| Some(reason.clone())).await;
             }
         }
         in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
         idle_notify.notify_waiters();
     });
+}
+
+/// Records each entity `reason` names (once per id, with the strongest retry state among its
+/// copies) in `content.failed_deployments`; one that cannot be recorded counts as lost.
+async fn record_flush_failures(
+    pool: &PgPool,
+    lost: &std::sync::atomic::AtomicU64,
+    entities: &[ParsedEntity],
+    reason: impl Fn(&str) -> Option<String>,
+) {
+    let failed_store = LiveFailedDeploymentsStore::new(pool.clone());
+    let mut strongest = strongest_retry_state(entities);
+    for entity in entities {
+        let Some(description) = reason(&entity.entity_id) else {
+            continue;
+        };
+        let Some(retry) = strongest.remove(entity.entity_id.as_str()) else {
+            continue;
+        };
+        let auth_chain: AuthChain = match serde_json::from_value(entity.auth_chain.clone()) {
+            Ok(chain) => chain,
+            Err(conv_err) => {
+                lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if let Some(report) = &entity.report {
+                    report.record_lost();
+                }
+                tracing::error!(
+                    entity_id = %entity.entity_id,
+                    error = %conv_err,
+                    "Entity dropped by a failed batch flush has an unconvertible auth \
+                     chain; counting it as lost instead of recording an un-retryable row"
+                );
+                continue;
+            }
+        };
+        let failure = flush_failure_record(entity, auth_chain, description, retry);
+        if let Err(record_err) = failed_store.report_failure(failure).await {
+            lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(report) = &entity.report {
+                report.record_lost();
+            }
+            tracing::error!(
+                entity_id = %entity.entity_id,
+                error = %record_err,
+                "Entity dropped by a failed batch flush could not be recorded as a \
+                 failed deployment; holding the sync frontier back"
+            );
+        }
+    }
 }
 
 impl LiveSyncDeployer {
@@ -421,6 +457,7 @@ impl LiveSyncDeployer {
         let flush_backlog_max = limits.flush_backlog_max.max(1);
         Self {
             pool,
+            storage: None,
             batch: Arc::new(Mutex::new(Vec::with_capacity(BATCH_SIZE))),
             flush_sem: Arc::new(Semaphore::new(flush_concurrency.max(1))),
             in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -434,6 +471,12 @@ impl LiveSyncDeployer {
             validations: Arc::new(Semaphore::new(VALIDATIONS_IN_FLIGHT)),
             access_passed: Arc::default(),
         }
+    }
+
+    /// The store whose files the flush checks under the shared store lock (see the module doc).
+    pub fn with_store(mut self, storage: Arc<Storage>) -> Self {
+        self.storage = Some(storage);
+        self
     }
 
     fn take_access_passed(&self, key: &str) -> bool {
@@ -541,6 +584,7 @@ impl LiveSyncDeployer {
     fn trigger_flush(&self, entities: Vec<ParsedEntity>) {
         spawn_flush(
             self.pool.clone(),
+            self.storage.clone(),
             self.flush_sem.clone(),
             self.in_flight.clone(),
             self.idle_notify.clone(),
@@ -565,12 +609,20 @@ impl LiveSyncDeployer {
     }
 }
 
-async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), SyncError> {
+/// Writes a batch in one transaction. Answers the entities left out because a file their rows
+/// name is no longer stored (checked under the shared store lock when `storage` is set), each
+/// with the reason to record.
+async fn flush_batch(
+    pool: &PgPool,
+    storage: Option<&Storage>,
+    entities: &[ParsedEntity],
+) -> Result<HashMap<String, String>, SyncError> {
+    let mut dropped = HashMap::new();
     if entities.is_empty() {
-        return Ok(());
+        return Ok(dropped);
     }
 
-    let entities: Vec<&ParsedEntity> = {
+    let mut entities: Vec<&ParsedEntity> = {
         let mut seen = std::collections::HashSet::with_capacity(entities.len());
         entities
             .iter()
@@ -578,15 +630,56 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
             .collect()
     };
 
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| SyncError::Storage(e.to_string()))?;
+
+    if let Some(storage) = storage {
+        // Held until commit: an unlink under the exclusive side either sees these rows or
+        // happened before the probe below.
+        crate::storage::gc::lock_store_shared(&mut tx)
+            .await
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
+        let mut named: Vec<&str> = entities
+            .iter()
+            .flat_map(|e| {
+                std::iter::once(e.entity_id.as_str())
+                    .chain(e.content.iter().map(|(_, h)| h.as_str()))
+            })
+            .collect();
+        named.sort_unstable();
+        named.dedup();
+        let stored = storage
+            .exist_multiple(&named)
+            .await
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
+        entities.retain(|e| {
+            let mut gone: Vec<&str> = std::iter::once(e.entity_id.as_str())
+                .chain(e.content.iter().map(|(_, h)| h.as_str()))
+                .filter(|h| !stored.get(*h).copied().unwrap_or(false))
+                .collect();
+            if gone.is_empty() {
+                return true;
+            }
+            gone.sort_unstable();
+            gone.dedup();
+            dropped.insert(
+                e.entity_id.clone(),
+                format!("files left the store before the flush: {}", gone.join(", ")),
+            );
+            false
+        });
+        if entities.is_empty() {
+            return Ok(dropped);
+        }
+    }
+
     let count = entities.len();
     let metadatas: Vec<String> = entities
         .iter()
         .map(|e| serde_json::to_string(&e.entity_metadata))
         .collect::<Result<_, _>>()?;
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| SyncError::Storage(e.to_string()))?;
 
     {
         let all_pointers: Vec<String> = entities
@@ -660,7 +753,7 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
         tx.commit()
             .await
             .map_err(|e| SyncError::Storage(e.to_string()))?;
-        return Ok(());
+        return Ok(dropped);
     }
 
     let id_map: HashMap<&str, i32> = rows.iter().map(|r| (r.0.as_str(), r.1)).collect();
@@ -893,7 +986,7 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
         batch_size = count,
         "Batch flush committed"
     );
-    Ok(())
+    Ok(dropped)
 }
 
 impl LiveSyncDeployer {

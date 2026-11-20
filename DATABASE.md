@@ -128,11 +128,16 @@ deploys (`POST /entities` and partial publication) and world scene deploys
 take that lock's shared side in their write transaction and re-check every
 file they name, so an unlink batch never removes a file such a deployment
 references; a content deploy waits at most 5 s for it and answers 503 past
-that. Synced content writes do not take it and rely on the collector's age
-floor. Content's partial-upload cleanup deletes an expired upload's
+that. The peer-sync flush (read-through's too) takes the shared side in its
+batch transaction and probes the batch's distinct files there; an entity
+whose file is gone is left out and recorded in `content.failed_deployments`
+for the retry worker, and the rest commits. So the unlinks that skip the age
+floor never remove a file a content deployment commits: the history prune
+and content's partial-upload cleanup, which deletes an expired upload's
 `content.pending_deployments` row and unlinks the files it wrote
 (`pending_deployment_files.written`) that no reference names in one
-transaction under the exclusive lock, without the age floor.
+transaction under the exclusive lock. Other domains' writers do not take
+the lock and rely on the collector's age floor.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a

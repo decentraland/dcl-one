@@ -1643,23 +1643,25 @@ async fn release_upload(pool: &PgPool, storage: &Storage, limits: &Limits, entit
 ///
 /// Races: the row goes and the references are read and the blobs unlinked
 /// in one transaction holding the exclusive store lock, the collector's.
-/// Local content deploys (a partial publication included) and world scene
-/// deploys take its shared side before they check that the files they name
-/// are stored, so either such a deploy has committed its `content_files`
-/// row and the check keeps the blob, or it finds the blob gone and answers
-/// 503 for a retry that uploads it again. Another upload's receipts are
+/// Every content writer that commits a deployment takes its shared side and
+/// checks there that the files its rows name are stored: a local deploy (a
+/// partial publication included), the peer-sync flush (read-through's
+/// too) and a world scene deploy. So either such a writer has committed its
+/// rows and the check keeps the blob, or it finds the blob gone: a local
+/// deploy answers 503 for a retry that uploads it again, and the sync flush
+/// leaves that entity out and records it for the retry worker, which
+/// downloads it again. Another upload's receipts are
 /// written before its blobs, so a staged blob it claims is kept (an expired
 /// one's too, until its own cleanup); one it found stored may go between its
 /// existence check and its receipt, and its completing batch's re-check
 /// reports it missing again. A failure, or a store lock busy past its
 /// timeout, rolls the row back and the next run retries, as upstream
-/// releases the accounting only once every unlink succeeded. Writers that do
-/// not take the store lock (peer sync and read-through, other domains) are
-/// not ordered: an upload whose entity a sync or read-through download of
-/// this process holds is skipped (checked under the lock, so a download that
-/// began while it was awaited counts), but such a writer that found a shared blob stored, or
-/// stored it, and commits its row after the check loses it, the window the
-/// collector leaves them too once a blob is past its age floor.
+/// releases the accounting only once every unlink succeeded. An upload whose
+/// entity a sync or read-through download of this process holds is skipped
+/// (checked under the lock), so that download is not sent to the retry worker.
+/// Writers outside the content deployment path that store into the same
+/// store (other domains' uploads) do not take the lock; they rely on the
+/// collector's age floor, which this path does not apply.
 async fn reclaim_upload(
     pool: &PgPool,
     storage: &Storage,

@@ -1,5 +1,7 @@
 use super::*;
-use crate::sync_test_support::{signed_chain, signed_chain_behind_contract, test_pool, unique};
+use crate::sync_test_support::{
+    signed_chain, signed_chain_behind_contract, temp_storage, test_pool, unique,
+};
 use crate::sync_types::AuthLinkType;
 
 const ENTITY_BODY: &[u8] = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":[]}"#;
@@ -89,6 +91,7 @@ async fn flushed_batches_preserve_metadata_order_and_scalars() {
 fn lazy_deployer() -> LiveSyncDeployer {
     LiveSyncDeployer {
         pool: sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+        storage: None,
         batch: Arc::new(Mutex::new(Vec::new())),
         flush_sem: Arc::new(Semaphore::new(1)),
         in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -118,7 +121,7 @@ async fn metadata_guard_rejects_nul_even_on_conflict_and_rolls_back_mixed_batche
     let parse = |id: &str, metadata: &str| {
         parse_entity_for_deploy(raw(metadata).as_bytes(), id, &vec![]).unwrap()
     };
-    flush_batch(&pool, &[parse(&existing, r#"{"z":1,"a":2}"#)])
+    flush_batch(&pool, None, &[parse(&existing, r#"{"z":1,"a":2}"#)])
         .await
         .unwrap();
     // Model an already-normalized historical row. Replay must never repair it.
@@ -164,7 +167,7 @@ async fn metadata_guard_rejects_nul_even_on_conflict_and_rolls_back_mixed_batche
             vec![parse(&existing, nul)],
             vec![parse(&new_id, r#"{"z":3,"a":4}"#), parse(&existing, nul)],
         ] {
-            assert!(flush_batch(&pool, &batch).await.is_err());
+            assert!(flush_batch(&pool, None, &batch).await.is_err());
             let count: i64 =
                 sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id=$1")
                     .bind(&new_id)
@@ -176,6 +179,7 @@ async fn metadata_guard_rejects_nul_even_on_conflict_and_rolls_back_mixed_batche
     }
     flush_batch(
         &pool,
+        None,
         &[
             parse(&existing, r#"{"z":7,"a":8}"#),
             parse(&new_id, "null"),
@@ -208,6 +212,7 @@ async fn metadata_unicode_refusals_distinguish_json_input_from_scene_index() {
     let successor_body = br#"{"type":"scene","pointers":[],"timestamp":2,"metadata":{}}"#;
     flush_batch(
         &pool,
+        None,
         &[parse_entity_for_deploy(successor_body, &successor, &vec![]).unwrap()],
     )
     .await
@@ -390,6 +395,7 @@ async fn cancelling_a_flush_after_insert_keeps_retry_and_ordered_replay() {
         async move {
             flush_batch(
                 &pool,
+                None,
                 &[parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap()],
             )
             .await
@@ -408,6 +414,7 @@ async fn cancelling_a_flush_after_insert_keeps_retry_and_ordered_replay() {
     let replay = std::time::Instant::now();
     flush_batch(
         &pool,
+        None,
         &[parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap()],
     )
     .await
@@ -441,7 +448,7 @@ async fn metadata_and_retry_cleanup_roll_back_when_content_insert_fails() {
     let parsed = parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap();
     sqlx::query("INSERT INTO content.failed_deployments (entity_id,entity_type,failure_time,reason,auth_chain,error_description,snapshot_hash,retry_count,next_retry_at) VALUES ($1,'profile',now(),'Deployment error','[]','fixture','',4,now())").bind(&prefix).execute(&pool).await.unwrap();
     assert!(
-        flush_batch(&pool, &[parsed])
+        flush_batch(&pool, None, &[parsed])
             .await
             .unwrap_err()
             .to_string()
@@ -451,7 +458,7 @@ async fn metadata_and_retry_cleanup_roll_back_when_content_insert_fails() {
     assert_eq!(counts, (0, 0, 1));
     let mut retry = parse_entity_for_deploy(raw.as_bytes(), &prefix, &vec![]).unwrap();
     retry.content.pop();
-    flush_batch(&pool, &[retry]).await.unwrap();
+    flush_batch(&pool, None, &[retry]).await.unwrap();
     let stored: String = sqlx::query_scalar(
         "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
     )
@@ -1300,4 +1307,146 @@ async fn failed_deployments_round_trip_and_never_rewind_retry_state() {
 
     cleanup(&pool, &prefix).await;
     pool.close().await;
+}
+
+/// A profile entity on a pointer of its own, its content file and the entity file stored: the
+/// entity id, its content hash and the raw entity.
+async fn stored_profile(storage: &Storage, tag: &str) -> (String, String, String) {
+    let content = format!("sync-store-lock-content-{tag}");
+    let content_hash = crate::auth::hash_bytes_v1(content.as_bytes());
+    storage
+        .store(&content_hash, bytes::Bytes::from(content))
+        .await
+        .unwrap();
+    let raw = format!(
+        r#"{{"type":"profile","pointers":["{tag}"],"timestamp":1,"content":[{{"file":"a.png","hash":"{content_hash}"}}],"metadata":{{}}}}"#
+    );
+    let id = crate::auth::hash_bytes_v1(raw.as_bytes());
+    storage
+        .store(&id, bytes::Bytes::from(raw.clone()))
+        .await
+        .unwrap();
+    (id, content_hash, raw)
+}
+
+async fn delete_entity_rows(pool: &PgPool, ids: &[&str]) {
+    for sql in [
+        "DELETE FROM content.content_files WHERE deployment IN (SELECT id FROM content.deployments WHERE entity_id = ANY($1))",
+        "DELETE FROM content.active_pointers WHERE entity_id = ANY($1)",
+        "DELETE FROM content.deployments WHERE entity_id = ANY($1)",
+        "DELETE FROM content.failed_deployments WHERE entity_id = ANY($1)",
+    ] {
+        sqlx::query(sql).bind(ids).execute(pool).await.unwrap();
+    }
+}
+
+/// A file unlinked between sync's download and its flush: the flush, checking under the shared
+/// store lock, leaves that entity out (no row names the missing file) and records it for the
+/// retry worker; the rest of the batch commits.
+#[tokio::test]
+async fn a_flush_leaves_out_an_entity_whose_file_left_the_store() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock").await;
+    let prefix = unique();
+    let (lost_id, lost_hash, lost_raw) = stored_profile(&storage, &format!("{prefix}-lost")).await;
+    let (kept_id, kept_hash, kept_raw) = stored_profile(&storage, &format!("{prefix}-kept")).await;
+    let deployer = LiveSyncDeployer::new(pool.clone(), 1, SyncValidation::AuthChainOnly)
+        .with_store(storage.clone());
+    for (id, raw) in [(&lost_id, &lost_raw), (&kept_id, &kept_raw)] {
+        deployer
+            .deploy_entity(
+                raw.as_bytes(),
+                id,
+                &signed_chain(id).await,
+                DeploymentContext::Synced,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    storage.delete_strict(&lost_hash).await.unwrap();
+    deployer.flush().await.unwrap();
+
+    let named: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.content_files WHERE content_hash = $1")
+            .bind(&lost_hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(named, 0, "no row names the missing file");
+    assert!(!is_entity_deployed(&pool, &lost_id, 0).await.unwrap());
+    let reason: String = sqlx::query_scalar(
+        "SELECT error_description FROM content.failed_deployments WHERE entity_id = $1",
+    )
+    .bind(&lost_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(reason.contains(&lost_hash), "{reason}");
+    assert_eq!(deployer.lost_count(), 0);
+    assert!(is_entity_deployed(&pool, &kept_id, 0).await.unwrap());
+    let kept: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.content_files WHERE content_hash = $1")
+            .bind(&kept_hash)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, 1);
+
+    delete_entity_rows(&pool, &[&lost_id, &kept_id]).await;
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A flush waits while an unlink batch holds the store lock's exclusive side, and commits once
+/// it is released.
+#[tokio::test]
+async fn a_flush_waits_for_the_exclusive_store_lock() {
+    let Some(pool) = test_pool(3).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("store-lock-wait").await;
+    let (id, _, raw) = stored_profile(&storage, &format!("{}-wait", unique())).await;
+    let parsed = parse_entity_for_deploy(raw.as_bytes(), &id, &signed_chain(&id).await).unwrap();
+    let unlinking = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let mut flush = std::pin::pin!(flush_batch(
+        &pool,
+        Some(&storage),
+        std::slice::from_ref(&parsed)
+    ));
+    let mut queued = false;
+    for _ in 0..100 {
+        if let Ok(done) =
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut flush).await
+        {
+            panic!("the flush did not wait for the unlink batch: {done:?}");
+        }
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks \
+             WHERE locktype = 'advisory' AND mode = 'ShareLock' AND NOT granted \
+               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND (classid::bigint << 32 | objid::bigint) = $1",
+        )
+        .bind(crate::storage::gc::STORE_LOCK_KEY)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if waiting >= 1 {
+            queued = true;
+            break;
+        }
+    }
+    assert!(queued, "the flush never queued on the store lock");
+    assert!(!is_entity_deployed(&pool, &id, 0).await.unwrap());
+    unlinking.commit().await.unwrap();
+    let dropped = flush.await.unwrap();
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert!(is_entity_deployed(&pool, &id, 0).await.unwrap());
+
+    delete_entity_rows(&pool, &[&id]).await;
+    let _ = std::fs::remove_dir_all(tmp);
 }
