@@ -13,7 +13,7 @@ vi.mock("@/data/lib/catalyst/places/destinations", async (original) => ({
   fetchDestinations: vi.fn(),
 }));
 
-type Payload = { sid: string; platform: { kind: string }; dehydratedState: DehydratedState; unavailable: boolean; liveMinUsers: number };
+type Payload = { sid: string; platform: { kind: string }; dehydratedState: DehydratedState; unavailable: boolean; liveMinUsers: number | null };
 
 const FLAG = "dapps-places-live-min-user";
 
@@ -151,12 +151,13 @@ describe("when the document reads Live Now's head count", () => {
   it.each([
     ["answers 500", async () => new Response("down", { status: 500 })],
     ["is unreachable", async (): Promise<Response> => Promise.reject(new Error("ECONNREFUSED"))],
-  ])("should hand 0 and still render Live Now when the flag service %s", async (_case, answer) => {
+  ])("should hand no head count and still render Live Now when the flag service %s", async (_case, answer) => {
     serveFlags(answer);
     vi.mocked(fetchDestinations).mockResolvedValue({ data: [destination()], total: 1, received: 1, copy: null });
     const { payload, status } = await run("http://localhost/places");
     expect(status).toBe(200);
-    expect(payload.liveMinUsers).toBe(0);
+    // Not a read: the browser reads the flags on its first client navigation instead of keeping 0.
+    expect(payload.liveMinUsers).toBeNull();
     expect(keys(payload.dehydratedState)).toEqual(expect.arrayContaining([["places", "live"]]));
   });
 });

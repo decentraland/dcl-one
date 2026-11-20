@@ -56,7 +56,10 @@ export const adminCopy = {
     otherPlaceholder: 'User will receive a notification, be as descriptive as you can.',
     cancel: 'Cancel',
     submit: 'Submit',
-    required: 'Select at least one reason'
+    required: 'Select at least one reason',
+    noteCount: (length: number, limit: number) => `${length}/${limit}`,
+    noteTooLong: (limit: number) =>
+      `The note is too long for the chosen reasons. Keep it to ${limit} characters.`
   },
   permissions: {
     addTitle: 'Add User',
@@ -124,14 +127,27 @@ export const REJECT_REASONS = [
 
 export type RejectReasonId = (typeof REJECT_REASONS)[number]['id']
 
-const REJECTION_REASON_MAX_LENGTH = 500
+/** The longest rejection reason the Events API stores (its `MAX_REASON_LENGTH`). */
+export const REJECTION_REASON_MAX_LENGTH = 500
+const NOTE_SEPARATOR = '. '
 
-/** The reason the API stores: the chosen reasons' titles, then the moderator's note (as decentraland.org). */
-export function rejectionReason(reasons: readonly RejectReasonId[], notes: string): string {
-  const titles = REJECT_REASONS.filter((reason) => reasons.includes(reason.id))
+const reasonTitles = (reasons: readonly RejectReasonId[]) =>
+  REJECT_REASONS.filter((reason) => reasons.includes(reason.id))
     .map((reason) => reason.title)
     .join(', ')
-  return [titles, notes.trim()].filter(Boolean).join('. ').slice(0, REJECTION_REASON_MAX_LENGTH)
+
+/** The longest note that fits in the stored reason beside the chosen reasons' titles. */
+export function rejectionNoteLimit(reasons: readonly RejectReasonId[]): number {
+  const titles = reasonTitles(reasons)
+  return REJECTION_REASON_MAX_LENGTH - (titles ? titles.length + NOTE_SEPARATOR.length : 0)
+}
+
+/**
+ * The reason the API stores: the chosen reasons' titles, then the moderator's note (as decentraland.org).
+ * The reject dialog keeps the note within `rejectionNoteLimit`, so nothing is cut here.
+ */
+export function rejectionReason(reasons: readonly RejectReasonId[], notes: string): string {
+  return [reasonTitles(reasons), notes.trim()].filter(Boolean).join(NOTE_SEPARATOR)
 }
 
 /**

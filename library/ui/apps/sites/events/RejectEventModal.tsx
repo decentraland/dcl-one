@@ -1,12 +1,10 @@
 import { useId, useState, type ReactNode } from 'react'
 import { CheckboxLabel } from '../../../components/CheckboxLabel/CheckboxLabel'
 import { Button } from '../shared/Button/Button'
-import { adminCopy, REJECT_REASONS, type RejectReasonId } from './admin-copy'
+import { adminCopy, REJECT_REASONS, rejectionNoteLimit, type RejectReasonId } from './admin-copy'
 import { Dialog } from './Dialog'
 import { Notice } from './Notice'
 import styles from './AdminModal.module.css'
-
-const MAX_NOTES_LENGTH = 2000
 
 export type RejectEventModalProps = {
   busy: boolean
@@ -18,13 +16,18 @@ export type RejectEventModalProps = {
 
 /**
  * decentraland.org's RejectEventModal: at least one reason, an optional note for the creator, Cancel
- * and Submit. The page builds the stored reason from both.
+ * and Submit. The page builds the stored reason from both, so the note is limited to what fits beside
+ * the chosen reasons' titles, with a counter; a note made too long by choosing more reasons blocks Submit.
  */
 export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEventModalProps) {
   const titleId = useId()
+  const notesId = useId()
+  const counterId = useId()
   const [selected, setSelected] = useState<RejectReasonId[]>([])
   const [notes, setNotes] = useState('')
   const [missing, setMissing] = useState(false)
+  const limit = rejectionNoteLimit(selected)
+  const tooLong = notes.length > limit
   const close = () => {
     if (!busy) onClose()
   }
@@ -58,25 +61,34 @@ export function RejectEventModal({ busy, feedback, onClose, onSubmit }: RejectEv
           ))}
         </ul>
         {missing ? <Notice tone="error">{adminCopy.reject.required}</Notice> : null}
-        <label className={styles.notes}>
-          <span className={styles.notesLabel}>{adminCopy.reject.otherLabel}</span>
+        <div className={styles.notes}>
+          <label className={styles.notesLabel} htmlFor={notesId}>
+            {adminCopy.reject.otherLabel}
+          </label>
           <textarea
+            id={notesId}
             className={styles.textarea}
             placeholder={adminCopy.reject.otherPlaceholder}
-            maxLength={MAX_NOTES_LENGTH}
+            maxLength={limit}
             rows={3}
             value={notes}
             disabled={busy}
+            aria-describedby={counterId}
+            aria-invalid={tooLong || undefined}
             onChange={(event) => setNotes(event.target.value)}
           />
-        </label>
+          <p id={counterId} className={styles.notesCount} data-over={tooLong || undefined}>
+            {adminCopy.reject.noteCount(notes.length, limit)}
+          </p>
+        </div>
+        {tooLong ? <Notice tone="error">{adminCopy.reject.noteTooLong(limit)}</Notice> : null}
         {feedback}
         <div className={styles.footer}>
           <Button variant="secondary" disabled={busy} onClick={close}>
             {adminCopy.reject.cancel}
           </Button>
           <Button
-            disabled={busy}
+            disabled={busy || tooLong}
             onClick={() => {
               if (selected.length === 0) {
                 setMissing(true)

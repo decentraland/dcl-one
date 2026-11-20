@@ -44,12 +44,16 @@ beforeEach(async () => {
 
 const FLAG = "dapps-places-live-min-user";
 
-/** The feature-flags service (as the server reads it) and this server's /internal/feature-flags, both with `variant`. */
-function serveFlags(variant: string) {
+/**
+ * The feature-flags service (as the server reads it) and this server's /internal/feature-flags, both with `variant`.
+ * `serviceDown` makes the service fail, as on a cold start before its first answer.
+ */
+function serveFlags(variant: string, { serviceDown = false } = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       if (String(url).endsWith("/dapps.json")) {
+        if (serviceDown) return new Response("down", { status: 500 });
         const payload = { type: "string", value: variant };
         return Response.json({ flags: { [FLAG]: true }, variants: { [FLAG]: { name: "min_users", enabled: true, payload } } });
       }
@@ -188,6 +192,56 @@ describe("when hydrating the real Places document", () => {
     expect(b.places.dehydratedState.queries[0]?.queryKey).toEqual(["places", "browse", "art", "bravo"]);
     expect(JSON.stringify(a.places.dehydratedState)).not.toContain('"bravo"');
     expect(JSON.stringify(b.places.dehydratedState)).not.toContain('"alpha"');
+  });
+
+  async function hydrateLive(url: string) {
+    const live = [destination({ id: "busy", title: "Busy", user_count: 6 }), destination({ id: "quiet", title: "Quiet", user_count: 2 })];
+    vi.mocked(fetchDestinations).mockImplementation(async (params) =>
+      params?.limit === 40 ? { data: live, total: 2, received: 2, copy: null } : { data: [], total: 0, received: 0, copy: null },
+    );
+    const data = await documentData(url);
+    const container = document.createElement("div");
+    container.innerHTML = renderToString(tree(data).element);
+    document.body.append(container);
+    const browser = tree(data);
+    await act(async () => {
+      hydrated = hydrateRoot(container, browser.element);
+    });
+    const rail = () => within(container).getByRole("group", { name: "Live Now" });
+    const flagReads = () => vi.mocked(fetch).mock.calls.filter(([called]) => String(called).startsWith("/internal/feature-flags")).length;
+    return { data, browser, rail, flagReads };
+  }
+
+  describe("and the flag service had not answered the server yet", () => {
+    it("should read the flags on the first client navigation and apply their head count", async () => {
+      serveFlags("5", { serviceDown: true });
+      const { data, browser, rail, flagReads } = await hydrateLive("https://example.org/places");
+      expect(data.places.liveMinUsers).toBeNull();
+      // Every scene while no head count is known.
+      expect(within(rail()).getByRole("link", { name: "Quiet" })).toBeTruthy();
+      await act(async () => browser.router.navigate("/places?category=music"));
+      await waitFor(() => expect(browser.router.state.navigation.state).toBe("idle"));
+      expect(flagReads()).toBe(1);
+      await waitFor(() => expect(within(rail()).queryByRole("link", { name: "Quiet" })).toBeNull());
+      expect(within(rail()).getByRole("link", { name: "Busy" })).toBeTruthy();
+      // Known now: a later navigation does not read the flags again.
+      await act(async () => browser.router.navigate("/places?category=art"));
+      await waitFor(() => expect(browser.router.state.navigation.state).toBe("idle"));
+      expect(flagReads()).toBe(1);
+    });
+  });
+
+  describe("and the flag service answered a head count of 0", () => {
+    it("should keep 0 on a client navigation without reading the flags", async () => {
+      serveFlags("0");
+      const { data, browser, rail, flagReads } = await hydrateLive("https://example.org/places");
+      expect(data.places.liveMinUsers).toBe(0);
+      serveFlags("5");
+      await act(async () => browser.router.navigate("/places?category=music"));
+      await waitFor(() => expect(browser.router.state.navigation.state).toBe("idle"));
+      expect(within(rail()).getByRole("link", { name: "Quiet" })).toBeTruthy();
+      expect(flagReads()).toBe(0);
+    });
   });
 
   it("should hydrate Live Now under the flag's head count and keep it on a client navigation", async () => {

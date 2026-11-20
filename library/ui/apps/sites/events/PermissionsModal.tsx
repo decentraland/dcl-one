@@ -29,11 +29,11 @@ export type PermissionsModalProps = {
   feedback?: ReactNode
   onClose: () => void
   /**
-   * `seeded` is true when the switches started from the account's current grants (Edit User, or a typed
-   * address that named a listed account); false means a fresh Add draft, whose save must not replace grants
-   * the account already holds.
+   * `permissions` are the chosen grants and `initial` the grants the switches started from (the edited
+   * account's, a typed listed account's, or none for a fresh Add). Their difference is the change to apply
+   * to the account's current set, which may have moved since the list was read.
    */
-  onSubmit: (payload: { address: string; permissions: string[]; seeded: boolean }) => void
+  onSubmit: (payload: { address: string; permissions: string[]; initial: string[] }) => void
 }
 
 /**
@@ -54,8 +54,11 @@ export function PermissionsModal({
   const descriptionPrefix = useId()
   const [address, setAddress] = useState(user?.address ?? '')
   const [permissions, setPermissions] = useState<string[]>([...initial])
-  // The choices made before the typed address named a listed account, restored when it no longer does.
+  // The choices made before the typed address named a listed account, restored when it no longer does,
+  // and that account's grants, which the switches then started from.
   const [beforeMatch, setBeforeMatch] = useState<string[] | null>(null)
+  const [matched, setMatched] = useState<readonly string[] | null>(null)
+  const start = matched ?? initial
   const valid = WALLET.test(address.trim())
   const invalid = address.length > 0 && !valid
   const target = user?.address ?? (valid ? address.trim() : '')
@@ -66,10 +69,12 @@ export function PermissionsModal({
     const held = WALLET.test(next.trim()) ? existing?.(next.trim()) : undefined
     if (held) {
       if (beforeMatch === null) setBeforeMatch(permissions)
+      setMatched(held)
       setPermissions([...held])
     } else if (beforeMatch !== null) {
       setPermissions(beforeMatch)
       setBeforeMatch(null)
+      setMatched(null)
     }
   }
   // The signed-in account keeps its own user administration, whatever the dialog started from.
@@ -160,7 +165,7 @@ export function PermissionsModal({
           <Button
             disabled={!valid || busy}
             onClick={() =>
-              onSubmit({ address: address.trim(), permissions: submitted, seeded: editing })
+              onSubmit({ address: address.trim(), permissions: submitted, initial: [...start] })
             }
           >
             {adminCopy.permissions.save}

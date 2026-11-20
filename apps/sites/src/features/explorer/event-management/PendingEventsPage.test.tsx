@@ -100,12 +100,22 @@ describe("when opening the Pending Events page", () => {
       expect(postJSON).toHaveBeenCalledWith(...moderation("own-one", { approved: true }));
     });
 
-    it("should offer no approval for someone else's event opened by link", async () => {
+    it("should list only its own recently approved event", async () => {
+      api.events = [
+        makeEvent({ id: "own-approved", name: "My approved show", user: MODERATOR, approved: true }),
+        makeEvent({ id: "other-approved", name: "Someone else's approved show", user: CREATOR, approved: true }),
+      ];
+      renderAdminPage(<PendingEventsPage />, PATH);
+      const recent = await screen.findByRole("region", { name: "Recently Approved (Last 24hs)" });
+      expect(await within(recent).findByRole("link", { name: "My approved show" })).toBeTruthy();
+      expect(within(recent).queryByRole("link", { name: "Someone else's approved show" })).toBeNull();
+    });
+
+    it("should open no review for someone else's approved event named by a link", async () => {
       api.events[1] = { ...api.events[1]!, approved: true };
       renderAdminPage(<PendingEventsPage />, `${PATH}?id=other-one`);
-      const review = await screen.findByRole("dialog", { name: "Someone else's show" });
-      expect(within(review).queryByRole("button", { name: "Approve" })).toBeNull();
-      expect(within(review).queryByRole("button", { name: "Edit Event" })).toBeNull();
+      await screen.findByRole("link", { name: "My own show" });
+      expect(screen.queryByRole("dialog")).toBeNull();
     });
   });
 

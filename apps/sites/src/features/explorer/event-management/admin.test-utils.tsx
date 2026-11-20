@@ -40,7 +40,10 @@ export type FakeEventsApi = {
   /** The moderator-only list; `"forbidden"` answers 403 as for an account that is not a moderator. */
   profiles: EventProfile[] | "forbidden";
   events: ManagedEvent[];
-  /** Other wallets' stored settings, as one wallet's read answers them; a wallet not named has none. */
+  /**
+   * Other wallets' stored settings, as one wallet's read answers them. A wallet not named here answers its
+   * grants in `profiles`, as the server stores one set for both reads, or none when it is not listed.
+   */
   settings?: Record<string, EventProfile>;
   /** Fails the next request of each kind once, with this error. */
   failNext: Partial<Record<"profile" | "events" | "moderate" | "settings" | "save", Error>>;
@@ -72,7 +75,8 @@ export function fakeEventsApi(api: FakeEventsApi) {
     const wallet = /^\/events\/api\/profiles\/(0x[0-9a-f]{40})\/settings$/.exec(path);
     if (wallet) {
       take("settings");
-      return { ok: true, data: api.settings?.[wallet[1]!] ?? null } as never;
+      const listed = Array.isArray(api.profiles) ? api.profiles.find((entry) => entry.user.toLowerCase() === wallet[1]) : undefined;
+      return { ok: true, data: api.settings?.[wallet[1]!] ?? listed ?? null } as never;
     }
     throw new Error(`Unexpected read ${path}`);
   });

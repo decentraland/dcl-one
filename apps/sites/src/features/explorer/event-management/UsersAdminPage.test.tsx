@@ -294,6 +294,50 @@ describe("when opening the Users page", () => {
     expect(postJSON).toHaveBeenCalledWith(...saving(address(1), ["approve_own_event", "edit_any_schedule"]));
   });
 
+  describe("and another moderator changed the account's grants after the list loaded", () => {
+    beforeEach(() => {
+      api.settings = { [address(1)]: { user: address(1), permissions: ["approve_own_event", "edit_any_event", "edit_any_schedule", "approve_any_event"] } };
+    });
+
+    it("should keep the grant the other moderator added when a switch is turned off", async () => {
+      renderAdminPage(<UsersAdminPage />, PATH);
+      await user.click(await screen.findByRole("button", { name: `${address(1)} (Selene)` }));
+      const dialog = screen.getByRole("dialog", { name: "Edit User" });
+      expect(within(dialog).getByRole<HTMLInputElement>("switch", { name: "Approve Events" }).checked).toBe(false);
+      await user.click(within(dialog).getByRole("switch", { name: "Edit Events" }));
+      await user.click(within(dialog).getByRole("button", { name: "Save Changes" }));
+      await screen.findByText("Permissions updated");
+      expect(postJSON).toHaveBeenCalledWith(...saving(address(1), ["approve_own_event", "edit_any_schedule", "approve_any_event"]));
+    });
+
+    it("should add a switch turned on to the account's current grants", async () => {
+      api.settings = { [address(1)]: { user: address(1), permissions: ["approve_own_event", "edit_any_schedule"] } };
+      renderAdminPage(<UsersAdminPage />, PATH);
+      await user.click(await screen.findByRole("button", { name: `${address(1)} (Selene)` }));
+      const dialog = screen.getByRole("dialog", { name: "Edit User" });
+      await user.click(within(dialog).getByRole("switch", { name: "Edit Users" }));
+      await user.click(within(dialog).getByRole("button", { name: "Save Changes" }));
+      await screen.findByText("Permissions updated");
+      // Edit Events, removed by the other moderator and left untouched here, stays removed.
+      expect(postJSON).toHaveBeenCalledWith(...saving(address(1), ["approve_own_event", "edit_any_schedule", "edit_any_profile"]));
+    });
+  });
+
+  describe("and reading the edited account's grants fails", () => {
+    beforeEach(() => { api.failNext.settings = new Error("Settings unavailable"); });
+
+    it("should save nothing and report the failure in the dialog", async () => {
+      renderAdminPage(<UsersAdminPage />, PATH);
+      await user.click(await screen.findByRole("button", { name: `${address(1)} (Selene)` }));
+      const dialog = screen.getByRole("dialog", { name: "Edit User" });
+      await user.click(within(dialog).getByRole("switch", { name: "Edit Events" }));
+      await user.click(within(dialog).getByRole("button", { name: "Save Changes" }));
+      expect((await within(dialog).findByRole("alert")).textContent).toBe("Unable to read this wallet's current permissions. Please try again.");
+      expect(postJSON).not.toHaveBeenCalled();
+      expect(within(dialog).getByRole<HTMLInputElement>("switch", { name: "Edit Events" }).checked).toBe(false);
+    });
+  });
+
   it("should not let the signed-in account remove its own user administration", async () => {
     renderAdminPage(<UsersAdminPage />, PATH);
     await user.click(await screen.findByRole("button", { name: MODERATOR }));

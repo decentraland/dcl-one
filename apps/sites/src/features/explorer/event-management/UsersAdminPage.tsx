@@ -17,7 +17,15 @@ import { EventAdminTabs } from "./EventAdminTabs";
 import { useEventAdmin, type EventAdminAccess } from "./useEventAdmin";
 import { useToast } from "./useToast";
 
+const SELF_LOCKED = "edit_any_profile";
+
 type Editing = { user?: AdminUserRow; permissions: readonly string[] };
+
+/** The wallet's current grants with the switches that changed from `initial` to `chosen` applied. */
+function applyPermissionChanges(current: readonly string[], initial: readonly string[], chosen: readonly string[]): string[] {
+  const removed = new Set(initial.filter((permission) => !chosen.includes(permission)));
+  return [...new Set([...current.filter((permission) => !removed.has(permission)), ...chosen.filter((permission) => !initial.includes(permission))])];
+}
 
 export default function UsersAdminPage() {
   const access = useEventAdmin();
@@ -59,7 +67,7 @@ function UsersAdmin({ access, profiles }: { access: EventAdminAccess; profiles: 
     setEditing(next);
   }
 
-  async function save({ address, permissions, seeded }: { address: string; permissions: string[]; seeded: boolean }) {
+  async function save({ address, permissions, initial }: { address: string; permissions: string[]; initial: string[] }) {
     const signer = getIdentity();
     if (!signer || signer.signer.toLowerCase() !== access.identity?.signer.toLowerCase()) {
       openSignIn();
@@ -68,21 +76,22 @@ function UsersAdmin({ access, profiles }: { access: EventAdminAccess; profiles: 
     if (busy) return;
     setBusy(true);
     setError(null);
-    let sent = permissions;
     try {
-      // A save replaces the wallet's whole set. Unless the switches started from the account's current grants,
-      // the draft knows nothing of what the wallet holds (it may be missing from the capped list, or have
-      // appeared in it after the address was typed), so its grants are read now and the choices added to them.
-      if (!seeded) {
-        let held: EventProfile | null;
-        try {
-          held = await loadEventProfileSettings(signer, address);
-        } catch {
-          if (mounted.current) setError(adminCopy.permissions.readError);
-          return;
-        }
-        sent = [...new Set([...(held?.permissions ?? []), ...permissions])];
+      // A save replaces the wallet's whole set, and the switches started from a list read up to the access
+      // query's stale time ago (or from nothing, for an address typed in Add). So the wallet's grants are read
+      // now and only the switches that changed are applied to them: a grant another moderator added since
+      // the list loaded is kept.
+      let held: EventProfile | null;
+      try {
+        held = await loadEventProfileSettings(signer, address);
+      } catch {
+        if (mounted.current) setError(adminCopy.permissions.readError);
+        return;
       }
+      const changed = applyPermissionChanges(held?.permissions ?? [], initial, permissions);
+      // The signed-in account keeps its own user administration, as the dialog's locked switch shows.
+      const own = address.toLowerCase() === signer.signer.toLowerCase();
+      const sent = own && !changed.includes(SELF_LOCKED) ? [...changed, SELF_LOCKED] : changed;
       const saved = await saveEventPermissions(signer, address, sent);
       void client.invalidateQueries({ queryKey: eventAdminKeys.access(signer.signer) });
       if (!mounted.current) return;

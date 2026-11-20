@@ -62,17 +62,18 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
 
   const signer = identity?.signer.toLowerCase() ?? "";
   const own = (event: ManagedEvent) => (event.user ?? "").toLowerCase() === signer;
-  // A reviewer's list has every creator's pending events; an own-events approver's has only theirs
-  // (the API answers them no one else's), kept to theirs here too.
+  // A reviewer's lists have every creator's events; an own-events approver's have only theirs
+  // (the API answers them no one else's pending ones), kept to theirs here too, Recently Approved included.
   const reviewer = access.canApproveAny || access.canEditAny;
-  const pending = (queue.data?.events ?? []).filter((event) => reviewer || own(event));
+  const visible = (event: ManagedEvent) => reviewer || own(event);
+  const pending = (queue.data?.events ?? []).filter(visible);
   // As the API's signed event PATCH: another creator's event takes `edit_any_event` before any change
   // (else 403), then `approve_any_event` to approve; the owner approves with either approval grant. A
   // rejection reason is stored only from an `approve_any_event` reviewer, so Reject stays theirs.
   const mayEdit = (event: ManagedEvent) => access.canEditAny || own(event);
   const mayApprove = (event: ManagedEvent) => mayEdit(event) && (access.canApproveAny || (access.canApproveOwn && own(event)));
   const mayReject = (event: ManagedEvent) => mayEdit(event) && access.canApproveAny;
-  const recentlyApproved = queue.data?.recentlyApproved ?? [];
+  const recentlyApproved = (queue.data?.recentlyApproved ?? []).filter(visible);
   const openId = params.get("id");
   const review = openId ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
   const now = new Date();

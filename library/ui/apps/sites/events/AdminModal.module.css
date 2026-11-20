@@ -76,6 +76,17 @@
   font-size: var(--dcl-font-size-body-xs);
 }
 
+.notesCount {
+  margin: 0;
+  text-align: end;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-body-xs);
+}
+
+.notesCount[data-over] {
+  color: var(--dcl-feedback-error);
+}
+
 .textarea {
   box-sizing: border-box;
   width: 100%;
