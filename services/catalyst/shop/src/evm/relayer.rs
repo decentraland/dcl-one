@@ -129,7 +129,8 @@ struct StoredAccounts {
     until: Instant,
     /// Whether `accounts` came from a complete list read, not only the configured relayer.
     listed: bool,
-    accounts: Arc<HashSet<Address>>,
+    /// `None` while neither the list nor the configured relayer's own account was ever read.
+    accounts: Option<Arc<HashSet<Address>>>,
 }
 
 pub struct Relayer {
@@ -181,10 +182,11 @@ impl Relayer {
     /// Every relayer account (`GET /api/v1/relayers`, all pages). Only the first call, before
     /// anything is stored, waits for a read; later ones answer the stored list, which
     /// [`Relayer::refresh_accounts`] keeps current. Concurrent callers share one read. `None` when
-    /// nothing is stored within [`ACCOUNTS_FIRST_WAIT`].
+    /// nothing is stored within the first wait ([`Relayer::with_first_wait`]), or when no read of
+    /// the list or of the configured relayer's own account has succeeded yet.
     pub async fn accounts(&self) -> Option<Arc<HashSet<Address>>> {
         if let Some(stored) = self.accounts.lock().as_ref() {
-            return Some(stored.accounts.clone());
+            return stored.accounts.clone();
         }
         let _ = tokio::time::timeout(
             self.first_wait,
@@ -194,7 +196,7 @@ impl Relayer {
         self.accounts
             .lock()
             .as_ref()
-            .map(|stored| stored.accounts.clone())
+            .and_then(|stored| stored.accounts.clone())
     }
 
     /// The background pass: reads the list when it is missing, failed last time, or would expire
@@ -207,8 +209,9 @@ impl Relayer {
     }
 
     /// Reads the list when `due` says so. A failed read keeps the last list, or, when none was
-    /// read yet, stores only the configured relayer's own account (`GET /api/v1/relayers/{id}`);
-    /// either way it is due again on the next pass.
+    /// read yet, stores only the configured relayer's own account (`GET /api/v1/relayers/{id}`),
+    /// or no accounts when that read fails too, so [`Relayer::accounts`] answers `None` rather
+    /// than an empty set; either way it is due again on the next pass.
     async fn read_accounts_if(
         &self,
         due: impl Fn(Option<&StoredAccounts>) -> bool,
@@ -222,7 +225,7 @@ impl Relayer {
                 *self.accounts.lock() = Some(StoredAccounts {
                     until: Instant::now() + ACCOUNTS_REFRESH,
                     listed: true,
-                    accounts: Arc::new(accounts),
+                    accounts: Some(Arc::new(accounts)),
                 });
                 return Ok(());
             }
@@ -242,8 +245,8 @@ impl Relayer {
                     "economy: could not read the relayer accounts; only the configured relayer's own account is refused until a read succeeds"
                 );
                 let accounts = match own {
-                    Ok(own) => Arc::new(own.into_iter().collect()),
-                    Err(_) => last.map(|l| l.accounts).unwrap_or_default(),
+                    Ok(own) => Some(Arc::new(own.into_iter().collect())),
+                    Err(_) => last.and_then(|l| l.accounts),
                 };
                 (false, accounts)
             }
@@ -652,7 +655,8 @@ mod tests {
     }
 
     /// While the accounts list cannot be read, concurrent and following callers share one read
-    /// instead of each reading it again; the background pass retries it.
+    /// instead of each reading it again, and get nothing rather than an empty list while the
+    /// configured relayer's own account cannot be read either; the background pass retries it.
     #[tokio::test]
     async fn a_failed_accounts_read_is_shared_and_not_repeated_per_call() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -671,8 +675,8 @@ mod tests {
         let (url, server) = serve(app).await;
         let relayer = relayer(&url);
         let (a, b) = tokio::join!(relayer.accounts(), relayer.accounts());
-        assert!(a.unwrap().is_empty() && b.unwrap().is_empty());
-        assert!(relayer.accounts().await.unwrap().is_empty());
+        assert!(a.is_none() && b.is_none());
+        assert!(relayer.accounts().await.is_none());
         assert_eq!(reads.load(Ordering::SeqCst), 1);
         server.abort();
     }
@@ -763,7 +767,7 @@ mod tests {
             let (url, server, _) = listing(pages, total).await;
             let relayer = relayer(&url);
             assert!(relayer.refresh_accounts().await.is_err());
-            assert!(relayer.accounts().await.unwrap().is_empty());
+            assert!(relayer.accounts().await.is_none());
             server.abort();
         }
     }
@@ -902,7 +906,7 @@ mod tests {
             );
         let (url, server) = serve(app).await;
         let relayer = relayer(&url);
-        assert!(relayer.accounts().await.unwrap().is_empty());
+        assert!(relayer.accounts().await.is_none());
         assert!(relayer.refresh_accounts().await.is_err());
         assert_eq!(
             *relayer.accounts().await.unwrap(),

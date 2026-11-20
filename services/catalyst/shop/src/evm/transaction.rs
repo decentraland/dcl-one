@@ -611,8 +611,8 @@ impl TransactionComponent {
                 "this relay serves only the test's buyers (CREDITS_TRIAL_MODE)".into(),
             ));
         }
-        self.check_self_relay(&sender).await?;
         check_refused_method(settings, tx)?;
+        self.check_self_relay(&sender).await?;
         self.check_contract_address(contracts, tx).await?;
         check_sale_price(settings, tx)?;
         if self.chain.is_some() {
