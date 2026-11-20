@@ -741,12 +741,12 @@ impl PassOutcome {
     }
 }
 
-/// Clamp the chain's safe head to an optional operator stop block.
 /// Whether a cursor at `last_block` is held at its stop block, with nothing left to walk.
 fn held_at_stop(last_block: i64, stop: Option<u64>) -> bool {
     stop.is_some_and(|s| last_block >= s as i64)
 }
 
+/// Clamp the chain's safe head to an optional operator stop block.
 pub fn target_block(safe: u64, stop: Option<u64>) -> u64 {
     stop.map_or(safe, |s| s.min(safe))
 }
