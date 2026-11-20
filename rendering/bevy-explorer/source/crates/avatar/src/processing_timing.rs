@@ -9,12 +9,14 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 /// The last run of `process_avatar`.
-#[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
-pub struct AvatarProcessingRun {
+// only the Explorer's measurement reads it
+#[cfg_attr(not(feature = "explorer"), allow(dead_code))]
+#[derive(Resource, Default)]
+pub(crate) struct AvatarProcessingRun {
     /// How long it took.
-    pub spent: Duration,
+    pub(crate) spent: Duration,
     /// The avatars it processed.
-    pub processed: usize,
+    pub(crate) processed: usize,
 }
 
 #[cfg(feature = "explorer")]
@@ -28,7 +30,6 @@ mod explorer {
     use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
 
     use super::AvatarProcessingRun;
-    use crate::process_avatar;
 
     /// A frame's avatar processing is logged from this long.
     const LOGGED_FROM: Duration = Duration::from_millis(1);
@@ -37,7 +38,8 @@ mod explorer {
 
     impl Plugin for AvatarProcessingTimingPlugin {
         fn build(&self, app: &mut App) {
-            app.add_systems(Update, measure_avatar_processing.after(process_avatar));
+            // `process_avatar` ran in `Update`: no ordering against it is needed here
+            app.add_systems(PostUpdate, measure_avatar_processing);
         }
     }
 

@@ -76,7 +76,7 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
-pub mod processing_timing;
+mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 

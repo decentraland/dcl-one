@@ -11,9 +11,9 @@ use crate::{
     update_render_avatar, AvatarLoaded, AvatarProcessed, AvatarSelection, AvatarShape,
 };
 
-/// An app with `n` avatars whose parts are written, so each is ready to be processed, and
+/// An app with `n` avatars whose parts are queued on the scene spawner and not written yet, and
 /// their owners in the order they were spawned.
-fn loaded_avatars(n: usize) -> (App, Vec<Entity>) {
+fn queued_avatars(n: usize) -> (App, Vec<Entity>) {
     let mut app = app_with_avatar_scenes();
     let body = base_wearables::default_bodyshape_urn();
     let gltf = usable_body_gltf(app.world_mut());
@@ -44,6 +44,13 @@ fn loaded_avatars(n: usize) -> (App, Vec<Entity>) {
         let build = avatar_build(app.world_mut(), *owner);
         assert!(app.world().get::<AvatarLoaded>(build).is_some());
     }
+    (app, owners)
+}
+
+/// An app with `n` avatars whose parts are written, so each is ready to be processed, and
+/// their owners in the order they were spawned.
+fn loaded_avatars(n: usize) -> (App, Vec<Entity>) {
+    let (mut app, owners) = queued_avatars(n);
     // the scene spawner writes the parts
     app.update();
     (app, owners)
@@ -73,8 +80,8 @@ fn a_run_reports_what_it_processed() {
 }
 
 #[test]
-fn a_run_with_nothing_ready_reports_no_avatars() {
-    let (mut app, _) = loaded_avatars(0);
+fn avatars_whose_parts_are_not_written_are_not_processed() {
+    let (mut app, owners) = queued_avatars(2);
     app.world_mut().insert_resource(AvatarProcessingRun {
         spent: Duration::from_millis(2),
         processed: 3,
@@ -83,6 +90,7 @@ fn a_run_with_nothing_ready_reports_no_avatars() {
     app.world_mut().run_system_once(process_avatar).unwrap();
 
     assert_eq!(app.world().resource::<AvatarProcessingRun>().processed, 0);
+    assert_eq!(processed(&mut app, &owners), [false, false]);
 }
 
 #[cfg(feature = "explorer")]

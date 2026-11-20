@@ -965,7 +965,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   longest frame of avatar processing took 1.7 ms against a slice of 4.17 ms, and an avatar
   takes 0.35 ms at the median. A gate would have stopped nothing. The
   `instantiation/avatar_processing` diagnostic and the Instantiation section of the debug panel
-  show what it takes each frame. Reopen with a measurement of a frame of avatar processing over
+  show the smoothed cost; with `spawn_timing=debug` in the log filter, each frame that took a
+  millisecond or more is logged. Reopen with a measurement of a frame of avatar processing over
   the slice, taken on an idle machine: with a compile running alongside, single avatars took up
-  to 43 ms in frames of 100 to 500 ms. Not measured: wearables much heavier than the base set,
-  a target above 60 fps (the slice is 1.7 ms at 144 fps), and the native client.
+  to 43 ms in frames of 100 to 500 ms. Not measured: the commands `process_avatar` queues, which
+  are applied after it; wearables much heavier than the base set; a target above 60 fps (the
+  slice is 1.7 ms at 144 fps); and the native client.
