@@ -40,7 +40,10 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   for a pattern that will recur. A new primitive must:
   1. Live in `library/ui/apps/hud/design/<Name>.tsx` (+ `.module.css`), token-driven only.
   2. Be exported from `library/ui/apps/hud/design/index.ts`.
-  3. Be added to `library/ui/apps/hud/design/Showcase.tsx` (viewable at `?showcase=1`).
+  3. Be added to the Showcase: a section in `library/ui/apps/hud/design/ShowcaseIndex.ts` that names
+     it, rendered in `Showcase.tsx` with local data (viewable at `?showcase=1` and in the UI gallery's
+     HUD section). The gallery's coverage test (`library/ui/gallery/test/hud/coverage.test.tsx`) fails
+     until a section mounts it.
   4. Support variants via props (size/variant/tone), not copy-paste.
 
 ## 2. When custom CSS is acceptable
