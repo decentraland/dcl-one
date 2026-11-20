@@ -23,9 +23,11 @@
 //! of the price with credits (`creditsCents`, whole credits below the quote)
 //! and the rest with the buyer's MANA in the same `useCredits` call. The
 //! price check stays on the whole quote; only the Credits part is reserved,
-//! recorded and settled, and the credit is that part's share of the whole
-//! price's cap (`policy::partial_credit_cap`), the bound the guard enforces.
-//! A NAME, a second line or a second unit with a Credits part answers 400.
+//! recorded and settled, and the credit is that part's share of the MANA the
+//! line's sale moves, with no buffer (`policy::partial_credit_cap`), the
+//! bound the guard enforces. A NAME, a bundle, a USD-pegged listing, a
+//! listing not paid in the chain's MANA, a second line or a second unit with
+//! a Credits part answers 400, before anything is reserved or signed.
 
 use std::str::FromStr;
 
@@ -404,6 +406,7 @@ pub fn refusal_code(r: &Refusal) -> &'static str {
         Refusal::NegativeDebit { .. } => "negative_debit",
         Refusal::CreditValueTooLarge { .. } => "credit_too_large",
         Refusal::PartialCreditOutOfRange { .. } => "partial_credit_out_of_range",
+        Refusal::PartialCreditUnavailable { .. } => "partial_credit_unavailable",
         Refusal::SettlementNeedAboveReference { .. } => "settlement_need_above_reference",
         Refusal::UnlistedMarketplace { .. } => "unlisted_marketplace",
     }
@@ -1062,8 +1065,8 @@ pub async fn authorize_group(
         refusal => policy_refusal(refusal),
     })?;
     // Defense in depth: the guard recomputes the same cap (the whole price's,
-    // or a Credits part's share of it) from the same inputs, so it only fails
-    // if the sizing above stops using it.
+    // or a Credits part's share of the line's MANA) from the same inputs, so
+    // it only fails if the sizing above stops using it.
     guard(value, sizing).map_err(policy_refusal)?;
     let recorded_rate = sizing.recorded_rate();
 

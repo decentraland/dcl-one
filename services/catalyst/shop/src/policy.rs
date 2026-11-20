@@ -120,6 +120,11 @@ pub enum Refusal {
         leg: UsdCents,
         quoted: UsdCents,
     },
+    #[error("a Credits part cannot pay for {asset}: {detail}")]
+    PartialCreditUnavailable {
+        asset: AssetId,
+        detail: &'static str,
+    },
     #[error(
         "at the marketplace's feed the group needs {need}, above the {reference} its quote allows; not signed"
     )]
@@ -754,14 +759,71 @@ pub fn credit_cap(lines: &[Authoritative], sizing: &CreditSizing) -> Result<Mana
     Ok(sized.min(reference))
 }
 
-/// The most a credit for the Credits part (`leg`, in cents) of a one-line
-/// purchase may sign: the whole price's [`credit_cap`] pro rata,
-/// `floor(cap * leg / quoted)`, with the same rate, buffer, headroom and
-/// settlement feed. The buyer's MANA pays the rest of the line in the same
-/// `useCredits` call, so the credit never carries more than its share. A
-/// group of more than one line, a leg that is not strictly inside the line's
-/// quote, a line the session may not pay in MANA, a share that floors to zero
-/// and an overflow are refused.
+/// The MANA a line's sale moves when part of its price is paid with credits
+/// and the rest with MANA in one `useCredits`: a store mint's price, or a
+/// listing's after its coupon as the contract computes it
+/// (`raw - floor(raw * ppm / 1e6)`, [`mana_quote`]). Only those terms are
+/// unambiguous: a NAME registration, a bundle, a USD-pegged listing (its MANA
+/// is only known when its marketplace reads its feed at settlement), a listing
+/// whose one received asset is not the chain's MANA (the ERC-20 at the
+/// CreditsManager's registered MANA address), any other offer, and a line the
+/// session may not pay with both credits and MANA have no Credits part.
+/// [`partial_credit_cap`] and the offer's `splittable` both read this.
+pub fn split_price(line: &Authoritative) -> Result<ManaWei, Refusal> {
+    let asset = line.asset;
+    let unavailable = |detail| Refusal::PartialCreditUnavailable { asset, detail };
+    if line.sale == SaleKind::PrimaryNameRegistration {
+        return Err(unavailable("a NAME registration is paid whole"));
+    }
+    if line.is_bundle() {
+        return Err(unavailable("a bundle is paid whole"));
+    }
+    match &line.offer {
+        Offer::StoreMint { .. } => {}
+        Offer::Trade { trade, .. } => {
+            let [received] = trade.received.as_slice() else {
+                return Err(unavailable(
+                    "its listing does not receive exactly one asset",
+                ));
+            };
+            if received.asset_type == TradeAssetType::UsdPeggedMana {
+                return Err(unavailable(
+                    "its price is set in USD, so its MANA is only known at settlement",
+                ));
+            }
+            let mana = crate::policy_entry::manager_routes(trade.venue.chain_id).map(|r| r.mana);
+            if received.asset_type != TradeAssetType::Erc20
+                || mana != Some(received.contract.address())
+            {
+                return Err(unavailable("its listing is not paid in the chain's MANA"));
+            }
+        }
+        _ => return Err(unavailable("only a store mint or a listing is split")),
+    }
+    let eligible = eligibility(line);
+    if !eligible.allows(PaymentMethod::Credits) {
+        return Err(Refusal::CreditsNotAllowed {
+            asset,
+            sale: line.sale,
+            kind: line.kind,
+        });
+    }
+    if !eligible.allows(PaymentMethod::Mana) {
+        return Err(Refusal::ManaRemainderNotAllowed { asset });
+    }
+    mana_quote(line, None)
+}
+
+/// The credit for the Credits part (`leg`, in cents) of a one-line purchase:
+/// `C = floor(P * leg / quoted)`, where `P` is the MANA the line's sale moves
+/// ([`split_price`]) and `quoted` the line's whole Credits quote. No buffer
+/// and no headroom: `useCredits` spends the credit first, up to its whole
+/// value, so anything above the part's share would pay MANA the buyer owes.
+/// The buyer's gap is `G = P - C`, which is `ceil(P * (quoted - leg) /
+/// quoted)`: credit and gap add up to exactly `P`, fixed on chain. Every bound
+/// is a refusal: one line, `0 < leg < quoted`, `0 < C < P`, no overflow, and
+/// `C` at most the whole price's cap ([`credit_cap`]) as a separate ceiling.
+/// The issuance and the guard both call this one function.
 pub fn partial_credit_cap(
     lines: &[Authoritative],
     sizing: &CreditSizing,
@@ -778,23 +840,31 @@ pub fn partial_credit_cap(
         });
     };
     let asset = line.asset;
+    let price = split_price(line)?;
     let quoted = credits_quote(line, Some(&sizing.rate()))?;
     if leg.get() <= 0 || leg >= quoted {
         return Err(Refusal::PartialCreditOutOfRange { asset, leg, quoted });
     }
-    if !eligibility(line).allows(PaymentMethod::Mana) {
-        return Err(Refusal::ManaRemainderNotAllowed { asset });
-    }
-    let whole = credit_cap(lines, sizing)?;
-    let value = whole
+    let value = price
         .get()
         .checked_mul(alloy_primitives::U256::from(leg.get().unsigned_abs()))
         .and_then(|v| v.checked_div(alloy_primitives::U256::from(quoted.get().unsigned_abs())))
+        .map(ManaWei::new)
         .ok_or(Refusal::AmountOverflow { asset })?;
     if value.is_zero() {
         return Err(Refusal::NonPositiveQuote { asset });
     }
-    Ok(ManaWei::new(value))
+    if value >= price {
+        return Err(Refusal::CreditValueTooLarge {
+            value,
+            cap: ManaWei::new(price.get() - alloy_primitives::U256::from(1u8)),
+        });
+    }
+    let whole = credit_cap(lines, sizing)?;
+    if value > whole {
+        return Err(Refusal::CreditValueTooLarge { value, cap: whole });
+    }
+    Ok(value)
 }
 
 /// The MANA a USD-pegged amount settles for: the coupon applied to the USD
@@ -1251,7 +1321,7 @@ pub fn guard_group_credit_spend(
                 });
             }
             // A credit for part of the price is bounded by that part's share of
-            // the whole-price cap: the whole cap alone would let a small
+            // the line's MANA price: the whole-price cap would let a small
             // reservation sign a full-value credit.
             let cap = match leg {
                 Some(leg) => partial_credit_cap(lines, sizing, *leg)?,

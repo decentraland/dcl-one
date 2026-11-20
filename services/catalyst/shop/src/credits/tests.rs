@@ -56,6 +56,8 @@ pub(crate) struct FakeMarket {
     pub orders: Vec<ListingRow>,
     pub trades: HashMap<String, TradeLookup>,
     pub mana_usd: Option<String>,
+    /// The creator coupon every trade is priced with, when set.
+    pub coupon: Option<crate::types::TradeCoupon>,
     pub item_reads: AtomicUsize,
     pub order_reads: AtomicUsize,
     pub oracle_reads: AtomicUsize,
@@ -109,6 +111,15 @@ impl FakeMarket {
         self.trades.insert(id.to_string(), TradeLookup::Open(trade));
         self
     }
+
+    fn with_coupon(mut self, discount_ppm: u32) -> Self {
+        self.coupon = Some(crate::types::TradeCoupon {
+            contract: crate::types::EvmAddress::parse("0xc914507fe297b2dddd1232ac3a8903f1c125e794")
+                .unwrap(),
+            discount_ppm,
+        });
+        self
+    }
 }
 
 #[async_trait]
@@ -151,7 +162,7 @@ impl Market for FakeMarket {
         _trade: &crate::types::SignedTrade,
         _trade_type: &str,
     ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
-        Ok(None)
+        Ok(self.coupon)
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
@@ -8577,16 +8588,13 @@ async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
         body["creditsCents"] = leg;
         body
     };
-    // Item 200 is 4 MANA at 0.5 USD/MANA: a 200-cent quote and a 4.08 MANA whole cap.
-    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
-    let whole = crate::types::CreditSizing::new(rate, 200, 100)
-        .unwrap()
-        .cap(UsdCents::new(200))
-        .unwrap()
-        .get();
+    // Item 200 is 4 MANA at 0.5 USD/MANA, a 200-cent quote: a part's credit is
+    // its share of those 4 MANA, with no buffer and no headroom.
     let share = |leg: u64| {
-        (whole * alloy_primitives::U256::from(leg) / alloy_primitives::U256::from(200u64))
-            .to_string()
+        (alloy_primitives::U256::from(4_000_000_000_000_000_000u64)
+            * alloy_primitives::U256::from(leg)
+            / alloy_primitives::U256::from(200u64))
+        .to_string()
     };
 
     let mut two_units = part(200, "200", json!(120));
@@ -8675,7 +8683,7 @@ async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
     assert_eq!(
         v["credit"]["amount"],
         share(120),
-        "floor(4.08 MANA * 120 / 200)"
+        "floor(4 MANA * 120 / 200): 2.4 MANA, the buyer's MANA the other 1.6"
     );
     assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
     assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 120);
@@ -8748,10 +8756,12 @@ async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
     db.drop().await;
 }
 
-/// A USD-pegged trade's Credits part is sized at its marketplace's feed like
-/// the whole price: the part's credit is its share of the feed-sized cap.
+/// A USD-pegged trade has no Credits part: its MANA is only fixed when the
+/// marketplace reads its feed at settlement. Refused with the rule's reason,
+/// before the feed is read and before anything is reserved; its whole price
+/// still authorizes.
 #[tokio::test]
-async fn a_credits_part_of_a_usd_pegged_trade_is_its_share_of_the_feed_sizing() {
+async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_reservation() {
     let Some(db) = OwnDatabase::create("feed-part").await else {
         return;
     };
@@ -8825,28 +8835,135 @@ async fn a_credits_part_of_a_usd_pegged_trade_is_its_share_of_the_feed_sizing() 
         }
     };
 
-    let (status, part) =
+    let (status, v) =
         authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e", "creditsCents": 80 })).await;
-    assert_eq!(status, StatusCode::OK, "{part}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+    assert!(feed.asked().is_empty(), "the feed was not read");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "nothing reserved"
+    );
     let (status, whole) = authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e" })).await;
     assert_eq!(status, StatusCode::OK, "{whole}");
-    let amount = |v: &Value| {
-        alloy_primitives::U256::from_str(v["credit"]["amount"].as_str().unwrap()).unwrap()
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+
+    db.drop().await;
+}
+
+/// The split vector through the route: a listing of 101 MANA wei with a 10%
+/// coupon moves 91; quoted 30 cents, a 10-cent part. The credit signs 30 wei
+/// (floor(91 * 10 / 30)), the buyer's MANA is the other 61, the 10 cents are
+/// what is reserved, and none of it moves with the node's buffer or headroom.
+/// A listing paid in another ERC-20 than the chain's MANA is refused before
+/// anything is reserved.
+#[tokio::test]
+async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_sizing() {
+    let Some(db) = OwnDatabase::create("split-vector").await else {
+        return;
     };
-    assert!(
-        amount(&whole) < alloy_primitives::U256::from(4_080_000_000_000_000_000u64),
-        "the whole price is sized at the 0.55 feed, under the quote's 4.08 MANA: {whole}"
-    );
-    assert_eq!(
-        amount(&part),
-        amount(&whole) * alloy_primitives::U256::from(80u64) / alloy_primitives::U256::from(200u64),
-        "the part's credit is 80/200 of the feed-sized cap"
-    );
-    assert_eq!(
-        (part["usdCents"].as_i64(), whole["usdCents"].as_i64()),
-        (Some(80), Some(200))
-    );
-    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 280);
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let trade = |token: &str| {
+        json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+            "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+            "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+            "received": [{ "assetType": 1, "contractAddress": token, "amount": "101", "beneficiary": CREATOR }] })
+    };
+    let lane = |buffer_bps: u32, headroom_pct: u32| {
+        // 3.2e15 USD a MANA: 101 wei is 33 cents rounded up, 30 after the coupon.
+        let market = FakeMarket::default()
+            .with_item(COLLECTION, "4", "4000000000000000000", true)
+            .with_trade("5b1a", trade(MANA_POLYGON))
+            .with_trade("0e20", trade("0x00000000000000000000000000000000000000e2"))
+            .with_coupon(100_000)
+            .with_mana_usd("3200000000000000");
+        let mut settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            mock_card: true,
+            usage_chain_id: super::usage::CHAIN_AMOY,
+            credits_onchain_authorize_enabled: true,
+            credits_signer_key: Some(
+                "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+            ),
+            credits_manager_contract: Some(OPID_MANAGER.to_string()),
+            mana_price_max_staleness_secs: 3600,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        settings.usage = super::usage::Settings {
+            enabled: true,
+            rpc_url: Some("http://127.0.0.1:9/".into()),
+            chain_id: 137,
+            contract: Some(OPID_MANAGER.to_string()),
+            ..super::usage::Settings::default()
+        };
+        settings.credit_buffer_bps = buffer_bps;
+        settings.credit_cap_headroom_pct = headroom_pct;
+        app(Arc::new(
+            State::with_sources(
+                pool.clone(),
+                Outbound::for_tests(),
+                settings,
+                Arc::new(market),
+                Arc::new(MockBroker::configured()),
+                None,
+            )
+            .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        ))
+    };
+    let part = json!({ "usdPriceCents": 30, "tradeId": "5b1a", "creditsCents": 10 });
+
+    for (buffer, headroom) in [(200, 100), (1_000, 150)] {
+        let lane = lane(buffer, headroom);
+        let wallet = scratch_wallet();
+        seed_paid_credits(&pool, &wallet.address, "50").await;
+        let (status, v) = call(
+            &lane,
+            &wallet,
+            "post",
+            "/credits/credits/authorize",
+            &[],
+            Some(json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+        assert_eq!(
+            authorized_count(&pool, &wallet.address).await,
+            0,
+            "nothing reserved for another ERC-20"
+        );
+
+        let (status, v) = call(
+            &lane,
+            &wallet,
+            "post",
+            "/credits/credits/authorize",
+            &[],
+            Some(part.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{buffer} bps, {headroom}%: {v}");
+        assert_eq!(
+            v["credit"]["amount"], "30",
+            "floor(91 * 10 / 30), with no buffer or headroom"
+        );
+        assert_eq!(v["maxCreditedValue"], "30");
+        assert_eq!(v["usdCents"], 10, "the part is what is charged");
+        assert_eq!(
+            authorized_sum_cents(&pool, &wallet.address).await,
+            10,
+            "and what is reserved"
+        );
+    }
 
     db.drop().await;
 }

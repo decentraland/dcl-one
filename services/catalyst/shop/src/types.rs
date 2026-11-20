@@ -988,7 +988,8 @@ pub enum SettlementOperation {
     /// later `useCredits` calls until it expires, so the rule bounds it by the
     /// group's own quoted need (`sizing`). `leg` is the Credits part in cents
     /// of a one-line purchase whose rest the buyer pays in MANA: the bound is
-    /// then that part's share of the line's (`policy::partial_credit_cap`).
+    /// then that part's share of the line's MANA price, with no buffer
+    /// (`policy::partial_credit_cap`).
     AuthorizeCredit {
         chain_id: ChainId,
         value: ManaWei,

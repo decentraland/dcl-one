@@ -180,6 +180,9 @@ pub(crate) fn base_refusal_json(refusal: &Refusal) -> Value {
         Refusal::PartialCreditOutOfRange { asset, leg, quoted } => {
             json!({ "code": "partialCreditOutOfRange", "asset": asset, "leg": leg, "quoted": quoted })
         }
+        Refusal::PartialCreditUnavailable { asset, detail } => {
+            json!({ "code": "partialCreditUnavailable", "asset": asset, "detail": detail })
+        }
         Refusal::SettlementNeedAboveReference { need, reference } => {
             json!({ "code": "settlementNeedAboveReference", "need": need, "reference": reference })
         }
@@ -1180,6 +1183,13 @@ mod tests {
                     quoted: UsdCents::new(200),
                 },
                 "partialCreditOutOfRange",
+            ),
+            (
+                Refusal::PartialCreditUnavailable {
+                    asset,
+                    detail: "example",
+                },
+                "partialCreditUnavailable",
             ),
             (
                 Refusal::SettlementNeedAboveReference {
