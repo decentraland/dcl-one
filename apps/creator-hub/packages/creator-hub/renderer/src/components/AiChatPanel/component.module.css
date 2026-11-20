@@ -433,10 +433,12 @@
   color: var(--ctl-disabled-ink);
 }
 
-.composerRecord {
+/* The Record button beside Send (or the turn's Stop). */
+.composerActions {
   display: inline-flex;
   flex-shrink: 0;
-  margin-right: 8px;
+  align-items: center;
+  gap: 6px;
 }
 
 .setupBox {

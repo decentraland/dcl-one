@@ -1,5 +1,3 @@
-import { MAX_RECORDING_MS, RECORDING_RETENTION_DAYS } from '/shared/types/recording';
-
 import { t } from '/@/modules/store/translation/utils';
 import { DefaultModal } from '../Modals/DefaultModal';
 import styles from './RecordingConsentModal.module.css';
@@ -12,6 +10,8 @@ type Props = {
   onCancel: () => void;
 };
 
+const bold = (chunks: string) => <b>{chunks}</b>;
+
 // Shown the first time the creator presses Record: what gets captured, where it goes, and that
 // the system's default microphone is used.
 export function RecordingConsentModal({ open, downloadMb, onAccept, onCancel }: Props) {
@@ -20,26 +20,36 @@ export function RecordingConsentModal({ open, downloadMb, onAccept, onCancel }: 
       open={open}
       title={t('editor.recording.consent.title')}
       onClose={onCancel}
-      body={t('editor.recording.consent.intro')}
+      corner="none"
+      body={
+        <div className={styles.sections}>
+          <p>{t('editor.recording.consent.intro')}</p>
+          <p>
+            <b>{t('editor.recording.consent.what_title')}</b>
+            <br />
+            {t('editor.recording.consent.what')}
+          </p>
+          <p>
+            <b>{t('editor.recording.consent.local_title')}</b>
+            <br />
+            {t('editor.recording.consent.local', { b: bold })}
+            <br />
+            {t('editor.recording.consent.stored')}
+          </p>
+          <p>
+            <b>{t('editor.recording.consent.first_title')}</b>
+            <br />
+            {downloadMb > 0 && <>{t('editor.recording.consent.download', { size: downloadMb })} </>}
+            {t('editor.recording.consent.microphone')}
+          </p>
+        </div>
+      }
       secondary={{ label: t('editor.recording.consent.cancel'), onClick: onCancel }}
       primary={{
         label: t('editor.recording.consent.accept'),
         onClick: onAccept,
         state: 'idle',
       }}
-    >
-      <ul className={styles.consentList}>
-        <li>{t('editor.recording.consent.what')}</li>
-        <li>
-          {t('editor.recording.consent.local', {
-            minutes: MAX_RECORDING_MS / 60_000,
-            days: RECORDING_RETENTION_DAYS,
-          })}
-        </li>
-        {downloadMb > 0 && <li>{t('editor.recording.consent.download', { size: downloadMb })}</li>}
-        <li>{t('editor.recording.consent.sent')}</li>
-        <li>{t('editor.recording.consent.microphone')}</li>
-      </ul>
-    </DefaultModal>
+    />
   );
 }

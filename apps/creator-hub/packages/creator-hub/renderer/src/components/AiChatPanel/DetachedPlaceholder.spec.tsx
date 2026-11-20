@@ -23,6 +23,7 @@ function renderPlaceholder(available: boolean, recording = false) {
         micLabel: '',
         tools: null,
         actionCount: 3,
+        endedWith: null,
       }),
     );
   }
@@ -32,6 +33,7 @@ function renderPlaceholder(available: boolean, recording = false) {
   });
   const onToggleRecording = vi.fn();
   const onCancelRecording = vi.fn();
+  const onSendRecording = vi.fn();
   render(
     <Provider store={store}>
       <TestProviders>
@@ -40,11 +42,12 @@ function renderPlaceholder(available: boolean, recording = false) {
           width={320}
           onToggleRecording={onToggleRecording}
           onCancelRecording={onCancelRecording}
+          onSendRecording={onSendRecording}
         />
       </TestProviders>
     </Provider>,
   );
-  return { onToggleRecording, onCancelRecording };
+  return { onToggleRecording, onCancelRecording, onSendRecording };
 }
 
 describe('DetachedPlaceholder', () => {
@@ -59,12 +62,17 @@ describe('DetachedPlaceholder', () => {
   });
 
   describe('when a recording is running', () => {
-    it('should show the recording card, with its Stop and its confirmed Discard', () => {
-      const { onToggleRecording, onCancelRecording } = renderPlaceholder(true, true);
-      expect(screen.getByText('3 actions captured')).toBeTruthy();
+    it('should show the recording bar, with its Stop, its Send and its confirmed Discard', () => {
+      const { onToggleRecording, onCancelRecording, onSendRecording } = renderPlaceholder(
+        true,
+        true,
+      );
+      expect(screen.getByRole('group', { name: 'Recording' })).toBeTruthy();
       fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
       expect(onToggleRecording).toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
+      expect(onSendRecording).toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discard' }));
       expect(onCancelRecording).toHaveBeenCalled();
     });

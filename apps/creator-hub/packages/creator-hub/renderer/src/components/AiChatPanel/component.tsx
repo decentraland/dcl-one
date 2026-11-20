@@ -24,8 +24,8 @@ interface Props {
   onToggleRecording: () => void;
   // Discard the running recording.
   onCancelRecording: () => void;
-  /** Send the stopping recording without waiting for its transcript. */
-  onSkipTranscription: () => void;
+  /** Stop the running recording and send it once transcribed. */
+  onSendRecording: () => void;
 }
 
 // The inline chat panel: a thin container that wires the redux store + thunks to the shared
@@ -38,7 +38,7 @@ export function AiChatPanel({
   width,
   onToggleRecording,
   onCancelRecording,
-  onSkipTranscription,
+  onSendRecording,
 }: Props) {
   const dispatch = useDispatch();
   const {
@@ -135,7 +135,7 @@ export function AiChatPanel({
       recorder={recorder}
       onToggleRecording={onToggleRecording}
       onCancelRecording={onCancelRecording}
-      onSkipTranscription={onSkipTranscription}
+      onSendRecording={onSendRecording}
       billingDismissed={billingDismissed}
       sessions={sessions}
       currentSessionId={currentSessionId}

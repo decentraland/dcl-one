@@ -1,4 +1,5 @@
+export { MicButton } from './MicButton';
 export { RecordButton } from './RecordButton';
-export { RecordingCard } from './RecordingCard';
+export { RecordingBar } from './RecordingBar';
 export { RecordingConsentModal } from './RecordingConsentModal';
-export { TranscribingCard } from './TranscribingCard';
+export { TranscribingBar } from './TranscribingBar';

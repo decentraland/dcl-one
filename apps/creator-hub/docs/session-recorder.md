@@ -9,7 +9,7 @@ A recording crosses four processes. Each part has one owner:
 1. The inspector iframe records what you do. Its trackers live in `packages/inspector/src/lib/recorder/` (DOM, ECS, Redux, renderer) and `src/lib/renderer/bevy/scene-observer.ts` (what a running scene shows). They only listen while the host has switched capture on (`set_recording`).
 2. The inspector sends batches over the scene RPC (`record_events`). The renderer's handler (`renderer/src/modules/rpc/scene/server.ts`) keeps plain objects only and forwards them to the active session.
 3. The renderer's recording controller (`renderer/src/modules/recording/controller.ts`) owns the recorder state. It opens the microphone, streams audio and events to main over unlogged fire-and-forget channels (`recording.audio`, `recording.events`), and dispatches every state change to the `ai.recorder` slice.
-4. Main (`main/src/modules/recording/`) writes the session folder, transcribes it on stop, builds the timeline, and returns the result the chat attaches to your next message.
+4. Main (`main/src/modules/recording/`) writes the session folder, transcribes it on stop, builds the timeline, and returns the result. The chat sends it as soon as no turn is running: the transcript, read-only, becomes the message text so the conversation shows what was understood, and the timeline goes with it as the recording attachment. The assistant works from the timeline, which keeps each spoken line's timing and pointer notes.
 
 ## Event contract
 
@@ -40,7 +40,7 @@ Each recording gets its own folder under the app's user data folder: `recordings
 | `transcript.json` | The transcribed words with their timings.                                    |
 | `SESSION.md`      | The full timeline. The context sent to the assistant links it.               |
 
-A recording stops by itself after 10 minutes (`MAX_RECORDING_MS`), and main drops audio past that length. Recording again before sending adds a session: the pending attachment holds every session in order, and discarding it deletes every folder. When several sessions go out together, main rebuilds their timelines from `events.jsonl` and `transcript.json` (`recording.combinedContext`) into one block with numbered parts, oldest first, that share the single context budget: Gemini and Cursor receive the prompt as a command-line argument, which Windows limits to 32 KB.
+A recording stops by itself after 10 minutes (`MAX_RECORDING_MS`), and main drops audio past that length. A recording made before an earlier one has gone out (a failed send puts it back) adds a session: the pending attachment holds every session in order, and discarding it deletes every folder. When several sessions go out together, main rebuilds their timelines from `events.jsonl` and `transcript.json` (`recording.combinedContext`) into one block with numbered parts, oldest first, that share the single context budget: Gemini and Cursor receive the prompt as a command-line argument, which Windows limits to 32 KB.
 
 ## Retention
 
@@ -66,7 +66,7 @@ Speech is transcribed on your computer. The whisper bindings (`@fugood/whisper.n
 - A download only counts toward the 60-second idle limit while it waits on the network: the limit stops once the last byte arrives, so a slow disk can't fail it.
 - Main tracks each session being transcribed separately, so a second recording's stop never replaces the first's.
 
-While main waits for the tools or the transcription, **Send without transcript** calls `recording.skipTranscription`. Main kills a running worker, lets a shared install continue in the background, and resolves the stop with the full action timeline, an empty transcript, and `transcriptionSkipped`.
+When the editor goes away while main waits for the tools or the transcription, the controller calls `recording.skipTranscription`. Main kills a running worker, lets a shared install continue in the background, and resolves the stop with the full action timeline, an empty transcript, and `transcriptionSkipped`.
 
 Transcription and background install failures go to Sentry with the tag `source: recording`.
 

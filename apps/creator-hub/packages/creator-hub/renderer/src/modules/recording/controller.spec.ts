@@ -39,8 +39,8 @@ const {
   getConsentPrompt,
   pressRecord,
   reapplyInspectorCapture,
+  sendRecording,
   setRecorderHost,
-  skipTranscription,
   startRecording,
   stopRecording,
 } = await import('./controller');
@@ -148,7 +148,11 @@ describe('the session recorder', () => {
         durationMs: 1000,
         actionCount: 2,
       });
-      expect(store.getState().ai.draftPrompt?.text).toBe('hello');
+      expect(store.getState().ai.draftPrompt).toMatchObject({
+        text: 'hello',
+        mode: 'append',
+        send: true,
+      });
       expect(onFinished).toHaveBeenCalled();
       expect(chime.playRecordingLimitChime).not.toHaveBeenCalled();
     });
@@ -322,42 +326,6 @@ describe('the session recorder', () => {
     });
   });
 
-  describe('when the user sends without waiting for the transcript', () => {
-    let stopping: Deferred<Awaited<ReturnType<typeof recording.stop>>>;
-
-    beforeEach(async () => {
-      stopping = deferred();
-      vi.mocked(recording.stop).mockReturnValue(stopping.promise);
-      await startRecording();
-      void stopRecording();
-      await settle();
-    });
-
-    it('should ask main to give up on the stopping session', () => {
-      skipTranscription();
-      expect(recording.skipTranscription).toHaveBeenCalledWith('s1');
-    });
-
-    it('should hand over the recording without a transcript or a warning', async () => {
-      const before = notifications().length;
-      skipTranscription();
-      stopping.resolve({
-        sessionId: 's1',
-        dir: '/recordings/p/s1',
-        durationMs: 1000,
-        transcript: '',
-        actionCount: 2,
-        context: '[Session recording]',
-        transcriptionSkipped: true,
-      });
-      await settle();
-
-      expect(store.getState().ai.recording?.sessions[0].dir).toBe('/recordings/p/s1');
-      expect(store.getState().ai.draftPrompt).toBeNull();
-      expect(notifications()).toHaveLength(before);
-    });
-  });
-
   describe('when a stop settles after the editor moved on', () => {
     let stopping: Deferred<Awaited<ReturnType<typeof recording.stop>>>;
 
@@ -470,24 +438,6 @@ describe('the session recorder', () => {
     });
   });
 
-  describe('when Send without transcript is pressed before main has been asked to stop', () => {
-    it('should still skip once the stop is on its way', async () => {
-      const flush = deferred<void>();
-      await startRecording();
-      setInspectorRecording.mockReturnValueOnce(flush.promise);
-      const stopped = stopRecording();
-      await settle();
-
-      skipTranscription();
-      expect(recording.skipTranscription).not.toHaveBeenCalled();
-
-      flush.resolve();
-      await stopped;
-
-      expect(recording.skipTranscription).toHaveBeenCalledWith('s1');
-    });
-  });
-
   describe('when the inspector reloads while the recording is stopping', () => {
     it('should not switch its capture back on', async () => {
       const flush = deferred<void>();
@@ -532,8 +482,50 @@ describe('the session recorder', () => {
     });
   });
 
+  describe('when the recording is sent from its bar', () => {
+    it('should stop it, show where it was sent from, and send it once transcribed', async () => {
+      const stopping = deferred<Awaited<ReturnType<typeof recording.stop>>>();
+      vi.mocked(recording.stop).mockReturnValue(stopping.promise);
+      await startRecording();
+
+      void sendRecording();
+      await settle();
+
+      expect(recorderState()).toMatchObject({ status: 'stopping', endedWith: 'send' });
+      stopping.resolve({
+        sessionId: 's1',
+        dir: '/recordings/p/s1',
+        durationMs: 1000,
+        transcript: 'add a door',
+        actionCount: 2,
+        context: '[Session recording]',
+      });
+      await settle();
+      expect(recorderState()).toMatchObject({ status: 'idle', endedWith: null });
+      expect(store.getState().ai.draftPrompt).toMatchObject({ text: 'add a door', send: true });
+    });
+  });
+
+  describe('when no speech could be transcribed', () => {
+    it('should still send the recording, for its actions', async () => {
+      vi.mocked(recording.stop).mockResolvedValue({
+        sessionId: 's1',
+        dir: '/recordings/p/s1',
+        durationMs: 1000,
+        transcript: '',
+        actionCount: 2,
+        context: '[Session recording]',
+      });
+      await startRecording();
+      await stopRecording();
+
+      expect(store.getState().ai.recording?.sessions).toHaveLength(1);
+      expect(store.getState().ai.draftPrompt).toMatchObject({ text: '', send: true });
+    });
+  });
+
   describe('when the recording is stopped', () => {
-    it('should remember when, so the card shows the length it had', async () => {
+    it('should remember when and how, for the transcribing bar', async () => {
       const stopping = deferred<Awaited<ReturnType<typeof recording.stop>>>();
       vi.mocked(recording.stop).mockReturnValue(stopping.promise);
       await startRecording();
@@ -543,6 +535,7 @@ describe('the session recorder', () => {
       await settle();
 
       expect(recorderState().status).toBe('stopping');
+      expect(recorderState().endedWith).toBe('stop');
       expect(recorderState().stoppedAt).toBeGreaterThanOrEqual(startedAt ?? 0);
       stopping.resolve({
         sessionId: 's1',
@@ -609,13 +602,6 @@ describe('the session recorder', () => {
       await started;
 
       expect(recording.start).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('when nothing is being transcribed', () => {
-    it('should not ask main to skip anything', () => {
-      skipTranscription();
-      expect(recording.skipTranscription).not.toHaveBeenCalled();
     });
   });
 

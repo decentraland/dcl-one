@@ -192,7 +192,7 @@ export function EditorPage() {
     onCloseAssistant: () => setAiOpen(false),
     onToggleRecording: recorder.press,
     onCancelRecording: recorder.cancel,
-    onSkipTranscription: recorder.skip,
+    onSendRecording: recorder.send,
   });
   // A prompt seeded from the inspector (Trigger Area "describe a reaction"). Open the inline
   // panel on it; ChatView copies the text into the composer and clears the draft.
@@ -1015,6 +1015,7 @@ export function EditorPage() {
                     width={aiPanelWidth}
                     onToggleRecording={recorder.press}
                     onCancelRecording={recorder.cancel}
+                    onSendRecording={recorder.send}
                   />
                 ) : (
                   <AiChatPanel
@@ -1024,7 +1025,7 @@ export function EditorPage() {
                     width={aiPanelWidth}
                     onToggleRecording={recorder.press}
                     onCancelRecording={recorder.cancel}
-                    onSkipTranscription={recorder.skip}
+                    onSendRecording={recorder.send}
                   />
                 )}
               </>

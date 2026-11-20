@@ -26,7 +26,7 @@ const controller = vi.hoisted(() => ({
   pressRecord: vi.fn(),
   reapplyInspectorCapture: vi.fn(),
   setRecorderHost: vi.fn(),
-  skipTranscription: vi.fn(),
+  sendRecording: vi.fn(),
 }));
 vi.mock('/@/modules/recording/controller', () => controller);
 

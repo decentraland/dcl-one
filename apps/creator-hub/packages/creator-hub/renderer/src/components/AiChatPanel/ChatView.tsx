@@ -55,10 +55,9 @@ import type {
   DraftPromptMode,
 } from '/@/modules/store/ai/types';
 import { MicrophoneIcon, WarningCircleIcon } from '../Icons';
-import { RecordButton, RecordingCard, TranscribingCard } from '../SessionRecorder';
+import { MicButton, RecordingBar, TranscribingBar } from '../SessionRecorder';
 import { SignInCodeField } from '../SignInCodeField';
 import { toolChipLabel } from './labels';
-import recordRowStyles from './RecordRow.module.css';
 import {
   SharingConsentCard,
   SharingStatusChip,
@@ -294,10 +293,10 @@ export interface ChatViewProps extends SharingProps {
   /** The Record button's state; with `onToggleRecording` it is shown in the composer. */
   recorder?: AiRecorderState;
   onToggleRecording?: () => void;
-  /** Discard the running recording; the card asks for confirmation first. */
+  /** Discard the running recording; the bar asks for confirmation first. */
   onCancelRecording?: () => void;
-  /** Send the recording without waiting for its transcript; shown while it transcribes. */
-  onSkipTranscription?: () => void;
+  /** Stop the running recording and send it once transcribed. */
+  onSendRecording?: () => void;
   // The user dismissed the billing hint for this scene (#1505) — hide it.
   billingDismissed: boolean;
   // The scene's saved conversations (newest first) and which one is active, for the history menu.
@@ -337,7 +336,7 @@ export interface ChatViewProps extends SharingProps {
   onClose: () => void;
   // A prompt seeded from the inspector (Trigger Area "describe a reaction"). When its nonce
   // changes the composer copies `text` into its input and calls onDraftConsumed. Inline only.
-  draftPrompt?: { text: string; nonce: number; mode: DraftPromptMode } | null;
+  draftPrompt?: { text: string; nonce: number; mode: DraftPromptMode; send?: boolean } | null;
   onDraftConsumed?: () => void;
 }
 
@@ -392,7 +391,7 @@ export function ChatView(props: ChatViewProps) {
     recorder,
     onToggleRecording,
     onCancelRecording,
-    onSkipTranscription,
+    onSendRecording,
     billingDismissed,
     sessions,
     currentSessionId,
@@ -424,6 +423,15 @@ export function ChatView(props: ChatViewProps) {
   } = props;
 
   const [input, setInput] = useState('');
+  // The text field leaves while a recording runs; coming back it must not take the keyboard
+  // from the editor, as it does when the panel first opens.
+  const composerMounted = useRef(false);
+  useEffect(() => {
+    composerMounted.current = true;
+  }, []);
+  // A transcribed recording landed in the composer: it is sent as soon as no turn is running,
+  // and can't be edited meanwhile.
+  const [autoSend, setAutoSend] = useState(false);
   const appliedDraftNonce = useRef(0);
   const wasRecording = useRef(recorder?.status === 'recording');
   const recordingJustStarted = recorder?.status === 'recording' && !wasRecording.current;
@@ -436,6 +444,11 @@ export function ChatView(props: ChatViewProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // A recording bar that held the keyboard hands it back to the text field replacing it.
+  const focusComposerOnceBack = useCallback(
+    () => requestAnimationFrame(() => composerRef.current?.focus()),
+    [],
+  );
 
   useEffect(() => {
     if (!draftPrompt || draftPrompt.nonce === appliedDraftNonce.current) return;
@@ -445,6 +458,7 @@ export function ChatView(props: ChatViewProps) {
     setInput(current =>
       append && current !== '' ? `${current} ${draftPrompt.text}` : draftPrompt.text,
     );
+    if (draftPrompt.send) setAutoSend(true);
     onDraftConsumed?.();
     if (append && !wasInChat) return;
     requestAnimationFrame(() => {
@@ -590,6 +604,12 @@ export function ChatView(props: ChatViewProps) {
     setInput('');
     setAttachments([]);
   }, [busy, input, attachments, recording, onSend]);
+
+  useEffect(() => {
+    if (!autoSend || busy) return;
+    setAutoSend(false);
+    handleSend();
+  }, [autoSend, busy, handleSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -1233,32 +1253,6 @@ export function ChatView(props: ChatViewProps) {
             </div>
           ))}
 
-        {recorder?.status === 'recording' && onToggleRecording !== undefined && (
-          <div className={recordRowStyles.recordRow}>
-            <RecordingCard
-              startedAt={recorder.startedAt}
-              micLabel={recorder.micLabel}
-              actionCount={recorder.actionCount}
-              onStop={onToggleRecording}
-              onDiscard={onCancelRecording}
-              focusStopOnMount={recordingJustStarted}
-              onFocusRelease={() => composerRef.current?.focus()}
-            />
-          </div>
-        )}
-        {recorder?.status === 'stopping' && (
-          <div className={recordRowStyles.recordRow}>
-            <TranscribingCard
-              startedAt={recorder.startedAt}
-              stoppedAt={recorder.stoppedAt}
-              actionCount={recorder.actionCount}
-              tools={recorder.tools}
-              onSkip={onSkipTranscription}
-              onFocusRelease={() => composerRef.current?.focus()}
-            />
-          </div>
-        )}
-
         <div
           className={styles.composer}
           data-dragging={dragging || undefined}
@@ -1341,92 +1335,103 @@ export function ChatView(props: ChatViewProps) {
             hidden
             onChange={handleFilePick}
           />
-          <TextField
-            fullWidth
-            multiline
-            maxRows={6}
-            size="small"
-            tone="neutral"
-            autoFocus
-            inputRef={composerRef}
-            className={styles.composerField}
-            placeholder={t('editor.ai.placeholder')}
-            value={input}
-            disabled={!available}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            startAdornment={
-              <>
-                <Tooltip
-                  label={t('editor.ai.attach.button')}
-                  side="bottom"
-                  portal
-                  keepInViewport
-                >
-                  <IconButton
-                    className={styles.attachButton}
-                    aria-label={t('editor.ai.attach.button')}
-                    disabled={!available || attachments.length >= MAX_ATTACHMENTS}
-                    onClick={() => fileInputRef.current?.click()}
+          {recorder?.status === 'recording' && onToggleRecording !== undefined ? (
+            <RecordingBar
+              onStop={onToggleRecording}
+              onSend={onSendRecording}
+              onDiscard={onCancelRecording}
+              focusStopOnMount={recordingJustStarted}
+              onFocusRelease={focusComposerOnceBack}
+            />
+          ) : recorder?.status === 'stopping' ? (
+            <TranscribingBar
+              endedWith={recorder.endedWith}
+              tools={recorder.tools}
+              onFocusRelease={focusComposerOnceBack}
+            />
+          ) : (
+            <TextField
+              fullWidth
+              multiline
+              maxRows={6}
+              size="small"
+              tone="neutral"
+              autoFocus={!composerMounted.current}
+              inputRef={composerRef}
+              className={styles.composerField}
+              placeholder={t('editor.ai.placeholder')}
+              value={input}
+              disabled={!available || autoSend}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              startAdornment={
+                <>
+                  <Tooltip
+                    label={t('editor.ai.attach.button')}
+                    side="bottom"
+                    portal
+                    keepInViewport
                   >
-                    <AttachFileIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                {recorder !== undefined &&
-                  onToggleRecording !== undefined &&
-                  (recorder.status === 'idle' || recorder.status === 'starting') && (
-                    <span className={styles.composerRecord}>
-                      <RecordButton
-                        status={recorder.status}
-                        startedAt={recorder.startedAt}
-                        micLabel={recorder.micLabel}
-                        tools={recorder.tools}
-                        disabled={!available}
-                        onClick={onToggleRecording}
-                      />
-                    </span>
+                    <IconButton
+                      className={styles.attachButton}
+                      aria-label={t('editor.ai.attach.button')}
+                      disabled={!available || attachments.length >= MAX_ATTACHMENTS}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <AttachFileIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </>
+              }
+              endAdornment={
+                <span className={styles.composerActions}>
+                  {recorder !== undefined && onToggleRecording !== undefined && (
+                    <MicButton
+                      starting={recorder.status === 'starting'}
+                      disabled={!available || autoSend}
+                      onClick={onToggleRecording}
+                    />
                   )}
-              </>
-            }
-            endAdornment={
-              busy ? (
-                <Tooltip
-                  label={t('editor.ai.stop')}
-                  side="bottom"
-                  portal
-                  keepInViewport
-                >
-                  <IconButton
-                    className={styles.sendButton}
-                    aria-label={t('editor.ai.stop')}
-                    onClick={onStop}
-                  >
-                    <StopIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              ) : (
-                <Tooltip
-                  label={t('editor.ai.send')}
-                  side="bottom"
-                  portal
-                  keepInViewport
-                >
-                  <IconButton
-                    className={styles.sendButton}
-                    aria-label={t('editor.ai.send')}
-                    disabled={
-                      !available ||
-                      (input.trim() === '' && attachments.length === 0 && recording === null)
-                    }
-                    onClick={handleSend}
-                  >
-                    <ArrowUpwardIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              )
-            }
-          />
+                  {busy ? (
+                    <Tooltip
+                      label={t('editor.ai.stop')}
+                      side="bottom"
+                      portal
+                      keepInViewport
+                    >
+                      <IconButton
+                        className={styles.sendButton}
+                        aria-label={t('editor.ai.stop')}
+                        onClick={onStop}
+                      >
+                        <StopIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip
+                      label={t('editor.ai.send')}
+                      side="bottom"
+                      portal
+                      keepInViewport
+                    >
+                      <IconButton
+                        className={styles.sendButton}
+                        aria-label={t('editor.ai.send')}
+                        disabled={
+                          !available ||
+                          (input.trim() === '' && attachments.length === 0 && recording === null)
+                        }
+                        onClick={handleSend}
+                      >
+                        <ArrowUpwardIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </span>
+              }
+            />
+          )}
         </div>
       </>
     </div>

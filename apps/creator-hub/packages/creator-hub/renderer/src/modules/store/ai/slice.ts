@@ -54,6 +54,7 @@ const initialState: AiState = {
     micLabel: '',
     tools: null,
     actionCount: 0,
+    endedWith: null,
   },
   chatVisible: false,
   billingDismissed: false,
@@ -543,10 +544,15 @@ const slice = createSlice({
     // panel on this; ChatView copies `text` into the composer and calls consumeDraftPrompt.
     setDraftPrompt: (
       state,
-      { payload }: PayloadAction<{ text: string; mode: DraftPromptMode }>,
+      { payload }: PayloadAction<{ text: string; mode: DraftPromptMode; send?: boolean }>,
     ) => {
       state.draftNonce += 1;
-      state.draftPrompt = { text: payload.text, mode: payload.mode, nonce: state.draftNonce };
+      state.draftPrompt = {
+        text: payload.text,
+        mode: payload.mode,
+        nonce: state.draftNonce,
+        ...(payload.send && { send: true }),
+      };
     },
     consumeDraftPrompt: state => {
       state.draftPrompt = null;

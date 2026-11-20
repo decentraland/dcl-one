@@ -293,6 +293,9 @@ export interface AiRecorderState {
   stoppedAt: number | null;
   // Speech-to-text download progress while it installs on first use.
   tools: RecordingToolsStatus | null;
+  /** How the recording being transcribed was ended: its Stop or its Send button. Either way it
+   *  is sent once transcribed; null while none is being transcribed. */
+  endedWith: 'stop' | 'send' | null;
 }
 
 export interface AiMirrorState {
@@ -306,7 +309,7 @@ export interface AiMirrorState {
   assetMentions: AiAssetMention[];
   recording: AiPendingRecording | null;
   recorder?: AiRecorderState;
-  draftPrompt?: { text: string; nonce: number; mode: 'append' | 'replace' } | null;
+  draftPrompt?: { text: string; nonce: number; mode: 'append' | 'replace'; send?: boolean } | null;
   billingDismissed: boolean;
   sessions: { id: string; title: string; updatedAt: number }[];
   currentSessionId: string;
@@ -348,7 +351,7 @@ export type AiRemoteCommand =
   | { type: 'removeRecording' }
   | { type: 'toggleRecording' }
   | { type: 'cancelRecording' }
-  | { type: 'skipTranscription' }
+  | { type: 'sendRecording' }
   | { type: 'consumeDraftPrompt' }
   | { type: 'closeAssistant' }
   // Opt-in conversation sharing: the consent card's answer, its "not now", and the chip's

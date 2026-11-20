@@ -15,8 +15,8 @@ import {
   onConsentPrompt,
   pressRecord,
   reapplyInspectorCapture,
+  sendRecording,
   setRecorderHost,
-  skipTranscription,
 } from '/@/modules/recording/controller';
 
 export type { RecorderStatus };
@@ -79,7 +79,7 @@ export function useSessionRecorder({
     consent,
     press: pressRecord,
     cancel: cancelRecording,
-    skip: skipTranscription,
+    send: sendRecording,
     acceptConsent: acceptRecordingConsent,
     dismissConsent: dismissRecordingConsent,
   };

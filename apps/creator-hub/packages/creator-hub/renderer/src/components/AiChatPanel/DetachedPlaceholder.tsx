@@ -5,7 +5,7 @@ import Button from '@ui/atoms/Button';
 import { useSelector } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 
-import { RecordButton, RecordingCard } from '../SessionRecorder';
+import { RecordButton, RecordingBar, TranscribingBar } from '../SessionRecorder';
 import recordRowStyles from './RecordRow.module.css';
 import styles from './component.module.css';
 
@@ -14,6 +14,7 @@ type Props = {
   width: number;
   onToggleRecording: () => void;
   onCancelRecording: () => void;
+  onSendRecording: () => void;
 };
 
 /** Stands in for the inline panel while the chat is popped out, keeping this window's Record. */
@@ -22,6 +23,7 @@ export function DetachedPlaceholder({
   width,
   onToggleRecording,
   onCancelRecording,
+  onSendRecording,
 }: Props) {
   const recorder = useSelector(state => state.ai.recorder);
   const available = useSelector(
@@ -38,12 +40,15 @@ export function DetachedPlaceholder({
       </div>
       <div className={recordRowStyles.recordRow}>
         {recorder.status === 'recording' ? (
-          <RecordingCard
-            startedAt={recorder.startedAt}
-            micLabel={recorder.micLabel}
-            actionCount={recorder.actionCount}
+          <RecordingBar
             onStop={onToggleRecording}
+            onSend={onSendRecording}
             onDiscard={onCancelRecording}
+          />
+        ) : recorder.status === 'stopping' ? (
+          <TranscribingBar
+            endedWith={recorder.endedWith}
+            tools={recorder.tools}
           />
         ) : (
           <RecordButton

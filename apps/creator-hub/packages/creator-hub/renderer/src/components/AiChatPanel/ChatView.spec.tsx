@@ -307,16 +307,22 @@ describe('ChatView session recorder', () => {
       micLabel: '',
       tools: null,
       actionCount: 0,
+      endedWith: null,
     };
 
-    it('should show it in the composer and pass presses on', () => {
+    it('should show it beside Send and pass presses on', () => {
       const onToggleRecording = vi.fn();
       renderChat({ recorder: idle, onToggleRecording });
 
-      fireEvent.click(screen.getByRole('button', { name: 'Record' }));
+      const record = screen.getByRole('button', { name: 'Record voice & actions' });
+      expect(
+        record.compareDocumentPosition(screen.getByRole('button', { name: 'Send' })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      fireEvent.click(record);
 
       expect(onToggleRecording).toHaveBeenCalled();
-      expect(screen.queryByTestId('recording-card')).toBeNull();
+      expect(screen.queryByTestId('recording-bar')).toBeNull();
     });
 
     it('should not start a recording while no assistant is available', () => {
@@ -326,9 +332,20 @@ describe('ChatView session recorder', () => {
         onToggleRecording: vi.fn(),
       });
 
-      expect((screen.getByRole('button', { name: 'Record' }) as HTMLButtonElement).disabled).toBe(
-        true,
-      );
+      expect(
+        (screen.getByRole('button', { name: 'Record voice & actions' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    });
+
+    it('should wait with a spinner while the recording starts', () => {
+      renderChat({ recorder: { ...idle, status: 'starting' }, onToggleRecording: vi.fn() });
+
+      expect(
+        (screen.getByRole('button', { name: 'Record voice & actions' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+      expect(screen.getByRole('progressbar', { name: 'Starting…' })).toBeTruthy();
     });
 
     describe('and a recording is running', () => {
@@ -339,14 +356,12 @@ describe('ChatView session recorder', () => {
         actionCount: 7,
       });
 
-      it('should show a card with the time, the limit and the actions captured', () => {
+      it('should put the recording bar in place of the text field', () => {
         renderChat({ recorder: recording(), onToggleRecording: vi.fn() });
 
-        const card = screen.getByRole('group', { name: 'Recording' });
-        expect(within(card).getByRole('timer').textContent).toBe('0:42');
-        expect(within(card).getByText('/ 10:00')).toBeTruthy();
-        expect(within(card).getByText('7 actions captured')).toBeTruthy();
-        expect(screen.queryByRole('button', { name: 'Record' })).toBeNull();
+        expect(screen.getByRole('group', { name: 'Recording' })).toBeTruthy();
+        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Record voice & actions' })).toBeNull();
       });
 
       it('should put the keyboard on Stop when the recording has just started', () => {
@@ -365,19 +380,17 @@ describe('ChatView session recorder', () => {
         );
       });
 
-      it('should put the keyboard back in the composer when the card goes away', () => {
-        const { update } = renderChat({ recorder: recording(), onToggleRecording: vi.fn() });
-        screen.getByRole('button', { name: 'Stop recording' }).focus();
+      it('should keep what was typed for when the text field comes back', () => {
+        const { update } = renderChat({ recorder: idle, onToggleRecording: vi.fn() });
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: 'make it blue' } });
 
-        update({
-          recorder: { ...idle, status: 'stopping' as const, startedAt: Date.now() - 1000 },
-          onToggleRecording: vi.fn(),
-        });
+        update({ recorder: recording(), onToggleRecording: vi.fn() });
+        update({ recorder: idle, onToggleRecording: vi.fn() });
 
-        expect(document.activeElement).toBe(screen.getByRole('textbox'));
+        expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('make it blue');
       });
 
-      it('should stop from the card', () => {
+      it('should stop from the bar', () => {
         const onToggleRecording = vi.fn();
         renderChat({ recorder: recording(), onToggleRecording });
 
@@ -386,11 +399,20 @@ describe('ChatView session recorder', () => {
         expect(onToggleRecording).toHaveBeenCalled();
       });
 
+      it('should stop and send from the bar', () => {
+        const onSendRecording = vi.fn();
+        renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onSendRecording });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
+
+        expect(onSendRecording).toHaveBeenCalled();
+      });
+
       it('should discard only after the user confirms', () => {
         const onCancelRecording = vi.fn();
         renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
 
-        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
         const dialog = screen.getByRole('dialog', { name: 'Discard this recording?' });
         expect(onCancelRecording).not.toHaveBeenCalled();
 
@@ -402,58 +424,69 @@ describe('ChatView session recorder', () => {
         const onCancelRecording = vi.fn();
         renderChat({ recorder: recording(), onToggleRecording: vi.fn(), onCancelRecording });
 
-        fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Discard recording' }));
         fireEvent.click(screen.getByRole('button', { name: 'Keep recording' }));
 
         expect(onCancelRecording).not.toHaveBeenCalled();
-        expect(screen.getByTestId('recording-card')).toBeTruthy();
+        expect(screen.getByTestId('recording-bar')).toBeTruthy();
       });
     });
 
     describe('and the recording is being transcribed', () => {
-      const stopping = () => ({
+      const stopping = (endedWith: 'stop' | 'send') => ({
         ...idle,
         status: 'stopping' as const,
         startedAt: Date.now() - 42_000,
         stoppedAt: Date.now(),
+        endedWith,
       });
 
-      it('should show the progress above a composer that stays usable', () => {
-        const onStop = vi.fn();
-        renderChat({ recorder: stopping(), busy: true, onToggleRecording: vi.fn(), onStop });
+      it('should say so in place of the text field, with nothing to press', () => {
+        renderChat({ recorder: stopping('stop'), onToggleRecording: vi.fn() });
 
-        const card = screen.getByRole('group', { name: 'Transcribing your recording' });
-        expect(within(card).getByText('0:42')).toBeTruthy();
-        expect(screen.getByRole('textbox')).toBeTruthy();
-
-        fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-        expect(onStop).toHaveBeenCalled();
-      });
-
-      it('should say it is transcribing only in the card', () => {
-        renderChat({ recorder: stopping(), onToggleRecording: vi.fn() });
-
-        expect(screen.queryAllByText(/^Transcribing/)).toHaveLength(1);
-      });
-
-      it('should put the card where the recording card was, above the composer', () => {
-        renderChat({ recorder: stopping(), onToggleRecording: vi.fn() });
-
-        const card = screen.getByTestId('recording-transcribing');
-        const composer = screen.getByRole('textbox');
-        expect(composer.contains(card)).toBe(false);
+        const bar = screen.getByTestId('recording-transcribing');
+        expect(within(bar).getByRole('status').textContent).toBe('Transcribing…');
+        expect(screen.queryByRole('textbox')).toBeNull();
         expect(
-          card.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+          within(bar)
+            .getAllByRole('button')
+            .every(button => (button as HTMLButtonElement).disabled),
+        ).toBe(true);
+      });
+
+      it('should spin where Stop was when the recording was stopped', () => {
+        renderChat({ recorder: stopping('stop'), onToggleRecording: vi.fn() });
+
+        const bar = screen.getByTestId('recording-transcribing');
+        const spinner = within(bar).getByRole('progressbar');
+        expect(
+          spinner.compareDocumentPosition(within(bar).getByRole('button', { name: 'Send' })) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
       });
 
-      it('should offer sending the recording without waiting for the transcript', () => {
-        const onSkipTranscription = vi.fn();
-        renderChat({ recorder: stopping(), onToggleRecording: vi.fn(), onSkipTranscription });
+      it('should spin where Send was when the recording was sent', () => {
+        renderChat({ recorder: stopping('send'), onToggleRecording: vi.fn() });
 
-        fireEvent.click(screen.getByRole('button', { name: 'Send without transcript' }));
+        const bar = screen.getByTestId('recording-transcribing');
+        const spinner = within(bar).getByRole('progressbar');
+        expect(
+          spinner.compareDocumentPosition(
+            within(bar).getByRole('button', { name: 'Stop recording' }),
+          ) & Node.DOCUMENT_POSITION_PRECEDING,
+        ).toBeTruthy();
+      });
 
-        expect(onSkipTranscription).toHaveBeenCalled();
+      it('should show the speech model download on first use', () => {
+        renderChat({
+          recorder: {
+            ...stopping('stop'),
+            tools: { state: 'installing', message: '', percent: 42 },
+          },
+          onToggleRecording: vi.fn(),
+        });
+
+        expect(screen.getByRole('status').textContent).toBe('Downloading speech model… 42%');
       });
     });
   });
@@ -548,6 +581,57 @@ describe('ChatView draft prompt', () => {
       expect(composer().value).toBe('describe a reaction');
       expect(document.activeElement).toBe(composer());
       outside.remove();
+    });
+  });
+
+  describe('when a transcribed recording arrives', () => {
+    const pending = { sessions: [], durationMs: 4000, actionCount: 3 };
+
+    it('should send it with what was typed before, once', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ onSend });
+      fireEvent.change(composer(), { target: { value: 'make it blue' } });
+
+      update({
+        onSend,
+        recording: pending,
+        draftPrompt: { text: 'and taller', nonce: 1, mode: 'append', send: true },
+      });
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('make it blue and taller', undefined);
+      expect(composer().value).toBe('');
+    });
+
+    it('should send the recording even when no speech was transcribed', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ onSend });
+
+      update({
+        onSend,
+        recording: pending,
+        draftPrompt: { text: '', nonce: 1, mode: 'append', send: true },
+      });
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('', undefined);
+    });
+
+    it('should wait for the running turn, with the transcript read-only meanwhile', () => {
+      const onSend = vi.fn();
+      const { update } = renderChat({ onSend, busy: true });
+
+      update({
+        onSend,
+        busy: true,
+        recording: pending,
+        draftPrompt: { text: 'add a door', nonce: 1, mode: 'append', send: true },
+      });
+      expect(onSend).not.toHaveBeenCalled();
+      expect(composer().value).toBe('add a door');
+      expect(composer().disabled).toBe(true);
+
+      update({ onSend, busy: false, recording: pending });
+
+      expect(onSend).toHaveBeenCalledExactlyOnceWith('add a door', undefined);
     });
   });
 

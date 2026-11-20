@@ -45,12 +45,12 @@ const IDLE: AiRecorderState = {
   micLabel: '',
   tools: null,
   actionCount: 0,
+  endedWith: null,
 };
 
 let host: RecorderHost | null = null;
 let active: Active | null = null;
 let stoppingSessionId: string | null = null;
-let skipRequested = false;
 let consentPrompt: ConsentPrompt | null = null;
 const consentListeners = new Set<() => void>();
 let attempt = 0;
@@ -211,15 +211,20 @@ export async function startRecording(): Promise<void> {
 }
 
 /**
- * Ends the recording and hands what main made of it to the assistant.
+ * Ends the recording and sends what main made of it to the assistant: the transcript as the
+ * message text, the timeline as its recording attachment.
  *
  * @param reason Why it ended: the limit and a lost microphone say so before main answers.
+ * @param endedWith The button that ended it, which only changes how the wait is shown.
  */
-export async function stopRecording(reason: StopReason = 'user'): Promise<void> {
+export async function stopRecording(
+  reason: StopReason = 'user',
+  endedWith: 'stop' | 'send' = 'stop',
+): Promise<void> {
   const current = active;
   if (current === null || state().status !== 'recording') return;
   const token = attempt;
-  patch({ status: 'stopping', stoppedAt: Date.now() });
+  patch({ status: 'stopping', stoppedAt: Date.now(), endedWith });
   if (current.limitTimer) clearTimeout(current.limitTimer);
   current.microphone?.stop();
   current.stopHubDom();
@@ -236,7 +241,6 @@ export async function stopRecording(reason: StopReason = 'user'): Promise<void> 
   stoppingSessionId = current.sessionId;
   const projectPath = host?.projectPath;
   const finishing = recordingPreload.stop(current.sessionId);
-  if (skipRequested) sendSkipTranscription(current.sessionId);
   try {
     const result = await finishing;
     if (!isCurrentAttempt(token) || !stillTheSameEditor(projectPath)) return;
@@ -249,9 +253,9 @@ export async function stopRecording(reason: StopReason = 'user'): Promise<void> 
         ...(result.transcriptionError && { transcriptionError: result.transcriptionError }),
       }),
     );
-    if (result.transcript) {
-      store.dispatch(aiActions.setDraftPrompt({ text: result.transcript, mode: 'append' }));
-    }
+    store.dispatch(
+      aiActions.setDraftPrompt({ text: result.transcript ?? '', mode: 'append', send: true }),
+    );
     host?.onFinished();
     if (result.transcriptionError && result.durationMs > 0) {
       notify('warning', t('editor.recording.no_transcript'), result.transcriptionError);
@@ -259,23 +263,17 @@ export async function stopRecording(reason: StopReason = 'user'): Promise<void> 
   } catch (error) {
     if (isCurrentAttempt(token)) fail(error);
   } finally {
-    if (stoppingSessionId === current.sessionId) {
-      stoppingSessionId = null;
-      skipRequested = false;
-    }
+    if (stoppingSessionId === current.sessionId) stoppingSessionId = null;
     current.stopToolsProgress();
-    if (isCurrentAttempt(token)) patch({ status: 'idle', startedAt: null, stoppedAt: null });
+    if (isCurrentAttempt(token)) {
+      patch({ status: 'idle', startedAt: null, stoppedAt: null, endedWith: null });
+    }
   }
 }
 
-/** Gives up on the transcript of the session being stopped: main answers the stop at once. */
-export function skipTranscription(): void {
-  if (state().status !== 'stopping') return;
-  if (stoppingSessionId === null) {
-    skipRequested = true;
-    return;
-  }
-  sendSkipTranscription(stoppingSessionId);
+/** The recording's Send button: stop, then send it as soon as it is transcribed. */
+export async function sendRecording(): Promise<void> {
+  await stopRecording('user', 'send');
 }
 
 /** Throws the running recording away: like an abort, and main deletes what it captured. */
@@ -302,7 +300,6 @@ export function abortRecording(): void {
   }
   if (stoppingSessionId !== null) sendSkipTranscription(stoppingSessionId);
   stoppingSessionId = null;
-  skipRequested = false;
   setConsentPrompt(null);
   store.dispatch(aiActions.setRecorderState(IDLE));
 }

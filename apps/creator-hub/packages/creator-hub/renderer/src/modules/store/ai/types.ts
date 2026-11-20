@@ -96,7 +96,8 @@ export interface AiState {
   // "describe a reaction" buttons (inspector→host `prompt_assistant` RPC). EditorPage opens
   // the panel on it and the composer seeds its input from `text`, then clears it. `nonce`
   // makes the same text fire again (a second click on the same button).
-  draftPrompt: { text: string; nonce: number; mode: DraftPromptMode } | null;
+  /** Text for the composer; with `send`, the composer sends it as soon as it can (a recording). */
+  draftPrompt: { text: string; nonce: number; mode: DraftPromptMode; send?: boolean } | null;
   /** Only ever counts up, so a composer can tell a draft it already applied from a new one. */
   draftNonce: number;
 }

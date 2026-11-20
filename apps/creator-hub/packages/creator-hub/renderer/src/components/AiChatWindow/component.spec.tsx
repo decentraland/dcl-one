@@ -31,6 +31,7 @@ const MIRROR: AiMirrorState = {
     micLabel: '',
     tools: null,
     actionCount: 0,
+    endedWith: null,
   },
   billingDismissed: true,
   sessions: [],
@@ -75,18 +76,18 @@ describe('the popped-out chat window', () => {
     });
   });
 
-  describe('when a recording made here is still transcribing', () => {
-    it('should ask the editor window to send it without the transcript', () => {
+  describe('when a recording is running', () => {
+    it('should ask the editor window to stop it and send it once transcribed', () => {
       act(() =>
         push({
           ...MIRROR,
-          recorder: { ...MIRROR.recorder!, status: 'stopping', startedAt: Date.now() - 1000 },
+          recorder: { ...MIRROR.recorder!, status: 'recording', startedAt: Date.now() - 1000 },
         }),
       );
 
-      fireEvent.click(screen.getByRole('button', { name: 'Send without transcript' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
 
-      expect(aiPreload.sendAiRemoteCommand).toHaveBeenCalledWith({ type: 'skipTranscription' });
+      expect(aiPreload.sendAiRemoteCommand).toHaveBeenCalledWith({ type: 'sendRecording' });
     });
   });
 });

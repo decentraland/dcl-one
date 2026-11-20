@@ -87,8 +87,8 @@ export function AiChatWindow() {
     () => aiPreload.sendAiRemoteCommand({ type: 'removeRecording' }),
     [],
   );
-  const onSkipTranscription = useCallback(
-    () => aiPreload.sendAiRemoteCommand({ type: 'skipTranscription' }),
+  const onSendRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'sendRecording' }),
     [],
   );
   const onDraftConsumed = useCallback(
@@ -151,7 +151,7 @@ export function AiChatWindow() {
       recorder={mirror.recorder}
       onToggleRecording={onToggleRecording}
       onCancelRecording={onCancelRecording}
-      onSkipTranscription={onSkipTranscription}
+      onSendRecording={onSendRecording}
       draftPrompt={mirror.draftPrompt}
       onDraftConsumed={onDraftConsumed}
       billingDismissed={mirror.billingDismissed}

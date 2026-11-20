@@ -18,7 +18,8 @@ export type AiSessionHandlers = {
   onCloseAssistant?: () => void;
   onToggleRecording?: () => void;
   onCancelRecording?: () => void;
-  onSkipTranscription?: () => void;
+  /** Stop the running recording and send it once transcribed. */
+  onSendRecording?: () => void;
 };
 
 // The AI session engine, mounted once in the editor (main window) whenever the assistant
@@ -174,8 +175,8 @@ export function useAiSession(
         case 'cancelRecording':
           latest.current.handlers.onCancelRecording?.();
           break;
-        case 'skipTranscription':
-          latest.current.handlers.onSkipTranscription?.();
+        case 'sendRecording':
+          latest.current.handlers.onSendRecording?.();
           break;
         case 'consumeDraftPrompt':
           dispatch(aiActions.consumeDraftPrompt());
