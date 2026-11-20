@@ -47,7 +47,7 @@ import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
-import type { ShopPaymentMethod, ShopPurchaseItem, ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
+import { shopStepLeave, type ShopPaymentMethod, type ShopPurchaseItem, type ShopPurchaseStep } from '@dcl/one-ui/apps/shop/ui'
 import { manaGuardedProvider, type ManaPurchaseIntent, type ManaSaleTerms } from './manaGuard'
 import { SEND_MS } from './manaPurchase'
 import { boundedReader, createManaEvidence, EVIDENCE_READ_MS, type ManaEvidence } from './manaEvidence'
@@ -181,8 +181,8 @@ const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 
 
 /**
  * `wallet` as `owner`'s purchase uses it: while a self-custody wallet asks the buyer to sign or send, the dialog
- * says to confirm in the wallet, then shows the step it showed before, unless a newer step replaced the prompt
- * meanwhile. The request, its answer and its refusal pass through untouched. An in-app wallet signs without asking,
+ * says to confirm in the wallet, with the covered step's own way out (its CANCEL, and Escape), then shows the step it
+ * showed before, unless a newer step replaced the prompt meanwhile. The request, its answer and its refusal pass through untouched. An in-app wallet signs without asking,
  * so it is returned as it is; so is a request while `owner` isn't the one shown.
  */
 export function promptingWallet(slot: DialogSlot, owner: DialogOwner, wallet: Eip1193Provider, kind: ShopWalletKind): Eip1193Provider {
@@ -191,8 +191,10 @@ export function promptingWallet(slot: DialogSlot, owner: DialogOwner, wallet: Ei
     request: async (args) => {
       const before = WALLET_PROMPTS.has(args.method) ? slot.shown() : null
       if (!before || before.owner !== owner) return wallet.request(args)
-      const asking: ShellPurchaseView = { step: 'wallet' }
-      slot.show(owner, asking, { onClose: () => {} }, before.opening)
+      // The step it covers keeps its way out (CANCEL on Authorize MANA): a wallet that never answers can't trap the buyer.
+      const close = shopStepLeave(before.view)
+      const asking: ShellPurchaseView = close ? { step: 'wallet', close } : { step: 'wallet' }
+      slot.show(owner, asking, { onClose: close ? before.handlers.onClose : () => {} }, before.opening)
       try {
         return await wallet.request(args)
       } finally {
@@ -320,7 +322,11 @@ export async function fetchBuyListing(contract: string, itemId: string, client: 
   return row && !isResale(row) ? row : null
 }
 
-/** Creators' profiles, read once per page for both their name and their picture; a read that failed is tried again. */
+/**
+ * Creators' profiles, read once per page for both their name and their picture; a read that failed is tried again. Kept
+ * for the page's life on purpose: a name and a picture only label the dialog (nothing is charged from them), they
+ * change rarely, and a page opened again reads them afresh.
+ */
 const creatorProfiles = new Map<string, ReturnType<typeof fetchProfile>>()
 const creatorProfile = (address: string): ReturnType<typeof fetchProfile> => {
   let read = creatorProfiles.get(address)

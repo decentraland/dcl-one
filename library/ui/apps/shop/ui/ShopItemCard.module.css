@@ -62,7 +62,7 @@
   fill: var(--rarity);
 }
 .flapShadow {
-  fill: #161518;
+  fill: var(--panel);
   opacity: 0.2;
 }
 .flapIcon {
@@ -113,7 +113,7 @@
   padding: 0 5px;
   overflow: hidden;
   border-radius: var(--r-xs);
-  background: linear-gradient(180deg, #fb2bff 0%, #af2ade 100%);
+  background: var(--shop-smart);
   color: var(--text);
   font-size: var(--type-12);
   font-weight: var(--fw-semibold);

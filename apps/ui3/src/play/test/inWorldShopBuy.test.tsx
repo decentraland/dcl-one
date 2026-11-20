@@ -199,6 +199,16 @@ describe('buying in the in-world Shop', () => {
       const panel = await screen.findByRole('complementary', { name: 'Golden Armor' })
       await waitFor(() => expect(panel.textContent).toContain('≈ 5,000 MANA'))
       cleanup()
+      // Rounded up as every Shop price is, never below what the wallet is asked for.
+      manaWei = '12999000000000000000'
+      serveCatalogue()
+      answerShell('web3', true, true, true)
+      renderShop()
+      await userEvent.click(await screen.findByRole('button', { name: 'Golden Armor' }, { timeout: 5000 }))
+      const rounded = await screen.findByRole('complementary', { name: 'Golden Armor' })
+      await waitFor(() => expect(rounded.textContent).toContain('≈ 13 MANA'))
+      cleanup()
+      manaWei = '5000000000000000000000'
       serveCatalogue()
       answerShell('web3', true, true, false)
       renderShop()

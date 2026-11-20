@@ -12,8 +12,8 @@
   overflow: hidden;
   border-radius: var(--r-xl);
   background:
-    radial-gradient(62% 45% at 92% -12%, rgba(255, 75, 237, 0.3) 0%, rgba(255, 75, 237, 0) 100%),
-    radial-gradient(85% 30% at 50% 112%, rgba(255, 75, 237, 0.42) 0%, rgba(255, 75, 237, 0) 100%),
+    radial-gradient(62% 45% at 92% -12%, var(--shop-modal-glow-top) 0%, transparent 100%),
+    radial-gradient(85% 30% at 50% 112%, var(--shop-modal-glow-bottom) 0%, transparent 100%),
     var(--shop-modal);
   color: var(--text);
 }

@@ -81,6 +81,27 @@ describe('the wallet prompt in the in-world purchase', () => {
     expect(slot.shown()?.view).toBe(processing)
   })
 
+  it('keeps the covered step’s way out: Authorize MANA’s CANCEL (and Escape) still leave it while the wallet asks', async () => {
+    const { slot, op } = setup()
+    const leave = vi.fn()
+    slot.show(op, { step: 'authorize', venue: 'the Collection Store', network: 'Polygon', required: 1n, state: 'waiting' }, { onClose: leave })
+    const held = heldWallet()
+    void promptingWallet(slot, op, held.wallet, 'web3').request(SIGN)
+    await tick()
+    const shown = slot.shown()!
+    expect(shown.view).toEqual({ step: 'wallet', close: 'Cancel' })
+    shown.handlers.onClose()
+    expect(leave).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers no way out while it covers Processing, as Processing offers none', async () => {
+    const { slot, op } = setup()
+    const held = heldWallet()
+    void promptingWallet(slot, op, held.wallet, 'web3').request(SIGN)
+    await tick()
+    expect(slot.shown()?.view).toEqual({ step: 'wallet' })
+  })
+
   it('shows nothing for an in-app wallet, for a read, or while the purchase isn’t the one shown', async () => {
     const { shown, slot, op } = setup()
     const managed = heldWallet()

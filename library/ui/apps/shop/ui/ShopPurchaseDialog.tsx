@@ -113,8 +113,11 @@ export type ShopPurchaseStep =
    * it didn't go through (`message` says why), and AUTHORIZE tries again.
    */
   | { step: 'authorize'; venue: string; network: string; required: bigint; state: 'ready' | 'waiting' | 'failed'; message?: string; progress?: ShopPaymentProgress }
-  /** Confirm in your wallet: the buyer's own wallet is asking them to sign. */
-  | { step: 'wallet' }
+  /**
+   * Confirm in your wallet: the buyer's own wallet is asking them to sign. `close`: the label of the button the step it
+   * covers offered to leave it (CANCEL on Authorize MANA), which leaves it the same way here; absent, nothing to press.
+   */
+  | { step: 'wallet'; close?: string }
   /**
    * Still being confirmed. `message`: what is known about it, in place of the step's own words. `check`: CHECK AGAIN
    * is offered (`checking` while it looks). `retry`: RETRY is offered in its place (the same purchase sent again, which
@@ -164,6 +167,25 @@ const simulationDone = (items: readonly ShopPurchaseItem[]): string =>
 const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
 /** "this item", "this Name", "these items". */
 const what = (items: readonly ShopPurchaseItem[]): string => (isName(items) ? 'this Name' : items.length === 1 ? 'this item' : 'these items')
+
+/**
+ * The button a step offers to leave it, as each step below draws it, or null where it offers none (Processing, and
+ * Confirm in your wallet itself). Confirm in your wallet keeps it, so a wallet that never answers can't trap the buyer.
+ */
+export function shopStepLeave(view: { step: ShopPurchaseStep['step']; retry?: boolean; switchTo?: string }): string | null {
+  switch (view.step) {
+    case 'processing':
+    case 'wallet':
+      return null
+    case 'success':
+    case 'pending':
+      return 'Continue shopping'
+    case 'failed':
+      return view.retry || view.switchTo != null ? 'Cancel' : 'Close'
+    default:
+      return 'Cancel'
+  }
+}
 
 export function ShopPurchaseDialog({
   view,
@@ -378,10 +400,17 @@ export function ShopPurchaseDialog({
           label="Confirm in your wallet"
           busy
           actions={
-            // The design's button in its loading state: the label kept out of sight, the spinner in its place.
-            <span className={styles.waiting} role="status" aria-label="Waiting for your wallet">
-              <Spinner variant="shop" size={22.667} />
-            </span>
+            <>
+              {view.close && (
+                <Button variant="dark" size="dialog" onClick={onClose}>
+                  {view.close}
+                </Button>
+              )}
+              {/* The design's button in its loading state: the label kept out of sight, the spinner in its place. */}
+              <span className={styles.waiting} role="status" aria-label="Waiting for your wallet">
+                <Spinner variant="shop" size={22.667} />
+              </span>
+            </>
           }
         >
           <ShopModalHeader>
@@ -555,7 +584,7 @@ function BoughtCards({ items, isNew = true }: { items: ShopPurchaseItem[]; isNew
   const bought = amounts(items)
   const scrolls = bought.length > 3 * CARD_ROWS_SHOWN
   const cards = bought.map(({ item, amount }, i) => (
-    <span key={i} className={styles.boughtItem} {...(scrolls ? { role: 'listitem', 'aria-label': item.name } : {})}>
+    <span key={i} className={styles.boughtItem} {...(scrolls ? { role: 'listitem', 'aria-label': amount > 1 ? `${item.name} x${amount}` : item.name } : {})}>
       <Card item={item} isNew={isNew} labelled={!scrolls} size="bought" amount={amount} />
     </span>
   ))
@@ -682,7 +711,7 @@ function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.
 /**
  * Buy Item with its payment options: the balance, the items, an option per currency, a cart's total, then CANCEL or BUY.
  * The step opens with a pick: the buyer's earlier one while it pays, else the Credits when they pay, else MANA. After
- * that only the buyer picks: picking one option drops the other, and picking the one picked drops it. A pick that stops
+ * that only the buyer picks, one option at a time (radios): picking one moves the pick to it. A pick that stops
  * paying (a balance read again) is dropped, and BUY waits for the buyer to pick an option that pays: the same BUY never
  * spends another way than the one picked, and a later read where the dropped option pays again doesn't pick it back.
  */
@@ -721,7 +750,7 @@ function MethodStep({
         <Balance credits={credits.balance} mana={mana.balance} />
       </ShopModalHeader>
       <ItemList items={view.items} />
-      <PaymentOptions credits={credits} mana={mana} picked={method} onPick={(m) => setPicked(method === m ? null : m)} />
+      <PaymentOptions credits={credits} mana={mana} picked={method} onPick={setPicked} />
       {count > 1 && <OrderSummary count={count} credits={method === 'mana' ? null : credits.price} mana={method === 'mana' ? mana.price : null} />}
     </ShopModal>
   )
@@ -735,8 +764,8 @@ function manaPerCredit(mana: bigint, credits: number | null): string | null {
 
 /**
  * The design's payment options: one per currency, each with its mark, its name over the buyer's balance, and what it
- * pays (MANA with its rate to Credits). An option that can't pay is shown off. Checkboxes, as drawn; `onPick` absent:
- * none may be picked (Insufficient Funds).
+ * pays (MANA with its rate to Credits). An option that can't pay is shown off. Radios, drawn as the design's
+ * checkboxes; `onPick` absent: none may be picked (Insufficient Funds).
  */
 function PaymentOptions({
   credits,
@@ -751,7 +780,8 @@ function PaymentOptions({
 }): React.JSX.Element {
   const rate = manaPerCredit(mana.price, credits.price)
   return (
-    <div className={styles.options} role="group" aria-label="Payment method">
+    // One is picked at a time: radios, drawn as the design's checkboxes.
+    <div className={styles.options} role="radiogroup" aria-label="Payment method">
       <PaymentOption
         label="Credits"
         checked={picked === 'credits'}
@@ -803,7 +833,7 @@ function PaymentOptions({
   )
 }
 
-/** One payment option: the checkbox (the native one, out of sight, drawn as the design system's filled checkbox). */
+/** One payment option: a native radio, out of sight, drawn as the design system's filled checkbox. */
 function PaymentOption({
   label,
   checked,
@@ -823,7 +853,7 @@ function PaymentOption({
 }): React.JSX.Element {
   return (
     <label className={styles.option} data-checked={checked || undefined} data-disabled={disabled || undefined}>
-      <input type="checkbox" className={styles.optionInput} checked={checked} disabled={disabled} onChange={onChange} />
+      <input type="radio" name="shop-payment-method" className={styles.optionInput} checked={checked} disabled={disabled} onChange={onChange} />
       <span className={styles.check} aria-hidden="true">
         <span className={styles.checkBox}>{checked && <img src={paymentCheck} alt="" width={16} height={16} />}</span>
       </span>

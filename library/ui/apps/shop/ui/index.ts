@@ -20,6 +20,7 @@ export { ShopNames, type ShopNameStatus, type ShopNamesProps, type ShopNamesTab 
 export { pressedWith, type PressedWith } from './pressedWith'
 export {
   ShopPurchaseDialog,
+  shopStepLeave,
   type ShopCreditsChoice,
   type ShopManaChoice,
   type ShopPaymentMethod,

@@ -5,7 +5,7 @@
 // sale) is offered on the web Shop's item page.
 
 import type { CardPrice } from '@shop/discovery/cardPrice'
-import { formatMana, type ManaWei } from '@shop/model/money'
+import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
 import { GeneralPolygonMana } from '@dcl/one-ui'
 import { Close, MaskIcon, rarityPanel } from '@hud/design'
 import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
@@ -84,7 +84,7 @@ export function ShopItemPanel({
             </span>
             {price.kind === 'credits' && manaPrice != null && manaPrice > 0n && (
               <span className={styles.manaPrice} title={`${formatMana(manaPrice, { group: true })} MANA`}>
-                <GeneralPolygonMana size={16} aria-hidden="true" />≈ {formatMana(manaPrice, { group: true, decimals: 2 })} MANA
+                <GeneralPolygonMana size={16} aria-hidden="true" />≈ {formatManaPrice(manaPrice)} MANA
               </span>
             )}
           </span>

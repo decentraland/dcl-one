@@ -443,6 +443,28 @@ describe('the in-world purchase with MANA', () => {
       expect(steps.filter((s) => s === 'wallet')).toHaveLength(2)
     })
 
+    it('lets the buyer cancel Authorize MANA from Confirm in your wallet while the approve waits on a wallet that never answers', async () => {
+      const w = world()
+      const original = w.wallet.request.bind(w.wallet)
+      let answer: () => void = () => {}
+      const held = new Promise<void>((r) => (answer = r))
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === 'eth_signTypedData_v4') await held
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w)
+      await p.payMana()
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      const asking = await p.until('wallet')
+      expect(asking.view).toEqual({ step: 'wallet', close: 'Cancel' })
+      asking.handlers.onClose()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      // The wallet answers late: nothing is relayed, the approve included.
+      answer()
+      await new Promise((r) => setTimeout(r, 30))
+      expect(relayedTo(w)).toEqual([])
+    })
+
     it('never says to confirm in a wallet that signs without asking (an in-app one)', async () => {
       const w = world({ allowance: maxUint256 })
       const p = page(w, { kind: 'managed' })

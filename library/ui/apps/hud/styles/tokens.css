@@ -68,11 +68,16 @@
   --black-55: rgba(0, 0, 0, 0.55); /* the minimap's compass badges */
   --cart-badge-ring: #2b0044; /* the Shop cart badge's ring */
   --shop-modal: #4c147c; /* the New Shop's dialogs (Buy Item, Purchase successful…) */
-  --shop-dialog-text: #cfcdd4; /* text/secondary-on-brand: a Shop dialog's body text and its balance's label */
+  /* Neutrals/Gray (the design system's --dcl-neutrals-gray, whose foundations the /play shell's dialog overlay doesn't
+     load): a Shop dialog's body text, its balance's label and a checkbox's border. */
+  --shop-gray: #cfcdd4;
+  /* The design system's explorer-modal glows and the item card's SMART badge. */
+  --shop-modal-glow-top: rgba(255, 75, 237, 0.3);
+  --shop-modal-glow-bottom: rgba(255, 75, 237, 0.42);
+  --shop-smart: linear-gradient(180deg, #fb2bff 0%, #af2ade 100%);
   --shop-option: rgba(255, 255, 255, 0.1); /* a payment option (Transparencies/White 10) */
   --shop-option-on: rgba(255, 255, 255, 0.2); /* a payment option picked or hovered (Transparencies/White 20) */
   --shop-option-ring: linear-gradient(180.67deg, #ff7439 2.82%, #ff2d55 97.47%); /* a picked option's 2px rim (Gradients/Button Primary) */
-  --shop-checkbox-rim: #cfcdd4; /* Neutrals/Gray: a checkbox's border */
   --shop-face-rim: rgba(255, 255, 255, 0.6); /* Transparencies/White 60: a profile picture's ring */
   --brand-purple: #691fa9; /* Brand/Purple: a card's thumbnail base, the skeleton's band */
   --brand-purple-dark: #4c147c; /* Brand/Purple Dark: the skeleton's base */
