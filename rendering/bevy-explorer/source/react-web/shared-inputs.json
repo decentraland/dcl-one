@@ -5073,6 +5073,10 @@
       "path": "library/ui/apps/hud/styles",
       "entries": [
         {
+          "name": "page.css",
+          "kind": "regular"
+        },
+        {
           "name": "tokens.css",
           "kind": "regular"
         }
@@ -6194,7 +6198,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
-      "sha256": "d8530674de07191bf296d069dc4863518abe30e6024423698818d678eab0df42"
+      "sha256": "8e0cfad37b090e9cd69c3e84b7ae3be65daa8c2e7690c10b1f6cc32835ba5dae"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/autopilotDrivers.test.ts",
@@ -6413,6 +6417,10 @@
       "sha256": "679587a4d484c71c357e7775f847f7d51e3c9b53eb2dfb91b69f867684190c58"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
+      "sha256": "c5046f798d8b17d245f08db5351885b2b8d830a5ec26dae52452cf31d01264ee"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
       "sha256": "3dbe90a2a7601e93446485518e5723cc6e6b50dd04ae9ee3603a6a6b689c26ac"
     },
@@ -6442,7 +6450,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "04e2ef38f58cc1f5b4b9c6d9bbc369b950f5e9ce952633aca11692371817cd4a"
+      "sha256": "9392d4f92a63690dff384f8c8f798ada70c7e7f1eb7f50f9f20e4ab57c6d4b02"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -6529,6 +6537,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/untrustedExit.test.ts",
@@ -9083,11 +9092,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "029d44248abb1568030419039f1786381012c14cbc491a4e1c55f05102bd23ad"
+      "sha256": "26a1460c5f6fd0080e6c2548b7167bddef278ece1ee9552fc3acdec0a2f404b0"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
-      "sha256": "ae542cbfe00d8e2abad9606b2520010f783739695e6b0640c2f1358818b560df"
+      "sha256": "89b6c71c990c4dadf95a0e4fe64a976a3ae50324c3f4739e1dfc066c49bea9f8"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -10464,6 +10473,10 @@
     {
       "path": "library/ui/apps/hud/lib/useWindowKeyDown.ts",
       "sha256": "7606cc4147d22a04c17c27b0792f393c217b1f8c87d883e62180acc9a4a26036"
+    },
+    {
+      "path": "library/ui/apps/hud/styles/page.css",
+      "sha256": "6523103501d22d23cb46c7a779d0266992d75159c1a98201dc7dba0933d19cf7"
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
@@ -45151,6 +45164,16 @@
       "from": "rendering/bevy-explorer/source/react-web/src/shell/main.ts",
       "to": "library/explorer-core/shell/googleTag.ts",
       "kind": "production:runtime"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
+      "to": "library/ui/apps/hud/styles/page.css",
+      "kind": "native:css"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
+      "to": "library/ui/apps/hud/styles/page.css",
+      "kind": "production:css"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import path from 'node:path'
+import ts from 'typescript'
 import { resolveConfig } from 'vite'
 import { describe, expect, it } from 'vitest'
 
@@ -67,5 +68,20 @@ describe('when the gallery compiles the Explorer HUD for its HUD canvas', () => 
         'hud'
       ])
     }
+  })
+})
+
+describe('when the HUD names are declared for the bundler, the tests and the type check', () => {
+  it('should map in tsconfig.hud.json exactly the names the Vite config and the hud tests resolve', async () => {
+    const { hudAliases } = await import('../vite.config')
+    const gallery = path.join(library, 'gallery')
+    const { config } = ts.readConfigFile(path.join(gallery, 'tsconfig.hud.json'), ts.sys.readFile)
+    const expected = Object.fromEntries(
+      Object.entries(hudAliases).map(([name, target]) => {
+        const relative = path.relative(gallery, target)
+        return path.extname(target) ? [name, [relative]] : [`${name}/*`, [`${relative}/*`]]
+      })
+    )
+    expect(config.compilerOptions.paths).toEqual(expected)
   })
 })

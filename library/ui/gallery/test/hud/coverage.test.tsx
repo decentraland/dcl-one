@@ -5,7 +5,10 @@ import { Button as ButtonModule } from '../../../apps/hud/design/Button'
 import * as design from '../../../apps/hud/design'
 import * as glyphs from '../../../apps/hud/design/Glyphs'
 import { SHOWCASE_SECTIONS } from '../../../apps/hud/design/Showcase'
-import { SHOWCASE_EXCLUSIONS } from '../../../apps/hud/design/ShowcaseIndex'
+import {
+  SHOWCASE_EXCLUSIONS,
+  SHOWCASE_NOT_COMPONENTS
+} from '../../../apps/hud/design/ShowcaseIndex'
 import {
   claimProblems,
   componentExports,
@@ -46,27 +49,6 @@ const pages = SHOWCASE_SECTIONS.map((section) => ({
   examples: [{ id: section.name, title: section.title, render: section.render }]
 }))
 
-// The design entry's exports that are not components, with why the coverage rule leaves each out. Types are erased
-// at runtime and never listed.
-const NOT_COMPONENTS: Record<string, string> = {
-  ARM_MS: 'a number: how long ArmedButton ignores presses after it appears',
-  anchoredMenuPosition: 'where AnchoredMenu opens, a function',
-  closeTopPopup: 'the popup layer API, which PopupHost draws',
-  dismissToast: 'the toast queue API, which ToastHost draws',
-  hasOpenPopup: 'the popup layer API, which PopupHost draws',
-  openPopup: 'the popup layer API, which PopupHost draws',
-  pageWindow: 'the page numbers Pager shows, a function',
-  rarityOf: 'a rarity art lookup the cards use',
-  rarityPanel: 'a rarity art lookup the cards use',
-  rarityTile: 'a rarity art lookup the cards use',
-  resetPopups: 'the popup layer API, which PopupHost draws',
-  showConfirm: 'opens a dialog on the popup layer: the Dialogs section calls it',
-  showDialog: 'opens a dialog on the popup layer: the Dialogs section calls it',
-  showToast: 'shows a toast: the Toast section calls it',
-  subscribePopups: 'the popup layer API, which PopupHost draws',
-  topPopupOrder: 'the popup layer API, which PopupHost draws'
-}
-
 // Sections whose named component appears only after a press: the button the test presses first.
 const OPENED_BY: Record<string, string> = { AnchoredMenu: 'Open the photo options' }
 
@@ -101,8 +83,8 @@ describe('when the Showcase is checked against the HUD design entry', () => {
     const others = Object.keys(design)
       .filter((name) => !isComponentExport(name, (design as Record<string, unknown>)[name]))
       .sort()
-    expect(others).toEqual(Object.keys(NOT_COMPONENTS).sort())
-    for (const reason of Object.values(NOT_COMPONENTS)) expect(reason.trim()).not.toBe('')
+    expect(others).toEqual(Object.keys(SHOWCASE_NOT_COMPONENTS).sort())
+    for (const reason of Object.values(SHOWCASE_NOT_COMPONENTS)) expect(reason.trim()).not.toBe('')
   })
 
   it('should name every component the design entry exports in a section, or exclude it with a reason', () => {

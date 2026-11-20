@@ -53,7 +53,7 @@ jobs:
             changed=true
           else
             changed=false
-            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui library/explorer-core .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
             [ -z "$files" ] || changed=true
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
@@ -117,7 +117,8 @@ jobs:
       # The skill installed at the repository root matches its source in figma/agent-kit (dependency-free).
       - run: node figma/agent-kit/cli.mjs check --target ../..
       - run: corepack enable
-      - run: pnpm install --frozen-lockfile
+      - id: install
+        run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
@@ -161,7 +162,8 @@ jobs:
           path: library/ui/figma/review/review-dist
           retention-days: 14
       # The gallery's HUD canvas compiles the Explorer HUD, checked under the profile and the TypeScript 7 its hosts
-      # use. Last, and run whatever failed before it, so a type error here hides no other check.
+      # use. Last, and run whatever check failed before it, so a type error here hides no other one; not after a
+      # failed install, which leaves nothing to check with.
       - name: Type-check the gallery's HUD canvas
-        if: success() || failure()
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: node node_modules/typescript-7/bin/tsc -p gallery/tsconfig.hud.json

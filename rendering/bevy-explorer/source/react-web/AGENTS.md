@@ -43,7 +43,8 @@ Design source of truth: the checked-in tokens and design primitives, together wi
   3. Be added to the Showcase: a section in `library/ui/apps/hud/design/ShowcaseIndex.ts` that names
      it, rendered in `Showcase.tsx` with local data (viewable at `?showcase=1` and in the UI gallery's
      HUD section). The gallery's coverage test (`library/ui/gallery/test/hud/coverage.test.tsx`) fails
-     until a section mounts it.
+     until a section mounts it. An export that is not a component (a function, a constant) gets its
+     reason in `SHOWCASE_NOT_COMPONENTS` in the same file instead.
   4. Support variants via props (size/variant/tone), not copy-paste.
 
 ## 2. When custom CSS is acceptable

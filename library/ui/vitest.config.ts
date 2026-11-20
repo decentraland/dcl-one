@@ -1,7 +1,7 @@
 import { availableParallelism } from 'node:os'
-import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
+import { hudAliases } from './gallery/vite.config'
 
 export default defineConfig({
   plugins: [react()],
@@ -58,12 +58,7 @@ export default defineConfig({
         // The Explorer HUD UI (apps/hud), with the gallery's canvas of its Showcase, under the harness its hosts run
         // it with: no CSS processing, and the host behaviours (`@hud-host`) of a web host.
         extends: true,
-        resolve: {
-          alias: {
-            '@hud-host': fileURLToPath(new URL('apps/hud/test/host.ts', import.meta.url)),
-            '@explorer-core': fileURLToPath(new URL('../explorer-core', import.meta.url))
-          }
-        },
+        resolve: { alias: hudAliases },
         test: {
           name: 'hud',
           environment: 'jsdom',
