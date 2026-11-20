@@ -1994,6 +1994,85 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .unwrap();
 }
 
+/// One contract and one item id on both networks: the read that names both
+/// pages the two rows itself and keeps the exact total on every page, as the
+/// paged read and its count do over the whole contract.
+#[tokio::test]
+async fn an_item_on_two_networks_keeps_its_total_on_every_page() {
+    use super::items::{ItemFilters, list_items};
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let contract = contract_of(&tag(), 3);
+    for (network, chain_id, item_id, created_at) in [
+        ("matic", 137, "7", 2),
+        ("ethereum", 1, "7", 1),
+        ("matic", 137, "8", 3),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+                 total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ($1, $2, $3::numeric, $4, 'wearable_v2', $5, $6, 'common', 0, 10, 10, 0, '', 'Item', 'hat', $7, 0, 0, now())",
+        )
+        .bind(network)
+        .bind(&contract)
+        .bind(item_id)
+        .bind(chain_id)
+        .bind(format!("urn:decentraland:{network}:collections-v2:{contract}:{item_id}"))
+        .bind(CREATOR)
+        .bind(created_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let read = |item_id: Option<&str>, first: i64, skip: i64| {
+        let f = ItemFilters {
+            contract_addresses: vec![contract.clone()],
+            item_id: item_id.map(String::from),
+            first: Some(first),
+            skip: Some(skip),
+            ..ItemFilters::default()
+        };
+        let state = state.clone();
+        async move {
+            let (items, total) = list_items(&state, &f).await.unwrap();
+            let chains: Vec<i64> = items
+                .iter()
+                .map(|i| {
+                    serde_json::to_value(i).unwrap()["chainId"]
+                        .as_i64()
+                        .unwrap()
+                })
+                .collect();
+            (chains, total)
+        }
+    };
+    for (first, skip, chains) in [
+        (1, 0, vec![137]),
+        (1, 1, vec![1]),
+        (1, 2, vec![]),
+        (5, 0, vec![137, 1]),
+        (0, 0, vec![]),
+    ] {
+        assert_eq!(
+            read(Some("7"), first, skip).await,
+            (chains, 2),
+            "first={first} skip={skip}"
+        );
+    }
+    assert_eq!(
+        read(None, 1, 0).await,
+        (vec![137], 3),
+        "the whole contract: a full page, then its count"
+    );
+    sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 /// The `public_item_order` ids the shared `unified_trades` view serves now.
 async fn open_item_order_ids(pool: &PgPool) -> Vec<String> {
     sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
