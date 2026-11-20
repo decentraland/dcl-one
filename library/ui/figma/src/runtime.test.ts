@@ -72,11 +72,10 @@ describe('when distinguishing configured capture failures from resolve-only mode
   })
   afterEach(async () => {
     specsFailure.error = undefined
-    vi.resetAllMocks()
     await rm(library.root, { recursive: true, force: true })
   })
 
-  describe('and the configured snapshot is malformed', () => {
+  describe('and the configured snapshot names no snapshotLock', () => {
     let failure: Promise<unknown>
     beforeEach(async () => {
       await writeFile(

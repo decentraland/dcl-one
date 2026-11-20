@@ -43,15 +43,16 @@ afterEach(async () => {
 
 describe('when figma_screenshot renders a node', () => {
   describe('and the API renders the image', () => {
-    let fetchFn: Mock<typeof fetch>
     let result: { nodeId: string; mimeType: string; data: string }
     beforeEach(async () => {
-      fetchFn = vi.fn<typeof fetch>(async (input) =>
-        String(input).includes('/v1/images/')
-          ? Response.json({ images: { '1:2': 'https://images.figmausercontent.com/render' } })
-          : new Response(new Uint8Array(PNG))
+      vi.stubGlobal(
+        'fetch',
+        vi.fn<typeof fetch>(async (input) =>
+          String(input).includes('/v1/images/')
+            ? Response.json({ images: { '1:2': 'https://images.figmausercontent.com/render' } })
+            : new Response(new Uint8Array(PNG))
+        )
       )
-      vi.stubGlobal('fetch', fetchFn)
       result = (await tool('figma_screenshot').handler({ nodeId: '1-2', scale: 1 })) as {
         nodeId: string
         mimeType: string

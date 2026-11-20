@@ -130,20 +130,34 @@ describe('when a Review capture tears down', () => {
 
   describe('and a DevTools socket is open', () => {
     let calls: string[]
+    let signalAtSocketClose: NodeJS.Signals | null | undefined
 
     beforeEach(async () => {
       child = await browser(false)
       started.push(child)
       calls = []
+      signalAtSocketClose = undefined
 
-      await stopBrowser({ socket: { close: () => calls.push('socket') }, browser: child })
+      await stopBrowser({
+        socket: {
+          close: () => {
+            calls.push('socket')
+            signalAtSocketClose = child.signalCode
+          }
+        },
+        browser: child
+      })
     })
 
     it('should close the DevTools socket', () => {
       assert.deepEqual(calls, ['socket'])
     })
 
-    it('should stop the browser with SIGTERM after the socket', () => {
+    it('should close the socket while the browser is still running', () => {
+      assert.equal(signalAtSocketClose, null)
+    })
+
+    it('should stop the browser with SIGTERM', () => {
       assert.equal(child.signalCode, 'SIGTERM')
     })
   })

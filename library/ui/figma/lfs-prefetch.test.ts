@@ -69,6 +69,7 @@ beforeEach(async () => {
   endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/lfs`
 })
 afterEach(async () => {
+  vi.resetAllMocks()
   vi.restoreAllMocks()
   await new Promise((done) => server.close(done))
   await rm(store, { recursive: true, force: true })
@@ -172,10 +173,6 @@ describe('when prefetching listed LFS objects', () => {
       fetchFn = vi.fn(async () => errorResponse(503, cancel))
     })
 
-    afterEach(() => {
-      vi.resetAllMocks()
-    })
-
     it('should release its body and report its status', async () => {
       await expect(
         prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [object('a')], fetchFn })
@@ -203,10 +200,6 @@ describe('when prefetching listed LFS objects', () => {
             })
           : errorResponse(500, cancel)
       )
-    })
-
-    afterEach(() => {
-      vi.resetAllMocks()
     })
 
     it('should release the body of every failed download and still try the remaining objects', async () => {
@@ -238,10 +231,6 @@ describe('when prefetching listed LFS objects', () => {
             })
           : errorResponse(502, cancel)
       )
-    })
-
-    afterEach(() => {
-      vi.resetAllMocks()
     })
 
     it('should keep the status as the failure', async () => {

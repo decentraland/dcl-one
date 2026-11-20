@@ -78,17 +78,17 @@ describe('componentRegistryEntries', () => {
       ],
       [
         'a bidi override',
-        { name: 'NavBar', limits: [{ id: 'a', text: 'abc‮def' }] },
+        { name: 'NavBar', limits: [{ id: 'a', text: 'abc\u202Edef' }] },
         INVALID_LIMIT
       ],
       [
         'a zero-width space',
-        { name: 'NavBar', limits: [{ id: 'a', text: 'zero​width' }] },
+        { name: 'NavBar', limits: [{ id: 'a', text: 'zero\u200Bwidth' }] },
         INVALID_LIMIT
       ],
       [
         'a paragraph separator',
-        { name: 'NavBar', limits: [{ id: 'a', text: 'a b' }] },
+        { name: 'NavBar', limits: [{ id: 'a', text: 'a\u2029b' }] },
         INVALID_LIMIT
       ],
       [

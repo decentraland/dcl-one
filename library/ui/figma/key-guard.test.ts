@@ -913,6 +913,7 @@ describe('when an artifact or a range contains a pointer whose object is not loc
   let previous: string | undefined
 
   beforeEach(async () => {
+    previous = process.env.PATH
     const actualGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
     const bin = path.join(root, 'bin')
     await mkdir(bin)
@@ -931,12 +932,12 @@ describe('when an artifact or a range contains a pointer whose object is not loc
       'version https://git-lfs.github.com/spec/v1\noid sha256:' + 'f'.repeat(64) + '\nsize 1\n'
     )
     commit('pointer')
-    previous = process.env.PATH
     process.env.PATH = bin + path.delimiter + previous
   })
 
   afterEach(() => {
-    process.env.PATH = previous
+    if (previous === undefined) delete process.env.PATH
+    else process.env.PATH = previous
   })
 
   it('should fail the artifact and the range on the lfs check', () => {

@@ -244,11 +244,14 @@ describe('preview cleanup', () => {
   describe('when validating an explicit preview cleanup transition', () => {
     describe('and a cleaned stage was prepared', () => {
       let stage: Awaited<ReturnType<typeof preparedStage>>
+      // Only a stage this test prepared is cleaned up, so a failed setup is not masked by a second cleanup.
+      let prepared: typeof stage | undefined
       beforeEach(async () => {
-        stage = await preparedStage()
+        prepared = undefined
+        stage = prepared = await preparedStage()
       })
       afterEach(async () => {
-        await stage.cleanup()
+        await prepared?.cleanup()
       })
       it.each(['automated', 'partial'] as const)(
         'should refuse the capability in %s mode',
