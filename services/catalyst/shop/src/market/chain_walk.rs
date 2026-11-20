@@ -1,6 +1,6 @@
 //! The walk the marketplace chain indexes share (`nft`, `trade_events`):
-//! `eth_getLogs` through the land_authz client over one window at a time,
-//! every filter group's address list split in chunks the endpoint accepts,
+//! one window at a time read from a [`LogSource`] (over JSON-RPC, every
+//! filter group's address list split in chunks the endpoint accepts),
 //! the window's logs and the cursor advance committed together by the
 //! caller together with the cursor hash, a request budget per pass (the backpressure: a catch-up is many
 //! passes, each leaving a durable `last_block`), Polygon milestone finality
@@ -16,17 +16,14 @@
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
 //! [`READY_WINDOW`] old at the caller's clock.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Utc};
-use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool};
 
-use crate::chain_index::rpc::{
-    BlockHeader, Rpc, RpcError as IndexError, RpcLog, hex_to_i64, is_address_limit,
-};
+use crate::chain_index::rpc::{BlockHeader, RpcLog};
 
 pub(crate) fn topic_address(topic: &str) -> Option<String> {
     let hex = topic.strip_prefix("0x")?;
@@ -476,145 +473,9 @@ pub async fn ready_cursor(
     }
 }
 
-/// One `eth_getLogs` filter: these addresses (split in chunks) and this
-/// `topics` array. The groups of one walk name disjoint addresses.
-#[derive(Clone, Debug)]
-pub struct LogGroup {
-    pub addresses: Vec<String>,
-    pub topics: Value,
-}
-
-/// What one window fetch returned.
-#[derive(Debug, Default)]
-pub struct Window {
-    pub logs: Vec<RpcLog>,
-    /// Every log of `[from, reached]` of every group is in `logs`.
-    pub reached: u64,
-    pub requests: usize,
-}
-
-pub fn log_position(log: &RpcLog) -> (i64, i64) {
-    (
-        hex_to_i64(&log.block_number).unwrap_or(i64::MAX),
-        hex_to_i64(&log.log_index).unwrap_or(i64::MAX),
-    )
-}
-
-/// The requests one window will need at the current chunk size.
-pub fn requests_for(groups: &[LogGroup], chunk: usize) -> usize {
-    groups
-        .iter()
-        .map(|g| g.addresses.len().div_ceil(chunk.max(1)))
-        .sum()
-}
-
-/// Every log of `[from, reached]` (some `reached <= to` every request
-/// accepted) of every group: a request that narrows the range narrows the
-/// window for all of them (the logs past it are dropped and re-read next
-/// window), and an address-count refusal halves `chunk` and repeats.
-pub async fn fetch_window(
-    rpc: &Rpc<'_>,
-    from: u64,
-    to: u64,
-    groups: &[LogGroup],
-    chunk: &mut usize,
-) -> Result<Window, IndexError> {
-    let mut out = Window {
-        logs: Vec::new(),
-        reached: to,
-        requests: 0,
-    };
-    for group in groups {
-        let mut i = 0usize;
-        while i < group.addresses.len() {
-            let end = (i + (*chunk).max(1)).min(group.addresses.len());
-            let slice = &group.addresses[i..end];
-            let address = if slice.len() == 1 {
-                json!(slice[0])
-            } else {
-                json!(slice)
-            };
-            match rpc
-                .get_logs_matching(from, out.reached, &address, &group.topics)
-                .await
-            {
-                Ok((logs, upper, used)) => {
-                    if upper < from
-                        || upper > out.reached
-                        || logs.iter().any(|l| {
-                            let (block, index) = log_position(l);
-                            block < from as i64
-                                || block > upper as i64
-                                || index < 0
-                                || index > i32::MAX as i64
-                        })
-                    {
-                        return Err(IndexError::Rpc(
-                            "invalid log window bounds or position".into(),
-                        ));
-                    }
-                    out.requests += used;
-                    if upper < out.reached {
-                        out.reached = upper;
-                        let cut = upper as i64;
-                        out.logs.retain(|l| log_position(l).0 <= cut);
-                    }
-                    let cut = out.reached as i64;
-                    out.logs
-                        .extend(logs.into_iter().filter(|l| log_position(l).0 <= cut));
-                    i = end;
-                }
-                Err(IndexError::Rpc(message)) if is_address_limit(&message) && *chunk > 1 => {
-                    out.requests += 1;
-                    *chunk = (*chunk / 2).max(1);
-                    tracing::info!(
-                        chunk = *chunk,
-                        "marketplace index: the endpoint refused the address count; halving the chunk"
-                    );
-                }
-                Err(e) => return Err(e),
-            }
-        }
-    }
-    out.logs.sort_by_key(log_position);
-    out.logs.dedup_by(|a, b| log_position(a) == log_position(b));
-    Ok(out)
-}
-
-/// The block time of every log: the endpoint's `blockTimestamp` when it sent
-/// one, else the headers of the distinct blocks without one, fetched in
-/// JSON-RPC batches (`Rpc::block_headers`; the requests are counted).
-pub async fn block_times(
-    rpc: &Rpc<'_>,
-    logs: &[RpcLog],
-) -> Result<(HashMap<i64, i64>, usize), IndexError> {
-    let mut times: HashMap<i64, i64> = HashMap::new();
-    let mut missing: BTreeSet<i64> = BTreeSet::new();
-    for log in logs {
-        let block = log_position(log).0;
-        match log.block_timestamp.as_deref().and_then(hex_to_i64) {
-            Some(t) => {
-                times.insert(block, t);
-            }
-            None => {
-                missing.insert(block);
-            }
-        }
-    }
-    let wanted: Vec<u64> = missing
-        .into_iter()
-        .filter(|b| !times.contains_key(b))
-        .map(|b| b as u64)
-        .collect();
-    if wanted.is_empty() {
-        return Ok((times, 0));
-    }
-    let (headers, requests) = rpc.block_headers(&wanted).await?;
-    for (number, header) in headers {
-        times.insert(number as i64, header.timestamp);
-    }
-    Ok((times, requests))
-}
+pub use crate::chain_index::logs::{
+    LogGroup, LogSource, Read, RpcSource, Window, log_position, requests_for,
+};
 
 /// The newest block whose time is surely at or before `t`, from an exact
 /// anchor at or after it: `anchor.number - (anchor.timestamp - t) /
@@ -730,11 +591,11 @@ pub trait ChainIndex: Send + Sync {
     /// whether the result may be published (nothing still owed).
     async fn fold(&self, pool: &PgPool, since: Option<i64>, upto: i64) -> anyhow::Result<bool>;
     /// Work walked before the main range under the same budget (the nft
-    /// backfill lane); the requests it spent.
+    /// backfill lane), read from the pass's source; the requests it spent.
     async fn lanes(
         &self,
         _pool: &PgPool,
-        _rpc: &Rpc<'_>,
+        _source: &dyn LogSource,
         _anchor: (u64, i64),
         _budget: usize,
         _chunk: &mut usize,
@@ -743,13 +604,13 @@ pub trait ChainIndex: Send + Sync {
     }
 }
 
-/// One pass of `ix` over `net`: the reorg check, the backfill lanes, the
-/// windows from the cursor to the confirmed head under the request budget
-/// (each committed with its cursor advance), the cursor block's header,
-/// then, once caught up, the fold and the publish.
+/// One pass of `ix` over `net`, read from `source`: the reorg check, the
+/// backfill lanes, the windows from the cursor to the confirmed head under
+/// the request budget (each committed with its cursor advance), the cursor
+/// block's header, then, once caught up, the fold and the publish.
 pub async fn run_pass(
     pool: &PgPool,
-    rpc: &Rpc<'_>,
+    source: &dyn LogSource,
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
     cancel: Option<&tokio_util::sync::CancellationToken>,
@@ -769,11 +630,12 @@ pub async fn run_pass(
     };
     if cur.last_block >= cur.start_block {
         let stored = cur.last_block_hash.as_deref().unwrap_or("");
-        let header = rpc
-            .block_header(cur.last_block as u64)
+        let header = source
+            .header(cur.last_block as u64)
             .await
             .context("eth_getBlockByNumber at the cursor")?;
-        out.requests += 1;
+        out.requests += header.requests;
+        let header = header.value;
         if header.hash != stored {
             let to = cur.start_block - 1;
             let mut tx = pool.begin().await?;
@@ -794,17 +656,16 @@ pub async fn run_pass(
             return Ok(out);
         }
     }
-    let head = rpc.head_block().await.context("eth_blockNumber")?;
-    out.requests += 1;
+    let head = source.head().await.context("eth_blockNumber")?;
+    out.requests += head.requests;
+    let head = head.value;
     out.head = head;
     let stop = settings.stop_block(net);
     let safe_head = match net {
         ChainNet::Matic => {
-            out.requests += 1;
-            rpc.finalized_header()
-                .await
-                .context("Polygon finalized head")?
-                .number
+            let finalized = source.finalized().await.context("Polygon finalized head")?;
+            out.requests += finalized.requests;
+            finalized.value.number
         }
         ChainNet::Ethereum => head.saturating_sub(net.confirmations()),
     };
@@ -813,17 +674,17 @@ pub async fn run_pass(
     let anchor = match cur.last_block_time {
         Some(t) => (cur.last_block.max(0) as u64, t),
         None => {
-            let h = rpc
-                .block_header(cur.last_block.max(0) as u64)
+            let h = source
+                .header(cur.last_block.max(0) as u64)
                 .await
                 .context("the time anchor")?;
-            out.requests += 1;
-            (h.number, h.timestamp)
+            out.requests += h.requests;
+            (h.value.number, h.value.timestamp)
         }
     };
     let budget = settings.requests_per_pass.max(1);
     let mut chunk = settings.address_chunk.max(1);
-    let mut log_requests = ix.lanes(pool, rpc, anchor, budget, &mut chunk).await?;
+    let mut log_requests = ix.lanes(pool, source, anchor, budget, &mut chunk).await?;
     out.requests += log_requests;
     let mut next = (cur.last_block + 1) as u64;
     let mut expected = cur.last_block;
@@ -839,25 +700,32 @@ pub async fn run_pass(
             out.paused = true;
             break;
         }
-        let before = rpc.block_header(to).await?;
-        out.requests += 1;
-        let window = fetch_window(rpc, next, to, &groups, &mut chunk)
+        let before = source.header(to).await?;
+        out.requests += before.requests;
+        let window = source
+            .window(next, to, &groups, &mut chunk)
             .await
             .with_context(|| format!("eth_getLogs [{next}, {to}]"))?;
         out.requests += window.requests;
         log_requests += window.requests;
-        let (times, extra) = block_times(rpc, &window.logs)
+        let times = source
+            .block_times(&window.logs)
             .await
             .context("block times")?;
-        out.requests += extra;
-        let after = rpc.block_header(to).await?;
-        out.requests += 1;
-        anyhow::ensure!(before == after, "chain changed while fetching window");
+        out.requests += times.requests;
+        let times = times.value;
+        let after = source.header(to).await?;
+        out.requests += after.requests;
+        anyhow::ensure!(
+            before.value == after.value,
+            "chain changed while fetching window"
+        );
         let header = if window.reached == to {
-            after
+            after.value
         } else {
-            out.requests += 1;
-            rpc.block_header(window.reached).await?
+            let reached = source.header(window.reached).await?;
+            out.requests += reached.requests;
+            reached.value
         };
         let mut tx = pool.begin().await?;
         let written = ix.write(&mut tx, &window.logs, &times).await?;
@@ -889,18 +757,20 @@ pub async fn run_pass(
         .context("folding")?;
     record_fold(pool, name, net, out.indexed_to).await?;
     out.folded = true;
-    let latest = rpc
-        .head_block()
+    let latest = source
+        .head()
         .await
         .context("eth_blockNumber after the fold")?;
-    out.requests += 1;
+    out.requests += latest.requests;
+    let latest = latest.value;
     let latest_safe = match net {
         ChainNet::Matic => {
-            out.requests += 1;
-            rpc.finalized_header()
+            let finalized = source
+                .finalized()
                 .await
-                .context("Polygon finalized head after fold")?
-                .number
+                .context("Polygon finalized head after fold")?;
+            out.requests += finalized.requests;
+            finalized.value.number
         }
         ChainNet::Ethereum => latest.saturating_sub(net.confirmations()),
     };
@@ -1079,16 +949,6 @@ mod tests {
             ChronoDuration::minutes(30),
             "ready_sql spells the window out"
         );
-    }
-
-    #[test]
-    fn a_window_needs_one_request_per_address_chunk_per_group() {
-        let g = |n: usize| LogGroup {
-            addresses: (0..n).map(|i| format!("0x{i:040x}")).collect(),
-            topics: json!([]),
-        };
-        assert_eq!(requests_for(&[g(2_500), g(2)], 1_000), 4);
-        assert_eq!(requests_for(&[g(0)], 1_000), 0);
     }
 
     #[test]

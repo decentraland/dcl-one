@@ -37,7 +37,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
-use crate::chain_index::rpc::{Rpc, RpcLog};
+use crate::chain_index::rpc::RpcLog;
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
 
 pub const TOPIC_TRANSFER: &str =
@@ -963,7 +963,7 @@ impl ChainIndex for NftIndex {
     async fn lanes(
         &self,
         pool: &PgPool,
-        rpc: &Rpc<'_>,
+        source: &dyn chain_walk::LogSource,
         _anchor: (u64, i64),
         budget: usize,
         chunk: &mut usize,
@@ -992,14 +992,16 @@ impl ChainIndex for NftIndex {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
-                let w = chain_walk::fetch_window(rpc, next as u64, to as u64, &group, chunk)
+                let w = source
+                    .window(next as u64, to as u64, &group, chunk)
                     .await
                     .with_context(|| {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
                     })?;
                 used += w.requests;
-                let (times, extra) = chain_walk::block_times(rpc, &w.logs).await?;
-                used += extra;
+                let times = source.block_times(&w.logs).await?;
+                used += times.requests;
+                let times = times.value;
                 let mut rows = Vec::new();
                 for log in &w.logs {
                     if let Ok(Some(row)) = decode_log(

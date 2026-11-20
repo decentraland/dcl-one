@@ -80,6 +80,7 @@ pub struct BlockHeader {
 }
 
 /// Ethereum logs and headers over the shared outbound client.
+#[derive(Clone, Copy)]
 pub struct Rpc<'a> {
     http: &'a crate::http::Outbound,
     url: &'a str,

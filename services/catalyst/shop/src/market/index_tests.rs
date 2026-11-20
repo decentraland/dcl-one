@@ -107,6 +107,8 @@ struct FakeChain {
     strip_timestamps: std::sync::atomic::AtomicBool,
     batches: AtomicUsize,
     drop_in_batch: Mutex<Vec<u64>>,
+    /// Every request in arrival order, as [`call_tag`] names it.
+    calls: Mutex<Vec<String>>,
 }
 
 impl FakeChain {
@@ -130,6 +132,7 @@ impl FakeChain {
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
+            calls: Mutex::new(Vec::new()),
         })
     }
 
@@ -158,11 +161,46 @@ fn time_of(block: u64) -> i64 {
     1_600_000_000 + 2 * block as i64
 }
 
+/// One request as the request-order test pins it: the method and the
+/// parameters that decide what it reads.
+fn call_tag(body: &Value) -> String {
+    let p = &body["params"];
+    match body["method"].as_str().unwrap_or_default() {
+        "eth_blockNumber" => "head".into(),
+        "eth_chainId" => "chain id".into(),
+        "eth_call" => "call".into(),
+        "eth_getBlockByNumber" if p[0] == "finalized" => "finalized".into(),
+        "eth_getBlockByNumber" => format!("header {}", hex_u64(&p[0])),
+        "eth_getLogs" => {
+            let f = &p[0];
+            let addresses = match &f["address"] {
+                Value::Array(a) => a.len(),
+                Value::String(_) => 1,
+                _ => 0,
+            };
+            format!(
+                "logs {}..{} x{addresses}",
+                hex_u64(&f["fromBlock"]),
+                hex_u64(&f["toBlock"])
+            )
+        }
+        other => other.to_string(),
+    }
+}
+
 async fn rpc(
     State(chain): State<Arc<FakeChain>>,
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
     chain.requests.fetch_add(1, Ordering::SeqCst);
+    let tag = match &body {
+        Value::Array(calls) => format!(
+            "batch [{}]",
+            calls.iter().map(call_tag).collect::<Vec<_>>().join(", ")
+        ),
+        one => call_tag(one),
+    };
+    chain.calls.lock().push(tag);
     match body {
         Value::Array(calls) => {
             chain.batches.fetch_add(1, Ordering::SeqCst);
@@ -340,10 +378,10 @@ async fn trades_pass_ended(st: &MarketplaceState, ago: std::time::Duration) {
 }
 
 async fn pass(state: &MarketplaceState, url: &str, ix: &dyn ChainIndex) -> PassOutcome {
-    let rpc = Rpc::at(&state.http, url);
+    let source = chain_walk::RpcSource::new(Rpc::at(&state.http, url));
     chain_walk::run_pass(
         &state.pool,
-        &rpc,
+        &source,
         ix,
         &state.settings.market.indexes,
         None,
@@ -532,9 +570,9 @@ async fn status_of(pool: &PgPool, id: &str) -> Option<String> {
 async fn the_trade_events_walk_refuses_an_endpoint_of_another_chain() {
     let url = serve(FakeChain::new(1_000, vec![], 10_000, 1_000)).await;
     let http = crate::http::Outbound::for_tests();
-    let rpc = Rpc::at(&http, &url);
-    super::ensure_chain(&rpc, 137).await.unwrap();
-    let refused = super::ensure_chain(&rpc, 80_002)
+    let source = chain_walk::RpcSource::new(Rpc::at(&http, &url));
+    super::ensure_chain(&source, 137).await.unwrap();
+    let refused = super::ensure_chain(&source, 80_002)
         .await
         .unwrap_err()
         .to_string();
@@ -1288,6 +1326,255 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
     assert_eq!(orphans, 0);
     db.drop().await;
 }
+
+/// The requests the walk sends, in order, for one fixed history: budgeted
+/// passes, the endpoint's address limit halving the chunk, headers for logs
+/// without a timestamp, a pass with nothing new, a late collection's
+/// backfill lane and a reorg rewind. Pinned so that a change to how the walk
+/// reads the chain shows as a diff of requests, not only of outcomes.
+#[tokio::test]
+async fn the_walk_sends_the_pinned_requests_in_order() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = nft_index::start_block(ChainNet::Matic);
+    let c1 = "0x00000000000000000000000000000000000000c1";
+    let c2 = "0x00000000000000000000000000000000000000c2";
+    let late = "0x00000000000000000000000000000000000000c3";
+    for (contract, created, urn, name) in [
+        (
+            c1,
+            s + 100,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        ),
+        (
+            c2,
+            s + 20_000,
+            "urn:decentraland:matic:collections-v2:0xc2",
+            "Dances",
+        ),
+    ] {
+        seed_collection(&db.pool, "matic", contract, created, urn, name).await;
+    }
+    let head = s + 30_000;
+    let chain = FakeChain::new(
+        head,
+        vec![
+            transfer(c1, ZERO, ALICE, v2_token(0, 1), s + 200, 0),
+            transfer(c1, ALICE, BOB, v2_token(0, 1), s + 300, 0),
+            transfer(c2, ZERO, CARL, v2_token(0, 1), s + 20_100, 0),
+            transfer(late, ZERO, ALICE, v2_token(0, 7), s + 1_500, 0),
+        ],
+        10_000,
+        2,
+    );
+    chain.strip_timestamps.store(true, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(
+        db.pool.clone(),
+        &url,
+        IndexSettings {
+            address_chunk: 4,
+            ..index_settings(3, 10_000)
+        },
+        false,
+    );
+    let tag = |o: &PassOutcome| {
+        format!(
+            "requests {} logs {} rows {} to +{} paused {} published {} rewound {:?}",
+            o.requests,
+            o.logs,
+            o.rows_written,
+            o.indexed_to - s as i64,
+            o.paused,
+            o.published,
+            o.reorg_rewound_to.map(|b| b - s as i64)
+        )
+    };
+    let mut outcomes = Vec::new();
+    let until_published = async |outcomes: &mut Vec<String>| {
+        for _ in 0..40 {
+            let o = pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await;
+            outcomes.push(tag(&o));
+            if o.published {
+                return;
+            }
+        }
+        panic!("never published: {outcomes:?}");
+    };
+    until_published(&mut outcomes).await;
+    // Nothing new: the cursor check, the heads and the publish refresh.
+    outcomes.push(tag(&pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await));
+    // The mirror learns c3 after the walk passed its creation.
+    seed_collection(
+        &db.pool,
+        "matic",
+        late,
+        s + 1_000,
+        "urn:decentraland:matic:collections-v2:0xc3",
+        "Late",
+    )
+    .await;
+    *chain.head.lock() = head + 100;
+    until_published(&mut outcomes).await;
+    // The block the cursor stands on changes hash.
+    let cursor = chain_walk::cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    chain
+        .forks
+        .lock()
+        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
+    outcomes.push(tag(&pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await));
+    chain.forks.lock().clear();
+    until_published(&mut outcomes).await;
+    let calls: Vec<String> = chain
+        .calls
+        .lock()
+        .iter()
+        .map(|c| from_start(c, s))
+        .collect();
+    assert_eq!(outcomes, PINNED_OUTCOMES);
+    assert_eq!(calls, PINNED_CALLS);
+    db.drop().await;
+}
+
+/// `tag` with every block number at or past `s` written as `s+N`.
+fn from_start(tag: &str, s: u64) -> String {
+    let mut out = String::new();
+    let mut digits = String::new();
+    for ch in tag.chars().chain(std::iter::once('\0')) {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+            continue;
+        }
+        if !digits.is_empty() {
+            match digits.parse::<u64>() {
+                Ok(n) if n >= s => out.push_str(&format!("s+{}", n - s)),
+                _ => out.push_str(&digits),
+            }
+            digits.clear();
+        }
+        if ch != '\0' {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+const PINNED_OUTCOMES: &[&str] = &[
+    "requests 9 logs 2 rows 2 to +9999 paused true published false rewound None",
+    "requests 8 logs 0 rows 0 to +19999 paused true published false rewound None",
+    "requests 11 logs 1 rows 1 to +29936 paused false published true rewound None",
+    "requests 5 logs 0 rows 0 to +29936 paused false published true rewound None",
+    "requests 10 logs 0 rows 0 to +30036 paused false published false rewound None",
+    "requests 8 logs 0 rows 0 to +30036 paused false published false rewound None",
+    "requests 6 logs 0 rows 0 to +30036 paused false published true rewound None",
+    "requests 1 logs 0 rows 0 to +30036 paused false published false rewound Some(-1)",
+    "requests 9 logs 3 rows 3 to +9999 paused true published false rewound None",
+    "requests 8 logs 0 rows 0 to +19999 paused true published false rewound None",
+    "requests 9 logs 1 rows 1 to +29999 paused true published false rewound None",
+    "requests 10 logs 0 rows 0 to +30036 paused false published true rewound None",
+];
+
+const PINNED_CALLS: &[&str] = &[
+    "head",
+    "finalized",
+    "header 15201999",
+    "header s+9999",
+    "logs s+0..s+9999 x3",
+    "logs s+0..s+9999 x2",
+    "logs s+0..s+9999 x1",
+    "batch [header s+200, header s+300]",
+    "header s+9999",
+    "header s+9999",
+    "head",
+    "finalized",
+    "header s+19999",
+    "logs s+10000..s+19999 x3",
+    "logs s+10000..s+19999 x2",
+    "logs s+10000..s+19999 x1",
+    "header s+19999",
+    "header s+19999",
+    "head",
+    "finalized",
+    "header s+29936",
+    "logs s+20000..s+29936 x3",
+    "logs s+20000..s+29936 x2",
+    "logs s+20000..s+29936 x1",
+    "batch [header s+20100]",
+    "header s+29936",
+    "head",
+    "finalized",
+    "header s+29936",
+    "head",
+    "finalized",
+    "head",
+    "finalized",
+    "header s+29936",
+    "head",
+    "finalized",
+    "header s+30036",
+    "logs s+29937..s+30036 x4",
+    "logs s+29937..s+30036 x2",
+    "logs s+29937..s+30036 x2",
+    "header s+30036",
+    "head",
+    "finalized",
+    "header s+30036",
+    "head",
+    "finalized",
+    "logs s+0..s+9999 x1",
+    "batch [header s+1500]",
+    "logs s+10000..s+19999 x1",
+    "head",
+    "finalized",
+    "header s+30036",
+    "head",
+    "finalized",
+    "logs s+20000..s+29936 x1",
+    "head",
+    "finalized",
+    "header s+30036",
+    "head",
+    "finalized",
+    "header 15201999",
+    "header s+9999",
+    "logs s+0..s+9999 x4",
+    "logs s+0..s+9999 x2",
+    "logs s+0..s+9999 x2",
+    "batch [header s+200, header s+300, header s+1500]",
+    "header s+9999",
+    "header s+9999",
+    "head",
+    "finalized",
+    "header s+19999",
+    "logs s+10000..s+19999 x4",
+    "logs s+10000..s+19999 x2",
+    "logs s+10000..s+19999 x2",
+    "header s+19999",
+    "header s+19999",
+    "head",
+    "finalized",
+    "header s+29999",
+    "logs s+20000..s+29999 x4",
+    "logs s+20000..s+29999 x2",
+    "logs s+20000..s+29999 x2",
+    "batch [header s+20100]",
+    "header s+29999",
+    "header s+29999",
+    "head",
+    "finalized",
+    "header s+30036",
+    "logs s+30000..s+30036 x4",
+    "logs s+30000..s+30036 x2",
+    "logs s+30000..s+30036 x2",
+    "header s+30036",
+    "head",
+    "finalized",
+];
 
 /// After a reorg rewind and the refold it owes, `land_data` equals a
 /// truncate-and-rebuild of the remaining log: a token whose only Update was
@@ -2817,7 +3104,7 @@ async fn mana_sync_failed_window_rolls_back_and_legacy_cursor_replays() {
     assert!(
         chain_walk::run_pass(
             &db.pool,
-            &Rpc::at(&st.http, &url),
+            &chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
             &ix,
             &st.settings.market.indexes,
             None,
@@ -2882,7 +3169,7 @@ async fn mana_sync_refuses_missing_finality_and_a_fork_during_fetch() {
     assert!(
         chain_walk::run_pass(
             &db.pool,
-            &Rpc::at(&st.http, &url),
+            &chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
             &ix,
             &st.settings.market.indexes,
             None,
@@ -2896,7 +3183,7 @@ async fn mana_sync_refuses_missing_finality_and_a_fork_during_fetch() {
     assert!(
         chain_walk::run_pass(
             &db.pool,
-            &Rpc::at(&st.http, &url),
+            &chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
             &ix,
             &st.settings.market.indexes,
             None,
@@ -2933,7 +3220,7 @@ async fn mana_sync_crash_after_window_keeps_the_hash() {
     let crashed = tokio::spawn(async move {
         chain_walk::run_pass(
             &runner.pool,
-            &Rpc::at(&runner.http, &endpoint),
+            &chain_walk::RpcSource::new(Rpc::at(&runner.http, &endpoint)),
             &super::mana_transfers::ManaTransfersIndex {
                 net: ChainNet::Matic,
             },
@@ -2985,7 +3272,7 @@ async fn mana_sync_stop_and_regressed_finality_clear_publication() {
     settings.stop_block_matic = Some(36);
     let outcome = chain_walk::run_pass(
         &db.pool,
-        &Rpc::at(&st.http, &url),
+        &chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
         &ix,
         &settings,
         None,

@@ -604,12 +604,15 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: Option<bo
         move |ctx| {
             let (market, url, settings) = (market.clone(), url.clone(), settings.clone());
             async move {
-                let rpc = crate::chain_index::rpc::Rpc::at(&market.http, &url);
-                crate::market::ensure_chain(&rpc, 1).await?;
+                let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                    &market.http,
+                    &url,
+                ));
+                crate::market::ensure_chain(&source, 1).await?;
                 let progress = |m: String| ctx.progress(m);
                 let outcome = chain_walk::run_pass(
                     &market.pool,
-                    &rpc,
+                    &source,
                     &RentalsIndex::mainnet(),
                     &settings,
                     Some(&ctx.cancel),

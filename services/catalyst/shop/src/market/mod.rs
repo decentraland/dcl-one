@@ -771,18 +771,13 @@ impl MarketplaceState {
     }
 }
 
-/// Refuses to walk an endpoint that serves another chain than `expected`:
+/// Refuses to walk a source that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
 pub(crate) async fn ensure_chain(
-    rpc: &crate::chain_index::rpc::Rpc<'_>,
+    source: &dyn chain_walk::LogSource,
     expected: i64,
 ) -> anyhow::Result<()> {
-    let v = rpc.call("eth_chainId", serde_json::json!([])).await?;
-    let served = v
-        .get("result")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-        .ok_or_else(|| anyhow::anyhow!("eth_chainId returned {v}"))?;
+    let served = source.chain_id().await?.value as i64;
     anyhow::ensure!(
         served == expected,
         "the endpoint serves chain {served}, not {expected}: refusing to index it"
@@ -872,25 +867,25 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                         let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
                         async move {
                             let Some(url) = rpc_url(state, *net) else { return Ok(()) };
-                            let rpc = crate::chain_index::rpc::Rpc::at(&state.http, &url);
+                            let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &url));
                             let progress = |m: String| ctx.progress(m);
                             let outcome = if name == chain_walk::INDEXER_NFT {
                                 if !nft_index::mirror_complete(&state.pool, *net).await {
                                     ctx.progress(format!("nft {}: waiting for the collections mirror's first complete pass", net.db_name()));
                                     return Ok(());
                                 }
-                                chain_walk::run_pass(&state.pool, &rpc, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                                chain_walk::run_pass(&state.pool, &source, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else if name == chain_walk::INDEXER_COMMITTEE {
-                                match ensure_chain(&rpc, 137).await {
-                                    Ok(()) => chain_walk::run_pass(&state.pool, &rpc, &committee_index::CommitteeIndex, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
+                                match ensure_chain(&source, 137).await {
+                                    Ok(()) => chain_walk::run_pass(&state.pool, &source, &committee_index::CommitteeIndex, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
                                     Err(e) => Err(e),
                                 }
                             } else if name == chain_walk::INDEXER_MANA {
-                                chain_walk::run_pass(&state.pool, &rpc, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                                chain_walk::run_pass(&state.pool, &source, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else {
                                 let chain_id = state.settings.market.indexes.chain_id(*net);
-                                match ensure_chain(&rpc, chain_id).await {
-                                    Ok(()) => chain_walk::run_pass(&state.pool, &rpc, &trade_events::TradeEventsIndex { net: *net, chain_id }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
+                                match ensure_chain(&source, chain_id).await {
+                                    Ok(()) => chain_walk::run_pass(&state.pool, &source, &trade_events::TradeEventsIndex { net: *net, chain_id }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
                                     Err(e) => Err(e),
                                 }
                             };

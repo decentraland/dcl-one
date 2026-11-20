@@ -662,6 +662,7 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
                     check_venues(&rpc, &market.pool).await?;
                     venues_checked.store(true, Ordering::SeqCst);
                 }
+                let source = chain_walk::RpcSource::new(rpc);
                 if !nft_index::mirror_complete(&market.pool, ChainNet::Matic).await {
                     ctx.progress(
                         "sales matic: waiting for the collections mirror's first complete pass"
@@ -672,7 +673,7 @@ pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs) {
                 let progress = |m: String| ctx.progress(m);
                 let outcome = chain_walk::run_pass(
                     &market.pool,
-                    &rpc,
+                    &source,
                     &SalesIndex,
                     &settings,
                     Some(&ctx.cancel),
