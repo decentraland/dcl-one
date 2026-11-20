@@ -980,6 +980,31 @@ describe('PayoutsTab', () => {
         await focusOn(emailInput(dialog));
       });
 
+      it('should stay on the step with the error line when the service says the email is already verified', async () => {
+        vi.mocked(api.putEnrollment).mockResolvedValue({
+          ...fail(409),
+          body: { error: 'email_verified' },
+        } as never);
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        expect((await within(dialog).findByRole('alert')).textContent).toBe(GENERIC);
+        expect(api.postEmailVerification).not.toHaveBeenCalled();
+        expect(continueButton(dialog).hasAttribute('disabled')).toBe(false);
+      });
+
+      it('should wait on a changed email while a 150 s cooldown runs', async () => {
+        vi.mocked(api.postEmailVerification).mockResolvedValueOnce(tooSoon(150e3) as never);
+        const { dialog } = await openVerify();
+
+        editEmail(dialog, NEW_EMAIL);
+        fireEvent.click(continueButton(dialog));
+
+        await expectWaiting(dialog);
+      });
+
       it('should keep the saved email read-only when the send fails after it, and retry only the send', async () => {
         vi.mocked(api.postEmailVerification).mockResolvedValueOnce(fail(500));
         const { dialog } = await openVerify();
@@ -1014,6 +1039,8 @@ describe('PayoutsTab', () => {
       it.each([
         ['30 s', 30e3],
         ['90 s', 90e3],
+        ['150 s', 150e3],
+        ['3 min', 180e3],
       ])(
         'should open the code step without a new code while the last one cools down for %s',
         async (_away, ms) => {
@@ -1030,8 +1057,8 @@ describe('PayoutsTab', () => {
       );
 
       it.each([
-        ['hours', 6 * 3600e3],
-        ['3 min', 180e3],
+        ['6 h', 6 * 3600e3],
+        ['12 h', 12 * 3600e3],
       ])(
         'should say the daily limit and hold CONTINUE when the next code is %s away',
         async (_away, ms) => {

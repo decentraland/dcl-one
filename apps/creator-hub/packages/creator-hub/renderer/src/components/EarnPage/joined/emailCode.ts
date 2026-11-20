@@ -14,7 +14,7 @@ export const DAILY_LIMIT: TranslationPath = 'earn.joined.payouts.verify.daily_li
 /** The last code's cooldown still runs, so the service sends no new one yet. */
 export const SEND_SOON: TranslationPath = 'earn.joined.payouts.verify.send_soon';
 
-const COOLDOWN_WITH_SKEW_MS = 120_000;
+const DAILY_LIMIT_CUTOFF_MS = 10 * 60_000;
 
 /** Whether two addresses are one to the service, which ignores case. */
 export const sameEmail = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
@@ -32,7 +32,7 @@ export function useSendCode() {
     if (failure?.status === 429) {
       const reopensAt = Date.parse(failure.body?.resend_available_at ?? '');
       if (Number.isNaN(reopensAt)) return SEND_FAILED;
-      return reopensAt - Date.now() > COOLDOWN_WITH_SKEW_MS ? DAILY_LIMIT : SEND_SOON;
+      return reopensAt - Date.now() > DAILY_LIMIT_CUTOFF_MS ? DAILY_LIMIT : SEND_SOON;
     }
     if (failure?.body?.error === 'no_active_place') {
       void dispatch(actions.fetchHasActivePlace());
