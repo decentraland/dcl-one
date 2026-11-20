@@ -203,8 +203,11 @@ function evidenceOf(reader: ChainReader): SplitEvidenceReader {
   };
 }
 
-/** The node's record of one credit (listed by its lines, `<salt>:<position>`), read page by page until found or the end. */
-async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
+/**
+ * The node's record of one credit (listed by its lines, `<salt>:<position>`), read page by page until found or the end. The
+ * in-world Shop reads a held split's credit through it too, so both surfaces page the history the same way.
+ */
+export async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
   const salt = creditId.toLowerCase();
   for (let skip = 0; ; ) {
     const { items, total, returned } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
