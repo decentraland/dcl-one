@@ -804,6 +804,10 @@
           "kind": "regular"
         },
         {
+          "name": "cefNativeBridge.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "console.ts",
           "kind": "regular"
         },
@@ -7053,7 +7057,7 @@
     },
     {
       "path": "library/explorer-core/lib/cefNativeBridge.ts",
-      "sha256": "e70b6a5c87803a9c91c027f7a67a45d8abc0fe62e41e50bdb193f17ece39b7a0"
+      "sha256": "f85f57ed40459d147fbab1df884e075c05dab570c5c2d14eaf832fb5ca9f2cd3"
     },
     {
       "path": "library/explorer-core/lib/coiServiceWorker.ts",
@@ -7204,6 +7208,10 @@
       "sha256": "f4c584203d049e36917180a532aaaef6501d80dfe6a82d70224045239564d7d0"
     },
     {
+      "path": "library/explorer-core/test/cefNativeBridge.test.ts",
+      "sha256": "4741f9cbdc437a94c97f6bdcfa70f24e341a43e05f12999218d8825fdac7a5a6"
+    },
+    {
       "path": "library/explorer-core/test/console.ts",
       "sha256": "1fde69a9041ff8bb7c2557b73cd60879a3f6e248da2886bf74dc74e343163f25"
     },
@@ -7257,7 +7265,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "84d4394ec657ed8a7b85795db6ceaa4110754caa6ab3817bbc9c1f4b21b5d11c"
+      "sha256": "caf71995bb7ea3156ee7f5e7a26fcafb400bb7b51368c92b4f16e80cd3b448d4"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -13150,6 +13158,21 @@
       "from": "library/explorer-core/test/bridgeClient.test.ts",
       "to": "library/explorer-core/engine/bridge.ts",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/cefNativeBridge.test.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/explorer-core/test/cefNativeBridge.test.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/explorer-core/test/cefNativeBridge.test.ts",
+      "to": "library/explorer-core/lib/cefNativeBridge.ts",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/explorer-core/test/donatePlace.test.ts",
@@ -47474,6 +47497,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/bridgeClient.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/cefNativeBridge.test.ts",
       "kind": "type"
     },
     {

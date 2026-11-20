@@ -131,7 +131,7 @@ impl Plugin for ReactHudCefPlugin {
 // The page posts {to:'scene'} Envelopes via window.cef.emit; bevy_cef delivers each as a trigger
 // on the webview entity with the raw JSON payload.
 #[derive(Event, serde::Deserialize, Debug)]
-struct PageEnvelope(serde_json::Value);
+pub(crate) struct PageEnvelope(pub(crate) serde_json::Value);
 
 /// Marker for the fullscreen UI node displaying the HUD texture.
 #[derive(Component)]
@@ -640,6 +640,7 @@ fn on_page_envelope(
     }
     // The page's stored values (react-web lib/prefs): read once before it renders, then written
     // through one at a time.
+    // (A window on Wayland also hears the page's clipboard messages: src/wayland_clipboard.rs.)
     if env.get("to").and_then(|t| t.as_str()) == Some("engine") {
         match env.get("kind").and_then(|k| k.as_str()) {
             Some("prefsLoad") => match serde_json::to_string(&state.prefs) {

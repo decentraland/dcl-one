@@ -1,0 +1,273 @@
+From 0000000000000000000000000000000000000000
+Subject: linux: use the embedder's Wayland display while it sets one
+Date: 2026-11-20T15:27:53+00:00
+
+---
+diff --git a/src/lib.rs b/src/lib.rs
+index d1be56e6f0a43bb3e83a355bc736c1b8f5ba3545..eadecc80ee9213ef188f08482c1aa1276156878a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -38,6 +38,28 @@ pub mod wayland_clipboard;
+ ))]
+ #[cfg(feature = "x11")]
+ pub mod x11_clipboard;
++#[cfg(all(
++    unix,
++    not(any(
++        target_os = "macos",
++        target_os = "android",
++        target_os = "ios",
++        target_os = "emscripten"
++    ))
++))]
++#[cfg(all(feature = "x11", feature = "wayland"))]
++pub mod linux_clipboard;
++#[cfg(all(
++    unix,
++    not(any(
++        target_os = "macos",
++        target_os = "android",
++        target_os = "ios",
++        target_os = "emscripten"
++    ))
++))]
++#[cfg(all(feature = "x11", feature = "wayland"))]
++pub use linux_clipboard::{clear_wayland_display, set_wayland_display};
+ 
+ #[cfg(windows)]
+ pub mod windows_clipboard;
+@@ -61,7 +83,18 @@ pub mod nop_clipboard;
+         target_os = "emscripten"
+     ))
+ ))]
+-#[cfg(feature = "x11")]
++#[cfg(all(feature = "x11", feature = "wayland"))]
++pub type ClipboardContext = linux_clipboard::LinuxClipboardContext;
++#[cfg(all(
++    unix,
++    not(any(
++        target_os = "macos",
++        target_os = "android",
++        target_os = "ios",
++        target_os = "emscripten"
++    ))
++))]
++#[cfg(all(feature = "x11", not(feature = "wayland")))]
+ pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
+ #[cfg(windows)]
+ pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
+diff --git a/src/linux_clipboard.rs b/src/linux_clipboard.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..470ed0b3c4087a02437b61391c400c88421aa0ad
+--- /dev/null
++++ b/src/linux_clipboard.rs
+@@ -0,0 +1,72 @@
++//! The clipboard of a Linux desktop: the Wayland display the embedder set, or X11 when it set
++//! none.
++
++use std::ffi::c_void;
++use std::sync::{Mutex, PoisonError};
++use std::time::Duration;
++
++use async_trait::async_trait;
++
++use crate::common::{ClipboardProvider, Result};
++use crate::wayland_clipboard::{create_clipboards_from_external, Clipboard as WaylandClipboard};
++use crate::x11_clipboard::X11ClipboardContext;
++
++static WAYLAND: Mutex<Option<WaylandClipboard>> = Mutex::new(None);
++
++/// Routes [`LinuxClipboardContext`] through the Wayland display `display` until
++/// [`clear_wayland_display`], for a window that is on Wayland: its session may have no X server.
++/// Does nothing while a display is set; returns whether this call set one.
++///
++/// # Safety
++///
++/// `display` must be a valid `*mut wl_display`, and must stay valid until
++/// [`clear_wayland_display`] has returned `true`.
++pub unsafe fn set_wayland_display(display: *mut c_void) -> bool {
++    let mut wayland = WAYLAND.lock().unwrap_or_else(PoisonError::into_inner);
++    if wayland.is_some() {
++        return false;
++    }
++    *wayland = Some(unsafe { create_clipboards_from_external(display) }.1);
++    true
++}
++
++/// Returns [`LinuxClipboardContext`] to X11 and stops the Wayland clipboard. Returns whether it
++/// stopped. When `true`, nothing uses the display, and a context made from it earlier answers
++/// with an error. When `false`, a read was still in progress after `wait`, and its worker still
++/// uses the display: the display must stay valid for the life of the process.
++pub fn clear_wayland_display(wait: Duration) -> bool {
++    let clipboard = WAYLAND.lock().unwrap_or_else(PoisonError::into_inner).take();
++    clipboard.map_or(true, |clipboard| clipboard.close(wait))
++}
++
++pub enum LinuxClipboardContext {
++    Wayland(WaylandClipboard),
++    X11(X11ClipboardContext),
++}
++
++impl LinuxClipboardContext {
++    pub fn new() -> Result<LinuxClipboardContext> {
++        let wayland = WAYLAND.lock().unwrap_or_else(PoisonError::into_inner).clone();
++        Ok(match wayland {
++            Some(clipboard) => LinuxClipboardContext::Wayland(clipboard),
++            None => LinuxClipboardContext::X11(X11ClipboardContext::new()?),
++        })
++    }
++}
++
++#[async_trait]
++impl ClipboardProvider for LinuxClipboardContext {
++    async fn get_contents(&mut self) -> Result<String> {
++        match self {
++            LinuxClipboardContext::Wayland(clipboard) => clipboard.get_contents().await,
++            LinuxClipboardContext::X11(clipboard) => clipboard.get_contents().await,
++        }
++    }
++
++    async fn set_contents(&mut self, data: String) -> Result<()> {
++        match self {
++            LinuxClipboardContext::Wayland(clipboard) => clipboard.set_contents(data).await,
++            LinuxClipboardContext::X11(clipboard) => clipboard.set_contents(data).await,
++        }
++    }
++}
+diff --git a/src/wayland_clipboard.rs b/src/wayland_clipboard.rs
+index ab8b00818ac77897f2b66294ecdd1e70802fb5ce..56010b3dba87b06bece9e61a0ac977fcdb8030a5 100644
+--- a/src/wayland_clipboard.rs
++++ b/src/wayland_clipboard.rs
+@@ -13,8 +13,9 @@
+ // limitations under the License.
+ 
+ use std::ffi::c_void;
+-use std::sync::Arc;
+-use tokio::sync::Mutex;
++use std::sync::{Arc, Mutex as SyncMutex, PoisonError};
++use std::time::{Duration, Instant};
++use tokio::sync::{oneshot, Mutex};
+ 
+ use async_trait::async_trait;
+ 
+@@ -22,12 +23,76 @@ use smithay_clipboard::Clipboard as WaylandClipboard;
+ 
+ use crate::common::{ClipboardProvider, Result};
+ 
++/// The clipboards of one display. A read waits for the owner of the selection, without limit when
++/// that owner does not answer, so reads and writes have a clipboard each: a read in progress
++/// holds no write.
++struct Context {
++    /// For reads, one at a time: held for the whole wait.
++    reader: Arc<Mutex<Option<WaylandClipboard>>>,
++    /// For writes, which do not wait.
++    writer: SyncMutex<Option<WaylandClipboard>>,
++}
++
++#[derive(Clone)]
+ pub struct Clipboard {
+-    context: Arc<Mutex<WaylandClipboard>>,
++    context: Arc<Context>,
+ }
+ 
+ pub struct Primary {
+-    context: Arc<Mutex<WaylandClipboard>>,
++    context: Arc<Context>,
++}
++
++impl Clipboard {
++    /// Stops the worker threads that serve this clipboard, its clones and its primary selection,
++    /// and waits for them. Returns whether they stopped. When `true`, none of them uses the
++    /// display, and each answers with an error. When `false`, a read was still in progress after
++    /// `wait` (a selection owner that does not answer holds a read without limit), and the
++    /// worker of the reads still uses the display. Writes stop in both cases.
++    pub fn close(&self, wait: Duration) -> bool {
++        drop(self.context.writer.lock().unwrap_or_else(PoisonError::into_inner).take());
++        let deadline = Instant::now() + wait;
++        loop {
++            if let Ok(mut reader) = self.context.reader.try_lock() {
++                drop(reader.take());
++                return true;
++            }
++            if Instant::now() >= deadline {
++                return false;
++            }
++            std::thread::sleep(Duration::from_millis(5));
++        }
++    }
++}
++
++fn closed() -> Box<dyn std::error::Error + Send + Sync + 'static> {
++    "the Wayland display of this clipboard is closed".into()
++}
++
++/// Reads with `load` on a thread of its own, so the wait for the selection's owner holds no
++/// thread of the caller's executor. An error while another read is in progress.
++async fn read(
++    context: &Context,
++    load: fn(&WaylandClipboard) -> std::io::Result<String>,
++) -> Result<String> {
++    let Ok(reader) = context.reader.clone().try_lock_owned() else {
++        return Err("a read of this clipboard is in progress".into());
++    };
++    let (sender, receiver) = oneshot::channel();
++    std::thread::Builder::new().name("clipboard-read".into()).spawn(move || {
++        let text = match reader.as_ref() {
++            Some(clipboard) => load(clipboard).map_err(Into::into),
++            None => Err(closed()),
++        };
++        let _ = sender.send(text);
++    })?;
++    receiver.await.map_err(|_| closed())?
++}
++
++fn write(context: &Context, store: impl FnOnce(&WaylandClipboard)) -> Result<()> {
++    let writer = context.writer.lock().unwrap_or_else(PoisonError::into_inner);
++    store(writer.as_ref().ok_or_else(closed)?);
++
++    Ok(())
+ }
+ 
+ /// Create new clipboard from a raw display pointer.
+@@ -37,7 +102,10 @@ pub struct Primary {
+ /// Since the type of the display is a raw pointer, it's the responsibility of the callee to make
+ /// sure that the passed pointer is a valid Wayland display.
+ pub unsafe fn create_clipboards_from_external(display: *mut c_void) -> (Primary, Clipboard) {
+-    let context = Arc::new(Mutex::new(WaylandClipboard::new(display)));
++    let context = Arc::new(Context {
++        reader: Arc::new(Mutex::new(Some(WaylandClipboard::new(display)))),
++        writer: SyncMutex::new(Some(WaylandClipboard::new(display))),
++    });
+ 
+     (Primary { context: context.clone() }, Clipboard { context })
+ }
+@@ -45,25 +113,21 @@ pub unsafe fn create_clipboards_from_external(display: *mut c_void) -> (Primary,
+ #[async_trait]
+ impl ClipboardProvider for Clipboard {
+     async fn get_contents(&mut self) -> Result<String> {
+-        Ok(self.context.lock().await.load()?)
++        read(&self.context, WaylandClipboard::load).await
+     }
+ 
+     async fn set_contents(&mut self, data: String) -> Result<()> {
+-        self.context.lock().await.store(data);
+-
+-        Ok(())
++        write(&self.context, |clipboard| clipboard.store(data))
+     }
+ }
+ 
+ #[async_trait]
+ impl ClipboardProvider for Primary {
+     async fn get_contents(&mut self) -> Result<String> {
+-        Ok(self.context.lock().await.load_primary()?)
++        read(&self.context, WaylandClipboard::load_primary).await
+     }
+ 
+     async fn set_contents(&mut self, data: String) -> Result<()> {
+-        self.context.lock().await.store_primary(data);
+-
+-        Ok(())
++        write(&self.context, |clipboard| clipboard.store_primary(data))
+     }
+ }

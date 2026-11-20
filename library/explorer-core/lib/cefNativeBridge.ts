@@ -19,6 +19,53 @@ function cefApi(): CefApi | null {
   return cef
 }
 
+let clipboardGoesToEngine = false
+// The engine drops a paste whose text comes later than this after the key
+// (rendering/bevy-explorer/source/src/wayland_clipboard.rs).
+const PASTE_FIELD_MS = 2000
+
+// A window on Wayland (rendering/bevy-explorer/source/src/wayland_clipboard.rs): this webview
+// draws offscreen, and there a client with no focused surface can neither set nor read the
+// session's clipboard. The engine can. Every copy goes to it. A paste is the engine's to start,
+// from the paste keys of the window: no message of this page makes it read the clipboard. It
+// sends the text as `paste`, typed here into the field that had the focus at the key, and the
+// webview's own paste of the same key is stopped. Once per document.
+function routeClipboardToEngine(cef: CefApi): void {
+  if (clipboardGoesToEngine) return
+  clipboardGoesToEngine = true
+  const copy = (text: string): void => cef.emit({ to: 'engine', kind: 'copyToClipboard', text })
+  const clipboard: Clipboard | undefined = navigator.clipboard
+  if (clipboard != null) {
+    clipboard.writeText = (text) => {
+      copy(text)
+      return Promise.resolve()
+    }
+  }
+  for (const type of ['copy', 'cut']) {
+    document.addEventListener(type, () => {
+      const text = document.getSelection()?.toString() ?? ''
+      if (text !== '') copy(text)
+    })
+  }
+  // The field with the focus at the paste key. The engine's text comes later: it goes to that
+  // field only, and is dropped when the focus has moved, or when a handler of the page took the
+  // paste for itself.
+  let pasteField: { field: Element | null; taken: boolean; at: number } | null = null
+  document.addEventListener('paste', (e) => {
+    pasteField = { field: document.activeElement, taken: e.defaultPrevented, at: Date.now() }
+    e.preventDefault()
+  })
+  cef.listen('paste', (text) => {
+    const asked = pasteField
+    pasteField = null
+    // No field on record (the text came before the webview's own paste, or that paste is an old
+    // one): the text goes to the focus, as the key did.
+    const known = asked != null && Date.now() - asked.at <= PASTE_FIELD_MS
+    if (known && (asked.taken || asked.field !== document.activeElement)) return
+    document.execCommand('insertText', false, String(text))
+  })
+}
+
 export function installCefNativeBridge(): void {
   const cef = cefApi()
   if (cef == null) return
@@ -39,7 +86,11 @@ export function installCefNativeBridge(): void {
   })
   // (HUD focus — including text focus — now flows through the bridge scene as a 'uiFocus'
   // message on every platform; see useEngineSession. The only engine-addressed messages are the
-  // console command below and the stored values further down.)
+  // clipboard and the console command below, and the stored values further down.)
+  // The engine of a window on Wayland answers this, once per load of the page: on X11, macOS and
+  // Windows the webview keeps its own clipboard.
+  cef.listen('engineClipboard', () => routeClipboardToEngine(cef))
+  cef.emit({ to: 'engine', kind: 'engineClipboard' })
   // Engine fps for the perf overlay (see useFps). HUD geometry does NOT come through here:
   // --ui-scale and the engine cutout rects are keyed off the scene's canvas report on every
   // platform (see lib/uiCanvasStore.ts).
