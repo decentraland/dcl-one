@@ -760,13 +760,13 @@ describe('the in-world purchase with MANA', () => {
       expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
     })
 
-    it('gives its credit back, and its hold, when its own transaction reverted', async () => {
+    it('gives its credit back, and its hold, when its own transaction reverted and the node lists no spend of it', async () => {
       on()
       const w = world()
       splitShop(w)
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'reverted'
-      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await p.until('failed')
@@ -940,6 +940,67 @@ describe('the in-world purchase with MANA', () => {
       const foreign = [...w.txs.keys()][0]!
       const reader = { ...w.chain, transaction: (c: number, h: string) => w.evidence.transaction(c, h) }
       expect(await settleSplitHold({ ...hold, txHash: foreign }, { account: BUYER, reader: reader as never, client: w.shop.client })).toBeNull()
+    })
+
+    /** The relayed execution at `hash`, signed again: the same terms in other bytes (another envelope). */
+    const resigned = (w: World) => {
+      const posted = [...w.txs.values()][0]!
+      const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: posted.input })
+      return { to: posted.to, input: encodeExecuteMetaTransaction('functionData', BUYER, meta.args[1] as Hex, `0x${'22'.repeat(65)}` as Hex) }
+    }
+
+    it('keeps a split held, its credit kept, when a revert carries its terms in bytes it never sent', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const evidence = { ...w.evidence, transaction: async (c: number, h: string) => (w.txs.has(h.toLowerCase()) ? resigned(w) : w.evidence.transaction(c, h)) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+    })
+
+    it('completes a split whose own bytes reverted when the node settled its credit in a replay that is this sale', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const B = `0x${'c'.repeat(63)}3`
+      const evidence = {
+        ...w.evidence,
+        transaction: async (c: number, h: string) => (h === B ? resigned(w) : w.evidence.transaction(c, h)),
+        receipt: async (c: number, h: string) => (h === B ? { transactionHash: h as Hex, status: 'success' as const, blockNumber: 1n } : w.evidence.receipt(c, h))
+      }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, ...settledIn(() => B) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('keeps the identity of the bytes it sends before they go, in its record and the shared hold', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      let atPost: string | undefined
+      const fetchImpl = (async (url: string, init?: RequestInit) => {
+        atPost = readSplitHoldRecord(BUYER, HOLD_LINE)?.sale?.envelope
+        return w.relay.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const rail = { relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, rail: () => rail } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+      const sent = (w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      expect(atPost).toBe(keccak256(sent))
     })
 
     it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {

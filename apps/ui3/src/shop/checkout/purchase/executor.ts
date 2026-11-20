@@ -58,6 +58,11 @@ export type SplitPlan = {
    * caller couldn't keep the purchase's record, so nothing is signed or sent and the credit is released.
    */
   onCredit?: (credit: { id: string; expiresAt: number }) => boolean | void;
+  /**
+   * The exact bytes the sale is about to send (the relayed execution as signed), before they go: false when the caller
+   * couldn't keep their identity, and then nothing is sent and the credit is released.
+   */
+  onEnvelope?: (bytes: Hex) => boolean | void;
 };
 
 export type CheckoutDeps = {
@@ -211,7 +216,18 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     let settled = false;
     if (ctx.gasless ?? gaslessEnabled()) {
       try {
-        await buyManyGasless(ctx, { purchases, onSigned: handoff, onBroadcast: ({ txHash: h }) => broadcast(h) });
+        await buyManyGasless(ctx, {
+          purchases,
+          onSigned: handoff,
+          ...(split?.onEnvelope
+            ? {
+                onSignedCall: (call: { data: Hex }) => {
+                  if (split.onEnvelope!(call.data) === false) throw new Error("This browser couldn't keep a record of this purchase, so it wasn't sent. Nothing was charged.");
+                },
+              }
+            : {}),
+          onBroadcast: ({ txHash: h }) => broadcast(h),
+        });
         await waitForSettlement(ctx.reader, chainId, txHash!, ctx.wait);
         settled = true;
       } catch (e) {

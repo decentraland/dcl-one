@@ -86,7 +86,7 @@ import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, STORAGE_REFUSED, type OperationRecord } from './ledger'
 import { createManaFlow, MANA_BALANCE_TIMEOUT_MS } from './manaFlow'
 import { seesMana, seesSplit } from './manaGate'
-import { splitExecution, type SplitSale } from '../../../shop/checkout/purchase/splitEvidence'
+import { splitEnvelope, splitExecution, type SplitSale } from '../../../shop/checkout/purchase/splitEvidence'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 import { hostApiOptions } from '../../../shop/api/host'
@@ -994,6 +994,20 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     return decided
   }
 
+  /**
+   * After a split's own bytes reverted, the node's record of its credit, read first: an attributable success (a replay
+   * the node settled) bought it; a credit spent by another call is that; a SETTLED it can't attribute, or a read that
+   * fails, says nothing yet (held). Anything else read (pending, expired, not listed): the revert stands.
+   */
+  const afterOwnRevert = async (op: Operation & { buyer: string }, sale: SplitSale): Promise<'bought' | 'elsewhere' | 'held' | 'reverted'> => {
+    const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => undefined)
+    if (record === undefined) return 'held'
+    if (record?.status !== 'SETTLED') return 'reverted'
+    if (!record.txHash) return 'held'
+    const outcome = await splitExecution(svc.manaEvidence(), sale, record.txHash)
+    return outcome === 'bought' ? 'bought' : outcome === 'other' ? 'elsewhere' : 'held'
+  }
+
   const findOutSplit = async (op: Operation & { buyer: string }, sale: SplitSale, store: CartStore): Promise<boolean | null> => {
     const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
     const hash = progress?.txHash ?? op.txHash ?? null
@@ -1007,13 +1021,19 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return true
       }
       if (outcome === 'reverted') {
-        settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.', REVERTED_PART)
+        const after = await afterOwnRevert(op, sale)
+        if (after === 'held') return false
+        if (after === 'bought') settled(op, 'succeeded', {})
+        else if (after === 'elsewhere') settled(op, 'failed', {}, SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART)
+        else settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.', REVERTED_PART)
         return true
       }
       // Unknown or another transaction: a hash that is missing, dropped or not this sale says nothing more. The node's
       // record of the credit is independent evidence, read next.
     }
-    const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => null)
+    // A read that fails says nothing (held), unlike a credit the node doesn't list.
+    const record = await svc.creditRecordOf(op.buyer, sale.creditId, client(op.buyer)).catch(() => undefined)
+    if (record === undefined) return false
     if (record?.status === 'SETTLED' && record.txHash) {
       const outcome = await splitExecution(evidence, sale, record.txHash)
       if (outcome === 'bought') {
@@ -1947,6 +1967,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                     op.split = sale
                     keep(op)
                     return true
+                  },
+                  // The very bytes about to be sent, kept (ledger and shared hold) before they go: only their own revert
+                  // ends this purchase unbought. Unkept, nothing is sent.
+                  onEnvelope: (bytes: Hex) => {
+                    if (!op.split) return false
+                    const envelope = splitEnvelope(bytes)
+                    op.split = { ...op.split, envelope }
+                    if (!keep(op)) return false
+                    const kept = readSplitHoldRecord(quote.buyer, split.hold.line)
+                    if (!kept || kept.attempt !== split.hold.attempt || !kept.sale) return false
+                    return writeSplitHold(quote.buyer, split.hold.line, { ...kept, sale: { ...kept.sale, envelope } })
                   }
                 }
               }
@@ -1989,6 +2020,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             return { kind: 'confirmed' }
           }
           if (outcome === 'reverted') {
+            // Its own bytes reverted; the node's record of its credit still comes first (a replay may have bought it).
+            const after = await afterOwnRevert(op as Operation & { buyer: string }, op.split)
+            if (after === 'bought') {
+              move(op, 'succeeded', { txHash: result.txHash })
+              return { kind: 'confirmed' }
+            }
+            if (after === 'elsewhere') return refused(SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART, null)
+            if (after === 'held') {
+              move(op, 'pending', { txHash: result.txHash })
+              return { kind: 'pending' }
+            }
             await cancelUsdIntents([op.split.creditId], quote.client).catch(() => 0)
             return refused('The transaction failed on-chain and nothing was bought.', REVERTED_PART, 'failed')
           }
