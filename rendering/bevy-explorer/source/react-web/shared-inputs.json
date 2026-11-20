@@ -6667,7 +6667,7 @@
     },
     {
       "path": "library/explorer-core/features/donate/tip.ts",
-      "sha256": "acf2e27638e0794853fe5d1b2937ad5f1fc523f0afba0519c40f1167f5dda2b0"
+      "sha256": "a50a5a09a90964f03e51e31499645c5dd5d9344c3a1014813338c264385e89b1"
     },
     {
       "path": "library/explorer-core/features/editorHost/config.ts",

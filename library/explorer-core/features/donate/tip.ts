@@ -24,7 +24,8 @@ export const TIP_INDEX_UNAVAILABLE = 'tip-index-unavailable'
 
 /**
  * How a forward ended: the catalyst took it, refused it (asking again changes nothing), answered that it has no tip
- * index (`TIP_INDEX_UNAVAILABLE`), or time ran out.
+ * index (`TIP_INDEX_UNAVAILABLE`), or time ran out. Callers end `unavailable` as they end `refused`; it is kept apart
+ * so their log says why.
  */
 export type ForwardOutcome = 'notified' | 'refused' | 'unavailable' | 'gave-up'
 
