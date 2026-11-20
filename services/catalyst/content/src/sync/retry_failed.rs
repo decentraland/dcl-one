@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
 use crate::failed_deployments_store::{
-    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments,
+    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments, remove_records,
 };
 use crate::storage::Storage;
 use crate::sync_deployer::LiveSyncDeployer;
@@ -132,6 +132,14 @@ fn retried_record(
         next_retry_at: now_ms + wait_ms as i64,
         ..failure.clone()
     }
+}
+
+/// What a successful retry did with a due record.
+enum Retried {
+    /// Buffered for the flush, whose transaction deletes the record.
+    Buffered,
+    /// Overtaken by a newer entity: the record is deleted and nothing is written.
+    Discarded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,27 +336,27 @@ impl RetryFailedDeployments {
                         // A failed discard is re-reported below like any failed attempt, so the
                         // record backs off instead of being checked again next cycle.
                         let outcome = match outcome {
-                            Err(SyncError::Overtaken { .. }) => {
-                                match self.failed_store.discard(&failure.entity_id).await {
-                                    Ok(()) => {
-                                        info!(
-                                            entity_id = %failure.entity_id,
-                                            entity_type = %failure.entity_type,
-                                            "Discarded failed deployment overtaken by newer deployments"
-                                        );
-                                        discarded_ref.fetch_add(1, Ordering::Relaxed);
-                                        return;
-                                    }
-                                    Err(e) => Err(e),
-                                }
-                            }
-                            other => other,
+                            Err(SyncError::Overtaken { .. }) => remove_records(
+                                &self.failed_store.pool,
+                                std::slice::from_ref(&failure.entity_id),
+                            )
+                            .await
+                            .map(|()| Retried::Discarded),
+                            other => other.map(|()| Retried::Buffered),
                         };
                         match outcome {
+                            Ok(Retried::Discarded) => {
+                                info!(
+                                    entity_id = %failure.entity_id,
+                                    entity_type = %failure.entity_type,
+                                    "Discarded failed deployment overtaken by newer deployments"
+                                );
+                                discarded_ref.fetch_add(1, Ordering::Relaxed);
+                            }
                             // Buffered, not yet written: the flush transaction that writes
                             // it deletes the failure record, so a crash or a failed flush
                             // before then leaves the record for the next cycle.
-                            Ok(()) => {
+                            Ok(Retried::Buffered) => {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
                             }

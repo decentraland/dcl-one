@@ -5,32 +5,15 @@
 
 use std::sync::Arc;
 
-use alloy::signers::{Signer, local::PrivateKeySigner};
 use catalyst_content::failed_deployments_store::LiveFailedDeploymentsStore;
 use catalyst_content::sync::retry_failed::{RetryFailedConfig, RetryFailedDeployments};
-use catalyst_content::sync::{AuthChain, AuthLink, AuthLinkType, FailedDeployment, FailureReason};
+use catalyst_content::sync::{FailedDeployment, FailureReason};
 use catalyst_content::sync_deployer::{LiveSyncDeployer, SyncValidation};
 use catalyst_content::validator::{Settings, Sources};
+use catalyst_shared::test_keys::signed_chain;
 
 const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const MAX_RETRIES: u32 = 2;
-
-async fn signed_chain(entity_id: &str) -> AuthChain {
-    let key: PrivateKeySigner = TEST_KEY.parse().unwrap();
-    let signature = key.sign_message(entity_id.as_bytes()).await.unwrap();
-    vec![
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", key.address()),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload: entity_id.to_string(),
-            signature: Some(signature.to_string()),
-        },
-    ]
-}
 
 /// Serves `body` as every content file.
 async fn peer(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
@@ -142,7 +125,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                 .into(),
                 entity_id: entity_id.clone(),
                 reason: FailureReason::DeploymentError,
-                auth_chain: signed_chain(&entity_id).await,
+                auth_chain: signed_chain(TEST_KEY, &entity_id).await,
                 error_description: "content server unreachable".into(),
                 failure_timestamp: chrono::Utc::now().timestamp_millis(),
                 snapshot_hash: None,
@@ -191,7 +174,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                     entity_type: "scene".into(),
                     entity_id: entity_id.clone(),
                     reason: FailureReason::ValidationUndecided,
-                    auth_chain: signed_chain(&entity_id).await,
+                    auth_chain: signed_chain(TEST_KEY, &entity_id).await,
                     error_description: "undecided".into(),
                     failure_timestamp: chrono::Utc::now().timestamp_millis(),
                     snapshot_hash: None,

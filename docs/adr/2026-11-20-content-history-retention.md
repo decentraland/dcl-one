@@ -1,14 +1,18 @@
-# Content history retention
+# ADR: Content history retention
 
 - Status: Accepted
 - Date: 2026-11-20
 
+## Context
+
+The content server differs from the legacy catalyst
+([`decentraland/catalyst@6c56f8a3`](https://github.com/decentraland/catalyst/tree/6c56f8a3eaff631cb7be0dc01ef92a24333bbc93))
+in three retention behaviors: it prunes superseded deployments, it does not
+expire profiles, and it never retries a validation refusal.
+
 ## Decision
 
-The content server keeps three retention behaviors that differ from the legacy
-catalyst
-([`decentraland/catalyst@6c56f8a3`](https://github.com/decentraland/catalyst/tree/6c56f8a3eaff631cb7be0dc01ef92a24333bbc93)).
-They are accepted as they are.
+The content server keeps these three retention behaviors as they are.
 
 ### Superseded deployments are pruned
 
@@ -30,6 +34,20 @@ returning it. On a node with pruning on, those routes cover active entities plus
 roughly the last day of superseded ones. The legacy garbage collector deletes
 only the blobs of overwritten deployments and keeps the rows, so its history
 routes list every superseded entity, even after its files are gone.
+
+#### Overtaken retries are discarded
+
+With history pruning on, the retry worker
+(`services/catalyst/content/src/sync/retry_failed.rs`) discards a retried entity
+that a newer active entity of its type has overtaken on any of its pointers: it
+deletes the entity's failure record and writes no deployment row. Pointer
+succession supersedes an entity as a whole, so such an entity could only land as
+a superseded row, and the prune would remove that row again. The worker checks
+this after it fetches the entity file and before it downloads content or
+validates, and only when that file hashes to the entity id. It does not discard
+an entity when a newer deployment of this node's own (`local_entities`) of its
+type shares one of its pointers, since the prune keeps the rows such a scene
+superseded. With pruning off, the entity is deployed as a superseded row.
 
 ### Profiles do not expire
 
@@ -57,18 +75,9 @@ failed sync deployment according to why it failed:
 
 The daily prune deletes every record whose failure time is older than
 `RETRY_FAILED_PRUNE_TTL_DAYS` (7), except undecided records. The failure time is
-that of the latest failure sync, read-through or a failed database write
-recorded, or of the retry worker giving up on an undecided record; a retry that
-fails again keeps it.
-
-With history pruning on, a retried entity that a newer active entity of its
-type has overtaken on any of its pointers is discarded: the worker deletes its
-record and writes no deployment row. Pointer succession supersedes an entity as
-a whole, so such an entity could only land as a superseded row, and the prune
-would remove that row again. The worker checks this after it fetches the entity
-file and before it downloads content or validates. It does not discard an entity
-a newer scene of this node's own would supersede, since the prune keeps those
-rows. With pruning off, the entity is deployed as a superseded row.
+the time of the latest failure that sync, read-through or a failed database
+write recorded, or of the retry worker giving up on an undecided record; a retry
+that fails again keeps it.
 
 The legacy catalyst retries every failure kind, refusals included, up to the
 same cap. It has no age-based prune. A refusal caused by a rule or chain-index

@@ -128,17 +128,12 @@ pub struct EvictedRecord {
 }
 
 pub struct LiveFailedDeploymentsStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl LiveFailedDeploymentsStore {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
-    }
-
-    /// Drops the record of an entity the retry discards (newer entities overtook it).
-    pub async fn discard(&self, entity_id: &str) -> Result<(), SyncError> {
-        remove_published(&self.pool, &[entity_id.to_string()]).await
     }
 
     /// GREATEST-monotonic on the retry columns: the sync path reports a failure with a fresh
@@ -356,9 +351,9 @@ impl LiveFailedDeploymentsStore {
 /// duration.
 const EXHAUSTED_DELETE_BATCH_SIZE: usize = 1000;
 
-/// Remove the failures of published entities (in the publication transaction) or of discarded
-/// ones.
-pub(crate) async fn remove_published<'e>(
+/// Removes the records of `entity_ids`: entities published (in their publication transaction)
+/// or discarded by the retry worker.
+pub(crate) async fn remove_records<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     entity_ids: &[String],
 ) -> Result<(), SyncError> {
@@ -370,7 +365,7 @@ pub(crate) async fn remove_published<'e>(
     Ok(())
 }
 
-/// One pass of the old daily prune: records whose first failure is older than `ttl_days`.
+/// One pass of the daily prune: records whose latest recorded failure is older than `ttl_days`.
 /// Undecided records stay: the retry worker gives up on them after [`crate::sync::retry_failed::UNDECIDED_GIVE_UP_MS`].
 pub async fn prune_failed_deployments(
     pool: &sqlx::PgPool,

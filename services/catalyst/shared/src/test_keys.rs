@@ -65,24 +65,7 @@ pub async fn signed_at(
         Shape::Legacy => build_legacy_payload(method, path, timestamp, signed),
         Shape::V6 => build_payload_v6(method, path, timestamp, signed),
     };
-    let wallet = wallet(key);
-    let signature = wallet
-        .sign_message(payload.as_bytes())
-        .await
-        .unwrap()
-        .to_string();
-    let chain = [
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", wallet.address()),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload,
-            signature: Some(signature),
-        },
-    ];
+    let chain = signed_chain(key, &payload).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTH_TIMESTAMP_HEADER,
@@ -99,6 +82,29 @@ pub async fn signed_at(
         );
     }
     headers
+}
+
+/// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY) in which `key` signs `payload`: an entity
+/// id or a signed-fetch payload.
+pub async fn signed_chain(key: &str, payload: &str) -> Vec<AuthLink> {
+    let wallet = wallet(key);
+    let signature = wallet
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    vec![
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: format!("{:#x}", wallet.address()),
+            signature: None,
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload: payload.to_string(),
+            signature: Some(signature),
+        },
+    ]
 }
 
 pub async fn signed(key: &str, method: &str, path: &str, metadata: &str) -> HeaderMap {

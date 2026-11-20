@@ -449,7 +449,8 @@ pub struct RemoteDeployment<'a> {
     pub report: Option<&'a Arc<DeploymentReport>>,
     pub retry_state: Option<(u32, u64)>,
     /// Refuse with [`SyncError::Overtaken`], before content is fetched or validated, an entity
-    /// a newer active entity overtook ([`LiveSyncDeployer::is_overtaken`]).
+    /// whose file hashes to its id and that a newer active entity overtook
+    /// ([`LiveSyncDeployer::is_overtaken`]).
     pub discard_overtaken: bool,
 }
 
@@ -507,7 +508,11 @@ pub async fn deploy_entity_streaming(
     let hashes = extract_content_hashes(&entity_data)
         .map_err(|e| entity_parse_error(entity_id, verification, e))?;
 
-    if discard_overtaken && deployer.is_overtaken(&entity_data, entity_id).await? {
+    // Only a file proven to hash to its id may discard: any other file is left to validation.
+    if discard_overtaken
+        && verification == CachedEntityVerification::Match
+        && deployer.is_overtaken(&entity_data, entity_id).await?
+    {
         return Err(SyncError::Overtaken {
             entity_id: entity_id.to_string(),
         });

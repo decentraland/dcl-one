@@ -8,42 +8,19 @@
 
 use std::sync::Arc;
 
-use alloy::signers::{Signer, local::PrivateKeySigner};
 use catalyst_content::failed_deployments_store::LiveFailedDeploymentsStore;
 use catalyst_content::sync::retry_failed::{RetryFailedConfig, RetryFailedDeployments, RetryStats};
-use catalyst_content::sync::{
-    AuthChain, AuthLink, AuthLinkType, DeploymentContext, FailedDeployment, FailureReason,
-};
+use catalyst_content::sync::{DeploymentContext, FailedDeployment, FailureReason};
 use catalyst_content::sync_deployer::{LiveSyncDeployer, SyncValidation};
+use catalyst_shared::test_keys::signed_chain;
 use sqlx::PgPool;
 
 const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-async fn signed_chain(entity_id: &str) -> AuthChain {
-    let key: PrivateKeySigner = TEST_KEY.parse().unwrap();
-    let signature = key.sign_message(entity_id.as_bytes()).await.unwrap();
-    vec![
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", key.address()),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload: entity_id.to_string(),
-            signature: Some(signature.to_string()),
-        },
-    ]
-}
-
-/// Serves each body at `/contents/{its hash}`.
-async fn peer(bodies: Vec<Vec<u8>>) -> (String, tokio::task::JoinHandle<()>) {
-    let files: Arc<std::collections::HashMap<String, Vec<u8>>> = Arc::new(
-        bodies
-            .into_iter()
-            .map(|b| (dcl_auth::hash_bytes_v1(&b), b))
-            .collect(),
-    );
+/// Serves each body at `/contents/{its id}`.
+async fn peer(files: Vec<(String, Vec<u8>)>) -> (String, tokio::task::JoinHandle<()>) {
+    let files: Arc<std::collections::HashMap<String, Vec<u8>>> =
+        Arc::new(files.into_iter().collect());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let app = axum::Router::new().route(
@@ -74,6 +51,13 @@ fn entity(entity_type: &str, pointers: &[&str], timestamp: i64, salt: u32) -> (V
     }))
     .unwrap();
     let id = dcl_auth::hash_bytes_v1(&body);
+    (body, id)
+}
+
+/// [`entity`] named by its CIDv0 (`Qm…`, mixed case) instead of its CIDv1.
+fn entity_v0(entity_type: &str, pointers: &[&str], timestamp: i64, salt: u32) -> (Vec<u8>, String) {
+    let (body, _) = entity(entity_type, pointers, timestamp, salt);
+    let id = dcl_auth::hash_bytes(&body);
     (body, id)
 }
 
@@ -112,7 +96,7 @@ impl Node {
             .deploy_entity(
                 body,
                 id,
-                &signed_chain(id).await,
+                &signed_chain(TEST_KEY, id).await,
                 DeploymentContext::Synced,
                 None,
                 None,
@@ -132,7 +116,7 @@ impl Node {
                     entity_type: entity_type.to_string(),
                     entity_id: id.clone(),
                     reason: FailureReason::DeploymentError,
-                    auth_chain: signed_chain(id).await,
+                    auth_chain: signed_chain(TEST_KEY, id).await,
                     error_description: "content server unreachable".into(),
                     failure_timestamp: now,
                     snapshot_hash: None,
@@ -142,7 +126,13 @@ impl Node {
                 .await
                 .unwrap();
         }
-        let (url, server) = peer(failed.iter().map(|(b, _, _)| b.clone()).collect()).await;
+        let (url, server) = peer(
+            failed
+                .iter()
+                .map(|(body, id, _)| (id.clone(), body.clone()))
+                .collect(),
+        )
+        .await;
         let retry = RetryFailedDeployments::new(
             RetryFailedConfig {
                 discard_overtaken: pruning,
@@ -407,4 +397,98 @@ async fn a_failed_discard_backs_off_like_a_failed_attempt() {
     .unwrap();
     assert_eq!(retry_count, 1, "the attempt is spent");
     assert!(next_retry_at as i64 > now, "and backed off");
+}
+
+#[tokio::test]
+async fn mixed_case_ids_order_lowercased() {
+    let Some(node) = Node::new().await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    // At one timestamp a CIDv1 (`bafy…`) sorts before a CIDv0 (`Qm…`) only once lowercased:
+    // byte order puts `Q` before `b`.
+    node.deploy(&entity("scene", &["40,40"], now, 1)).await;
+    let newer_v0 = entity_v0("scene", &["40,40"], now, 2);
+    let active_v0 = entity_v0("scene", &["40,41"], now, 3);
+    node.deploy(&active_v0).await;
+    let (older_v1, older_v1_id) = entity("scene", &["40,41"], now, 4);
+
+    let stats = node
+        .retry(
+            &[
+                (newer_v0.0, newer_v0.1.clone(), "scene"),
+                (older_v1, older_v1_id.clone(), "scene"),
+            ],
+            true,
+        )
+        .await;
+    assert_eq!(counts(&stats), (1, 1, 0));
+    assert_eq!(node.active_on("40,40").await, Some(newer_v0.1));
+    assert!(!node.deployed(&older_v1_id).await);
+    assert_eq!(node.active_on("40,41").await, Some(active_v0.1));
+}
+
+#[tokio::test]
+async fn an_active_pointer_row_without_a_type_still_overtakes() {
+    let Some(node) = Node::new().await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    node.deploy(&scene(&["10,10"], now)).await;
+    // Succession reads the deployment's type, not the pointer row's.
+    sqlx::query("UPDATE content.active_pointers SET entity_type = NULL WHERE pointer = '10,10'")
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    let (older, older_id) = scene(&["10,10"], now - 60_000);
+
+    let stats = node
+        .retry(&[(older, older_id.clone(), "scene")], true)
+        .await;
+    assert_eq!(counts(&stats), (1, 0, 0));
+    assert!(!node.deployed(&older_id).await);
+}
+
+#[tokio::test]
+async fn a_timestamp_postgres_cannot_hold_is_left_to_validation() {
+    let Some(node) = Node::new().await else {
+        return;
+    };
+    node.deploy(&scene(&["10,10"], chrono::Utc::now().timestamp_millis()))
+        .await;
+    for timestamp in [-1e20, 1e20] {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "version": "v3", "type": "scene", "pointers": ["10,10"], "timestamp": timestamp,
+            "content": [], "metadata": {}
+        }))
+        .unwrap();
+        let id = dcl_auth::hash_bytes_v1(&body);
+        assert!(
+            !node.deployer.is_overtaken(&body, &id).await.unwrap(),
+            "{timestamp}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_stored_file_that_cannot_be_hash_checked_is_not_discarded() {
+    let Some(node) = Node::new().await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    node.deploy(&scene(&["10,10"], now)).await;
+    let (older, older_hash) = scene(&["10,10"], now - 60_000);
+    // A storable id of no IPFS shape (a CIDv1 is 59 characters), so the stored file cannot be
+    // checked against it.
+    let id = format!("{older_hash}a");
+    catalyst_storage::Storage::from_config(&node.tmp)
+        .await
+        .unwrap()
+        .store(&id, older.clone().into())
+        .await
+        .unwrap();
+
+    let stats = node.retry(&[(older, id.clone(), "scene")], true).await;
+    assert_eq!(stats.discarded, 0);
+    assert!(node.deployed(&id).await || node.recorded(&id).await);
 }

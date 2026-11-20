@@ -126,7 +126,9 @@ pub struct ContentConfig {
     // deployments no pointer is served by any more (superseded or
     // unpublished), their content_files and the blobs nothing else names.
     // Off by default and independent of CONTENT_WRITES_ENABLED: local scenes
-    // and the rows they superseded always stay.
+    // and the rows they superseded always stay. It also makes the retry
+    // worker discard a failed deployment a newer active entity overtook,
+    // instead of storing it as a superseded row.
     #[arg(long, env = "CONTENT_HISTORY_PRUNE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_history_prune_enabled: bool,
 
