@@ -96,6 +96,24 @@ export function eventPageShareUrl(origin: string, event: Pick<Event, "id" | "liv
   return url.toString();
 }
 
+/**
+ * An event cover as the page renders it. The API names an uploaded poster under its public base, which is
+ * http on a local or preview node, and the library's images take only root-relative paths and https: a
+ * cover on the page's own origin becomes its path, so it renders on any scheme and identically on server
+ * and client. Anything else is unchanged and left to the library's check.
+ */
+export function eventImage(image: string | null | undefined, origin: string): string | null {
+  if (!image || !origin) return image ?? null;
+  try {
+    const url = new URL(image);
+    // A path starting `//` would read as another host once the origin is dropped.
+    if (url.origin !== new URL(origin).origin || url.pathname.startsWith("//")) return image;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return image;
+  }
+}
+
 export function placeShareUrl(origin: string, target: Target): string {
   return new URL(placeHref(target), origin).toString();
 }
@@ -396,7 +414,7 @@ export function upcomingCardProps(
   return {
     id: event.id,
     title: event.name ?? eventText(locale, "Untitled event"),
-    image: event.image,
+    image: eventImage(event.image, ctx.origin),
     href: ctx.href,
     creator: eventCreator(event, ctx.profiles, locale),
     time: start ? { label: relativeStart(start, ctx.now, ctx.zone, locale), dateTime: start } : { label: eventText(locale, "Soon") },

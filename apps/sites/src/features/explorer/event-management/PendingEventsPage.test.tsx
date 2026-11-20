@@ -65,6 +65,25 @@ describe("when opening the Pending Events page", () => {
     });
   });
 
+  describe("and a pending event has a cover uploaded to the page's own http origin", () => {
+    const poster = "/events-assets-099ac00/poster/abc.png";
+
+    beforeEach(() => {
+      expect(window.location.protocol).toBe("http:");
+      api.events = [makeEvent({ image: `${window.location.origin}${poster}` })];
+    });
+
+    it("should show the cover on its card and in its review", async () => {
+      renderAdminPage(<PendingEventsPage />, PATH);
+      const pending = await screen.findByRole("region", { name: "Pending Events" });
+      const card = (await within(pending).findByRole("link", { name: "Moon concert" })).closest("li")!;
+      expect(card.querySelector("img")?.getAttribute("src")).toBe(poster);
+      await user.click(within(pending).getByRole("link", { name: "Moon concert" }));
+      const review = await screen.findByRole("dialog", { name: "Moon concert" });
+      expect(review.querySelector("img")?.getAttribute("src")).toBe(poster);
+    });
+  });
+
   describe("and the account has no event permission", () => {
     beforeEach(() => { api.profile.permissions = []; });
 

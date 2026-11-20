@@ -16,6 +16,7 @@ import {
   editEventHref, eventAdminKeys, eventOccurrence, eventReviewStatus, moderateEvent, moderationQueueQuery, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
 import { useEventsFooterCopy } from "../../events/locale";
+import { eventImage } from "../../events/view";
 import { openSignIn } from "../../components/auth/signin-store";
 import SitesLayout from "../../components/chrome/SitesLayout";
 import { AdminAccessGate } from "./AdminAccessGate";
@@ -45,6 +46,8 @@ export default function PendingEventsPage() {
 
 function PendingQueue({ access }: { access: EventAdminAccess }) {
   const identity = access.identity;
+  // The queue is a signed read, so its cards render in the browser only: the page origin is known.
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -123,7 +126,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
           <li key={event.id}>
             <PendingEventCard
               title={event.name}
-              image={event.image}
+              image={eventImage(event.image, origin)}
               href={`${PENDING_PATH}?id=${encodeURIComponent(event.id)}`}
               onOpen={(click) => {
                 click.preventDefault();
@@ -169,7 +172,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       {review && !rejecting ? (
         <EventDetailModal
           title={review.name}
-          image={review.image}
+          image={eventImage(review.image, origin)}
           live={false}
           when={reviewStart ? { label: new Date(reviewStart).toLocaleString(DATE_LOCALE), dateTime: reviewStart } : undefined}
           location={{ world: review.world, label: review.world ? review.server || "World location not published" : `${review.x},${review.y}` }}

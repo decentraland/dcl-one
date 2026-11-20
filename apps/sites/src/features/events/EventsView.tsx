@@ -56,6 +56,7 @@ import {
   dayLabel,
   eventCreator,
   eventHref,
+  eventImage,
   eventPageShareUrl,
   eventTarget,
   eventUsers,
@@ -236,7 +237,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: item.event.id,
         title: item.event.name ?? text("Untitled event"),
-        image: item.event.image,
+        image: eventImage(item.event.image, origin),
         href,
         onOpen: open(href, item.event.id),
         users: item.users,
@@ -283,7 +284,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: `${event.id}@${occurrence.start}`,
         title: event.name ?? text("Untitled event"),
-        image: event.image,
+        image: eventImage(event.image, origin),
         href,
         onOpen: open(href, event.id),
         users,
@@ -314,8 +315,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const myCards = useMemo(
     () =>
-      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, profiles, locale }) : [],
-    [identity, mine.events, now, zone, profiles, locale],
+      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, origin, profiles, locale }) : [],
+    [identity, mine.events, now, zone, origin, profiles, locale],
   );
 
   const calendarStatus = calendar.data ? "ready" : calendar.isError || initial?.unavailable ? "unavailable" : "loading";
@@ -436,7 +437,7 @@ function EventDetail({
   return (
     <EventDetailModal
       title={event.name ?? text("Untitled event")}
-      image={event.image}
+      image={eventImage(event.image, origin)}
       live={event.live}
       when={event.live ? undefined : heroWhen(event, zone, locale)}
       creator={eventCreator(event, profiles, locale)}
