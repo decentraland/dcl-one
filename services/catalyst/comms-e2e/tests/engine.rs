@@ -37,6 +37,7 @@ const fn scenario(name: &'static str, run: fn(Ctx) -> ScenarioFuture) -> Scenari
             explorer: false,
             scene_listener: false,
             restart: false,
+            visit: false,
         },
         hostile: false,
         default_repeat: 1,

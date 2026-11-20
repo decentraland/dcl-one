@@ -60,6 +60,22 @@ pub fn input_at(grid: &Grid, world: [f32; 3]) -> Option<ClientMessage> {
     state_at(grid, world).map(input)
 }
 
+/// A grounded player at `world` walking at `speed` metres per second towards `heading` (degrees
+/// about the vertical axis, 0 along +z, 90 along +x) and facing that way: what a client sends while
+/// its player walks. `None` outside the grid.
+pub fn walking_at(grid: &Grid, world: [f32; 3], heading: f32, speed: f32) -> Option<ClientMessage> {
+    let mut state = state_at(grid, world)?;
+    let radians = heading.to_radians();
+    state.set_velocity_x_f(speed * radians.sin());
+    state.set_velocity_z_f(speed * radians.cos());
+    state.set_rotation_y_f(heading.rem_euclid(360.0));
+    // 0 standing, 1 walking, up to 3 running
+    state.set_movement_blend_f(if speed > 0.0 { 1.0 } else { 0.0 });
+    state.state_flags =
+        catalyst_comms::pulse::decentraland::pulse::PlayerAnimationFlags::Grounded as u32;
+    Some(input(state))
+}
+
 pub fn teleport(grid: &Grid, realm: &str, world: [f32; 3]) -> Option<ClientMessage> {
     let state = state_at(grid, world)?;
     Some(teleport_to_parcel(realm, state.parcel_index, &state))

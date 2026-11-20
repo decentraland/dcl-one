@@ -9,6 +9,7 @@ pub mod explorer_uplink;
 pub mod livekit;
 pub mod pulse;
 pub mod support;
+pub mod visit;
 pub mod webtransport;
 
 use crate::engine::Scenario;
@@ -42,6 +43,7 @@ pub const TAGS: &[&str] = &[
     "smoke",
     "swarm",
     "uplink",
+    "visit",
     "webtransport",
 ];
 
@@ -53,6 +55,7 @@ pub fn registry() -> Vec<&'static Scenario> {
     all.extend(connections::all());
     all.extend(livekit::all());
     all.extend(crowd_discovery::all());
+    all.extend(visit::all());
     all.extend(explorer::all());
     all
 }
@@ -97,6 +100,17 @@ mod tests {
             .filter(|name| !readme.contains(&format!("`{name}`")))
             .collect();
         assert!(missing.is_empty(), "the README does not name {missing:?}");
+    }
+
+    #[test]
+    fn the_registry_holds_every_scenario_once() {
+        let names: Vec<&str> = registry().iter().map(|scenario| scenario.name).collect();
+        let mut unique = names.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "a name twice in {names:?}");
+        // the README's groups: pulse 15 (crowd-visit among them), connections 9, explorer 17
+        assert_eq!(names.len(), 41, "{names:?}");
     }
 
     #[test]

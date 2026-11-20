@@ -62,6 +62,22 @@ pub struct CrowdSize {
     pub room_players: Option<usize>,
 }
 
+/// Where `crowd-visit` takes its crowd: the realm and the parcel other clients stand in, how
+/// long it stays, and the wallets it must meet there. The command line fills it from the
+/// `CE2E_VISIT_*` variables; without it the scenario is skipped. A scenario never reads the
+/// environment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VisitPlan {
+    /// The realm name exactly as the clients there send it to Pulse.
+    pub realm: String,
+    /// The parcel the crowd stands around, as `(x, y)` on the map.
+    pub parcel: (i32, i32),
+    /// How long the crowd stays, walking, once it has entered.
+    pub seconds: u64,
+    /// Wallets (lowercase) every player of the crowd must catch a join event of.
+    pub expect: Vec<String>,
+}
+
 /// What a scenario needs from the stack beyond Pulse over ENet.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Needs {
@@ -75,6 +91,8 @@ pub struct Needs {
     pub scene_listener: bool,
     /// The stack file names a command that restarts the gatekeeper's process.
     pub restart: bool,
+    /// The run names a visit plan ([`VisitPlan`]): a realm and a place other clients are in.
+    pub visit: bool,
 }
 
 impl Needs {
@@ -89,6 +107,7 @@ impl Needs {
         explorer: false,
         scene_listener: false,
         restart: false,
+        visit: false,
     };
 
     /// What `stack` lacks for this scenario, if anything.
@@ -131,6 +150,7 @@ struct CtxInner {
     transport: Transport,
     one_source_address: std::sync::atomic::AtomicBool,
     crowd: Mutex<CrowdSize>,
+    visit: Mutex<Option<VisitPlan>>,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
     notes: Mutex<Vec<Note>>,
@@ -183,6 +203,7 @@ impl Ctx {
                 transport,
                 one_source_address: std::sync::atomic::AtomicBool::new(false),
                 crowd: Mutex::new(CrowdSize::default()),
+                visit: Mutex::new(None),
                 timeline: Timeline::new(),
                 seeded: Mutex::new(Seeded::new(seed)),
                 notes: Mutex::new(Vec::new()),
@@ -259,6 +280,16 @@ impl Ctx {
     /// Sets the crowd size the crowd scenarios of this context use.
     pub fn set_crowd(&self, crowd: CrowdSize) {
         *self.inner.crowd.lock() = crowd;
+    }
+
+    /// The visit plan this run named, if any.
+    pub fn visit(&self) -> Option<VisitPlan> {
+        self.inner.visit.lock().clone()
+    }
+
+    /// Sets the visit plan `crowd-visit` follows in this context.
+    pub fn set_visit(&self, visit: Option<VisitPlan>) {
+        *self.inner.visit.lock() = visit;
     }
 
     pub fn repeat(&self) -> u32 {
@@ -358,6 +389,8 @@ pub struct RunOptions {
     pub one_source_address: bool,
     /// How large the crowd scenarios' crowd is.
     pub crowd: CrowdSize,
+    /// Where `crowd-visit` goes; `None` skips it.
+    pub visit: Option<VisitPlan>,
 }
 
 impl Default for RunOptions {
@@ -374,6 +407,7 @@ impl Default for RunOptions {
             transport: Transport::Enet,
             one_source_address: false,
             crowd: CrowdSize::default(),
+            visit: None,
         }
     }
 }
@@ -420,6 +454,11 @@ pub async fn run_scenarios(
 
         if let Some(reason) = scenario.needs.missing(&stack) {
             result.outcome = Outcome::Skipped { reason };
+        } else if scenario.needs.visit && options.visit.is_none() {
+            result.outcome = Outcome::Skipped {
+                reason: "the run names no place to visit (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL)"
+                    .to_owned(),
+            };
         } else if options.transport == Transport::WebTransport && stack.pulse_webtransport.is_none()
         {
             result.outcome = Outcome::Skipped {
@@ -457,6 +496,7 @@ pub async fn run_scenarios(
                     ctx.use_one_source_address();
                 }
                 ctx.set_crowd(options.crowd);
+                ctx.set_visit(options.visit.clone());
                 ctx.record(
                     "runner",
                     "start",

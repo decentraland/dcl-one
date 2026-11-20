@@ -151,7 +151,7 @@ itself. Neither the gatekeeper client nor the room-service client follows a redi
 
 | Group | Scenarios, each with its other tags | Need |
 |---|---|---|
-| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-crowd` (`crowd`), `pulse-webtransport-bursts` (`webtransport`, `slow`) | Pulse. All but the last run on either transport (`--transport`). |
+| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-crowd` (`crowd`), `crowd-visit` (`crowd`, `visit`), `pulse-webtransport-bursts` (`webtransport`, `slow`) | Pulse. All but the last run on either transport (`--transport`). `crowd-visit` also needs a visit plan, see below. |
 | `connections` | `connect-full-stack` (`connect`), `second-device-takeover` (`session`, `races`: Pulse ends the older device; the archipelago keeps one socket per session key and leaves the older socket open), `stale-socket-reconnect` (`session`, `faults`), `assignment-order` (`assignment`, `races`), `mints-under-churn` (`gatekeeper`, `races`), `ban-eviction` (`moderation`, `slow`), `stationary-credentials` (`restart`, `slow`), `livekit-same-identity` (`livekit`), `crowd-discovery` (`crowd`) | The API; LiveKit for the room joins, which are left out, with a note, without a LiveKit client |
 | `explorer` | `explorer-uplink-stall` (`battle`, `faults`), `explorer-out-of-grid` (`battle`), `explorer-past-the-east-edge` (`battle`), `explorer-sleep-wake` (`battle`, `faults`), `explorer-port-unreachable` (`battle`, `faults`), `explorer-two-devices` (`races`), `explorer-resync` (`faults`). Probes: `explorer-replaced-by-another-device`, `explorer-replaces-another-device` (`probe`, `races`), `explorer-long-uplink-stall`, `explorer-reconnect-outside-grid` (`probe`, `faults`). The uplink over a slow path: `explorer-uplink-cadence` (`uplink`), `explorer-walk-800ms-round-trip`, `explorer-walk-1200ms-round-trip`, `explorer-walk-lossy-link`, `explorer-queued-stall-1200ms-round-trip`, `explorer-queued-stall-2000ms-round-trip` (`uplink`, `faults`) | The API and a headless explorer build |
 
@@ -168,6 +168,25 @@ server admits from one address is refused before the first packet, naming the li
 `limits.max_sockets_per_ip` for `crowd-discovery`. `crowd-discovery` checks an island's peer
 list only when the connector sends one, and its report says whether it did
 (`island_peers_sent`).
+
+**Visits.** `crowd-visit` is the one scenario that goes where real clients are, so a person can
+watch a crowd arrive in a client and the report shows which clients the crowd met. It runs only
+when the run names a place, and is skipped otherwise. Its variables are read only when it is
+selected; its crowd is the crowd scenarios' (`CE2E_CROWD_PLAYERS`, at most 30 here):
+
+| Variable | What it says |
+|---|---|
+| `CE2E_VISIT_REALM` | The realm name exactly as the clients there send it to Pulse: a realm's `/about` `configurations.realmName` |
+| `CE2E_VISIT_PARCEL` | The parcel, `x,y`, the crowd stands around (on a grid 2 m apart, at most 30 players) |
+| `CE2E_VISIT_SECONDS` | How long it stays, walking back and forth, before it leaves (120 unless given, 1 to 900); give `--deadline` above it |
+| `CE2E_VISIT_EXPECT` | Wallets, comma-separated, every player must catch a Pulse join event of |
+
+The report notes every join event each player caught (`visitor_joins_by_player` for wallets
+outside the crowd, `crowd_join_events_caught_by_player` for the crowd itself), for each expected
+wallet how many players caught it (`expected_caught_by`), the crowd's wallets by player
+(`crowd_wallets`) and samples of what each player held while it stayed (`held_samples`). The
+crowd has no deployed profiles: a client that draws a player only from its profile draws none of
+them.
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
 

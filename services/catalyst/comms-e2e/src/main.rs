@@ -187,6 +187,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 transport,
                 one_source_address,
                 crowd: crowd_from_environment(&selection)?,
+                visit: visit_from_environment(&selection)?,
                 ..RunOptions::default()
             };
             options.work_dir = match work_dir {
@@ -360,6 +361,44 @@ fn crowd_from(players: Option<String>, room_players: Option<String>) -> Result<C
     })
 }
 
+/// The visit plan the environment names: `CE2E_VISIT_REALM`, `CE2E_VISIT_PARCEL`,
+/// `CE2E_VISIT_SECONDS` and `CE2E_VISIT_EXPECT`.
+fn visit_from_environment(
+    selection: &[&Scenario],
+) -> Result<Option<catalyst_comms_e2e::engine::VisitPlan>> {
+    use scenarios::visit;
+    let read = |name: &str| std::env::var(name).ok();
+    visit_for(
+        selection,
+        [
+            read(visit::REALM_VARIABLE),
+            read(visit::PARCEL_VARIABLE),
+            read(visit::SECONDS_VARIABLE),
+            read(visit::EXPECT_VARIABLE),
+        ],
+    )
+}
+
+/// The visit plan the texts of its variables name, for a run of `selection`. They are read only
+/// when it holds `crowd-visit`: a variable the run does not use cannot stop it.
+fn visit_for(
+    selection: &[&Scenario],
+    [realm, parcel, seconds, expect]: [Option<String>; 4],
+) -> Result<Option<catalyst_comms_e2e::engine::VisitPlan>> {
+    if !selection
+        .iter()
+        .any(|scenario| scenario.name == scenarios::visit::CROWD_VISIT.name)
+    {
+        return Ok(None);
+    }
+    scenarios::visit::plan_from(
+        realm.as_deref(),
+        parcel.as_deref(),
+        seconds.as_deref(),
+        expect.as_deref(),
+    )
+}
+
 /// The wallet address of a private key. A key that does not parse is an error that does not
 /// repeat it.
 fn address_of_key(key: &str) -> Result<String> {
@@ -403,6 +442,23 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn a_run_without_crowd_visit_does_not_read_the_visit_variables() {
+        let malformed = || [Some("r".into()), Some("0;0".into()), Some("0".into()), None];
+        for other in ["pulse-smoke", "pulse-crowd", "crowd-discovery"] {
+            let selection = scenarios::select(Some(other), None, false);
+            assert_eq!(visit_for(&selection, malformed()).unwrap(), None, "{other}");
+        }
+        let visit = scenarios::select(Some("crowd-visit"), None, false);
+        assert_eq!(visit.len(), 1);
+        assert!(visit_for(&visit, malformed()).is_err());
+        assert_eq!(visit_for(&visit, [None, None, None, None]).unwrap(), None);
+        let plan = visit_for(&visit, [Some("r".into()), Some("1,2".into()), None, None])
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.parcel, (1, 2));
     }
 
     #[test]
