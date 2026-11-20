@@ -623,6 +623,14 @@ mod tests {
                 "{stored}"
             );
         }
+        // A root-relative image that is not a poster stays relative, as on read: no image.
+        let notice = message(
+            "ev-5",
+            "submitted",
+            &labels(&json!({"name":"Other","image":"/other/a.webp"})),
+            &links(),
+        );
+        assert!(notice["blocks"][1].get("accessory").is_none());
         // Without `PUBLIC_URL` a poster is root-relative: the notice goes out without the image.
         let notice = message(
             "ev-4",

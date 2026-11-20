@@ -1834,6 +1834,19 @@ mod tests {
             );
             assert_eq!(payload["image"], absolute, "{stored}");
         }
+        // Without `PUBLIC_URL` a poster stays relative, as `GET` serves it.
+        let payload = metadata(
+            &intent(
+                "event_approved",
+                json!({"name":"Poster","image":"/poster/a.webp"}),
+            ),
+            &recipient(false, false),
+            &origins(
+                "https://web.example.org",
+                "https://assets.example.org/events",
+            ),
+        );
+        assert_eq!(payload["image"], "/events-assets-099ac00/poster/a.webp");
         assert_eq!(
             payload["link"], "https://decentraland.org/jump/events?id=legacy-event&position=0%2C0",
             "an approval links the jump-in site (`Notifications/index.ts:205`)"

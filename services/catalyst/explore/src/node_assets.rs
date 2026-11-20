@@ -25,16 +25,15 @@ pub(crate) fn event_image_url(
     configured_public_base: Option<&str>,
     events_asset_base: &str,
 ) -> String {
+    let url = notice_image_url(image, configured_public_base, events_asset_base);
     if poster_path(image).is_some() {
-        return mounted_poster_url(image, configured_public_base);
+        url
+    } else {
+        to_node(&url, rewrite_base)
     }
-    to_node(
-        &absolute_default_image(image, events_asset_base),
-        rewrite_base,
-    )
 }
 
-/// Expand the bundled default for consumers that render a stored event.
+/// The bundled default on the events asset mount; anything else as stored.
 fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     if image == DEFAULT_EVENT_IMAGE {
         format!("{}{image}", events_asset_base.trim_end_matches('/'))
