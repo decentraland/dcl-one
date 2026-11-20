@@ -1661,6 +1661,7 @@ async fn a_relay_before_the_relayer_list_is_read_is_unavailable() {
             polygon_rpc_url: Some(chain_url),
             meta_tx_broadcast_enabled: true,
             relayer_private_key: Some(hex::encode(signer_key.to_bytes())),
+            oz_accounts_first_wait: std::time::Duration::from_millis(50),
             ..Settings::for_tests()
         },
     );
@@ -1682,6 +1683,7 @@ async fn a_relay_before_the_relayer_list_is_read_is_unavailable() {
         post_transaction(&app, &user, COLLECTION, &signed_split_calldata(&key, FS)).await;
     assert_eq!(status, 503, "{body}");
     assert_eq!(body["not_sent"], true, "{body}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
     assert!(raws.lock().unwrap().is_empty());
 }
 

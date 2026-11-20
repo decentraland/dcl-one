@@ -22,7 +22,7 @@ const ACCOUNTS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5000);
 const ACCOUNTS_READ_DEADLINE: Duration = Duration::from_secs(20);
 /// How long a request waits for the first read of the relayer accounts before it is answered
 /// as unavailable.
-const ACCOUNTS_FIRST_WAIT: Duration = Duration::from_secs(5);
+pub const ACCOUNTS_FIRST_WAIT: Duration = Duration::from_secs(5);
 /// Relayers asked for per page; a full page stays well under [`OZ_BODY_CAP`].
 const ACCOUNTS_PAGE_SIZE: usize = 50;
 /// Pages read before the list is taken as unreadable.
@@ -144,7 +144,7 @@ pub struct Relayer {
     accounts: parking_lot::Mutex<Option<StoredAccounts>>,
     /// Held while the list is read, so concurrent requests wait for one read.
     accounts_read: tokio::sync::Mutex<()>,
-    /// [`ACCOUNTS_FIRST_WAIT`]; shorter in tests.
+    /// [`ACCOUNTS_FIRST_WAIT`] unless set with [`Relayer::with_first_wait`].
     first_wait: Duration,
 }
 
@@ -170,6 +170,12 @@ impl Relayer {
             accounts_read: tokio::sync::Mutex::new(()),
             first_wait: ACCOUNTS_FIRST_WAIT,
         }
+    }
+
+    /// How long a request waits for the first read of the accounts ([`Relayer::accounts`]).
+    pub fn with_first_wait(mut self, first_wait: Duration) -> Self {
+        self.first_wait = first_wait;
+        self
     }
 
     /// Every relayer account (`GET /api/v1/relayers`, all pages). Only the first call, before
@@ -976,8 +982,7 @@ mod tests {
             }),
         );
         let (url, server) = serve(app).await;
-        let mut relayer = relayer(&url);
-        relayer.first_wait = Duration::from_millis(50);
+        let relayer = relayer(&url).with_first_wait(Duration::from_millis(50));
         let started = Instant::now();
         assert!(relayer.accounts().await.is_none());
         assert!(started.elapsed() < Duration::from_secs(1));

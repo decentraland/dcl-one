@@ -145,6 +145,9 @@ pub struct Settings {
     pub oz_relayer_speed: String,
     pub oz_max_status_checks: u32,
     pub oz_sleep_between_checks: Duration,
+    /// How long a relay waits for the first read of the OZ relayer accounts (5s; not read from
+    /// the environment).
+    pub oz_accounts_first_wait: Duration,
     /// `META_TX_BROADCAST_ENABLED` (false): arms the direct signers.
     pub meta_tx_broadcast_enabled: bool,
     /// `RELAYER_PRIVATE_KEY` via `RELAYER_PRIVATE_KEY_FILE`: the relayer EOA's key.
@@ -202,6 +205,7 @@ impl Settings {
             oz_relayer_speed: "fast".to_string(),
             oz_max_status_checks: 150,
             oz_sleep_between_checks: Duration::from_millis(800),
+            oz_accounts_first_wait: relayer::ACCOUNTS_FIRST_WAIT,
             meta_tx_broadcast_enabled: false,
             relayer_private_key: None,
             transactions_upstream_url: None,
@@ -458,6 +462,7 @@ impl State {
                 settings.oz_max_status_checks,
                 settings.oz_sleep_between_checks,
             )
+            .with_first_wait(settings.oz_accounts_first_wait)
         });
         let key = settings
             .relayer_private_key
