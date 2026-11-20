@@ -7,8 +7,8 @@ import {
   PROFILE_STALE_MS,
   assetsQuery,
   canReadProfile,
+  communitiesQuery,
   creationsQuery,
-  myCommunitiesQuery,
   myFavoritePlacesQuery,
   nextCollectiblesPage,
   photosQuery,
@@ -60,6 +60,16 @@ describe("profileKeys", () => {
     expect(profileKeys.myCommunities(ADDRESS)).toEqual(["private", LOWER, "profile", "communities"]);
   });
 
+  it("keys a member's communities by who reads them: the member's own identity, or anyone", () => {
+    const owner = { signer: ADDRESS } as AuthIdentity;
+    const visitor = { signer: `0x${"1".repeat(40)}` } as AuthIdentity;
+
+    expect(communitiesQuery(ADDRESS, owner).queryKey).toEqual(["private", LOWER, "profile", "communities"]);
+    expect(communitiesQuery(ADDRESS).queryKey).toEqual(["profile", "communities", LOWER]);
+    // Another wallet's identity reads the public list, never a private one.
+    expect(communitiesQuery(ADDRESS, visitor).queryKey).toEqual(["profile", "communities", LOWER]);
+  });
+
   it("puts the member's saved places under the private account prefix", () => {
     expect(profileKeys.myFavoritePlaces(ADDRESS)).toEqual(["private", LOWER, "profile", "favorite-places"]);
   });
@@ -80,7 +90,8 @@ describe("options factories", () => {
       placesQuery(ADDRESS),
       photosQuery(ADDRESS),
       assetsQuery(ADDRESS, null),
-      myCommunitiesQuery(identity),
+      communitiesQuery(ADDRESS),
+      communitiesQuery(ADDRESS, identity),
       myFavoritePlacesQuery(identity),
       placeOwnersQuery([ADDRESS]),
     ];

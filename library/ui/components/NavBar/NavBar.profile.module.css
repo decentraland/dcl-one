@@ -95,8 +95,9 @@
     color: var(--dcl-text-secondary);
   }
 
-  .balances:has(ul) {
+  .balances {
     margin-top: var(--dcl-space-12);
+    min-height: calc(var(--dcl-font-size-body-md-strong) * 1.5);
   }
 
   .balances ul {

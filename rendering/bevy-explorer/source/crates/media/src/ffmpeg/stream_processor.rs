@@ -60,8 +60,6 @@ impl Drop for AudioOutput {
 pub trait FfmpegContext {
     fn is_live(&self) -> bool;
     fn stream_index(&self) -> Option<usize>;
-    #[expect(unused)]
-    fn has_frame(&self) -> bool;
     fn buffered_time(&self) -> f64;
     fn receive_packet(&mut self, packet: Packet) -> Result<(), anyhow::Error>;
     fn send_frame(&mut self);

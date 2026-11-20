@@ -50,7 +50,6 @@ impl Plugin for SocialPlugin {
         app.add_event::<ConnectivityEvent>();
         app.add_event::<CommunityConnectivityEvent>();
         app.add_event::<BlockUpdateEvent>();
-        app.add_event::<DirectChatEvent>();
         app.add_event::<VoiceEventReceived>();
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
@@ -494,7 +493,6 @@ fn init_social_client(
     mut friends: Local<Option<UnboundedReceiver<FriendshipEvent>>>,
     mut connectivity: Local<Option<UnboundedReceiver<ConnectivityEvent>>>,
     mut block_updates: Local<Option<UnboundedReceiver<BlockUpdateEvent>>>,
-    mut chats: Local<Option<UnboundedReceiver<DirectChatEvent>>>,
     mut community_connectivity: Local<Option<UnboundedReceiver<CommunityConnectivityEvent>>>,
     mut voice: Local<Option<UnboundedReceiver<VoiceEventReceived>>>,
     social_runtime: runtime::SocialRuntimeRes,
@@ -515,7 +513,6 @@ fn init_social_client(
         *friends = None;
         *connectivity = None;
         *block_updates = None;
-        *chats = None;
         *community_connectivity = None;
         *voice = None;
     }
@@ -535,14 +532,12 @@ fn init_social_client(
         *friends = None;
         *connectivity = None;
         *block_updates = None;
-        *chats = None;
         *community_connectivity = None;
         *voice = None;
 
         let (f_sx, f_rx) = unbounded_channel();
         let (conn_sx, conn_rx) = unbounded_channel();
         let (block_sx, block_rx) = unbounded_channel();
-        let (c_sx, c_rx) = unbounded_channel();
         let (community_sx, community_rx) = unbounded_channel();
         let (v_sx, v_rx) = unbounded_channel();
         let client = SocialClientHandler::connect(
@@ -562,9 +557,6 @@ fn init_social_client(
                     address: address.to_owned(),
                     is_blocked,
                 });
-            },
-            move |c| {
-                let _ = c_sx.send(DirectChatEvent(c));
             },
             move |community_id, address, status| {
                 let _ = community_sx.send(CommunityConnectivityEvent {
@@ -586,7 +578,6 @@ fn init_social_client(
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);
-        *chats = Some(c_rx);
         *community_connectivity = Some(community_rx);
         *voice = Some(v_rx);
     }
@@ -596,7 +587,6 @@ fn init_social_client(
         &mut friends,
         &mut connectivity,
         &mut block_updates,
-        &mut chats,
         &mut community_connectivity,
         &mut voice,
     );
@@ -610,7 +600,6 @@ fn init_social_client(
     mut friends: Local<Option<UnboundedReceiver<FriendshipEvent>>>,
     mut connectivity: Local<Option<UnboundedReceiver<ConnectivityEvent>>>,
     mut block_updates: Local<Option<UnboundedReceiver<BlockUpdateEvent>>>,
-    mut chats: Local<Option<UnboundedReceiver<DirectChatEvent>>>,
     mut community_connectivity: Local<Option<UnboundedReceiver<CommunityConnectivityEvent>>>,
     mut voice: Local<Option<UnboundedReceiver<VoiceEventReceived>>>,
     mut consumer_requested: ResMut<SocialConsumerRequested>,
@@ -629,7 +618,6 @@ fn init_social_client(
         *friends = None;
         *connectivity = None;
         *block_updates = None;
-        *chats = None;
         *community_connectivity = None;
         *voice = None;
     }
@@ -639,7 +627,6 @@ fn init_social_client(
         let (f_sx, f_rx) = unbounded_channel();
         let (conn_sx, conn_rx) = unbounded_channel();
         let (block_sx, block_rx) = unbounded_channel();
-        let (c_sx, c_rx) = unbounded_channel();
         let (community_sx, community_rx) = unbounded_channel();
         let (v_sx, v_rx) = unbounded_channel();
         let client = SocialClientHandler::connect(
@@ -659,9 +646,6 @@ fn init_social_client(
                     is_blocked,
                 });
             },
-            move |c| {
-                let _ = c_sx.send(DirectChatEvent(c));
-            },
             move |community_id, address, status| {
                 let _ = community_sx.send(CommunityConnectivityEvent {
                     community_id: community_id.to_owned(),
@@ -677,7 +661,6 @@ fn init_social_client(
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);
-        *chats = Some(c_rx);
         *community_connectivity = Some(community_rx);
         *voice = Some(v_rx);
     }
@@ -687,7 +670,6 @@ fn init_social_client(
         &mut friends,
         &mut connectivity,
         &mut block_updates,
-        &mut chats,
         &mut community_connectivity,
         &mut voice,
     );
@@ -698,7 +680,6 @@ fn drain_events(
     friends: &mut Option<UnboundedReceiver<FriendshipEvent>>,
     connectivity: &mut Option<UnboundedReceiver<ConnectivityEvent>>,
     block_updates: &mut Option<UnboundedReceiver<BlockUpdateEvent>>,
-    chats: &mut Option<UnboundedReceiver<DirectChatEvent>>,
     community_connectivity: &mut Option<UnboundedReceiver<CommunityConnectivityEvent>>,
     voice: &mut Option<UnboundedReceiver<VoiceEventReceived>>,
 ) {
@@ -713,9 +694,6 @@ fn drain_events(
     }
     while let Some(b) = block_updates.as_mut().and_then(|rx| rx.try_recv().ok()) {
         commands.send_event(b);
-    }
-    while let Some(c) = chats.as_mut().and_then(|rx| rx.try_recv().ok()) {
-        commands.send_event(c);
     }
     while let Some(ev) = community_connectivity
         .as_mut()
@@ -1495,9 +1473,6 @@ pub struct BlockUpdateEvent {
     pub address: String,
     pub is_blocked: bool,
 }
-
-#[derive(Event)]
-pub struct DirectChatEvent(pub DirectChatMessage);
 
 /// A voice chat event from the social connection (see [`voice::VoiceEvent`]).
 #[derive(Event, Clone, Debug)]

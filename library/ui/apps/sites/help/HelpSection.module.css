@@ -66,6 +66,8 @@
 
   .scroller {
     min-height: 0;
-    max-height: 340px;
+    max-height: none;
+    padding-right: 0;
+    overflow: visible;
   }
 }

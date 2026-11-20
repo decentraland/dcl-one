@@ -166,7 +166,7 @@ pub trait VoiceRooms: Send + Sync {
         muted: bool,
     ) -> Result<(), VoiceUnavailable>;
 
-    /// Shows a stored DM privacy change to the peers of the private-messages
+    /// Shows a DM privacy change to the peers of the private-messages
     /// room while `address` is in it (upstream social-service calls the
     /// gatekeeper's `PATCH /users/{address}/private-messages-privacy` for
     /// this). A runtime without LiveKit has nobody to show it to.

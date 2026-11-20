@@ -564,14 +564,9 @@ pub struct ServerScenes {
     total: usize,
 }
 
-// This replicates the structure of a `scene.json`, maybe extend if needed, but
-// for multi-scene worlds, only `entity_id` is needed
-#[expect(dead_code)]
+// A world's scene entry: for multi-scene worlds, only `entity_id` is needed
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerScene {
-    #[serde(rename = "worldName")]
-    world_name: String,
-    deployer: String,
     #[serde(rename = "entityId")]
     entity_id: String,
 }
@@ -1982,12 +1977,10 @@ impl IpfsIo {
         about: &ServerAbout,
         new_realm: &str,
     ) -> Result<Option<IVec2>, anyhow::Error> {
-        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
-            config
-                .scenes_urn
-                .as_ref()
-                .is_some_and(|urns| !urns.is_empty())
-        });
+        let has_scene_urns = about
+            .configurations
+            .as_ref()
+            .is_some_and(ServerConfiguration::lists_scenes);
         if !has_scene_urns {
             return Ok(None);
         }

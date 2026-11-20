@@ -191,10 +191,8 @@
     color: var(--dcl-text-secondary);
   }
 
-  .tab:active,
-  .dropdownLink:active,
-  .drawerToggle:active {
-    background: var(--dcl-bg-pressed);
+  .dropdown[data-compact] .dropdownLink[aria-current='page'] {
+    color: var(--dcl-text-primary);
   }
 
   .dropdownLink[aria-current='page'],
@@ -604,6 +602,12 @@
     .menuButton:hover {
       background: var(--dcl-bg-hover);
     }
+  }
+
+  .tab:active,
+  .dropdownLink:active,
+  .drawerToggle:active {
+    background: var(--dcl-bg-pressed);
   }
 
   @media (min-width: 768px) {

@@ -1,6 +1,4 @@
-use std::{path::PathBuf, sync::Mutex, time::Instant};
-
-use std::{collections::BTreeMap, fs::File, io::Write};
+use std::{collections::BTreeMap, sync::Mutex, time::Instant};
 
 use bevy::{
     app::{PluginGroupBuilder, ScheduleRunnerPlugin},
@@ -259,8 +257,10 @@ macro_rules! assert_output_eq {
 }
 
 // write output to file
-#[allow(dead_code)]
+#[cfg(feature = "gen-tests")]
 fn write_expected(expected: String, filename: &str) {
+    use std::{fs::File, io::Write, path::PathBuf};
+
     let mut path = PathBuf::from(file!());
     path.pop();
     path.push(filename);
