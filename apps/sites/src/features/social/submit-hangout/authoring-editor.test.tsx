@@ -38,11 +38,19 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     );
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.resetAllMocks();
+  });
 
-  it("should block preview and submission while required details are incomplete", () => {
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Preview" }).disabled).toBe(true);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Submit Event" }).disabled).toBe(true);
+  describe("and the required details are incomplete", () => {
+    it("should block the preview", () => {
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Preview" }).disabled).toBe(true);
+    });
+
+    it("should block the submission", () => {
+      expect(screen.getByRole<HTMLButtonElement>("button", { name: "Submit Event" }).disabled).toBe(true);
+    });
   });
 
   it("should use the same upload path for dropping a cover", async () => {
@@ -65,15 +73,20 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
     expect(await screen.findByRole("img", { name: "Vertical hangout cover" })).toBeTruthy();
   });
 
-  it("should let the creator retry the same file after an upload failure", async () => {
-    upload.mockRejectedValueOnce(new Error("Cover upload failed"));
-    const picker = screen.getByLabelText("Upload cover image");
-    await user.upload(picker, image);
-    expect((await screen.findByRole("alert")).textContent).toBe("Cover upload failed");
-    expect(screen.getByRole("alert").dataset.tone).toBe("error");
-    await user.upload(picker, image);
-    expect(await screen.findByRole("img", { name: "Hangout cover" })).toBeTruthy();
-    expect(upload).toHaveBeenCalledTimes(2);
+  describe("and the first cover upload fails", () => {
+    beforeEach(() => {
+      upload.mockRejectedValueOnce(new Error("Cover upload failed"));
+    });
+
+    it("should let the creator retry the same file", async () => {
+      const picker = screen.getByLabelText("Upload cover image");
+      await user.upload(picker, image);
+      expect((await screen.findByRole("alert")).textContent).toBe("Cover upload failed");
+      expect(screen.getByRole("alert").dataset.tone).toBe("error");
+      await user.upload(picker, image);
+      expect(await screen.findByRole("img", { name: "Hangout cover" })).toBeTruthy();
+      expect(upload).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("and the required fields have been filled", () => {
@@ -110,16 +123,21 @@ describe("when a signed-in creator opens the single-page Events editor", () => {
       expect(submit).not.toHaveBeenCalled();
     });
 
-    it("should keep the form and let the creator retry after a denied submission", async () => {
-      submit.mockRejectedValueOnce(new Error("Submission denied"));
-      await user.click(screen.getByRole("button", { name: "Submit Event" }));
-      await screen.findByText(/Submission denied/);
-      expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Open studio");
-      await user.click(screen.getByRole("button", { name: "Submit Event" }));
-      await screen.findByText("Your event was created successfully. You'll be notified once it's approved. Track its status in \"My Events\"");
-      expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({
-        draft: expect.objectContaining({ name: "Open studio", startDate: "2099-07-01", startTime: "18:30" }),
-      }));
+    describe("and the first submission is denied", () => {
+      beforeEach(() => {
+        submit.mockRejectedValueOnce(new Error("Submission denied"));
+      });
+
+      it("should keep the form and let the creator retry", async () => {
+        await user.click(screen.getByRole("button", { name: "Submit Event" }));
+        await screen.findByText(/Submission denied/);
+        expect(screen.getByRole("textbox", { name: "Event Name" })).toHaveProperty("value", "Open studio");
+        await user.click(screen.getByRole("button", { name: "Submit Event" }));
+        await screen.findByText("Your event was created successfully. You'll be notified once it's approved. Track its status in \"My Events\"");
+        expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({
+          draft: expect.objectContaining({ name: "Open studio", startDate: "2099-07-01", startTime: "18:30" }),
+        }));
+      });
     });
   });
 });
@@ -142,7 +160,10 @@ describe("when the single-page editor receives sign-in without remounting", () =
       </MemoryRouter>
     );
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.resetAllMocks();
+  });
 
   it("should enter the editor and record one start", async () => {
     const view = render(page(false));
