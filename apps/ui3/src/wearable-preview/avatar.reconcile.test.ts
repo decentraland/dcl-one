@@ -382,6 +382,28 @@ test("a slow model still downloading after the wait is neither cut nor read agai
   container.remove();
 });
 
+test("a model that stalls until the parts' timeout is not read again: no loader starts once its download ended", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  timeoutsOnTheClock();
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:12";
+  const stalled = stallFiles([SLOW]);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+  const { container, scene, onStatus, mountedParts } = mount([SLOW]);
+  await vi.waitFor(() => expect(stalled).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(19_000);
+  expect(loads).not.toContain(contentUrl(SLOW));
+  // The parts' timeout ends the download and the part together: nothing reads the model again.
+  await vi.advanceTimersByTimeAsync(1_000);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
+  expect(mountedParts()).toEqual([partName(BODY)]);
+  expect(loads).not.toContain(contentUrl(SLOW));
+  expect(stalled).toHaveLength(1);
+
+  scene.dispose();
+  container.remove();
+});
+
 test("a listed file that stalls holds its part no longer than the wait: the loader gets it if the model uses it", async () => {
   heldObjectUrls();
   timeoutsOnTheClock();
@@ -425,7 +447,7 @@ test("a listed file that stalls holds its part no longer than the wait: the load
   container.remove();
 });
 
-test("a facial texture whose held copy never came and whose own read never answers costs only that feature", async () => {
+test("a facial texture whose download failed early and whose own read outlasts the bound costs only that feature, and is freed", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   // Pointers no other test resolved: resolved entities are cached for the module's life.
   const FACE_BODY = "urn:decentraland:off-chain:base-avatars:basemale_face";
@@ -436,20 +458,13 @@ test("a facial texture whose held copy never came and whose own read never answe
     metadata: { data: { category: "eyes", representations: [{ bodyShapes: [FACE_BODY], mainFile: "eyes.png", contents: ["eyes.png", "eyes_mask.png"] }] } },
   };
   const body = { ...entityFor(FACE_BODY), metadata: { data: { category: "body_shape", representations: [{ bodyShapes: [FACE_BODY], mainFile: "model.glb" }] } } };
-  const waits: AbortController[] = [];
-  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
-    const ctl = new AbortController();
-    waits.push(ctl);
-    return ctl.signal;
-  });
-  const stalled: string[] = [];
+  // The eyes' downloads fail at once, with the wave still running: the loader reads them itself.
+  const failed: string[] = [];
   globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
     if (path.includes(`/content/contents/h_${EYES}`)) {
-      stalled.push(path);
-      return new Promise<Response>((_resolve, reject) =>
-        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
-      );
+      failed.push(path);
+      return { ok: false, status: 503, body: null } as unknown as Response;
     }
     if (path.includes("/content/contents/")) return { ok: false, status: 404, body: null } as unknown as Response;
     const asked = (JSON.parse(String(init?.body ?? "{}")) as { pointers?: string[] }).pointers ?? [];
@@ -464,8 +479,8 @@ test("a facial texture whose held copy never came and whose own read never answe
   const container = document.createElement("div");
   const onStatus = vi.fn();
   const scene = createAvatarScene(container, { body: FACE_BODY, urns: [EYES], emote: "idle", onStatus });
-  await vi.waitFor(() => expect(stalled).toHaveLength(2));
-  waits.at(-1)!.abort();
+  await vi.waitFor(() => expect(failed).toHaveLength(2));
+  await vi.waitFor(() => expect(lateTextures).toHaveLength(1));
   await vi.advanceTimersByTimeAsync(20_000);
   await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
   const renderer = rendererInstances.at(-1)!;

@@ -419,15 +419,17 @@ export function createAvatarScene(
   /**
    * Object URLs of the held files among `hashes`. The part waits for `essential` (its model, or a feature's texture),
    * which it cannot draw without, for as long as that download runs; for the others, until it has `essential` and the
-   * wave is HELD_FILES_MS old. A file that did not download, or not by then, is left to the loader, which reads it if
-   * the model references it. A disposed preview loads nothing.
+   * wave is HELD_FILES_MS old. A file that failed early, or an optional one still on its way by then, is left to the
+   * loader, which reads it if the model references it. Once the downloads have ended (the preview was disposed, or the
+   * parts' timeout ran out) the part is not loaded at all: a loader started then would read the same files again with
+   * nothing left to stop it.
    */
   async function heldUrls(files: HeldFiles, hashes: string[], essential: string): Promise<Map<string, string>> {
     const first = await files.get(essential);
     const blobs = await Promise.all(
       hashes.map((hash) => (hash === essential ? first : Promise.race([files.get(hash), files.late.then(() => undefined)]))),
     );
-    if (disposed) throw new DOMException("the preview was disposed", "AbortError");
+    if (disposed || files.signal.aborted) throw new DOMException("the part's downloads ended", "AbortError");
     const urls = new Map<string, string>();
     hashes.forEach((hash, i) => {
       const blob = blobs[i];
