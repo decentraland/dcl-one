@@ -75,7 +75,9 @@ use dcl_component::ComponentNameRegistry;
 
 pub mod asset_preload;
 pub mod automatic_testing;
+pub mod cpu_probe;
 pub mod loop_pacing;
+pub mod tick_stages;
 pub mod visible_content_bytes;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
@@ -439,6 +441,10 @@ impl Plugin for SceneRunnerPlugin {
                 First,
                 loop_pacing::web_frame_start.before(bevy::time::TimeSystem),
             );
+            console::DoAddConsoleCommand::add_console_command::<SceneLoopModeCommand, _>(
+                app,
+                scene_loop_mode_command,
+            );
         }
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
@@ -474,6 +480,8 @@ impl Plugin for SceneRunnerPlugin {
             app.add_plugins(scene_lod::SceneLodPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
+        app.add_plugins(cpu_probe::CpuProbePlugin);
+        app.add_plugins(tick_stages::TickStagesPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
         app.add_systems(
@@ -533,11 +541,11 @@ fn run_scene_loop(world: &mut World) {
     loop_schedule.next_frame_end = next_frame_end;
     // web: in the deadline mode, from the frame's start once the frame's tail is measured
     #[cfg(target_arch = "wasm32")]
-    let target_end_time = {
+    let (target_end_time, mode, tail_reserve) = {
         let mode = dcl_wasm::scene_loop_mode::get();
         let pacing = world.resource::<loop_pacing::WebLoopPacing>();
         let reserve = pacing.tail.reserve();
-        match (
+        let target = match (
             mode.frame_deadline() && fps != 0.0,
             pacing.frame_start,
             reserve,
@@ -549,12 +557,26 @@ fn run_scene_loop(world: &mut World) {
                 reserve,
             ),
             _ => target_end_time,
-        }
+        };
+        (target, mode.name(), reserve)
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (mode, tail_reserve) = ("native", None);
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
     updates.frame_target = (fps != 0.0).then_some(frame_target_duration);
+    // MEASUREMENT ONLY (tick_stages)
+    let movement_scene = updates.priority_scenes.get("movement_controller").copied();
+    world
+        .resource_mut::<tick_stages::TickStages>()
+        .loop_started(
+            start_loop_time,
+            target_end_time,
+            movement_scene,
+            mode,
+            tail_reserve,
+        );
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -576,6 +598,15 @@ fn run_scene_loop(world: &mut World) {
         world.resource_mut::<loop_pacing::WebLoopPacing>().loop_end = Some(loop_end_time);
     }
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
+    // MEASUREMENT ONLY (tick_stages): the loop's condition, read again after it ended
+    let in_flight_at_end = world.resource::<SceneUpdates>().jobs_in_flight.len() as u32;
+    world.resource_mut::<tick_stages::TickStages>().loop_ended(
+        loop_end_time,
+        loop_end_time >= target_end_time,
+        eligible_scene_jobs_left_count,
+        in_flight_at_end,
+        scene_schedule_run_count,
+    );
 
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     loop_schedule.schedule = schedule;
@@ -594,6 +625,33 @@ fn run_scene_loop(world: &mut World) {
         eligible_scene_jobs_left_count,
         refresh_hz,
     });
+}
+
+/// The web scene loop's scheduling mode (`dcl_wasm::scene_loop_mode`): prints it, or sets it to
+/// legacy | relay | deadline | both.
+#[cfg(target_arch = "wasm32")]
+#[derive(clap::Parser, bevy_console::ConsoleCommand)]
+#[command(name = "/scene_loop_mode")]
+struct SceneLoopModeCommand {
+    mode: Option<String>,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn scene_loop_mode_command(mut input: bevy_console::ConsoleCommand<SceneLoopModeCommand>) {
+    use dcl_wasm::scene_loop_mode::{self, SceneLoopMode};
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    match command.mode.as_deref() {
+        None => input.reply_ok(scene_loop_mode::get().name()),
+        Some(name) => match SceneLoopMode::parse(name) {
+            Some(mode) => {
+                scene_loop_mode::set(mode);
+                input.reply_ok(mode.name());
+            }
+            None => input.reply_failed(format!("unknown mode {name}: {}", SceneLoopMode::NAMES)),
+        },
+    }
 }
 
 fn update_scene_priority(
@@ -1395,10 +1453,12 @@ fn send_scene_updates(
     ),
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
-    preview_mode: Res<PreviewMode>,
+    (preview_mode, mut stages): (Res<PreviewMode>, ResMut<tick_stages::TickStages>),
     mut buf: Local<Vec<u8>>,
     mut realm_info_cache: Local<RealmInfoCache>,
 ) {
+    let _cpu_span = cpu_probe::Span::new(cpu_probe::Bucket::Send);
+    let cpu_t0 = Instant::now();
     let updates = &mut *updates;
     let buf = &mut *buf;
     let realm_info_cache = &mut *realm_info_cache;
@@ -1651,6 +1711,9 @@ fn send_scene_updates(
     if let Some(mut traffic) = traffic {
         traffic.record_sent(&crdt);
     }
+    // MEASUREMENT ONLY (tick_stages): numbered for the relay before it can take the tick
+    let movement = updates.priority_scenes.get("movement_controller") == Some(&ent);
+    stages.dispatching(movement, engine_info.frame.0);
     if let Err(e) = sender.send(RendererResponse::Ok(crdt, census, dt)) {
         error!(
             "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
@@ -1662,6 +1725,9 @@ fn send_scene_updates(
         context.last_sent = now;
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
+        if movement {
+            cpu_probe::add(cpu_probe::Bucket::SendMovement, cpu_t0);
+        }
     }
 
     updates.eligible_jobs -= 1;
@@ -1679,7 +1745,12 @@ fn receive_scene_updates(
     mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
     mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
     mut traffic: Query<&mut scene_traffic::SceneTraffic>,
+    mut stages: ResMut<tick_stages::TickStages>,
 ) {
+    let _cpu_span = cpu_probe::Span::new(cpu_probe::Bucket::Receive);
+    // MEASUREMENT ONLY (tick_stages, cpu_probe)
+    let movement_scene = updates.priority_scenes.get("movement_controller").copied();
+    let first_poll = stages.poll();
     loop {
         let maybe_completed_job = match updates.receiver().try_recv() {
             Ok((scene_id, response)) => match response {
@@ -1748,6 +1819,10 @@ fn receive_scene_updates(
                 SceneResponse::Ok(census, mut crdt, runtime, messages, rpc_calls) => {
                     // scene ids are the scene root entity
                     let root = scene_id.0;
+                    let _cpu_move = (Some(root) == movement_scene).then(|| {
+                        stages.movement_reply(frame.0, first_poll);
+                        cpu_probe::Span::new(cpu_probe::Bucket::ReceiveMovement)
+                    });
                     debug!(
                         "scene {:?} received updates! [+{}, -{}, {} rpc",
                         root,

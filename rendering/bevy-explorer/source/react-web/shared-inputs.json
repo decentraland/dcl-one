@@ -5922,7 +5922,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "4f27e744a4713048901b327168aa459f6f051d0f69c12c00e0b0c5b7dc6f99f0"
+      "sha256": "a6b6dd6d0c805ac2e4a75885116d6ce89d4c438da5b925eba782284082b91043"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",

@@ -438,7 +438,7 @@ initEngine()
     // on CA trust.
     if (window.__bevyPulseCertificateHash) engine_set_pulse_certificate_hash(window.__bevyPulseCertificateHash)
     // the scene loop's scheduling mode, for comparing builds' behaviour in one build
-    // (crates/dcl_wasm/src/scene_loop_mode.rs)
+    // (crates/dcl_wasm/src/scene_loop_mode.rs; /scene_loop_mode changes it in session)
     const sceneLoop = new URLSearchParams(window.location.search).get('sceneLoop')
     if (sceneLoop && !engine_set_scene_loop_mode(sceneLoop)) console.warn(`[engine] unknown sceneLoop=${sceneLoop}`)
     // The harness's benchmark stream (react-web EngineHost: ?perfStream, and ?perfCsv for the CSV): the

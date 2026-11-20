@@ -4,9 +4,9 @@
 //! `relay` and `deadline` do one of the two and `legacy` neither.
 //! Only the relays of the scenes the engine wakes ([`wakes_scene`]: the scenes the player is in,
 //! portable experiences among them) wait for its send; any other scene's relay keeps the poll.
-//! Set from the page (`?sceneLoop=`); the relays read it from engine memory each step, so a
-//! change reaches every scene worker without a message. Outside the wasm-only module so the host
-//! tests cover the names; nothing reads it natively.
+//! Set from the page (`?sceneLoop=`) or the console (`/scene_loop_mode`); the relays read it
+//! from engine memory each step, so a change reaches every scene worker without a message.
+//! Outside the wasm-only module so the host tests cover the names; nothing reads it natively.
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SceneLoopMode {
