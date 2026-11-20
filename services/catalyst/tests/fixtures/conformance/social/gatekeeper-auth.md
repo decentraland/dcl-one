@@ -29,7 +29,7 @@ scene and world administration and moderation.
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
 | Signed fetch: crypto-middleware 6.x payload, legacy form only with canonical metadata keys (37776fc, 315f59d) | `GK/logic/utils.ts:23-48` | `G/auth.rs:196-258`, keys `:53-63` | MATCH | `either_shape_with_mixed_case_metadata_verifies_through_the_allowlist` |
-| Freshness window: 60 s back and ahead on every route, `/get-server-scene-adapter` and the moderator gate included | crypto-middleware `DEFAULT_EXPIRATION`, no route overrides it | `SIGNED_FETCH_WINDOW_SECS` (`library/dcl-auth/src/signed_fetch.rs`), aliased as `DEFAULT_EXPIRATION_SECS` (`G/auth.rs:47`), whole seconds | MATCH | `a_present_but_empty_timestamp_expires_and_a_stale_one_is_refused` |
+| Freshness window: 60 s back and ahead on every route, `/get-server-scene-adapter` and the moderator gate included | crypto-middleware `DEFAULT_EXPIRATION`, no route overrides it | `SIGNED_FETCH_WINDOW_SECS` (`library/dcl-auth/src/signed_fetch.rs`), aliased as `DEFAULT_EXPIRATION_SECS` (`G/auth.rs:42`), whole seconds | MATCH | `a_present_but_empty_timestamp_expires_and_a_stale_one_is_refused` |
 | Malformed chain (link order, unsigned link, unknown type, bad ephemeral payload) | 401 | 400 "Invalid chain format" | DIVERGENCE (status only) | – |
 | Absent `x-identity-metadata` | signed over an empty string | signed over `{}` (`G/auth.rs`) | DIVERGENCE (both clients always send the header) | – |
 | Re-spelled `signer` key refused (637d2a4) | crypto-middleware 6.3.0 | `G/auth.rs:117-119,219-226` | MATCH | `the_signer_allowlist_refuses_missing_respelled_and_unlisted_signers` |
@@ -48,7 +48,7 @@ scene and world administration and moderation.
 | Room names (52f32da lowercase) | `livekit.ts:223-245` | `w1:` world scheme, `scene:<realm>:<scene>` (`C/comms/src/rooms.rs:95-134`) | DIVERGENCE (documented `rooms.rs:13-18`, [`worlds-comms.md`](../worlds/worlds-comms.md)) | `canonical_world_client_and_authoritative_tokens_are_byte_identical` |
 | Same preview room on both endpoints (101073b), no preview fallback (2de6a61) | server handler `:32-53` | `resolve_adapter_room` (`handlers.rs:118,242`) | MATCH | `server_adapter_uses_signed_context_with_optional_irrelevant_body` |
 | Authoritative-server identity → server token | server handler `:40-43,59-60` | `handlers.rs:233-248` | MATCH | `authoritative_server_signature_still_mints_a_token` |
-| Scene admins added to room `presenters` on join | `comms-scene-handler.ts:154-170` | `spawn_admin_presenter_on_join`, only in a room with an active credential (`G/streaming_cast.rs`) | MATCH, see [`meetings-voice.md`](meetings-voice.md) | `an_expired_credential_does_not_promote_admins_on_join` |
+| Scene admins added to room `presenters` on join | `comms-scene-handler.ts:154-170` | `spawn_admin_presenter_on_join`, only in a room with an active credential (`G/streaming_cast.rs`) | DIVERGENCE (narrower: upstream promotes on every join), see [`meetings-voice.md`](meetings-voice.md) | `an_expired_credential_does_not_promote_admins_on_join` |
 
 ## 2. LiveKit token claims
 
@@ -101,7 +101,7 @@ scene and world administration and moderation.
 
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
-| Moderator signed fetch: current payload only, scene signer refused | `signedFetch` without canonical keys (`routes.ts:255-262`) | `authorize_moderator` (`G/auth.rs`) | MATCH | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
+| Moderator signed fetch: current payload only, scene signer refused | `signedFetch` without canonical keys (`routes.ts:255-262`) | `authorize_moderator` (`G/auth.rs`); it also guards the report list and evidence download (`G/reports.rs:897,998`), which have no upstream route | MATCH | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
 | Moderator: `MODERATOR_TOKEN` or a wallet in the `platform_user_moderators` feature flag | `logic/moderator/component.ts:19-102` | token or static `PLATFORM_USER_MODERATORS` (`G/auth.rs:411-452`) | DIVERGENCE (static list) | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
 | Ban create: 409 duplicate, advisory lock (defb3ad), device snapshot, kick everywhere | `user-moderation/component.ts:60-97` | `handlers.rs:704-747`, `store.rs:472-536` | MATCH | `concurrent_create_ban_yields_single_active_ban` |
 | `GET /users/{a}/bans`: device id stripped (70054bf) | `ban-status-handler.ts:23-48` | `store.rs:434-453,687-773` | MATCH | `the_public_status_shape_never_carries_the_device_id_and_the_moderator_list_keeps_it` |
