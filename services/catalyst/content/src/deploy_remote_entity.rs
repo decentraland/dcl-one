@@ -1088,10 +1088,20 @@ mod tests {
         };
         let tag = crate::sync_test_support::unique();
         let blob = |name: &str| format!("{name} {tag}").into_bytes();
-        let (face256, body, face, face128) =
-            (blob("face256"), blob("body"), blob("face"), blob("face128"));
-        let [face256_hash, body_hash, face_hash, face128_hash] =
-            [&face256, &body, &face, &face128].map(|b| hash_bytes_v1(b));
+        let (face256, body, face, face128, second_body) = (
+            blob("face256"),
+            blob("body"),
+            blob("face"),
+            blob("face128"),
+            blob("second body"),
+        );
+        let [
+            face256_hash,
+            body_hash,
+            face_hash,
+            face128_hash,
+            second_body_hash,
+        ] = [&face256, &body, &face, &face128, &second_body].map(|b| hash_bytes_v1(b));
         let pointer = format!("0x{}", &tag[..32]);
         let entity = serde_json::to_vec(&serde_json::json!({
             "version": "v3",
@@ -1105,7 +1115,7 @@ mod tests {
                     "face128": face128_hash,
                 }}},
                 // A second avatar's `body` would reuse `body.png`: the flush must not see it.
-                {"avatar": {"snapshots": {"body": hash_bytes_v1(b"second body")}}},
+                {"avatar": {"snapshots": {"body": second_body_hash}}},
             ]},
         }))
         .unwrap();
@@ -1114,6 +1124,7 @@ mod tests {
             (id.clone(), entity),
             (face256_hash.clone(), face256),
             (body_hash.clone(), body),
+            (second_body_hash, second_body),
         ]))
         .await;
         let (storage, tmp) = temp_storage("profile-renders").await;
@@ -1303,7 +1314,8 @@ mod tests {
             .unwrap();
         assert!(!stored);
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
-        assert!(started.elapsed() < std::time::Duration::from_millis(RETRY_WAIT_MS));
+        // A retried download would ask a third time and wait at least 1.5 s.
+        assert!(started.elapsed() < std::time::Duration::from_millis(2 * RETRY_WAIT_MS));
         handles.iter().for_each(tokio::task::JoinHandle::abort);
         let _ = std::fs::remove_dir_all(tmp);
     }

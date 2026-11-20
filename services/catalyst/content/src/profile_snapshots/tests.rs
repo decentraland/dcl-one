@@ -216,3 +216,36 @@ async fn repair_adds_no_row_to_a_profile_superseded_during_the_pass() {
     server.abort();
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+/// A store that cannot keep a render a peer served ends the pass with an error, instead of
+/// counting the render as unavailable.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_store_fault_ends_the_repair() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let tag = unique();
+    let render = format!("unstorable {tag}").into_bytes();
+    let render_hash = hash_bytes_v1(&render);
+    insert_profile(
+        &pool,
+        &format!("unstorable-{tag}"),
+        json!([{"avatar": {"snapshots": {"body": render_hash}}}]),
+    )
+    .await;
+    let (storage, tmp) = temp_storage("snapshot-repair-fault").await;
+    // A dangling link where the render's shard belongs: a read finds it absent, a write cannot
+    // create the shard (even as root).
+    let shard = storage
+        .root()
+        .join(crate::storage::hex_prefix(&render_hash));
+    std::os::unix::fs::symlink(tmp.join("nowhere"), &shard).unwrap();
+    let (url, server) = blob_peer(HashMap::from([(render_hash, render)])).await;
+    let client = crate::sync::test_sync_client(reqwest::Client::new());
+
+    let result = repair(&pool, &storage, &client, std::slice::from_ref(&url), 10_000).await;
+    assert!(result.is_err(), "{result:?}");
+    server.abort();
+    let _ = std::fs::remove_dir_all(tmp);
+}
