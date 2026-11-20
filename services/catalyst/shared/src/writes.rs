@@ -347,7 +347,7 @@ mod tests {
         ("explore/src/api/satellite.rs", "mirror"),
         ("explore/src/api/world_manifest.rs", "mirror"),
         ("explore/src/events/posters.rs", "data"),
-        ("shop/src/outfits/mod.rs", "data"),
+        ("shop/src/outfits/store.rs", "data"),
         ("social/src/communities/fed_content.rs", "social"),
         ("social/src/communities/thumbnail.rs", "social"),
         ("social/src/messaging.rs", "social"),
