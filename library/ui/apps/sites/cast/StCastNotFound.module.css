@@ -7,7 +7,12 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, var(--dcl-primary-primary-dark-2) 0%, #16213e 50%, #0d1117 100%);
+  background: linear-gradient(
+    135deg,
+    var(--dcl-primary-primary-dark-2) 0%,
+    #16213e 50%,
+    #0d1117 100%
+  );
   color: var(--dcl-neutrals-white);
   text-align: center;
   padding: var(--dcl-space-32);
@@ -69,7 +74,10 @@
   font-weight: 600; /* reference 600, no token (button/md is 700) */
   line-height: 24px;
   letter-spacing: 0.4px;
-  transition: background 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease,
+    transform 0.2s ease;
 }
 .goHome:hover {
   background: var(--dcl-primary-primary-dark-2);

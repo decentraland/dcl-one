@@ -1,12 +1,12 @@
-import type { ComponentType } from "react";
+import type { ComponentType } from 'react'
 
-import FlowMapPage, { Hourglass } from "./FlowMapPage";
-import type { LinkComponentProps } from "./FlowMapPage";
-import { ASCII_SOURCE, MACHINE_PATHS, SECTIONS, STATS } from "./exflowmapdata";
+import FlowMapPage, { Hourglass } from './FlowMapPage'
+import type { LinkComponentProps } from './FlowMapPage'
+import { ASCII_SOURCE, MACHINE_PATHS, SECTIONS, STATS } from './exflowmapdata'
 
 type ExFlowMapPageProps = {
-  LinkComponent?: ComponentType<LinkComponentProps>;
-};
+  LinkComponent?: ComponentType<LinkComponentProps>
+}
 
 export default function ExFlowMapPage({ LinkComponent = undefined }: ExFlowMapPageProps) {
   return (
@@ -16,52 +16,47 @@ export default function ExFlowMapPage({ LinkComponent = undefined }: ExFlowMapPa
       stats={STATS}
       ascii={ASCII_SOURCE}
       copy={{
-        backHref: "/play/",
-        backLabel: "\u{2190} Play",
+        backHref: '/play/',
+        backLabel: '\u{2190} Play',
         backPlain: true,
-        crumb: "sites / explorer / map",
+        crumb: 'sites / explorer / map',
         lede: (
           <>
-            The complete click/state sitemap of the Explorer &#x2014; the /play web
-            client. Nodes are URLs and component states; every edge is{" "}
-            <strong>one user click</strong> &#x2014; or a{" "}
+            The complete click/state sitemap of the Explorer &#x2014; the /play web client. Nodes
+            are URLs and component states; every edge is <strong>one user click</strong> &#x2014; or
+            a{' '}
             <strong className="fm-lede-load">
               <Hourglass className="fm-inline-hg" /> load
-            </strong>{" "}
-            whenever the product makes you wait more than 100&thinsp;ms: engine boot,
-            signed deploys, teleports. Hover or focus anything to light its full path.
-            Surveyed against the live overlay, the engine page, and the engine
-            crates.
+            </strong>{' '}
+            whenever the product makes you wait more than 100&thinsp;ms: engine boot, signed
+            deploys, teleports. Hover or focus anything to light its full path. Surveyed against the
+            live overlay, the engine page, and the engine crates.
           </>
         ),
         machineTitle: (m) => MACHINE_PATHS[m] ?? m,
-        asciiLabel: "Explorer sitemap, ascii original",
+        asciiLabel: 'Explorer sitemap, ascii original',
         honesty: (
           <>
-            Source of truth: the overlay sources under <code>catalyrst/ui3/src/app</code>,{" "}
-            <code>catalyrst/ui3/src/explorer</code> and <code>catalyrst/ui3/src/overlay</code>, plus the
-            engine page <code>engine/deploy/web/index.html</code>; every bridge
-            claim checked against <code>catalyrst/ui3/src/generated/bridge/BridgeAction.ts</code>.
-            Honesty notes: the jump-in loading overlay dismisses on a{" "}
-            <strong>3.5&thinsp;s timer</strong>, not on arrival confirmation; the chat
-            dock is <strong>Nearby-only</strong> (no DM or channel tabs on web); the
-            login-code modal only appears on an engine push; the fatal-error modal
-            covers only overlay render errors &#x2014; the native crash overlay owns engine
-            launch and crash cases; friend actions here ride{" "}
-            <code>SignRequest</code> (<code>upsert_friendship</code>). Scene-lifecycle
-            notes (all constants quoted from{" "}
-            <code>engine/crates</code>): a broken scene shows no banner on web &#x2014;
-            the &#x201C;not responding&#x201D; countdown streams engine-side only; as coded the
-            unload check compares against the 15&thinsp;m <em>extra</em> distance
-            alone, leaving the hysteresis band empty so scenes despawn right at the
-            50&thinsp;m load radius; a scene-pack hash mismatch silently falls back to
-            per-file fetch (log-only); imposter states surface only behind{" "}
-            <code>/debug_imposters</code>.
-            Deliberately excluded: the engine page's dev launcher form and <code>?preview</code>{" "}
-            editor mode.
+            Source of truth: the overlay sources under <code>catalyrst/ui3/src/app</code>,{' '}
+            <code>catalyrst/ui3/src/explorer</code> and <code>catalyrst/ui3/src/overlay</code>, plus
+            the engine page <code>engine/deploy/web/index.html</code>; every bridge claim checked
+            against <code>catalyrst/ui3/src/generated/bridge/BridgeAction.ts</code>. Honesty notes:
+            the jump-in loading overlay dismisses on a <strong>3.5&thinsp;s timer</strong>, not on
+            arrival confirmation; the chat dock is <strong>Nearby-only</strong> (no DM or channel
+            tabs on web); the login-code modal only appears on an engine push; the fatal-error modal
+            covers only overlay render errors &#x2014; the native crash overlay owns engine launch
+            and crash cases; friend actions here ride <code>SignRequest</code> (
+            <code>upsert_friendship</code>). Scene-lifecycle notes (all constants quoted from{' '}
+            <code>engine/crates</code>): a broken scene shows no banner on web &#x2014; the
+            &#x201C;not responding&#x201D; countdown streams engine-side only; as coded the unload
+            check compares against the 15&thinsp;m <em>extra</em> distance alone, leaving the
+            hysteresis band empty so scenes despawn right at the 50&thinsp;m load radius; a
+            scene-pack hash mismatch silently falls back to per-file fetch (log-only); imposter
+            states surface only behind <code>/debug_imposters</code>. Deliberately excluded: the
+            engine page's dev launcher form and <code>?preview</code> editor mode.
           </>
-        ),
+        )
       }}
     />
-  );
+  )
 }

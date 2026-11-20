@@ -1,46 +1,51 @@
-import { createContext, useContext, useMemo, useState } from "react";
-import type { ComponentType, ReactNode } from "react";
+import { createContext, useContext, useMemo, useState } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 
-import type { FlowEdge, FlowNode, FlowSection, FlowStats, Track } from "../../../../web-core/flow-map";
-import "./flowmappage.css";
+import type {
+  FlowEdge,
+  FlowNode,
+  FlowSection,
+  FlowStats,
+  Track
+} from '../../../../web-core/flow-map'
+import './flowmappage.css'
 
 export type LinkComponentProps = {
-  to: string;
-  className?: string;
-  title?: string;
-  "aria-label"?: string;
-  children?: ReactNode;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
-  onFocus?: () => void;
-  onBlur?: () => void;
-};
+  to: string
+  className?: string
+  title?: string
+  'aria-label'?: string
+  children?: ReactNode
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
+  onFocus?: () => void
+  onBlur?: () => void
+}
 
-const LinkCtx = createContext<ComponentType<LinkComponentProps> | undefined>(undefined);
+const LinkCtx = createContext<ComponentType<LinkComponentProps> | undefined>(undefined)
 
 const ChainCtx = createContext<{
-  active: string | null;
-  setActive: (c: string | null) => void;
-}>({ active: null, setActive: () => {} });
+  active: string | null
+  setActive: (c: string | null) => void
+}>({ active: null, setActive: () => {} })
 
 function useChain(chains: string[], demo?: boolean) {
-  const { active, setActive } = useContext(ChainCtx);
-  const primary = chains[0] ?? null;
-  const lit = !demo && active !== null && chains.includes(active);
+  const { active, setActive } = useContext(ChainCtx)
+  const primary = chains[0] ?? null
+  const lit = !demo && active !== null && chains.includes(active)
   const handlers =
     !demo && primary
       ? {
           onMouseEnter: () => setActive(primary),
           onMouseLeave: () => setActive(null),
           onFocus: () => setActive(primary),
-          onBlur: () => setActive(null),
+          onBlur: () => setActive(null)
         }
-      : {};
-  return { lit, handlers };
+      : {}
+  return { lit, handlers }
 }
 
-const itemClass = (base: string, lit: boolean) =>
-  `fm-item ${base}${lit ? " is-lit" : ""}`;
+const itemClass = (base: string, lit: boolean) => `fm-item ${base}${lit ? ' is-lit' : ''}`
 
 export function Hourglass({ className }: { className?: string }) {
   return (
@@ -60,45 +65,37 @@ export function Hourglass({ className }: { className?: string }) {
         strokeLinecap="round"
       />
     </svg>
-  );
+  )
 }
 
-const Arrow = () => <i className="fm-arrow" aria-hidden="true" />;
+const Arrow = () => <i className="fm-arrow" aria-hidden="true" />
 const Seg = ({ dash, long }: { dash?: boolean; long?: boolean }) => (
   <i
-    className={`fm-seg${dash ? " fm-seg--dash" : ""}${long ? " fm-seg--long" : ""}`}
+    className={`fm-seg${dash ? ' fm-seg--dash' : ''}${long ? ' fm-seg--long' : ''}`}
     aria-hidden="true"
   />
-);
+)
 
 function edgeAria(e: FlowEdge): string {
   switch (e.kind) {
-    case "click":
-      return `Click: ${e.label}`;
-    case "load":
+    case 'click':
+      return `Click: ${e.label}`
+    case 'load':
       return e.label
-        ? `Click: ${e.label} \u{2014} then a load over 100 milliseconds: ${e.work ?? "loading"}`
-        : `Load over 100 milliseconds: ${e.work ?? "loading"}`;
-    case "auto":
-      return `Condition: ${e.label}`;
-    case "reversible":
-      return `Reversible click pair: ${e.label}`;
-    case "step":
-      return "Next step (one click)";
+        ? `Click: ${e.label} \u{2014} then a load over 100 milliseconds: ${e.work ?? 'loading'}`
+        : `Load over 100 milliseconds: ${e.work ?? 'loading'}`
+    case 'auto':
+      return `Condition: ${e.label}`
+    case 'reversible':
+      return `Reversible click pair: ${e.label}`
+    case 'step':
+      return 'Next step (one click)'
   }
 }
 
-function EdgeView({
-  edge,
-  chains,
-  demo,
-}: {
-  edge: FlowEdge;
-  chains: string[];
-  demo?: boolean;
-}) {
-  const { lit, handlers } = useChain(chains, demo);
-  const kind = edge.kind;
+function EdgeView({ edge, chains, demo }: { edge: FlowEdge; chains: string[]; demo?: boolean }) {
+  const { lit, handlers } = useChain(chains, demo)
+  const kind = edge.kind
 
   return (
     <span
@@ -109,16 +106,16 @@ function EdgeView({
       {...handlers}
     >
       {edge.label &&
-        (kind === "auto" ? (
+        (kind === 'auto' ? (
           <span className="fm-cond">{edge.label}</span>
-        ) : kind === "reversible" ? (
+        ) : kind === 'reversible' ? (
           <span className="fm-key fm-key--rev">{edge.label}</span>
         ) : (
           <span className="fm-key">{edge.label}</span>
         ))}
       <span className="fm-wire" aria-hidden="true">
-        {kind === "reversible" && <i className="fm-arrow fm-arrow--back" />}
-        {kind === "load" ? (
+        {kind === 'reversible' && <i className="fm-arrow fm-arrow--back" />}
+        {kind === 'load' ? (
           <>
             <Seg dash />
             <span className="fm-hg">
@@ -127,61 +124,53 @@ function EdgeView({
             <Seg dash />
           </>
         ) : (
-          <Seg long={kind !== "step"} />
+          <Seg long={kind !== 'step'} />
         )}
         <Arrow />
       </span>
-      {kind === "load" && edge.work && <span className="fm-copy">{edge.work}</span>}
+      {kind === 'load' && edge.work && <span className="fm-copy">{edge.work}</span>}
     </span>
-  );
+  )
 }
 
-const KIND_NAME: Record<FlowNode["kind"], string> = {
-  route: "Route",
-  state: "Machine state",
-  modal: "Modal",
-  outcome: "Outcome",
-  chip: "Affordance",
-  external: "External tab",
-  jump: "Jump to",
-  end: "Terminus",
-  sep: "",
-};
+const KIND_NAME: Record<FlowNode['kind'], string> = {
+  route: 'Route',
+  state: 'Machine state',
+  modal: 'Modal',
+  outcome: 'Outcome',
+  chip: 'Affordance',
+  external: 'External tab',
+  jump: 'Jump to',
+  end: 'Terminus',
+  sep: ''
+}
 
-function NodeView({
-  node,
-  chains,
-  demo,
-}: {
-  node: FlowNode;
-  chains: string[];
-  demo?: boolean;
-}) {
-  const { lit, handlers } = useChain(chains, demo);
-  const LinkComponent = useContext(LinkCtx);
+function NodeView({ node, chains, demo }: { node: FlowNode; chains: string[]; demo?: boolean }) {
+  const { lit, handlers } = useChain(chains, demo)
+  const LinkComponent = useContext(LinkCtx)
 
-  if (node.kind === "sep") {
+  if (node.kind === 'sep') {
     return (
       <span className="fm-item fm-sepdot" aria-hidden="true">
         &#xB7;
       </span>
-    );
+    )
   }
-  if (node.kind === "end") {
+  if (node.kind === 'end') {
     return (
       <span
-        className={itemClass("fm-node fm-node--end", lit)}
+        className={itemClass('fm-node fm-node--end', lit)}
         aria-label="outcome as in product"
         title="outcome as in product"
         {...handlers}
       />
-    );
+    )
   }
 
   const aria = `${KIND_NAME[node.kind]}: ${node.label}${
-    node.href && node.kind !== "jump" ? ` \u{2014} opens ${node.href}` : ""
-  }`;
-  const cls = itemClass(`fm-node fm-node--${node.kind}`, lit);
+    node.href && node.kind !== 'jump' ? ` \u{2014} opens ${node.href}` : ''
+  }`
+  const cls = itemClass(`fm-node fm-node--${node.kind}`, lit)
   const body = (
     <>
       <span className="fm-label">
@@ -191,19 +180,29 @@ function NodeView({
           </span>
         )}
         {node.label}
-        {node.kind === "external" && <span className="fm-ext" aria-hidden="true"> &#x2197;</span>}
-        {node.kind === "jump" && <span className="fm-ext" aria-hidden="true"> &#xBB;</span>}
+        {node.kind === 'external' && (
+          <span className="fm-ext" aria-hidden="true">
+            {' '}
+            &#x2197;
+          </span>
+        )}
+        {node.kind === 'jump' && (
+          <span className="fm-ext" aria-hidden="true">
+            {' '}
+            &#xBB;
+          </span>
+        )}
       </span>
       {node.sub && <span className="fm-sub">{node.sub}</span>}
     </>
-  );
+  )
 
-  if (node.href && node.href.startsWith("#")) {
+  if (node.href && node.href.startsWith('#')) {
     return (
       <a className={cls} href={node.href} aria-label={aria} title={node.title} {...handlers}>
         {body}
       </a>
-    );
+    )
   }
   if (node.href) {
     if (LinkComponent && !node.plain) {
@@ -217,7 +216,7 @@ function NodeView({
         >
           {body}
         </LinkComponent>
-      );
+      )
     }
     return (
       <a
@@ -229,7 +228,7 @@ function NodeView({
       >
         {body}
       </a>
-    );
+    )
   }
   return (
     <span
@@ -242,24 +241,21 @@ function NodeView({
     >
       {body}
     </span>
-  );
+  )
 }
 
 function TrackView({ track, depth = 0 }: { track: Track; depth?: number }) {
   return (
-    <div className={`fm-trackrow${depth > 0 ? " fm-trackrow--branch" : ""}`}>
-      <div className={`fm-track${track.chips ? " fm-track--chips" : ""}`}>
+    <div className={`fm-trackrow${depth > 0 ? ' fm-trackrow--branch' : ''}`}>
+      <div className={`fm-track${track.chips ? ' fm-track--chips' : ''}`}>
         {track.items.map((it, i) => {
-          const chains = [
-            ...(it.chains ?? []),
-            ...(track.chain ? [track.chain] : []),
-          ];
+          const chains = [...(it.chains ?? []), ...(track.chain ? [track.chain] : [])]
           const el =
-            it.t === "node" ? (
+            it.t === 'node' ? (
               <NodeView key={i} node={it} chains={chains} />
             ) : (
               <EdgeView key={i} edge={it} chains={chains} />
-            );
+            )
           if (track.chips && i > 0) {
             return (
               <span key={i} className="fm-chipcell">
@@ -268,9 +264,9 @@ function TrackView({ track, depth = 0 }: { track: Track; depth?: number }) {
                 </span>
                 {el}
               </span>
-            );
+            )
           }
-          return el;
+          return el
         })}
         {track.note && <span className="fm-note">&#x2014; {track.note}</span>}
       </div>
@@ -282,15 +278,15 @@ function TrackView({ track, depth = 0 }: { track: Track; depth?: number }) {
         </div>
       )}
     </div>
-  );
+  )
 }
 
 function SectionView({
   section,
-  machineTitle,
+  machineTitle
 }: {
-  section: FlowSection;
-  machineTitle?: (m: string) => string;
+  section: FlowSection
+  machineTitle?: (m: string) => string
 }) {
   return (
     <section className="fm-section" id={section.id} aria-labelledby={`${section.id}-h`}>
@@ -317,19 +313,24 @@ function SectionView({
         ))}
       </div>
     </section>
-  );
+  )
 }
 
 function Legend() {
   return (
     <div className="fm-legend" aria-label="Legend">
       <div className="fm-legend-item">
-        <EdgeView edge={{ t: "edge", kind: "click", label: "click" }} chains={[]} demo />
+        <EdgeView edge={{ t: 'edge', kind: 'click', label: 'click' }} chains={[]} demo />
         <span>one user click</span>
       </div>
       <div className="fm-legend-item">
         <EdgeView
-          edge={{ t: "edge", kind: "load", label: "click", work: "\u{201C}Loading\u{2026}\u{201D}" }}
+          edge={{
+            t: 'edge',
+            kind: 'load',
+            label: 'click',
+            work: '\u{201C}Loading\u{2026}\u{201D}'
+          }}
           chains={[]}
           demo
         />
@@ -339,164 +340,164 @@ function Legend() {
         </span>
       </div>
       <div className="fm-legend-item">
-        <EdgeView edge={{ t: "edge", kind: "auto", label: "condition" }} chains={[]} demo />
+        <EdgeView edge={{ t: 'edge', kind: 'auto', label: 'condition' }} chains={[]} demo />
         <span>automatic &#x2014; no click</span>
       </div>
       <div className="fm-legend-item">
-        <EdgeView edge={{ t: "edge", kind: "reversible", label: "toggle" }} chains={[]} demo />
+        <EdgeView edge={{ t: 'edge', kind: 'reversible', label: 'toggle' }} chains={[]} demo />
         <span>reversible pair</span>
       </div>
       <div className="fm-legend-item">
-        <NodeView node={{ t: "node", kind: "route", label: "/route" }} chains={[]} demo />
+        <NodeView node={{ t: 'node', kind: 'route', label: '/route' }} chains={[]} demo />
         <span>route &#x2014; click to open it</span>
       </div>
       <div className="fm-legend-item">
-        <NodeView node={{ t: "node", kind: "state", label: "STATE" }} chains={[]} demo />
+        <NodeView node={{ t: 'node', kind: 'state', label: 'STATE' }} chains={[]} demo />
         <span>machine state</span>
       </div>
       <div className="fm-legend-item">
-        <NodeView node={{ t: "node", kind: "modal", label: "MODAL" }} chains={[]} demo />
+        <NodeView node={{ t: 'node', kind: 'modal', label: 'MODAL' }} chains={[]} demo />
         <span>overlay</span>
       </div>
       <div className="fm-legend-item">
-        <NodeView node={{ t: "node", kind: "external", label: "external" }} chains={[]} demo />
+        <NodeView node={{ t: 'node', kind: 'external', label: 'external' }} chains={[]} demo />
         <span>external tab</span>
       </div>
     </div>
-  );
+  )
 }
 
 function AsciiDetails({ source, label }: { source: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState(false)
   const copy = () => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(source).then(
         () => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1600);
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1600)
         },
-        () => {},
-      );
+        () => {}
+      )
     }
-  };
+  }
   return (
     <details className="fm-ascii">
       <summary>View as text &#x2014; the ascii original, for copy-paste</summary>
       <div className="fm-ascii-body">
         <button type="button" className="fm-copybtn" onClick={copy}>
-          {copied ? "Copied \u{2713}" : "Copy"}
+          {copied ? 'Copied \u{2713}' : 'Copy'}
         </button>
         <pre tabIndex={0} aria-label={label}>
           {source}
         </pre>
       </div>
     </details>
-  );
+  )
 }
 
 type FlowMapCopy = {
-  backHref: string;
-  backLabel: string;
-  backPlain?: boolean;
-  crumb: string;
-  lede: ReactNode;
-  machineTitle?: (m: string) => string;
-  asciiLabel: string;
-  honesty: ReactNode;
-};
+  backHref: string
+  backLabel: string
+  backPlain?: boolean
+  crumb: string
+  lede: ReactNode
+  machineTitle?: (m: string) => string
+  asciiLabel: string
+  honesty: ReactNode
+}
 
 type FlowMapPageProps = {
-  LinkComponent?: ComponentType<LinkComponentProps>;
-  sections: FlowSection[];
-  stats: FlowStats;
-  ascii: string;
-  copy: FlowMapCopy;
-};
+  LinkComponent?: ComponentType<LinkComponentProps>
+  sections: FlowSection[]
+  stats: FlowStats
+  ascii: string
+  copy: FlowMapCopy
+}
 
 export default function FlowMapPage({
   LinkComponent = undefined,
   sections,
   stats,
   ascii,
-  copy,
+  copy
 }: FlowMapPageProps) {
-  const [active, setActive] = useState<string | null>(null);
-  const ctx = useMemo(() => ({ active, setActive }), [active]);
+  const [active, setActive] = useState<string | null>(null)
+  const ctx = useMemo(() => ({ active, setActive }), [active])
 
   return (
     <LinkCtx.Provider value={LinkComponent}>
-    <ChainCtx.Provider value={ctx}>
-      <div className={`fmp${active ? " fmp--dim" : ""}`}>
-        <div className="fmp-bg" aria-hidden="true" />
+      <ChainCtx.Provider value={ctx}>
+        <div className={`fmp${active ? ' fmp--dim' : ''}`}>
+          <div className="fmp-bg" aria-hidden="true" />
 
-        <header className="fm-hero">
-          <div className="fm-hero-top">
-            {LinkComponent && !copy.backPlain ? (
-              <LinkComponent to={copy.backHref} className="fm-back">
-                {copy.backLabel}
-              </LinkComponent>
-            ) : (
-              <a href={copy.backHref} className="fm-back">
-                {copy.backLabel}
+          <header className="fm-hero">
+            <div className="fm-hero-top">
+              {LinkComponent && !copy.backPlain ? (
+                <LinkComponent to={copy.backHref} className="fm-back">
+                  {copy.backLabel}
+                </LinkComponent>
+              ) : (
+                <a href={copy.backHref} className="fm-back">
+                  {copy.backLabel}
+                </a>
+              )}
+              <span className="fm-crumb">{copy.crumb}</span>
+            </div>
+
+            <p className="fm-eyebrow">Decentraland &#xB7; interaction topology</p>
+            <h1 className="fm-title">
+              Every <span className="fm-title-click">click</span>. Every{' '}
+              <span className="fm-title-wait">
+                <Hourglass className="fm-title-hg" /> wait
+              </span>
+              . One map.
+            </h1>
+            <p className="fm-lede">{copy.lede}</p>
+
+            <dl className="fm-stats">
+              <div>
+                <dd>{stats.routes}</dd>
+                <dt>route nodes</dt>
+              </div>
+              <div>
+                <dd>{stats.states}</dd>
+                <dt>machine states</dt>
+              </div>
+              <div>
+                <dd>{stats.clicks}</dd>
+                <dt>click edges</dt>
+              </div>
+              <div>
+                <dd className="fm-stat-load">{stats.loads}</dd>
+                <dt>
+                  <Hourglass className="fm-inline-hg" /> loads &gt;100 ms
+                </dt>
+              </div>
+            </dl>
+
+            <Legend />
+          </header>
+
+          <nav className="fm-toc" aria-label="Flow families">
+            {sections.map((s) => (
+              <a key={s.id} href={`#${s.id}`}>
+                <span>{s.num}</span> {s.title}
               </a>
-            )}
-            <span className="fm-crumb">{copy.crumb}</span>
-          </div>
+            ))}
+          </nav>
 
-          <p className="fm-eyebrow">Decentraland &#xB7; interaction topology</p>
-          <h1 className="fm-title">
-            Every <span className="fm-title-click">click</span>. Every{" "}
-            <span className="fm-title-wait">
-              <Hourglass className="fm-title-hg" /> wait
-            </span>
-            . One map.
-          </h1>
-          <p className="fm-lede">{copy.lede}</p>
+          <main className="fm-map">
+            {sections.map((s) => (
+              <SectionView key={s.id} section={s} machineTitle={copy.machineTitle} />
+            ))}
+          </main>
 
-          <dl className="fm-stats">
-            <div>
-              <dd>{stats.routes}</dd>
-              <dt>route nodes</dt>
-            </div>
-            <div>
-              <dd>{stats.states}</dd>
-              <dt>machine states</dt>
-            </div>
-            <div>
-              <dd>{stats.clicks}</dd>
-              <dt>click edges</dt>
-            </div>
-            <div>
-              <dd className="fm-stat-load">{stats.loads}</dd>
-              <dt>
-                <Hourglass className="fm-inline-hg" /> loads &gt;100 ms
-              </dt>
-            </div>
-          </dl>
-
-          <Legend />
-        </header>
-
-        <nav className="fm-toc" aria-label="Flow families">
-          {sections.map((s) => (
-            <a key={s.id} href={`#${s.id}`}>
-              <span>{s.num}</span> {s.title}
-            </a>
-          ))}
-        </nav>
-
-        <main className="fm-map">
-          {sections.map((s) => (
-            <SectionView key={s.id} section={s} machineTitle={copy.machineTitle} />
-          ))}
-        </main>
-
-        <footer className="fm-foot">
-          <AsciiDetails source={ascii} label={copy.asciiLabel} />
-          <p className="fm-honesty">{copy.honesty}</p>
-        </footer>
-      </div>
-    </ChainCtx.Provider>
+          <footer className="fm-foot">
+            <AsciiDetails source={ascii} label={copy.asciiLabel} />
+            <p className="fm-honesty">{copy.honesty}</p>
+          </footer>
+        </div>
+      </ChainCtx.Provider>
     </LinkCtx.Provider>
-  );
+  )
 }

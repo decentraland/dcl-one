@@ -1,7 +1,7 @@
-import { Spinner } from "../../../components/Spinner/Spinner";
-import spinnerStyles from "./CastProgress.module.css";
-import type { ReactNode } from "react";
-import "./stcastwatcher.css";
+import { Spinner } from '../../../components/Spinner/Spinner'
+import spinnerStyles from './CastProgress.module.css'
+import type { ReactNode } from 'react'
+import './stcastwatcher.css'
 
 const TvIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -10,7 +10,7 @@ const TvIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const VolumeUpIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -19,7 +19,7 @@ const VolumeUpIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const VolumeOffIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -28,7 +28,7 @@ const VolumeOffIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const ChatIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -37,7 +37,7 @@ const ChatIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const PeopleIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -46,7 +46,7 @@ const PeopleIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const CallEndIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -55,13 +55,13 @@ const CallEndIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const ChevronDownIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path d="M7 10l5 5 5-5H7Z" fill="currentColor" />
   </svg>
-);
+)
 
 const CloseIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -70,7 +70,7 @@ const CloseIcon = () => (
       fill="currentColor"
     />
   </svg>
-);
+)
 
 const DclLogo = () => (
   <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -79,7 +79,7 @@ const DclLogo = () => (
     <circle cx="18" cy="33" r="2.4" fill="#fff" />
     <circle cx="30" cy="33" r="2.4" fill="#fff" />
   </svg>
-);
+)
 
 function LivePill({ label }: { label: ReactNode }) {
   return (
@@ -89,7 +89,7 @@ function LivePill({ label }: { label: ReactNode }) {
         {label}
       </div>
     </div>
-  );
+  )
 }
 
 function WatcherEmptyState({ title, message }: { title: ReactNode; message: ReactNode }) {
@@ -101,27 +101,32 @@ function WatcherEmptyState({ title, message }: { title: ReactNode; message: Reac
       <h2 className="stcastwatcher__emptytitle">{title}</h2>
       <p className="stcastwatcher__emptysub">{message}</p>
     </div>
-  );
+  )
 }
 
-type ChatMessage = { name: string; time: string; body: string };
+type ChatMessage = { name: string; time: string; body: string }
 
 function ChatSidebar({
   title,
   messages,
   footer,
-  onClose,
+  onClose
 }: {
-  title: ReactNode;
-  messages: ChatMessage[];
-  footer: ReactNode;
-  onClose: () => void;
+  title: ReactNode
+  messages: ChatMessage[]
+  footer: ReactNode
+  onClose: () => void
 }) {
   return (
     <>
       <div className="stcastwatcher__sidehead">
         <h2 className="stcastwatcher__sidetitle">{title}</h2>
-        <button type="button" className="stcastwatcher__sideclose" aria-label="Close" onClick={onClose}>
+        <button
+          type="button"
+          className="stcastwatcher__sideclose"
+          aria-label="Close"
+          onClick={onClose}
+        >
           <CloseIcon />
         </button>
       </div>
@@ -138,66 +143,66 @@ function ChatSidebar({
       </div>
       <div className="stcastwatcher__chatfoot">{footer}</div>
     </>
-  );
+  )
 }
 
 const DEMO_MESSAGES: ChatMessage[] = [
-  { name: "0x7a3f...c21d", time: "2:14 PM", body: "this build looks incredible \u{1F525}" },
-  { name: "metahopper.dcl.eth", time: "2:15 PM", body: "where can i grab those wearables?" },
-  { name: "0x91be...4f08", time: "2:16 PM", body: "gm everyone, just jumped in" },
-];
+  { name: '0x7a3f...c21d', time: '2:14 PM', body: 'this build looks incredible \u{1F525}' },
+  { name: 'metahopper.dcl.eth', time: '2:15 PM', body: 'where can i grab those wearables?' },
+  { name: '0x91be...4f08', time: '2:16 PM', body: 'gm everyone, just jumped in' }
+]
 
-type WatcherState = "onboarding" | "joining" | "live" | "waiting";
-type WatcherToastAction = { label?: string; onClick?: () => void };
-type WatcherToast = { title: ReactNode; message: ReactNode; action?: string | WatcherToastAction };
+type WatcherState = 'onboarding' | 'joining' | 'live' | 'waiting'
+type WatcherToastAction = { label?: string; onClick?: () => void }
+type WatcherToast = { title: ReactNode; message: ReactNode; action?: string | WatcherToastAction }
 
 type StCastWatcherProps = {
-  streamName?: string;
-  state?: WatcherState;
-  sidebarOpen?: boolean;
-  isTabMuted?: boolean;
-  viewerTag?: ReactNode;
-  joinLabel?: ReactNode;
-  joiningLabel?: ReactNode;
-  leaveLabel?: ReactNode;
-  liveLabel?: ReactNode;
-  chatTitle?: ReactNode;
-  chatFooter?: ReactNode;
-  watcherTitle?: ReactNode;
-  watcherMessage?: ReactNode;
-  toasts?: WatcherToast[];
-  participantCount?: number;
-  unreadCount?: number;
+  streamName?: string
+  state?: WatcherState
+  sidebarOpen?: boolean
+  isTabMuted?: boolean
+  viewerTag?: ReactNode
+  joinLabel?: ReactNode
+  joiningLabel?: ReactNode
+  leaveLabel?: ReactNode
+  liveLabel?: ReactNode
+  chatTitle?: ReactNode
+  chatFooter?: ReactNode
+  watcherTitle?: ReactNode
+  watcherMessage?: ReactNode
+  toasts?: WatcherToast[]
+  participantCount?: number
+  unreadCount?: number
   /** Live media of the cast; without it the live view shows the placeholder frame. */
-  stage?: ReactNode;
+  stage?: ReactNode
   /** Chat lines in the sidebar; defaults to the demo conversation. */
-  messages?: ChatMessage[];
-};
+  messages?: ChatMessage[]
+}
 
 export default function StCastWatcher({
-  streamName = "Genesis Plaza",
-  state = "live",
+  streamName = 'Genesis Plaza',
+  state = 'live',
   sidebarOpen = true,
   isTabMuted = false,
-  viewerTag = "Viewer",
-  joinLabel = "JOIN NOW",
-  joiningLabel = "Joining...",
-  leaveLabel = "Leave",
-  liveLabel = "LIVE",
-  chatTitle = "In-World Chat",
-  chatFooter = "Jump into Genesis Plaza in Decentraland to participate in the chat.",
-  watcherTitle = "No one is currently casting to this link...",
-  watcherMessage = "This Decentraland Cast may be starting soon or has already ended.",
+  viewerTag = 'Viewer',
+  joinLabel = 'JOIN NOW',
+  joiningLabel = 'Joining...',
+  leaveLabel = 'Leave',
+  liveLabel = 'LIVE',
+  chatTitle = 'In-World Chat',
+  chatFooter = 'Jump into Genesis Plaza in Decentraland to participate in the chat.',
+  watcherTitle = 'No one is currently casting to this link...',
+  watcherMessage = 'This Decentraland Cast may be starting soon or has already ended.',
   toasts = [],
   participantCount = 12,
   unreadCount = 0,
   stage,
-  messages = DEMO_MESSAGES,
+  messages = DEMO_MESSAGES
 }: StCastWatcherProps) {
-  const onboardTitle = `Decentraland Cast from ${streamName}`;
+  const onboardTitle = `Decentraland Cast from ${streamName}`
 
-  let body: ReactNode;
-  if (state === "onboarding") {
+  let body: ReactNode
+  if (state === 'onboarding') {
     body = (
       <div className="stcastwatcher__onboard">
         <div className="stcastwatcher__modal">
@@ -222,8 +227,8 @@ export default function StCastWatcher({
           </button>
         </div>
       </div>
-    );
-  } else if (state === "joining") {
+    )
+  } else if (state === 'joining') {
     body = (
       <div className="stcastwatcher__onboard">
         <div className="stcastwatcher__joining">
@@ -234,20 +239,16 @@ export default function StCastWatcher({
           <p className="stcastwatcher__joiningtext">{joiningLabel}</p>
         </div>
       </div>
-    );
+    )
   } else {
-    const showSidebar = state === "live" && sidebarOpen;
+    const showSidebar = state === 'live' && sidebarOpen
     body = (
-      <div
-        className={
-          "stcastwatcher__layout" + (showSidebar ? " stcastwatcher--sidebar" : "")
-        }
-      >
+      <div className={'stcastwatcher__layout' + (showSidebar ? ' stcastwatcher--sidebar' : '')}>
         <div className="stcastwatcher__main">
           <div className="stcastwatcher__videocontainer">
             <div className="stcastwatcher__videoarea">
               <div className="stcastwatcher__content">
-                {state === "waiting" ? (
+                {state === 'waiting' ? (
                   <WatcherEmptyState title={watcherTitle} message={watcherMessage} />
                 ) : (
                   <>
@@ -296,15 +297,17 @@ export default function StCastWatcher({
               <div className="stcastwatcher__controlsright">
                 <button
                   type="button"
-                  className={"stcastwatcher__iconbtn" + (isTabMuted ? " is-active" : "")}
-                  title={isTabMuted ? "Unmute Cast audio" : "Mute this Cast audio while you're in World"}
-                  aria-label={isTabMuted ? "Unmute Cast audio" : "Mute Cast audio"}
+                  className={'stcastwatcher__iconbtn' + (isTabMuted ? ' is-active' : '')}
+                  title={
+                    isTabMuted ? 'Unmute Cast audio' : "Mute this Cast audio while you're in World"
+                  }
+                  aria-label={isTabMuted ? 'Unmute Cast audio' : 'Mute Cast audio'}
                 >
                   {isTabMuted ? <VolumeOffIcon /> : <VolumeUpIcon />}
                 </button>
                 <button
                   type="button"
-                  className={"stcastwatcher__iconbtn" + (showSidebar ? " is-active" : "")}
+                  className={'stcastwatcher__iconbtn' + (showSidebar ? ' is-active' : '')}
                   aria-label="Chat"
                   aria-expanded={showSidebar}
                 >
@@ -320,7 +323,7 @@ export default function StCastWatcher({
           </div>
         </div>
       </div>
-    );
+    )
   }
 
   return (
@@ -344,9 +347,9 @@ export default function StCastWatcher({
                 <button
                   type="button"
                   className="stcastwatcher__toastaction"
-                  onClick={typeof toast.action === "string" ? undefined : toast.action.onClick}
+                  onClick={typeof toast.action === 'string' ? undefined : toast.action.onClick}
                 >
-                  {typeof toast.action === "string" ? toast.action : toast.action.label}
+                  {typeof toast.action === 'string' ? toast.action : toast.action.label}
                 </button>
               )}
             </div>
@@ -354,5 +357,5 @@ export default function StCastWatcher({
         </div>
       )}
     </div>
-  );
+  )
 }

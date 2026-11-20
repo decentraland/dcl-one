@@ -15,7 +15,7 @@ export const SITES_LANGUAGES = [
   { code: 'ja', label: '日本語', flag: jaFlag }
 ] as const
 
-export type SitesLocaleHandle = { sitesLocalized: true };
+export type SitesLocaleHandle = { sitesLocalized: true }
 
 export type SitesLocale = (typeof SITES_LANGUAGES)[number]['code']
 
