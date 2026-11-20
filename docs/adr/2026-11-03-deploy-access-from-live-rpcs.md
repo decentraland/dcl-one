@@ -42,9 +42,9 @@ remembers the blocks it read.
   refused. Outside island and journey the defaults satisfy this. The journey posture sets
   `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, since it reads no chain; an island taking deploys needs it
   too, or loopback https RPCs.
-- Escrow leases in `shop.usage_grants` do not count as ownership of the leased item, for
-  profiles, outfits or items. Peers that check ownership on chain only reject a profile, outfit
-  or item that is valid only through a lease, so accepting it locally makes the network diverge.
+- Escrow leases in `shop.usage_grants` do not count as ownership of the leased item worn by a
+  profile or outfits entity. Peers that check ownership on chain only reject a profile or outfit
+  that is valid only through a lease, so accepting it locally makes the network diverge.
   This stands while such peers remain on the network. `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`
   (off by default and under every posture) lets an operator count a node's active leases for
   the items its own profile and outfits deploys wear; entities from peers are checked on chain
@@ -76,5 +76,13 @@ remembers the blocks it read.
 - The LAND index stays for worlds, comms and the unpublish route; it no longer decides deploys.
 - A leased item is not wearable in a deployed profile or outfit unless the operator opts in, and
   a node that opts in serves entities that peers checking ownership on chain only refuse to
-  sync. The explorer backpack lists leased items only with `EXPLORER_ESCROW_GRANTS_ENABLED`,
-  also off by default and under every posture.
+  sync. The explorer backpack (`/lambdas/explorer/{address}/{wearables,emotes}`) lists leased
+  items only with `EXPLORER_ESCROW_GRANTS_ENABLED`, also off by default and under every
+  posture. `/v1/users/{address}/{wearables,emotes}` and their `grouped` forms list active leases
+  either way, as rows with `status: "leased"` and their `unlockAt`.
+- A line bought with Credits through the server checkout (`POST /shop-api/v1/checkouts`) is
+  bought by the broker into escrow and becomes a lease. By default the buyer can neither wear it
+  nor find it in the explorer backpack until the escrow releases it to the buyer's wallet,
+  `ESCROW_LOCK_DAYS` after the line's purchase confirms (15 days by default,
+  `DEFAULT_ESCROW_LOCK_DAYS`). A Credits purchase spent through `CreditsManager.useCredits`, as
+  the web Shop's checkout makes it, delivers to the buyer's wallet and takes no lease.

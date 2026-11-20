@@ -579,6 +579,19 @@ impl Config {
         })
     }
 
+    /// The warning for escrow-lease opt-ins set apart: a node that accepts
+    /// a deploy wearing a leased item without listing that item in the
+    /// explorer backpack (or the reverse) shows its user two answers.
+    pub fn escrow_lease_flags_warning(&self) -> Option<String> {
+        let ownership = self.validator.content_escrow_lease_ownership_enabled;
+        let backpack = self.market_upstreams.explorer_escrow_grants_enabled;
+        (ownership != backpack).then(|| {
+            format!(
+                "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED={ownership} but EXPLORER_ESCROW_GRANTS_ENABLED={backpack}: set both, or neither, so that leased items are both wearable and listed in the explorer backpack"
+            )
+        })
+    }
+
     /// How far CoinGecko's `source_updated_at` trails a poll (about 90 s
     /// measured on the 2026-09-25 review node), with margin.
     pub const PRICE_UPSTREAM_LAG_SECS: i64 = 120;
@@ -969,6 +982,31 @@ mod tests {
             .price_staleness_warning()
             .expect("300 s is one poll interval");
         assert!(warning.contains("at least 420"), "{warning}");
+    }
+
+    #[test]
+    fn escrow_lease_opt_ins_set_apart_warn() {
+        let with = |flags: &[&str]| {
+            let mut args = vec!["catalyst", "--database-url", "postgres://x/y"];
+            args.extend_from_slice(flags);
+            parse(&args).unwrap().escrow_lease_flags_warning()
+        };
+        assert!(with(&[]).is_none());
+        let both = [
+            "--content-escrow-lease-ownership-enabled",
+            "true",
+            "--explorer-escrow-grants-enabled",
+            "true",
+        ];
+        assert!(with(&both).is_none());
+        for one in [&both[..2], &both[2..]] {
+            let warning = with(one).expect("one opt-in without the other");
+            assert!(
+                warning.contains("CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED")
+                    && warning.contains("EXPLORER_ESCROW_GRANTS_ENABLED"),
+                "{warning}"
+            );
+        }
     }
 
     #[test]

@@ -91,8 +91,8 @@ pub struct Settings {
     pub additional_dcl_address: Option<String>,
     /// `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`: an active escrow lease
     /// (`shop.usage_grants`) counts as ownership of the leased item worn by a
-    /// profile or outfits. Off by default: a peer that checks ownership on
-    /// chain only rejects such an entity.
+    /// profile or outfits. `parse` leaves it off, the default: a peer that
+    /// checks ownership on chain only rejects such an entity. `serve` sets it.
     pub escrow_lease_ownership: bool,
     /// `ETH_NETWORK`: mainnet (with polygon) or sepolia (with amoy).
     pub eth_network: String,
@@ -130,7 +130,6 @@ impl Settings {
         eth_network: &str,
         l1_rpc_url: Option<String>,
         l2_rpc_url: Option<&str>,
-        escrow_lease_ownership: bool,
     ) -> anyhow::Result<Self> {
         let clean = |v: Option<&str>| {
             v.map(str::trim)
@@ -176,7 +175,7 @@ impl Settings {
         Ok(Self {
             ignore_blockchain_access,
             additional_dcl_address,
-            escrow_lease_ownership,
+            escrow_lease_ownership: false,
             eth_network,
             l1_rpc_url,
             l2_rpc_url,

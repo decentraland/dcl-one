@@ -91,18 +91,15 @@ fn lease_covers(urn: &str, grants: &[(String, Option<String>)]) -> bool {
 impl Sources {
     /// The owner's active escrow leases (`shop.usage_grants`) on the
     /// requested URNs (`exact`, compared as stored) or under the requested
-    /// `LIKE` patterns: `(urn key, token id)`; none unless
-    /// `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`, since a peer that checks
-    /// ownership on chain only would reject what a lease admits. Bounded by
-    /// the request; the grantee's partial index serves it (the urn clause is
-    /// a filter).
+    /// `LIKE` patterns: `(urn key, token id)`. Bounded by the request; the
+    /// grantee's partial index serves it (the urn clause is a filter).
     async fn granted(
         &self,
         owner: &str,
         exact: &[String],
         patterns: &[String],
     ) -> Result<Vec<(String, Option<String>)>, ValidatorError> {
-        if !self.escrow_lease_ownership || (exact.is_empty() && patterns.is_empty()) {
+        if exact.is_empty() && patterns.is_empty() {
             return Ok(Vec::new());
         }
         let rows: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -160,16 +157,21 @@ impl BlockchainChecker for Sources {
         if urns.is_empty() {
             return Ok(PermissionResult::ok());
         }
-        // Leased items first: the chain must grant every other item at one block.
-        let patterns: Vec<String> = urns
-            .iter()
-            .flat_map(|u| [like_pattern(u), like_pattern(&urn_key(u))])
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let grants = self
-            .granted(eth_address, &exact_forms(urns.iter()), &patterns)
-            .await?;
+        // Leased items first, only with CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED
+        // (a peer that checks ownership on chain only rejects what a lease
+        // admits): the chain must grant every other item at one block.
+        let grants = if self.escrow_lease_ownership {
+            let patterns: Vec<String> = urns
+                .iter()
+                .flat_map(|u| [like_pattern(u), like_pattern(&urn_key(u))])
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            self.granted(eth_address, &exact_forms(urns.iter()), &patterns)
+                .await?
+        } else {
+            Vec::new()
+        };
         let on_chain: Vec<String> = urns
             .iter()
             .filter(|u| !lease_covers(u, &grants))

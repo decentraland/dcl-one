@@ -472,7 +472,11 @@ pub struct ValidatorConfig {
     /// Count this node's active escrow leases (`shop.usage_grants`) as
     /// ownership of the leased item when a local profile or outfits deploy
     /// wears it. Off under every posture: a peer that checks ownership on
-    /// chain only rejects such an entity when it syncs it.
+    /// chain only rejects such an entity when it syncs it. Set it together
+    /// with `EXPLORER_ESCROW_GRANTS_ENABLED`, which lists the same leases in
+    /// the explorer backpack; startup warns when the two differ. This node's
+    /// `/lambdas/profiles` still serves the deployed profile without the
+    /// leased item, since it keeps chain-owned items only.
     #[arg(long, env = "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_escrow_lease_ownership_enabled: bool,
 }

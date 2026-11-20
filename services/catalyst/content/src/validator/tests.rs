@@ -1138,7 +1138,6 @@ fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
             " mainnet ",
             Some("https://l1.example/KEY".into()),
             l2,
-            false,
         )
     };
     let ok = parse(
@@ -1176,16 +1175,8 @@ fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
 #[test]
 fn a_node_taking_deploys_needs_both_rpcs_and_a_known_network() {
     let parse = |ignore: bool, writes: bool, network: &str, l1: Option<&str>, l2: Option<&str>| {
-        Settings::parse(
-            ignore,
-            writes,
-            None,
-            network,
-            l1.map(str::to_string),
-            l2,
-            false,
-        )
-        .map_err(|e| format!("{e:#}"))
+        Settings::parse(ignore, writes, None, network, l1.map(str::to_string), l2)
+            .map_err(|e| format!("{e:#}"))
     };
     let (l1, l2) = (
         Some("https://l1.example/KEY"),
@@ -1223,18 +1214,10 @@ fn a_node_taking_deploys_needs_both_rpcs_and_a_known_network() {
 #[test]
 fn a_node_judging_peer_entities_needs_both_rpcs_and_a_known_network() {
     let settings = |ignore: bool, network: &str, l1: Option<&str>, l2: Option<&str>| {
-        Settings::parse(
-            ignore,
-            false,
-            None,
-            network,
-            l1.map(str::to_string),
-            l2,
-            false,
-        )
-        .unwrap()
-        .require_chain_for_peer_entities()
-        .map_err(|e| format!("{e:#}"))
+        Settings::parse(ignore, false, None, network, l1.map(str::to_string), l2)
+            .unwrap()
+            .require_chain_for_peer_entities()
+            .map_err(|e| format!("{e:#}"))
     };
     let (l1, l2) = (
         Some("https://l1.example/KEY"),

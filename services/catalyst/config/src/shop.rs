@@ -64,6 +64,9 @@ pub struct MarketUpstreamsConfig {
     /// Merge this node's active escrow grants (`shop.usage_grants`) into the
     /// explorer backpack's on-chain items. lamb2 lists chain-owned tokens
     /// only, so it is off under every posture until the operator opts in.
+    /// Set it together with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`, which
+    /// lets profile and outfits deploys wear the same leases; startup warns
+    /// when the two differ.
     #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub explorer_escrow_grants_enabled: bool,
 
