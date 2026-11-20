@@ -71,10 +71,22 @@ pub const ALL_TOPICS: [&str; 11] = [
     TOPIC_UPDATE,
 ];
 
+/// The position of the asset id among the topics of a data document log
+/// (`CreateEstate`, `Update`); `None` for any other `topic0`.
+fn data_asset_topic(topic0: &str) -> Option<usize> {
+    if topic0.eq_ignore_ascii_case(TOPIC_CREATE_ESTATE) {
+        Some(2)
+    } else if topic0.eq_ignore_ascii_case(TOPIC_UPDATE) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 /// Whether `topic0` carries an asset's data document (`CreateEstate`,
 /// `Update`): those logs feed [`decode_estate_data`], never the rights fold.
 pub fn is_data_topic(topic0: &str) -> bool {
-    topic0.eq_ignore_ascii_case(TOPIC_CREATE_ESTATE) || topic0.eq_ignore_ascii_case(TOPIC_UPDATE)
+    data_asset_topic(topic0).is_some()
 }
 
 /// One row of `land_authz.estate_data_event`: an Estate registry data
@@ -104,14 +116,7 @@ pub fn decode_estate_data(
     if !address.eq_ignore_ascii_case(estate_registry) {
         return None;
     }
-    let topic0 = topics.first()?;
-    let estate_topic = if topic0.eq_ignore_ascii_case(TOPIC_CREATE_ESTATE) {
-        2
-    } else if topic0.eq_ignore_ascii_case(TOPIC_UPDATE) {
-        1
-    } else {
-        return None;
-    };
+    let estate_topic = data_asset_topic(topics.first()?)?;
     let estate_id = u256_topic_to_decimal(topics.get(estate_topic)?)?;
     let document = abi_string(data)?;
     let (name, description) = parse_estate_data(&document)?;
