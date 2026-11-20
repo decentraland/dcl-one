@@ -6667,11 +6667,11 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "0e11d4fa58c8ad08339da734af6f9bc3ddec06954f5d2363f29270c3c3131d3c"
+      "sha256": "0ee3a04d94599146a48f751ed5310ee3bc4c4b0f729471e0669238d5dd1a8bc4"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "1499c6df83095cee7260041f03c2a452cd136979a3e35ff665fd1544d77e2a63"
+      "sha256": "6f7d02de3dbac514f1b2ac2d937747a92d44261f464246644c876aa13d660c35"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
@@ -10187,7 +10187,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "83e3a833b0c646117bebbe5171cb2e3711f9f6b93a26da5b49d7c7eec8cd58fe"
+      "sha256": "a5238527e4b5a19eb561960433c69b52007823d80f4b9c46eb1fef287c4dd548"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10611,7 +10611,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.test.tsx",
-      "sha256": "2b7b8eb367836fd1256bb63a0c183d5115a2e6948e92cfdfb3beca63f1a17704"
+      "sha256": "6af91e8fd265f7c714534fb93dbf63a92401a6b5954a22c90b9bcd7c01f3cff4"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
