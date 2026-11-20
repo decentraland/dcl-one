@@ -154,7 +154,9 @@ fn behind_the_loading_backdrop_every_material_is_created() {
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(app.world())
         .unwrap();
-    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    app.world_mut()
+        .entity_mut(player)
+        .insert(OutOfWorld::default());
     let entities = spawn_materials(&mut app, root, 0..fit(NEW_MATERIAL_COST) + 50);
 
     app.update();
@@ -475,7 +477,9 @@ fn waiting_materials_are_created_when_the_player_goes_behind_the_backdrop() {
         .query_filtered::<Entity, With<PrimaryUser>>()
         .single(app.world())
         .unwrap();
-    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    app.world_mut()
+        .entity_mut(player)
+        .insert(OutOfWorld::default());
     preset_charges(&mut app, Duration::from_millis(10));
     app.update();
 

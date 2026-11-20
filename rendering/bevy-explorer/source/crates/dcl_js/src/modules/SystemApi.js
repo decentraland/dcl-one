@@ -252,6 +252,21 @@ module.exports.getHomeScene = async function() {
     return await Deno.core.ops.op_get_home_scene()
 }
 
+// The HUD's teleport. args: { parcel?: { x, y }, realm?: string, spawnPoint?: string }
+// - parcel alone: a parcel of the realm the player is in
+// - realm: a realm change, landing on the parcel or (without one) on the realm's own spawn
+// - spawnPoint: the name (any case) of the spawn point of the scene landed in to use
+// rejects with the engine's reason when the teleport or the realm change fails
+module.exports.teleport = async function(args) {
+    const parcel = args.parcel;
+    await Deno.core.ops.op_teleport(
+        parcel ? Number(parcel.x) : null,
+        parcel ? Number(parcel.y) : null,
+        args.realm ?? null,
+        args.spawnPoint ?? null,
+    );
+}
+
 // { 
 //   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
 //   parcel: Vector2,

@@ -2,24 +2,20 @@
 // unity-explorer's IChatCommand set. Pure parser: turns a raw input line into an action the session
 // dispatches (teleport / changeRealm / reload / console) or a system message to echo in chat.
 //
-// `/goto` and `/world` reuse the existing teleport/changeRealm bridge plumbing; `/reload` and
-// `/commands` go through thin bridge handlers (reloadScene / consoleCommand). `/help` is a
+// `/goto`, `/goto-local` and `/world` take the destinations of ../lobby/goto.ts's grammar and
+// reuse the teleport/changeRealm bridge plumbing; `/reload` and `/commands` go through thin bridge handlers (reloadScene / consoleCommand). `/help` is a
 // client-rendered system message; `/commands` surfaces the engine's own console command list.
 // Any other `/word args` is passed through to the engine console (`consoleCommand`), except the
 // HUD_HIDDEN_COMMANDS below; the engine itself only registers dev/cheat commands in preview mode.
 
-/** The DCL default (Genesis) realm — `/goto genesis` / `/goto main` target this. */
-const GENESIS_ALIASES = new Set(['genesis', 'main'])
+import { type GotoTarget, WORLD_PARCEL_LIMIT, isGenesisParcel, isWorldName, parseGotoTarget, worldName, worldOfRealm } from '../lobby/goto'
 
 export type ChatCommand =
   /** Not a command (no leading `/`) — send as a normal chat message. */
   | { kind: 'send'; text: string }
-  /** `/goto x,y` — teleport to a parcel. */
-  | { kind: 'goto'; x: number; y: number }
-  /** `/goto genesis|main` — change to the default (Genesis) realm. */
-  | { kind: 'genesis' }
-  /** `/goto <world>` or `/world <world>` — jump to a world's realm (normalized to `.dcl.eth`). */
-  | { kind: 'world'; realm: string }
+  /** `/goto <destination>`, `/goto-local <destination>` or `/world <world>`: `local` stays in the
+   *  realm the player is in. `resolveGoto` turns it into the request to send. */
+  | { kind: 'goto'; target: GotoTarget; local: boolean }
   /** `/reload` — reload the current scene. */
   | { kind: 'reload' }
   /** `/commands` — list the engine console commands. */
@@ -30,14 +26,20 @@ export type ChatCommand =
   /** `/help` (and invalid usage) — echo this text as a system message. */
   | { kind: 'system'; message: string }
 
+// Each command's usage, as /help lists it and an invalid destination answers.
+const GOTO_USAGE = '/goto <x,y | x,y/spawn | random | crowd | world | world/x,y | world/spawn | world/x,y/spawn>\n  Teleport inside of Genesis or World'
+const GOTO_LOCAL_USAGE = '/goto-local <x,y | x,y/spawn | spawn>\n  Teleport inside of the current realm'
+const WORLD_USAGE = '/world <world>\n  Jump to a world (alias of /goto world)'
+const usageReply = (usage: string): string => `🔴 Invalid parameters, usage:\n${usage}`
+const invalid = (usage: string): ChatCommand => ({ kind: 'system', message: usageReply(usage) })
+
 /** The `/help` body — the client (DCL) commands, plain text (chat has no bold). */
 export const HELP_TEXT = [
   'Available commands:',
   '/help — show this help',
-  '/goto x,y — teleport to parcel x,y',
-  '/goto <world> — jump to a world (e.g. world_name or world_name.dcl.eth)',
-  '/goto genesis — go to Genesis Plaza',
-  '/world <world> — jump to a world (alias of /goto <world>)',
+  GOTO_USAGE,
+  GOTO_LOCAL_USAGE,
+  WORLD_USAGE,
   '/reload — reload the current scene',
   '/commands — list the engine console commands',
   '/debug [section | help] — open the debug panel, find a section, or list its sections',
@@ -122,23 +124,96 @@ export function formatConsoleReply(command: string, args: string[], output: stri
   return output.trim() || `(no output for /${command})`
 }
 
-/** Normalize a world token to its ENS realm: `boedo` → `boedo.dcl.eth`; `foo.eth` stays. */
-function toRealm(token: string): string {
-  return token.includes('.eth') ? token : `${token.replace('.dcl.eth', '')}.dcl.eth`
+// A command takes one destination: a space after a comma is dropped ("10, 20"), and what is left
+// holds no other space.
+function destination(rest: string): string | null {
+  const arg = rest.replace(/,\s+/g, ',')
+  return arg === '' || /\s/.test(arg) ? null : arg
 }
 
-const COORDS_RE = /^(-?\d+)\s*,\s*(-?\d+)$/
+function parseGoto(rest: string): ChatCommand {
+  const arg = destination(rest)
+  return arg == null ? invalid(GOTO_USAGE) : { kind: 'goto', target: parseGotoTarget(arg), local: false }
+}
 
-// `/goto` and `/world` share the realm/coords parsing; only `/goto` accepts coordinates.
-function parseGoto(rest: string, allowCoords: boolean): ChatCommand {
-  const arg = rest.trim()
-  if (!arg) return { kind: 'system', message: 'Usage: /goto x,y  ·  /goto <world>  ·  /goto genesis' }
-  if (GENESIS_ALIASES.has(arg.toLowerCase())) return { kind: 'genesis' }
-  const m = allowCoords ? arg.match(COORDS_RE) : null
-  if (m) return { kind: 'goto', x: Number(m[1]), y: Number(m[2]) }
-  // A single token → world name; anything with a space/comma that isn't coords is invalid.
-  if (/\s|,/.test(arg)) return { kind: 'system', message: `Invalid destination: ${arg}` }
-  return { kind: 'world', realm: toRealm(arg) }
+// A parcel, a parcel and a spawn point, or a spawn point of the scene the player stands in (which
+// the grammar reads as a world name).
+function parseGotoLocal(rest: string): ChatCommand {
+  const arg = destination(rest)
+  if (arg == null) return invalid(GOTO_LOCAL_USAGE)
+  const target = parseGotoTarget(arg)
+  if (target.random || target.crowd) return invalid(GOTO_LOCAL_USAGE)
+  if (target.world == null) return { kind: 'goto', target, local: true }
+  if (target.parcel != null || target.spawnPoint != null || /[,/]/.test(target.world)) return invalid(GOTO_LOCAL_USAGE)
+  return { kind: 'goto', target: { ...target, world: null, spawnPoint: target.world }, local: true }
+}
+
+// A world's name alone, whatever it spells ("random" is a world here).
+function parseWorld(rest: string): ChatCommand {
+  const arg = destination(rest)
+  if (arg == null || arg.includes(',') || arg.includes('/')) return invalid(WORLD_USAGE)
+  return { kind: 'goto', target: { world: arg, parcel: null, spawnPoint: null, random: false, crowd: false }, local: false }
+}
+
+/** Where the player is, for `resolveGoto`. */
+export interface GotoHere {
+  /** The realm's kind: Genesis City, a world, or any other (a scene preview, a realm of its own,
+   *  or not known yet), which has no Genesis City to go back to and no known bounds. */
+  kind: 'genesis' | 'world' | 'other'
+  /** The world's name (`name.dcl.eth`, lowercase) in a world; null anywhere else. */
+  realm: string | null
+  parcel: { x: number; y: number }
+}
+
+/** What a `/goto` asks of the engine, or the line to answer with instead. `reply` is the answer
+ *  once the request succeeds; `world` is the world as the player typed it. */
+export type GotoPlan =
+  | { kind: 'reply'; message: string }
+  /** A teleport inside the realm the player is in. */
+  | { kind: 'teleport'; x: number; y: number; spawnPoint?: string; reply: string }
+  /** A realm change, to `parcel` or to the realm's own spawn. */
+  | { kind: 'travel'; realm: string; parcel?: { x: number; y: number }; spawnPoint?: string; reply: string; world?: string }
+
+const outside = (p: { x: number; y: number }): GotoPlan => ({ kind: 'reply', message: `🔴 Error: Parcel (${p.x}, ${p.y}) is outside of the bounds.` })
+const teleported = (p: { x: number; y: number }): string => `🟢 You teleported to ${p.x},${p.y}.`
+const REALM_URL = /^https?:\/\//i
+
+/**
+ * A parcel alone is a Genesis City parcel, reached by a realm change from a world, unless `local`.
+ * In a realm of any other kind it is a parcel of that realm: a scene preview refuses realm changes,
+ * and its parcels are the creator's own. A world the player is already in is a teleport inside it.
+ * `genesisRealm` is the Genesis City realm's address. `random` and `crowd` are resolved to a
+ * parcel by the caller.
+ */
+export function resolveGoto(target: GotoTarget, local: boolean, here: GotoHere, genesisRealm: string): GotoPlan {
+  const spawnPoint = target.spawnPoint ?? undefined
+  const inGenesis = (p: { x: number; y: number }): boolean => isGenesisParcel(p.x, p.y)
+  const inWorld = (p: { x: number; y: number }): boolean => Math.abs(p.x) <= WORLD_PARCEL_LIMIT && Math.abs(p.y) <= WORLD_PARCEL_LIMIT
+  if (target.world == null) {
+    const parcel = target.parcel ?? here.parcel
+    const toGenesis = !local && here.kind === 'world'
+    const inside = here.kind === 'genesis' || toGenesis ? inGenesis(parcel) : here.kind === 'other' || inWorld(parcel)
+    if (target.parcel != null && !inside) return outside(parcel)
+    if (toGenesis) return { kind: 'travel', realm: genesisRealm, parcel, spawnPoint, reply: teleported(parcel) }
+    return { kind: 'teleport', ...parcel, spawnPoint, reply: teleported(parcel) }
+  }
+
+  const name = target.world
+  const toGenesis = name.toLowerCase() === 'genesis'
+  const url = REALM_URL.test(name)
+  // a realm's address goes as it is; anything else has to be a world's name
+  if (!toGenesis && !url && !isWorldName(name)) return { kind: 'reply', message: usageReply(GOTO_USAGE) }
+  // a parcel of Genesis City or of a world, within its bounds; a realm given by address has its own
+  if (target.parcel != null && !url && !(toGenesis ? inGenesis(target.parcel) : inWorld(target.parcel))) return outside(target.parcel)
+  const realm = toGenesis ? genesisRealm : url ? name : worldName(name)
+  // a world is the same one by its name or by its address on a worlds server
+  const there = toGenesis ? here.kind === 'genesis' : here.kind === 'world' && here.realm === worldOfRealm(realm)
+  if (there) {
+    if (target.parcel == null && spawnPoint == null) return { kind: 'reply', message: `🟡 You are already in ${name}!` }
+    const parcel = target.parcel ?? here.parcel
+    return { kind: 'teleport', ...parcel, spawnPoint, reply: teleported(parcel) }
+  }
+  return { kind: 'travel', realm, parcel: target.parcel ?? undefined, spawnPoint, reply: `🟢 Welcome to the ${name} world!`, world: name }
 }
 
 /** Parse a raw chat input into an action. Non-`/` lines pass through as `send`. */
@@ -163,11 +238,11 @@ export function parseChatCommand(input: string): ChatCommand {
       if (restParts.length > 0) return { kind: 'console', command: 'reload', args: splitArgs(rest) }
       return { kind: 'reload' }
     case 'goto':
-      return parseGoto(rest, true)
+      return parseGoto(rest)
+    case 'goto-local':
+      return parseGotoLocal(rest)
     case 'world':
-      return restParts.length === 0
-        ? { kind: 'system', message: 'Usage: /world <world>' }
-        : parseGoto(rest, false)
+      return parseWorld(rest)
     default:
       if (name === '' || HUD_HIDDEN_COMMANDS.has(name)) {
         return { kind: 'system', message: `Unknown command ${word}. Type /help for the list.` }

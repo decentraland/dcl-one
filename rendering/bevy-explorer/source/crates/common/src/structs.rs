@@ -1926,8 +1926,12 @@ pub struct PlayerTeleported {
 /// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
 /// position — until the destination scene resolves and they're placed in-world. Lives here (rather
 /// than `scene_runner`) so lower-level crates like `comms` can read it; `scene_runner` re-exports it.
-#[derive(Component)]
-pub struct OutOfWorld;
+#[derive(Component, Default, Debug)]
+pub struct OutOfWorld {
+    /// The name (any case) of the spawn point of the destination scene to be placed on. Without
+    /// one, or when the scene has none of that name, the scene's default spawn points are used.
+    pub spawn_point: Option<String>,
+}
 
 /// The primary camera is the camera reel's free photo camera: the player camera systems leave its
 /// transform and projection alone until it is removed.

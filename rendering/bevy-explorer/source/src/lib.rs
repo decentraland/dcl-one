@@ -845,7 +845,7 @@ fn setup(
             )),
             Visibility::default(),
             config.player_settings.clone(),
-            OutOfWorld,
+            OutOfWorld::default(),
             AvatarDynamicState::default(),
             HeadSync::default(),
             PointAtSync::default(),
@@ -854,7 +854,10 @@ fn setup(
         ))
         .id();
     if boot_location.explicit {
-        commands.insert_resource(RealmInitialLocation::Parcel(boot_location.parcel));
+        commands.insert_resource(RealmInitialLocation::Parcel {
+            parcel: boot_location.parcel,
+            spawn_point: None,
+        });
     }
 
     // add a camera

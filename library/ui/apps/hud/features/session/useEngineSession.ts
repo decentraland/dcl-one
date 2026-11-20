@@ -6,7 +6,8 @@ import { clearLogins, getLogin, redirectToAuth, returnedFromAuth, rootAddress, t
 import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
-import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
+import { fetchCrowd, recordVisit } from '@explorer-core/features/lobby/lobbyApi'
+import { type GotoTarget, randomParcel, worldOfRealm } from '@explorer-core/features/lobby/goto'
 import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
 import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
@@ -44,7 +45,7 @@ import { peekProfile, profileChanged, profileReadFailed, receiveOwnProfile, rece
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
-import { formatConsoleReply, parseChatCommand } from '@explorer-core/features/chat/chatCommands'
+import { formatConsoleReply, parseChatCommand, resolveGoto, type GotoHere } from '@explorer-core/features/chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
 import { clearPingMode, shouldPing } from '../chat/ping'
 import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
@@ -1398,6 +1399,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // the latest counts: an earlier one is answered as superseded when a newer one replaces it.
   const travelSeq = useRef(0)
   const [travellingTo, setTravellingTo] = useState<string | null>(null)
+  // Chat's /goto answers once its request ends: the line for each outcome, by travel id. A teleport
+  // inside the realm takes its id from below zero, apart from the realm changes' own.
+  const gotoReplies = useRef(new Map<number, { ok: string; failed: (reason: string) => string }>())
+  const gotoTeleportSeq = useRef(0)
+  const pushSystemMessageRef = useRef<(message: string) => void>(() => undefined)
   const [travelError, setTravelError] = useState<string | null>(null)
   const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
   const [banRefusedTravel, setBanRefusedTravel] = useState(false)
@@ -1641,6 +1647,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
   const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
   const [linkRealm, setLinkRealm] = useState<string | null>(null)
+  /** The realm the engine is in, as it names itself (a world's name in a world); null until it says. */
+  const [realmName, setRealmName] = useState<string | null>(null)
+  /** The realm a travel just ended in, until the engine next reports its realm: the report trails
+   *  the travel's answer. */
+  const [arrivedRealm, setArrivedRealm] = useState<string | null>(null)
   /** The scene (realm and hash) Donate's place was last taken from. */
   const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
@@ -2471,23 +2482,39 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         }
         case 'realmInfo':
           setSatelliteView(msg.satelliteView)
+          setRealmName(msg.realm)
+          setArrivedRealm(null)
           break
         case 'homeScene':
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
           break
-        case 'travelResult':
-          if (msg.ok) travelCount.traveled()
+        case 'travelResult': {
+          // A travel chat's /goto asked for answers in chat, in place of the travel notice; a ban's
+          // refusal keeps its own dialog and has no line.
+          const reply = gotoReplies.current.get(msg.travelId)
+          const banned = !msg.ok && msg.message === PLATFORM_BANNED_REFUSAL
+          if (reply != null) {
+            gotoReplies.current.delete(msg.travelId)
+            if (!banned) pushSystemMessageRef.current(msg.ok ? reply.ok : reply.failed(msg.message ?? 'unknown error'))
+          }
+          // a teleport inside the realm: no realm was left, and no loader shown
+          if (msg.travelId < 0) break
+          if (msg.ok) {
+            travelCount.traveled()
+            setArrivedRealm(msg.realm)
+          }
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
-            if (msg.message === PLATFORM_BANNED_REFUSAL) setBanRefusedTravel(true)
-            else setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
+            if (banned) setBanRefusedTravel(true)
+            else if (reply == null) setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
           }
           if (lobbyRef.current) {
             if (msg.ok) setLobby(false)
             else setDestinationPicked(false)
           }
           break
+        }
         case 'lobbyStageReady':
           setLobbyStageReady(true)
           setAvatarLoaded(true)
@@ -2857,6 +2884,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       [...prev, { sender: '', message, channel: 'Nearby', messageId: '', id: chatId.current++, ts: Date.now() }].slice(-MAX_CHAT_LINES)
     )
   }, [])
+  pushSystemMessageRef.current = pushSystemMessage
 
   // A realm change from the HUD: the loader shows from the request until the engine reports the
   // outcome (it validates the destination before leaving the current realm).
@@ -2865,8 +2893,9 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     const travelId = ++travelSeq.current
     setTravellingTo(msg.realm)
     driverRef.current?.send({ ...msg, travelId })
+    return travelId
   }, [])
-  const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
+  const changeRealm = useCallback((realm: string) => void travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
   const dismissBanRefusedTravel = useCallback(() => setBanRefusedTravel(false), [])
 
@@ -2882,6 +2911,67 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     skipRefusal.current.clear()
   }, [])
 
+  // Chat's /goto and /goto-local: the destination becomes one request to the
+  // engine, and the command's answer is posted when that request ends.
+  // Genesis City advertises its map and a world goes by its name; any other realm (a scene
+  // preview, a realm of its own, one not reported yet) is neither.
+  const hereRef = useRef<GotoHere>({ kind: 'other', realm: null, parcel: mapParcel })
+  // Right after a travel the realm is the one travelled to, whatever the last report says, when
+  // its address tells its kind: Genesis City's own, or a world's. Any other address says nothing
+  // (Genesis City is reached by more than one), so the reports decide.
+  const arrivedWorld = worldOfRealm(arrivedRealm ?? '')
+  const arrived = arrivedRealm === DEFAULT_REALM ? 'genesis' : arrivedWorld != null ? 'world' : null
+  const world = arrived === 'world' ? arrivedWorld : arrived == null ? worldOfRealm(realmName ?? '') : null
+  const genesis = arrived != null ? arrived === 'genesis' : isGenesisSatelliteView(satelliteView)
+  hereRef.current = { kind: genesis ? 'genesis' : world != null ? 'world' : 'other', realm: world, parcel: mapParcel }
+  const goto = useCallback(
+    async (target: GotoTarget, local: boolean) => {
+      // no engine to ask: nothing would answer
+      if (driverRef.current == null) {
+        pushSystemMessage('🔴 Error running command.')
+        return
+      }
+      let destination = target
+      if (target.random || target.crowd) {
+        const signOut = signOuts.current
+        try {
+          destination = { ...target, random: false, crowd: false, parcel: target.random ? randomParcel() : await fetchCrowd() }
+        } catch (e) {
+          console.warn('[chat] /goto crowd', e)
+          if (signOuts.current === signOut) pushSystemMessage('🔴 Error running command.')
+          return
+        }
+        // signed out while the busiest scene was read: the command is that session's
+        if (signOuts.current !== signOut) return
+      }
+      const plan = resolveGoto(destination, local, hereRef.current, DEFAULT_REALM)
+      if (plan.kind === 'reply') {
+        pushSystemMessage(plan.message)
+        return
+      }
+      const { spawnPoint } = plan
+      if (plan.kind === 'teleport') {
+        const travelId = --gotoTeleportSeq.current
+        gotoReplies.current.set(travelId, { ok: plan.reply, failed: (reason) => `🔴 Error: ${reason}` })
+        driverRef.current?.send({ kind: 'teleport', x: plan.x, y: plan.y, spawnPoint, travelId })
+        return
+      }
+      const travelId = travel(plan.parcel == null ? { kind: 'changeRealm', realm: plan.realm, spawnPoint } : { kind: 'teleport', realm: plan.realm, ...plan.parcel, spawnPoint })
+      const { world } = plan
+      gotoReplies.current.set(travelId, {
+        ok: plan.reply,
+        failed: (reason) => {
+          // a later travel took this one's place (the bridge's own words)
+          if (reason.startsWith('superseded')) return '🔴 Error: The operation was canceled!'
+          // the worlds server has no such world; any other refusal is told in the engine's words
+          if (world != null && /\b404\b/.test(reason)) return `🔴 Error: The world ${world} doesn't exist or not reachable!`
+          return `🔴 Error: ${reason}`
+        }
+      })
+    },
+    [pushSystemMessage, travel]
+  )
+
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
   // command, or echoes a system message. Anything else is sent as a normal Nearby message.
@@ -2893,13 +2983,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           if (cmd.text) driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
           break
         case 'goto':
-          driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
-          break
-        case 'genesis':
-          changeRealm(DEFAULT_REALM)
-          break
-        case 'world':
-          changeRealm(cmd.realm)
+          void goto(cmd.target, cmd.local)
           break
         case 'reload':
           reloadScene()
@@ -2918,7 +3002,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
       }
     },
-    [pushSystemMessage, changeRealm, reloadScene]
+    [pushSystemMessage, goto, reloadScene]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
@@ -4256,6 +4340,8 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
+    // a /goto still waiting for its answer has no chat of this session to post it in
+    gotoReplies.current.clear()
     driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
