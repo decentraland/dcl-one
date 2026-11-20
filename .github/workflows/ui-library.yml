@@ -99,8 +99,6 @@ jobs:
     needs: key-guard
     if: needs.key-guard.outputs.ui_changed == 'true'
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
-    outputs:
-      artifact_url: ${{ steps.upload.outputs.artifact-url }}
     defaults:
       run:
         working-directory: library/ui
@@ -150,44 +148,7 @@ jobs:
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist
       # Named by the commit it was built for, which ui-library-key-scan.yml downloads by that same SHA.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        id: upload
         with:
           name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
           path: library/ui/figma/review/review-dist
           retention-days: 14
-
-  # One comment on the pull request links the Review artifact (the runtime gallery and the Figma reference), found by
-  # its marker and edited on every push. It checks out and runs nothing from the pull request: the artifact URL and
-  # the head SHA reach the script as env values only. Fork pull requests and pushes skip it.
-  review-link:
-    needs: library
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-26.04
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Post or update the Review artifact comment
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          ARTIFACT_URL: ${{ needs.library.outputs.artifact_url }}
-        run: |
-          set -euo pipefail
-          [ -n "$ARTIFACT_URL" ] || { echo "The library job reported no artifact URL" >&2; exit 1; }
-          marker='<!-- ui-review-artifact -->'
-          body=$(printf '%s\n' \
-            "$marker" \
-            "**UI review build** of $HEAD_SHA: [download the artifact]($ARTIFACT_URL) (component gallery and Figma reference)." \
-            "" \
-            "1. Unzip the download into a folder, for example \`ui-review\`." \
-            "2. Run \`python3 -m http.server 8080 --directory ui-review\`." \
-            "3. Open http://localhost:8080/gallery/.")
-          id=$(gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- ui-review-artifact -->"))) | .id' | sed -n 1p)
-          if [ -n "$id" ]; then
-            gh api --method PATCH "repos/$REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
-          else
-            gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
-          fi

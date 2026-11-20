@@ -13,9 +13,10 @@ pnpm exec vite --config gallery/vite.config.ts      # http://127.0.0.1:6020/
 pnpm review                                          # optional: the Figma reference in development (own Vite cache, so both run side by side)
 pnpm review:build --base ./ && pnpm exec vite build --config gallery/vite.config.ts
 node gallery/scripts/check-build.mjs figma/review/review-dist [--prefix /nested/prefix/]
+pnpm exec vite build --config gallery/vite.config.ts --mode hosted && node gallery/scripts/check-build.mjs gallery/dist --hosted
 ```
 
-To review a pull request's build without building it, download its `ui-review-<sha>` artifact (the pull request comment links it), unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/.
+To review a pull request without building it, open the UI gallery link in its comment: `ui-review-preview.yml` builds the gallery alone (`--mode hosted`, into `gallery/dist`, without the Figma reference) and publishes it per branch. The same comment links the full Review artifact, which also has the Figma reference: unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/.
 
 The build writes `figma/review/review-dist/gallery/`, beside the generated Review, and uses relative URLs, so the combined output works at the root or under any prefix. Build the generated Review with `--base ./` (as CI does for the uploaded artifact) to serve the same output anywhere, or with the absolute prefix it is served from.
 

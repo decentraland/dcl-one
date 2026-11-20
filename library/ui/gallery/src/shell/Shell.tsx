@@ -28,6 +28,9 @@ const presets = widthPresets(breakpoints)
 const groups = [...new Set(entries.map((entry) => entry.group))]
 
 const figmaNames = new Set(__GENERATED_COMPONENTS__.map((component) => component.name))
+// The hosted pull request preview leaves the Figma reference out; the Review artifact carries it.
+const FIGMA_REFERENCE_ELSEWHERE =
+  'Not in this hosted preview: the full build linked from the pull request includes it.'
 const runtimeNames = new Set(entries.flatMap((entry) => [entry.name, ...entry.components]))
 
 /** In-app navigation: the sidebar stays mounted, so its scroll and filter survive a selection. */
@@ -147,27 +150,31 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
         <p className={styles.navNote}>
           Auto-generated previews of the Figma design, for comparison. Apps never use them.
         </p>
-        <ul className={styles.navList}>
-          {figma.map((component) => (
+        {__GENERATED_REVIEW_URL__ === null ? (
+          <p className={styles.navNote}>{FIGMA_REFERENCE_ELSEWHERE}</p>
+        ) : (
+          <ul className={styles.navList}>
+            {figma.map((component) => (
+              <NavLink
+                key={component.name}
+                href={galleryHref({ source: 'generated', component: component.name })}
+                current={generatedName === component.name}
+                label={component.name}
+                source="generated"
+                badge={runtimeNames.has(component.name) ? 'Figma' : undefined}
+                navigate={navigate}
+              />
+            ))}
             <NavLink
-              key={component.name}
-              href={galleryHref({ source: 'generated', component: component.name })}
-              current={generatedName === component.name}
-              label={component.name}
+              href={galleryHref({ source: 'generated', foundations: 'tokens' })}
+              current={route.source === 'generated' && generatedName === null}
+              label="Foundations"
               source="generated"
-              badge={runtimeNames.has(component.name) ? 'Figma' : undefined}
+              badge="Figma"
               navigate={navigate}
             />
-          ))}
-          <NavLink
-            href={galleryHref({ source: 'generated', foundations: 'tokens' })}
-            current={route.source === 'generated' && generatedName === null}
-            label="Foundations"
-            source="generated"
-            badge="Figma"
-            navigate={navigate}
-          />
-        </ul>
+          </ul>
+        )}
       </details>
     </nav>
   )
@@ -293,7 +300,8 @@ function RuntimeView({
 }
 
 function GeneratedView({ query }: { query: string }) {
-  const href = generatedHref(__GENERATED_REVIEW_URL__, query)
+  const review = __GENERATED_REVIEW_URL__
+  const href = review === null ? null : generatedHref(review, query)
   const name = new URLSearchParams(query).get('component')
   return (
     <>
@@ -303,11 +311,21 @@ function GeneratedView({ query }: { query: string }) {
         </h1>
         <p className={styles.summary}>
           An auto-generated preview of the Figma design, for comparison only: apps never use it.
-          {name && runtimeNames.has(name) ? ` Apps use the ${name} component instead.` : ''}{' '}
-          <a href={href}>Open it on its own</a>.
+          {name && runtimeNames.has(name) ? ` Apps use the ${name} component instead.` : ''}
+          {href ? (
+            <>
+              {' '}
+              <a href={href}>Open it on its own</a>.
+            </>
+          ) : null}
         </p>
+        {href ? null : (
+          <p role="note" className={styles.missing}>
+            {FIGMA_REFERENCE_ELSEWHERE}
+          </p>
+        )}
       </header>
-      <iframe className={styles.generated} title="Figma reference" src={href} />
+      {href ? <iframe className={styles.generated} title="Figma reference" src={href} /> : null}
     </>
   )
 }

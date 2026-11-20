@@ -8,6 +8,9 @@
 //   4. every runtime foundations page renders;
 //   5. the generated route opens the generated Review's page for a component inside the gallery;
 // with every request answered 2xx from under the prefix, and no uncaught page error or console error along the way.
+// With --hosted, <dist> is the hosted pull request preview (`vite build --mode hosted`): the gallery alone at its root,
+// opened as <prefix>index.html the way the bucket serves it, listing no generated page; check 5 becomes a Figma
+// reference link that answers with a note and loads nothing from the generated Review.
 // It runs the built files it is given, so only run it on an unprivileged build.
 import { readFile, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -135,10 +138,10 @@ const EXAMPLES = `(() => {
 })()`
 
 /** Runs the checks. Resolves with a summary; rejects naming the first failed check. */
-async function checkGallery({ dist, prefix = '/', browser } = {}) {
+async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}) {
   const base = normalizePrefix(prefix)
   const server = await serve(path.resolve(dist), base)
-  const gallery = `${server.origin}${base}gallery/`
+  const gallery = `${server.origin}${base}${hosted ? 'index.html' : 'gallery/'}`
   let session
   let summary
   let failure
@@ -169,10 +172,12 @@ async function checkGallery({ dist, prefix = '/', browser } = {}) {
         const names = (source) => [...document.querySelectorAll('nav a[data-source="' + source + '"]')]
           .map((a) => new URL(a.href).searchParams.get('component')).filter(Boolean)
         const runtime = names('runtime'), generated = names('generated')
-        return runtime.length && generated.length ? { runtime, generated } : null
+        return runtime.length && (${hosted} || generated.length) ? { runtime, generated } : null
       })()`,
       'runtime and generated navigation'
     )
+    if (hosted && listed.generated.length)
+      throw new Error(`the hosted preview lists ${listed.generated.length} generated pages`)
 
     const examples = []
     for (const name of listed.runtime) {
@@ -222,13 +227,27 @@ async function checkGallery({ dist, prefix = '/', browser } = {}) {
       )
     }
 
-    const generated = listed.generated[0]
+    const generated = hosted ? 'Button' : listed.generated[0]
     await open(`?source=generated&component=${encodeURIComponent(generated)}`)
-    await waitFor(
-      session,
-      `${CANVAS}?.querySelector('main h1')?.textContent === ${JSON.stringify(generated)}`,
-      `the generated ${generated} page inside the gallery`
+    if (hosted)
+      await waitFor(
+        session,
+        `!document.querySelector('iframe') && (document.querySelector('[role="note"]')?.textContent ?? '').includes('Not in this hosted preview')`,
+        'the note in place of the Figma reference'
+      )
+    else
+      await waitFor(
+        session,
+        `${CANVAS}?.querySelector('main h1')?.textContent === ${JSON.stringify(generated)}`,
+        `the generated ${generated} page inside the gallery`
+      )
+    const reviewRequests = server.requests.filter((request) =>
+      request.path.includes('/dcl-ui-review/')
     )
+    if (hosted && reviewRequests.length)
+      throw new Error(
+        `the hosted preview requested the generated Review: ${reviewRequests[0].path}`
+      )
 
     checkRequests()
     const failed = server.requests.filter((request) => request.status >= 400)
@@ -239,7 +258,8 @@ async function checkGallery({ dist, prefix = '/', browser } = {}) {
     if (session.runtimeErrors.length) throw new Error(`page error: ${session.runtimeErrors[0]}`)
     if (session.consoleErrors.length) throw new Error(`console error: ${session.consoleErrors[0]}`)
     summary = {
-      entry: `${base}gallery/`,
+      entry: `${base}${hosted ? 'index.html' : 'gallery/'}`,
+      hosted,
       runtimePages: listed.runtime.length,
       examples: examples.length,
       foundations: foundations.length,
@@ -261,17 +281,26 @@ async function checkGallery({ dist, prefix = '/', browser } = {}) {
   return summary
 }
 
+function usage() {
+  process.stderr.write('Usage: check-build <dist> [--prefix <path>] [--hosted]\n')
+  return 2
+}
+
 /** Command-line entry point. Returns the exit code. */
 async function main(argv) {
   const [dist, ...rest] = argv
   let prefix = '/'
-  if (rest[0] === '--prefix' && rest.length === 2) prefix = rest[1]
-  else if (rest.length || !dist) {
-    process.stderr.write('Usage: check-build <dist> [--prefix <path>]\n')
-    return 2
+  let hosted = false
+  for (let at = 0; at < rest.length; at += 1) {
+    if (rest[at] === '--hosted') hosted = true
+    else if (rest[at] === '--prefix' && at + 1 < rest.length) prefix = rest[(at += 1)]
+    else return usage()
   }
+  if (!dist || dist.startsWith('--')) return usage()
   try {
-    process.stdout.write(`${JSON.stringify(await checkGallery({ dist, prefix }), null, 2)}\n`)
+    process.stdout.write(
+      `${JSON.stringify(await checkGallery({ dist, prefix, hosted }), null, 2)}\n`
+    )
     return 0
   } catch (error) {
     process.stderr.write(

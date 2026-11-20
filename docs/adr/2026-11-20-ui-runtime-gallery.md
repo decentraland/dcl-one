@@ -15,6 +15,8 @@ Add `library/ui/gallery/`: a browser app that imports components from the packag
 - Examples render inside an iframe, so a chosen width is a real viewport for media queries.
 - The build writes beside the generated Review (`figma/review/review-dist/gallery/`), so the existing Review artifact carries both routes and the existing key scans cover it. The gallery opens the generated Review as its second route without changing it.
 
+- A pull request preview (`.github/workflows/ui-review-preview.yml`) builds the gallery alone, without the Figma reference, and publishes it per branch to the SDK bucket beside the Creator Hub previews; one pull request comment links it and the Review artifact. Its build job holds no credential, and its publish job runs no pull request code. `ui-library.yml` keeps holding no secret.
+
 This is the `library/ui` counterpart of the layout ADR's rules: the folder serves the shared UI deliverables and is owned with the rest of `library/ui`.
 
 ## Consequences

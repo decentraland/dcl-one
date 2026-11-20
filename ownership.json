@@ -352,13 +352,14 @@
     },
     {
       "id": "ui-library-workflow",
-      "description": "The shared UI library CI workflow that runs the provenance checks; owned by the library team together with infra, which owns the other workflows",
+      "description": "The shared UI library CI workflow that runs the provenance checks, and its pull request gallery preview; owned by the library team together with infra, which owns the other workflows",
       "owners": [
         "@decentraland/web-applications",
         "@decentraland/infra"
       ],
       "paths": [
-        "/.github/workflows/ui-library.yml"
+        "/.github/workflows/ui-library.yml",
+        "/.github/workflows/ui-review-preview.yml"
       ]
     }
   ]

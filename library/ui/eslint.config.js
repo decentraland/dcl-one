@@ -12,6 +12,7 @@ export default tseslint.config(
       'figma/test/fixtures',
       'figma/capture',
       'figma/review/review-dist',
+      'gallery/dist',
       'figma/review/src/generated',
       'templates',
       // The Explorer HUD UI keeps the conventions of the HUD it moved from (react-web, which has no linter);
