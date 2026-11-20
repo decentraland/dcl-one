@@ -3,7 +3,8 @@
 //! old crate's SQL: `metadata` is `rental_assets` keyed by
 //! `(contract_address, token_id numeric)` with the wire's `nft_id` as a
 //! UNIQUE (so a listing's asset is the chain identity, not a string), the
-//! asset row is refreshed on conflict (the reader just fetched it), every
+//! asset row is refreshed on conflict (the reader just fetched it; its
+//! `nft_updated_at` keeps the greater time), every
 //! row-stamping clock is a bound parameter (`now`), never `now()`, and the
 //! status values and numeric filters are validated before they reach the
 //! statement (the old crate let Postgres answer 500 on a bad `status` or

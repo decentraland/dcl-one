@@ -294,10 +294,9 @@ pub async fn insert_events(
 /// a reorg's rewind restores what the remaining log says). An incremental
 /// fold also revisits a cancelled listing whose own rent is past `$1`: a
 /// rent indexed after an expiry or transfer cancellation still executes it.
-/// The fold reads the signatures of the venue's rents past `$1` once (the
-/// primary key's block range) and matches the cancelled listings against
-/// that list, so the leg costs what the block range holds, not one event
-/// lookup per cancelled listing; the one-listing read probes
+/// The fold reads the signatures of the venue's rents past `$1` once and
+/// matches the cancelled listings against that list, so the leg makes no
+/// event lookup per cancelled listing; the one-listing read probes
 /// `rental_event_signature_idx` for its own signature instead. `$2` is the
 /// Rentals address, lowercase; the nonces are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).

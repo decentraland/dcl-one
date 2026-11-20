@@ -1830,11 +1830,12 @@ Workload: mainnet holds thousands of listings, of which hundreds are open
 Invariants:
 
 - `cancel_reason` is NULL unless the status is `cancelled` (a row `CHECK`).
-- `rental_assets.nft_updated_at` never moves backwards. The refresh route
-  skips a reader row older than the stored one, and the create route's upsert
-  keeps the greater time. A reader that answers from an older block and then
-  from a less old one therefore cannot pass the refresh route's newer-row
-  test.
+- The routes never move `rental_assets.nft_updated_at` backwards. The refresh
+  route skips a reader row older than the stored one, and the create route's
+  upsert keeps the greater time. A reader that answers from an older block
+  and then from a less old one therefore cannot pass the refresh route's
+  newer-row test. The signatures-server import writes the upstream time as
+  it is.
 - A cancellation with no recorded cause keeps NULL. Rows imported from
   signatures-server, which records no cause, are of this kind.
 - A reopening never makes a second open listing of an asset
@@ -1848,13 +1849,12 @@ Invariants:
   unexpired nonce cancellation reopens in its place. Any
   reason gives way to a rent of the listing: an incremental fold also
   revisits a cancelled listing whose own `rented` log is past its block. The
-  fold reads the signatures of the venue's `rented` rows past that block once,
-  a range of `shop.rental_event`'s primary key, and matches the cancelled
-  listings against that list in the scan of the venue's listings it already
-  makes. The leg therefore costs what the block range holds and no event
-  lookup per cancelled listing. The refresh route, which folds one listing
-  over every block, makes one `rental_event_signature_idx` probe for that
-  listing's signature instead.
+  fold reads the signatures of the venue's `rented` rows past that block
+  once and matches the cancelled listings against that list in the scan of
+  the venue's listings it already makes, so the leg makes no event lookup
+  per cancelled listing under any plan. The refresh route, which folds one
+  listing over every block, makes one `rental_event_signature_idx` probe for
+  that listing's signature instead.
 - The fold's `cancelled` verdict never rewrites a listing that is already
   cancelled. The fold reads its verdicts before it writes them, so a listing
   the job cancelled in between keeps the job's reason and stays closed on a

@@ -28,7 +28,8 @@
 //!   contract, so off mainnet no rent is read and an asset the contract
 //!   holds is refused as not the lessor's (401).
 //! - `PATCH /v1/rentals-listings/{id}`: the same reader refreshes the asset
-//!   row and syncs the listing's status ([`status::sync_listing`]: its own
+//!   row, unless its row is older than the stored one, and syncs the
+//!   listing's status ([`status::sync_listing`]: its own
 //!   Rentals logs while the `rentals` index is published, then expiry, a
 //!   transfer away from the lessor and a dissolved estate); behind the
 //!   write switch; the same envelope without a reader (the old crate
