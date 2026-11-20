@@ -373,6 +373,20 @@ describe('community card place actions', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('closes the Communities page behind the card when a jump goes ahead, and keeps it when refused', async () => {
+    const session = fakeSession()
+    session.communities = { ...session.communities, open: true, toggle: vi.fn() }
+    vi.mocked(session.map.teleportToPlace).mockReturnValueOnce('refused').mockReturnValueOnce('sent')
+    const { onClose } = renderCard({ id: 'pl-1', title: 'Plaza', positions: '3,4', detail: detailOf() }, 'member', session)
+    await openPlaces()
+    await userEvent.click(screen.getByRole('button', { name: 'Jump in to Plaza' }))
+    expect(session.communities.toggle).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Jump in to Plaza' }))
+    expect(session.communities.toggle).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('jumps to a World by its realm', async () => {
     const { session } = renderCard({ id: 'w-1', title: 'Mansion', positions: 'me.dcl.eth', detail: detailOf({ id: 'w-1', title: 'Mansion', world: true, world_name: 'me.dcl.eth' }) })
     await openPlaces()

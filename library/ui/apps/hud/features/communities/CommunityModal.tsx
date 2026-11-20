@@ -256,8 +256,11 @@ function ActionablePlaceCard({ place, detail, onDelete, deleting, onTravelled }:
   const session = useSession()
   // the row came from a signed read, so it already carries the user's votes and favourite
   const actions = usePlaceActions(detail, { readSigned: false })
+  // as the Places, Map and Gallery pages: a jump that goes ahead closes the Communities page too
   const travel = (to: DiscoverPlace): boolean => {
-    if (travelToPlace(to, session.map) === 'refused') return false
+    const outcome = travelToPlace(to, session.map)
+    if (outcome === 'refused') return false
+    if (outcome === 'sent' && session.communities.open) session.communities.toggle()
     onTravelled()
     return true
   }
