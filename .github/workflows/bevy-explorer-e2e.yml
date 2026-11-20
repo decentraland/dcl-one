@@ -304,6 +304,7 @@ jobs:
       # finds no LUID.
       - name: GPU probe
         continue-on-error: true
+        timeout-minutes: 5
         run: |
           Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS"
           Get-CimInstance Win32_VideoController | ForEach-Object { Write-Output "video controller: $($_.Name) driver=$($_.DriverVersion) status=$($_.Status)" }

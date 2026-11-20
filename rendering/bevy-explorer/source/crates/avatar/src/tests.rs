@@ -333,6 +333,48 @@ fn a_body_that_exhausted_its_fallback_reports_failure_to_the_renderer_host() {
 }
 
 #[test]
+fn a_build_waits_for_the_face_textures_and_masks() {
+    use bevy::asset::{uuid::Uuid, LoadState};
+    let image = |id: u128| {
+        Handle::<Image>::Weak(AssetId::Uuid {
+            uuid: Uuid::from_u128(id),
+        })
+    };
+    let face = |texture: u128, mask: Option<u128>| Wearable {
+        category: WearableCategory::MOUTH,
+        hides: HashSet::default(),
+        model: None,
+        texture: Some(image(texture)),
+        mask: mask.map(image),
+    };
+    let loading = |ids: &'static [u128]| {
+        move |handle: &Handle<Image>| {
+            if ids.iter().any(|id| handle.id() == image(*id).id()) {
+                Some(LoadState::Loading)
+            } else {
+                Some(LoadState::Loaded)
+            }
+        }
+    };
+    let worn = [face(1, Some(2)), face(3, None)];
+    assert!(!face_images_loading(&worn, loading(&[])));
+    // a texture or a mask still on its way holds the build
+    assert!(face_images_loading(&worn, loading(&[3])));
+    assert!(face_images_loading(&worn, loading(&[2])));
+    // a failed image does not: the face is built without it
+    assert!(!face_images_loading(&worn, |_: &Handle<Image>| Some(
+        LoadState::Failed(Arc::new(
+            bevy::asset::AssetLoadError::RequestedHandleTypeMismatch {
+                path: "face.png".into(),
+                requested: std::any::TypeId::of::<Image>(),
+                actual_asset_name: "",
+                loader_name: "",
+            }
+        ))
+    )));
+}
+
+#[test]
 fn a_body_failure_waits_for_its_fallback_before_reporting_a_terminal_error() {
     let mut app = app_with_render_avatar();
     let world = app.world_mut();
@@ -836,4 +878,126 @@ fn an_exhausted_gltf_fallback_reports_terminal_error_to_the_scene_crdt() {
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].asset, other_body().as_str());
     assert!(errors[0].timestamp > 0);
+}
+
+#[test]
+fn a_hidden_players_avatar_takes_no_max_avatars_slot() {
+    let mut app = App::new();
+    app.init_resource::<AppConfig>();
+    app.world_mut().resource_mut::<AppConfig>().max_avatars = 1;
+    app.init_resource::<SessionGraphics>();
+    let world = app.world_mut();
+    world.spawn((PrimaryUser::default(), GlobalTransform::default()));
+    // a built avatar at `distance` from the player, under a player root shown or hidden
+    let mut avatar = |distance: f32, shown: InheritedVisibility| {
+        let root = world.spawn(shown).id();
+        world
+            .spawn((
+                AvatarProcessed,
+                GlobalTransform::from_translation(Vec3::X * distance),
+                Visibility::Inherited,
+                ChildOf(root),
+            ))
+            .id()
+    };
+    // the nearest is hidden for another reason, such as a block
+    let blocked = avatar(1.0, InheritedVisibility::HIDDEN);
+    let near = avatar(2.0, InheritedVisibility::VISIBLE);
+    let far = avatar(3.0, InheritedVisibility::VISIBLE);
+
+    world.run_system_once(set_avatar_visibility).unwrap();
+
+    let visibility = |entity| *world.get::<Visibility>(entity).unwrap();
+    assert_eq!(
+        visibility(near),
+        Visibility::Inherited,
+        "the one slot is its"
+    );
+    assert_eq!(visibility(far), Visibility::Hidden);
+    assert_eq!(
+        visibility(blocked),
+        Visibility::Inherited,
+        "the cap leaves it alone: its player hides it"
+    );
+}
+
+fn render_definition(avatar_outline: bool, disable_dither: bool) -> AvatarRenderDefinition {
+    AvatarRenderDefinition {
+        body: Wearable {
+            category: WearableCategory::BODY_SHAPE,
+            hides: default(),
+            model: Some(WearableModel {
+                gltf: default(),
+                outline_compatible: true,
+                spring_bones: None,
+            }),
+            texture: None,
+            mask: None,
+        },
+        body_shape: String::new(),
+        skin_color: Color::WHITE,
+        hair_color: Color::WHITE,
+        eyes_color: Color::WHITE,
+        wearables: Vec::new(),
+        hides: default(),
+        bounds: SceneBounds::unbounded(),
+        disable_dither,
+        avatar_outline,
+    }
+}
+
+/// the face masks carry the body's tag, so they are outlined and faded by the camera dither
+/// exactly when the body is, plus the face-feature tag that lights them by the ambient alone
+#[test]
+fn mask_tag_matches_the_body() {
+    let dither = SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG;
+    let face = SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG;
+    let outlined = render_definition(true, false);
+    assert_eq!(
+        outlined.mask_tag(),
+        SCENE_MATERIAL_TOON_MESH_TAG | SCENE_MATERIAL_OUTLINE_MESH_TAG | dither | face
+    );
+    assert_eq!(outlined.mask_tag(), outlined.body_tag() | face);
+
+    let plain = render_definition(false, false);
+    assert_eq!(
+        plain.mask_tag(),
+        SCENE_MATERIAL_TOON_MESH_TAG | dither | face
+    );
+    assert_eq!(plain.mask_tag(), plain.body_tag() | face);
+
+    let undithered = render_definition(true, true);
+    assert_eq!(
+        undithered.mask_tag(),
+        SCENE_MATERIAL_TOON_MESH_TAG
+            | SCENE_MATERIAL_OUTLINE_MESH_TAG
+            | SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+            | dither
+            | face
+    );
+    assert_eq!(undithered.mask_tag(), undithered.body_tag() | face);
+
+    // the body itself is not a face feature
+    assert_eq!(outlined.body_tag() & face, 0);
+}
+
+/// a wearable opts out of the hover glow with `outlineCompatible: false`, with the outline
+/// setting on or off, and takes no outline tag either
+#[test]
+fn a_wearable_opts_out_of_the_hover_glow() {
+    let model = |outline_compatible| WearableModel {
+        gltf: default(),
+        outline_compatible,
+        spring_bones: None,
+    };
+    for avatar_outline in [true, false] {
+        let def = render_definition(avatar_outline, false);
+        assert!(hover_glows(def.body.model.as_ref()));
+        assert!(hover_glows(Some(&model(true))));
+        assert!(!hover_glows(Some(&model(false))));
+        assert_eq!(
+            def.model_tag(Some(&model(false))) & SCENE_MATERIAL_OUTLINE_MESH_TAG,
+            0
+        );
+    }
 }

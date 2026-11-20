@@ -34,10 +34,11 @@ use collectibles::{
 };
 #[cfg(feature = "explorer")]
 use console::DoAddConsoleCommand;
+use hover_glow::{can_glow, set_hover_glows};
 use scene_material::{
     SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-    SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
-    SCENE_MATERIAL_TOON_MESH_TAG,
+    SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
+    SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
 };
 
 pub mod animate;
@@ -62,6 +63,7 @@ pub mod foreign_dynamics;
 #[cfg(feature = "explorer")]
 pub mod ghost;
 pub mod head_ik;
+mod hover_glow;
 #[cfg(feature = "explorer")]
 mod ik_debug;
 #[cfg(feature = "explorer")]
@@ -675,8 +677,39 @@ pub struct AvatarRenderDefinition {
     hides: HashSet<WearableCategory>,
     bounds: SceneBounds,
     disable_dither: bool,
-    cel_shading: bool,
     avatar_outline: bool,
+}
+
+impl AvatarRenderDefinition {
+    /// The tag of a mesh of `model`. Avatars are always toon shaded; the outline follows the
+    /// setting in the definition, and toggling it re-renders avatars (see
+    /// retag_avatars_on_style_change). Wearables can opt out of the outline via
+    /// `outlineCompatible: false`.
+    fn model_tag(&self, model: Option<&WearableModel>) -> u32 {
+        let outline = self.avatar_outline && model.is_some_and(|model| model.outline_compatible);
+        (if outline {
+            SCENE_MATERIAL_OUTLINE_MESH_TAG
+        } else {
+            0
+        }) | (if self.disable_dither {
+            SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+        } else {
+            0
+        }) | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
+            | SCENE_MATERIAL_TOON_MESH_TAG
+    }
+
+    /// the body model is guaranteed by spawn_scenes
+    fn body_tag(&self) -> u32 {
+        self.model_tag(self.body.model.as_ref())
+    }
+
+    /// The eyes, eyebrows and mouth are drawn on the body's head, so they outline and fade as
+    /// the body does; they are lit by the ambient light alone (toon.wgsl's
+    /// `facial_feature_lighting`).
+    fn mask_tag(&self) -> u32 {
+        self.body_tag() | SCENE_MATERIAL_FACIAL_FEATURE_MESH_TAG
+    }
 }
 
 #[derive(Component)]
@@ -690,6 +723,12 @@ pub struct RetryRenderAvatar;
 pub struct AvatarLoadFailures {
     bodies: HashSet<WearableUrn>,
     wearables: HashSet<WearableUrn>,
+}
+
+/// Whether a mesh of `model` glows while its avatar is hovered: a wearable opts out with
+/// `outlineCompatible: false`, whatever the outline setting.
+fn hover_glows(model: Option<&WearableModel>) -> bool {
+    model.is_none_or(|model| model.outline_compatible)
 }
 
 impl AvatarLoadFailures {
@@ -750,16 +789,16 @@ fn record_avatar_failures(
         });
 }
 
-// when an avatar style setting (cel shading, outline) is toggled, re-render every
+// when the avatar outline setting is toggled, re-render every
 // avatar so their meshes are respawned with the right mesh tags. the tags are set
 // once at mesh creation in process_avatar, so an in-place flip isn't enough.
 fn retag_avatars_on_style_change(
     config: Res<AppConfig>,
-    mut prev: Local<Option<(bool, bool)>>,
+    mut prev: Local<Option<bool>>,
     avatars: Query<Entity, With<AvatarSelection>>,
     mut commands: Commands,
 ) {
-    let cur = (config.graphics.cel_shading, config.graphics.avatar_outline);
+    let cur = config.graphics.avatar_outline;
     if *prev != Some(cur) {
         if prev.is_some() {
             for entity in &avatars {
@@ -1058,7 +1097,6 @@ fn update_render_avatar(
                     .map(|ctx| ctx.bounds.clone())
                     .unwrap_or_default(),
                 disable_dither: selection.disable_dither,
-                cel_shading: config.graphics.cel_shading,
                 avatar_outline: config.graphics.avatar_outline,
             },
             emote: selection
@@ -1195,6 +1233,18 @@ fn update_render_avatar(
     }
 }
 
+/// Whether a face wearable's texture or mask is still loading. A failed one does not hold the
+/// build: that face is drawn without it.
+fn face_images_loading<'a>(
+    wearables: impl IntoIterator<Item = &'a Wearable>,
+    load_state: impl Fn(&Handle<Image>) -> Option<bevy::asset::LoadState>,
+) -> bool {
+    wearables
+        .into_iter()
+        .flat_map(|wearable| wearable.texture.iter().chain(&wearable.mask))
+        .any(|image| matches!(load_state(image), Some(bevy::asset::LoadState::Loading)))
+}
+
 #[derive(Component)]
 pub struct AvatarLoaded {
     body_instance: InstanceId,
@@ -1249,7 +1299,14 @@ fn spawn_scenes(
                 }
             });
 
-        if any_loading {
+        // the face's textures and masks too: the avatar on show stays until this one can draw its
+        // eyes, eyebrows and mouth, instead of showing a bare face while they load
+        let face_loading = face_images_loading(
+            def.wearables.iter().map(|(_, wearable)| wearable),
+            |image| asset_server.get_load_state(image),
+        );
+
+        if any_loading || face_loading {
             continue;
         }
 
@@ -1468,24 +1525,6 @@ fn process_avatar(
             Vec3::new(1.24, 2.42, 0.7) + root_gt.translation(),
         );
 
-        // style avatar meshes per the settings in the definition; toggling either
-        // re-renders avatars (see retag_avatars_on_style_change)
-        let toon_tag = if def.cel_shading {
-            SCENE_MATERIAL_TOON_MESH_TAG
-        } else {
-            0
-        };
-        // wearables can opt out of the outline via `outlineCompatible: false`
-        let outline_tag = |model: &WearableModel| {
-            if def.avatar_outline && model.outline_compatible {
-                SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG
-            } else {
-                0
-            }
-        };
-        // body model is guaranteed by spawn_scenes
-        let body_outline_tag = def.body.model.as_ref().map(outline_tag).unwrap_or(0);
-
         let bounds_key = bounds_bits(&def.bounds);
         // how far the visible meshes reach above the head bone, along it and in its own units:
         // the nametag clears them. read from each skin's bind pose, so the pose the avatar is
@@ -1579,19 +1618,15 @@ fn process_avatar(
                                 &mut scene_materials,
                             )
                         });
-                    commands.entity(scene_ent).try_insert((
+                    let mut mesh = commands.entity(scene_ent);
+                    mesh.try_insert((
                         MeshMaterial3d(instance_mat.clone()),
-                        MeshTag(
-                            body_outline_tag
-                                | (if def.disable_dither {
-                                    SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-                                } else {
-                                    0
-                                })
-                                | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-                                | toon_tag,
-                        ),
+                        MeshTag(def.body_tag()),
                     ));
+                    set_hover_glows(
+                        &mut mesh,
+                        hover_glows(def.body.model.as_ref()) && can_glow(mat.alpha_mode),
+                    );
                 }
             }
 
@@ -1645,7 +1680,10 @@ fn process_avatar(
                                 });
                             commands
                                 .entity(scene_ent)
-                                .try_insert(MeshMaterial3d(mask_material))
+                                .try_insert((
+                                    MeshMaterial3d(mask_material),
+                                    MeshTag(def.mask_tag()),
+                                ))
                                 .remove::<MeshMaterial3d<SceneMaterial>>();
                         } else {
                             debug!("no mask for {suffix}");
@@ -1675,20 +1713,12 @@ fn process_avatar(
                                         .with_base_opacity(AVATAR_DITHER_BASE_OPACITY)
                                         .with_capsule_dither(),
                                 });
-                            commands.entity(scene_ent).try_insert((
-                                MeshMaterial3d(material),
-                                MeshTag(
-                                    body_outline_tag
-                                        | (if def.disable_dither {
-                                            SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-                                        } else {
-                                            0
-                                        })
-                                        | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-                                        | toon_tag,
-                                ),
-                            ));
+                            commands
+                                .entity(scene_ent)
+                                .try_insert((MeshMaterial3d(material), MeshTag(def.mask_tag())));
                         };
+                        // blended either way
+                        set_hover_glows(&mut commands.entity(scene_ent), false);
                         *vis = Visibility::Inherited;
                     }
                 }
@@ -1952,19 +1982,15 @@ fn process_avatar(
                                     &mut scene_materials,
                                 )
                             });
-                        commands.entity(scene_ent).try_insert((
+                        let mut mesh = commands.entity(scene_ent);
+                        mesh.try_insert((
                             MeshMaterial3d(instance_mat.clone()),
-                            MeshTag(
-                                outline_tag(model)
-                                    | (if def.disable_dither {
-                                        SCENE_MATERIAL_NO_DITHERING_MESH_TAG
-                                    } else {
-                                        0
-                                    })
-                                    | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
-                                    | toon_tag,
-                            ),
+                            MeshTag(def.model_tag(Some(model))),
                         ));
+                        set_hover_glows(
+                            &mut mesh,
+                            hover_glows(Some(model)) && can_glow(mat.alpha_mode),
+                        );
                     }
                 }
             }
@@ -2328,6 +2354,7 @@ fn set_avatar_visibility(
         With<AvatarProcessed>,
     >,
     beyond_max: Query<(), With<BeyondMaxAvatars>>,
+    shown: Query<&InheritedVisibility>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
     session: Res<SessionGraphics>,
@@ -2337,11 +2364,16 @@ fn set_avatar_visibility(
     };
     let max_avatars = session.max_avatars(&config);
 
+    // an avatar whose player is hidden for another reason (a block or ban, an avatar modifier
+    // area, its scene) draws nothing, so it takes no slot from one that would show. The cap
+    // itself hides the build, below its player, so it never feeds back into this
+    let counts = |player: Entity| shown.get(player).is_ok_and(|shown| shown.get());
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
         .iter()
-        .filter(|(_, _, maybe_layer, _)| {
+        .filter(|(_, _, maybe_layer, player)| {
             maybe_layer.is_none_or(|layer| layer.intersects(&default_layer))
+                && counts(player.parent())
         })
         .map(|(t, ..)| (t.translation() - player_pos).length_squared())
         .collect::<Vec<_>>();
