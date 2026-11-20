@@ -130,6 +130,25 @@ function disposeObject(root: THREE.Object3D): void {
   });
 }
 
+/**
+ * The wave's wait for optional files: `late` settles HELD_FILES_MS from now, or at once when `signal` aborts (the
+ * downloads ended). `release` settles it and drops its timer, for a wave whose parts have all settled.
+ */
+function heldFilesWait(signal: AbortSignal): { late: Promise<void>; release(): void } {
+  let settle: () => void = () => {};
+  const late = new Promise<void>((resolve) => (settle = resolve));
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const release = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    signal.removeEventListener("abort", release);
+    settle();
+  };
+  timer = setTimeout(release, HELD_FILES_MS);
+  signal.addEventListener("abort", release, { once: true });
+  return { late, release };
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const expiry = new Promise<T>((_resolve, reject) => {
@@ -864,16 +883,17 @@ export function createAvatarScene(
 
     // The downloads end with the preview or with the parts' own timeout. An outfit change does not end them: the parts
     // they feed stay in the part cache, where the next outfit picks them up.
-    const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), {
-      signal: AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]),
-      late: new Promise<void>((settle) => setTimeout(settle, HELD_FILES_MS)),
-    });
+    const signal = AbortSignal.any([downloads.signal, AbortSignal.timeout(GLB_TIMEOUT_MS)]);
+    const wait = heldFilesWait(signal);
+    const files: HeldFiles = Object.assign(new Map<string, Promise<Blob | null>>(), { signal, late: wait.late });
     for (const p of wantParts) if (!partCache.has(p.key)) holdFiles(files, p.entity, bodyShape);
     for (const f of wantFeatures) if (!featureCache.has(f.key)) holdFiles(files, f.entity, bodyShape);
     const [objs, feats] = await Promise.all([
       Promise.all(wantParts.map((p) => cachedPart(p.key, p.entity, bodyShape, files))),
       Promise.all(wantFeatures.map((f) => cachedFeature(f.key, f.entity, bodyShape, files))),
     ]);
+    // Every part of the wave has settled: nothing waits on its timer any more.
+    wait.release();
     if (stale(gen)) return null;
 
     const at = mixers.values().next().value?.time ?? 0;
