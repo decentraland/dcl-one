@@ -57,7 +57,11 @@ describe("/help loader session", () => {
 });
 
 describe("/help meta", () => {
-  it("names the page after the help center", () => {
-    expect(meta()[0]).toEqual({ title: "Decentraland - Help Center" });
+  it("should carry the title, the description and the canonical path", () => {
+    expect(meta({ matches: [{ loaderData: { publicPageBase: "https://public.test" } }] } as never)).toEqual([
+      { title: "Help & Support | Decentraland" },
+      { name: "description", content: "Find answers, troubleshoot issues, and get the most out of Decentraland." },
+      { tagName: "link", rel: "canonical", href: "https://public.test/help" },
+    ]);
   });
 });
