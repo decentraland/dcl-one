@@ -1288,6 +1288,17 @@ pub mod test_support {
                 .or_default()
                 .push(label.to_string());
         }
+        /// Makes `owner` the label's only holder.
+        pub fn transfer(&self, owner: &Address, label: &str) {
+            let mut registry = self.0.lock().unwrap();
+            for labels in registry.values_mut() {
+                labels.retain(|l| !l.eq_ignore_ascii_case(label));
+            }
+            registry
+                .entry(owner.as_str().to_string())
+                .or_default()
+                .push(label.to_string());
+        }
         pub fn forget(&self, owner: &Address) {
             self.0.lock().unwrap().remove(owner.as_str());
         }
