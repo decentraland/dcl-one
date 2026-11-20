@@ -2076,8 +2076,12 @@ contract-wallet RPC nor queues on the lock. Contract-wallet calls
 chain stores no row for the caps to count: 20 calls per network per minute,
 200 shared by requests with no network, 200 shared by networks past 4,096
 tracked ones, and 1,000 per replica; the calls behind a request, outcome or
-identity that is stored are given back. A network past its budget gets a 429
-before the RPC. During an RPC outage the refused calls are not given back, so
+identity that is stored are given back. An IPv6 caller is keyed by its /48. A
+network past its budget gets a 429 before the RPC. Forged calls are never
+given back, so about 50 networks together can spend the replica's 1,000 in a
+window: every contract-wallet sign-in on that replica then gets a 429 ("on this
+node") until the window ends, while EOA chains are unaffected; the replica logs
+a warning once per window when that happens. During an RPC outage the refused calls are not given back, so
 after 20 failed calls (about 10 sign-ins) a network sees that 429, not the
 503, for up to a minute. Then a create takes `pg_advisory_xact_lock` on one key per table
 (`hashtextextended('explore_api.auth_requests:admission', 0)` and the

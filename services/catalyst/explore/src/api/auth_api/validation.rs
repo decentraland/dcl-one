@@ -9,6 +9,7 @@ use crate::auth::{
 };
 
 use super::CreateRequestBody;
+use super::contract_checks::{BUDGET_SPENT, Spent};
 
 const DISALLOWED_METHODS: [&str; 1] = ["dcl_personal_sign"];
 const MAX_METHOD_LENGTH: usize = 256;
@@ -123,13 +124,13 @@ pub(super) struct VerifiedChain {
 }
 
 /// Why a chain was refused: invalid (400), a contract-wallet link no
-/// validator could decide (503), or one not asked because the network spent
-/// its budget of refused contract-wallet checks (429).
+/// validator could decide (503), or one not asked because the network's or
+/// the replica's budget of contract-wallet calls was spent (429).
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum ChainRefusal {
     Invalid(String),
     Unavailable,
-    Throttled,
+    Throttled(Spent),
 }
 
 /// Whether `chain` has a contract-wallet link, whose check is an RPC call.
@@ -174,6 +175,10 @@ async fn verify_chain(
                     "auth-api: contract-wallet chain refused, no EIP-1654 validator configured"
                 );
             }
+            Err(ChainRefusal::Unavailable)
+        }
+        // A spent budget, not the RPC: the handler answers it as a 429.
+        Err(AuthError::Eip1654ValidationFailed(detail)) if detail == BUDGET_SPENT => {
             Err(ChainRefusal::Unavailable)
         }
         Err(AuthError::Eip1654ValidationFailed(detail)) => {

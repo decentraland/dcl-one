@@ -4,11 +4,13 @@
 //! caller's network, a network that spent its budget is refused before the
 //! RPC until the window ends, and the calls behind a request that is stored
 //! are given back, so honest contract wallets never run it down. A replica
-//! also caps the calls it makes in all. The budget is per process: each
-//! replica keeps its own.
+//! also caps the calls it makes in all; forged calls are never given back, so
+//! enough networks together can spend it and refuse every contract wallet on
+//! the replica until the window ends (logged once per window). An IPv6 caller
+//! is keyed by its /48, so one allocation is one network. The budget is per
+//! process: each replica keeps its own.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -27,6 +29,28 @@ const OVERFLOW: u32 = 200;
 const GLOBAL: u32 = 1000;
 const WINDOW: Duration = Duration::from_secs(60);
 const MAX_SOURCES: usize = 4096;
+/// The prefix an IPv6 source key is widened to.
+const IPV6_NETWORK_BITS: u8 = 48;
+/// The error a [`Budgeted`] call refused for a spent budget carries.
+pub(super) const BUDGET_SPENT: &str = "contract check budget spent";
+
+/// Whose budget refused a call: the caller's network, or the replica's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Spent {
+    Network,
+    Replica,
+}
+
+/// `source` as a budget key: an IPv6 key (a /64) widened to its /48.
+fn network_key(source: &str) -> String {
+    match source.parse::<ipnet::Ipv6Net>() {
+        Ok(net) if net.prefix_len() > IPV6_NETWORK_BITS => {
+            ipnet::Ipv6Net::new(net.network(), IPV6_NETWORK_BITS)
+                .map_or_else(|_| source.to_string(), |n| n.trunc().to_string())
+        }
+        _ => source.to_string(),
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Key {
@@ -71,6 +95,8 @@ impl Window {
 struct Windows {
     by_key: HashMap<Key, Window>,
     global: Window,
+    /// Whether the replica cap was logged in this global window.
+    global_tripped: bool,
 }
 
 pub struct ContractChecks {
@@ -83,6 +109,7 @@ impl Default for ContractChecks {
             windows: Mutex::new(Windows {
                 by_key: HashMap::new(),
                 global: Window::new(Instant::now()),
+                global_tripped: false,
             }),
         }
     }
@@ -97,14 +124,24 @@ pub(super) struct Charge {
 }
 
 impl ContractChecks {
-    /// Charges one call to `source`; `None` when its budget or the replica's is spent.
-    pub(super) fn charge(&self, source: Option<&str>, now: Instant) -> Option<Charge> {
+    /// Charges one call to `source`; refused when its budget or the replica's is spent.
+    pub(super) fn charge(&self, source: Option<&str>, now: Instant) -> Result<Charge, Spent> {
         let mut windows = self.windows.lock();
+        let before = windows.global.started;
         let global = *windows.global.current(now);
-        if global.count >= GLOBAL {
-            return None;
+        if global.started != before {
+            windows.global_tripped = false;
         }
-        let mut key = source.map_or(Key::NoSource, |s| Key::Source(s.to_string()));
+        if global.count >= GLOBAL {
+            if !windows.global_tripped {
+                windows.global_tripped = true;
+                tracing::warn!(
+                    "auth-api: the replica's contract-wallet check budget is spent; contract wallets get 429 until the window ends"
+                );
+            }
+            return Err(Spent::Replica);
+        }
+        let mut key = source.map_or(Key::NoSource, |s| Key::Source(network_key(s)));
         if !windows.by_key.contains_key(&key) && windows.by_key.len() >= MAX_SOURCES {
             windows
                 .by_key
@@ -120,12 +157,12 @@ impl ContractChecks {
             .or_insert(Window::new(now))
             .current(now);
         if w.count >= max {
-            return None;
+            return Err(Spent::Network);
         }
         w.count += 1;
         let started = w.started;
         windows.global.count += 1;
-        Some(Charge {
+        Ok(Charge {
             key,
             started,
             global_started: global.started,
@@ -152,7 +189,7 @@ pub(super) struct Budgeted<'a> {
     checks: &'a ContractChecks,
     source: Option<&'a str>,
     charges: Mutex<Vec<Charge>>,
-    spent: AtomicBool,
+    spent: Mutex<Option<Spent>>,
 }
 
 impl<'a> Budgeted<'a> {
@@ -166,13 +203,13 @@ impl<'a> Budgeted<'a> {
             checks,
             source,
             charges: Mutex::new(Vec::new()),
-            spent: AtomicBool::new(false),
+            spent: Mutex::new(None),
         }
     }
 
-    /// Whether a call was refused because the budget was spent.
-    pub(super) fn spent(&self) -> bool {
-        self.spent.load(Ordering::Relaxed)
+    /// Whose spent budget refused a call, if one was.
+    pub(super) fn spent(&self) -> Option<Spent> {
+        *self.spent.lock()
     }
 
     /// Gives back every call charged, once the request they verified is stored.
@@ -191,11 +228,12 @@ impl Eip1654Validator for Budgeted<'_> {
         hash: &[u8],
         signature: &[u8],
     ) -> Result<bool, AuthError> {
-        let Some(charge) = self.checks.charge(self.source, Instant::now()) else {
-            self.spent.store(true, Ordering::Relaxed);
-            return Err(AuthError::Eip1654ValidationFailed(
-                "contract check budget spent".into(),
-            ));
+        let charge = match self.checks.charge(self.source, Instant::now()) {
+            Ok(charge) => charge,
+            Err(spent) => {
+                *self.spent.lock() = Some(spent);
+                return Err(AuthError::Eip1654ValidationFailed(BUDGET_SPENT.into()));
+            }
         };
         self.charges.lock().push(charge);
         self.inner
@@ -210,7 +248,7 @@ mod tests {
 
     fn spend(checks: &ContractChecks, source: Option<&str>, n: u32, now: Instant) {
         for _ in 0..n {
-            assert!(checks.charge(source, now).is_some());
+            assert!(checks.charge(source, now).is_ok());
         }
     }
 
@@ -219,12 +257,25 @@ mod tests {
         let checks = ContractChecks::default();
         let now = Instant::now();
         spend(&checks, Some("a"), PER_SOURCE, now);
-        assert!(checks.charge(Some("a"), now).is_none());
+        assert!(checks.charge(Some("a"), now).is_err());
         assert!(
-            checks.charge(Some("b"), now).is_some(),
+            checks.charge(Some("b"), now).is_ok(),
             "another network has its own"
         );
-        assert!(checks.charge(Some("a"), now + WINDOW).is_some());
+        assert!(checks.charge(Some("a"), now + WINDOW).is_ok());
+    }
+
+    #[test]
+    fn an_ipv6_allocation_is_one_network() {
+        let checks = ContractChecks::default();
+        let now = Instant::now();
+        spend(&checks, Some("2001:db8:1:2::/64"), PER_SOURCE, now);
+        assert!(matches!(
+            checks.charge(Some("2001:db8:1:3::/64"), now),
+            Err(Spent::Network)
+        ));
+        assert!(checks.charge(Some("2001:db8:2::/64"), now).is_ok());
+        assert_eq!(network_key("203.0.113.5"), "203.0.113.5");
     }
 
     #[test]
@@ -235,7 +286,7 @@ mod tests {
             let charge = checks.charge(Some("a"), now).unwrap();
             checks.refund(charge);
         }
-        assert!(checks.charge(Some("a"), now).is_some());
+        assert!(checks.charge(Some("a"), now).is_ok());
     }
 
     #[test]
@@ -246,7 +297,7 @@ mod tests {
         let later = now + WINDOW;
         spend(&checks, Some("a"), PER_SOURCE, later);
         checks.refund(stale);
-        assert!(checks.charge(Some("a"), later).is_none());
+        assert!(checks.charge(Some("a"), later).is_err());
     }
 
     #[test]
@@ -254,8 +305,8 @@ mod tests {
         let checks = ContractChecks::default();
         let now = Instant::now();
         spend(&checks, None, NO_SOURCE, now);
-        assert!(checks.charge(None, now).is_none());
-        assert!(checks.charge(Some("a"), now).is_some());
+        assert!(checks.charge(None, now).is_err());
+        assert!(checks.charge(Some("a"), now).is_ok());
     }
 
     #[test]
@@ -269,14 +320,14 @@ mod tests {
             checks.refund(charge);
         }
         spend(&checks, Some("new"), OVERFLOW, now);
-        assert!(checks.charge(Some("newer"), now).is_none());
+        assert!(checks.charge(Some("newer"), now).is_err());
         assert!(
-            checks.charge(None, now).is_some(),
+            checks.charge(None, now).is_ok(),
             "requests without a network keep theirs"
         );
         assert!(checks.windows.lock().by_key.len() <= MAX_SOURCES + 2);
         assert!(
-            checks.charge(Some("new"), now + WINDOW).is_some(),
+            checks.charge(Some("new"), now + WINDOW).is_ok(),
             "ended windows are dropped first"
         );
         assert!(checks.windows.lock().by_key.len() <= 2);
@@ -298,12 +349,12 @@ mod tests {
         let dropped = ask(Budgeted::new(&crate::auth::PeerValidated, &checks, source)).await;
         drop(dropped);
         let spent = ask(Budgeted::new(&crate::auth::PeerValidated, &checks, source)).await;
-        assert!(!spent.spent());
+        assert_eq!(spent.spent(), None);
         assert!(
             spent.validate_signature("0x", b"h", b"s").await.is_err(),
             "the stored request's calls came back, the refused one's did not"
         );
-        assert!(spent.spent());
+        assert_eq!(spent.spent(), Some(Spent::Network));
     }
 
     #[test]
@@ -313,7 +364,10 @@ mod tests {
         for i in 0..GLOBAL / PER_SOURCE {
             spend(&checks, Some(&i.to_string()), PER_SOURCE, now);
         }
-        assert!(checks.charge(Some("fresh"), now).is_none());
-        assert!(checks.charge(Some("fresh"), now + WINDOW).is_some());
+        assert!(matches!(
+            checks.charge(Some("fresh"), now),
+            Err(Spent::Replica)
+        ));
+        assert!(checks.charge(Some("fresh"), now + WINDOW).is_ok());
     }
 }

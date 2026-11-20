@@ -126,10 +126,12 @@ pub(super) async fn create_identity(
     let request_signer =
         match verify_identity_post(&headers, uri.path(), as_validator(&budget)).await {
             Ok(signer) => signer,
-            Err(_) if budget.as_ref().is_some_and(Budgeted::spent) => {
-                return chain_refused(ChainRefusal::Throttled);
+            Err(refusal) => {
+                return match budget.as_ref().and_then(Budgeted::spent) {
+                    Some(spent) => chain_refused(ChainRefusal::Throttled(spent)),
+                    None => *refusal,
+                };
             }
-            Err(refusal) => return *refusal,
         };
     if body.identity.is_null() {
         return bad_request("AuthIdentity is required in request body");

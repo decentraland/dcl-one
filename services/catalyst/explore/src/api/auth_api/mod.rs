@@ -31,8 +31,8 @@ mod contract_checks;
 mod identities;
 mod validation;
 
-use contract_checks::Budgeted;
 pub use contract_checks::ContractChecks;
+use contract_checks::{Budgeted, Spent};
 
 use identities::{create_identity, get_identity};
 pub use identities::{sweep_expired_identities, sweep_identity_tombstones};
@@ -1156,24 +1156,29 @@ fn as_validator<'a>(
         .map(|b| b as &dyn crate::auth::eip1654::Eip1654Validator)
 }
 
-/// `refusal`, or a 429 when a call was refused because the budget was spent.
+/// `refusal`, or a 429 when a call was refused because a budget was spent.
 fn under(budget: &Option<Budgeted<'_>>, refusal: ChainRefusal) -> ChainRefusal {
-    if budget.as_ref().is_some_and(Budgeted::spent) {
-        ChainRefusal::Throttled
-    } else {
-        refusal
+    match budget.as_ref().and_then(Budgeted::spent) {
+        Some(spent) => ChainRefusal::Throttled(spent),
+        None => refusal,
     }
 }
 
 fn chain_refused(refusal: ChainRefusal) -> Response {
     match refusal {
         ChainRefusal::Invalid(msg) => bad_request(&msg),
-        ChainRefusal::Throttled => (
+        ChainRefusal::Throttled(spent) => (
             StatusCode::TOO_MANY_REQUESTS,
             Json(ErrorBody {
-                error:
-                    "Too many contract wallet signature checks from this network, try again later"
-                        .into(),
+                error: match spent {
+                    Spent::Network => {
+                        "Too many contract wallet signature checks from this network, try again later"
+                    }
+                    Spent::Replica => {
+                        "Too many contract wallet signature checks on this node, try again later"
+                    }
+                }
+                .into(),
             }),
         )
             .into_response(),
@@ -1797,6 +1802,28 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         db.teardown().await;
+    }
+
+    #[tokio::test]
+    async fn a_spent_budget_says_whose_it_was() {
+        for (spent, says) in [
+            (
+                Spent::Network,
+                "Too many contract wallet signature checks from this network, try again later",
+            ),
+            (
+                Spent::Replica,
+                "Too many contract wallet signature checks on this node, try again later",
+            ),
+        ] {
+            let res = chain_refused(ChainRefusal::Throttled(spent));
+            assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+            let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap()["error"],
+                says
+            );
+        }
     }
 
     #[tokio::test]
