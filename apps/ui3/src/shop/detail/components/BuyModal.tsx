@@ -242,12 +242,14 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
   // Sold or withdrawn since the page showed it: nothing left to price, which the failure panel says.
   const gone = !!cartLine && co.review.kind !== "checking" && co.reviewChanges.some((c) => c.lineId === cartLine.id && c.kind === "unavailable");
   // Loading is the first check only: a re-price after the buyer picks how to pay keeps the screen, with Buy held until
-  // the new price is in (the checkout's own blocker).
+  // the new price is in (the checkout's own blocker). The offer the page showed moments ago shows the screen at once;
+  // a check that finds it changed turns to the price-change notice, and Buy waits for the check either way.
   const [priced, setPriced] = useState(false);
   const checked = !!view && co.review.kind !== "checking";
+  const shown = checked || (!!view && co.review.kind === "checking" && co.review.seenRecently);
   useEffect(() => {
-    if (checked) setPriced(true);
-  }, [checked]);
+    if (shown) setPriced(true);
+  }, [shown]);
 
   // The split's approval counts as its purchase running, as the checkout's own does: nothing closes the dialog under it.
   const phase: Phase =
@@ -269,7 +271,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
                     ? "error"
                     : outage || gone
                       ? "error"
-                      : !view || (!priced && !checked) || (co.balance === undefined && !co.balanceError)
+                      : !view || (!priced && !shown) || (co.balance === undefined && !co.balanceError)
                         ? "loading"
                         : (creditsShort !== null || co.topUp || result?.status === "failed") && !manaRail
                           ? "nofunds"

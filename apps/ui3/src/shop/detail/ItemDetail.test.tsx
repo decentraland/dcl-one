@@ -19,6 +19,9 @@ import { fakeChain, fakeWallet } from "../market/testing";
 import { marketplaceOn } from "../market/testing-flags";
 import type { EvmAddress } from "@shop/model/address";
 import { CHAIN } from "@shop/model/chain";
+import { requireContracts } from "../checkout/chain/contracts";
+import { setShopChainReader } from "../checkout/chain/rpc";
+import { createFakeChain } from "../checkout/fakes";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
@@ -183,6 +186,20 @@ describe("the item route (a collection item, sold by its creator)", () => {
     await waitFor(() => expect(dialog.querySelector("[data-phase]")?.getAttribute("data-phase")).not.toBe("loading"));
     return dialog;
   }
+
+  it("Buy now's dialog shows the MANA balance the page read, without reading it again", async () => {
+    const chain = createFakeChain();
+    chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n);
+    setShopChainReader(chain);
+    onTestFinished(() => setShopChainReader(null));
+    const mana = requireContracts(CHAIN.POLYGON).mana.address.toLowerCase();
+    const balanceReads = () => chain.calls.filter((c) => c.to.toLowerCase() === mana && c.data.startsWith("0x70a08231")).length;
+    itemPage({ session: "web3", offers: { kind: "storeMint" } });
+    await waitFor(() => expect(balanceReads()).toBe(1));
+    const dialog = await openBuyNow();
+    expect(within(dialog).getByTestId("payment-method-step")).toHaveTextContent("Mana Balance:1,000");
+    expect(balanceReads()).toBe(1);
+  });
 
   it("web2: credits only, in Buy now's dialog too: no MANA to choose", async () => {
     itemPage({ session: "web2", offers: { kind: "storeMint" } });

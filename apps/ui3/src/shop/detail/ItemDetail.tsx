@@ -71,8 +71,8 @@ import { preloadable } from "./lib/preloadable";
 import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
-import { useShopServices } from "../checkout/services";
-import { readManaBalanceWei } from "../checkout/lib/mana";
+import { EnsureQueryClient, useShopServices } from "../checkout/services";
+import { useManaBalance } from "../credits/hooks";
 import { useBuysInPlace, usePurchaseLauncher } from "./purchase";
 import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "@shop/market/access-rule";
@@ -262,7 +262,11 @@ function ClampedDescription({ text }: { text: string }) {
 
 export function ItemDetailRoute() {
   const { pathname } = useLocation();
-  return <ItemDetail key={pathname} />;
+  return (
+    <EnsureQueryClient>
+      <ItemDetail key={pathname} />
+    </EnsureQueryClient>
+  );
 }
 
 export default function ItemDetail() {
@@ -417,11 +421,8 @@ export default function ItemDetail() {
   const creditsQ = useShopQuery(account && session.kind !== "signedOut" ? ["credits-balance", account] : null, (signal) => shopClient().credits.balance(account!, { signal }), { staleMs: 30_000 });
   const creditsBalance = creditsQ.data ? balanceCents(creditsQ.data) : null;
   const manaChain = (offer ? offerSettlementKey(offer, "mana")?.chainId : null) ?? current.chainId;
-  const manaQ = useShopQuery(
-    session.kind === "web3" && account ? ["mana-balance", account, manaChain] : null,
-    () => readManaBalanceWei(account!, manaChain, services.reader),
-    { staleMs: 30_000 },
-  );
+  // The checkout's own read (one key, one cache): Buy now's dialog and the cart then show it without asking again.
+  const manaQ = useManaBalance(session.kind === "web3" ? account : null, manaChain);
   const manaBalance = manaQ.data != null ? (manaQ.data as ManaWei) : null;
 
   const urnForTraits = meta?.urn ?? current.urn ?? itemUrn(current);
