@@ -635,6 +635,14 @@ fn emit_user_chat(
                 message: message.clone(),
             });
 
+            // This panel's own send sound. A line sent from the HUD page is sounded by the
+            // page, which knows the notification ping setting.
+            if output.active_tab == "Nearby" && !message.starts_with('/') {
+                commands.send_event(SystemAudio(
+                    "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
+                ));
+            }
+
             if message.starts_with('/') {
                 match enter_command(message, &console_config, &mut command_entered) {
                     Ok(()) => {}
@@ -666,7 +674,6 @@ fn emit_user_chat(
 }
 
 pub fn broadcast_nearby_chats(
-    mut commands: Commands,
     mut chat_events: EventReader<ChatEvent>,
     transports: Query<&Transport>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -681,10 +688,6 @@ pub fn broadcast_nearby_chats(
         .filter(|ev| ev.sender == player)
         .filter(|ev| !ev.message.starts_with("/"))
     {
-        commands.send_event(SystemAudio(
-            "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
-        ));
-
         // we display receive time
         let timestamp = ev.timestamp;
 

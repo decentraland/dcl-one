@@ -15,6 +15,7 @@ import {
 import "@dcl/one-ui/foundations/colors/colors.css";
 import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
+import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 
@@ -25,7 +26,6 @@ import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
 import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
 import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
-import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
@@ -74,7 +74,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     commitHash,
     pulseServer,
     catalystBase,
-    thumbnailBase: catalystBase || requestUrl.origin,
+    publicPageBase: catalystBase || requestUrl.origin,
     shopApiMode,
     wallet,
     locale: context.get(publicResponseContext)
@@ -127,7 +127,7 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; thumbnailBase?: string; shopApiMode?: string; locale?: SitesLocale }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; commitHash?: string; pulseServer?: string; catalystBase?: string; publicPageBase?: string; shopApiMode?: string; locale?: SitesLocale }
     | undefined;
   const [selectedLocale, setLocale] = useState<SitesLocale>();
   const homeData = useRouteLoaderData("routes/_index") as { locale?: SitesLocale } | undefined;
@@ -177,7 +177,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body>
         <SitesLocaleContext.Provider value={{ locale, onSelect: setLocale }}>
-          <ThumbnailPublicBase.Provider value={data?.thumbnailBase ?? ""}>
+          <ThumbnailPublicBase.Provider value={data?.publicPageBase ?? ""}>
             {children}
           </ThumbnailPublicBase.Provider>
         </SitesLocaleContext.Provider>
@@ -323,7 +323,6 @@ export default function App() {
           <Outlet />
           <EmbedBridge />
           <SignInModalHost />
-          <SyncEngineBridge />
         </ChromeNavBridge>
       </ChromeAuthBridge>
     </QueryClientProvider>

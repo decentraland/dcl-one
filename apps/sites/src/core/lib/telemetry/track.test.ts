@@ -48,8 +48,8 @@ describe("track (fetch mocked)", () => {
   });
 
   it("preserves an event variant when the context does not override it", () => {
-    expect(buildSegmentBody("cl_open_screen_shown", { variant: "base" }, { sid: "test" }).properties.variant).toBe("base");
-    expect(buildSegmentBody("cl_open_screen_shown", { variant: "base" }, { sid: "test", variant: "genesis" }).properties.variant).toBe("genesis");
+    expect(buildSegmentBody("cast_ending", { variant: "base" }, { sid: "test" }).properties.variant).toBe("base");
+    expect(buildSegmentBody("cast_ending", { variant: "base" }, { sid: "test", variant: "genesis" }).properties.variant).toBe("genesis");
   });
 
   it("wraps the body in Segment's HTTP API envelope: the public write key, a message id, timestamps and the library context", () => {
@@ -175,7 +175,7 @@ describe("track (fetch mocked)", () => {
     expect(withoutSensitiveParams("/a?token=x&")).toBe("/a");
     expect(withoutSensitiveParams("/a?token=x&&y=1")).toBe("/a?y=1");
     expect(withoutSensitiveParams("/a?q=token#token=1")).toBe("/a?q=token");
-    expect(withoutSensitiveParams("/create/scene-editor?project=p#token=abc&x=1")).toBe("/create/scene-editor?project=p#x=1");
+    expect(withoutSensitiveParams("/create/preview?project=p#token=abc&x=1")).toBe("/create/preview?project=p#x=1");
     expect(withoutSensitiveParams("/a#top")).toBe("/a#top");
     expect(withoutSensitiveParams("/a?#token")).toBe("/a?#token");
     expect(withoutSensitiveParams("")).toBe("");

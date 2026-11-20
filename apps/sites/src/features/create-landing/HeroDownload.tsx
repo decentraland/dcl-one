@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 
-import Tooltip from "@ui/atoms/Tooltip";
-
 import type { HeroDownloads } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
 import { useCreatorHubDownloadClick } from "../download/creator-hub-click";
-import OtherBuilds, { downloadFor, OsIcon } from "../download/OtherBuilds";
+import CreatorHubDownload from "../download/CreatorHubDownload";
 
 import { copy } from "./content";
 import styles from "./CreateLanding.module.css";
@@ -38,26 +36,12 @@ export default function HeroDownload({ downloads, sid }: Props) {
     );
   }
 
-  const { primary, others } = offered;
   return (
-    <>
-      <Tooltip label={downloadFor(primary)} side="top" className={styles.desktopOnly}>
-        <a
-          className={`${styles.cta} ${styles.ctaDesktop}`}
-          href={primary.url}
-          data-os={primary.osKey}
-          data-arch={primary.arch}
-          onClick={(event) => onDownload(primary, "primary", event)}
-        >
-          <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
-          <OsIcon os={primary.osKey} className={styles.osIcon} />
-        </a>
-      </Tooltip>
-      <OtherBuilds
-        options={others}
-        className={styles.desktopOnly}
-        onDownload={(option, event) => onDownload(option, "secondary", event)}
-      />
-    </>
+    <CreatorHubDownload
+      primary={offered.primary}
+      others={offered.others}
+      onDownload={onDownload}
+      className={styles.desktopOnly}
+    />
   );
 }

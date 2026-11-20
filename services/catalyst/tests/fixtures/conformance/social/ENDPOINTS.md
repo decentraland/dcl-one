@@ -240,7 +240,7 @@ the moderator role.
 | POST | `/get-server-scene-adapter` | signed, authoritative server | error shape only | `get-server-scene-adapter-unauth` |
 | GET | `/scene-participants` | `pointer`, `realm_name` (default `main` with a pointer) | yes | `scene-participants`, `-default-realm`, `-world`, `-400-no-params` |
 | POST | `/mute` | | no: write | |
-| GET | `/scene-admin` | `admin`; signed as scene | yes (signed) | `scene-admin-unauth` (400 `{"ok":false,"message":"Invalid Auth Chain"}`), `-signed-wrong-signer` (400 "Invalid metadata content"), `-signed-scene` (200: the place's admin list for the Genesis Plaza scene) |
+| GET | `/scene-admin` | `admin`; signed as scene or as the server: the signed scene names the place, a scene that is not deployed answers 400. Here a `place_id` (upstream reads none) must name the signed scene, by its entity id or by its place, else 400 | yes (signed) | `scene-admin-unauth` (400 `{"ok":false,"message":"Invalid Auth Chain"}`), `-signed-wrong-signer` (400 "Invalid metadata content"), `-signed-scene` (200: the place's admin list for the Genesis Plaza scene) |
 | POST/DELETE | `/scene-admin` | | no: write | |
 | GET | `/scene-bans` | `limit` (default 20), `offset`; signed as scene, admin | shape only | `scene-bans-unauth`, `-signed-wrong-signer`, `-signed-scene` (401 "User does not have permission to list scene bans") |
 | GET | `/scene-bans/addresses` | signed as scene, admin | shape only | `scene-bans-addresses-unauth`, `-signed-scene` |

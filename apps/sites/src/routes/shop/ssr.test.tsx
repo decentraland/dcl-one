@@ -91,8 +91,7 @@ describe("server-read answers reach the first paint", () => {
   const fetchImpl = (async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     const bodies: Record<string, unknown> = {
-      "/shop-api/v1/items": { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", creator: "0x1", rarity: "rare", category: "wearable", chainId: 137, network: "MATIC" }], total: 1 },
-      "/shop-api/v2/catalog": { data: [{ data: { wearable: { description: "A hat for pirates." } } }] },
+      "/shop-api/v1/items": { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", creator: "0x1", rarity: "rare", category: "wearable", chainId: 137, network: "MATIC", data: { wearable: { description: "A hat for pirates." } } }], total: 1 },
       "/shop-api/v1/collections": { data: [{ contractAddress: C, name: "Sea Things", creator: "0x1" }] },
       "/shop-api/v3/catalog/unified": { data: [], total: 0 },
     };

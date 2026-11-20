@@ -7,8 +7,8 @@ import { assertNavigationEntries, isPlainLinkClick } from '../../link.helpers'
 type PanelTabsBarProps = {
   label: string
   children: ReactNode
-  /** `underline` is the Figma bar (a bottom rule); `pill` spaces rounded tabs as decentraland.org's events page does. */
-  variant?: 'underline' | 'pill'
+  /** `compact` is the transparent underline bar. `pill` spaces rounded filter tabs. */
+  variant?: 'underline' | 'compact' | 'pill'
   /**
    * The bar's inline padding. Without it the variant's own (the Figma 64px for `underline`, none for
    * `pill`); `content` lines the first tab up with a page's content column: 16px, 32px from 1024px.

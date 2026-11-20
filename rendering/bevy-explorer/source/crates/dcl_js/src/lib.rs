@@ -57,8 +57,8 @@ impl KillFlag {
 pub struct RendererStore(pub CrdtStore);
 
 // Sidecar holding only the components the scene→renderer filter drops (unrecognized / custom).
-// Merged into the inspector snapshot so custom components are visible as raw bytes; never
-// pushed to the renderer.
+// The inspector snapshot includes these components as raw bytes. This store keeps its grow-only
+// entries across scene ticks. The renderer never receives them.
 #[derive(Default)]
 pub struct FilteredCrdtStore(pub CrdtStore);
 

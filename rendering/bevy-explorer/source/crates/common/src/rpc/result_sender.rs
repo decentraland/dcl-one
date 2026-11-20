@@ -161,12 +161,17 @@ struct IpcResultCallback<T: DeserializeOwned + Send + 'static> {
 
 impl<T: DeserializeOwned + Send + 'static> IpcEndpoint for IpcResultCallback<T> {
     fn send(&mut self, raw_bytes: Vec<u8>) {
-        if let Ok(val) = rmp_serde::from_slice::<T>(&raw_bytes) {
-            if let Some(sx) = self.sender.take() {
-                let _ = sx.send(val);
+        match rmp_serde::from_slice::<T>(&raw_bytes) {
+            Ok(val) => {
+                if let Some(sx) = self.sender.take() {
+                    let _ = sx.send(val);
+                }
             }
-        } else {
-            let _ = rmp_serde::from_slice::<T>(&raw_bytes).unwrap();
+            // drop the sender: the channel closes without a value
+            Err(e) => {
+                error!("dropping undecodable ipc result: {e}");
+                self.sender = None;
+            }
         }
     }
 }

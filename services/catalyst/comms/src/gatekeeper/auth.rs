@@ -30,7 +30,7 @@ use crate::auth::signed_fetch::{
 };
 use crate::auth::{AuthChain, AuthError, AuthLinkType};
 use crate::shared::signed_fetch::{
-    self, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, FIVE_MINUTES,
+    self, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, SIGNED_FETCH_WINDOW_SECS,
     SignedFetchError as ChainError, SignedPath, candidate_paths, check_timestamp_window,
     header_str,
 };
@@ -39,7 +39,7 @@ use crate::{Address, AuthorityNotEstablished};
 use super::errors::ApiError;
 
 /// The comms-gatekeeper freshness window of every signed-fetch route.
-pub const DEFAULT_EXPIRATION_SECS: i64 = 60;
+pub const DEFAULT_EXPIRATION_SECS: i64 = SIGNED_FETCH_WINDOW_SECS;
 
 pub const SCENE_SIGNER: &str = "decentraland-kernel-scene";
 pub const SERVER_SIGNER: &str = "dcl:authoritative-server";
@@ -326,7 +326,7 @@ pub async fn verify_viewer_signed_fetch(
     .await
 }
 
-/// Authoritative server context, verified with its existing five-minute window.
+/// Authoritative server context, verified with the shared 60-second window.
 pub async fn verify_server_signed_fetch(
     headers: &HeaderMap,
     method: &str,
@@ -340,7 +340,7 @@ pub async fn verify_server_signed_fetch(
         &[],
         &[],
         CANONICAL_METADATA_KEYS,
-        FIVE_MINUTES,
+        SIGNED_FETCH_WINDOW_SECS,
         validator,
     )
     .await
@@ -453,7 +453,7 @@ pub async fn authorize_moderator(
         &[],
         &[SCENE_SIGNER],
         MODERATOR_METADATA_KEYS,
-        FIVE_MINUTES,
+        SIGNED_FETCH_WINDOW_SECS,
         validator,
     )
     .await
@@ -653,11 +653,14 @@ mod tests {
             (401, "Expired signature".to_string()),
             "the gatekeeper window is 60 s"
         );
-        assert!(
-            verify_server_signed_fetch(&headers, "post", &SignedPath::local(PATH), None)
-                .await
-                .is_ok(),
-            "the authoritative server route keeps the five minute window"
+        let err = verify_server_signed_fetch(&headers, "post", &SignedPath::local(PATH), None)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(
+            failure(err),
+            (401, "Expired signature".to_string()),
+            "the authoritative server route shares the 60 s window"
         );
     }
 

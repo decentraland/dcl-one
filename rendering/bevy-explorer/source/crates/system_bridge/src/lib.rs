@@ -157,6 +157,10 @@ pub enum SystemApi {
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
+    /// A satellite map tile as base64-encoded JPEG bytes. The path is relative to the abgen
+    /// CDN's `SatelliteMaps/` (`sections/<sx>%2C<sy>/<version>/<level>/<x>%2C<y>.ktx2`);
+    /// `image_processing` validates it, fetches the tile and converts it.
+    GetSatelliteTile(String, RpcResultSender<Result<String, String>>),
     GetSystemActionStream(RpcStreamSender<SystemActionEvent>),
     GetChatStream(RpcStreamSender<ChatMessage>),
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
@@ -189,6 +193,9 @@ pub enum SystemApi {
     Quit,
     GetPermissionRequestStream(RpcStreamSender<PermissionRequestEvent>),
     SetSinglePermission(SetSinglePermission),
+    /// Scene requests to open the item purchase confirmation, sent as they are accepted.
+    GetItemPurchaseRequestStream(RpcStreamSender<ItemPurchaseRequest>),
+    SetItemPurchaseState(SetItemPurchaseState),
     SetPermanentPermission(SetPermanentPermission),
     GetPermissionUsedStream(RpcStreamSender<PermissionUsed>),
     GetPermanentPermissions(

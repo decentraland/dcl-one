@@ -1,4 +1,5 @@
 use bevy::ecs::system::RunSystemOnce;
+use common::structs::ServerConfiguration;
 
 use super::*;
 
@@ -16,6 +17,7 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
     world.init_resource::<Time>();
+    world.init_resource::<AppConfig>();
     world.insert_resource(SceneLoadDistance {
         load: 20.0,
         unload: 10.0,
@@ -206,6 +208,70 @@ fn live_scene_is_kept_to_ring_two_at_a_zero_load_distance() {
         .resource::<LiveScenes>()
         .scenes
         .contains_key("neighbour"));
+}
+
+fn zero_load_distance(world: &mut World, live_scene_ring: u16) {
+    world.insert_resource(SceneLoadDistance {
+        load: 0.0,
+        unload: 0.0,
+        load_imposter: 0.0,
+    });
+    world.resource_mut::<AppConfig>().live_scene_ring = live_scene_ring;
+}
+
+#[test]
+fn live_ring_zero_runs_only_the_players_own_scene() {
+    let mut world = lifecycle_world();
+    zero_load_distance(&mut world, 0);
+    spawn_current_scene(&mut world, SceneLoading::Failed);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    // the neighbour, in ring 1, stays out
+    assert!(spawned_hashes(&world).is_empty());
+}
+
+#[test]
+fn a_wider_live_ring_goes_live_and_keeps_one_ring_further() {
+    let mut world = lifecycle_world();
+    zero_load_distance(&mut world, 2);
+
+    // parcel (-1,0), on no scene: the neighbour is in ring 2
+    move_player(&mut world, -8.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(spawned_hashes(&world).contains(&"neighbour".to_owned()));
+
+    let mut world = lifecycle_world();
+    zero_load_distance(&mut world, 2);
+    let neighbour = spawn_live_neighbour(&mut world);
+
+    // parcel (-2,0): ring 3, the keep ring
+    move_player(&mut world, -24.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_ok());
+
+    // parcel (-3,0): ring 4
+    move_player(&mut world, -40.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
+}
+
+#[test]
+fn an_out_of_range_live_ring_is_clamped() {
+    let mut world = lifecycle_world();
+    // past the setting's 0 to 3 range, as a hand-edited config could hold
+    zero_load_distance(&mut world, u16::MAX);
+    let neighbour = spawn_live_neighbour(&mut world);
+
+    // parcel (-3,0): ring 4, the keep ring of ring 3
+    move_player(&mut world, -40.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_ok());
+
+    // parcel (-4,0): ring 5
+    move_player(&mut world, -56.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
 }
 
 /// Nine scenes in a row east of the player, who stands on a parcel with no scene of its own, all
@@ -455,4 +521,85 @@ fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
         .resource::<LiveScenes>()
         .scenes
         .contains_key("current"));
+}
+
+/// an L of three parcels and one parcel apart from it: two connected regions
+const SPLIT_SCENE: [IVec2; 4] = [IVec2::ZERO, IVec2::X, IVec2::Y, IVec2::splat(5)];
+
+/// the height limit over each parcel of a scene with these parcels, in a realm whose `about`
+/// carries this configuration
+fn heights_over(parcels: &[IVec2], config: &ServerConfiguration) -> Vec<f32> {
+    let realm = CurrentRealm {
+        config: config.clone(),
+        ..Default::default()
+    };
+    let regions = scene_bound_regions(&parcels.iter().copied().collect(), &realm);
+    parcels
+        .iter()
+        .map(|parcel| {
+            let over = regions
+                .iter()
+                .filter(|r| {
+                    parcel.cmpge(r.parcel_min()).all() && parcel.cmple(r.parcel_max()).all()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(over.len(), 1, "{parcel} is in one region");
+            over[0].height
+        })
+        .collect()
+}
+
+#[test]
+fn a_world_scene_is_bounded_at_the_fixed_height() {
+    let world = ServerConfiguration {
+        scenes_urn: Some(vec!["urn:decentraland:entity:world-scene".to_owned()]),
+        ..Default::default()
+    };
+
+    assert_eq!(heights_over(&[IVec2::ZERO], &world), [FIXED_SCENE_HEIGHT]);
+    assert_eq!(heights_over(&SPLIT_SCENE, &world), [FIXED_SCENE_HEIGHT; 4]);
+}
+
+#[test]
+fn a_preview_scene_is_bounded_at_the_fixed_height() {
+    // a preview lists the project's parcels, whether or not it lists its scene
+    for preview in [
+        ServerConfiguration {
+            scenes_urn: Some(Vec::new()),
+            local_scene_parcels: Some(vec!["0,0".to_owned()]),
+            ..Default::default()
+        },
+        ServerConfiguration {
+            scenes_urn: Some(vec!["urn:decentraland:entity:preview-scene".to_owned()]),
+            local_scene_parcels: Some(vec!["0,0".to_owned()]),
+            ..Default::default()
+        },
+    ] {
+        assert_eq!(heights_over(&[IVec2::ZERO], &preview), [FIXED_SCENE_HEIGHT]);
+        assert_eq!(
+            heights_over(&SPLIT_SCENE, &preview),
+            [FIXED_SCENE_HEIGHT; 4]
+        );
+    }
+}
+
+#[test]
+fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
+    // a city realm lists neither its scenes nor a project's parcels: no list, or an empty one
+    for city in [
+        ServerConfiguration::default(),
+        ServerConfiguration {
+            scenes_urn: Some(Vec::new()),
+            ..Default::default()
+        },
+        ServerConfiguration {
+            scenes_urn: Some(Vec::new()),
+            local_scene_parcels: Some(Vec::new()),
+            ..Default::default()
+        },
+    ] {
+        // log2(parcels + 1) * 20
+        assert_eq!(heights_over(&[IVec2::ZERO], &city), [20.0]);
+        assert_eq!(heights_over(&SPLIT_SCENE, &city), [40.0, 40.0, 40.0, 20.0]);
+    }
 }

@@ -27,6 +27,17 @@ are external. Explorer images: pipeline.
   corresponding source is Chromium's `third_party/ffmpeg` at the revision the `DEPS` of WebRTC
   commit `a545de4` pins (the archive's tag, `webrtc-a545de4-prefixed-2`). `cast-bot` itself is
   built from this tree, so it can be relinked against a modified libwebrtc.
+- Cast client composition: `CAST_PRESENTER_PUBLIC_URL=https://cast-presenter-service.<base domain>`
+  on the APIs lets a client that composes the slides fetch the slide pictures (the Unity
+  Explorer fetches them only from that host); unset or blank, clients show the bot's slide
+  track ([ADR](../../docs/adr/2026-11-20-cast-client-composition.md)). The host needs a DNS
+  record that points to the gateway and a certificate that covers it. Post-deploy check:
+  `curl -s -o /dev/null -w '%{http_code}\n' https://cast-presenter-service.<base domain>/presentations/x/slides/x.png`
+  prints `404`, the API's answer for an unknown slide; a DNS or TLS error or a `502` means that
+  the host does not reach the API. Open gap: the slide picture route reads the session memory of
+  one `serve` process, and the gateway spreads API requests over the replicas. Client
+  composition needs one API replica, or `/cast-presenter-service` routed to one. With more
+  replicas, most slide requests answer `404` and the Unity Explorer draws a black slide.
 - Workflows are `<component>-<task>.yml`; Quay variables `QUAY_<COMPONENT>_REPOSITORY` hold full destinations without tags.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
 - `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
@@ -164,6 +175,28 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 - Run `schema apply` (empty) or `schema migrate` as a job before the new API. Never reset an existing database.
 
 Event poster upgrade: run `catalyst schema migrate` before deploying the API. Step `0050_explore_poster_avif` allows mirrored AVIF posters to be stored with their detected media type and preserves existing poster rows.
+
+Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API. Step `0051_explore_auth_identity_request_id` adds the nullable `auth_request_id` that binds a parked identity to its deep-link request; parked identities stay unbound. Sites binds only Creator Hub sign-ins, whose pickup must then send `x-identity-verifier`.
+
+Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Builder's committee routes admit only `BUILDER_ADMIN_ADDRESSES` until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee.
+
+Scene admin upgrade: the release script
+`schemas/releases/scene-admin-place-keys.sql` requires a maintenance window. Stop old API
+replicas before `catalyst schema migrate`. Then run
+`psql -v ON_ERROR_STOP=1 -f schemas/releases/scene-admin-place-keys.sql`
+with the administrative role before starting the new binaries. It moves the scene admin grants
+of active deployments from the scene entity to its place. An old replica reads and writes
+grants by entity id: after the release it refuses every admin, and a grant it writes is lost.
+`catalyst serve` refuses startup while a grant of an active deployment has the entity key.
+Keep the pre-migration database backup: rollback must restore the matching backup.
+
+Stream key upgrade: `catalyst schema migrate` creates five notification triggers on `worlds.world_scenes`, `worlds.worlds`, `worlds.world_permissions` and `worlds.world_permission_parcels`. Each `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock: writes to these four tables wait until the migrate transaction ends; reads continue.
+
+Cast upgrade:
+
+- Redeploy the gateway image with the APIs: the rule that sends the `/comms-gatekeeper/` and `/cast-presenter-service/` paths of the realm hosts (`worlds-content-server`, `realm-provider`, `realm-provider-ea`) to the APIs unprefixed is in the gateway image. Check: `curl -s -o /dev/null -w '%{http_code}\n' https://worlds-content-server.<base domain>/comms-gatekeeper/scene-admin` prints `400` (the gatekeeper refuses the unsigned request); `404` means that the gateway is the old one.
+- The first start of the stream key listener (`comms-streaming-key-listener`) checks every active stream key and revokes each key whose scene was deployed again or removed since the key was made. Expect one burst of owner notices after the deploy.
+- After the deploy, watch the rate of 5xx answers of `POST /livekit-webhook`: a Cast join guard that fails now answers 5xx, and LiveKit sends the event again.
 
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and

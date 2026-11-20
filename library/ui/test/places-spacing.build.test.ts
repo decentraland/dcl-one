@@ -61,9 +61,11 @@ afterAll(async () => {
 })
 
 describe.each([390, 1440])('when Places renders at %ipx', (width) => {
-  it.each([false, true])(
-    'should reserve the section gap only for visible Live Now (%s)',
-    async (live) => {
+  describe.each([
+    { live: false, state: 'hidden' },
+    { live: true, state: 'visible' }
+  ])('and Live Now is $state', ({ live }) => {
+    it('should reserve the section gap only for visible Live Now', async () => {
       await session.send('Emulation.setDeviceMetricsOverride', {
         width,
         height: 844,
@@ -95,6 +97,6 @@ describe.each([390, 1440])('when Places renders at %ipx', (width) => {
       expect(geometry.mainTop).toBeCloseTo(pageTop, 1)
       expect(geometry.bandTop).toBeCloseTo(live ? geometry.liveBottom! + 48 : pageTop, 1)
       expect(geometry.contentTop - geometry.bandTop).toBeCloseTo(48, 1)
-    }
-  )
+    })
+  })
 })

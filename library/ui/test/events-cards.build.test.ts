@@ -53,27 +53,6 @@ beforeAll(async () => {
   )
 }, 30_000)
 
-// Turning touch emulation off gives the open document the host's own hover and pointer media; only the next
-// document gets the capture browser's desktop defaults. Tests reset input here, before navigating, never after.
-beforeEach(async () => {
-  await session.send('Emulation.setDeviceMetricsOverride', {
-    width: 1440,
-    height: 1000,
-    deviceScaleFactor: 1,
-    mobile: false
-  })
-  await session.send('Emulation.setTouchEmulationEnabled', {
-    enabled: false,
-    configuration: 'desktop'
-  })
-  await session.navigate(server.resolvedUrls!.local[0]!)
-  await evaluate(
-    `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==13||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
-  )
-  await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
-  await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
-})
-
 afterAll(async () => {
   try {
     await session?.close()
@@ -101,6 +80,27 @@ const hover = async (selector: string) => {
 const UPCOMING = 'article[class*="small"]:not([class*="isLive"])'
 
 describe('when Events cards reveal their controls', () => {
+  // Turning touch emulation off gives the open document the host's own hover and pointer media; only the next
+  // document gets the capture browser's desktop defaults. Tests reset input here, before navigating, never after.
+  beforeEach(async () => {
+    await session.send('Emulation.setDeviceMetricsOverride', {
+      width: 1440,
+      height: 1000,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+    await session.send('Emulation.setTouchEmulationEnabled', {
+      enabled: false,
+      configuration: 'desktop'
+    })
+    await session.navigate(server.resolvedUrls!.local[0]!)
+    await evaluate(
+      `(async()=>{for(let n=0;n<100 && (document.querySelectorAll('article').length!==13||document.querySelectorAll('[class*="liveCard"]').length!==2);n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
+    )
+    await evaluate(`document.activeElement?.blur();scrollTo(0,0)`)
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 })
+  })
+
   it.each([390, 1440])(
     'should keep Live Now and the next section stable at %ipx',
     async (width) => {
@@ -156,7 +156,7 @@ describe('when Events cards reveal their controls', () => {
     ).toBe('1')
     expect((await rect(selector)).height).toBeCloseTo(before.height, 1)
   })
-  describe('when a live event is in the desktop day column', () => {
+  describe('and a live event is in the desktop day column', () => {
     it('should grow only the cover on hover and keep Jump In visible at rest', async () => {
       const card = '[data-live-day] article'
       const cover = card + ' [class*="media"]'
@@ -181,26 +181,27 @@ describe('when Events cards reveal their controls', () => {
     })
   })
 
-  describe('when All Events cards sit inside a scrolling day column', () => {
+  describe('and All Events cards sit inside a scrolling day column', () => {
     const column = '[data-calendar] ul[aria-label="Events for Today"]'
     const live = column + ' li:first-child article'
     const future = column + ' li:nth-child(2) article'
 
-    it('should keep the live accent and hover stable when the first cover expands above a stationary pointer', async () => {
-      await evaluate(`document.querySelector('${column}').scrollIntoView({block:'center'})`)
-      const box = await rect(live)
-      const cover = live + ' [class*="media"]'
-      const initial = (await rect(cover)).height
-      await session.send('Input.dispatchMouseEvent', {
-        type: 'mouseMoved',
-        x: box.x + box.width / 2,
-        y: box.y + initial / 2
-      })
-      const result = await evaluate<{
-        heights: number[]
-        accent: string
-        shadow: string
-      }>(`(async () => {
+    describe('and the first cover expands above a stationary pointer', () => {
+      it('should keep the live accent and hover stable', async () => {
+        await evaluate(`document.querySelector('${column}').scrollIntoView({block:'center'})`)
+        const box = await rect(live)
+        const cover = live + ' [class*="media"]'
+        const initial = (await rect(cover)).height
+        await session.send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: box.x + box.width / 2,
+          y: box.y + initial / 2
+        })
+        const result = await evaluate<{
+          heights: number[]
+          accent: string
+          shadow: string
+        }>(`(async () => {
         const card = document.querySelector('${live}')
         const cover = document.querySelector('${cover}')
         const heights = []
@@ -210,14 +211,17 @@ describe('when Events cards reveal their controls', () => {
         }
         return { heights, accent: getComputedStyle(card, '::before').width, shadow: getComputedStyle(card).boxShadow }
       })()`)
-      expect(result.accent).toBe('5px')
-      expect(result.shadow).toBe('none')
-      expect(result.heights.at(-1)).toBeGreaterThan(initial)
-      expect(result.heights.at(-1)).toBe(result.heights.at(-2))
-      expect(
-        result.heights.every((height, index) => index === 0 || height >= result.heights[index - 1]!)
-      ).toBe(true)
-      expect((await rect(live)).x).toBe(box.x)
+        expect(result.accent).toBe('5px')
+        expect(result.shadow).toBe('none')
+        expect(result.heights.at(-1)).toBeGreaterThan(initial)
+        expect(result.heights.at(-1)).toBe(result.heights.at(-2))
+        expect(
+          result.heights.every(
+            (height, index) => index === 0 || height >= result.heights[index - 1]!
+          )
+        ).toBe(true)
+        expect((await rect(live)).x).toBe(box.x)
+      })
     })
 
     it('should keep the future hover highlight inset with the card partly clipped by the column', async () => {
@@ -327,16 +331,17 @@ describe('when Events cards reveal their controls', () => {
       }
     })
 
-    it('should use the existing live small card and accessible Jump In at 390px on touch', async () => {
-      await session.send('Emulation.setDeviceMetricsOverride', {
-        width: 390,
-        height: 900,
-        deviceScaleFactor: 1,
-        mobile: true
-      })
-      await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
-      await session.navigate(server.resolvedUrls!.local[0]!)
-      const state = await evaluate(`(async () => {
+    describe('and the viewport is a 390px touch screen', () => {
+      it('should use the existing live small card and accessible Jump In', async () => {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width: 390,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: true
+        })
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
+        await session.navigate(server.resolvedUrls!.local[0]!)
+        const state = await evaluate(`(async () => {
         for (let i = 0; i < 100 && !document.querySelector('${live}'); i++) await new Promise(resolve => setTimeout(resolve, 25))
         const card = document.querySelector('${live}')
         const image = card.querySelector('[class*="media"]').getBoundingClientRect()
@@ -349,17 +354,18 @@ describe('when Events cards reveal their controls', () => {
           visible: launch.getBoundingClientRect().width > 0 && launch.getBoundingClientRect().height > 0
         }
       })()`)
-      expect(state).toEqual({
-        small: true,
-        hover: false,
-        media: [135, 135],
-        action: '/play?realm=gallery.dcl.eth',
-        visible: true
+        expect(state).toEqual({
+          small: true,
+          hover: false,
+          media: [135, 135],
+          action: '/play?realm=gallery.dcl.eth',
+          visible: true
+        })
       })
     })
   })
 
-  describe('when the card link is copied', () => {
+  describe('and the card link is copied', () => {
     it('should visibly announce success and let the user retry after a denial', async () => {
       await hover('[data-day] article')
       expect(
@@ -389,7 +395,7 @@ describe('when Events cards reveal their controls', () => {
     })
   })
 
-  describe('when activating an event reminder', () => {
+  describe('and activating an event reminder', () => {
     it.each([
       ['no-preference', true],
       ['reduce', false]

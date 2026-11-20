@@ -42,8 +42,8 @@ struct BridgeFile {
 /// Who handles `decentraland://` links on this machine.
 enum Handler {
     None,
-    /// Our own registration, as written (never on macos)
-    #[allow(dead_code)]
+    /// Our own registration, as written
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Ours(String),
     /// Someone else's (normally the launcher): never touched
     Other,
@@ -65,8 +65,11 @@ pub struct PlaceLink {
 pub fn ensure_scheme_handler() -> Result<(), anyhow::Error> {
     match os::handler() {
         Handler::Other => Ok(()),
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Handler::Ours(current) if current == os::registration()? => Ok(()),
-        Handler::Ours(_) | Handler::None => os::register_handler(),
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        Handler::Ours(_) => os::register_handler(),
+        Handler::None => os::register_handler(),
     }
 }
 

@@ -1,7 +1,15 @@
 //! The sky preset: the fog, the directional light and the Trilight ambient by time of day. Keys
 //! are interpolated linearly (see decisions.md).
 
+use std::f32::consts::PI;
+
 use bevy::prelude::*;
+
+/// One light unit of the sky preset and of scene light intensities: the directional light that
+/// lights a facing white surface to 1. bevy divides illuminance by pi and multiplies by the view
+/// exposure, so the lux that land at 1 are `pi / exposure`; the explorer leaves every camera on
+/// bevy's default exposure (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
+pub const LIGHT_UNIT_LUX: f32 = PI * 1.2 * 831.7465;
 
 /// Fog density at every phase, in the preset's units (see `fog_falloff_density`).
 pub const FOG_DENSITY_PER_METRE: f32 = 0.0005;
@@ -90,6 +98,20 @@ pub const AMBIENT_GROUND_RAMP: [(f32, Vec3); 6] = [
     (0.5, Vec3::new(0.5849056, 0.1017827, 0.09104664)),
     (0.7, Vec3::new(0.5283019, 0.09220363, 0.10541872)),
     (1.0, Vec3::new(0.56078434, 0.24313724, 0.26083013)),
+];
+
+/// The lens flare's intensity, by day fraction.
+pub const LENS_FLARE_INTENSITY_BY_TIME: [(f32, f32); 10] = [
+    (0.0, 0.6),
+    (0.0723, 0.6),
+    (0.1410, 0.0018),
+    (0.2738, 0.0),
+    (0.35, 1.0),
+    (0.7, 1.0),
+    (0.7584, 0.0),
+    (0.8655, 0.0),
+    (0.9319, 0.6),
+    (1.0, 0.6),
 ];
 
 /// Linear between keys, clamped outside the range. `keys` must be sorted ascending.

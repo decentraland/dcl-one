@@ -134,6 +134,8 @@ pub struct RawSettings {
     /// `LEASE_AUTHORIZATIONS_URL`: the linker-server lease document; unset
     /// lists no lease holder.
     pub lease_authorizations_url: Option<String>,
+    /// Whether lease entries marked `onlyDev` count (only on a Sepolia `ETH_NETWORK`).
+    pub lease_dev_entries: bool,
     /// `VOICE_CHAT_CONNECTION_INTERRUPTED_TTL` (ms, default 300000).
     pub voice_connection_interrupted_ttl_ms: i64,
     /// `VOICE_CHAT_INITIAL_CONNECTION_TTL` (ms, default 300000).
@@ -150,6 +152,12 @@ pub struct RawSettings {
     pub cast2_url: String,
     /// `COMMIT_HASH` for `/status`.
     pub commit_hash: Option<String>,
+    /// `ALLOW_LOCAL_PREVIEW`: a local preview scene (a `b64-` id or a
+    /// `preview`/`localpreview` realm) gets a Genesis scene token without a
+    /// deployed scene behind it.
+    pub allow_local_preview: bool,
+    /// `REALM_NAME`: this node's Genesis City realm name (default `main`).
+    pub realm_name: Option<String>,
 }
 
 impl RawSettings {
@@ -184,6 +192,8 @@ pub struct Settings {
     /// The lease document [`admission::scene::get_lease_holders_for_parcels`] reads;
     /// `None` lists no lease holder and fetches nothing.
     pub lease_authorizations_url: Option<String>,
+    /// Whether lease entries marked `onlyDev` count; false on a production node.
+    pub lease_dev_entries: bool,
     pub voice: VoiceDbConfig,
     /// Declared evidence bytes the player report intake accepts in 24 hours
     /// from all wallets and addresses ([`reports`]). The value is the
@@ -192,6 +202,10 @@ pub struct Settings {
     /// The Cast 2.0 web app base of the stream links, no trailing slash.
     pub cast2_url: String,
     pub commit_hash: Option<String>,
+    /// Local preview scenes skip the Genesis deployment check (`ALLOW_LOCAL_PREVIEW`).
+    pub allow_local_preview: bool,
+    /// This node's Genesis City realm name: never read as a world's label.
+    pub realm_name: String,
 }
 
 /// Masks the moderator and gatekeeper tokens (the LiveKit secret is masked
@@ -216,6 +230,7 @@ impl std::fmt::Debug for Settings {
             )
             .field("land_operators_url", &self.land_operators_url)
             .field("lease_authorizations_url", &self.lease_authorizations_url)
+            .field("lease_dev_entries", &self.lease_dev_entries)
             .field("voice", &self.voice)
             .field(
                 "report_evidence_daily_bytes",
@@ -223,6 +238,7 @@ impl std::fmt::Debug for Settings {
             )
             .field("cast2_url", &self.cast2_url)
             .field("commit_hash", &self.commit_hash)
+            .field("allow_local_preview", &self.allow_local_preview)
             .finish()
     }
 }
@@ -341,6 +357,7 @@ impl Settings {
             gatekeeper_auth_token,
             land_operators_url,
             lease_authorizations_url,
+            lease_dev_entries: raw.lease_dev_entries,
             voice: VoiceDbConfig {
                 connection_interrupted_ttl_ms: raw.voice_connection_interrupted_ttl_ms,
                 initial_connection_ttl_ms: raw.voice_initial_connection_ttl_ms,
@@ -353,6 +370,10 @@ impl Settings {
                 url => url.to_string(),
             },
             commit_hash: raw.commit_hash,
+            allow_local_preview: raw.allow_local_preview,
+            realm_name: raw
+                .realm_name
+                .unwrap_or_else(|| crate::world_identity::GENESIS_CITY_REALM.to_string()),
         })
     }
 
@@ -374,6 +395,7 @@ impl Settings {
             gatekeeper_auth_token: None,
             land_operators_url: None,
             lease_authorizations_url: None,
+            lease_dev_entries: false,
             voice: VoiceDbConfig::default(),
             report_evidence_daily_bytes: i64::from(
                 RawSettings::defaults().report_evidence_daily_mib,
@@ -381,6 +403,8 @@ impl Settings {
                 * 1024,
             cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
+            allow_local_preview: false,
+            realm_name: crate::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }
 }
@@ -418,6 +442,8 @@ crate::shared::send_sync_once! {
         /// `None` refuses such chains.
         pub eip1654: Option<Arc<dyn Eip1654Validator>>,
         pub caches: admission::scene::SceneCaches,
+        /// Content's moderation denylist: a listed Genesis scene gets no scene token.
+        pub content_denylist: Arc<crate::content::Denylist>,
         /// Where the LiveKit webhook's participant events are also handed.
         pub room_events: Option<Arc<dyn RoomEventSink>>,
         /// Where every verified participant event is stored before it is acknowledged.
@@ -480,6 +506,7 @@ impl CommsState {
             name_owners: None,
             eip1654,
             caches: admission::scene::SceneCaches::default(),
+            content_denylist: Arc::default(),
             room_events: None,
             room_event_store: None,
             webhooks: webhook::WebhookCoordinator::default(),
@@ -504,6 +531,12 @@ impl CommsState {
         reader: Arc<dyn crate::interfaces::NameOwnerReader>,
     ) -> Self {
         self.name_owners = Some(reader);
+        self
+    }
+
+    /// Content's denylist, shared with the content reads.
+    pub fn with_content_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.content_denylist = denylist;
         self
     }
 

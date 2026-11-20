@@ -30,15 +30,36 @@ const OWN_TABS: readonly TabEntry[] = [
   { id: "referral-rewards", label: "Referral Rewards" },
 ];
 
-export function profileTabs(own: boolean): readonly TabEntry[] {
-  return own ? OWN_TABS : MEMBER_TABS;
+/** What decides a tab beyond whose profile it is: Referral Rewards is shown only while its rollout flag is on. */
+export type ProfileTabOptions = { referral?: boolean };
+
+export function profileTabs(own: boolean, { referral = false }: ProfileTabOptions = {}): readonly TabEntry[] {
+  if (!own) return MEMBER_TABS;
+  return referral ? OWN_TABS : OWN_TABS.filter((tab) => tab.id !== "referral-rewards");
+}
+
+/** Tab ids of the profile site's old links, and the tab each one is now. */
+const LEGACY_TAB_IDS: Readonly<Record<string, ProfileTab>> = { referral: "referral-rewards" };
+
+function tabSegment(segment: string | undefined): string {
+  return (segment ?? "").trim().toLowerCase();
+}
+
+/** Whether a URL segment is an old tab id, so the URL moves to the current one. */
+export function isLegacyTabSegment(segment: string | undefined): boolean {
+  return Object.hasOwn(LEGACY_TAB_IDS, tabSegment(segment));
 }
 
 /** The tab a URL segment names for this viewer, or `null` when this profile does not show it. */
-export function readProfileTab(segment: string | undefined, own: boolean): ProfileTab | null {
-  const raw = (segment ?? "").trim().toLowerCase();
+export function readProfileTab(
+  segment: string | undefined,
+  own: boolean,
+  options: ProfileTabOptions = {},
+): ProfileTab | null {
+  const raw = tabSegment(segment);
   if (raw === "") return "overview";
-  return profileTabs(own).some((tab) => tab.id === raw) ? (raw as ProfileTab) : null;
+  const id = Object.hasOwn(LEGACY_TAB_IDS, raw) ? LEGACY_TAB_IDS[raw] : raw;
+  return profileTabs(own, options).some((tab) => tab.id === id) ? (id as ProfileTab) : null;
 }
 
 /** Overview lives at the profile's root; every other tab is a path segment. */

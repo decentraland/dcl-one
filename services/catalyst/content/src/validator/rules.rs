@@ -17,8 +17,9 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    avatar_has_snapshots, count_urn_segments, navmap_thumbnail_error, profile_has_emotes,
-    should_validate_face_thumbnail, validate_profile_emote_urns, validate_profile_wearable_urns,
+    avatar_has_snapshots, navmap_thumbnail_error, profile_has_emotes,
+    should_validate_face_thumbnail, slot_key, validate_profile_emote_urns,
+    validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
 use super::scene_parcels::validate_scene_parcels_match_pointers;
@@ -71,6 +72,8 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     pub ignore_blockchain_access: bool,
     /// An entity a peer serves: the item thumbnail is not checked and an
     /// item's equivalent pointers count as one, as the reference does.
+    /// A new deploy also needs integer emote and outfit slots, stricter than
+    /// the reference's number; a synced entity keeps the numeric reading.
     pub synced: bool,
     /// The access step already passed for this entity and chain (the
     /// read-through's check before its content was in): not asked again.
@@ -86,6 +89,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         } else {
             ACCESS_DEADLINE
         }
+    }
+
+    /// The access step alone, within its own deadline.
+    pub async fn validate_access_only(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        let deadline = tokio::time::Instant::now() + self.access_budget();
+        self.validate_access(deployment, deadline).await
     }
 
     pub async fn validate(&self, deployment: &Deployment<'_>) -> ValidationResponse {
@@ -657,9 +666,15 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                     .and_then(|e| e.as_array())
                 {
                     for emote in emotes {
-                        if let Some(slot) = emote.get("slot").and_then(|s| s.as_i64())
-                            && !used_slots.insert(slot)
-                        {
+                        let Some(slot) = emote.get("slot").and_then(|s| s.as_f64()) else {
+                            continue;
+                        };
+                        if !self.synced && slot.fract() != 0.0 {
+                            return ValidationResponse::fail(format!(
+                                "The slot {slot} of the emote must be an integer."
+                            ));
+                        }
+                        if !used_slots.insert(slot_key(slot)) {
                             return ValidationResponse::fail(format!(
                                 "Emote slot {slot} should not be repeated."
                             ));
@@ -776,15 +791,20 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         if let Some(outfits) = metadata.get("outfits").and_then(|v| v.as_array()) {
             let mut used_slots = HashSet::new();
             for outfit in outfits {
-                if let Some(slot) = outfit.get("slot").and_then(|s| s.as_i64()) {
-                    if !(0..=9).contains(&slot) {
+                if let Some(slot) = outfit.get("slot").and_then(|s| s.as_f64()) {
+                    if !self.synced && slot.fract() != 0.0 {
+                        return ValidationResponse::fail(
+                            "Outfits slots are invalid, they must be integers".to_string(),
+                        );
+                    }
+                    if !(0.0..=9.0).contains(&slot) {
                         return ValidationResponse::fail(
                             "Outfits slots are invalid, they must be between 0 and 9 \
                              inclusive"
                                 .to_string(),
                         );
                     }
-                    if !used_slots.insert(slot) {
+                    if !used_slots.insert(slot_key(slot)) {
                         return ValidationResponse::fail("Outfits slots are repeated".to_string());
                     }
                 }
@@ -792,8 +812,8 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
 
             let has_extra = outfits.iter().any(|o| {
                 o.get("slot")
-                    .and_then(|s| s.as_i64())
-                    .map(|s| s > 4)
+                    .and_then(|s| s.as_f64())
+                    .map(|s| s > 4.0)
                     .unwrap_or(false)
             });
             if has_extra {
@@ -813,27 +833,32 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
 
         if entity.timestamp >= adr_timestamps::ADR_244 {
-            let mut non_item_urns: Vec<String> = Vec::new();
-            if let Some(outfits) = metadata.get("outfits").and_then(|v| v.as_array()) {
-                for outfit in outfits {
-                    if let Some(wearables) = outfit
-                        .get("outfit")
-                        .and_then(|o| o.get("wearables"))
-                        .and_then(|w| w.as_array())
-                    {
-                        for w in wearables {
-                            if let Some(urn) = w.as_str() {
-                                let lower = urn.to_lowercase();
-                                if (lower.contains("collections-v1:")
-                                    || lower.contains("collections-v2:"))
-                                    && count_urn_segments(&lower) <= 6
-                                {
-                                    non_item_urns.push(urn.to_string());
-                                }
-                            }
-                        }
-                    }
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut invalid_urns: Vec<&str> = Vec::new();
+            let mut non_item_urns: Vec<&str> = Vec::new();
+            let wearables = metadata
+                .get("outfits")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|o| o.get("outfit")?.get("wearables")?.as_array())
+                .flatten()
+                .filter_map(|w| w.as_str());
+            for urn in wearables {
+                if !seen.insert(urn) {
+                    continue;
                 }
+                match super::urn::parse(urn) {
+                    None => invalid_urns.push(urn),
+                    Some(parsed) if parsed.is_collection_asset() => non_item_urns.push(urn),
+                    Some(_) => {}
+                }
+            }
+            if !invalid_urns.is_empty() {
+                return ValidationResponse::fail(format!(
+                    "Invalid wearable pointer: ({})",
+                    invalid_urns.join(", ")
+                ));
             }
             if !non_item_urns.is_empty() {
                 return ValidationResponse::fail(format!(
@@ -857,7 +882,11 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
         if self.ignore_blockchain_access {
             let deployer = deployment.deployer();
-            let local = super::checker::validate_local_pointer_ownership(deployment, &deployer);
+            let local = super::checker::validate_local_pointer_ownership(
+                deployment,
+                self.blockchain_checker,
+                &deployer,
+            );
             if !matches!(local, ValidationResponse::Ok) {
                 return local;
             }
@@ -1465,6 +1494,240 @@ mod tests {
             assert!(validator.validate(&d.view()).await.is_ok());
             assert!(validator.validate_staging(&d.view(), false).await.is_ok());
             assert_eq!(calls.1.load(std::sync::atomic::Ordering::SeqCst), 2);
+        }
+
+        /// A profile whose first avatar has emotes in the given slots.
+        fn profile_with_emote_slots(slots: &str) -> OwnedDeployment {
+            let mut d = profile();
+            let emotes: Vec<serde_json::Value> = slots
+                .split(',')
+                .enumerate()
+                .map(|(i, slot)| {
+                    serde_json::from_str(&format!(
+                        r#"{{"slot": {slot}, "urn": "urn:decentraland:off-chain:base-emotes:e{i}"}}"#
+                    ))
+                    .unwrap()
+                })
+                .collect();
+            d.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["emotes"] =
+                serde_json::Value::Array(emotes);
+            d
+        }
+
+        /// An outfits entity with outfits in the given slots.
+        fn outfits_with_slots(slots: &str, names: &str) -> OwnedDeployment {
+            let outfits: Vec<String> = slots
+                .split(',')
+                .map(|slot| format!(r#"{{"slot": {slot}, "outfit": {{"wearables": []}}}}"#))
+                .collect();
+            let metadata = format!(
+                r#"{{"outfits": [{}], "namesForExtraSlots": [{names}]}}"#,
+                outfits.join(",")
+            );
+            let mut d = profile();
+            d.entity.entity_type = EntityType::Outfits;
+            d.entity.pointers = vec![format!("{OWNER}:outfits")];
+            d.entity.metadata = Some(serde_json::from_str(&metadata).unwrap());
+            d
+        }
+
+        /// Whether the profile or outfits content rules pass for `d`.
+        fn slots_pass(d: &OwnedDeployment, synced: bool) -> bool {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced,
+                access_passed: false,
+            };
+            match d.entity.entity_type {
+                EntityType::Outfits => validator.validate_outfits_content(&d.view()),
+                _ => validator.validate_profile_content(&d.view()),
+            }
+            .is_ok()
+        }
+
+        #[test]
+        fn emote_slots_are_judged_by_their_numeric_value_in_every_json_form() {
+            for synced in [false, true] {
+                assert!(slots_pass(&profile_with_emote_slots("0,1.0,9e0"), synced));
+                for slots in ["1e1", "-1.0", "1,1.0"] {
+                    assert!(
+                        !slots_pass(&profile_with_emote_slots(slots), synced),
+                        "emote slots {slots}"
+                    );
+                }
+            }
+            // Fractional slots are refused on a new deploy; a peer's entity keeps the old reading.
+            assert!(!slots_pass(&profile_with_emote_slots("1.5"), false));
+            assert!(slots_pass(&profile_with_emote_slots("1.5"), true));
+            // `-0.0` and `0` are one slot.
+            assert!(!slots_pass(&profile_with_emote_slots("0,-0.0"), false));
+            // Slots are unique across every avatar of the profile.
+            let two_avatars = |first: &str, second: &str| {
+                let mut d = profile_with_emote_slots(first);
+                let metadata = d.entity.metadata.as_mut().unwrap();
+                let mut avatar = metadata["avatars"][0].clone();
+                avatar["avatar"]["emotes"] = profile_with_emote_slots(second)
+                    .entity
+                    .metadata
+                    .unwrap()["avatars"][0]["avatar"]["emotes"]
+                    .clone();
+                metadata["avatars"].as_array_mut().unwrap().push(avatar);
+                d
+            };
+            assert!(slots_pass(&two_avatars("1", "2.0"), false));
+            assert!(!slots_pass(&two_avatars("1", "1.0"), false));
+        }
+
+        #[test]
+        fn outfit_slots_are_judged_by_their_numeric_value_in_every_json_form() {
+            for synced in [false, true] {
+                assert!(slots_pass(&outfits_with_slots("0,1.0,4e0", ""), synced));
+                assert!(slots_pass(&outfits_with_slots("5.0", r#""alice""#), synced));
+                for slots in ["10.0", "-1.0", "1,1e0", "5e0"] {
+                    assert!(
+                        !slots_pass(&outfits_with_slots(slots, ""), synced),
+                        "outfit slots {slots}"
+                    );
+                }
+            }
+            // Fractional slots are refused on a new deploy; a peer's entity keeps the old reading.
+            assert!(!slots_pass(&outfits_with_slots("1.5", ""), false));
+            assert!(slots_pass(&outfits_with_slots("1.5", ""), true));
+            assert!(!slots_pass(&outfits_with_slots("4.5", ""), true));
+            // `-0.0` and `0` are one slot.
+            assert!(!slots_pass(&outfits_with_slots("0,-0.0", ""), false));
+        }
+
+        #[test]
+        fn outfit_wearables_must_resolve_to_items() {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            };
+            let c = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
+            let wearing = |urn: &str| {
+                let mut d = profile();
+                d.entity.entity_type = EntityType::Outfits;
+                d.entity.pointers = vec![format!("{OWNER}:outfits")];
+                d.entity.metadata = Some(serde_json::json!({
+                    "outfits": [{"slot": 0, "outfit": {"wearables": [urn]}}],
+                    "namesForExtraSlots": []
+                }));
+                d
+            };
+            let errors = |urn: &str| {
+                validator
+                    .validate_outfits_content(&wearing(urn).view())
+                    .errors()
+                    .map(<[String]>::to_vec)
+                    .unwrap_or_default()
+            };
+            assert_eq!(
+                errors("urn:foo:bar"),
+                ["Invalid wearable pointer: (urn:foo:bar)"]
+            );
+            let asset = format!("urn:decentraland:matic:collections-v2:{c}:1?x:2");
+            assert_eq!(
+                errors(&asset),
+                [format!(
+                    "Wearable pointers {asset} should be items, not assets. \
+                     The URNs must include the tokenId."
+                )]
+            );
+            for urn in [
+                format!("URN:decentraland:matic:collections-v2:{c}:1:5"),
+                format!("urn:decentraland:matic:collections-v2:{c}"),
+                "urn:decentraland:off-chain:base-avatars:BaseMale".to_string(),
+            ] {
+                assert!(errors(&urn).is_empty(), "{urn}");
+            }
+        }
+
+        #[tokio::test]
+        async fn outfits_pointer_rule_holds_with_chain_checks_ignored() {
+            let other = "0xbbbb000000000000000000000000000000000002";
+            let validator = &ContentValidator {
+                external_calls: &Calls::new(Duration::ZERO),
+                blockchain_checker: &SlowChecker(Duration::ZERO, false),
+                ignore_blockchain_access: true,
+                synced: false,
+                access_passed: false,
+            };
+            let access = |pointers: Vec<String>| {
+                let mut d = profile();
+                d.entity.entity_type = EntityType::Outfits;
+                d.entity.pointers = pointers;
+                d.entity.metadata = None;
+                async move {
+                    validator
+                        .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+                        .await
+                }
+            };
+            let own = format!("{OWNER}:outfits");
+            assert!(access(vec![own.clone()]).await.is_ok());
+            let mixed_case = format!("0x{}:outfits", OWNER[2..].to_uppercase());
+            assert!(access(vec![mixed_case]).await.is_ok());
+            for pointers in [
+                vec![own.clone(), format!("{other}:outfits")],
+                vec![format!("{other}:outfits")],
+                vec![format!("{OWNER}:profile")],
+                vec!["outfits".to_string()],
+                vec![format!("{OWNER}:outfits:extra")],
+                vec!["0xzz:outfits".to_string()],
+            ] {
+                let response = access(pointers.clone()).await;
+                assert!(!response.is_ok(), "{pointers:?} must be refused");
+            }
+        }
+
+        #[tokio::test]
+        async fn profile_pointer_rule_holds_with_chain_checks_ignored() {
+            let other = "0xbbbb000000000000000000000000000000000002";
+            let validator = &ContentValidator {
+                external_calls: &Calls::new(Duration::ZERO),
+                blockchain_checker: &SlowChecker(Duration::ZERO, false),
+                ignore_blockchain_access: true,
+                synced: false,
+                access_passed: false,
+            };
+            let access = |pointers: Vec<String>, eth_address: &str| {
+                let mut d = profile();
+                d.entity.pointers = pointers;
+                d.entity.timestamp = adr_timestamps::PROFILE_IDENTITY;
+                d.entity.metadata.as_mut().unwrap()["avatars"][0]["ethAddress"] =
+                    eth_address.into();
+                async move {
+                    validator
+                        .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+                        .await
+                }
+            };
+            assert!(access(vec![OWNER.into()], OWNER).await.is_ok());
+            let mixed_case = format!("0x{}", OWNER[2..].to_uppercase());
+            assert!(access(vec![mixed_case], OWNER).await.is_ok());
+            for (pointers, eth_address) in [
+                (vec![OWNER.to_string(), other.to_string()], OWNER),
+                (vec![other.to_string()], OWNER),
+                (vec!["default1".to_string()], OWNER),
+                (vec!["not-an-address".to_string()], OWNER),
+                (vec![OWNER.to_string()], other),
+            ] {
+                let response = access(pointers.clone(), eth_address).await;
+                assert!(
+                    !response.is_ok(),
+                    "{pointers:?} with ethAddress {eth_address} must be refused"
+                );
+            }
         }
 
         #[tokio::test]

@@ -7,10 +7,20 @@ let open = false;
 let pendingRedirect: string | null = null;
 const listeners = new Set<() => void>();
 let hostSignIn: (() => void) | undefined;
+const beforeBrowserSignIn = new Set<(returnTo: string) => void>();
 
 export function installHostSignIn(signIn: () => void): () => void {
   hostSignIn = signIn;
-  return () => { if (hostSignIn === signIn) hostSignIn = undefined; };
+  return () => {
+    if (hostSignIn === signIn) hostSignIn = undefined;
+  };
+}
+
+export function onBeforeBrowserSignIn(listener: (returnTo: string) => void): () => void {
+  beforeBrowserSignIn.add(listener);
+  return () => {
+    beforeBrowserSignIn.delete(listener);
+  };
 }
 
 function emit(): void {
@@ -24,10 +34,15 @@ function emit(): void {
  * caller asking mid-task, whose unsaved input a navigation would lose.
  */
 export function openSignIn(opts?: { redirectTo?: string; inPlace?: boolean }): void {
-  if (hostSignIn) { hostSignIn(); return; }
+  if (hostSignIn) {
+    hostSignIn();
+    return;
+  }
   if (typeof window !== "undefined" && !isDesktopShell() && !opts?.inPlace) {
     const here = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    window.location.assign(loginPath(opts?.redirectTo ?? here));
+    const returnTo = opts?.redirectTo ?? here;
+    for (const listener of beforeBrowserSignIn) listener(returnTo);
+    window.location.assign(loginPath(returnTo));
     return;
   }
   pendingRedirect = opts?.redirectTo ?? null;

@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { createServer, type ViteDevServer } from 'vite'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
 
 type Measurement = {
@@ -206,17 +206,18 @@ describe('when busy and focusable disabled controls use the native component', (
   })
 })
 
-it('should preserve control identity and native focus behavior across loading transitions', async () => {
-  const result = await evaluate<{
-    buttonFocusedBefore: boolean
-    buttonMatchesNativeBusyFocus: boolean
-    buttonStable: boolean
-    noFocusSteal: boolean
-    linkFocusedBefore: boolean
-    linkRetainsFocus: boolean
-    linkStable: boolean
-    linkHrefRestored: boolean
-  }>(`(async()=>{
+describe('when controls go through loading transitions', () => {
+  it('should preserve control identity and native focus behavior', async () => {
+    const result = await evaluate<{
+      buttonFocusedBefore: boolean
+      buttonMatchesNativeBusyFocus: boolean
+      buttonStable: boolean
+      noFocusSteal: boolean
+      linkFocusedBefore: boolean
+      linkRetainsFocus: boolean
+      linkStable: boolean
+      linkHrefRestored: boolean
+    }>(`(async()=>{
 
     const button=document.querySelector('[data-control="transition"]'),link=document.querySelector('[data-control="transition-link"]');
     const setBusy=async value=>{window.dispatchEvent(new CustomEvent('button-busy',{detail:value}));for(let i=0;i<100 && (button.getAttribute('aria-busy')==='true')!==value;i++)await new Promise(r=>setTimeout(r,10))};
@@ -226,20 +227,26 @@ it('should preserve control identity and native focus behavior across loading tr
     link.focus();const linkFocusedBefore=document.activeElement===link;await setBusy(true);const linkRetainsFocus=document.activeElement===link;await setBusy(false);
     return {buttonFocusedBefore,buttonMatchesNativeBusyFocus,buttonStable,noFocusSteal,linkFocusedBefore,linkRetainsFocus,linkStable:link===document.querySelector('[data-control="transition-link"]'),linkHrefRestored:link.getAttribute('href')==='/save'};
   })()`)
-  expect(Object.values(result)).toEqual(Array(8).fill(true))
+    expect(Object.values(result)).toEqual(Array(8).fill(true))
+  })
 })
 
-it('should stop the native loading animation when reduced motion is requested', async () => {
-  await session.send('Emulation.setEmulatedMedia', {
-    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+describe('when reduced motion is requested', () => {
+  beforeEach(async () => {
+    await session.send('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+    })
   })
-  try {
+
+  afterEach(async () => {
+    await session.send('Emulation.setEmulatedMedia', { features: [] })
+  })
+
+  it('should stop the native loading animation', async () => {
     expect(
       await evaluate<string>(
         `getComputedStyle(document.querySelector('[data-control="loading"] [data-loading-indicator]')).animationName`
       )
     ).toBe('none')
-  } finally {
-    await session.send('Emulation.setEmulatedMedia', { features: [] })
-  }
+  })
 })

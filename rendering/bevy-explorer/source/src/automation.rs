@@ -107,7 +107,7 @@ pub(crate) mod input {
 
     use super::*;
     use bevy::input::{
-        keyboard::{Key, KeyboardInput, NativeKeyCode},
+        keyboard::{Key, KeyboardInput},
         mouse::MouseButtonInput,
         ButtonState,
     };
@@ -158,13 +158,15 @@ pub(crate) mod input {
     /// Type `text` a key at a time, as a keyboard would: each character's press carries it as its
     /// text, on a key code that binds nothing, so the world acts on none of it. `reply` answers
     /// with `message` once the last key is up. For `/hud_fill` (react_hud_cef/automation.rs).
-    #[cfg_attr(not(feature = "react-hud-cef"), allow(dead_code))]
+    #[cfg(any(all(not(target_arch = "wasm32"), feature = "react-hud-cef"), test))]
     pub fn queue_typing(
         script: &mut InputScript,
         text: &str,
         reply: RpcResultSender<Result<String, String>>,
         message: String,
     ) {
+        use bevy::input::keyboard::NativeKeyCode;
+
         for c in text.chars() {
             let (key_code, logical_key, text) = match c {
                 '\n' => (KeyCode::Enter, Key::Enter, "\r".to_owned()),
