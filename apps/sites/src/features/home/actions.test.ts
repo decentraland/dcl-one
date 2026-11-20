@@ -27,16 +27,35 @@ describe("home download actions", () => {
     });
   });
   describe("when the visitor uses Android", () => {
-    it("should offer Google Play before the App Store in the hero", () => {
-      const { store, alternateStore } = homeDownloadActions(
-        { kind: "mobile", os: "android" },
-        "+438K",
-        true,
-      );
-      expect([store.badge, alternateStore.badge]).toEqual([
-        "google_play",
-        "app_store",
-      ]);
+    it("should offer only Google Play in the narrow hero", () => {
+      expect(
+        homeDownloadActions({ kind: "mobile", os: "android" }, "+438K", true),
+      ).toMatchObject({
+        store: { badge: "google_play" },
+        alternateStore: undefined,
+      });
+    });
+  });
+
+  describe("when the visitor uses iOS", () => {
+    it("should offer only the App Store in the narrow hero", () => {
+      expect(
+        homeDownloadActions({ kind: "mobile", os: "ios" }, "+438K", true),
+      ).toMatchObject({
+        store: { badge: "app_store" },
+        alternateStore: undefined,
+      });
+    });
+  });
+
+  describe("when the mobile operating system is not identified", () => {
+    it("should offer both stores in the narrow hero", () => {
+      expect(
+        homeDownloadActions({ kind: "unknown" }, "+438K", true),
+      ).toMatchObject({
+        store: { badge: "app_store" },
+        alternateStore: { badge: "google_play" },
+      });
     });
   });
 
