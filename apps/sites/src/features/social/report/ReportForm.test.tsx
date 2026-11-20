@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { Link, MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { safeRedirectTarget } from "../../auth/login/redirect";
@@ -52,6 +52,7 @@ describe("when a signed-out visitor fills the report form", () => {
         <button type="button" onClick={() => openSignIn()}>
           Header Sign In
         </button>
+        <Link to={returnTo}>Original report</Link>
       </MemoryRouter>,
     );
   }
@@ -90,6 +91,22 @@ describe("when a signed-out visitor fills the report form", () => {
     const other = openReport("/report?reported_address=0x2222222222222222222222222222222222222222");
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", "");
     other.unmount();
+    openReport(returnTo);
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", description);
+  });
+
+  it("should preserve typing during client-side navigation to a saved report URL", async () => {
+    const original = openReport(returnTo);
+    await user.type(screen.getByRole("textbox", { name: "Description" }), description);
+    await user.click(screen.getByRole("button", { name: "Sign In" }));
+    original.unmount();
+
+    const other = openReport("/report?reported_address=0x2222222222222222222222222222222222222222");
+    await user.type(screen.getByRole("textbox", { name: "Description" }), "A report I started in this view");
+    await user.click(screen.getByRole("link", { name: "Original report" }));
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", "A report I started in this view");
+    other.unmount();
+
     openReport(returnTo);
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveProperty("value", description);
   });

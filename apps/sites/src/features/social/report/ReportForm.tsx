@@ -200,7 +200,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     if (reportedParam) setReportedAddress(reportedParam);
   }, [reportedParam]);
 
-  useEffect(() => {
+  const restoreSignInDraft = useEffectEvent(() => {
     const saved = takeSignInDraft(returnTo);
     if (!saved) return;
     setReportedAddress(reportedParam || saved.reportedAddress);
@@ -208,7 +208,10 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     setDescription(saved.description);
     setComments(saved.comments);
     setReattachEvidence(saved.hadEvidence);
-  }, [reportedParam, returnTo]);
+  });
+  useEffect(() => {
+    restoreSignInDraft();
+  }, []);
 
   const saveBrowserDraft = useEffectEvent((destination: string) => {
     if (destination !== returnTo) return;
