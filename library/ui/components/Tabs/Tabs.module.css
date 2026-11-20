@@ -56,6 +56,16 @@
     }
   }
 
+  .compact {
+    composes: underline;
+  }
+
+  @media (min-width: 1024px) {
+    .compact:not(.mobile) {
+      height: 46px;
+    }
+  }
+
   .pill {
     composes: text627574746f6e2f6c67 from '../../foundations/typography/text-styles.module.css';
     padding: var(--dcl-space-8) var(--dcl-space-16);

@@ -73,6 +73,17 @@ describe('Toast', () => {
       expect(close).toHaveBeenCalledTimes(1)
     })
 
+    it('preserves the timer when the same rich message rerenders', () => {
+      vi.useFakeTimers()
+      const close = vi.fn()
+      const view = () => <Toast duration={1000} messageKey="saved" onClose={close}><strong>Saved</strong></Toast>
+      const { rerender } = render(view())
+      act(() => void vi.advanceTimersByTime(900))
+      rerender(view())
+      act(() => void vi.advanceTimersByTime(100))
+      expect(close).toHaveBeenCalledTimes(1)
+    })
+
     it('stays with a duration of 0', () => {
       vi.useFakeTimers()
       const close = vi.fn()

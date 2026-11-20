@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { Button, JumpInCTA, Spinner, Tag } from "@dcl/one-ui";
+import { Button, CopyFeedback, JumpInCTA, Spinner, Tag } from "@dcl/one-ui";
 import { GeneralCheck, GeneralCopy, GeneralPlayers, NavbarCommunities } from "@dcl/one-ui/foundations/icons";
 
 import { track } from "@/core/lib/telemetry/track";
@@ -9,7 +9,6 @@ import { playUrl } from "@/data/lib/catalyst/bases";
 import type { ProfileCommunity } from "@/data/lib/catalyst/social/profile-communities";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import { useCopyStatus } from "../components/useCopyStatus";
 import { communityHref, membersLabel, roleLabel, thumbnailUrl } from "../social/community/view";
 import { EmptyMessage } from "./EmptyMessage";
 import { useProfileCommunities } from "./hooks";
@@ -37,7 +36,7 @@ function CommunityCard({ community, own }: { community: ProfileCommunity; own: b
   const picture = thumbnailUrl(community);
   const href = communityHref(community.id);
   const { broken, ref, onError } = useBrokenImage(picture);
-  const { state, announcement, copy } = useCopyStatus();
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
   const joined = own && community.role === "member";
   return (
     <li className={styles.card}>
@@ -48,7 +47,7 @@ function CommunityCard({ community, own }: { community: ProfileCommunity; own: b
           <img ref={ref} className={styles.picture} src={picture} alt="" loading="lazy" decoding="async" onError={onError} />
         )}
         {community.role !== "member" ? (
-          <div className={styles.role}><Tag variant="role" className={styles.roleTag}>{roleLabel(community.role)}</Tag></div>
+          <div className={styles.role}><Tag variant="role" appearance="emphasized">{roleLabel(community.role)}</Tag></div>
         ) : null}
         {community.membersCount !== null ? (
           <span className={styles.members}>
@@ -72,18 +71,18 @@ function CommunityCard({ community, own }: { community: ProfileCommunity; own: b
           >
             {joined ? "Joined" : "View"}
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label={`Copy link to ${community.name}`}
-            onClick={() => copy(new URL(href, window.location.origin).toString())}
+          <CopyFeedback
+            value={`${origin}${href}`}
+            successAnnouncement="Community link copied."
+            errorAnnouncement="Couldn't copy the community link."
           >
-            {state === "copied" ? <GeneralCheck size={16} aria-hidden="true" /> : <GeneralCopy size={16} aria-hidden="true" />}
-          </Button>
+            {(copy, state) => (
+              <Button variant="iconOnly" size="sm" aria-label={`Copy link to ${community.name}`} onClick={copy}>
+                {state === "copied" ? <GeneralCheck size={16} aria-hidden="true" /> : <GeneralCopy size={16} aria-hidden="true" />}
+              </Button>
+            )}
+          </CopyFeedback>
         </div>
-        <span className={styles.visuallyHidden} role="status">
-          <span key={announcement}>{state === "copied" ? "Community link copied." : state === "failed" ? "Couldn't copy the community link." : ""}</span>
-        </span>
       </div>
     </li>
   );

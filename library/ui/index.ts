@@ -77,11 +77,6 @@ export type {
 
 export { ProfilePic } from './components/ProfilePic/ProfilePic'
 export type { ProfilePicProps, ProfilePicSize } from './components/ProfilePic/ProfilePic'
-export { ConnectionStatus } from './components/ProfilePic/ConnectionStatus'
-export type {
-  ConnectionStatusProps,
-  ConnectionStatusValue
-} from './components/ProfilePic/ConnectionStatus'
 
 export { Tag } from './components/Tag/Tag'
 export type { TagProps, TagVariant } from './components/Tag/Tag'

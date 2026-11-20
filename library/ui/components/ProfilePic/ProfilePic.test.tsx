@@ -1,7 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ConnectionStatus } from './ConnectionStatus'
 import { ProfilePic } from './ProfilePic'
 
 describe('ProfilePic', () => {
@@ -68,24 +67,6 @@ describe('ProfilePic', () => {
     })
   })
 
-  describe('when the member has a connection status', () => {
-    it('names the status beside the picture', () => {
-      render(<ProfilePic name="Ana" src="https://faces.example/ana.png" status="online" />)
-      expect(screen.getByRole('img', { name: 'Online' })).toBeInTheDocument()
-      expect(screen.getByRole('img', { name: 'Ana' })).toBeInTheDocument()
-    })
-
-    it('takes the status text of another language', () => {
-      render(<ProfilePic name="Ana" status="away" statusLabel="Ausente" />)
-      expect(screen.getByRole('img', { name: 'Ausente' })).toHaveAttribute('data-status', 'away')
-    })
-
-    it('shows no status below 32px, as the design draws none', () => {
-      render(<ProfilePic name="Ana" size={28} status="online" />)
-      expect(screen.queryByRole('img', { name: 'Online' })).toBeNull()
-    })
-  })
-
   describe('when given the member name colour', () => {
     it('passes it to the styles as a custom property', () => {
       render(<ProfilePic name="Ana" nameColor="rgb(1, 2, 3)" data-testid="pic" />)
@@ -93,21 +74,5 @@ describe('ProfilePic', () => {
         'rgb(1, 2, 3)'
       )
     })
-  })
-})
-
-describe('ConnectionStatus', () => {
-  it.each([
-    ['online', 'Online'],
-    ['away', 'Away']
-  ] as const)('names the %s dot', (status, name) => {
-    render(<ConnectionStatus status={status} />)
-    expect(screen.getByRole('img', { name })).toHaveAttribute('data-status', status)
-  })
-
-  it('is hidden from assistive technology with an empty label', () => {
-    render(<ConnectionStatus status="online" label="" data-testid="dot" />)
-    expect(screen.queryByRole('img')).toBeNull()
-    expect(screen.getByTestId('dot')).toHaveAttribute('aria-hidden', 'true')
   })
 })

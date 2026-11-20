@@ -17,7 +17,7 @@ export function profileFlagsFrom(flags: Readonly<Record<string, unknown>> | null
  * document request gets them from the profile loader.
  */
 export async function fetchProfileFlags(opts: { signal?: AbortSignal } = {}): Promise<ProfileFlags> {
-  const res = await fetch("/internal/dapps-flags", { signal: opts.signal, headers: { accept: "application/json" } });
+  const res = await fetch("/internal/dapps-flags?known=1", { signal: opts.signal, headers: { accept: "application/json" } });
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new Error(`the flags route answered ${res.status}`);

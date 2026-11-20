@@ -1,6 +1,6 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
-import { Button, FriendCTA, Toast, type FriendCTAStatus } from "@dcl/one-ui";
+import { Button, CopyFeedback, FriendCTA, Toast, type FriendCTAStatus } from "@dcl/one-ui";
 import { GeneralCheck, GeneralForbidden, GeneralPlayers, MenusShare } from "@dcl/one-ui/foundations/icons";
 
 import { useAuth } from "@/data/lib/auth/index";
@@ -8,7 +8,6 @@ import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import type { Friendship, FriendshipAction } from "@/data/lib/friends/friends";
 
 import { openSignIn } from "../components/auth/signin-store";
-import { useCopyStatus } from "../components/useCopyStatus";
 import {
   useBlocking,
   useChangeFriendship,
@@ -53,7 +52,6 @@ export function ProfileMemberActions({ address: rawAddress, name }: { address: s
   const mutual = useMutualFriendsCount(identity, address).data;
   const change = useChangeFriendship(identity, address);
   const block = useSetBlocked(identity, address);
-  const share = useCopyStatus();
   const [notice, setNotice] = useState<Notice | null>(null);
 
   // The block lists decide a block either way; the friendship read only knows one without a friendship.
@@ -158,14 +156,6 @@ export function ProfileMemberActions({ address: rawAddress, name }: { address: s
           },
         ]
       : []),
-    {
-      label: "Share",
-      icon: <MenusShare {...ICON} />,
-      onSelect: () => {
-        setNotice(null);
-        share.copy(profileShareUrl(address));
-      },
-    },
   ];
 
   return (
@@ -186,15 +176,22 @@ export function ProfileMemberActions({ address: rawAddress, name }: { address: s
             {tryAgain}
           </>
         ) : null}
-        <ProfileMoreActions actions={more} />
+        <CopyFeedback as="div" value={profileShareUrl(address)} successAnnouncement="Profile link copied" errorAnnouncement="Couldn't copy the link">
+          {(copy) => (
+            <ProfileMoreActions actions={[...more, {
+              label: "Share",
+              icon: <MenusShare {...ICON} />,
+              onSelect: () => {
+                setNotice(null);
+                copy();
+              },
+            }]} />
+          )}
+        </CopyFeedback>
       </div>
       {/* The status region stays mounted, so a screen reader hears each result. An alert is announced when it appears, and stays until it is closed. */}
       <Toast onClose={() => setNotice(null)}>
-        {notice?.kind === "status" ? (
-          notice.text
-        ) : share.state === "idle" ? null : (
-          <Fragment key={share.announcement}>{share.state === "copied" ? "Profile link copied" : "Couldn't copy the link"}</Fragment>
-        )}
+        {notice?.kind === "status" ? notice.text : null}
       </Toast>
       {notice?.kind === "error" ? (
         <Toast role="alert" variant="error" duration={0} closeButton onClose={() => setNotice(null)}>

@@ -24,7 +24,7 @@ vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
 }));
 vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: net.fetchUserPhotos }));
 const flags = vi.hoisted(() => ({ dappsFlags: vi.fn() }));
-vi.mock("@/data/lib/feature-flags.server", () => ({ dappsFlags: flags.dappsFlags }));
+vi.mock("@/data/lib/feature-flags.server", () => ({ knownDappsFlags: flags.dappsFlags }));
 
 import { createStaticHandler, RouterContextProvider } from "react-router";
 
@@ -457,6 +457,17 @@ describe("profile loader, Referral Rewards", () => {
 
     expect(out.ok).toBe(false);
     expect(locationOf(out.ok ? null : out.thrown)).toBe(`/profile/${A}`);
+  });
+
+  it("keeps the owner's referral URL while flags are unavailable and leaves the flags query unseeded", async () => {
+    flags.dappsFlags.mockResolvedValue(null);
+
+    const out = await run(referral, { address: A, tab: "referral-rewards" }, A);
+
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.data.dehydratedState.queries.some((query) => query.queryKey.includes("flags"))).toBe(false);
+    }
   });
 
   it("sends the profile site's old `referral` tab id to Referral Rewards, keeping the query", async () => {

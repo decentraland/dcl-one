@@ -85,7 +85,7 @@
   },
   "apps/sites/src/features/profile/ProfileCommunitiesScreen.module.css": {
     "primitives": 0,
-    "tokens": 29
+    "tokens": 27
   },
   "apps/sites/src/features/profile/ProfileHeader.module.css": {
     "primitives": 0,
@@ -117,11 +117,11 @@
   },
   "apps/sites/src/features/profile/ProfileReferralsScreen.module.css": {
     "primitives": 0,
-    "tokens": 82
+    "tokens": 78
   },
   "apps/sites/src/features/profile/ProfileShell.module.css": {
     "primitives": 0,
-    "tokens": 7
+    "tokens": 10
   },
   "apps/sites/src/features/profile/collectibles.module.css": {
     "primitives": 0,
@@ -323,10 +323,6 @@
     "primitives": 0,
     "tokens": 55
   },
-  "library/ui/components/ProfilePic/ConnectionStatus.module.css": {
-    "primitives": 0,
-    "tokens": 3
-  },
   "library/ui/components/ProfilePic/ProfilePic.module.css": {
     "primitives": 0,
     "tokens": 5
@@ -361,7 +357,7 @@
   },
   "library/ui/components/Tag/Tag.module.css": {
     "primitives": 0,
-    "tokens": 29
+    "tokens": 7
   },
   "library/ui/components/TitleBar/TitleBar.module.css": {
     "primitives": 0,
@@ -369,6 +365,6 @@
   },
   "library/ui/components/Toast/Toast.module.css": {
     "primitives": 0,
-    "tokens": 16
+    "tokens": 11
   }
 }

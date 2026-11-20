@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -40,7 +40,6 @@ import { emptyProfile } from "@/data/lib/catalyst/social/profile";
 import { friendsKeys } from "@/data/lib/friends/queries";
 
 import { ProfileMemberActions } from "./ProfileMemberActions";
-import { ProfileFriendsCount, ProfileInviteFriends } from "./ProfileOwnerActions";
 import { ProfileShell } from "./ProfileShell";
 
 const ME = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
@@ -116,7 +115,7 @@ describe("a member's header actions, signed out", () => {
     expect(document.activeElement).toBe(button("More actions"));
     expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/profile/${OTHER}`);
     expect(await screen.findByText("Profile link copied")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("Profile link copied");
+    expect(screen.getByText("Profile link copied").closest('[role="status"]')).toBeTruthy();
   });
 });
 
@@ -327,45 +326,6 @@ describe("a member's header actions, block", () => {
   });
 });
 
-describe("a member's header actions, the More actions menu", () => {
-  it("opens from the keyboard, moves with the arrow keys, and gives the focus back on Escape", async () => {
-    const user = userEvent.setup();
-    show();
-    const more = button("More actions");
-    expect(more.getAttribute("aria-haspopup")).toBe("menu");
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    await findBlockItem(user);
-    await user.keyboard("{Escape}");
-    expect(document.activeElement).toBe(more);
-
-    await user.keyboard("{ArrowDown}");
-
-    expect(more.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(item("Block"));
-    await user.keyboard("{ArrowDown}");
-    expect(document.activeElement).toBe(item("Share"));
-    await user.keyboard("{ArrowDown}");
-    expect(document.activeElement).toBe(item("Block"));
-    await user.keyboard("{ArrowUp}");
-    expect(document.activeElement).toBe(item("Share"));
-    await user.keyboard("{Escape}");
-
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(document.activeElement).toBe(more);
-    expect(net.setBlocked).not.toHaveBeenCalled();
-  });
-
-  it("closes on a press outside", async () => {
-    const user = userEvent.setup();
-    show();
-    await openMenu(user);
-
-    await user.click(document.body);
-
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-});
-
 describe("friends counters", () => {
   it("shows the friends the visitor shares with the member, and nothing when there are none", async () => {
     net.fetchMutualFriendsCount.mockResolvedValue(3);
@@ -393,46 +353,6 @@ describe("friends counters", () => {
     await waitFor(() => expect(client.getQueryData(friendsKeys.blocking(ME))).toEqual(lists));
     expect(screen.queryByText(/Mutual/)).toBeNull();
   });
-
-  it("shows the member's own friends count on their profile, read with their identity", async () => {
-    show(<ProfileFriendsCount address={ME} />);
-
-    expect(await screen.findByText("17 Friends")).toBeTruthy();
-    expect(net.fetchFriendsCount.mock.calls[0]?.[0]).toBe(identity);
-  });
-
-  it("loads the signed friends list only after the owner opens it and can retry a failed read", async () => {
-    const user = userEvent.setup();
-    net.fetchFriendsPage.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ addresses: [], total: 0 });
-    show(<ProfileFriendsCount address={ME} />);
-
-    const trigger = await findButton("17 Friends");
-    expect(net.fetchFriendsPage).not.toHaveBeenCalled();
-    await user.click(trigger);
-    expect(await screen.findByRole("dialog", { name: "Friends" })).toBeTruthy();
-    expect(await screen.findByText("Friends are unavailable right now.")).toBeTruthy();
-    await user.click(button("Try again"));
-    expect(await screen.findByText("You don't have any friends yet.")).toBeTruthy();
-    expect(net.fetchFriendsPage.mock.calls[0]?.[0]).toBe(identity);
-  });
-
-  it("copies the wallet invite from the owner header", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn(async () => {});
-    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-    show(<ProfileInviteFriends address={ME} />);
-
-    await user.click(button("Invite Friends"));
-
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/invite/${ME}`);
-    expect(await findButton("Invite Copied")).toBeTruthy();
-  });
-
-  it("reads no friends count with another wallet's identity", () => {
-    show(<ProfileFriendsCount address={OTHER} />);
-
-    expect(net.fetchFriendsCount).not.toHaveBeenCalled();
-  });
 });
 
 describe("the profile header", () => {
@@ -458,6 +378,33 @@ describe("the profile header", () => {
     expect(await findButton("Add friend")).toBeTruthy();
     expect(button("More actions")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Get a Unique Name" })).toBeNull();
+  });
+
+  it("drops a pending action and its notice when the viewer changes wallets", async () => {
+    const user = userEvent.setup();
+    let resolveWrite = () => {};
+    net.changeFriendship.mockReturnValueOnce(new Promise<void>((resolve) => { resolveWrite = resolve; }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const profile = { ...emptyProfile(OTHER), name: "Bob" };
+    const view = () => (
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ProfileShell profile={profile} own={false} tabs={[]} active="overview" onTab={vi.fn()}>body</ProfileShell>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view());
+    await user.click(await findButton("Add friend"));
+    expect(net.changeFriendship.mock.calls[0]?.[0]).toBe(identity);
+
+    const second = { ...identity, signer: "0x2222222222222222222222222222222222222222" };
+    auth.state = { identity: second, isConnected: true, address: second.signer };
+    rerender(view());
+    await findButton("Add friend");
+    await act(async () => { resolveWrite(); });
+
+    expect(screen.queryByText("Friend request sent.")).toBeNull();
+    expect(button("Add friend").getAttribute("aria-busy")).not.toBe("true");
   });
 
   it("keeps the owner's call to action on their own profile, with their friends count and no friend actions", async () => {

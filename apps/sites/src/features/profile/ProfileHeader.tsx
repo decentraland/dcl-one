@@ -33,7 +33,7 @@ export function ProfileHeader({
   return (
     <header className={styles.root} style={{ "--name-color": nameColor } as CSSProperties}>
       <div className={styles.identity}>
-        <ProfilePic className={styles.avatar} name={name} src={avatarUrl} size={48} nameColor={nameColor} />
+        <ProfilePic name={name} src={avatarUrl} size={76} compactOnMobile nameColor={nameColor} />
         <div className={styles.nameBlock}>
           <div className={styles.nameRow}>
             <h1 className={styles.name}>{name}</h1>

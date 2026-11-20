@@ -65,28 +65,7 @@
     overflow-wrap: anywhere;
   }
 
-  /* The capture's 20px close box at white 10%, in a 24px target. */
-  .close {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    margin: 0;
-    padding: 0;
-    border: 2px solid var(--dcl-neutrals-shadow);
-    border-radius: var(--dcl-radius-xs);
-    background: var(--dcl-transparencies-white-10);
-    background-clip: padding-box;
-    color: var(--dcl-neutrals-snow);
-    cursor: pointer;
-  }
 
-  .close:focus-visible {
-    outline: 2px solid var(--dcl-neutrals-snow);
-    outline-offset: 0;
-  }
 
   @media (prefers-reduced-motion: no-preference) {
     .toast {

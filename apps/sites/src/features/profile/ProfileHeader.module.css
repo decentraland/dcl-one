@@ -91,11 +91,6 @@
     padding: var(--dcl-space-16) var(--dcl-space-24);
   }
 
-  .avatar {
-    --profile-pic-size: 76px;
-    --profile-pic-ring: 3.2px;
-  }
-
   .name,
   .discriminator {
     font-size: var(--dcl-font-size-heading-2);

@@ -81,10 +81,7 @@
   font-size: var(--dcl-font-size-body-lg);
 }
 
-.termsButton {
-  min-width: 32px;
-  padding-inline: 0;
-}
+
 
 .invite {
   display: flex;
@@ -105,24 +102,14 @@
   border-radius: var(--dcl-radius-md);
 }
 
-.inviteField > :first-child {
+.inviteInput {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.copy {
-  flex: 0 0 auto;
-  padding-inline: var(--dcl-space-8);
-}
 
-.copied {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--dcl-space-4);
-  margin: 0;
-  color: var(--dcl-text-primary);
-  font-size: var(--dcl-font-size-body-sm);
-}
+
+
 
 .terms {
   position: absolute;

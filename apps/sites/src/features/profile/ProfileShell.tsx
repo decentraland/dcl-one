@@ -6,6 +6,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 import { Button, Tabs, TabsBar, type TabsLinkProps } from "@dcl/one-ui";
 
 import { SHOP_BASE } from "@/core/lib/shop/redirects";
+import { useAuth } from "@/data/lib/auth/index";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
@@ -50,6 +51,7 @@ type ProfileShellProps = {
  * action or another member's friendship, block and share actions, tab bar.
  */
 export function ProfileShell({ profile, own, tabs, active, onTab, aside, children }: ProfileShellProps) {
+  const { identity } = useAuth();
   const ids = useId();
   const tabId = (id: string) => `${ids}-tab-${id}`;
   // On a narrow screen the bar scrolls sideways and opens at its start, where a late tab is out of sight.
@@ -75,11 +77,11 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
         </Button>
       )}
       <ProfileFriendsCount address={profile.address} />
-      <ProfileInviteFriends address={profile.address} />
+      <ProfileInviteFriends profile={profile} />
     </>
   ) : (
     // Keyed by address: another profile starts with no result of the last one's actions.
-    <ProfileMemberActions key={profile.address} address={profile.address} name={profile.name} />
+    <ProfileMemberActions key={`${identity?.signer ?? ""}:${profile.address}`} address={profile.address} name={profile.name} />
   );
 
   // No top-bar entry is highlighted on a profile ("play" maps to none), as on the profile site.
@@ -96,11 +98,11 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
             avatarUrl={profile.avatarUrl || undefined}
             actions={actions}
           />
-          <TabsBar label="Profile sections" inset="content" className={styles.sectionBar} scrollable>
+          <TabsBar label="Profile sections" variant="compact" inset="content" scrollable>
             {tabs.map((tab) => (
               <Tabs
                 key={tab.id}
-                className={styles.sectionTab}
+                variant="compact"
                 id={tabId(tab.id)}
                 label={tab.label}
                 href={tab.href}

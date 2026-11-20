@@ -5,3 +5,11 @@
 @import './colors/colors.css';
 @import './spacing/spacing.css';
 @import './layout/layout.css';
+
+@layer dcl.foundations {
+  :root {
+    --dcl-profile-gradient-start: #7434b1;
+    --dcl-profile-gradient-middle: #481c6c;
+    --dcl-profile-gradient-end: #2b1040;
+  }
+}

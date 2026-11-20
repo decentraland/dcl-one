@@ -74,6 +74,11 @@ export function referralJourneyProgress(accepted: number): number {
   return fromPosition + share * (toPosition - fromPosition);
 }
 
+/** The same referral link is shared by the Profile header and the Referral Rewards tab. */
+export function profileReferralHandle(profile: { address: string; name: string; hasClaimedName: boolean }): string {
+  return profile.hasClaimedName && profile.name ? profile.name : profile.address;
+}
+
 /** The invite page a member shares: by claimed NAME when they have one, by wallet otherwise. */
 export function referralInviteUrl(origin: string, handle: string): string {
   return `${origin.replace(/\/+$/, "")}/invite/${encodeURIComponent(handle)}`;

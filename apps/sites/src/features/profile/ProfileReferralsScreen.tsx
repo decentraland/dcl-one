@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useId, useState, type CSSProperties } from "react";
+import { useEffect, useId, useState, type CSSProperties } from "react";
 
-import { Button, InputWebCreatorTools, Spinner } from "@dcl/one-ui";
+import { Button, CopyFeedback, InputWebCreatorTools, Spinner } from "@dcl/one-ui";
 import envelopeImage from "@dcl/one-ui/apps/sites/assets/referrals/referral-envelope.webp";
 import logoPointerImage from "@dcl/one-ui/apps/sites/assets/referrals/logo-with-pointer.webp";
 import medalImage from "@dcl/one-ui/apps/sites/assets/referrals/sports-medal.webp";
@@ -28,6 +28,7 @@ import { useAuth } from "@/data/lib/auth/index";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 import {
   nextReferralTier,
+  profileReferralHandle,
   REFERRAL_TIERS,
   referralInviteUrl,
   referralJourneyProgress,
@@ -36,8 +37,6 @@ import {
   type ReferralTier,
 } from "@/data/lib/catalyst/social/referrals";
 import { signsFor } from "@/data/lib/profile/queries";
-
-import { useCopyStatus } from "../components/useCopyStatus";
 
 import { useReferralProgress, useReferralTiersSeen } from "./hooks";
 import { ProfileMoreActions } from "./ProfileMoreActions";
@@ -97,9 +96,8 @@ function ReferralHero({ profile }: { profile: ProfileVM }) {
   const [stepsOpen, setStepsOpen] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const termsId = useId();
-  const { state, announcement, copy } = useCopyStatus();
   // A claimed NAME makes the shorter link; the wallet always works.
-  const handle = profile.hasClaimedName && profile.name ? profile.name : profile.address;
+  const handle = profileReferralHandle(profile);
   const inviteUrl = referralInviteUrl(typeof window === "undefined" ? "" : window.location.origin, handle);
 
   return (
@@ -112,9 +110,8 @@ function ReferralHero({ profile }: { profile: ProfileVM }) {
         <div className={styles.subtitle}>
           <p className={styles.heroSubtitle}>Invite yours and get rewards!</p>
           <Button
-            variant="text"
+            variant="iconOnly"
             size="sm"
-            className={styles.termsButton}
             aria-label="Referral program details"
             aria-expanded={termsOpen}
             aria-controls={termsId}
@@ -131,38 +128,37 @@ function ReferralHero({ profile }: { profile: ProfileVM }) {
             .
           </p>
         </div>
-        <div className={styles.invite}>
-          <div className={styles.inviteField}>
-            <InputWebCreatorTools
-              label="Your invite link"
-              labelHidden
-              value={inviteUrl}
-              readOnly
-              onFocus={(event) => event.currentTarget.select()}
-            />
-            <Button variant="text" size="sm" aria-label="Copy link" className={styles.copy} onClick={() => copy(inviteUrl)}>
-              <GeneralCopy size={18} aria-hidden="true" />
-            </Button>
-          </div>
-          <ProfileMoreActions
-            label="Share"
-            actions={[
-              { label: "Copy link", icon: <GeneralCopy size={18} aria-hidden="true" />, onSelect: () => copy(inviteUrl) },
-              { label: "Share on X", icon: <SocialX size={18} aria-hidden="true" />, onSelect: () => window.open(shareOnXHref(inviteUrl), "_blank", "noopener,noreferrer") },
-            ]}
-          />
-        </div>
-        <p className={state === "idle" ? styles.visuallyHidden : styles.copied} role="status">
-          <Fragment key={announcement}>
-            {state === "copied" ? (
-              <>
-                <GeneralCheck size={16} aria-hidden="true" /> Link copied successfully
-              </>
-            ) : state === "failed" ? (
-              "Couldn't copy the link"
-            ) : null}
-          </Fragment>
-        </p>
+        <CopyFeedback
+          as="div"
+          value={inviteUrl}
+          successAnnouncement="Link copied successfully"
+          errorAnnouncement="Couldn't copy the link"
+        >
+          {(copy) => (
+            <div className={styles.invite}>
+              <div className={styles.inviteField}>
+                <InputWebCreatorTools
+                  className={styles.inviteInput}
+                  label="Your invite link"
+                  labelHidden
+                  value={inviteUrl}
+                  readOnly
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <Button variant="iconOnly" size="sm" aria-label="Copy link" onClick={copy}>
+                  <GeneralCopy size={18} aria-hidden="true" />
+                </Button>
+              </div>
+              <ProfileMoreActions
+                label="Share"
+                actions={[
+                  { label: "Copy link", icon: <GeneralCopy size={18} aria-hidden="true" />, onSelect: copy },
+                  { label: "Share on X", icon: <SocialX size={18} aria-hidden="true" />, onSelect: () => window.open(shareOnXHref(inviteUrl), "_blank", "noopener,noreferrer") },
+                ]}
+              />
+            </div>
+          )}
+        </CopyFeedback>
         <Button
           variant="text"
           size="md"

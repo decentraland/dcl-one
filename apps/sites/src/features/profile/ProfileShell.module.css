@@ -9,9 +9,12 @@
    * it, so the page keeps the bar's height free above its own gap. */
   padding-top: calc(var(--site-header-h, 64px) + var(--dcl-space-16));
   padding-bottom: var(--dcl-space-64);
-  --profile-background: radial-gradient(123.58% 82% at 9.01% 25.79%, #7434b1 0%, #481c6c 37.11%, #2b1040 100%);
-
-  background: var(--profile-background);
+  background: radial-gradient(
+    123.58% 82% at 9.01% 25.79%,
+    var(--dcl-profile-gradient-start) 0%,
+    var(--dcl-profile-gradient-middle) 37.11%,
+    var(--dcl-profile-gradient-end) 100%
+  );
   color: var(--dcl-text-primary);
 }
 
@@ -22,10 +25,6 @@
   width: 100%;
   max-width: 1650px;
   margin: 0 auto;
-}
-
-.sectionBar {
-  background: transparent;
 }
 
 .body {
@@ -53,14 +52,6 @@
 
   .content {
     padding: 0 var(--dcl-space-32);
-  }
-
-  .sectionBar {
-    padding-inline: 0;
-  }
-
-  .sectionTab {
-    height: 46px;
   }
 
   .withAside {

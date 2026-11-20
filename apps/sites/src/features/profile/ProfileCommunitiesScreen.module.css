@@ -118,12 +118,6 @@
   left: var(--dcl-space-8);
 }
 
-.roleTag {
-  background: var(--dcl-brand-ruby);
-  color: var(--dcl-neutrals-white);
-  text-transform: uppercase;
-}
-
 .members {
   right: var(--dcl-space-8);
   display: inline-flex;

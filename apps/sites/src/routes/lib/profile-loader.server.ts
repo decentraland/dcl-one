@@ -5,7 +5,7 @@ import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
-import { dappsFlags } from "@/data/lib/feature-flags.server";
+import { knownDappsFlags } from "@/data/lib/feature-flags.server";
 import { profileFlagsFrom } from "@/data/lib/profile/flags";
 import {
   assetsQuery,
@@ -101,8 +101,10 @@ export async function profileLoader(
   const own = isOwnProfile(address, readWallet(request));
 
   // Only the member's own profile has a tab behind a rollout flag, so only it reads the flags.
-  const flags = own ? profileFlagsFrom(await dappsFlags()) : null;
-  const tabOptions = { referral: flags?.referral === true };
+  const readFlags = own ? await knownDappsFlags() : null;
+  const flags = readFlags === null ? null : profileFlagsFrom(readFlags);
+  // An unavailable flag keeps an owner's deep link until the client can confirm the rollout.
+  const tabOptions = { referral: own && flags?.referral !== false };
 
   const legacyTab = url.searchParams.get("tab");
   if (legacyTab !== null || url.searchParams.has("own")) {

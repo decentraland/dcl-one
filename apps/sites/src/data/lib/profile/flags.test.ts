@@ -19,7 +19,7 @@ describe("profile flags", () => {
 
     await expect(fetchProfileFlags({ signal })).resolves.toEqual({ referral: true });
 
-    expect(fetchMock).toHaveBeenCalledWith("/internal/dapps-flags", expect.objectContaining({ signal }));
+    expect(fetchMock).toHaveBeenCalledWith("/internal/dapps-flags?known=1", expect.objectContaining({ signal }));
   });
 
   it("fail when the route does, so a failure is not read as every flag off for a minute", async () => {

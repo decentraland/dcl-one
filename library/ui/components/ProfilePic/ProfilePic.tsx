@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, HTMLAttributes } from 'react'
-import { ConnectionStatus, type ConnectionStatusValue } from './ConnectionStatus'
 import styles from './ProfilePic.module.css'
 
-export type ProfilePicSize = 72 | 60 | 48 | 40 | 32 | 28 | 24 | 20
+export type ProfilePicSize = 76 | 72 | 60 | 48 | 40 | 32 | 28 | 24 | 20
 
 export type ProfilePicProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   /** The member's name: the picture's text alternative, and the source of the fallback initial. */
@@ -13,9 +12,8 @@ export type ProfilePicProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> 
   /** The text alternative when it is not the name. `""` marks a picture shown beside the name as decoration. */
   alt?: string
   size?: ProfilePicSize
-  /** Shows the connection dot. The design draws it from 32px up; smaller pictures show none. */
-  status?: ConnectionStatusValue
-  statusLabel?: string
+  /** Uses the 48px portrait below the desktop breakpoint. */
+  compactOnMobile?: boolean
   /** The member's own name colour, behind the picture and the initial. It is member data, not a palette choice. */
   nameColor?: string
 }
@@ -34,8 +32,7 @@ export function ProfilePic({
   src,
   alt = name,
   size = 72,
-  status,
-  statusLabel,
+  compactOnMobile = false,
   nameColor,
   className,
   style,
@@ -54,6 +51,7 @@ export function ProfilePic({
       {...rest}
       className={[styles.root, className].filter(Boolean).join(' ')}
       data-size={size}
+      data-compact-on-mobile={compactOnMobile || undefined}
       style={nameColor ? ({ ...style, '--profile-pic-name-color': nameColor } as CSSProperties) : style}
     >
       <span className={styles.picture}>
@@ -75,9 +73,6 @@ export function ProfilePic({
           </span>
         )}
       </span>
-      {status && size >= 32 && (
-        <ConnectionStatus className={styles.status} status={status} label={statusLabel} />
-      )}
     </span>
   )
 }

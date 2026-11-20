@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { HTMLAttributes, ReactNode } from 'react'
-import { GeneralCheck, GeneralClose, GeneralWarning } from '../../foundations/icons/general'
+import { CloseButton } from '../CloseButton/CloseButton'
+import { GeneralCheck, GeneralWarning } from '../../foundations/icons/general'
 import styles from './Toast.module.css'
 
 export type ToastVariant = 'text' | 'confirmation' | 'error'
@@ -16,10 +17,12 @@ export type ToastProps = Omit<HTMLAttributes<HTMLDivElement>, 'role' | 'children
   variant?: ToastVariant
   /**
    * How long the message shows, in ms, before `onClose` is called. Defaults to 4000; `0` keeps it
-   * until the caller removes it. The time starts again when `children` changes, and waits while
-   * the pointer or the focus is on the toast.
+   * until the caller removes it. The timer restarts for new text or a different message key.
+   * The timer waits while the pointer or focus is on the toast.
    */
   duration?: number
+  /** Identifies a message with element children, allowing it to restart the duration. */
+  messageKey?: string | number
   /** Called when the time ends or the close button is pressed. The caller then removes the message. */
   onClose?: () => void
   /** Shows the close button. Needs `onClose`. */
@@ -40,6 +43,7 @@ export function Toast({
   role = 'status',
   variant = 'text',
   duration = 4000,
+  messageKey,
   onClose,
   closeButton = false,
   closeLabel = 'Close',
@@ -49,6 +53,7 @@ export function Toast({
   ...rest
 }: ToastProps) {
   const shown = children !== undefined && children !== null && children !== false && children !== ''
+  const timerKey = messageKey ?? (typeof children === 'string' ? children : undefined)
   const close = useRef(onClose)
   const held = useRef(false)
   useEffect(() => {
@@ -64,7 +69,7 @@ export function Toast({
     }
     timer = setTimeout(tick, duration)
     return () => clearTimeout(timer)
-  }, [shown, duration, children])
+  }, [shown, duration, timerKey])
   const hold = (value: boolean) => () => {
     held.current = value
   }
@@ -94,9 +99,7 @@ export function Toast({
           <span className={styles.message}>{children}</span>
           {action}
           {closeButton && onClose && (
-            <button type="button" className={styles.close} aria-label={closeLabel} onClick={onClose}>
-              <GeneralClose size={12} aria-hidden="true" focusable="false" />
-            </button>
+            <CloseButton variant="plain" aria-label={closeLabel} onClick={onClose} />
           )}
         </div>
       )}
