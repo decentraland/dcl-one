@@ -503,6 +503,16 @@ pub async fn deploy_entity_streaming(
     let hashes = extract_content_hashes(&entity_data)
         .map_err(|e| entity_parse_error(entity_id, verification, e))?;
 
+    // A retried failure a newer entity overtook on any pointer is discarded before its
+    // content is fetched or validated: it would only ever land as a superseded row.
+    if context == DeploymentContext::SyncedFix
+        && deployer.is_overtaken(&entity_data, entity_id).await?
+    {
+        return Err(SyncError::Overtaken {
+            entity_id: entity_id.to_string(),
+        });
+    }
+
     let mut tasks: tokio::task::JoinSet<Result<(), SyncError>> = tokio::task::JoinSet::new();
 
     let refs: Vec<&str> = hashes.iter().map(String::as_str).collect();

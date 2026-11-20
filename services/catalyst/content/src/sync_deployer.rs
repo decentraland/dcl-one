@@ -955,6 +955,15 @@ impl LiveSyncDeployer {
         Ok(())
     }
 
+    /// [`is_overtaken`] over this deployer's pool.
+    pub async fn is_overtaken(
+        &self,
+        entity_data: &[u8],
+        entity_id: &str,
+    ) -> Result<bool, SyncError> {
+        is_overtaken(&self.pool, entity_data, entity_id).await
+    }
+
     /// Flushes the buffer and waits for every in-flight flush to finish.
     pub async fn flush(&self) -> Result<(), SyncError> {
         {
@@ -970,6 +979,47 @@ impl LiveSyncDeployer {
             notified.await;
         }
     }
+}
+
+/// Whether a newer active entity holds any pointer of `entity_data`, in the order pointer
+/// succession uses (`entity_timestamp`, then the lowercased entity id). Such an entity can only
+/// land as a superseded row: succession supersedes an entity as a whole. An entity without
+/// pointers or a timestamp is never overtaken.
+pub async fn is_overtaken(
+    pool: &PgPool,
+    entity_data: &[u8],
+    entity_id: &str,
+) -> Result<bool, SyncError> {
+    let entity: Value = serde_json::from_slice(entity_data)?;
+    let Some(timestamp) = entity.get("timestamp").and_then(Value::as_f64) else {
+        return Ok(false);
+    };
+    let pointers: Vec<String> = entity
+        .get("pointers")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_lowercase))
+                .collect()
+        })
+        .unwrap_or_default();
+    if pointers.is_empty() {
+        return Ok(false);
+    }
+    sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM content.active_pointers ap
+             JOIN content.deployments d ON d.entity_id = ap.entity_id
+             WHERE ap.pointer = ANY($1)
+               AND (d.entity_timestamp, lower(d.entity_id))
+                   > (to_timestamp($2 / 1000.0), lower($3)))",
+    )
+    .bind(&pointers)
+    .bind(timestamp)
+    .bind(entity_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| SyncError::Storage(e.to_string()))
 }
 
 /// Whether `entity_id` is already deployed at `timestamp_ms` or later: the bloom-guarded

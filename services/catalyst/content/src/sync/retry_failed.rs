@@ -234,6 +234,7 @@ impl RetryFailedDeployments {
         let content_semaphore = Arc::new(Semaphore::new(50));
         let succeeded = AtomicU64::new(0);
         let still_failing = AtomicU64::new(0);
+        let discarded = AtomicU64::new(0);
         let mut skipped: u64 = 0;
         let mut pages: u64 = 0;
 
@@ -293,6 +294,7 @@ impl RetryFailedDeployments {
             let servers_ref: &[String] = servers.as_deref().unwrap_or_default();
             let succeeded_ref = &succeeded;
             let still_failing_ref = &still_failing;
+            let discarded_ref = &discarded;
             let content_semaphore = &content_semaphore;
 
             futures::stream::iter(due)
@@ -324,6 +326,21 @@ impl RetryFailedDeployments {
                             Ok(()) => {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(SyncError::Overtaken { .. }) => {
+                                info!(
+                                    entity_id = %failure.entity_id,
+                                    entity_type = %failure.entity_type,
+                                    "Discarding failed deployment overtaken by newer deployments"
+                                );
+                                match self.failed_store.discard(&failure.entity_id).await {
+                                    Ok(()) => {
+                                        discarded_ref.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        error!(entity_id = %failure.entity_id, error = %e, "Failed to discard overtaken failed deployment");
+                                    }
+                                }
                             }
                             Err(e) => {
                                 debug!(entity_id = %failure.entity_id, error = %e, "Retry still failing");
@@ -361,6 +378,7 @@ impl RetryFailedDeployments {
         let stats = RetryStats {
             succeeded: succeeded.load(Ordering::Relaxed),
             still_failing: still_failing.load(Ordering::Relaxed),
+            discarded: discarded.load(Ordering::Relaxed),
             waiting,
             evicted,
             skipped,
@@ -373,6 +391,7 @@ impl RetryFailedDeployments {
             info!(
                 succeeded = stats.succeeded,
                 still_failing = stats.still_failing,
+                discarded = stats.discarded,
                 waiting = stats.waiting,
                 evicted = stats.evicted,
                 skipped = stats.skipped,
@@ -422,6 +441,8 @@ impl RetryFailedDeployments {
 pub struct RetryStats {
     pub succeeded: u64,
     pub still_failing: u64,
+    /// Due records dropped because a newer deployment overtook the entity.
+    pub discarded: u64,
     /// Records whose deadline was still ahead when the cycle started.
     pub waiting: u64,
     pub evicted: u64,

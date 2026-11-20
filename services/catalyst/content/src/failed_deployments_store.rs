@@ -136,6 +136,16 @@ impl LiveFailedDeploymentsStore {
         Self { pool }
     }
 
+    /// Drops the record of an entity the retry discards (newer entities overtook it).
+    pub async fn discard(&self, entity_id: &str) -> Result<(), SyncError> {
+        sqlx::query("DELETE FROM content.failed_deployments WHERE entity_id = $1")
+            .bind(entity_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| SyncError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     /// GREATEST-monotonic on the retry columns: the sync path reports a failure with a fresh
     /// entity's zeroed retry state every time an entity reappears in a snapshot, and that must
     /// never rewind a backoff deadline or attempt count the retry worker already advanced. An
