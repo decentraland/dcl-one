@@ -179,7 +179,7 @@ export default function SitesTopBar({
   const manaAccount = profileOpen && profileManaEligible ? identity : null;
   const { data: mana, isPending: manaPending } = useManaBalance(manaAccount, ethereumChainId());
   const { data: polygonMana, isPending: polygonManaPending } = useManaBalance(manaAccount, settlementChainId());
-  const menuBalances = manaAccount && (mana !== undefined || polygonMana !== undefined)
+  const menuBalances = manaAccount
     ? {
         mana: mana === undefined ? undefined : manaWeiToNumber(mana),
         polygonMana: polygonMana === undefined ? undefined : manaWeiToNumber(polygonMana),

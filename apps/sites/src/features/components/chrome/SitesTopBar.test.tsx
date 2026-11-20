@@ -495,6 +495,20 @@ describe("when Nav Profile reads the matching browser wallet", () => {
     expect(panel.querySelector('[data-balance="polygonMana"]')?.textContent).toBe("MANA en Polygon: 0");
   });
 
+  it("should retain the balance row without amounts when both MANA reads fail", async () => {
+    readManaBalanceWei.mockRejectedValue(new Error("RPC unavailable"));
+    await act(async () => { await request.mock.results[0]!.value; });
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!)!;
+    const row = panel.querySelector('[aria-busy="true"]');
+    expect(row).toBeTruthy();
+    await waitFor(() => expect(panel.querySelector('[aria-busy="true"]')).toBeNull());
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+    expect(panel.contains(row)).toBe(true);
+    expect(panel.querySelector("[data-balance]")).toBeNull();
+  });
+
   it("should confirm the address copy in the Sites locale", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");

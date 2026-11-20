@@ -96,10 +96,10 @@ root.render(navbar)
 if (profileBalances) {
   window.addEventListener(
     'fixture:load-profile-balances',
-    () =>
+    (event) =>
       root.render(
         cloneElement(navbar, {
-          accountMenuBalances: { mana: 123.45, polygonMana: 67.89 },
+          accountMenuBalances: (event as CustomEvent).detail,
           accountMenuBalancesPending: false
         })
       ),
