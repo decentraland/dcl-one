@@ -780,42 +780,6 @@ const messages = {
     '커뮤니티 소유자와 관리자가 이 연결을 변경할 수 있습니다.',
     'コミュニティのオーナーとモデレーターがこの関連付けを変更できます。'
   ],
-  Schedules: ['Horarios', 'Horaires', '日程', '일정', 'スケジュール'],
-  'Could not load schedules: {error}': [
-    'No se pudieron cargar los horarios: {error}',
-    'Impossible de charger les horaires : {error}',
-    '无法加载日程：{error}',
-    '일정을 불러오지 못했습니다: {error}',
-    'スケジュールを読み込めませんでした：{error}'
-  ],
-  'No schedules are available.': [
-    'No hay horarios disponibles.',
-    'Aucun horaire disponible.',
-    '没有可用日程。',
-    '사용 가능한 일정이 없습니다.',
-    '利用できるスケジュールがありません。'
-  ],
-  'Unavailable schedule (remove association)': [
-    'Horario no disponible (quitar asociación)',
-    'Horaire indisponible (supprimer l’association)',
-    '日程不可用（移除关联）',
-    '사용할 수 없는 일정(연결 해제)',
-    '利用できないスケジュール（関連付けを削除）'
-  ],
-  'Custom join link': [
-    'Enlace de acceso personalizado',
-    'Lien d’accès personnalisé',
-    '自定义加入链接',
-    '맞춤 입장 링크',
-    'カスタム参加リンク'
-  ],
-  "Use the venue's default link": [
-    'Usar el enlace predeterminado del lugar',
-    'Utiliser le lien par défaut du lieu',
-    '使用地点的默认链接',
-    '장소의 기본 링크 사용',
-    '会場のデフォルトリンクを使用'
-  ],
   'Loading your hangout…': [
     'Cargando tu evento…',
     'Chargement de votre événement…',

@@ -45,7 +45,6 @@ type SubmitHangoutProps = {
   onSignIn?: () => void;
   upload?: UploadFn;
   options?: HangoutOptions | null;
-  canEditAny?: boolean;
   privateFieldsEditable?: boolean;
   canChangeCommunity?: boolean;
   editor?: boolean;
@@ -70,7 +69,6 @@ export default function SubmitHangout({
   onSignIn,
   upload,
   options = null,
-  canEditAny = false,
   privateFieldsEditable = mode === "create",
   canChangeCommunity = mode === "create",
   editor = false,
@@ -102,7 +100,6 @@ export default function SubmitHangout({
       onSignIn={onSignIn}
       upload={upload}
       options={options}
-      canEditAny={canEditAny}
       privateFieldsEditable={privateFieldsEditable}
       canChangeCommunity={canChangeCommunity}
       onDelete={onDelete}
@@ -128,7 +125,6 @@ type InnerProps = {
   onSignIn?: () => void;
   upload?: UploadFn;
   options: HangoutOptions | null;
-  canEditAny: boolean;
   privateFieldsEditable: boolean;
   canChangeCommunity: boolean;
   onDelete?: () => void;
@@ -157,7 +153,6 @@ function SubmitHangoutInner({
   onSignIn,
   upload,
   options,
-  canEditAny,
   privateFieldsEditable,
   canChangeCommunity,
   onDelete,
@@ -255,7 +250,7 @@ function SubmitHangoutInner({
           inline={editingInline}
         />
         {section === "details" && !editingInline && (
-          <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
+          <HangoutAssociations draft={d} options={options} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
         )}
         {section === "details" && !communityAllowed && <Notice tone="error">{text("Choose a community you manage, or select None.")}</Notice>}
       </>
@@ -297,7 +292,7 @@ function SubmitHangoutInner({
                     <h2>{text("Event details")}</h2>
                     <fieldset className={styles.editorSection}><legend>{text("Schedule")}</legend>{fields("schedule")}</fieldset>
                     <fieldset className={styles.editorSection}><legend>{text("Location")}</legend>{fields("location")}</fieldset>
-                    <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
+                    <HangoutAssociations draft={d} options={options} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
                   </div>
                   <div className={styles.editorActions}>
                     <div className={styles.reviewBar}>

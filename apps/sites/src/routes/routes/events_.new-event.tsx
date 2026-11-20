@@ -153,8 +153,9 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   const canChangeCommunity = d.mode === "create" || owner;
   // Another creator's event needs the account's permissions; a failed read of them is not an answer.
   const permissionsError = original && !owner && optionsResult ? optionsResult.error || options?.profileError || null : null;
-  // A signed-out edit link (a rejection email, say) asks for sign-in and returns to this same editor.
-  const signInNeeded = d.mode === "edit" && Boolean(d.eventId) && hydrated && !auth.isConnected;
+  // A signed-out visitor goes straight to sign-in and comes back to this same editor: creating needs an
+  // account, and an edit link (a rejection email, say) names an event only its owner or a moderator edits.
+  const signInNeeded = (d.mode === "create" || Boolean(d.eventId)) && hydrated && !auth.isConnected;
   useSignInRequired(signInNeeded, auth.isConnected);
   // As decentraland.org: an edit link that is missing its event, refused or not found, or definitely not
   // this account's to edit goes back to the Events page instead of showing an error.
@@ -230,7 +231,6 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
         signedIn={auth.isConnected}
         onSignIn={openSignIn}
         options={options}
-        canEditAny={canEditAny}
         privateFieldsEditable={d.mode === "create" || owner}
         canChangeCommunity={canChangeCommunity}
         onDelete={editReady ? () => { setDeleteFailed(false); setConfirmingDelete(true); } : undefined}

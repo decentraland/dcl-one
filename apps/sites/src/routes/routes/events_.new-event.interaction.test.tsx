@@ -24,6 +24,7 @@ vi.mock("@/data/lib/catalyst/landings/hangout-options", async (original) => ({ .
 
 const EVENT_ID = "5f0c6a52-6b1d-4c1e-9a77-0e8f5b2c4d10";
 const EDIT_PATH = `/events/edit-event/${EVENT_ID}`;
+const CREATE_PATH = "/events/new-event";
 
 describe("when editing a hangout through its route", () => {
   let options: HangoutOptions;
@@ -39,9 +40,10 @@ describe("when editing a hangout through its route", () => {
   let scrollTo: ReturnType<typeof vi.spyOn>;
 
   function mount(path = `/events/edit-event/${EVENT_ID}`, eventId: string | null = EVENT_ID) {
-    const loaderData = { sid: "test", mode: "edit", eventId, communityId: "", categories: [], categoriesError: false, assignment: { variant: "wizard" } };
+    const mode = path === CREATE_PATH ? "create" : "edit";
+    const loaderData = { sid: "test", mode, eventId: mode === "create" ? null : eventId, communityId: "", categories: [], categoriesError: false, assignment: { variant: "wizard" } };
     router = createMemoryRouter([
-      { id: "hangout", path: "/events/edit-event/:id", Component: SubmitHangoutRoute as never, loader: () => loaderData },
+      { id: "hangout", path: mode === "create" ? CREATE_PATH : "/events/edit-event/:id", Component: SubmitHangoutRoute as never, loader: () => loaderData },
       { path: "/events", element: <h1>What's On</h1> },
     ], { initialEntries: [path], hydrationData: { loaderData: { hangout: loaderData } } });
     render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
@@ -174,6 +176,28 @@ describe("when editing a hangout through its route", () => {
     });
   });
 
+  describe("and a signed-out visitor opens the create page", () => {
+    beforeEach(() => {
+      vi.mocked(useAuth).mockReturnValue({ identity: null, address: null, isConnected: false } as unknown as ReturnType<typeof useAuth>);
+      vi.mocked(getIdentity).mockReturnValue(null);
+      mount(CREATE_PATH);
+    });
+
+    it("should send the visitor to sign-in and back to the create page", async () => {
+      await waitFor(() => expect(openSignIn).toHaveBeenCalledWith({ redirectTo: CREATE_PATH }));
+      expect(openSignIn).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("and a signed-in visitor opens the create page", () => {
+    beforeEach(() => mount(CREATE_PATH));
+
+    it("should not ask for sign-in", async () => {
+      expect(await screen.findByRole("heading", { level: 1 })).toBeTruthy();
+      expect(openSignIn).not.toHaveBeenCalled();
+    });
+  });
+
   describe("and the edit link names a malformed event id, which the loader reads as no event", () => {
     beforeEach(() => mount("/events/edit-event/not-an-id", null));
 
@@ -225,7 +249,7 @@ describe("when editing a hangout through its route", () => {
         });
 
         it("should open the delegated editor", async () => {
-          expect(await screen.findByRole("textbox", { name: "Custom join link" })).toBeTruthy();
+          expect(await screen.findByRole("button", { name: "Delete" })).toBeTruthy();
           expect(router.state.location.pathname).toBe(EDIT_PATH);
         });
       });
@@ -238,8 +262,8 @@ describe("when editing a hangout through its route", () => {
       });
 
       it("should show delegated controls while keeping owner fields private", () => {
-        expect(screen.getByRole("textbox", { name: "Custom join link" })).toBeTruthy();
         expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
+        expect(screen.queryByRole("textbox", { name: "Custom join link" })).toBeNull();
         expect(screen.queryByRole("textbox", { name: "Contact email" })).toBeNull();
         expect(screen.queryByRole("textbox", { name: "Details for moderators" })).toBeNull();
         expect((screen.getByRole("combobox", { name: "Community" }) as HTMLSelectElement).disabled).toBe(true);
