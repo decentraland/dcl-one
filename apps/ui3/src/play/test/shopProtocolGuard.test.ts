@@ -306,7 +306,9 @@ describe('the purchase wallet', () => {
       ['an unlimited approve', approve(MANAGER, maxUint256)],
       ['another amount', approve(MANAGER, GAP + 1n)],
       ['another spender (the sale’s venue)', approve(STORE)],
-      ['a call other than approve', encodeFunctionData({ abi: parseAbi(['function transfer(address to, uint256 amount)']), functionName: 'transfer', args: [OTHER as Hex, GAP] })]
+      ['a call other than approve', encodeFunctionData({ abi: parseAbi(['function transfer(address to, uint256 amount)']), functionName: 'transfer', args: [OTHER as Hex, GAP] })],
+      ['the right approve with bytes after it', `${approve()}00` as Hex],
+      ['the right approve with a word after it', `${approve()}${'00'.repeat(32)}` as Hex]
     ])('refuses %s', async (_, data) => {
       const g = setup(approving())
       await expect(sign(g, manaTyped(data))).rejects.toMatchObject({ code: 4100 })

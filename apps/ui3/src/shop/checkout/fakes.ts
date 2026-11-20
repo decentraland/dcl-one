@@ -281,9 +281,10 @@ export function splitSaleTransaction(sale: SplitSale, over: { user?: string; sig
 
 /**
  * The Web Locks of one browser, shared by every dialog (tab) given the same one: a lock asked `ifAvailable` while another
- * holds it is refused. Waiting for one is not modeled.
+ * holds it is refused. Waiting for one is not modeled. With `freesAfterMs`, a released lock stays taken that long, as a
+ * real browser frees one a turn after its release: a page asking again at once for a lock it just let go is refused.
  */
-export function createFakeLocks(): LockManager & { held: Set<string> } {
+export function createFakeLocks(config: { freesAfterMs?: number } = {}): LockManager & { held: Set<string> } {
   const held = new Set<string>();
   const request = async (name: string, options: LockOptions | LockGrantedCallback<unknown>, callback?: LockGrantedCallback<unknown>) => {
     const opts = typeof options === "function" ? {} : options;
@@ -296,7 +297,8 @@ export function createFakeLocks(): LockManager & { held: Set<string> } {
     try {
       return await granted({ name, mode: "exclusive" } as Lock);
     } finally {
-      held.delete(name);
+      if (config.freesAfterMs == null) held.delete(name);
+      else setTimeout(() => held.delete(name), config.freesAfterMs);
     }
   };
   return { held, request, query: async () => ({ held: [], pending: [] }) } as unknown as LockManager & { held: Set<string> };

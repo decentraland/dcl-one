@@ -184,12 +184,16 @@ function manaOf(chainId: number): ContractInfo | null {
   }
 }
 
+/** `0x`, a 4-byte selector and two 32-byte words, in hex. */
+const APPROVE_DATA_LENGTH = 2 + 8 + 64 * 2
+
 /** MANA's approve of exactly a split's gap to the trusted CreditsManager, only while the buyer authorizes it. */
 export function checkSplitApprove(data: unknown, intent: PurchaseIntent): void {
   const split = intent.split
   if (!split) refuse('The Shop only signs its own purchases.')
   if (split.phase !== 'approve') refuse('The Shop doesn’t approve MANA while it buys.')
-  if (typeof data !== 'string' || !/^0x[0-9a-fA-F]*$/.test(data) || lower(data.slice(0, 10)) !== APPROVE_SELECTOR) refuse('The Shop only approves MANA for its own purchases.')
+  // Exactly approve(address, uint256): the selector and two words, no trailing bytes.
+  if (typeof data !== 'string' || data.length !== APPROVE_DATA_LENGTH || !/^0x[0-9a-fA-F]*$/.test(data) || lower(data.slice(0, 10)) !== APPROVE_SELECTOR) refuse('The Shop only approves MANA for its own purchases.')
   let spender: string
   let amount: bigint
   try {

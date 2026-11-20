@@ -6,7 +6,7 @@ import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'v
 import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import { claimSplitHold, readSplitHold, readSplitHoldRecord, settleSplitHold, splitHoldKey, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
-import { ASSET_TYPE, buildStoreUseCreditsArgs, encodeStoreBuy, encodeUseCredits } from '../../shop/checkout/purchase/encoding'
+import { ASSET_TYPE, buildStoreUseCreditsArgs, encodeStoreBuy, encodeUseCredits, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
 import { createLedger } from '../shell/shop/ledger'
@@ -19,7 +19,7 @@ import { itemAsset } from '@shop/model/asset'
 import { CHAIN } from '@shop/model/chain'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
-import { createShellShop, RETRY_AFTER_MS, splitTerms, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import { createShellShop, RETRY_AFTER_MS, splitQuoteFor, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
 import type { ManaEvidence, ManaExecution } from '../shell/shop/manaEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -104,7 +104,8 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     onRelay: (hash, body) => {
       const [to, input] = (body as { transactionData: { params: [string, Hex] } }).transactionData.params
       // `foreignHash`: the relay answers the hash of some other transaction than the one it was given.
-      txs.set(hash.toLowerCase(), { to, input: onChain.foreignHash ? ('0xdeadbeef' as Hex) : input })
+      // `rewrite`: what mined at the hash is another call than the one signed.
+      txs.set(hash.toLowerCase(), { to, input: onChain.foreignHash ? ('0xdeadbeef' as Hex) : onChain.rewrite ? onChain.rewrite(input) : input })
       // `advancing`: it lands just past the latest finalized block read (its sale's checkpoint).
       if (opts.advancing) onChain.blocks.set(hash.toLowerCase(), onChain.head + 1n)
     }
@@ -125,6 +126,7 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     /** Where the relay's transactions land: past the checkpoint, and final. */
     receiptBlock: 1050n,
     foreignHash: false,
+    rewrite: null as ((input: Hex) => Hex) | null,
     /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
     hold: null as Promise<void> | null,
     finalizedReads: 0,
@@ -203,11 +205,13 @@ function page(
     split?: boolean
     /** Who is signed in now (LOGIN by default). */
     login?: () => StoredLogin | null
+    /** Web Locks freed a moment after their release, as a real browser frees them (not at once). */
+    lateLocks?: boolean
   } = {}
 ) {
   const shown: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }[] = []
   const events: ShopOperationEvent[] = []
-  const locks = createFakeLocks()
+  const locks = createFakeLocks(opts.lateLocks ? { freesAfterMs: 20 } : {})
   const manaReads: number[] = []
   let clock = 0
   const cents = opts.creditsCents ?? 7000
@@ -432,13 +436,13 @@ describe('the in-world purchase with MANA', () => {
     it('splits whole credits from the balance and MANA for the rest, rounded up, as the web Shop does', () => {
       // 1,000 cents for 100 MANA; 370 cents held: 37 credits (370 cents) pay, and 630 cents' worth, 63 MANA, the rest.
       const MANA_WEI = 10n ** 18n
-      expect(splitTerms(1000 as UsdCents, 375 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toEqual({ creditsCents: 370, credits: 37, manaWei: 63n * MANA_WEI })
+      expect(splitQuoteFor(1000 as UsdCents, 375 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toEqual({ creditsCents: 370, credits: 37, manaWei: 63n * MANA_WEI })
       // A third of a wei is still owed: rounded up, never down.
-      expect(splitTerms(300 as UsdCents, 100 as UsdCents, 1000n as never, 10_000n)?.manaWei).toBe(667n)
+      expect(splitQuoteFor(300 as UsdCents, 100 as UsdCents, 1000n as never, 10_000n)?.manaWei).toBe(667n)
       // None when the balance holds no whole credit, covers the price, or the MANA can't pay the rest.
-      expect(splitTerms(1000 as UsdCents, 9 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
-      expect(splitTerms(1000 as UsdCents, 1000 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
-      expect(splitTerms(1000 as UsdCents, 370 as UsdCents, (100n * MANA_WEI) as never, 63n * MANA_WEI - 1n)).toBeNull()
+      expect(splitQuoteFor(1000 as UsdCents, 9 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
+      expect(splitQuoteFor(1000 as UsdCents, 1000 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
+      expect(splitQuoteFor(1000 as UsdCents, 370 as UsdCents, (100n * MANA_WEI) as never, 63n * MANA_WEI - 1n)).toBeNull()
     })
 
     it('offers both together when the Credits are short of one item and MANA pays the rest', async () => {
@@ -523,6 +527,19 @@ describe('the in-world purchase with MANA', () => {
       expect(authorized.body).toMatchObject({ items: [{ creditsCents: 50 }] })
       expect(useCreditsOf(w.relay.posts[1])).toEqual(expect.objectContaining({ maxCreditedValue: BigInt(PRICE) - gap, maxUncreditedValue: gap }))
       expect(w.wallet.sent).toHaveLength(0)
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
+    })
+
+    it('takes the approval’s lock again right after the buyer’s own approval let it go, though the browser frees it a moment later', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed, lateLocks: true })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
       expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
     })
 
@@ -658,6 +675,30 @@ describe('the in-world purchase with MANA', () => {
       await new Promise((r) => setTimeout(r, 50))
       expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('never takes a confirmed useCredits of other terms at its hash as bought, nor keeps that hash as its own', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // What mined at the hash the relay answered is a successful useCredits by the buyer, but of another gap: 'other'.
+      w.onChain.rewrite = (input) => {
+        const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: input })
+        const [args] = decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args as unknown as [UseCreditsArgs]
+        return encodeExecuteMetaTransaction('functionData', BUYER, encodeUseCredits({ ...args, maxUncreditedValue: args.maxUncreditedValue + 1n }), `0x${'33'.repeat(65)}` as Hex)
+      }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      // Pending with no hash of its own: another call's success is never what it is watched or published by.
+      const other = [...w.txs.keys()][0]!
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending', txHash: null })
+      expect(createLedger(() => w.storage).load(BUYER).every((r) => r.txHash !== other)).toBe(true)
     })
 
     it('finds a sale whose answer was lost by the transaction the node indexed its credit in, and completes it', async () => {
@@ -854,11 +895,12 @@ describe('the in-world purchase with MANA', () => {
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'none'
       const B = `0x${'b'.repeat(63)}2`
-      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => losingA(w, B) as never, creditRecordOf: async () => record('SETTLED', B) } })
+      // Found out right after its sale let the item's lock go, which the browser frees a moment later.
+      const p = page(w, { split: splitOn, creditsCents: 50, lateLocks: true, services: { ...managed, manaEvidence: () => losingA(w, B) as never, creditRecordOf: async () => record('SETTLED', B) } })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
-      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+      await vi.waitFor(() => expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull())
     })
 
     it('ends unbought when its own hash is gone and the node says its credit expired unspent, past the index\'s lag', async () => {
@@ -963,7 +1005,8 @@ describe('the in-world purchase with MANA', () => {
       const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e5'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: HOLD_LINE, attempt: 'stranded' } }
       expect(ledger.save({ id: 'abcdef01-0002', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'cancelled', createdAt: 1, updatedAt: 2, split: sale })).toBe(true)
       expect(writeSplitHold(BUYER, HOLD_LINE, { ...webHold, attempt: 'stranded', creditId: sale.creditId })).toBe(true)
-      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      // The item's lock, let go by the read that found the hold, frees a moment later, as in a real browser.
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed, lateLocks: true })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
       await p.until('success')

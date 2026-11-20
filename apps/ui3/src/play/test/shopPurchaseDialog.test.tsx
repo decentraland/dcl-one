@@ -453,6 +453,31 @@ describe('the purchase dialog', () => {
         expect(buy().disabled).toBe(true)
       })
 
+      it('drops a lone tick that can’t pay when the view is sent again, and keeps one that pays', () => {
+        vi.useFakeTimers()
+        const onPay = vi.fn()
+        // The same split read again: a new view object, as each balance read sends.
+        const view = (): ShopPurchaseStep => ({ step: 'method', items: [item], credits: { ...short }, mana: { ...enough }, split: { ...split } })
+        const { rerender } = render(<ShopPurchaseDialog view={view()} onClose={vi.fn()} onPay={onPay} />)
+        arm()
+        // Credits alone, mid-way to another pick: it doesn't pay, so the new view drops it and BUY waits.
+        fireEvent.click(box(/^MANA/))
+        rerender(<ShopPurchaseDialog view={view()} onClose={vi.fn()} onPay={onPay} />)
+        expect(box(/^Credits/).checked || box(/^MANA/).checked).toBe(false)
+        expect(buy().disabled).toBe(true)
+        fireEvent.click(box(/^Credits/))
+        fireEvent.click(box(/^MANA/))
+        fireEvent.click(buy())
+        expect(onPay).toHaveBeenLastCalledWith('split')
+        // MANA alone pays the whole price, so the new view keeps it.
+        fireEvent.click(box(/^Credits/))
+        rerender(<ShopPurchaseDialog view={view()} onClose={vi.fn()} onPay={onPay} />)
+        expect(box(/^Credits/).checked).toBe(false)
+        expect(box(/^MANA/).checked).toBe(true)
+        fireEvent.click(buy())
+        expect(onPay).toHaveBeenLastCalledWith('mana')
+      })
+
       it('keeps one pick at a time, as radios, where they aren’t offered together', () => {
         show({ step: 'method', items: [item], credits, mana })
         expect(screen.queryByRole('checkbox')).toBeNull()

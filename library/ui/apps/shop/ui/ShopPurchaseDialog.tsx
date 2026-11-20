@@ -739,10 +739,12 @@ function Working({ label, size }: { label: string; size?: 'small' }): React.JSX.
 
 /**
  * Buy Item with its payment options: the balance, the items, an option per currency, a cart's total, then CANCEL or BUY.
- * The step opens with a pick: the buyer's earlier one while it pays, else the Credits when they pay, else MANA. After
- * that only the buyer picks, one option at a time (radios): picking one moves the pick to it. A pick that stops
- * paying (a balance read again) is dropped, and BUY waits for the buyer to pick an option that pays: the same BUY never
- * spends another way than the one picked, and a later read where the dropped option pays again doesn't pick it back.
+ * The step opens with a pick: the buyer's earlier one while it pays, else the Credits when they pay, else both together
+ * where a split is offered (`split`), else MANA. After that only the buyer picks. Without a split it is one option at a
+ * time (radios): picking one moves the pick to it. With a split offered each option is its own checkbox, and both ticked
+ * pay together. A pick that stops paying (a balance read again) is dropped, and BUY waits for the buyer to pick a way
+ * that pays: the same BUY never spends another way than the one picked, and a later read where the dropped option pays
+ * again doesn't pick it back.
  */
 function MethodStep({
   view,
