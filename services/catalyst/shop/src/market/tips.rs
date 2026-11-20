@@ -394,8 +394,9 @@ const INDEX_ABANDONED_SECS: i64 = 3 * CLAIM_TTL_SECS;
 enum IndexState {
     /// A live walk near the head ([`chain_walk::is_walked`] within the claim's hour).
     Serves,
-    /// No cursor (with the local setting off), one without its whole history,
-    /// or one not advanced for [`INDEX_ABANDONED_SECS`]: no claim can settle.
+    /// No cursor (setting off, or on past [`FIRST_PASS_GRACE`]), one without its
+    /// whole history, or one not advanced for [`INDEX_ABANDONED_SECS`]: no claim
+    /// can settle.
     Off,
     /// A whole-history walk lagging or paused, or, just after start, the local
     /// walk not started yet: it may serve again soon.
@@ -1610,11 +1611,8 @@ mod tests {
             (None, index_off.clone())
         );
         assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
-        assert_eq!(
-            refused(forward_tip(&app_with(true), &w).await).await,
-            (Some("60".into()), behind.clone()),
-            "the local walk has not created its cursor yet"
-        );
+        // A missing cursor with the setting on depends on uptime:
+        // `a_missing_cursor_waits_for_the_first_pass_only_briefly`.
 
         // An unpublished walk this many minutes behind, last advanced
         // `advanced` ago by the database clock.
