@@ -1023,7 +1023,10 @@ fn is_black(app: &App, image: &Handle<Image>) -> bool {
         .data
         .as_ref()
         .unwrap();
-    data.chunks_exact(4).all(|pixel| pixel == [0, 0, 0, 255])
+    data.as_chunks::<4>()
+        .0
+        .iter()
+        .all(|pixel| *pixel == [0, 0, 0, 255])
 }
 
 #[test]
