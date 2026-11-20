@@ -124,6 +124,7 @@ dragonbox_ecma = "0.1.12"
 parking_lot = "0.12"
 hex = "0.4"
 libc = "0.2"
+memmap2 = "0.9"
 urlencoding = "2"
 base64 = "0.23"
 alloy-primitives = { version = "1", features = ["k256"] }

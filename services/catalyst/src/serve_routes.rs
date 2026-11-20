@@ -268,7 +268,10 @@ pub(super) fn build_routes(
     // A request a gate, an auth check or a handler answers before reading
     // its body is drained, not reset: nginx writes a buffered upload after
     // the answer, and a reset fails that write, answers 502 and counts the
-    // process down. Up to the largest body a route admits (a deployment).
+    // process down. Up to the largest body a route admits (a deployment,
+    // `MAX_UPLOAD_TOTAL_SIZE` plus framing): the drain discards each chunk
+    // as it arrives, so the bound costs bandwidth nginx already spent
+    // receiving the body, never memory or disk.
     // Forwarding headers name the client only from a loopback or listed proxy.
     let app =
         shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());

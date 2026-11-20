@@ -588,6 +588,18 @@ pub async fn serve(
     .with_denylist(content.denylist.clone())
     .with_forwarder(content_forwarder);
     content.attach_writes(config.writes.content_writes(), Arc::new(deployer));
+    // Spool directories of POST /entities requests a crashed process left;
+    // older than any live request, so a running replica's are never touched.
+    {
+        let spool_root = content.spool_root.clone();
+        let stale_after = catalyst_storage::gc::orphan_age_floor(
+            config.worlds.multipart_upload_timeout_ms,
+            config.worlds.deployment_processing_timeout_ms,
+        );
+        tokio::spawn(async move {
+            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+        });
+    }
     // Expired partial uploads (content::partial_deployments) are reclaimed
     // only where they can be made: a node taking local writes.
     if config.writes.content_writes() {
@@ -621,6 +633,9 @@ pub async fn serve(
         );
     }
     content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
+    for warning in config.content.upload_limit_warnings() {
+        tracing::warn!("{warning}");
+    }
     if config.writes.content_writes() {
         tracing::warn!(
             denylisted,

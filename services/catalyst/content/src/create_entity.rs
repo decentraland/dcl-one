@@ -29,12 +29,20 @@
 //! [`super::writes`] come before any of it (404 read-only, 503 disabled),
 //! then the 503 with `Retry-After: 60` while the node is bootstrapping.
 //!
-//! The form is read into memory, not spooled to disk as upstream does: a
-//! deploy holds up to `MAX_UPLOAD_TOTAL_SIZE` (2 GiB by default) while it
-//! is read, hashed and stored. The in-memory upload budget
-//! (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, never below `MAX_UPLOAD_TOTAL_SIZE`)
-//! bounds what every deploy of the process holds together; a body without
-//! a declared length reserves the whole `MAX_UPLOAD_TOTAL_SIZE`.
+//! The files are spooled as upstream spools them: each file part is
+//! streamed, hashed and checked against the limits into its own file under
+//! the request's directory in `UPLOAD_SPOOL_FOLDER`
+//! (`<STORAGE_ROOT_FOLDER>/tmp/content-uploads` by default), removed when the
+//! request ends, by success, refusal, error or disconnect; a crashed
+//! process's directories go at the next start. The deployer reads them
+//! memory-mapped, through the page cache, never copied onto the heap. Two
+//! budgets admit a request before its body: the spool budget
+//! (`MAX_IN_FLIGHT_UPLOAD_BYTES`, never below one maximal form) takes its
+//! declared payload, none for a chunked body, and grows with what it writes;
+//! the memory budget (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`) takes a fixed 16 MiB
+//! for its fields and parsing, grown by its entity file once the form is
+//! read. A budget that does not fit, or a spool the disk refuses (full,
+//! failing), answers 503 with `Retry-After`.
 //! Before the body is read, in upstream's order: a client address past its
 //! daily quota 429, a body that does not fit the in-memory upload budget
 //! 503, and a client with its uploads or bytes in flight 429
@@ -73,16 +81,43 @@ use axum::extract::multipart::MultipartError;
 use axum::extract::{FromRequest, Multipart, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::{Value, json};
 
 use super::errors::{AppError, AppResult};
 use super::partial_deployments;
+use super::upload_admission::Reservation;
 use super::write_deployer::DeployFailure;
 use super::writes;
 use super::{Settings, SharedState};
 use crate::auth::MAX_AUTH_CHAIN_LINKS;
+use crate::storage::upload_spool::UploadSpool;
+
+/// What each spooled file is charged on the spool budget beside its bytes
+/// (upstream `SPOOL_FILE_OVERHEAD_BYTES`), so the budget bounds inodes too.
+pub const SPOOL_FILE_OVERHEAD_BYTES: u64 = 16 * 1024;
+
+/// Upstream's answer when the spool cannot be written (full or failing disk).
+pub const SPOOL_UNAVAILABLE_MESSAGE: &str =
+    "The server cannot store uploads right now, please retry shortly.";
+
+/// The label of this route's spool metrics and cleanup counter.
+const SPOOL_ROUTE: &str = "content-entities";
+
+/// The spool's default place: `<STORAGE_ROOT_FOLDER>/tmp/content-uploads`,
+/// on the blob store's filesystem.
+pub fn default_spool_root(storage: &crate::storage::Storage) -> std::path::PathBuf {
+    storage.scratch_dir().join("content-uploads")
+}
+
+/// The spool bytes one maximal form takes: every value plus each file's
+/// charge; the spool budget never sits below it.
+pub fn max_spool_footprint(settings: &Settings) -> u64 {
+    (settings.max_upload_total_bytes as u64).saturating_add(
+        (settings.max_upload_file_count as u64).saturating_mul(SPOOL_FILE_OVERHEAD_BYTES),
+    )
+}
 
 /// The most framing a part adds (upstream `MULTIPART_PART_FRAMING_BYTES`):
 /// a 16 KiB header block plus a boundary line and CRLFs.
@@ -272,23 +307,56 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
         || content_type.is_some_and(|t| !t.trim_start().to_ascii_lowercase().starts_with("text/"))
 }
 
-/// A form as read, or turned away before its files were buffered.
+/// A spooled file part of a read form: its form name, bytes and spool path
+/// (the store hard-links it from there).
+struct Upload {
+    name: String,
+    bytes: Bytes,
+    path: std::path::PathBuf,
+}
+
+/// Parts up to this size, and the entity file, are read onto the heap and
+/// charged to the request's memory reservation; larger ones are
+/// memory-mapped ([`crate::storage::upload_spool::SpooledFile::map`]). So
+/// the mappings live at once stay under the spool budget over this size
+/// (4096 at the 4 GiB default), and the spool's own cap
+/// (`MAX_LIVE_MAPS`, 8192, a 503 past it) keeps them far below the kernel's
+/// per-process map limit (Linux `vm.max_map_count`, 65530 by default)
+/// whatever the budgets are set to.
+pub const MAP_THRESHOLD_BYTES: usize = 1024 * 1024;
+
+/// A form as read, or turned away before or while its files were spooled.
 enum Form {
-    Read(BTreeMap<String, String>, Vec<(String, Bytes)>),
+    Read(BTreeMap<String, String>, Vec<Upload>),
     Refused(Response),
 }
 
-/// Reads the whole form into memory with upstream's multipart limits and
-/// answers (`multipart.ts`): text fields by name, at most
+/// What a request spools into: its directory, its share of the spool
+/// budget, grown as its files arrive, and its memory reservation, grown by
+/// the parts read onto the heap.
+struct Spooling<'a, 'b, 'c> {
+    spool: &'a mut UploadSpool,
+    disk: &'a mut Reservation<'b>,
+    memory: &'a mut Reservation<'c>,
+}
+
+/// Reads the whole form with upstream's multipart limits and answers
+/// (`multipart.ts`): text fields by name in memory, at most
 /// `MAX_UPLOAD_FIELD_COUNT` of up to `MAX_UPLOAD_FIELD_SIZE` each, and file
-/// parts in order with their field names, each up to `MAX_UPLOAD_FILE_SIZE`,
-/// at most `MAX_UPLOAD_FILE_COUNT` of them, all values together up to
-/// `MAX_UPLOAD_TOTAL_SIZE`; a limit passed is a 413, a name sent twice a
-/// 400. `before_files` sees the fields read before the first file part (the
-/// clients send theirs first) and may refuse the form there.
+/// parts in order with their field names, streamed and hashed into the
+/// request's spool, each up to `MAX_UPLOAD_FILE_SIZE`, at most
+/// `MAX_UPLOAD_FILE_COUNT` of them, all values together up to
+/// `MAX_UPLOAD_TOTAL_SIZE`; a limit passed is a 413 as the bytes arrive, a
+/// name sent twice a 400. The request's spool reservation grows with what
+/// it wrote (each file charged [`SPOOL_FILE_OVERHEAD_BYTES`] more); past the
+/// budget, or on a write the disk refuses (full, failing), the form is
+/// refused with a 503 and `Retry-After`. `before_files` sees the fields read
+/// before the first file part (the clients send theirs first) and may
+/// refuse the form there.
 async fn read_form(
     multipart: &mut Multipart,
     settings: &Settings,
+    spooling: Spooling<'_, '_, '_>,
     before_files: impl AsyncFnOnce(&BTreeMap<String, String>) -> Option<Response>,
 ) -> AppResult<Form> {
     let max_fields = settings.max_upload_field_count;
@@ -296,21 +364,24 @@ async fn read_form(
     let max_files = settings.max_upload_file_count;
     let max_file_bytes = settings.max_upload_file_bytes;
     let max_total = settings.max_upload_total_bytes;
+    let Spooling {
+        spool,
+        disk,
+        memory,
+    } = spooling;
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
-    let mut files: Vec<(String, Bytes)> = Vec::new();
+    let mut files: Vec<Upload> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let mut field_count = 0usize;
     let mut total_bytes = 0usize;
     let mut before_files = Some(before_files);
     let duplicate = |name: &str| invalid(format!("Duplicate form field '{name}'"));
-    let mut count_total = |bytes: usize| {
-        total_bytes = total_bytes.saturating_add(bytes);
-        if total_bytes > max_total {
-            return Err(too_large(format!(
+    let over_total = |total: usize| {
+        (total > max_total).then(|| {
+            too_large(format!(
                 "The request body is too large. The maximum allowed total upload size is {max_total} bytes."
-            )));
-        }
-        Ok(())
+            ))
+        })
     };
 
     while let Some(mut field) = multipart
@@ -337,17 +408,53 @@ async fn read_form(
             // Upstream prints busboy's file name, `undefined` for a part
             // without one (the Explorer names its parts by hash only).
             let file_name = field.file_name().unwrap_or("undefined").to_string();
-            let mut buf = BytesMut::new();
+            let mut part = match spool.part().await {
+                Ok(part) => part,
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
+            };
+            let charged = (files.len() as u64 + 1) * SPOOL_FILE_OVERHEAD_BYTES;
             while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, settings))? {
-                if buf.len().saturating_add(chunk.len()) > max_file_bytes {
+                if part.len().saturating_add(chunk.len()) > max_file_bytes {
                     return Err(too_large(format!(
                         "File '{file_name}' is too large. The maximum allowed size per file is {max_file_bytes} bytes."
                     )));
                 }
-                count_total(chunk.len())?;
-                buf.extend_from_slice(&chunk);
+                total_bytes = total_bytes.saturating_add(chunk.len());
+                if let Some(e) = over_total(total_bytes) {
+                    return Err(e);
+                }
+                // Checked after the limits: an oversize body gets the final
+                // 413, never the retryable 503.
+                if !disk.grow(total_bytes as u64 + charged) {
+                    return Ok(Form::Refused(budget_exhausted()));
+                }
+                if let Err(e) = part.write(&chunk).await {
+                    return Ok(Form::Refused(spool_unavailable(&e)));
+                }
             }
-            files.push((name, buf.freeze()));
+            let spooled = match part.finish(name.clone()).await {
+                Ok(spooled) => spooled,
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
+            };
+            let on_heap = spooled.len() <= MAP_THRESHOLD_BYTES
+                || fields.get("entityId") == Some(&spooled.hash);
+            let bytes = if on_heap {
+                if !memory.grow(memory.bytes() + spooled.len() as u64) {
+                    return Ok(Form::Refused(budget_exhausted()));
+                }
+                spooled.read().await.map(Bytes::from)
+            } else {
+                spooled.map().await
+            };
+            let bytes = match bytes {
+                Ok(bytes) => bytes,
+                Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
+            };
+            files.push(Upload {
+                name,
+                bytes,
+                path: spooled.path,
+            });
         } else {
             if field_count >= max_fields {
                 return Err(too_large(format!(
@@ -367,12 +474,37 @@ async fn read_form(
             if !seen.insert(name.clone()) {
                 return Err(duplicate(&name));
             }
-            count_total(buf.len())?;
+            total_bytes = total_bytes.saturating_add(buf.len());
+            if let Some(e) = over_total(total_bytes) {
+                return Err(e);
+            }
             // busboy decodes a value as UTF-8 with replacement characters.
             fields.insert(name, String::from_utf8_lossy(&buf).into_owned());
         }
     }
     Ok(Form::Read(fields, files))
+}
+
+/// Upstream's 503 for a spool the disk refuses (full, failing): the cause
+/// is logged, the client told to retry.
+fn spool_unavailable(e: &std::io::Error) -> Response {
+    tracing::error!(error = %e, "POST /entities: the upload spool could not be written");
+    metrics::counter!("upload_spool_failures_total", "route" => SPOOL_ROUTE).increment(1);
+    with_retry_after(
+        super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, SPOOL_UNAVAILABLE_MESSAGE),
+        header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
+    )
+}
+
+/// The 503 of a full upload budget, memory or spool.
+fn budget_exhausted() -> Response {
+    with_retry_after(
+        super::errors::json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
+        ),
+        header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
+    )
 }
 
 /// The `type` of the uploaded entity file (the JSON upload hashing to
@@ -655,16 +787,19 @@ pub async fn create_entity(
         return Ok(quota_exceeded_response(retry_after));
     }
 
-    let body_bytes = declared_body_bytes(&headers, &state.settings);
-    let Some(_reservation) = state.upload_budget.try_reserve(body_bytes) else {
-        return Ok(with_retry_after(
-            super::errors::json_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
-            ),
-            header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
-        ));
+    // Memory: the fixed share every request holds (its fields, parsing),
+    // grown by its entity file once the form is read. Disk: the declared
+    // payload (none for a chunked body), grown to what the spool holds.
+    let Some(mut memory) = state.upload_budget.try_reserve(0) else {
+        return Ok(budget_exhausted());
     };
+    let declared_payload = declared_length(&headers)
+        .unwrap_or(0)
+        .min(state.settings.max_upload_total_bytes as u64);
+    let Some(mut disk) = state.spool_budget.try_reserve(declared_payload) else {
+        return Ok(budget_exhausted());
+    };
+    let body_bytes = declared_body_bytes(&headers, &state.settings);
     let Ok(_source_lease) = state.source_uploads.try_acquire(&client_ip, body_bytes) else {
         return Ok(with_retry_after(
             super::errors::json_error(
@@ -697,7 +832,15 @@ pub async fn create_entity(
         started: request_started,
         received: &received,
     };
-    deploy_form(&state, deployer, &request, multipart).await
+    deploy_form(
+        &state,
+        deployer,
+        &request,
+        multipart,
+        &mut memory,
+        &mut disk,
+    )
+    .await
 }
 
 /// `request` with its body's bytes added to `received` as they arrive.
@@ -786,14 +929,27 @@ async fn deploy_form(
     deployer: std::sync::Arc<super::write_deployer::WriteDeployer>,
     request: &Request<'_>,
     mut multipart: Multipart,
+    memory: &mut Reservation<'_>,
+    disk: &mut Reservation<'_>,
 ) -> AppResult<Response> {
     let settings = &state.settings;
+    // Removed, with every file in it, when this request ends however it
+    // ends; the mapped bytes stay readable until the deploy drops them.
+    let mut spool = match UploadSpool::create(&state.spool_root, SPOOL_ROUTE).await {
+        Ok(spool) => spool,
+        Err(e) => return Ok(spool_unavailable(&e)),
+    };
     let is_partial = |fields: &BTreeMap<String, String>| {
         fields.get("partial").map(String::as_str) == Some("true")
     };
     let read = read_form(
         &mut multipart,
         settings,
+        Spooling {
+            spool: &mut spool,
+            disk,
+            memory,
+        },
         async |fields: &BTreeMap<String, String>| {
             if !request.declared_partial && !is_partial(fields) {
                 return None;
@@ -819,11 +975,12 @@ async fn deploy_form(
             declared_length(request.headers),
         ));
     };
-    let (fields, files) = match form? {
-        Form::Read(fields, files) => (fields, files),
+    let (fields, uploads) = match form? {
+        Form::Read(fields, uploads) => (fields, uploads),
         Form::Refused(response) => return Ok(response),
     };
     if is_partial(&fields) {
+        let files = uploads.into_iter().map(|u| (u.name, u.bytes)).collect();
         let answer = partial_batch(state, &deployer, request, fields, files).await;
         return Ok(answer.unwrap_or_else(IntoResponse::into_response));
     }
@@ -839,6 +996,16 @@ async fn deploy_form(
         Ok(charge) => charge,
         Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
     };
+    let files = uploads
+        .into_iter()
+        .map(|u| {
+            let upload = super::write_deployer::Upload {
+                bytes: u.bytes,
+                path: Some(u.path),
+            };
+            (u.name, upload)
+        })
+        .collect();
     let deploy = deploy_regular(state, &deployer, request, fields, files);
     let Ok(answer) = tokio::time::timeout(settings.deployment_processing_timeout, deploy).await
     else {
@@ -864,7 +1031,7 @@ async fn deploy_regular(
     deployer: &super::write_deployer::WriteDeployer,
     request: &Request<'_>,
     fields: BTreeMap<String, String>,
-    files: Vec<(String, Bytes)>,
+    files: Vec<(String, super::write_deployer::Upload)>,
 ) -> AppResult<Answer> {
     let headers = request.headers;
     let request_started = request.started;
@@ -876,8 +1043,10 @@ async fn deploy_regular(
     let named = files
         .iter()
         .find(|(name, _)| *name == entity_id)
-        .map(|(_, bytes)| bytes.clone());
-    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
+        .map(|(_, upload)| upload.bytes.clone());
+    let uploads: Vec<super::write_deployer::Upload> =
+        files.into_iter().map(|(_, upload)| upload).collect();
+    let files: Vec<Bytes> = uploads.iter().map(|u| u.bytes.clone()).collect();
     let failed = |failure: DeployFailure, refundable: bool| {
         tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
         let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
@@ -942,7 +1111,7 @@ async fn deploy_regular(
     let multipart_us = request_started.elapsed().as_micros() as u64;
     let deploy_started = std::time::Instant::now();
     match deployer
-        .deploy_entity(files, &entity_id, auth_chain, "LOCAL")
+        .deploy_uploads(uploads, &entity_id, auth_chain, "LOCAL")
         .await
     {
         Ok(creation_timestamp) => {

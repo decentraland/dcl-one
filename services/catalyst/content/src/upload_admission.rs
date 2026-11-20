@@ -1,6 +1,7 @@
-//! Admission for `POST /entities` before its body is read: a byte budget
-//! shared by every in-flight deploy (the forms are held in memory), each
-//! client's share of it ([`SourceUploads`]), a
+//! Admission for `POST /entities` before its body is read: two byte budgets
+//! shared by every in-flight deploy, one for the memory a deploy buffers
+//! (its fields and entity file) and one for the disk its spooled files take,
+//! each client's share of the bytes in flight ([`SourceUploads`]), a
 //! per-client burst limit (upstream's `POST_ENTITIES_RATE_LIMIT_MAX` per
 //! `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`, every request counted) and a
 //! per-client daily deploy quota, checked before the body and counted once
@@ -76,6 +77,36 @@ impl UploadBudget {
             budget: self,
             bytes,
         })
+    }
+}
+
+impl Reservation<'_> {
+    /// Grows the reservation to `bytes` when it holds less; `false`, keeping
+    /// what it holds, when the rest does not fit.
+    pub fn grow(&mut self, bytes: u64) -> bool {
+        if bytes <= self.bytes {
+            return true;
+        }
+        let mut reserved = self.budget.reserved.lock();
+        let more = bytes - self.bytes;
+        if reserved.saturating_add(more) > self.budget.capacity {
+            return false;
+        }
+        *reserved += more;
+        self.bytes = bytes;
+        true
+    }
+
+    /// The bytes this reservation holds.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+impl UploadBudget {
+    /// The bytes reserved now, across every reservation.
+    pub fn reserved(&self) -> u64 {
+        *self.reserved.lock()
     }
 }
 
@@ -306,6 +337,23 @@ mod tests {
         let third = limits.try_acquire("203.0.113.1", 60).unwrap();
         drop((second, third));
         assert!(limits.in_flight.lock().is_empty());
+    }
+
+    #[test]
+    fn a_reservation_grows_while_the_rest_fits() {
+        let min = MIN_UPLOAD_RESERVATION_BYTES;
+        let budget = UploadBudget::new(3 * min);
+        let mut growing = budget.try_reserve(0).unwrap();
+        let other = budget.try_reserve(0).unwrap();
+        assert!(growing.grow(min / 2), "within what it holds");
+        assert!(growing.grow(2 * min));
+        assert_eq!((growing.bytes(), budget.reserved()), (2 * min, 3 * min));
+        assert!(!growing.grow(2 * min + 1), "past the capacity");
+        assert_eq!(growing.bytes(), 2 * min, "a failed grow keeps what it held");
+        drop(other);
+        assert!(growing.grow(3 * min));
+        drop(growing);
+        assert_eq!(budget.reserved(), 0);
     }
 
     #[test]

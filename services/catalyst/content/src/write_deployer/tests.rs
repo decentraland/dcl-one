@@ -62,11 +62,15 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     let first = Bytes::from_static(b"first content");
     let second = Bytes::from(vec![42; 300_000]);
     let unreferenced = Bytes::from_static(b"unreferenced");
+    let spooled = std::path::PathBuf::from("/spool/1");
     let uploads = hash_uploads(vec![
-        entity_bytes.clone(),
-        first.clone(),
-        second.clone(),
-        unreferenced,
+        entity_bytes.clone().into(),
+        first.clone().into(),
+        Upload {
+            bytes: second.clone(),
+            path: Some(spooled.clone()),
+        },
+        unreferenced.into(),
     ])
     .await
     .unwrap();
@@ -87,9 +91,13 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     .unwrap();
     let files = deployment_files(&entity, &entity_bytes, &uploads);
     assert_eq!(files.len(), 3);
-    assert_eq!(files[&entity.id], entity_bytes);
-    assert_eq!(files[&uploads[1].v0], first);
-    assert_eq!(files[&uploads[2].v1], second);
+    assert_eq!(files[&entity.id], (entity_bytes, None));
+    assert_eq!(files[&uploads[1].v0], (first, None));
+    assert_eq!(
+        files[&uploads[2].v1],
+        (second, Some(spooled)),
+        "a spooled file is stored from its spool file"
+    );
     assert!(!files.contains_key(&missing));
     assert!(!files.contains_key(&uploads[3].v1));
 }
@@ -112,6 +120,10 @@ async fn deployment_storage_drains_writes_and_preserves_atomic_files_on_failure(
         })
         .collect();
     files.extend(expected.iter().cloned());
+    let files = files
+        .into_iter()
+        .map(|(hash, bytes)| (hash, (bytes, None)))
+        .collect();
     let error = store_deployment_files(&deployer.storage, files)
         .await
         .unwrap_err();
@@ -1524,7 +1536,7 @@ async fn binding_sql_supersession_has_a_typed_rejection() {
     let mut entity: Entity = serde_json::from_slice(&bytes).unwrap();
     entity.id = id;
     let chain = serde_json::from_value(chain).unwrap();
-    let uploads = hash_uploads(vec![bytes.clone()]).await.unwrap();
+    let uploads = hash_uploads(vec![bytes.clone().into()]).await.unwrap();
     // Call publication directly to exercise the binding SQL decision after preflight.
     let failure = deployer
         .persist(&entity, &bytes, &uploads, &chain, "LOCAL")

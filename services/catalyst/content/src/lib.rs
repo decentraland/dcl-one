@@ -171,8 +171,14 @@ pub struct Settings {
     /// `READ_ONLY`: the write routes answer the router's not-found, whatever
     /// the console's toggle says.
     pub read_only: bool,
-    /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`, at least one maximum-size deployment.
+    /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`: what `POST /entities` requests
+    /// buffer at once (their fields and entity files).
     pub max_in_memory_deployment_bytes: u64,
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES` (read by worlds too): the disk the
+    /// `POST /entities` spool may take at once, never below one maximal form.
+    pub max_in_flight_upload_bytes: u64,
+    /// `UPLOAD_SPOOL_FOLDER`; unset, `<STORAGE_ROOT_FOLDER>/tmp/content-uploads`.
+    pub upload_spool_folder: Option<std::path::PathBuf>,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
     /// `POST_ENTITIES_RATE_LIMIT_MAX` per `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`; 0 is off.
@@ -286,6 +292,8 @@ impl Settings {
             max_upload_total_bytes: config.content.max_upload_total_size,
             read_only: config.writes.read_only,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
+            max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
+            upload_spool_folder: config.content.upload_spool_folder.clone(),
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
             post_entities_rate_limit_max: config.content.post_entities_rate_limit_max,
             post_entities_rate_limit_window: Duration::from_secs(
@@ -354,6 +362,8 @@ impl Settings {
             max_upload_total_bytes: 2 * 1024 * 1024 * 1024,
             read_only: false,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
+            max_in_flight_upload_bytes: 4 * 1024 * 1024 * 1024,
+            upload_spool_folder: None,
             post_entities_daily_quota_max: 300,
             post_entities_rate_limit_max: 200,
             post_entities_rate_limit_window: Duration::from_secs(60),
@@ -578,8 +588,15 @@ pub struct ContentState {
     read_through: OnceLock<Arc<read_through::ReadThrough>>,
     /// Whether the explorer's tile grid is loaded (the minimap draws from it).
     parcel_grid: OnceLock<GridReady>,
-    /// The memory `POST /entities` bodies may hold at once.
+    /// The memory `POST /entities` requests may buffer at once: a fixed
+    /// share per request (fields, parsing) plus its entity file.
     pub upload_budget: upload_admission::UploadBudget,
+    /// The disk the `POST /entities` spool may take at once: each request's
+    /// declared payload, grown to its spooled bytes (plus a per-file charge).
+    pub spool_budget: upload_admission::UploadBudget,
+    /// Where each `POST /entities` request spools its files
+    /// ([`Settings::upload_spool_folder`]).
+    pub spool_root: std::path::PathBuf,
     /// `POST /entities` requests per client address and day.
     pub deploy_quota: upload_admission::DailyQuota,
     /// `POST /entities` requests per client address and burst window.
@@ -620,8 +637,17 @@ impl ContentState {
         let upload_budget = upload_admission::UploadBudget::new(
             settings
                 .max_in_memory_deployment_bytes
-                .max(settings.max_upload_total_bytes as u64),
+                .max(upload_admission::MIN_UPLOAD_RESERVATION_BYTES),
         );
+        let spool_budget = upload_admission::UploadBudget::new(
+            settings
+                .max_in_flight_upload_bytes
+                .max(create_entity::max_spool_footprint(&settings)),
+        );
+        let spool_root = settings
+            .upload_spool_folder
+            .clone()
+            .unwrap_or_else(|| create_entity::default_spool_root(&storage));
         let deploy_quota =
             upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
         let deploy_burst = upload_admission::DailyQuota::with_window(
@@ -651,6 +677,8 @@ impl ContentState {
             read_through: OnceLock::new(),
             parcel_grid: OnceLock::new(),
             upload_budget,
+            spool_budget,
+            spool_root,
             deploy_quota,
             deploy_burst,
             source_uploads,

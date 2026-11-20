@@ -2008,26 +2008,63 @@ async fn the_upload_limits_follow_their_configuration() {
         assert_eq!(status, expected, "declared {declared}");
     }
 
+    // The spool budget never sits below one maximal form, files charged;
+    // the memory budget never below one request's share.
     let mib = 1024 * 1024;
     let floored = deploying_node(
         "configured-upload-budget",
         Settings {
             max_upload_total_bytes: 64 * mib,
+            max_in_flight_upload_bytes: 1,
             max_in_memory_deployment_bytes: 1,
             ..Settings::for_tests()
         },
     )
     .await;
-    let one = floored.state.upload_budget.try_reserve(64 * mib as u64);
-    assert!(one.is_some(), "the budget fits one maximal form");
+    let footprint = 64 * mib as u64 + 3000 * super::create_entity::SPOOL_FILE_OVERHEAD_BYTES;
+    let one = floored.state.spool_budget.try_reserve(footprint);
+    assert!(one.is_some(), "the spool fits one maximal form");
     drop(one);
     assert!(
         floored
             .state
-            .upload_budget
-            .try_reserve(64 * mib as u64 + 1)
+            .spool_budget
+            .try_reserve(footprint + 1)
             .is_none()
     );
+    let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
+    assert!(floored.state.upload_budget.try_reserve(min).is_some());
+    assert!(
+        spool_is_empty(&node.state).await,
+        "refused forms leave no spool"
+    );
+}
+
+/// A spool the disk refuses (here a folder that cannot be created, as a
+/// full or failing disk refuses a write) answers upstream's 503 with
+/// `Retry-After`, the client told to retry.
+#[tokio::test]
+async fn an_unwritable_spool_answers_503() {
+    let blocker =
+        std::env::temp_dir().join(format!("catalyst-spool-blocker-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&blocker, b"a file, not a folder").unwrap();
+    let settings = Settings {
+        upload_spool_folder: Some(blocker.join("spool")),
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("spool-unwritable", settings).await;
+    let (status, headers, body) =
+        call(&node.router(), form_request("203.0.113.41", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": super::create_entity::SPOOL_UNAVAILABLE_MESSAGE})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+    assert_eq!(node.state.spool_budget.reserved(), 0);
+    let _ = std::fs::remove_file(&blocker);
 }
 
 /// A form the parser cannot read answers upstream's fixed 400, never the
@@ -2388,51 +2425,114 @@ async fn a_request_without_a_client_address_skips_the_quota() {
     }
 }
 
+/// A chunked body (no `Content-Length`) reserves only the minimum of the
+/// spool budget and grows it with what it spools: it is admitted beside
+/// uploads that leave little room, and refused with 503 once it outgrows it.
 #[tokio::test]
-async fn a_chunked_body_reserves_the_whole_body_cap() {
-    let cap = Settings::for_tests().max_upload_total_bytes as u64;
+async fn a_chunked_body_grows_its_spool_reservation_as_it_arrives() {
+    let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
     let settings = Settings {
-        max_in_memory_deployment_bytes: 2 * cap,
+        max_upload_total_bytes: 64 * 1024 * 1024,
+        max_upload_file_count: 4,
+        max_in_flight_upload_bytes: 1,
         ..Settings::for_tests()
     };
-    let node = deploying_node("upload-budget-chunked", settings).await;
+    let capacity = super::create_entity::max_spool_footprint(&settings);
+    let node = deploying_node("spool-budget-chunked", settings).await;
     let router = node.router();
-    let _held = node.state.upload_budget.try_reserve(cap + 1).unwrap();
+    let budget = &node.state.spool_budget;
+    let held = budget.try_reserve(capacity - min).unwrap();
 
-    let mut chunked = form_request("203.0.113.12", &entity_form());
-    chunked.headers_mut().remove(header::CONTENT_LENGTH);
-    let (status, _, _) = call(&router, chunked).await;
+    let chunked = |files: &[(&str, &Bytes)]| {
+        let chain = serde_json::from_str::<Value>(&entity_form()[1].1).unwrap();
+        let mut req = deploy_request("/content/entities", "bafy", &chain, files);
+        req.headers_mut().remove(header::CONTENT_LENGTH);
+        req
+    };
+    // A declared body past the room left is refused unread.
+    let mut declared = form_request("203.0.113.42", &entity_form());
+    declared
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(min + 1));
+    let (status, headers, body) = call(&router, declared).await;
     assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "the cap does not fit"
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": super::upload_admission::BUDGET_EXHAUSTED_MESSAGE})
+        ),
+        "a declared body that does not fit"
     );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
 
-    let (status, _, _) = call(&router, form_request("203.0.113.12", &entity_form())).await;
+    let small = Bytes::from_static(b"small");
+    let (status, _, body) = call(&router, chunked(&[("a", &small)])).await;
     assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "a declared small body fits"
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["Failed to find the entity file."]})
+        ),
+        "a small chunked body fits in the room left"
     );
+    let large = Bytes::from(vec![b'x'; min as usize]);
+    let (status, headers, body) = call(&router, chunked(&[("a", &large)])).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": super::upload_admission::BUDGET_EXHAUSTED_MESSAGE})
+        ),
+        "one that outgrows it is refused as it arrives"
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+    assert_eq!(
+        budget.reserved(),
+        capacity - min,
+        "both gave their share back"
+    );
+    drop(held);
+    assert!(spool_is_empty(&node.state).await);
 }
 
+/// Whether the request spool holds nothing, once the removals the ended
+/// requests started have run.
+async fn spool_is_empty(state: &SharedState) -> bool {
+    for _ in 0..300 {
+        let empty = std::fs::read_dir(&state.spool_root)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true);
+        if empty {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    false
+}
+
+/// A client that disconnects mid-upload gives back its budgets and source
+/// share, and its spooled part is removed.
 #[tokio::test]
-async fn a_cancelled_request_returns_its_reservation_and_source_share() {
-    let cap = Settings::for_tests().max_upload_total_bytes as u64;
+async fn a_disconnected_upload_returns_its_reservations_and_spool() {
     let settings = Settings {
-        max_in_memory_deployment_bytes: cap,
         max_concurrent_uploads_per_source: 1,
         ..Settings::for_tests()
     };
     let node = deploying_node("upload-budget-cancel", settings).await;
     let router = node.router();
 
-    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
     let boundary = "catalyst-admission-boundary";
+    let chain = entity_form()[1].1.clone();
     tx.try_send(Ok(Bytes::from(format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nba"
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"authChain\"\r\n\r\n{chain}\r\n\
+         --{boundary}\r\nContent-Disposition: form-data; name=\"a\"; filename=\"a\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
     ))))
     .unwrap();
+    tx.try_send(Ok(Bytes::from(vec![b'x'; 300 * 1024])))
+        .unwrap();
     let req = Request::post("/content/entities")
         .header(
             header::CONTENT_TYPE,
@@ -2443,13 +2543,27 @@ async fn a_cancelled_request_returns_its_reservation_and_source_share() {
         .unwrap();
     let pending = tokio::spawn(router.clone().oneshot(req));
 
-    let budget = &node.state.upload_budget;
+    let spooled = |state: &SharedState| {
+        std::fs::read_dir(&state.spool_root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .flat_map(|dir| {
+                std::fs::read_dir(dir.path())
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+            })
+            .any(|part| part.metadata().is_ok_and(|m| m.len() > 0))
+    };
     let mut waited = 0;
-    while budget.try_reserve(1).is_some() {
-        assert!(waited < 500, "the request never reserved");
+    while !spooled(&node.state) {
+        assert!(waited < 500, "the request never spooled its part");
         waited += 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert!(node.state.upload_budget.reserved() > 0);
+    assert!(node.state.spool_budget.reserved() > 0);
     let sources = &node.state.source_uploads;
     assert!(
         sources.try_acquire("203.0.113.13", 1).is_err(),
@@ -2458,13 +2572,15 @@ async fn a_cancelled_request_returns_its_reservation_and_source_share() {
     pending.abort();
     let _ = pending.await;
     drop(tx);
-    assert!(
-        budget.try_reserve(cap).is_some(),
-        "the aborted request gave its reservation back"
-    );
+    assert_eq!(node.state.upload_budget.reserved(), 0);
+    assert_eq!(node.state.spool_budget.reserved(), 0);
     assert!(
         matches!(sources.try_acquire("203.0.113.13", 1), Ok(Some(_))),
         "the aborted request gave its source's upload back"
+    );
+    assert!(
+        spool_is_empty(&node.state).await,
+        "its spooled part is removed"
     );
 }
 
@@ -2905,5 +3021,109 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
     assert_eq!(status, StatusCode::OK, "{body:?}");
 
     drop(node);
+    db.drop_now().await;
+}
+
+/// A deploy whose files outweigh the memory budget streams through the
+/// spool: the memory reservation holds the fixed share and the entity file,
+/// never the files; once deployed, the blobs are stored, both reservations
+/// are back and the spool is empty.
+#[tokio::test]
+async fn a_deploy_larger_than_the_memory_budget_streams_through_the_spool() {
+    require_test_db!(Some(db) = OwnDb::create().await);
+    let owner = key(OWNER_KEY);
+    let parcels = [(43, -13), (44, -13), (45, -13)];
+    let pointers: Vec<String> = parcels.iter().map(|(x, y)| format!("{x},{y}")).collect();
+    index_land(&db.pool, &address(&owner), &parcels).await;
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-spool-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
+    let memory_capacity = min + 1024 * 1024;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: memory_capacity,
+        ..Settings::for_tests()
+    };
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        settings,
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        None,
+    ));
+    let chain_rpc = fake_chain::serve(fake_chain::land_owners(
+        parcels
+            .iter()
+            .map(|&(x, y)| (address(&owner), x.into(), y.into()))
+            .collect(),
+    ))
+    .await;
+    attach(&state, true, Some(land), Some(&chain_rpc));
+    let router = build_router(state.clone());
+
+    let file = |seed: u8| {
+        Bytes::from(
+            (0..10 * 1024 * 1024u32)
+                .map(|i| (i % 251) as u8 ^ seed)
+                .collect::<Vec<u8>>(),
+        )
+    };
+    let blobs = [file(1), file(2), file(3)];
+    let hashes: Vec<String> = blobs.iter().map(|b| hash_bytes_v1(b)).collect();
+    let names = ["bin/index.js", "models/a.bin", "models/b.bin"];
+    let content: Vec<(&str, &str)> = names
+        .iter()
+        .zip(&hashes)
+        .map(|(n, h)| (*n, h.as_str()))
+        .collect();
+    let pointer_refs: Vec<&str> = pointers.iter().map(String::as_str).collect();
+    let (entity_bytes, entity_id, chain) =
+        signed_entity(&owner, scene(&pointer_refs, &content)).await;
+    let mut parts: Vec<(&str, &Bytes)> = vec![(entity_id.as_str(), &entity_bytes)];
+    parts.extend(hashes.iter().map(String::as_str).zip(blobs.iter()));
+    let body_bytes: u64 = blobs.iter().map(|b| b.len() as u64).sum();
+    assert!(
+        body_bytes > memory_capacity,
+        "the files outweigh the memory budget"
+    );
+
+    // The memory budget holds one request's share and a 1 MiB entity file
+    // at most: were the files counted there, the deploy would be refused.
+    let copies = crate::storage::store_file_copy_fallbacks();
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &entity_id, &chain, &parts),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    assert_eq!(
+        crate::storage::store_file_copy_fallbacks(),
+        copies,
+        "the spooled files are hard-linked into the store, not copied"
+    );
+    assert_eq!(
+        (
+            state.upload_budget.reserved(),
+            state.spool_budget.reserved()
+        ),
+        (0, 0),
+        "both reservations are given back"
+    );
+    for (hash, bytes) in hashes.iter().zip(&blobs) {
+        assert_eq!(storage.retrieve(hash).await.unwrap().as_ref(), Some(bytes));
+    }
+    assert!(
+        spool_is_empty(&state).await,
+        "the spool is empty after the deploy"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
     db.drop_now().await;
 }

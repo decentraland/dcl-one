@@ -106,10 +106,25 @@ impl From<Vec<String>> for DeployFailure {
     }
 }
 
+/// One uploaded file: its bytes and, when it was spooled
+/// (`create_entity`), its spool file, which the store hard-links instead of
+/// writing the bytes again.
+pub struct Upload {
+    pub bytes: Bytes,
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl From<Bytes> for Upload {
+    fn from(bytes: Bytes) -> Self {
+        Self { bytes, path: None }
+    }
+}
+
 struct HashedUpload {
     v0: String,
     v1: String,
     bytes: Bytes,
+    path: Option<std::path::PathBuf>,
 }
 
 impl HashedUpload {
@@ -140,14 +155,15 @@ pub(crate) async fn bounded_upload_hash<T: Send + 'static>(
     })
 }
 
-async fn hash_uploads(files: Vec<Bytes>) -> Result<Vec<HashedUpload>, String> {
+async fn hash_uploads(files: Vec<Upload>) -> Result<Vec<HashedUpload>, String> {
     bounded_upload_hash(Arc::clone(&UPLOAD_HASH_JOBS), move || {
         files
             .into_iter()
-            .map(|bytes| HashedUpload {
+            .map(|Upload { bytes, path }| HashedUpload {
                 v0: hash_bytes(&bytes),
                 v1: hash_bytes_v1(&bytes),
                 bytes,
+                path,
             })
             .collect()
     })
@@ -181,38 +197,45 @@ fn auth_chain_of(auth_chain: Value) -> Result<AuthChain, DeployFailure> {
     serde_json::from_value(auth_chain).map_err(|e| vec![format!("invalid auth chain: {e}")].into())
 }
 
+/// The files to store by hash: the entity file and every uploaded file its
+/// content names, each with its spool file when it has one.
 fn deployment_files(
     entity: &Entity,
     entity_bytes: &Bytes,
     uploads: &[HashedUpload],
-) -> HashMap<String, Bytes> {
-    let by_hash: HashMap<&str, &Bytes> = uploads
+) -> HashMap<String, (Bytes, Option<std::path::PathBuf>)> {
+    let by_hash: HashMap<&str, &HashedUpload> = uploads
         .iter()
-        .flat_map(|upload| {
-            [
-                (upload.v0.as_str(), &upload.bytes),
-                (upload.v1.as_str(), &upload.bytes),
-            ]
-        })
+        .flat_map(|upload| [(upload.v0.as_str(), upload), (upload.v1.as_str(), upload)])
         .collect();
-    let mut files = HashMap::from([(entity.id.clone(), entity_bytes.clone())]);
+    let spool_of = |hash: &str| by_hash.get(hash).and_then(|u| u.path.clone());
+    let mut files = HashMap::from([(
+        entity.id.clone(),
+        (entity_bytes.clone(), spool_of(&entity.id)),
+    )]);
     for content in &entity.content {
-        if let Some(bytes) = by_hash.get(content.hash.as_str()) {
-            files.insert(content.hash.clone(), (*bytes).clone());
+        if let Some(upload) = by_hash.get(content.hash.as_str()) {
+            files.insert(
+                content.hash.clone(),
+                (upload.bytes.clone(), upload.path.clone()),
+            );
         }
     }
     files
 }
 
+/// Stores every file: a spooled one by hard link from its spool file
+/// (a copy when the spool is on another filesystem), any other by its bytes.
 async fn store_deployment_files(
     storage: &Storage,
-    files: HashMap<String, Bytes>,
+    files: HashMap<String, (Bytes, Option<std::path::PathBuf>)>,
 ) -> Result<(), String> {
-    let mut writes = stream::iter(files.into_iter().map(|(hash, bytes)| async move {
-        storage
-            .store(&hash, bytes)
-            .await
-            .map_err(|e| format!("failed to store deployment file {hash}: {e}"))
+    let mut writes = stream::iter(files.into_iter().map(|(hash, (bytes, spool))| async move {
+        match spool {
+            Some(path) => storage.store_file(&hash, &path).await,
+            None => storage.store(&hash, bytes).await,
+        }
+        .map_err(|e| format!("failed to store deployment file {hash}: {e}"))
     }))
     .buffer_unordered(8);
     let mut first_error = None;
@@ -1115,20 +1138,34 @@ impl WriteDeployer {
             .await
     }
 
+    /// [`Self::deploy_entity`] over uploads that may name their spool files.
+    pub(crate) async fn deploy_uploads(
+        &self,
+        files: Vec<Upload>,
+        entity_id: &str,
+        auth_chain: Value,
+        context: &str,
+    ) -> Result<i64, DeployFailure> {
+        self.deploy_entity_anchored(files, entity_id, auth_chain, context, None)
+            .await
+    }
+
     /// [`Self::deploy_entity`] with the request TTLs measured from
     /// `ttl_anchor_ms` instead of now: a partial upload's publication
     /// measures them from the upload's first batch.
     pub(crate) async fn deploy_entity_anchored(
         &self,
-        files: Vec<Bytes>,
+        files: Vec<impl Into<Upload>>,
         entity_id: &str,
         auth_chain: Value,
         context: &str,
         ttl_anchor_ms: Option<i64>,
     ) -> Result<i64, DeployFailure> {
+        let files: Vec<Upload> = files.into_iter().map(Into::into).collect();
         let mut deployed = self.deploying.lock(entity_id).await;
         if let Some(creation_ts) = *deployed {
-            self.verify_replay(None, &files, entity_id, &auth_chain)
+            let bytes: Vec<Bytes> = files.into_iter().map(|u| u.bytes).collect();
+            self.verify_replay(None, &bytes, entity_id, &auth_chain)
                 .await?;
             return Ok(creation_ts);
         }
@@ -1158,13 +1195,13 @@ impl WriteDeployer {
         auth_chain: &Value,
     ) -> Result<(), DeployFailure> {
         let mut uploads = match named {
-            Some(bytes) => hash_uploads(vec![bytes.clone()])
+            Some(bytes) => hash_uploads(vec![Upload::from(bytes.clone())])
                 .await
                 .map_err(|e| deploy_error(entity_id, &e))?,
             None => Vec::new(),
         };
         if !uploads.iter().any(|upload| upload.names(entity_id)) {
-            uploads = hash_uploads(files.to_vec())
+            uploads = hash_uploads(files.iter().cloned().map(Upload::from).collect())
                 .await
                 .map_err(|e| deploy_error(entity_id, &e))?;
         }
@@ -1208,7 +1245,7 @@ impl WriteDeployer {
 
     async fn deploy_entity_unlocked(
         &self,
-        files: Vec<Bytes>,
+        files: Vec<Upload>,
         entity_id: &str,
         auth_chain: Value,
         context: &str,

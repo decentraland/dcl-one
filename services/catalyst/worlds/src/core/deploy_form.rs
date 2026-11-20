@@ -1,5 +1,5 @@
 //! The multipart form of `POST /entities`: fields in memory, file parts
-//! spooled to disk ([`super::upload_spool`]), both accounted against the
+//! spooled to disk ([`catalyst_storage::upload_spool`]), both accounted against the
 //! process-wide upload budgets as they are parsed. The caps and texts are
 //! upstream's `DEPLOYMENT_FIELD_LIMITS` over busboy
 //! (`src/controllers/multipart/{limits,middleware}.ts`).
@@ -17,7 +17,7 @@ use super::deploy::{MAX_UPLOAD_SIZE_BYTES, err_one, payload_too_large};
 use super::deploy_validate::{MAX_DEPLOY_FILE_BYTES, MAX_DEPLOY_FILES};
 use super::metrics::{ENTITIES_ROUTE, upload_rejected};
 use super::upload_limits;
-use super::upload_spool::{SpooledFile, UploadSpool};
+use catalyst_storage::upload_spool::{SpooledFile, UploadSpool};
 
 pub const SPOOL_FAILED_MESSAGE: &str =
     "The server could not store the multipart upload, please retry shortly.";
@@ -209,7 +209,7 @@ pub(super) async fn read_deploy_form(
             }
             if spool.is_none() {
                 spool = Some(
-                    UploadSpool::create(spool_root)
+                    UploadSpool::create(spool_root, "entities")
                         .await
                         .map_err(spool_failed)?,
                 );

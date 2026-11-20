@@ -153,7 +153,9 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub max_file_count: u32,
 
-    /// Deploy payload bytes buffered at once across every upload (>= one 350 MiB deploy).
+    /// Deploy payload bytes spooled at once across every upload: the worlds
+    /// deploys' budget (>= one 350 MiB deploy) and, separately, the content
+    /// `POST /entities` spool's (never below one `MAX_UPLOAD_TOTAL_SIZE` form).
     #[arg(
         long,
         env = "MAX_IN_FLIGHT_UPLOAD_BYTES",

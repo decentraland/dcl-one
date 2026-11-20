@@ -183,11 +183,11 @@ pub struct ContentConfig {
 
     /// Bytes of every file and field value one `POST /entities` form may
     /// carry together (2 GiB); the route's body limit is this plus the
-    /// multipart framing of its parts. The form is read into memory, so this
-    /// is also the most one deploy holds: `MAX_IN_MEMORY_DEPLOYMENT_BYTES` is
-    /// raised to it when lower. The gateway's body cap on the route
-    /// (`CONTENT_DEPLOY_CAP` in `infra/gateway/gateway.py`) is set for the
-    /// default and must follow a change.
+    /// multipart framing of its parts. The files are spooled to
+    /// `UPLOAD_SPOOL_FOLDER`, so this bounds a deploy's disk, not its memory.
+    /// The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
+    /// `infra/gateway/gateway.py`) is set for the default and must follow a
+    /// change.
     #[arg(
         long,
         env = "MAX_UPLOAD_TOTAL_SIZE",
@@ -195,10 +195,19 @@ pub struct ContentConfig {
     )]
     pub max_upload_total_size: usize,
 
-    /// Bytes of `POST /entities` bodies held in memory at once across every
-    /// request, each holding at least 16 MiB; never below one maximum-size
-    /// deployment (`MAX_UPLOAD_TOTAL_SIZE`). A request that does not fit
-    /// answers 503 unread.
+    /// Where `POST /entities` spools its files while a form is read, one
+    /// directory per request removed when it ends; directories a crashed
+    /// process left are removed at startup once older than an hour. Unset,
+    /// `<STORAGE_ROOT_FOLDER>/tmp/content-uploads`: the blob store's
+    /// filesystem, so its disk is the one the deploy fills anyway, and never
+    /// the OS temp dir, which may be memory-backed.
+    #[arg(long, env = "UPLOAD_SPOOL_FOLDER")]
+    pub upload_spool_folder: Option<std::path::PathBuf>,
+
+    /// Bytes `POST /entities` requests buffer in memory at once: each holds
+    /// 16 MiB for its fields and parsing, plus its entity file once the form
+    /// is read; the files themselves are spooled to disk. A request that does
+    /// not fit answers 503 (unread when it does not fit on arrival).
     #[arg(
         long,
         env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",
@@ -321,10 +330,11 @@ pub struct ContentConfig {
     pub max_concurrent_uploads_per_source: u32,
 
     /// Bytes of `POST /entities` bodies (declared, else `MAX_UPLOAD_TOTAL_SIZE`)
-    /// one client address may have in flight. The worlds uploads read it too,
-    /// so a set value must fit one 350 MiB world deploy and one
-    /// `MAX_UPLOAD_TOTAL_SIZE` content deploy; below either the config is
-    /// refused. Unset, each route keeps one maximum-size upload of its
+    /// one client address may have in flight, its share of the upload spool.
+    /// The worlds uploads read it too, so a set value must fit one 350 MiB
+    /// world deploy (below that the config is refused); a value below
+    /// `MAX_UPLOAD_TOTAL_SIZE` is logged at startup, since a larger content
+    /// upload is then always refused. Unset, each route keeps one maximum-size upload of its
     /// own (content `MAX_UPLOAD_TOTAL_SIZE`, worlds 350 MiB): a source with one large or
     /// undeclared-length (chunked) body in flight is turned away (429) until
     /// it ends, whatever `MAX_CONCURRENT_UPLOADS_PER_SOURCE` allows; raise it
@@ -442,20 +452,10 @@ impl ContentConfig {
         Ok(Some(raw.to_string()))
     }
 
-    /// The `POST /entities` limits that depend on each other: a set
-    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` must fit one
-    /// `MAX_UPLOAD_TOTAL_SIZE` form, and `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE`
-    /// a batch of the entity file (10 MiB) and one `MAX_UPLOAD_FILE_SIZE`
-    /// file; either below would refuse such a deploy every time.
+    /// `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` must fit a batch of the entity
+    /// file (10 MiB) and one `MAX_UPLOAD_FILE_SIZE` file, or such a batch
+    /// would wait forever.
     pub fn check_upload_limits(&self) -> anyhow::Result<()> {
-        let total = self.max_upload_total_size as u64;
-        if let Some(per_source) = self.max_in_flight_upload_bytes_per_source {
-            anyhow::ensure!(
-                per_source >= total,
-                "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE ({per_source}) must fit one \
-                 MAX_UPLOAD_TOTAL_SIZE upload ({total} bytes)"
-            );
-        }
         let batch = 10 * 1024 * 1024 + self.max_upload_file_size as u64;
         anyhow::ensure!(
             self.max_partial_upload_bytes_per_minute >= batch,
@@ -464,6 +464,25 @@ impl ContentConfig {
             self.max_partial_upload_bytes_per_minute
         );
         Ok(())
+    }
+
+    /// What the startup log warns about in the `POST /entities` limits: a set
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` below `MAX_UPLOAD_TOTAL_SIZE`
+    /// refuses (429) every upload declaring more than it, which is the
+    /// operator's choice to make, not a reason to stop.
+    pub fn upload_limit_warnings(&self) -> Vec<String> {
+        let total = self.max_upload_total_size as u64;
+        self.max_in_flight_upload_bytes_per_source
+            .filter(|&per_source| per_source < total)
+            .map(|per_source| {
+                format!(
+                    "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE ({per_source}) is below \
+                     MAX_UPLOAD_TOTAL_SIZE ({total}): POST /entities uploads of more than \
+                     {per_source} bytes are refused"
+                )
+            })
+            .into_iter()
+            .collect()
     }
 
     /// `DENYLIST_URLS`: the URLs, split on commas and whitespace (upstream
@@ -618,6 +637,7 @@ mod tests {
         assert_eq!(cli.content.request_ttl_backwards_ms, 20 * 60 * 1000);
         assert_eq!(cli.content.max_concurrent_uploads_per_source, 4);
         assert_eq!(cli.content.max_in_flight_upload_bytes_per_source, None);
+        assert_eq!(cli.content.upload_spool_folder, None);
         assert_eq!(cli.content.deployments_default_rate_limit_ttl_ms, None);
         let with = |extra: &[&str]| parse(&[&base[..], extra].concat());
         let cli = with(&[
@@ -651,19 +671,24 @@ mod tests {
             Some(350 * 1024 * 1024)
         );
         assert!(with(&["--max-concurrent-uploads-per-source", "0"]).is_err());
-        // A source share below one MAX_UPLOAD_TOTAL_SIZE form, or a partial
-        // rate below the entity file and one MAX_UPLOAD_FILE_SIZE file, is
-        // refused at startup.
+        // A source share below one MAX_UPLOAD_TOTAL_SIZE form starts with a
+        // warning; a partial rate below the entity file and one
+        // MAX_UPLOAD_FILE_SIZE file is refused at startup.
+        let warned = |extra: &[&str]| with(extra).unwrap().content.upload_limit_warnings();
         let checked = |extra: &[&str]| with(extra).unwrap().content.check_upload_limits();
-        assert!(checked(&["--max-in-flight-upload-bytes-per-source", &mib(350)]).is_err());
+        assert!(warned(&[]).is_empty());
+        let warning = warned(&["--max-in-flight-upload-bytes-per-source", &mib(350)]);
+        assert_eq!(warning.len(), 1);
+        assert!(warning[0].contains("are refused"), "{warning:?}");
+        assert!(checked(&["--max-in-flight-upload-bytes-per-source", &mib(350)]).is_ok());
         assert!(
-            checked(&[
+            warned(&[
                 "--max-in-flight-upload-bytes-per-source",
                 &mib(350),
                 "--max-upload-total-size",
                 &mib(350),
             ])
-            .is_ok()
+            .is_empty()
         );
         assert!(checked(&["--max-upload-file-size", &mib(600)]).is_err());
         assert!(
