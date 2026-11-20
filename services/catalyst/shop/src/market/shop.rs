@@ -1246,15 +1246,6 @@ async fn ready(state: &MarketplaceState) -> Result<(), Response> {
     super::trades::require_ready(state).await
 }
 
-fn hour_cache() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        CACHE_CONTROL,
-        "public,max-age=3600,s-maxage=3600".parse().unwrap(),
-    );
-    headers
-}
-
 pub async fn get_shop_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -1487,7 +1478,7 @@ pub async fn get_trending_catalog(
         directory_snapshot(&state)
     );
     match body {
-        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(hour_cache())),
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
         Err(r) => r,
     }
 }
@@ -1512,6 +1503,19 @@ fn with_creator_profiles(
     let mut body = Arc::unwrap_or_clone(body);
     name_creators(&mut body, directory, &state.denylist);
     (profiles_revalidate(), Json(body)).into_response()
+}
+
+/// The `Cache-Control` of a trending or top-creators answer sent without the creator directory (a
+/// cold node, a feed that did not lead the directory's read, or a failing read): kept briefly, so
+/// a CDN does not hold an answer without profiles, whose cards each ask `/lambdas/profiles`, for
+/// the hour these feeds were cached before they carried profiles.
+fn brief_cache() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CACHE_CONTROL,
+        "public,max-age=60,s-maxage=60".parse().unwrap(),
+    );
+    headers
 }
 
 /// The `Cache-Control` of a response that carries creator profiles: a cache may keep it only to
@@ -1668,7 +1672,7 @@ pub async fn get_top_creators(
     match ranked {
         Ok(mut data) => {
             let Some(directory) = directory.as_deref() else {
-                return (hour_cache(), Json(TopCreatorsResponseBody { data })).into_response();
+                return (brief_cache(), Json(TopCreatorsResponseBody { data })).into_response();
             };
             let ids = data.iter().map(|c| c.id.clone()).collect();
             let profiles = creator_profiles(directory, &ids, &state.denylist);

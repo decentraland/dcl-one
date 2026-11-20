@@ -702,6 +702,7 @@ pub(super) fn social_states(
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            events_public_base: explore.settings.configured_public_base.clone(),
             signing_key: non_empty(&config.social.signing_key),
             service_base_url: config.social.notifications_service_base_url.clone(),
             community_cdn_url: communities.settings.cdn_url.clone(),

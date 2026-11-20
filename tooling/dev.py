@@ -501,7 +501,7 @@ def runtime_env(config, refuse_exposed_relayer=True):
         'CONTENT_HISTORY_PRUNE_ENABLED': 'false', 'WORLDS_CONTENT_MIRROR_ENABLED': 'false',
         'MARKETPLACE_MIRRORS_ENABLED': 'false', 'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'false', 'MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED': 'false',
-        'MARKETPLACE_SALES_INDEX_ENABLED': 'false',
+        'MARKETPLACE_SALES_INDEX_ENABLED': 'false', 'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'LAND_AUTHZ_INDEX_ENABLED': 'false', 'CREDITS_USAGE_INDEX_ENABLED': 'false',
         'SHOP_RENTALS_INDEX_ENABLED': 'false', 'PRICE_POLL_ENABLED': 'false',
         'COMMUNITIES_MIRROR_UPSTREAM': 'false', 'SCENE_HOST_ENABLED': 'false',
@@ -588,6 +588,8 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'SHOP_RENTALS_INDEX_ENABLED': 'true',
+            # Builder's curation committee: the Polygon Committee contracts over RPC_ENDPOINT_POLYGON.
+            'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
@@ -644,6 +646,8 @@ def testnet_env(config, refuse_exposed_relayer=True):
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
         'SHOP_RENTALS_INDEX_ENABLED': 'false',
+        # The Committee contracts are Polygon mainnet's; RPC_ENDPOINT_POLYGON is Amoy here.
+        'MARKETPLACE_COMMITTEE_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
         # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.

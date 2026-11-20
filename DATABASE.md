@@ -1239,7 +1239,8 @@ Admitted effects retain the ten-second deadline. Reward requests run in the exis
 leased worker after login recording commits; they do not delay login acknowledgement. One nullable receipt per milestone stores a
 pre-POST `reward_requested_at`, confirmed provider `reward_response` and
 `reward_retry_at`. The expected workload is at most one receipt per milestone,
-with a 64-row due batch every minute; this bound is not a throughput measurement.
+with a 64-row due batch every minute; a tier with an empty supply is asked once
+an hour, plus once per new grant; this bound is not a throughput measurement.
 The partial due index excludes completed and ambiguous requests. A session
 advisory guard serializes attempts without an open transaction across HTTP; its
 connection closes on cancellation.
@@ -1248,7 +1249,18 @@ Configuration failures leave the request unclaimed. After the POST claim commits
 transport errors, non-success statuses, malformed replies and a crash before
 response persistence leave an ambiguous receipt that is never automatically
 reissued. Operators must reconcile the outcome before restoring it to pending or
-supplying a confirmed response. Additive step `0024_social_referral_reward_receipt`
+supplying a confirmed response. A held claim with no stored response stays
+quarantined until an operator clears `reward_requested_at`. A successful reply
+`{"ok": true, "data": []}` means the tier's campaign has no stock left ([greeter-dapp
+reads it as "No Stock"](https://github.com/decentraland/greeter-dapp/blob/30631bd10335f6f89f708829c26c3d679f9a626f/src/api/Rewards.ts)): the claim is cleared and
+the tier's other unclaimed rows without a stored response move one hour ahead
+in their current order, through the partial due index, with the answered row
+placed last. A reply for a new grant moves only rows that are due or new, so a
+row already waiting keeps its time; a reply for a waiting row also moves every
+row due within the hour. One request per hour therefore covers the tier, each
+asking the next row, plus one per new grant on arrival, until its campaign is
+restocked. After restocking, operators may clear
+`reward_retry_at` on those rows to retry sooner. Additive step `0024_social_referral_reward_receipt`
 imports previously confirmed object-valued `reward_paid` responses, including
 receipts with missing or invalid image metadata, and quarantines uncertain pending
 markers. A confirmed receipt with unusable image metadata remains confirmed and
@@ -2064,6 +2076,29 @@ any wallet has a row of it. Each upsert (with the definition it wrote) and
 each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
+
+## Curation committee
+
+Builder's committee routes (the drafts and items of every wallet, another
+wallet's collections and items, the curation console's committee list)
+admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
+curation committee. Shop's `committee` index
+(`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
+`MemberSet` logs from the first one's deployment into `shop.committee_event`
+over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
+once the endpoint answers chain id 137 (tens of rows, appended with the cursor advance in `shop.chain_cursor`,
+deleted past a reorg rewind). Builder reads, never writes, both tables by
+shared SQL in one statement: `shop.committee_event` (`network`,
+`block_number`, `log_index`, `member`, `is_member`) and `shop.chain_cursor`
+(`indexer`, `network`, `full_history`, `folded_block`, `folded_at`). A
+wallet is a member when its latest event (block, log index) at or below the
+published block (`folded_block`) set it, so rows a pass adds before its
+publish wait for it. Unlike the shop routes' readiness rule, it does not
+require `folded_block = last_block`, so the published membership stays
+readable while a pass runs. An index that is off, not yet published or
+published more than 30 minutes ago (`READY_WINDOW`) admits only the
+configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
+and the AGENTS.md "Ownership" entry in the same change.
 
 ## Auth API relay state workload
 

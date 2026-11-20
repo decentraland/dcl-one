@@ -60,6 +60,7 @@ pub mod bids;
 pub mod catalog;
 pub mod chain_walk;
 pub mod collections;
+pub mod committee_index;
 pub mod contracts;
 pub mod definitions;
 pub mod features;
@@ -741,6 +742,21 @@ impl MarketplaceState {
         self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
     }
 
+    /// The endpoint the committee walk reads (Polygon only): the
+    /// `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`
+    /// (off mainnet it serves another chain); the walk checks the endpoint
+    /// serves chain 137 before each pass.
+    pub fn committee_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        if net != chain_walk::ChainNet::Matic {
+            return None;
+        }
+        self.chain_rpc_url(net).or_else(|| {
+            (self.settings.eth_network.trim() == "mainnet")
+                .then(|| self.settings.polygon_rpc_url.clone())
+                .flatten()
+        })
+    }
+
     fn rpc_url_for(&self, net: chain_walk::ChainNet, chain_id: i64) -> Option<String> {
         self.settings
             .market
@@ -774,8 +790,8 @@ pub(crate) async fn ensure_chain(
     Ok(())
 }
 
-/// Attaches `nft-index`, `trade-events-index` and `mana-transfers-index`
-/// when their switches are on: one periodic job each, a pass walking both
+/// Attaches `nft-index`, `trade-events-index`, `mana-transfers-index` and
+/// `committee-index` (Polygon only) when their switches are on: one periodic job each, a pass walking both
 /// networks in turn (the budget is per network), the nft walk of a network
 /// waiting for the collections mirror's first complete pass (its address
 /// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
@@ -789,25 +805,38 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
         ),
         (settings.nft_enabled, chain_walk::INDEXER_NFT),
         (settings.mana_transfers_enabled, chain_walk::INDEXER_MANA),
+        (settings.committee_enabled, chain_walk::INDEXER_COMMITTEE),
     ] {
         let job = if name == chain_walk::INDEXER_NFT {
             "nft-index"
         } else if name == chain_walk::INDEXER_MANA {
             "mana-transfers-index"
+        } else if name == chain_walk::INDEXER_COMMITTEE {
+            "committee-index"
         } else {
             "trade-events-index"
         };
         if !enabled {
-            tracing::info!(
-                job,
-                "marketplace chain index off: its routes answer the unavailable envelope"
-            );
+            if name == chain_walk::INDEXER_COMMITTEE {
+                tracing::info!(
+                    job,
+                    "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
+                );
+            } else {
+                tracing::info!(
+                    job,
+                    "marketplace chain index off: its routes answer the unavailable envelope"
+                );
+            }
             continue;
         }
         let trade_events = name == chain_walk::INDEXER_TRADE_EVENTS;
+        let committee = name == chain_walk::INDEXER_COMMITTEE;
         let rpc_url = move |state: &MarketplaceState, net: chain_walk::ChainNet| {
             if trade_events {
                 state.trade_events_rpc_url(net)
+            } else if committee {
+                state.committee_rpc_url(net)
             } else {
                 state.chain_rpc_url(net)
             }
@@ -817,10 +846,17 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
             .filter(|n| rpc_url(state, *n).is_some())
             .collect();
         if nets.is_empty() {
-            tracing::warn!(
-                job,
-                "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
-            );
+            if committee {
+                tracing::warn!(
+                    job,
+                    "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
+                );
+            } else {
+                tracing::warn!(
+                    job,
+                    "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
+                );
+            }
             continue;
         }
         let state = state.clone();
@@ -844,6 +880,11 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                                     return Ok(());
                                 }
                                 chain_walk::run_pass(&state.pool, &rpc, &nft_indexes[i], &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                            } else if name == chain_walk::INDEXER_COMMITTEE {
+                                match ensure_chain(&rpc, 137).await {
+                                    Ok(()) => chain_walk::run_pass(&state.pool, &rpc, &committee_index::CommitteeIndex, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
+                                    Err(e) => Err(e),
+                                }
                             } else if name == chain_walk::INDEXER_MANA {
                                 chain_walk::run_pass(&state.pool, &rpc, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else {

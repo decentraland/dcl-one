@@ -20,8 +20,8 @@ const HEADLESS_NO_GPU = [
 
 export const ROUTES: Route[] = [
   { path: "/create", auth: "both" },
-  { path: "/create/wearables", auth: "out", allowConsole: [AUTH_PROBE] },
-  { path: "/create/curate", auth: "out", allowConsole: [AUTH_PROBE] },
+  { path: "/create/collections", auth: "out", allowConsole: [AUTH_PROBE] },
+  { path: "/create/curation", auth: "out", allowConsole: [AUTH_PROBE] },
   { path: "/creator-hub/claim-name", auth: "both", allowConsole: [AUTH_PROBE] },
 
   // The Shop (ui3/src/shop); every old /marketplace page redirects to one of these.

@@ -96,7 +96,7 @@ test("one mobile toggle opens both global and Creator Hub links and closes after
     const collections = within(creatorNav).getByRole("link", { name: "Collections" });
     expect(collections).toHaveAttribute("aria-current", "page");
     await userEvent.click(collections);
-    expect(navigate).toHaveBeenCalledWith("/create/wearables");
+    expect(navigate).toHaveBeenCalledWith("/create/collections");
     expect(onTab).not.toHaveBeenCalled();
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);

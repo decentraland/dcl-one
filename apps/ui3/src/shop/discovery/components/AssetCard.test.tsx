@@ -120,6 +120,15 @@ describe("the card's creator line", () => {
     expect(screen.getByTestId("creator-ava-letter")).toHaveTextContent("N");
   });
 
+  it("shows the short address for an empty profile the feed carries, and asks for none", async () => {
+    profiles = () => profileAnswer(true);
+    card(item({ creatorProfile: { name: "", face: null, claimed: false } }));
+    expect(screen.getByTestId("creator-display")).toHaveTextContent(`${CREATOR.slice(0, 6)}…${CREATOR.slice(-4)}`);
+    expect(screen.queryByTestId("creator-ava")).toBeNull();
+    await settle();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/lambdas/profiles"))).toBe(false);
+  });
+
   it("paints a profile the feed carries at once and asks for none", async () => {
     profiles = () => profileAnswer(true);
     card(item({ creatorProfile: { name: "nacho", face: FACE, claimed: true } }));

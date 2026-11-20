@@ -312,7 +312,7 @@ describe("Sites native chrome integration", () => {
         name: "Notifications",
       }),
     );
-    await screen.findByText("No notifications yet");
+    await screen.findByText("No Notifications Yet");
     view.rerender(<Host auth={{ ...a, account: "0xb" }} />);
     view.rerender(<Host auth={a} />);
     expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
@@ -495,6 +495,20 @@ describe("when Nav Profile reads the matching browser wallet", () => {
     expect(panel.querySelector('[data-balance="polygonMana"]')?.textContent).toBe("MANA en Polygon: 0");
   });
 
+  it("should retain the balance row without amounts when both MANA reads fail", async () => {
+    readManaBalanceWei.mockRejectedValue(new Error("RPC unavailable"));
+    await act(async () => { await request.mock.results[0]!.value; });
+    const avatar = screen.getByRole("button", { name: "Cuenta: Ada" });
+    fireEvent.click(avatar);
+    const panel = document.getElementById(avatar.getAttribute("aria-controls")!)!;
+    const row = panel.querySelector('[aria-busy="true"]');
+    expect(row).toBeTruthy();
+    await waitFor(() => expect(panel.querySelector('[aria-busy="true"]')).toBeNull());
+    expect(readManaBalanceWei).toHaveBeenCalledTimes(2);
+    expect(panel.contains(row)).toBe(true);
+    expect(panel.querySelector("[data-balance]")).toBeNull();
+  });
+
   it("should confirm the address copy in the Sites locale", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -549,9 +563,23 @@ it("restores the actual bell opener after pointer activation and dialog dismissa
   );
   const bell = screen.getByRole("button", { name: "Notifications" });
   fireEvent.click(bell);
-  await screen.findByText("No notifications yet");
+  await screen.findByText("No Notifications Yet");
   fireEvent.click(screen.getByRole("button", { name: "Close" }));
   expect(document.activeElement).toBe(bell);
+});
+
+it("shows standalone artwork for a community event and a badged thumbnail for a sale", async () => {
+  const fetchNotifications = vi.fn().mockResolvedValue({ notifications: ["events_started", "item_sold"].map(type => ({
+    id: type, type, timestamp: Date.now(), metadata: { title: type, image: "https://example.org/item.png" }
+  })) });
+  render(<Host auth={{ ...baseAuth, signedIn: true, account: "0xa", fetchNotifications }} />);
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  const event = (await screen.findByText("events_started")).closest("li")!;
+  const sale = screen.getByText("item_sold").closest("li")!;
+  expect(event.querySelectorAll("img")).toHaveLength(1);
+  expect(event.querySelector("img")?.getAttribute("src")).not.toBe("https://example.org/item.png");
+  expect(sale.querySelectorAll("img")).toHaveLength(2);
+  expect(sale.querySelector("img")?.getAttribute("src")).toBe("https://example.org/item.png");
 });
 
 it("keeps cached notifications alongside a background refresh error", async () => {
@@ -637,7 +665,7 @@ describe("when Home notifications are opened", () => {
     const bell = screen.getByRole("button", { name: "Notifications" });
     fireEvent.click(bell);
     const panel = screen.getByRole("dialog", { name: "Notifications" });
-    await screen.findByText("No notifications yet");
+    await screen.findByText("No Notifications Yet");
     const close = within(panel).getByRole("button", { name: "Close" });
     close.focus();
     fireEvent.keyDown(close, { key: "Escape" });

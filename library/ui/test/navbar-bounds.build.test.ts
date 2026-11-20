@@ -375,16 +375,16 @@ describe('when the public Sites navigation runs with browser input', () => {
     }
   })
 
-  it.each([390, 1440])(
-    'should keep profile actions in place when MANA first loads at %ipx',
-    async (width) => {
+  it.each([390, 1440].flatMap((width) => [true, false].map((success) => ({ width, success }))))(
+    'should keep profile actions in place at $width px when MANA requests settle (success=$success)',
+    async ({ width, success }) => {
       await openCase('in-solid-3', width, true, 900, 'balances')
       await click('button[aria-label="Account: Ada"]')
       const actionTop =
         'document.querySelector(\'nav a[href="/profile"]\').getBoundingClientRect().top'
       const before = await evaluate<number>(actionTop)
       await evaluate(`(async () => {
-        window.dispatchEvent(new Event('fixture:load-profile-balances'))
+        window.dispatchEvent(new CustomEvent('fixture:load-profile-balances', {detail: ${JSON.stringify(success ? { mana: 123.45, polygonMana: 67.89 } : {})}}))
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       })()`)
       expect(
@@ -393,7 +393,7 @@ describe('when the public Sites navigation runs with browser input', () => {
         const panel = document.getElementById(account.getAttribute('aria-controls'))
         return !!panel.querySelector('[data-balance="polygonMana"]')
       })()`)
-      ).toBe(true)
+      ).toBe(success)
       expect(await evaluate<number>(actionTop)).toBeCloseTo(before, 0)
     }
   )

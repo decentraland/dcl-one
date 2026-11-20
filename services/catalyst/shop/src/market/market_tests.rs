@@ -1552,7 +1552,15 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
     let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    // The browse read started the directory's read in the background; it may land after the
+    // answer, which waits at most 500 ms for it.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the browse read fills the creator directory");
 
     // The feeds carry their creators' profiles per response, never memoized with the page: a
     // profile denylisted after the pages were memoized leaves the very next answer, and every
@@ -1575,6 +1583,10 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .await
         .unwrap();
     state.readers.clear();
+    // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
+    // feeds below then find it fresh, start no refresh of their own, and never depend on how
+    // fast a cold read is.
+    super::search::creator_directory(&state).await.unwrap();
     let feeds = [
         "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
@@ -1626,6 +1638,32 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .execute(&pool)
         .await
         .unwrap();
+    // A feed without the creator directory (here, its refresh held by another) answers without
+    // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
+    // answer whose cards each ask /lambdas/profiles.
+    // A claim still live from the feeds above could not release this hold either: its release
+    // acts only on its own claim.
+    state.readers.clear();
+    let hold = state
+        .readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .expect("a reset frees the directory's refresh");
+    for uri in [
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ] {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert!(
+            body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none() && r.get("profile").is_none()),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
+    }
+    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)

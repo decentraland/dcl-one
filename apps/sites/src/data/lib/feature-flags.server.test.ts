@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dappsFlags, dappsFlagsAnswer, resetDappsFlags } from "./feature-flags.server";
+import { dappsFlags, dappsFlagsAnswer, flagsAnswer, resetDappsFlags } from "./feature-flags.server";
 
 const fetchMock = vi.fn();
 
@@ -93,5 +93,13 @@ describe("decentraland.org's rollout flags, read by the server", () => {
     answer({ flags: { "dapps-shop-creator-sales": true } });
     expect(await dappsFlags()).toEqual({});
     await vi.waitFor(async () => expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true }));
+  });
+
+  it("reads another application's file as a separate answer", async () => {
+    answer({ flags: { "dapps-shop-creator-sales": true } });
+    answer({ flags: { "builder-maintenance": true } });
+    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    expect((await flagsAnswer("builder")).flags).toEqual({ "builder-maintenance": true });
+    expect(fetchMock.mock.calls[1]![0]).toBe("https://feature-flags.decentraland.org/builder.json");
   });
 });

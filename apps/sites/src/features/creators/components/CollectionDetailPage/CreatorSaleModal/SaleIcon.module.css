@@ -1,0 +1,27 @@
+/* Layered: consumers size and tint the glyphs through `className` and `data-sale-icon`. */
+@layer foundations {
+  /* The Shop's `.ico` base: a 20px glyph that never shrinks. The modal's styles resize it through `data-sale-icon`. */
+  .svg {
+    display: inline-block;
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+
+  /* The Shop's credits mark: a mask tinted with currentColor, `data-inline` sizing it to the text around it. */
+  .mark {
+    display: inline-block;
+    flex: none;
+    width: 20px;
+    height: 20px;
+    background-color: currentColor;
+    -webkit-mask: var(--icon-url) center / contain no-repeat;
+    mask: var(--icon-url) center / contain no-repeat;
+
+    &[data-inline] {
+      width: 1em;
+      height: 1em;
+      vertical-align: -0.125em;
+    }
+  }
+}

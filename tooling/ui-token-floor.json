@@ -39,6 +39,362 @@
     "primitives": 0,
     "tokens": 198
   },
+  "apps/sites/src/features/creators/CreatorsShell.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
+  "apps/sites/src/features/creators/components/ActionsMenu/ActionsMenu.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "apps/sites/src/features/creators/components/AssignCuratorModal/AssignCuratorModal.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/AutomatedReviewIcon/AutomatedReviewIcon.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/Button/Button.module.css": {
+    "primitives": 0,
+    "tokens": 22
+  },
+  "apps/sites/src/features/creators/components/Checkbox/Checkbox.module.css": {
+    "primitives": 0,
+    "tokens": 6
+  },
+  "apps/sites/src/features/creators/components/CollectionActivityModal/CollectionActivityModal.module.css": {
+    "primitives": 0,
+    "tokens": 13
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/AddItemsModal/AddItemsModal.module.css": {
+    "primitives": 0,
+    "tokens": 38
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/CollectionDetailPage.module.css": {
+    "primitives": 0,
+    "tokens": 27
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/CreatorSaleModal/CreatorSaleModal.module.css": {
+    "primitives": 0,
+    "tokens": 64
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/CreatorSaleModal/RangePicker.module.css": {
+    "primitives": 0,
+    "tokens": 31
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/CreatorSaleModal/SaleCountdown.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/DiscountFlow/DiscountFlow.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/ItemActionsMenu/MoveItemModal.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/ItemListRow/ItemListRow.module.css": {
+    "primitives": 0,
+    "tokens": 29
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/ItemSaleStatus/ItemSaleStatus.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/ItemSyncPill/ItemSyncPill.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/LinkedCollectionView/EditUrnModal/EditUrnModal.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/LinkedCollectionView/LinkedCollectionView.module.css": {
+    "primitives": 0,
+    "tokens": 16
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/LinkedCollectionView/PublishLinkedItemsModal/LinkedPublishRow.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/ManageRolesFlow/ManageRolesModal.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/PublishCollectionModal/BuyCreditsModal/BuyCreditsModal.module.css": {
+    "primitives": 0,
+    "tokens": 20
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/PublishCollectionModal/PaymentMethodCard.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/PublishCollectionModal/PublishCollectionModal.module.css": {
+    "primitives": 0,
+    "tokens": 18
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/PublishCollectionModal/PublishItemRow.module.css": {
+    "primitives": 0,
+    "tokens": 22
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/PublishCollectionModal/PublishSuccessModal.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/PublishCollectionModal/ValidationIssuesView.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/ReviewFlow/ReviewFlow.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/SaleTag/SaleTag.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/SellItemFlow/SellItemModal.module.css": {
+    "primitives": 0,
+    "tokens": 54
+  },
+  "apps/sites/src/features/creators/components/CollectionDetailPage/SendItemsFlow/SendItemsModal.module.css": {
+    "primitives": 0,
+    "tokens": 27
+  },
+  "apps/sites/src/features/creators/components/CollectionNameInput/CollectionNameInput.module.css": {
+    "primitives": 0,
+    "tokens": 8
+  },
+  "apps/sites/src/features/creators/components/CollectionNameModal/CollectionNameModal.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/CollectionRolePill/CollectionRolePill.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/CollectionStatusPill/CollectionStatusPill.module.css": {
+    "primitives": 0,
+    "tokens": 6
+  },
+  "apps/sites/src/features/creators/components/CollectionsPage/CollectionCard/CollectionCard.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
+  "apps/sites/src/features/creators/components/CollectionsPage/CollectionListRow/CollectionListRow.module.css": {
+    "primitives": 0,
+    "tokens": 7
+  },
+  "apps/sites/src/features/creators/components/CollectionsPage/CollectionsPage.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
+  "apps/sites/src/features/creators/components/CollectionsPage/CreateLinkedCollectionModal/CreateLinkedCollectionModal.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
+  "apps/sites/src/features/creators/components/ConfirmModal/ConfirmModal.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/CurationPage/CurationPage.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/CurationPage/CurationRow/CurationRow.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
+  "apps/sites/src/features/creators/components/CurationPage/ReviewTypePill/ReviewTypePill.module.css": {
+    "primitives": 0,
+    "tokens": 4
+  },
+  "apps/sites/src/features/creators/components/CurationStatePill/CurationStatePill.module.css": {
+    "primitives": 0,
+    "tokens": 4
+  },
+  "apps/sites/src/features/creators/components/ErrorBoundary/ErrorBoundary.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/FindingsList/FindingsList.module.css": {
+    "primitives": 0,
+    "tokens": 16
+  },
+  "apps/sites/src/features/creators/components/ItemDraftModal/ItemDraftModal.module.css": {
+    "primitives": 0,
+    "tokens": 33
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/AvatarCustomizer/AvatarCustomizer.module.css": {
+    "primitives": 0,
+    "tokens": 15
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ChangeFileModal/ChangeFileModal.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ItemEditorPage.module.css": {
+    "primitives": 0,
+    "tokens": 33
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ItemsSidebar/ItemsSidebar.module.css": {
+    "primitives": 0,
+    "tokens": 13
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/PlaybackBar/PlaybackBar.module.css": {
+    "primitives": 0,
+    "tokens": 9
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ReviewBar/ApprovalFlowModal.module.css": {
+    "primitives": 0,
+    "tokens": 13
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ReviewBar/AutomatedVerdictModal.module.css": {
+    "primitives": 0,
+    "tokens": 19
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ReviewBar/ForumVerdictModal.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ReviewBar/RejectCurationModal.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/ReviewBar/ReviewBar.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/SceneBoundariesToggle/SceneBoundariesToggle.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/SpringBonesEditor/BoneTreePicker/BoneTreePicker.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/ItemEditorPage/SpringBonesEditor/SpringBonesEditor.module.css": {
+    "primitives": 0,
+    "tokens": 6
+  },
+  "apps/sites/src/features/creators/components/ItemThumbnail/ItemThumbnail.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/LivePreviewPage/LivePreviewPage.module.css": {
+    "primitives": 0,
+    "tokens": 8
+  },
+  "apps/sites/src/features/creators/components/MappingEditor/MappingEditor.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
+  "apps/sites/src/features/creators/components/Modal/Modal.module.css": {
+    "primitives": 0,
+    "tokens": 8
+  },
+  "apps/sites/src/features/creators/components/MultiSelect/MultiSelect.module.css": {
+    "primitives": 0,
+    "tokens": 1
+  },
+  "apps/sites/src/features/creators/components/NoteField/NoteField.module.css": {
+    "primitives": 0,
+    "tokens": 6
+  },
+  "apps/sites/src/features/creators/components/Pagination/Pagination.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/PendingModal/PendingModal.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/components/ProfileBadge/ProfileBadge.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/ProgressModal/ProgressModal.module.css": {
+    "primitives": 0,
+    "tokens": 6
+  },
+  "apps/sites/src/features/creators/components/RarityPill/RarityPill.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/RequiredPermissions/RequiredPermissions.module.css": {
+    "primitives": 0,
+    "tokens": 7
+  },
+  "apps/sites/src/features/creators/components/Select/Select.module.css": {
+    "primitives": 0,
+    "tokens": 21
+  },
+  "apps/sites/src/features/creators/components/StepIndicator/StepIndicator.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "apps/sites/src/features/creators/components/SubNav/SubNav.module.css": {
+    "primitives": 0,
+    "tokens": 4
+  },
+  "apps/sites/src/features/creators/components/SuccessModal/SuccessModal.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/Switch/Switch.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/ThumbnailModal/ThumbnailModal.module.css": {
+    "primitives": 0,
+    "tokens": 18
+  },
+  "apps/sites/src/features/creators/components/ThumbnailMosaic/ThumbnailMosaic.module.css": {
+    "primitives": 0,
+    "tokens": 2
+  },
+  "apps/sites/src/features/creators/components/Toasts/Toasts.module.css": {
+    "primitives": 0,
+    "tokens": 7
+  },
+  "apps/sites/src/features/creators/components/Tooltip/Tooltip.module.css": {
+    "primitives": 0,
+    "tokens": 4
+  },
+  "apps/sites/src/features/creators/components/ValidationBadge/ItemValidationCard.module.css": {
+    "primitives": 0,
+    "tokens": 12
+  },
+  "apps/sites/src/features/creators/components/ValidationBadge/ValidationBadge.module.css": {
+    "primitives": 0,
+    "tokens": 4
+  },
+  "apps/sites/src/features/creators/components/VideoModal/VideoDropzone.module.css": {
+    "primitives": 0,
+    "tokens": 11
+  },
+  "apps/sites/src/features/creators/components/VideoModal/VideoModal.module.css": {
+    "primitives": 0,
+    "tokens": 3
+  },
+  "apps/sites/src/features/creators/components/WearablePreview/PreviewControls.module.css": {
+    "primitives": 0,
+    "tokens": 15
+  },
+  "apps/sites/src/features/creators/components/ZoomControls/ZoomControls.module.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
+  "apps/sites/src/features/creators/styles/shared.module.css": {
+    "primitives": 0,
+    "tokens": 19
+  },
+  "apps/sites/src/features/creators/styles/tokens.css": {
+    "primitives": 0,
+    "tokens": 5
+  },
   "apps/sites/src/features/docs/docs.css": {
     "primitives": 11,
     "tokens": 0
@@ -81,7 +437,7 @@
   },
   "apps/sites/src/features/social/report/ReportForm.module.css": {
     "primitives": 0,
-    "tokens": 69
+    "tokens": 59
   },
   "apps/sites/src/features/social/report/ReportSuccess.module.css": {
     "primitives": 0,
