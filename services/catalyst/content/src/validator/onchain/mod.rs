@@ -6,9 +6,9 @@
 //! question asked at the block of the entity timestamp and again at the
 //! block five minutes before it. Blocks come from a binary search over the
 //! RPC ([`dcl_http::jsonrpc::BlockSearch`]); each block it reads is asked up
-//! to [`BLOCK_READ_ATTEMPTS`] times, an error or an empty answer (a replica
-//! behind the chain) retried after a jittered backoff. The `eth_call`s are
-//! asked once.
+//! to [`BLOCK_READ_ATTEMPTS`] times, a transient error or an empty answer (a
+//! replica behind the chain) retried after a jittered backoff. The
+//! `eth_call`s are asked once.
 //!
 //! The vendored contract data is in `contracts/` with its provenance
 //! (`upstream.lock.json`). A call that cannot be decided (no RPC, a failing
@@ -126,6 +126,9 @@ const CHECK_DEADLINE: Duration = Duration::from_secs(30);
 /// them: 100-200 ms, then 200-400 ms.
 const BLOCK_READ_ATTEMPTS: u32 = 3;
 const BLOCK_READ_BASE_MS: u64 = 100;
+/// One block read's timeout: every attempt and its backoff (under 16 s) fit
+/// in [`CHECK_DEADLINE`] with an `eth_call` after them.
+const BLOCK_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// An address as the vendored JSON spells it.
 #[derive(Debug, Clone, Copy)]
@@ -234,11 +237,29 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
     Value::Array(params)
 }
 
-/// One block, read again after an error or an empty answer, each wait
-/// doubling with up to as much again in jitter; an endpoint the guard refuses
-/// is not asked again.
-async fn read_block(rpc: &Rpc<'_>, tag: BlockTag) -> Result<BlockInfo, RpcError> {
+/// Whether a failed block read may succeed when asked again: the node
+/// unreachable or overloaded, a server-side JSON-RPC error, or a replica that
+/// has not seen the block yet. A rate limit is not asked again within the
+/// check, nor is an answer that will not change (a refused endpoint, a bad
+/// key or path, invalid params, a malformed block).
+fn transient(e: &RpcError) -> bool {
+    match e {
+        RpcError::Transport(_) => true,
+        RpcError::Status(s) => *s == 408 || (500..600).contains(s),
+        RpcError::Malformed(m) => m.starts_with("no block "),
+        RpcError::Response { code, .. } => (-32099..=-32000).contains(code),
+        RpcError::Refused(_) => false,
+    }
+}
+
+/// One block, read again after a [`transient`] error, each wait doubling with
+/// up to as much again in jitter.
+async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockInfo, RpcError> {
+    let rpc = Rpc::new(http, url).with_timeout(BLOCK_READ_TIMEOUT);
+    let rpc = &rpc;
     let mut attempt = 0;
+    // `after` always carries the jittered wait, overriding the helper's own
+    // ladder, so the `base_ms` passed here is nominal.
     let answer = retry_with_backoff(
         "block read",
         BLOCK_READ_ATTEMPTS,
@@ -250,10 +271,13 @@ async fn read_block(rpc: &Rpc<'_>, tag: BlockTag) -> Result<BlockInfo, RpcError>
             let wait = Duration::from_millis(base + rand::random::<u64>() % base);
             async move {
                 Ok(match rpc.block(tag).await {
-                    Err(e) if !last && !matches!(e, RpcError::Refused(_)) => RetryDecision::Retry {
-                        after: Some(wait),
-                        rate_limited: false,
-                    },
+                    Err(e) if !last && transient(&e) => {
+                        tracing::debug!(error = %e, ?tag, attempt, "block read failed, asking again");
+                        RetryDecision::Retry {
+                            after: Some(wait),
+                            rate_limited: false,
+                        }
+                    }
                     answer => RetryDecision::Done(answer),
                 })
             }
@@ -295,9 +319,8 @@ impl Chain {
     }
 
     async fn block_at(&self, timestamp: i64) -> Result<Option<BlockInfo>, ValidatorError> {
-        let rpc = self.rpc();
         self.search
-            .block_at(timestamp, |tag| read_block(&rpc, tag))
+            .block_at(timestamp, |tag| read_block(&self.http, &self.url, tag))
             .await
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }

@@ -4,7 +4,7 @@
 //! `multicall`) and to item contracts, each question answered by the test.
 //! A JSON-RPC batch is answered element by element unless batches are off.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -104,6 +104,8 @@ struct Switches {
     failing_blocks: Arc<AtomicUsize>,
     /// `eth_getBlockByNumber`s left to answer `null`.
     missing_blocks: Arc<AtomicUsize>,
+    /// The HTTP status every `eth_getBlockByNumber` answers, when not 0.
+    block_status: Arc<AtomicU16>,
 }
 
 #[derive(Clone)]
@@ -144,6 +146,11 @@ impl FakeChain {
     /// The next `n` block reads answer `null`, as a replica behind the chain does.
     pub fn miss_block_reads(&self, n: usize) {
         self.switches.missing_blocks.store(n, Ordering::SeqCst);
+    }
+
+    /// Every block read answers HTTP `status` with no JSON-RPC body; 0 answers normally.
+    pub fn set_block_status(&self, status: u16) {
+        self.switches.block_status.store(status, Ordering::SeqCst);
     }
 
     /// The `eth_chainId` this chain answers (1 by default).
@@ -373,6 +380,16 @@ async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::resp
             .await
             .unwrap();
             Json(Value::Array(answers)).into_response()
+        }
+        single
+            if single["method"] == "eth_getBlockByNumber"
+                && fake.switches.block_status.load(Ordering::SeqCst) != 0 =>
+        {
+            fake.log.lock().unwrap().push("eth_getBlockByNumber".into());
+            let status = fake.switches.block_status.load(Ordering::SeqCst);
+            axum::http::StatusCode::from_u16(status)
+                .unwrap()
+                .into_response()
         }
         single => {
             let answer = tokio::task::spawn_blocking(move || answer_one(&fake, &single))

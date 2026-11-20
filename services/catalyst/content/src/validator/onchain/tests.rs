@@ -981,6 +981,51 @@ async fn a_block_the_rpc_never_answers_is_undecided_after_three_reads() {
 }
 
 #[tokio::test]
+async fn only_a_block_read_that_may_succeed_is_asked_again() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    // 401: a bad key; 429: rate limited, not asked again within the check.
+    for (status, reads) in [(401, 1), (429, 1), (404, 1), (408, 3), (503, 3)] {
+        chain.clear();
+        chain.set_block_status(status);
+        let err = access(Some(&chain.url), None)
+            .l1_block_at(TS)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains(&status.to_string())),
+            "{status}: {err}"
+        );
+        assert_eq!(block_reads(&chain), reads, "{status}");
+    }
+}
+
+#[test]
+fn transient_block_read_errors() {
+    let response = |code| RpcError::Response {
+        code,
+        message: String::new(),
+    };
+    for (e, retried) in [
+        (RpcError::Transport("timeout".into()), true),
+        (RpcError::Status(502), true),
+        (RpcError::Malformed("no block latest".into()), true),
+        (response(-32000), true),
+        (response(-32099), true),
+        (RpcError::Refused("private address".into()), false),
+        (RpcError::Status(403), false),
+        (
+            RpcError::Malformed("block without a hex timestamp".into()),
+            false,
+        ),
+        (response(-32602), false),
+        (response(-32100), false),
+        (response(3), false),
+    ] {
+        assert_eq!(transient(&e), retried, "{e}");
+    }
+}
+
+#[tokio::test]
 async fn a_refused_endpoint_is_not_asked_again() {
     let a = OnChainAccess::new(
         Outbound::new(Default::default()).unwrap(),
