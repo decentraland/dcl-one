@@ -12488,7 +12488,6 @@ dependencies = [
  "scene_runner",
  "serde",
  "serde_json",
- "shlex",
  "social",
  "system_bridge",
  "texture_camera",

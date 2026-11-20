@@ -251,7 +251,11 @@ The console (`/help` lists it; `window.engine_console_command` in the app frame 
 client's agent surface, the same in every build: end-to-end tests and people's own agents drive the
 deployed clients through it, the HUD included, so nothing outside the client rebuilds the plumbing.
 Replies are JSON where the command says so; a failed command rejects (web) or answers `ok: false`
-(loopback), with no marker in the text. Arguments split on whitespace.
+(loopback), with no marker in the text. Arguments split on whitespace, and a double-quoted run is
+one argument (`/chat nearby "two words"`), in the chat input as over a transport; a command that
+takes JSON takes the rest of the line, split on whitespace alone. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
+the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rules
+(quoting, normalized coordinates).
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
@@ -283,7 +287,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
   ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
   ended; `/item_purchase_cancel` drops the one in flight), `/entity_screen_position <entity>
-  [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
+  [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
   and the scene commands.
@@ -330,7 +334,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   that keeps its start page. `/hud_logout` signs the HUD out, the engine with it, so `/hud_login`
   can sign in again; the engine's `/logout` leaves the HUD signed in.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
-  `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
+  `/click_at <x> <y> [--button left|right|middle] [--normalized]` (logical pixels, or 0 to 1 of the
+  window with `--normalized`; replies JSON `x`, `y`, `normalized`, `button`, `screen`). Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
 - Portables and smart wearables: `/portables`, `/stop_portable <hash>`, `/smart_wearables`,
