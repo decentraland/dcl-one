@@ -977,6 +977,10 @@
           "kind": "directory"
         },
         {
+          "name": "figma-mapping-manifest.json",
+          "kind": "regular"
+        },
+        {
           "name": "foundations",
           "kind": "directory"
         },

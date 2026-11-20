@@ -93,18 +93,20 @@ describe('when building the public Sites navigation', () => {
     expect(mobile[0]).toEqual(desktop[0])
   })
 
-  it.each([undefined, false])('should hide LAND when eligibility is %s', (marketplaceEligible) => {
-    const { desktop, mobile } = decentralandPublicNavSections('shop', '/shop/overview', {
-      marketplaceEligible
+  describe('and Marketplace eligibility is not granted', () => {
+    it.each([undefined, false])('should hide LAND for eligibility %s', (marketplaceEligible) => {
+      const { desktop, mobile } = decentralandPublicNavSections('shop', '/shop/overview', {
+        marketplaceEligible
+      })
+      expect(desktop[1]?.items?.map(({ href }) => href)).toEqual([
+        '/shop/overview',
+        '/shop/items?category=wearable',
+        '/shop/items?category=emote',
+        '/shop/names',
+        'https://store.decentraland.org/'
+      ])
+      expect(mobile[1]).toEqual(desktop[1])
     })
-    expect(desktop[1]?.items?.map(({ href }) => href)).toEqual([
-      '/shop/overview',
-      '/shop/items?category=wearable',
-      '/shop/items?category=emote',
-      '/shop/names',
-      'https://store.decentraland.org/'
-    ])
-    expect(mobile[1]).toEqual(desktop[1])
   })
 
   it.each([

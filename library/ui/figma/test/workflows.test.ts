@@ -1691,13 +1691,20 @@ describe('when the Figma capture lives in figma-design-system', () => {
     for (const command of [
       'figma diff',
       'figma guard',
-      'check-mappings',
       'promotion-verify',
       'review-manifest',
       'review:check',
       'fetch-source'
     ])
       expect(all).not.toContain(command)
+  })
+
+  it('should check the mappings against the tracked manifest only, never against the capture', () => {
+    const checks = [...runs('key-guard'), ...runs('library')].filter((run) =>
+      run.includes('check-mappings')
+    )
+
+    expect(checks).toEqual(['pnpm --silent figma check-mappings --mapping-only'])
   })
 })
 
