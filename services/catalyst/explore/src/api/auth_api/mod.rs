@@ -1748,6 +1748,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_malformed_chain_is_refused_before_the_network_count() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = Router::new().nest("/auth-api", routes().with_state(state));
+        let mut chain = delegated("0x00000000000000000000000000000000000000e1");
+        chain[1].signature = Some(format!("0x{}", "11".repeat(65)));
+        let body = serde_json::to_vec(
+            &json!({ "method": "personal_sign", "params": ["hi"], "authChain": chain }),
+        )
+        .unwrap();
+        let (status, err) = call(
+            &app,
+            from_peer(json_post("/auth-api/requests", body), "203.0.113.5:1"),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "no database behind this state: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_network_that_spends_its_refused_contract_checks_posts_no_outcome() {
+        use validation::contract_wallet::{SIGNATURE, Wallet};
+        let Some((db, state)) = replica().await else {
+            return;
+        };
+        let wallet = std::sync::Arc::new(Wallet::default());
+        assert!(state.attach_eip1654(Some(wallet.clone())));
+        let app = app(&state);
+        let (status, created) = call(
+            &app,
+            from_peer(
+                json_post("/auth-api/requests", contract_request(SIGNATURE)),
+                "198.51.100.7:1",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        let outcome = format!(
+            "/auth-api/v2/requests/{}/outcome",
+            created["requestId"].as_str().unwrap()
+        );
+        let post = |signature: &str, peer: &str| {
+            from_peer(json_post(&outcome, contract_outcome(signature)), peer)
+        };
+        for _ in 0..contract_checks::PER_SOURCE {
+            let (status, body) = call(&app, post("0xbad0", "203.0.113.5:1")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        }
+        let asked = wallet.calls();
+        let (status, body) = call(&app, post(SIGNATURE, "203.0.113.5:2")).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        assert_eq!(
+            wallet.calls(),
+            asked,
+            "a spent network reaches no validator"
+        );
+        let (status, body) = call(&app, post(SIGNATURE, "198.51.100.7:2")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "another network still answers: {body}"
+        );
+        db.teardown().await;
+    }
+
+    #[tokio::test]
     async fn a_sign_in_request_is_recovered_answered_and_fulfilled_once() {
         let Some((db, state)) = replica().await else {
             return;

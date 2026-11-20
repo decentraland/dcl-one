@@ -3,6 +3,7 @@
 //! while each one costs an `isValidSignature` call: a network that spends its
 //! budget is refused before the RPC until the window ends. A check that
 //! verifies is given back, so honest contract wallets never run it down.
+//! The budget is per process: each replica keeps its own.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
