@@ -236,6 +236,9 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
   return { queries: page.ok ? [[grid.key, page.value.value, page.value.at]] : [], seo, status: 200 };
 }
 
+/** Statuses whose response has no body (a Response built with one throws). */
+const NULL_BODY: ReadonlySet<number> = new Set([101, 204, 205, 304]);
+
 /** The SSR data for one /shop page: its head, its primed public reads and the HTTP status. */
 export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Promise<ShopPageLoad> {
   const env = input.env ?? processEnv();
@@ -252,12 +255,15 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     primeRemoteFlags(answer.flags, answer.variants);
     return answer;
   });
+  // The body is read under the request's own deadline before the answer waits for the flags: waiting first would leave
+  // that deadline running against a slow flags read and abort the body.
   const client =
     input.client ??
     serverShopClient(env, async (...args) => {
       const res = await fetch(...args);
+      const body = NULL_BODY.has(res.status) ? null : await res.arrayBuffer();
       await primed;
-      return res;
+      return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
     });
   const now = input.now ?? Date.now;
   const { request, params } = input;
