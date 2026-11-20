@@ -789,9 +789,10 @@ export function Showcase(): React.JSX.Element {
   return (
     <div style={wrap}>
       <h1 style={{ margin: 0, fontSize: 'var(--fs-title)' }}>Design system · Explorer 2.0</h1>
-      {SHOWCASE_SECTIONS.map((section) => (
-        <Section key={section.name} title={section.title}>
-          {section.render()}
+      {/* Each render as an element, so its hooks and its failure belong to the section, not to the page. */}
+      {SHOWCASE_SECTIONS.map(({ name, title, render: Render }) => (
+        <Section key={name} title={title}>
+          <Render />
         </Section>
       ))}
     </div>

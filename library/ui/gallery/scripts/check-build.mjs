@@ -7,8 +7,8 @@
 //   3. the canvas is a real viewport: NavBar shows its menu button at 375px and hides it at 1280px;
 //   4. every runtime foundations page renders;
 //   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
-//      in its canvas, which is a HUD window (16:9 at the chosen width, 480px high at least, at the --ui-scale
-//      the HUD hosts install for it), and a component opens the section that renders it;
+//      in its canvas, which is a HUD window (the height its aspect ratio and minimum give it, at the --ui-scale
+//      hudScale.ts computes for that window), and a component opens the section that renders it;
 //   6. the generated route opens the generated Review's page for a component inside the gallery;
 // with every request answered 2xx from under the prefix, and no uncaught page error or console error along the way.
 // With --hosted, <dist> is the hosted pull request preview (`vite build --mode hosted`): the gallery alone at its root,
@@ -26,6 +26,7 @@ import {
   findBrowser,
   openSession
 } from '../../figma/review/scripts/capture-browser.mjs'
+import { expectedHudScale, expectedWindowHeight, readHudScale } from './hud-window.mjs'
 
 const TYPES = {
   '.html': 'text/html',
@@ -236,7 +237,8 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
     const [showcase, ...pages] = hudPages
     if (!showcase || !pages.length)
       throw new Error(`the sidebar lists no HUD pages: ${hudPages.join(', ')}`)
-    // A HUD page at a width: the page it shows, its window's height and HUD scale, and what it draws.
+    // A HUD page at a width: the page it shows, its window (size and the CSS that shapes it), the HUD scale inside
+    // it, and what it draws.
     const hudPage = async (name, width) => {
       await open(`?hud=${encodeURIComponent(name)}&width=${width}`)
       return waitFor(
@@ -246,9 +248,13 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
           const main = doc?.querySelector('main')
           const frame = document.querySelector('iframe')
           const examples = main && frame.clientWidth === ${width} ? ${EXAMPLES} : null
+          const style = getComputedStyle(frame)
           return examples && {
             hud: main.dataset.hud,
             height: frame.clientHeight,
+            aspectRatio: style.aspectRatio,
+            minBlockSize: style.minBlockSize,
+            inner: [doc.defaultView.innerWidth, doc.defaultView.innerHeight],
             scale: doc.documentElement.style.getPropertyValue('--ui-scale'),
             examples
           }
@@ -256,15 +262,20 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
         `the HUD ${name} page at ${width}px`
       )
     }
-    // 16:9 at 1280px; at 375px the window keeps its 480px floor and the HUD its smallest scale.
-    for (const [width, height, scale] of [
-      [1280, 720, '0.6667'],
-      [375, 480, '0.2500']
-    ]) {
+    // The window follows its own aspect ratio at 1280px and its minimum height at 375px; the scale inside is the one
+    // hudScale.ts computes for that window, there with the HUD's lowest bound.
+    const hudScale = readHudScale()
+    for (const width of [1280, 375]) {
       const page = await hudPage(showcase, width)
-      if (page.height !== height || page.scale !== scale)
+      const height = expectedWindowHeight(width, page.aspectRatio, page.minBlockSize)
+      if (page.height !== height)
         throw new Error(
-          `the HUD canvas at ${width}px is ${page.height}px high at --ui-scale ${page.scale}, not a ${width}x${height} HUD window at ${scale}`
+          `the HUD canvas at ${width}px is ${page.height}px high; its aspect-ratio ${page.aspectRatio} and min-block-size ${page.minBlockSize} make ${height}px`
+        )
+      const scale = expectedHudScale(hudScale, ...page.inner)
+      if (page.scale !== scale)
+        throw new Error(
+          `the HUD canvas's --ui-scale is ${page.scale || 'unset'} in a ${page.inner.join('x')} window; hudScale.ts gives ${scale}`
         )
       if (page.examples.length !== pages.length)
         throw new Error(

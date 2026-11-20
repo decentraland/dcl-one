@@ -24,6 +24,8 @@ class ExampleBoundary extends Component<{ children: ReactNode }, { error: Error 
 
 /** One example on a canvas: its title and note over a stage that keeps a failure to itself. */
 export function ExampleView({ example }: { example: Example }) {
+  // Rendered as an element inside the boundary, so a throw in the render function lands there too.
+  const Render = example.render
   return (
     <section
       className={styles.example}
@@ -33,7 +35,9 @@ export function ExampleView({ example }: { example: Example }) {
       <h2 className={styles.title}>{example.title}</h2>
       {example.note ? <p className={styles.note}>{example.note}</p> : null}
       <div className={styles.stage} data-stage>
-        <ExampleBoundary>{example.render()}</ExampleBoundary>
+        <ExampleBoundary>
+          <Render />
+        </ExampleBoundary>
       </div>
     </section>
   )

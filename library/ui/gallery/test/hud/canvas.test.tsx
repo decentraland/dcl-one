@@ -11,7 +11,11 @@ const drawn = (container: HTMLElement) =>
   [...container.querySelectorAll<HTMLElement>('[data-example]')].map((node) => node.dataset.example)
 
 describe('when the HUD pages render with local data', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  // Restored after each case, so a failed assertion cannot leave the spy on later ones.
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   it.each(hudCanvasPages.map((page) => [page.name, page] as const))(
     'should render %s without a fetch, a remote picture or a console error',
@@ -27,7 +31,6 @@ describe('when the HUD pages render with local data', () => {
       expect(pictures.filter((src) => /^https?:/.test(src))).toEqual([])
       expect(fetch).not.toHaveBeenCalled()
       expect(errors).not.toHaveBeenCalled()
-      errors.mockRestore()
     }
   )
 

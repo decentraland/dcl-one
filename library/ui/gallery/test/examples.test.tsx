@@ -28,7 +28,11 @@ const examples = entries.flatMap((entry) =>
 )
 
 describe('when the gallery renders its examples with deterministic data', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  // Restored after each case, so a failed assertion cannot leave the spy on later ones.
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   it.each(examples)('should render %s without network access or errors', (_, example) => {
     const fetch = vi.fn()
@@ -38,7 +42,6 @@ describe('when the gallery renders its examples with deterministic data', () => 
     expect(container.childElementCount).toBeGreaterThan(0)
     expect(fetch).not.toHaveBeenCalled()
     expect(errors).not.toHaveBeenCalled()
-    errors.mockRestore()
   })
 
   it.each(foundationPages.map((page) => [page.name, page] as const))(
