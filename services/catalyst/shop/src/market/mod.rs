@@ -194,7 +194,8 @@ pub struct Settings {
     pub nft_worker_base_url: Option<String>,
     /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer backpack's on-chain
     /// items include this node's active escrow grants (`shop.usage_grants`);
-    /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
+    /// off unless the operator opts in, since lamb2 lists chain-owned tokens
+    /// only.
     pub explorer_escrow_grants: bool,
     /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
     /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and

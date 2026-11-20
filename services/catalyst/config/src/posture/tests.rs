@@ -239,27 +239,46 @@ fn a_mirror_reads_the_third_party_registry() {
     refuse_remote_secrets(&mut c).unwrap();
 }
 
+/// Escrow leases are a dcl-one extension: the explorer backpack lists them
+/// and a local deploy counts them as item ownership only when the operator
+/// opts in, under every posture and without one.
 #[test]
-fn a_mirror_explorer_lists_chain_owned_items_only() {
-    assert_eq!(
-        expanded(Posture::Mirror, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
-        "false"
-    );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(
-            expanded(posture, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
-            "true"
+fn escrow_leases_count_only_on_an_operator_opt_in() {
+    for posture in Posture::ALL {
+        for key in [
+            "EXPLORER_ESCROW_GRANTS_ENABLED",
+            "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED",
+        ] {
+            assert_eq!(expanded(posture, &[])[key], "false", "{key}");
+        }
+    }
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    for posture in [None, Some("mirror"), Some("island"), Some("journey")] {
+        let mut pairs = vec![db];
+        pairs.extend(posture.map(|p| (ENV, p)));
+        let c = parsed(&pairs);
+        assert!(
+            !c.market_upstreams.explorer_escrow_grants_enabled,
+            "{posture:?}"
+        );
+        assert!(
+            !c.validator.content_escrow_lease_ownership_enabled,
+            "{posture:?}"
+        );
+        pairs.extend([
+            ("EXPLORER_ESCROW_GRANTS_ENABLED", "true"),
+            ("CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "true"),
+        ]);
+        let c = parsed(&pairs);
+        assert!(
+            c.market_upstreams.explorer_escrow_grants_enabled,
+            "{posture:?}"
+        );
+        assert!(
+            c.validator.content_escrow_lease_ownership_enabled,
+            "{posture:?}"
         );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert!(!c.market_upstreams.explorer_escrow_grants_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
-    assert!(c.market_upstreams.explorer_escrow_grants_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
-    assert!(
-        c.market_upstreams.explorer_escrow_grants_enabled,
-        "without a posture the binary default lists them"
-    );
 }
 
 #[test]
@@ -365,7 +384,6 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
             let allowed = [
                 "SERVE_UNSYNCED",
                 "PHASED_SYNC",
-                "EXPLORER_ESCROW_GRANTS_ENABLED",
                 "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
             ];
             assert!(

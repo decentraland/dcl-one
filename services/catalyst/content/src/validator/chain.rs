@@ -7,7 +7,7 @@
 //! | --- | --- |
 //! | LAND rights of a scene | `checkLAND` per parcel (owner, operator, update operator, update manager, approved; of the LAND or its estate) |
 //! | claimed names | `checkName` per name |
-//! | owned wearables/emotes | `ownerOf` of each item token, `ownerOf`/`balanceOf` of each third-party item's NFT, plus the escrow lease overlay `shop.usage_grants` |
+//! | owned wearables/emotes | `ownerOf` of each item token, `ownerOf`/`balanceOf` of each third-party item's NFT; with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`, also the escrow lease overlay `shop.usage_grants` |
 //! | collection access of a wearable/emote deploy | `validateWearables` with the ADR-32 hashes of the deployment; L1 items only by the Decentraland address |
 //! | third-party items | `validateThirdParty` with the root the entity's merkle proof yields |
 //!
@@ -91,15 +91,18 @@ fn lease_covers(urn: &str, grants: &[(String, Option<String>)]) -> bool {
 impl Sources {
     /// The owner's active escrow leases (`shop.usage_grants`) on the
     /// requested URNs (`exact`, compared as stored) or under the requested
-    /// `LIKE` patterns: `(urn key, token id)`. Bounded by the request; the
-    /// grantee's partial index serves it (the urn clause is a filter).
+    /// `LIKE` patterns: `(urn key, token id)`; none unless
+    /// `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`, since a peer that checks
+    /// ownership on chain only would reject what a lease admits. Bounded by
+    /// the request; the grantee's partial index serves it (the urn clause is
+    /// a filter).
     async fn granted(
         &self,
         owner: &str,
         exact: &[String],
         patterns: &[String],
     ) -> Result<Vec<(String, Option<String>)>, ValidatorError> {
-        if exact.is_empty() && patterns.is_empty() {
+        if !self.escrow_lease_ownership || (exact.is_empty() && patterns.is_empty()) {
             return Ok(Vec::new());
         }
         let rows: Vec<(String, Option<String>)> = sqlx::query_as(

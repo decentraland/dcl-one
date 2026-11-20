@@ -15,9 +15,10 @@
 //! the reference catalyst's on-chain validator does ([`onchain`], `chain.rs`
 //! has the table): the Checker contract and the item contracts over
 //! `ETH_RPC_URL` (L1) and `RPC_ENDPOINT_POLYGON` (L2) at the block of the
-//! entity timestamp, then five minutes before it; the escrow lease overlay
-//! (`shop.usage_grants`) over the ONE pool, content probes against the ONE
-//! blob store, every RPC call through the ONE `http::Outbound`.
+//! entity timestamp, then five minutes before it; the opt-in escrow lease
+//! overlay (`shop.usage_grants`, `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`)
+//! over the ONE pool, content probes against the ONE blob store, every RPC
+//! call through the ONE `http::Outbound`.
 //!
 //! Each error has a kind ([`ValidationError`]): `Rejected` is the
 //! deployment's fault (400); `Unavailable` means this node could not decide
@@ -88,6 +89,11 @@ pub struct Settings {
     /// Decentraland address's rights (default profiles, off-chain items,
     /// legacy content, v1 collection items).
     pub additional_dcl_address: Option<String>,
+    /// `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`: an active escrow lease
+    /// (`shop.usage_grants`) counts as ownership of the leased item worn by a
+    /// profile or outfits. Off by default: a peer that checks ownership on
+    /// chain only rejects such an entity.
+    pub escrow_lease_ownership: bool,
     /// `ETH_NETWORK`: mainnet (with polygon) or sepolia (with amoy).
     pub eth_network: String,
     /// `ETH_RPC_URL`: the L1 JSON-RPC.
@@ -102,6 +108,7 @@ impl std::fmt::Debug for Settings {
         f.debug_struct("Settings")
             .field("ignore_blockchain_access", &self.ignore_blockchain_access)
             .field("additional_dcl_address", &self.additional_dcl_address)
+            .field("escrow_lease_ownership", &self.escrow_lease_ownership)
             .field("eth_network", &self.eth_network)
             .field("l1_rpc_url", &self.l1_rpc_url.is_some())
             .field("l2_rpc_url", &self.l2_rpc_url.is_some())
@@ -123,6 +130,7 @@ impl Settings {
         eth_network: &str,
         l1_rpc_url: Option<String>,
         l2_rpc_url: Option<&str>,
+        escrow_lease_ownership: bool,
     ) -> anyhow::Result<Self> {
         let clean = |v: Option<&str>| {
             v.map(str::trim)
@@ -168,6 +176,7 @@ impl Settings {
         Ok(Self {
             ignore_blockchain_access,
             additional_dcl_address,
+            escrow_lease_ownership,
             eth_network,
             l1_rpc_url,
             l2_rpc_url,
@@ -204,7 +213,7 @@ impl Settings {
     }
 }
 
-/// What the validator reads, built once by `serve`: the ONE pool (the
+/// What the validator reads, built once by `serve`: the ONE pool (the opt-in
 /// `shop.usage_grants` overlay), the ONE blob store, the shared EIP-1654
 /// validator (`None` without `ETH_RPC_URL`: a contract-wallet link is then
 /// undecidable) and the chain access checks over the ONE client.
@@ -215,6 +224,7 @@ pub struct Sources {
     access: Arc<onchain::OnChainAccess>,
     ignore_blockchain_access: bool,
     additional_dcl_address: Option<String>,
+    escrow_lease_ownership: bool,
 }
 
 impl Sources {
@@ -238,6 +248,7 @@ impl Sources {
             access: Arc::new(access),
             ignore_blockchain_access: settings.ignore_blockchain_access,
             additional_dcl_address: settings.additional_dcl_address,
+            escrow_lease_ownership: settings.escrow_lease_ownership,
         }
     }
 

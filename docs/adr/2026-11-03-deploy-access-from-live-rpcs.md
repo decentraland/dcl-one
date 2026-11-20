@@ -42,7 +42,13 @@ remembers the blocks it read.
   refused. Outside island and journey the defaults satisfy this. The journey posture sets
   `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, since it reads no chain; an island taking deploys needs it
   too, or loopback https RPCs.
-- The escrow leases in `shop.usage_grants` still count as ownership of the leased item.
+- Escrow leases in `shop.usage_grants` do not count as ownership of the leased item, for
+  profiles, outfits or items. Peers that check ownership on chain only reject a profile, outfit
+  or item that is valid only through a lease, so accepting it locally makes the network diverge.
+  This stands while such peers remain on the network. `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`
+  (off by default and under every posture) lets an operator count a node's active leases for
+  the items its own profile and outfits deploys wear; entities from peers are checked on chain
+  only either way.
 
 ## Consequences
 
@@ -68,3 +74,7 @@ remembers the blocks it read.
   then one Checker multicall or one item batch per block, plus two probe batches the first time
   a third-party contract is seen.
 - The LAND index stays for worlds, comms and the unpublish route; it no longer decides deploys.
+- A leased item is not wearable in a deployed profile or outfit unless the operator opts in, and
+  a node that opts in serves entities that peers checking ownership on chain only refuse to
+  sync. The explorer backpack lists leased items only with `EXPLORER_ESCROW_GRANTS_ENABLED`,
+  also off by default and under every posture.

@@ -254,7 +254,7 @@ pub async fn serve(
         .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
 
     // The content validator of the local write path (src/content/validator):
-    // the old catalyrst-validator rules over the ONE pool (the escrow
+    // the old catalyrst-validator rules over the ONE pool (the opt-in escrow
     // overlay), store and client, the shared EIP-1654 validator and the
     // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
     let validator_settings = content::validator::Settings::parse(
@@ -264,6 +264,7 @@ pub async fn serve(
         &config.node.eth_network,
         config.content.eth_rpc_url()?,
         config.economy.rpc_endpoint_polygon.as_deref(),
+        config.validator.content_escrow_lease_ownership_enabled,
     )
     .context("content validator configuration")?;
     // Sync and the read-through validate every entity a peer serves.
