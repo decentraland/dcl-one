@@ -4,7 +4,9 @@
 // `window.__SHOP_FLAGS__`. The Marketplace's switch (`dapps-shop-marketplace-features`, dcl-one's own) may be declared
 // there too, but only market/access.tsx reads it: a declared value stands at once (else it waits for the file), and
 // the Marketplace still needs a web3 wallet session. So may My Store's (`dapps-shop-my-store`, upstream's), read only by
-// seller/lib/featureFlags.ts: a declared value stands at once, and the file's address list then does not apply.
+// seller/lib/featureFlags.ts: a declared value stands at once, and the file's address list then does not apply. And
+// so may buying with MANA in the in-world Shop (`dapps-shop-mana-in-world`, dcl-one's own), read only by the /play
+// shell (play/shell/shop/purchase.ts): a declared value stands, else the file's.
 //
 // The browser host's switches: what the page declares (`window.__SHOP_FLAGS__`) over the file as this page holds it
 // (lib/remoteFlags.ts). How the two combine is lib/rolloutFlags.ts.

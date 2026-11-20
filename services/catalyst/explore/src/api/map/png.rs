@@ -374,7 +374,8 @@ pub async fn estate_minimap_png(State(state): State<Shared>, headers: HeaderMap)
     cached_png_render(
         &state,
         &headers,
-        "estatemap".to_string(),
+        // Versioned with the renderer so cached ETags of the old numbering lapse.
+        "estatemap-v2".to_string(),
         http_cache::MINIMAP_MAX_AGE,
         http_cache::MINIMAP_SWR,
         |grid| render_estate_minimap(grid).map_err(render_error),

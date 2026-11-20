@@ -350,6 +350,34 @@ impl ItemsComponent {
         .ok_or_else(|| ApiError::not_found("Item not found"))
     }
 
+    /// The collection an item belongs to, if any.
+    pub async fn item_collection(&self, id: Uuid) -> Result<Option<Uuid>, ApiError> {
+        Ok(
+            sqlx::query_scalar("SELECT collection_id FROM builder.items WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten(),
+        )
+    }
+
+    /// An item of `collection` with no owner filter: the caller authorized
+    /// the signer against the collection's on-chain creator.
+    pub async fn collection_item_draft(
+        &self,
+        collection: Uuid,
+        id: Uuid,
+    ) -> Result<Value, ApiError> {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT {ITEM_DRAFT_PROJECTION} FROM builder.items i WHERE i.id = $1 AND i.collection_id = $2"
+        )))
+        .bind(id)
+        .bind(collection)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Item not found"))
+    }
+
     /// One owned, unpublished item by primary key. Use publication's parent-then-item
     /// lock order; cascading content links go away, shared uploaded bytes remain.
     pub async fn delete_item_draft(&self, signer: &str, id: Uuid) -> Result<(), ApiError> {

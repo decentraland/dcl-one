@@ -10,6 +10,18 @@ afterEach(() => {
 });
 
 describe("the rollout flags endpoint", () => {
+  it("reports an unread profile flag without changing the normal flags fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 502 })));
+
+    const known = await loader({ request: new Request("https://node.example/internal/dapps-flags?known=1") });
+    const bare = await loader({ request: new Request("https://node.example/internal/dapps-flags") });
+
+    expect(known.status).toBe(503);
+    expect(known.headers.get("cache-control")).toBe("no-store");
+    expect(bare.status).toBe(200);
+    expect(await bare.json()).toEqual({});
+  });
+
   it("answers decentraland.org's flags and their variants' payloads as this server read them, cacheable for their minute", async () => {
     const list = "0x00000000000000000000000000000000000000aa";
     vi.stubGlobal(

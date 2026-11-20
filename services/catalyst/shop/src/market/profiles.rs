@@ -1022,7 +1022,7 @@ mod tests {
         let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
             pool.clone(),
             storage,
-            reqwest::Client::new(),
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
             vec![source],
             None,
             crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
@@ -1097,7 +1097,7 @@ mod tests {
         let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
             pool.clone(),
             storage,
-            reqwest::Client::new(),
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
             vec![format!("http://{address}/content")],
             None,
             crate::content::read_through::Fills::new(1, Duration::from_secs(30)),

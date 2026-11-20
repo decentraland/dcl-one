@@ -165,6 +165,8 @@ describes cache scope, trust boundaries, stale-entry replacement and retention.
 
 Event poster upgrade: run `catalyst schema migrate` before deploying the API. Step `0050_explore_poster_avif` allows mirrored AVIF posters to be stored with their detected media type and preserves existing poster rows.
 
+Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API. Step `0051_explore_auth_identity_request_id` adds the nullable `auth_request_id` that binds a parked identity to its deep-link request; parked identities stay unbound. Sites binds only Creator Hub sign-ins, whose pickup must then send `x-identity-verifier`.
+
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
 scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.

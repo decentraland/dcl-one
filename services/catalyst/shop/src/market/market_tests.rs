@@ -120,6 +120,23 @@ async fn get(router: Router, uri: &str) -> (StatusCode, Value) {
     call(router, "GET", uri, HeaderMap::new(), None).await
 }
 
+/// A GET and its `Cache-Control` (empty when the response sets none).
+async fn get_cached(router: Router, uri: &str) -> (Value, String) {
+    let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+    let cache = resp
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (serde_json::from_slice(&bytes).unwrap(), cache)
+}
+
 fn bearer(token: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
     h.insert(
@@ -1437,6 +1454,12 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "{body}"
     );
 
+    // The trending rail's memo is filled right before the cancellation below, so the few reads in
+    // between are all that separate it from the check that it still answers: its 30 s cannot lapse
+    // over the rest of this test on a slow runner.
+    state.readers.clear();
+    let (status, trending) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(status, StatusCode::OK, "{trending}");
     // An operator cancellation drops the listing from every leg.
     let (status, body) = call(
         app(),
@@ -1457,6 +1480,113 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     let (status, body) = get(app(), &format!("/v2/catalog?id={c1}-1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["data"][0]["tradeId"].is_null(), "{}", body["data"][0]);
+    // An item read stays fresh; the trending rail answers from its 30 s memo until it lapses.
+    let (_, body) = get(
+        app(),
+        &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
+    )
+    .await;
+    assert_eq!(unified_total(&body), 0, "{body}");
+    let carries_primary = |body: &Value| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["tradeId"] == primary_id.as_str())
+    };
+    assert!(carries_primary(&trending), "{trending}");
+    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert_eq!(body["data"], trending["data"]);
+    state.readers.clear();
+    let (_, body) = get(app(), "/v3/catalog/trending?first=3").await;
+    assert!(!carries_primary(&body), "{body}");
+    // A read that names its item never reads the creator directory; a browse read does.
+    use super::readers::Ttl;
+    use super::search::CREATOR_DIRECTORY_KEY;
+    state.readers.clear();
+    let (status, body) = get(
+        app(),
+        &format!("/v3/catalog/unified?groupBy=item&contractAddress={c1}&itemId=1&source=native"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+
+    // The feeds carry their creators' profiles per response, never memoized with the page: a
+    // profile denylisted after the pages were memoized leaves the very next answer, and every
+    // response that carries a profile is sent no-cache.
+    let profile_entity = format!("bafyprofile{t}");
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'profile', $2, $3::json, now(), ARRAY[$1], now(), '[]'::json)",
+    )
+    .bind(CREATOR)
+    .bind(&profile_entity)
+    .bind(json!({ "v": { "avatars": [{ "name": "Creatorname", "avatar": { "snapshots": { "face256": "bafyface" } } }] } }).to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')")
+        .bind(CREATOR)
+        .bind(&profile_entity)
+        .execute(&pool)
+        .await
+        .unwrap();
+    state.readers.clear();
+    let feeds = [
+        "/v3/catalog/unified?groupBy=item&first=12",
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ];
+    let creator_profile = |body: &Value| {
+        let rows = body["data"].as_array().unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r["creator"] == CREATOR || r["id"] == CREATOR)
+            .unwrap_or_else(|| panic!("a row of the creator: {body}"));
+        row.get("creatorProfile")
+            .or_else(|| row.get("profile"))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    for uri in feeds {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert_eq!(
+            creator_profile(&body)["name"],
+            "Creatorname",
+            "{uri}: {body}"
+        );
+        assert!(
+            creator_profile(&body)["face"].as_str().is_some(),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "no-cache", "{uri}");
+    }
+    let listed = "https://registry.example/denylist";
+    state.denylist.set_remote(listed, [profile_entity.clone()]);
+    for uri in feeds {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert_eq!(
+            creator_profile(&body),
+            json!({ "name": "", "face": null, "claimed": false }),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "no-cache", "{uri}");
+    }
+    state.denylist.set_remote(listed, Vec::<String>::new());
+    sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
+        .bind(&profile_entity)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -1949,6 +2079,19 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["ok"], true);
     let created = body["data"]["id"].as_str().unwrap().to_string();
+    // The 201 carries the stored trade, `received` included, as the read answers it.
+    assert_eq!(
+        body["data"]["received"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let (status, read) = get(
+        market_router(state.clone()),
+        &format!("/v1/trades/{created}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(body["data"], read["data"]);
     let (status, body) = call(
         market_router(state.clone()),
         "POST",

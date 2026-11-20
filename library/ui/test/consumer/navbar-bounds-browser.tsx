@@ -4,11 +4,16 @@ import {
   NavBar,
   NavCreditsBalance,
   NavMenuItem,
-  decentralandNavSections
+  decentralandNavSections,
+  decentralandPublicNavSections
 } from '@dcl/one-ui'
 import '../../foundations/foundations.css'
 import { nativeNavBarCases } from './navbar-bounds-cases'
-const requested = new URLSearchParams(location.search).get('case')
+const params = new URLSearchParams(location.search)
+const requested = params.get('case')
+const publicNavigation = params.has('public')
+  ? decentralandPublicNavSections('events', '/events')
+  : undefined
 const example = nativeNavBarCases.find((value) => value.id === requested)
 const root = createRoot(document.getElementById('native-bounds-root')!)
 // Opened by hand without a known case: list the cases so the fixture can be browsed.
@@ -39,7 +44,9 @@ const authentication = example.signedIn
 root.render(
   <NavBar
     {...authentication}
-    sections={decentralandNavSections('', '/')}
+    accountMenuAppearance={params.has('profile') ? 'profile' : undefined}
+    sections={publicNavigation?.desktop ?? decentralandNavSections('', '/')}
+    mobileSections={publicNavigation?.mobile}
     balances={example.balances}
     surface={example.surface}
     balanceAction={

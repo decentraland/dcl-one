@@ -111,6 +111,8 @@ export type GroupFailure = {
   switchTo?: number;
   /** With `switchTo`: the fee-free (relayed) way was tried first and couldn't run, so the wallet's own was its fallback. */
   feeFreeUnavailable?: boolean;
+  /** With `feeFreeUnavailable`: why the fee-free way couldn't run, as the buyer reads it, when the relay said why (its daily limits). */
+  feeFreeNote?: string;
 };
 
 /** One confirmation group's progress inside a checkout. */
