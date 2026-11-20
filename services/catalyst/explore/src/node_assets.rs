@@ -43,8 +43,9 @@ fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     }
 }
 
-/// A notice's image as the read projection serves it: posters on their mount,
-/// the default on the asset mount, anything else as stored.
+/// A notice's image: posters on their mount and the default on the asset
+/// mount, as on read; anything else as stored, without the read side's
+/// `asset_rewrite_base` mapping of upstream asset URLs to this node.
 pub fn notice_image_url(
     image: &str,
     configured_public_base: Option<&str>,

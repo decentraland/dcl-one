@@ -23,7 +23,7 @@ pub struct Links {
     /// `JUMP_IN_SITE_URL` (`:13-16`): a stored url under it is the generated
     /// jump-in link the submission notice labels with the place.
     pub jump_in_site_url: String,
-    /// The events asset mount (`<origin>/events`) that makes stored images absolute.
+    /// The events asset mount (`<origin>/events`) the bundled default image is served on.
     pub asset_base: String,
     /// `PUBLIC_URL` as the read projection uses it for poster URLs.
     pub public_base: Option<String>,

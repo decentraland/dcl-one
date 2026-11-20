@@ -57,7 +57,7 @@ pub struct Links {
     /// The events site (`/whats-on/{id}`): the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
-    /// Backend events asset mount (`<origin>/events`) for stored image paths.
+    /// Backend events asset mount (`<origin>/events`) for the bundled default image.
     pub asset_base: String,
     /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
     pub public_base: Option<String>,
