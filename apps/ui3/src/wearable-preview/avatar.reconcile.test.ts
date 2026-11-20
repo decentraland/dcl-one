@@ -194,16 +194,14 @@ test("initial load: no frame shows the avatar before the idle clip is bound (no 
   renderer.loop!();
   expect(renders.at(-1)).toEqual({ visible: false, hipsY: null });
 
+  const idleUrl = loads.find((u) => u.includes("idle.glb"));
+  expect(idleUrl).toBeTruthy();
   resolveLoad(contentUrl(BODY));
   resolveLoad(contentUrl(HAT1));
-  const idleUrl = await vi.waitFor(() => {
-    const url = loads.find((u) => u.includes("idle.glb"));
-    expect(url).toBeTruthy();
-    return url;
+  await vi.waitFor(() => {
+    renderer.loop!();
+    expect(renders.at(-1)).toEqual({ visible: false, hipsY: 0 });
   }, { timeout: 10_000 });
-
-  renderer.loop!();
-  expect(renders.at(-1)).toEqual({ visible: false, hipsY: 0 });
   expect(onStatus).not.toHaveBeenCalledWith("ready");
 
   resolveLoad(idleUrl!);
@@ -212,6 +210,24 @@ test("initial load: no frame shows the avatar before the idle clip is bound (no 
   expect(renders.at(-1)).toEqual({ visible: true, hipsY: 1 });
   expect(onStatus).toHaveBeenLastCalledWith("ready");
   expect(neverShowedBindPose()).toBe(true);
+
+  scene.dispose();
+  container.remove();
+});
+
+test("initial load: the first emote's file loads beside the parts, and the emote lookup shares their entity request", async () => {
+  autoResolve = false;
+  const HAT7 = "urn:decentraland:matic:collections-v2:0xhat:7";
+  const { container, scene, onStatus } = mount([HAT7]);
+  await vi.waitFor(() => {
+    expect(loads).toContain(contentUrl(HAT7));
+    expect(loads.some((u) => u.includes("idle.glb"))).toBe(true);
+  }, { timeout: 10_000 });
+  const reads = vi.mocked(fetch).mock.calls.filter(([, init]) => String(init?.body).includes("0xhat:7"));
+  expect(reads).toHaveLength(1);
+
+  for (const url of [...deferred.keys()]) resolveLoad(url);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenCalledWith("ready"), { timeout: 10_000 });
 
   scene.dispose();
   container.remove();

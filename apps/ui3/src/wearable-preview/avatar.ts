@@ -723,13 +723,22 @@ export function createAvatarScene(
     }
   }
 
-  async function bindInitialEmote(bodyShape: string): Promise<void> {
+  // The first motion's file (the outfit's emote item, else the one asked, else idle), found and loaded while the
+  // parts load, not after them.
+  async function initialEmoteUrl(bodyShape: string, gen: number): Promise<string> {
     const wanted = opts.emotes?.length ? opts.emotes[0] : opts.emote;
     const listed = await outfitEmoteUrl(bodyShape).catch(() => null);
-    outfitEmote = listed;
+    if (!stale(gen)) outfitEmote = listed;
     const item = listed ?? (wanted?.startsWith("urn:") ? await emoteItemUrl(wanted, bodyShape).catch(() => null) : null);
+    const url = item ?? emoteUrlFor(wanted) ?? (EMOTES.idle as string);
+    if (!stale(gen)) void loadEmote(url);
+    return url;
+  }
+
+  async function bindInitialEmote(emoteUrl: Promise<string>): Promise<void> {
+    const url = await emoteUrl;
     if (disposed) return;
-    await playEmote(item ?? emoteUrlFor(wanted) ?? (EMOTES.idle as string));
+    await playEmote(url);
     if (disposed) return;
     reveal();
     if (opts.emotes?.length) void runEmoteCycle(opts.emotes);
@@ -821,6 +830,7 @@ export function createAvatarScene(
     try {
       const target = await resolveOutfit(base, opts);
       if (stale(gen)) return;
+      const firstEmote = initial ? initialEmoteUrl(target.bodyShape, gen) : null;
       const result = await reconcile(target, gen);
       if (!result) return;
       if (!result.count) {
@@ -830,8 +840,8 @@ export function createAvatarScene(
       }
       if (initial || result.bodyChanged) frame();
       currentBodyShape = target.bodyShape;
-      if (initial) {
-        await bindInitialEmote(target.bodyShape);
+      if (firstEmote) {
+        await bindInitialEmote(firstEmote);
         if (stale(gen)) return;
       } else {
         await followOutfitEmote(target.bodyShape, gen);

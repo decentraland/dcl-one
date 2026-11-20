@@ -1,9 +1,10 @@
 // Shop item preview with avatar, wearable, and emote states.
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { fetchProfile } from "../../../data/catalyst/profile";
 import type { AvatarStatus } from "../../../wearable-preview/avatar";
+import WearablePreview from "../../../wearable-preview/WearablePreview";
 import type { OutfitData } from "../../../wearable-preview/outfit";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
@@ -18,7 +19,11 @@ import "./itempreview.css";
 
 const VIEW_TEXT = { previewMode: "Preview mode", onAvatar: "On avatar", itemView: "Item", playEmote: "Play emote" };
 
-const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
+// The three.js scene starts loading with the page, beside the outfit reads, not after them; only where this page
+// draws it (WebGL, and no Explorer preview host).
+if (typeof window !== "undefined" && pickRenderer().reason !== "no-webgl" && !window.dclAvatarPreviewExpected && !window.dclAvatarPreview) {
+  void import("../../../wearable-preview/avatar").catch(() => {});
+}
 
 const wornItemUrn = (urn: string) => {
   const p = urn.split(":");
@@ -29,7 +34,8 @@ async function fetchWornOutfit(account: string, tryOn: { urn: string; category: 
   const avatar = (await fetchProfile(account, { signal }))?.avatar;
   if (!avatar?.bodyShape) return null;
   const worn = [...new Set((avatar.wearables ?? []).map(wornItemUrn))];
-  const rules = await fetchWearableRules(worn, signal);
+  // The body and the item join this read; the preview mounts them next from the same entity cache.
+  const rules = await fetchWearableRules(worn, [avatar.bodyShape, ...(tryOn ? [tryOn.urn] : [])]);
   const kept = new Set(keepEquipped(rules, tryOn ? [tryOn.category] : []).map((u) => u.toLowerCase()));
   const known = new Set(rules.map((r) => r.urn.toLowerCase()));
   const wearables = worn.filter((u) => kept.has(u.toLowerCase()) || !known.has(u.toLowerCase()));
@@ -80,7 +86,7 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
       ) : waiting ? (
         <div className="shop-preview__loading" role="status">{t("itemDetail.previewLoading")}</div>
       ) : (
-        <Suspense fallback={<div className="shop-preview__loading" role="status">{t("itemDetail.previewLoading")}</div>}>
+        <>
           <WearablePreview
             urns={isEmote ? [] : [urn!]}
             body={body}
@@ -96,7 +102,7 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
               {t("itemDetail.previewLoading")}
             </div>
           ) : null}
-        </Suspense>
+        </>
       )}
       {show3d && failed ? (
         <p className="shop-preview__note" role="status">

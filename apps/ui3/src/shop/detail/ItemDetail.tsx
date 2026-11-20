@@ -418,7 +418,7 @@ export default function ItemDetail() {
   const manaBalance = manaQ.data != null ? (manaQ.data as ManaWei) : null;
 
   const urnForTraits = meta?.urn ?? current.urn ?? itemUrn(current);
-  const vrmQ = useShopQuery(urnForTraits && current.category === "wearable" ? ["item-vrm", urnForTraits] : null, (signal) => fetchVrmExportBlocked(urnForTraits!, signal), { staleMs: 30 * 60_000 });
+  const vrmQ = useShopQuery(urnForTraits && current.category === "wearable" ? ["item-vrm", urnForTraits] : null, () => fetchVrmExportBlocked(urnForTraits!), { staleMs: 30 * 60_000 });
   const videoQ = useShopQuery(current.isSmart && pageItemId ? ["item-video", contractAddress, pageItemId] : null, (signal) => fetchItemVideoUrl(contractAddress, pageItemId!, signal), { staleMs: 30 * 60_000 });
   const permissionsQ = useShopQuery(current.isSmart && urnForTraits ? ["item-permissions", urnForTraits] : null, (signal) => fetchSmartWearableRequiredPermissions(urnForTraits!, signal), { staleMs: 30 * 60_000 });
 

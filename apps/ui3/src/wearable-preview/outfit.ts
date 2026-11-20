@@ -32,6 +32,7 @@ interface EntityData {
   hides?: string[];
   replaces?: string[];
   removesDefaultHiding?: string[];
+  blockVrmExport?: boolean;
 }
 
 export interface Entity {
