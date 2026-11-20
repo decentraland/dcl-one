@@ -112,7 +112,7 @@ impl From<Vec<String>> for DeployFailure {
 /// `POST /entities` spooled to disk, hashed as it was written, whose bytes
 /// are read only when a validation inspects them and which the store takes
 /// by hard link.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Upload {
     Bytes(Bytes),
     Spooled(SpooledFile),

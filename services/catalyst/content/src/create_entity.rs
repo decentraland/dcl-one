@@ -1222,6 +1222,81 @@ async fn partial_batch(
 mod tests {
     use super::*;
 
+    /// The route's read of a spooled form: the entity file comes onto the
+    /// heap, the reservation grows by it and by the thumbnail its validation
+    /// reads (never by the other parts), a budget without that room is the
+    /// budget's 503 and an entity part the disk cannot give back the
+    /// spool's.
+    #[tokio::test]
+    async fn the_entity_file_and_the_inspected_thumbnail_are_charged_to_memory() {
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-uploads-of-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let entity = serde_json::to_vec(&json!({
+            "version": "v3", "type": "wearable", "pointers": ["urn:x"], "timestamp": 1,
+            "content": [{"file": "thumbnail.png", "hash": "bafythumb"}],
+            "metadata": {"thumbnail": "thumbnail.png"}
+        }))
+        .unwrap();
+        let part = |name: &str, hash: &str, bytes: &[u8]| {
+            std::fs::write(dir.join(name), bytes).unwrap();
+            SpooledFile {
+                name: name.to_string(),
+                hash: hash.to_string(),
+                hash_v0: format!("Qm{hash}"),
+                len: bytes.len(),
+                path: dir.join(name),
+            }
+        };
+        let parts = vec![
+            part("bafyentity", "bafyentity", &entity),
+            part("bafythumb", "bafythumb", &[7; 3000]),
+            part("bafymodel", "bafymodel", &[9; 50_000]),
+        ];
+        let fields = fields(&[("entityId", "bafyentity")]);
+        let min = super::super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
+        let most = min + entity.len() as u64 + 3000;
+
+        let budget = super::super::upload_admission::UploadBudget::new(most);
+        let mut memory = budget.try_reserve(0).unwrap();
+        let (uploads, read) = uploads_of(&fields, parts.clone(), &mut memory)
+            .await
+            .unwrap();
+        assert_eq!(read.as_deref(), Some(&entity[..]));
+        assert_eq!(memory.bytes(), most, "the model part is not charged");
+        assert!(matches!(&uploads[0].1, Upload::Bytes(b) if b[..] == entity[..]));
+        assert!(
+            uploads[1..]
+                .iter()
+                .all(|(_, upload)| matches!(upload, Upload::Spooled(_)))
+        );
+        drop(memory);
+
+        let small = super::super::upload_admission::UploadBudget::new(most - 1);
+        let mut memory = small.try_reserve(0).unwrap();
+        let refused = uploads_of(&fields, parts.clone(), &mut memory)
+            .await
+            .unwrap_err();
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(refused.headers().contains_key(header::RETRY_AFTER));
+        drop(memory);
+
+        let mut gone = parts;
+        gone[0].path = dir.join("removed");
+        let mut memory = budget.try_reserve(0).unwrap();
+        let unreadable = uploads_of(&fields, gone, &mut memory).await.unwrap_err();
+        assert_eq!(unreadable.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(unreadable.headers().contains_key(header::RETRY_AFTER));
+        let body = axum::body::to_bytes(unreadable.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&body).contains(SPOOL_UNAVAILABLE_MESSAGE),
+            "{body:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn limits_past_the_shipped_gateway_cap_are_warned_about() {
         let defaults = Settings::for_tests();
