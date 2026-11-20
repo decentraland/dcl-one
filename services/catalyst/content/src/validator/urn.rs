@@ -186,7 +186,7 @@ fn resolve(path: &str) -> Result<Option<Parsed>, Throws> {
     let Some(decoded) = parts.iter().map(|p| decode(p)).collect::<Option<Vec<_>>>() else {
         // A literal never holds a `%`, so the malformed escape is in a group
         // of every route the path matches, and decoding it throws.
-        return if matches_a_route(&parts) {
+        return if route_pattern(&parts).is_some() {
             Err(Throws)
         } else {
             Ok(None)
@@ -198,109 +198,67 @@ fn resolve(path: &str) -> Result<Option<Parsed>, Throws> {
     }))
 }
 
-/// Whether `parts` matches one of the resolver's route patterns, before its
+/// The type of the resolver route whose pattern `parts` matches, before its
 /// handler checks the network, contract or position.
-fn matches_a_route(parts: &[&str]) -> bool {
+fn route_pattern(parts: &[&str]) -> Option<UrnType> {
+    use UrnType::*;
     let item_id = |id: &str| is_hex(id) || is_digits(id);
     match parts {
-        ["decentraland", "off-chain", _, _] | ["decentraland", "entity", _] => true,
+        ["decentraland", "off-chain", _, _] => Some(OffChain),
+        ["decentraland", "entity", _] => Some(Entity),
         ["decentraland", _, "collections-v1", rest @ ..] => match rest {
-            [_] | [_, _] => true,
-            [_, _, token] => is_digits(token),
-            _ => false,
+            [_] => Some(CollectionV1),
+            [_, _] => Some(CollectionV1Asset),
+            [_, _, token] if is_digits(token) => Some(CollectionV1Item),
+            _ => None,
         },
         ["decentraland", _, "collections-v2", contract, rest @ ..] if is_hex(contract) => {
             match rest {
-                [] => true,
-                [id] => item_id(id),
-                [id, token] => item_id(id) && is_digits(token),
-                _ => false,
-            }
-        }
-        ["decentraland", _, "LAND", _] => true,
-        ["decentraland", _, "collections-thirdparty", rest @ ..] => match rest {
-            [_] | [_, _] | [_, _, _] => true,
-            [_, _, _, _, contract, token] => is_hex(contract) && is_digits(token),
-            _ => false,
-        },
-        ["decentraland", _, "erc721", contract, _] => is_hex(contract),
-        _ => false,
-    }
-}
-
-/// The type `parseUrn` gives a path whose groups all decode.
-fn route(parts: &[&str], decoded: &[String]) -> Option<UrnType> {
-    let in_set = |set: &[&str], network: &str| set.contains(&network.to_lowercase().as_str());
-    match parts[..] {
-        ["decentraland", "off-chain", _, _] => Some(UrnType::OffChain),
-        ["decentraland", "entity", _] => Some(UrnType::Entity),
-        ["decentraland", _, "collections-v1", ref rest @ ..] => collection_v1(
-            &decoded[1],
-            in_set(NETWORKS, &decoded[1]),
-            rest,
-            &decoded[3..],
-        ),
-        ["decentraland", _, "collections-v2", ref rest @ ..] if in_set(NETWORKS, &decoded[1]) => {
-            collection_v2(rest)
-        }
-        ["decentraland", _, "LAND", _] if in_set(LAND_NETWORKS, &decoded[1]) => {
-            land_position_resolves(&decoded[3]).then_some(UrnType::Land)
-        }
-        ["decentraland", _, "collections-thirdparty", ref rest @ ..]
-            if in_set(TPR_NETWORKS, &decoded[1]) =>
-        {
-            match rest {
-                [_] => Some(UrnType::ThirdPartyName),
-                [_, _] => Some(UrnType::ThirdPartyCollection),
-                [_, _, _] => Some(UrnType::ThirdParty),
-                [_, _, _, _, contract, token] if is_hex(contract) && is_digits(token) => {
-                    Some(UrnType::ThirdPartyItem)
-                }
+                [] => Some(CollectionV2),
+                [id] if item_id(id) => Some(CollectionV2Asset),
+                [id, token] if item_id(id) && is_digits(token) => Some(CollectionV2Item),
                 _ => None,
             }
         }
-        ["decentraland", _, "erc721", contract, _]
-            if in_set(NETWORKS, &decoded[1]) && is_hex(contract) =>
-        {
-            Some(UrnType::Erc721)
-        }
+        ["decentraland", _, "LAND", _] => Some(Land),
+        ["decentraland", _, "collections-thirdparty", rest @ ..] => match rest {
+            [_] => Some(ThirdPartyName),
+            [_, _] => Some(ThirdPartyCollection),
+            [_, _, _] => Some(ThirdParty),
+            [_, _, _, _, contract, token] if is_hex(contract) && is_digits(token) => {
+                Some(ThirdPartyItem)
+            }
+            _ => None,
+        },
+        ["decentraland", _, "erc721", contract, _] if is_hex(contract) => Some(Erc721),
         _ => None,
     }
 }
 
-/// A collections-v1 route: by contract on any network, else by collection
-/// name on `ethereum` only (spelled exactly so).
-fn collection_v1(
-    network: &str,
-    network_known: bool,
-    rest: &[&str],
-    decoded: &[String],
-) -> Option<UrnType> {
-    let by_contract = network_known && rest.first().is_some_and(|c| is_hex(c));
-    let by_name = network == "ethereum";
-    match rest {
-        [_] if by_contract => Some(UrnType::CollectionV1),
-        [_] if by_name => super::onchain::v1_collection_contract(&decoded[0])
-            .is_some()
-            .then_some(UrnType::CollectionV1),
-        [_, _] if by_contract || by_name => Some(UrnType::CollectionV1Asset),
-        [_, _, token] if is_digits(token) && (by_contract || by_name) => {
-            Some(UrnType::CollectionV1Item)
+/// The type `parseUrn` gives a path whose groups all decode: its route's
+/// type where the route's handler accepts the network, contract or position.
+fn route(parts: &[&str], decoded: &[String]) -> Option<UrnType> {
+    use UrnType::*;
+    let kind = route_pattern(parts)?;
+    let network = decoded[1].to_lowercase();
+    let on = |set: &[&str]| set.contains(&network.as_str());
+    let accepted = match kind {
+        OffChain | Entity => true,
+        CollectionV1 | CollectionV1Asset | CollectionV1Item => {
+            // By contract on any known network, else by collection name on
+            // `ethereum` only (spelled exactly so).
+            let by_contract = on(NETWORKS) && is_hex(parts[3]);
+            let by_name = decoded[1] == "ethereum";
+            by_contract
+                || (by_name
+                    && (kind != CollectionV1
+                        || super::onchain::v1_collection_contract(&decoded[3]).is_some()))
         }
-        _ => None,
-    }
-}
-
-fn collection_v2(rest: &[&str]) -> Option<UrnType> {
-    let item_id = |id: &str| is_hex(id) || is_digits(id);
-    match rest {
-        [contract] if is_hex(contract) => Some(UrnType::CollectionV2),
-        [contract, id] if is_hex(contract) && item_id(id) => Some(UrnType::CollectionV2Asset),
-        [contract, id, token] if is_hex(contract) && item_id(id) && is_digits(token) => {
-            Some(UrnType::CollectionV2Item)
-        }
-        _ => None,
-    }
+        CollectionV2 | CollectionV2Asset | CollectionV2Item | Erc721 => on(NETWORKS),
+        Land => on(LAND_NETWORKS) && land_position_resolves(&decoded[3]),
+        ThirdPartyName | ThirdPartyCollection | ThirdParty | ThirdPartyItem => on(TPR_NETWORKS),
+    };
+    accepted.then_some(kind)
 }
 
 /// `parseInt(s, 10)`: optional whitespace and sign, then the leading digits.

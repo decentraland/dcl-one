@@ -45,19 +45,19 @@ dcl-one (`services/catalyst/`):
 
 Upstream production serves every route below under `/content/*` (nginx strips the prefix). dcl-one
 serves the same router at the root and under `/content`
-(`services/catalyst/content/src/lib.rs:710-711`).
+(`services/catalyst/content/src/lib.rs:854-855`).
 
 | # | method | upstream path | prod prefix | dcl-one route(s) | status |
 |---|---|---|---|---|---|
-| 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:630` -> `active_entities.rs:123` | DIVERGENT |
-| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:760-763` -> `active_entities.rs:264` | DIVERGENT |
-| 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:635-638` -> `active_entities.rs:98` | DIVERGENT |
-| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | DIVERGENT |
-| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | DIVERGENT |
-| 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:643-646` -> `active_entities.rs:169` | MATCH |
-| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | MATCH |
-| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | MATCH |
-| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:623-625,712` | MATCH |
+| 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:759` -> `active_entities.rs:141` | DIVERGENT |
+| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:760-763` -> `active_entities.rs:264` | DIVERGENT: third-party freshness only (upstream lists from a materialized view refreshed on a schedule, dcl-one reads `active_pointers` live; section 2, data dependency) |
+| 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:764-772` -> `active_entities.rs:101` | DIVERGENT |
+| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:773-781` -> `get_content.rs:172` | DIVERGENT |
+| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:776` -> `get_content.rs:172` | DIVERGENT |
+| 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:782-785` -> `active_entities.rs:218` | MATCH |
+| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:786-789` -> `available_content.rs:14` | MATCH |
+| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:790` -> `audit.rs:13` | MATCH |
+| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:743-750,856` | MATCH |
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
@@ -313,7 +313,7 @@ time this node stored the deployment, so it differs between any two nodes (upstr
   answer (`decentraland/catalyst:src/service.ts:63-65`). Captured: `404`, `Content-Type: text/plain;
   charset=utf-8`, body `Not found` (`Content-Length: 9`), no CORS headers without `Origin`
   (`captures/content-reads/CR-13-unknown-route.json`).
-- dcl-one: `404 text/plain "Not found"` (`services/catalyst/content/src/lib.rs:623-625,712`); axum gives a
+- dcl-one: `404 text/plain "Not found"` (`services/catalyst/content/src/lib.rs:743-750,856`); axum gives a
   `&str` body `text/plain; charset=utf-8`. It adds the CORS and `X-Content-Type-Options: nosniff` headers.
 - Verdict: MATCH on status, content type and body, by the capture (CR-13).
 
@@ -388,7 +388,7 @@ Verdict: MATCH under `/content/` (CR-11).
     `Unrecognized type: Active`, as upstream's `/entities/:type` would. Other methods take
     `/entities/active`.
 - Prefix: upstream production serves only `/content/*`; dcl-one answers the same routes at the root
-  and under `/content` (`services/catalyst/content/src/lib.rs:710-711`). A superset.
+  and under `/content` (`services/catalyst/content/src/lib.rs:854-855`). A superset.
 - NUL bytes: dcl-one answers any path or query containing a NUL (raw or `%00`) with
   `400 {"error":"request path or query contains a NUL byte"}` (`services/catalyst/shared/src/nul_guard.rs:12-22`);
   upstream lets it reach the handler (404 on `/contents`, a DB error elsewhere).
@@ -523,7 +523,7 @@ Verdict: MATCH under `/content/` (CR-11).
     - Expected: the `@dcl/http-server` default answer.
     - Capture: `404 text/plain; charset=utf-8` `Not found` (`captures/content-reads/CR-13-unknown-route.json`),
       the same status, type and body dcl-one answers. No code change is needed.
-    - Place: `services/catalyst/content/src/lib.rs:623-625`.
+    - Place: `services/catalyst/content/src/lib.rs:743-750`.
     - Severity: none (closed).
 
 14. **CR-14** Entity JSON key order.
@@ -604,7 +604,7 @@ Verdict: MATCH under `/content/` (CR-11).
 
 ## dcl-one routes in this area that upstream does not serve
 
-- The whole content router at the root as well as under `/content` (`services/catalyst/content/src/lib.rs:710-711`).
+- The whole content router at the root as well as under `/content` (`services/catalyst/content/src/lib.rs:854-855`).
 - `POST /entities/active?fields=...` masking (`services/catalyst/content/src/active_entities.rs:112-116`).
 - Read-through fills on entity and content misses (`READ_THROUGH_ENABLED`, `services/catalyst/content/src/read_through.rs:466-521`).
 - `localProvenance` in `/audit` for entities published to this node (`services/catalyst/content/src/queries.rs:919-923`).
@@ -612,5 +612,5 @@ Verdict: MATCH under `/content/` (CR-11).
   `X-Content-Type-Options: nosniff` from `services/catalyst/shared/src/cors.rs:81-86` is not here because the
   public peer sends it too, see X3), the NUL-byte 400
   (`services/catalyst/shared/src/nul_guard.rs:12-22`), and a 408 when `request_timeout` is configured
-  (`services/catalyst/content/src/lib.rs:720-725`).
+  (`services/catalyst/content/src/lib.rs:864-881`).
 - `X-Accel-Redirect` delivery when `STORAGE_X_ACCEL_BASE` is set (`services/catalyst/content/src/get_content.rs:177-191`).
