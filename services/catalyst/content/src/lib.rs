@@ -163,6 +163,14 @@ pub struct Settings {
     /// `MAX_UPLOAD_FIELD_COUNT`, `MAX_UPLOAD_FIELD_SIZE`: the non-file fields of a deploy form.
     pub max_upload_field_count: usize,
     pub max_upload_field_bytes: usize,
+    /// `MAX_UPLOAD_FILE_COUNT`, `MAX_UPLOAD_FILE_SIZE`: the files of a deploy form.
+    pub max_upload_file_count: usize,
+    pub max_upload_file_bytes: usize,
+    /// `MAX_UPLOAD_TOTAL_SIZE`: the bytes of every file and field value of a deploy form.
+    pub max_upload_total_bytes: usize,
+    /// `READ_ONLY`: the write routes answer the router's not-found, whatever
+    /// the console's toggle says.
+    pub read_only: bool,
     /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`, at least one maximum-size deployment.
     pub max_in_memory_deployment_bytes: u64,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
@@ -273,6 +281,10 @@ impl Settings {
             admin_token: AdminToken::new(config.writes.catalyrst_content_admin_token.clone()),
             max_upload_field_count: config.content.max_upload_field_count,
             max_upload_field_bytes: config.content.max_upload_field_size,
+            max_upload_file_count: config.content.max_upload_file_count,
+            max_upload_file_bytes: config.content.max_upload_file_size,
+            max_upload_total_bytes: config.content.max_upload_total_size,
+            read_only: config.writes.read_only,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
             post_entities_rate_limit_max: config.content.post_entities_rate_limit_max,
@@ -299,7 +311,7 @@ impl Settings {
             max_in_flight_upload_bytes_per_source: config
                 .content
                 .max_in_flight_upload_bytes_per_source
-                .unwrap_or(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+                .unwrap_or(config.content.max_upload_total_size as u64),
             multipart_upload_timeout: Duration::from_millis(
                 config.worlds.multipart_upload_timeout_ms.max(1),
             ),
@@ -337,6 +349,10 @@ impl Settings {
             admin_token: AdminToken::default(),
             max_upload_field_count: 2 + 3 * 10,
             max_upload_field_bytes: 32 * 1024,
+            max_upload_file_count: 3000,
+            max_upload_file_bytes: 100 * 1024 * 1024,
+            max_upload_total_bytes: 2 * 1024 * 1024 * 1024,
+            read_only: false,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
             post_entities_daily_quota_max: 300,
             post_entities_rate_limit_max: 200,
@@ -344,7 +360,7 @@ impl Settings {
             content_get_limit: content_get_limit::Config::default(),
             partial_uploads: partial_deployments::Limits::default(),
             max_concurrent_uploads_per_source: 4,
-            max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
+            max_in_flight_upload_bytes_per_source: 2 * 1024 * 1024 * 1024,
             multipart_upload_timeout: Duration::from_secs(300),
             deployment_processing_timeout: Duration::from_secs(300),
             deploy_limits: write_deployer::DeployLimits::default(),
@@ -544,9 +560,9 @@ pub struct ContentState {
     /// and the snapshot list; cleared when a deployment lands or a local
     /// scene is unpublished.
     pub deployments_cache: TtlMap<String, Bytes>,
-    /// The console's read-only toggle (process state, off at start as the
-    /// old `READ_ONLY` default was): while set, `POST /entities` and
-    /// `DELETE /scenes/{coord}` answer the router's not-found.
+    /// The console's read-only toggle (process state, off at start): while
+    /// it or `READ_ONLY` ([`Settings::read_only`]) is set, `POST /entities`
+    /// and `DELETE /scenes/{coord}` answer the router's not-found.
     pub read_only: AtomicBool,
     /// The console's accepting-users toggle (process state, on at start):
     /// `/about` reports `acceptingUsers` while the node is healthy and this
@@ -604,7 +620,7 @@ impl ContentState {
         let upload_budget = upload_admission::UploadBudget::new(
             settings
                 .max_in_memory_deployment_bytes
-                .max(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+                .max(settings.max_upload_total_bytes as u64),
         );
         let deploy_quota =
             upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
@@ -658,13 +674,14 @@ impl ContentState {
     }
 
     pub fn is_read_only(&self) -> bool {
-        self.read_only.load(Ordering::Relaxed)
+        self.settings.read_only || self.read_only.load(Ordering::Relaxed)
     }
 
-    /// Answers the value now in force.
+    /// Sets the console's toggle and answers the value now in force, which
+    /// `READ_ONLY` keeps on.
     pub fn set_read_only(&self, read_only: bool) -> bool {
         self.read_only.store(read_only, Ordering::Relaxed);
-        read_only
+        self.is_read_only()
     }
 
     pub fn is_accepting_users(&self) -> bool {
@@ -834,8 +851,7 @@ fn content_routes(state: &SharedState, max_deploy_body: usize) -> Router<SharedS
 /// them (the reverse proxy strips nothing).
 pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
-    let max_deploy_body =
-        create_entity::max_deployment_body_bytes(state.settings.max_upload_field_count);
+    let max_deploy_body = create_entity::max_deployment_body_bytes(&state.settings);
     let mut app = Router::new()
         .route("/about", get(about::get_about))
         // lamb2's own path for the same handler (`routes.ts`: `/about` under `/lambdas`).

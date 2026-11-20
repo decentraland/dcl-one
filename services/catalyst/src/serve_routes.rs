@@ -150,6 +150,7 @@ pub(super) fn build_routes(
     let statistics = archipelago.statistics.clone();
     let blobs = content.clone();
     let report_storage = blobs.storage.clone();
+    let max_deploy_body = content::create_entity::max_deployment_body_bytes(&content.settings);
     let app = content::build_router(content)
         .merge(shop::market::router(market.clone()))
         .merge(shop_routes(shop::States {
@@ -273,8 +274,7 @@ pub(super) fn build_routes(
         shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());
     let app = shared::drain::drain_unread(
         app,
-        content::create_entity::MAX_DEPLOYMENT_BYTES
-            .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
+        max_deploy_body.max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
     // Upstream's router under /content/: static segments matched whatever
     // their case, and its `Allow` list on a 405 (also under

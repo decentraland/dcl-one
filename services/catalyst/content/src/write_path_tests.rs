@@ -406,6 +406,43 @@ async fn the_write_routes_answer_their_gates_in_order() {
 /// `SYNC_SOURCE` names a peer (its default does) the node is an unsynced copy
 /// of that peer and keeps the bootstrapping refusal; with no source at all (an
 /// island or a journey node) it is its own authority and a deploy passes.
+/// `READ_ONLY=true` refuses the write routes with upstream's not-found even
+/// on a node whose write path is attached and on (the refusal wins), and
+/// the console's toggle cannot lift it.
+#[tokio::test]
+async fn read_only_refuses_writes_whatever_the_switch_and_toggle_say() {
+    let settings = Settings {
+        read_only: true,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("read-only-env", settings).await;
+    let router = node.router();
+    assert!(node.state.writes_enabled() && node.state.is_read_only());
+    let not_found = (StatusCode::NOT_FOUND, Bytes::from_static(b"Not found"));
+    let chain = json!([{"type": "SIGNER", "payload": "0xabc"}]);
+    assert!(
+        node.state.set_read_only(false),
+        "the toggle answers the value in force"
+    );
+    for req in [
+        deploy_request("/content/entities", "bafy", &chain, &[]),
+        deploy_request("/entities", "bafy", &chain, &[]),
+        Request::delete("/scenes/0,0").body(Body::empty()).unwrap(),
+        Request::get("/content/entities")
+            .body(Body::empty())
+            .unwrap(),
+    ] {
+        let (status, _, body) = call(&router, req).await;
+        assert_eq!((status, body), not_found);
+    }
+
+    // Without it the same node takes the deploy as far as the deployer.
+    let open = deploying_node("read-only-off", Settings::for_tests()).await;
+    assert!(!open.state.is_read_only());
+    let (status, _, _) = call(&open.router(), form_request("203.0.113.40", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn serve_unsynced_takes_deploys_only_with_no_sync_source() {
     for (i, (source, takes_deploys)) in [
@@ -833,12 +870,12 @@ async fn signed_scene_roundtrip(positional: bool) {
     )
     .await;
     assert_eq!(
-        nul_status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "{}",
-        json_of(&nul_body)
+        (nul_status, json_of(&nul_body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": [super::write_deployer::UNSTORABLE_TEXT_MESSAGE]})
+        )
     );
-    assert!(String::from_utf8_lossy(&nul_body).contains("There was an error deploying the entity"));
     let nul_rows: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM content.deployments WHERE entity_id=$1),(SELECT count(*) FROM content.local_entities WHERE entity_id=$1),(SELECT count(*) FROM content.forward_outbox WHERE entity_id=$1)").bind(&nul_id).fetch_one(&db.pool).await.unwrap();
     assert_eq!(nul_rows, (0, 0, 0));
     assert_eq!(storage.retrieve(&nul_id).await.unwrap(), Some(nul_bytes));
@@ -1393,20 +1430,15 @@ async fn a_profile_with_nul_metadata_preserves_the_write_error_and_active_profil
         ),
     )
     .await;
+    // The request's own text, so a 400 the client does not retry.
     assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "{}",
-        json_of(&body)
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": [super::write_deployer::UNSTORABLE_TEXT_MESSAGE]})
+        )
     );
-    assert_eq!(
-        headers[header::RETRY_AFTER],
-        writes::UNAVAILABLE_RETRY_AFTER_SECS
-    );
-    assert_eq!(
-        json_of(&body),
-        json!({"errors":[super::write_deployer::DEPLOY_ERROR_MESSAGE]})
-    );
+    assert!(headers.get(header::RETRY_AFTER).is_none());
     assert_eq!(
         node.state.storage.retrieve(&rejected).await.unwrap(),
         Some(bytes),
@@ -1799,7 +1831,7 @@ async fn the_burst_limit_counts_a_direct_socket_not_its_header() {
 
 #[tokio::test]
 async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
-    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let capacity = Settings::for_tests().max_upload_total_bytes as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: capacity,
         ..Settings::for_tests()
@@ -1831,15 +1863,16 @@ async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
     );
 }
 
-/// Upstream's multipart limits (`multipart.ts`), each a 413 with its text:
-/// 3000 files, 100 MiB per file (named by the part's file name), and a
-/// declared body past the total plus framing, refused unread.
+/// Upstream's multipart limits (`multipart.ts`) at their `MAX_UPLOAD_*`
+/// defaults, each a 413 with its text: 3000 files, 100 MiB per file (named by
+/// the part's file name), and a declared body past the 2 GiB total plus
+/// framing, refused unread.
 #[tokio::test]
 async fn a_form_past_upstreams_multipart_limits_is_413() {
     let node = deploying_node("multipart-limits", Settings::for_tests()).await;
     let router = node.router();
     let one = Bytes::from_static(b"x");
-    let names: Vec<String> = (0..=super::create_entity::MAX_DEPLOY_FILES)
+    let names: Vec<String> = (0..=Settings::for_tests().max_upload_file_count)
         .map(|i| format!("bafyfile{i}"))
         .collect();
     let files: Vec<(&str, &Bytes)> = names.iter().map(|n| (n.as_str(), &one)).collect();
@@ -1856,7 +1889,7 @@ async fn a_form_past_upstreams_multipart_limits_is_413() {
         )
     );
 
-    let big = Bytes::from(vec![0u8; super::create_entity::MAX_DEPLOY_FILE_BYTES + 1]);
+    let big = Bytes::from(vec![0u8; Settings::for_tests().max_upload_file_bytes + 1]);
     let (status, _, body) = call(
         &router,
         deploy_request(
@@ -1876,7 +1909,7 @@ async fn a_form_past_upstreams_multipart_limits_is_413() {
     );
     drop(big);
 
-    let max_body = super::create_entity::max_deployment_body_bytes(32);
+    let max_body = super::create_entity::max_deployment_body_bytes(&Settings::for_tests());
     let mut declared = form_request("203.0.113.15", &entity_form());
     declared
         .headers_mut()
@@ -1887,9 +1920,113 @@ async fn a_form_past_upstreams_multipart_limits_is_413() {
         (
             StatusCode::PAYLOAD_TOO_LARGE,
             json!({"error": format!(
-                "The request body is too large. The maximum allowed total upload size is 209715200 bytes plus multipart framing ({max_body} bytes in all)."
+                "The request body is too large. The maximum allowed total upload size is 2147483648 bytes plus multipart framing ({max_body} bytes in all)."
             )})
         )
+    );
+}
+
+/// The `MAX_UPLOAD_*` limits are the configured ones: a form at each passes
+/// the reader and reaches the deployer, one past it is a 413 naming it, a
+/// declared body past the configured total plus framing is refused unread,
+/// and the upload budget never sits below one maximal form.
+#[tokio::test]
+async fn the_upload_limits_follow_their_configuration() {
+    let settings = Settings {
+        max_upload_file_count: 2,
+        max_upload_file_bytes: 1000,
+        max_upload_total_bytes: 1500,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("configured-upload-limits", settings.clone()).await;
+    let router = node.router();
+    let fields: usize = entity_form().iter().map(|(_, v)| v.len()).sum();
+    let send = |files: Vec<(String, Bytes)>| {
+        let router = router.clone();
+        async move {
+            let files: Vec<(&str, &Bytes)> = files.iter().map(|(n, b)| (n.as_str(), b)).collect();
+            let chain = &entity_form()[1].1;
+            let req = deploy_request(
+                "/content/entities",
+                "bafy",
+                &serde_json::from_str(chain).unwrap(),
+                &files,
+            );
+            let (status, _, body) = call(&router, req).await;
+            (status, json_of(&body))
+        }
+    };
+    let file = |name: &str, n: usize| (name.to_string(), Bytes::from(vec![b'x'; n]));
+    let reached = (
+        StatusCode::BAD_REQUEST,
+        json!({"errors": ["Failed to find the entity file."]}),
+    );
+    let too_large = |text: &str| (StatusCode::PAYLOAD_TOO_LARGE, json!({"error": text}));
+
+    assert_eq!(
+        send(vec![file("a", 1000)]).await,
+        reached,
+        "a file at its cap"
+    );
+    assert_eq!(
+        send(vec![file("a", 1001)]).await,
+        too_large("File 'a' is too large. The maximum allowed size per file is 1000 bytes.")
+    );
+    assert_eq!(
+        send(vec![file("a", 1), file("b", 1)]).await,
+        reached,
+        "two files"
+    );
+    assert_eq!(
+        send(vec![file("a", 1), file("b", 1), file("c", 1)]).await,
+        too_large("Too many files in the request. The maximum allowed is 2.")
+    );
+    let left = 1500 - fields;
+    assert_eq!(
+        send(vec![file("a", 1000), file("b", left - 1000)]).await,
+        reached,
+        "every value at the total"
+    );
+    assert_eq!(
+        send(vec![file("a", 1000), file("b", left - 999)]).await,
+        too_large(
+            "The request body is too large. The maximum allowed total upload size is 1500 bytes."
+        )
+    );
+
+    let max_body = super::create_entity::max_deployment_body_bytes(&settings);
+    assert_eq!(max_body, 1500 + (2 + 32 + 1) * (16 * 1024 + 128));
+    for (declared, expected) in [
+        (max_body, StatusCode::BAD_REQUEST),
+        (max_body + 1, StatusCode::PAYLOAD_TOO_LARGE),
+    ] {
+        let mut req = form_request("203.0.113.16", &entity_form());
+        req.headers_mut()
+            .insert(header::CONTENT_LENGTH, HeaderValue::from(declared));
+        // Only the declaration is checked: the short body ends the form early.
+        let (status, _, _) = call(&router, req).await;
+        assert_eq!(status, expected, "declared {declared}");
+    }
+
+    let mib = 1024 * 1024;
+    let floored = deploying_node(
+        "configured-upload-budget",
+        Settings {
+            max_upload_total_bytes: 64 * mib,
+            max_in_memory_deployment_bytes: 1,
+            ..Settings::for_tests()
+        },
+    )
+    .await;
+    let one = floored.state.upload_budget.try_reserve(64 * mib as u64);
+    assert!(one.is_some(), "the budget fits one maximal form");
+    drop(one);
+    assert!(
+        floored
+            .state
+            .upload_budget
+            .try_reserve(64 * mib as u64 + 1)
+            .is_none()
     );
 }
 
@@ -1991,7 +2128,7 @@ async fn only_forms_that_were_read_count_toward_the_quota() {
 /// full upload budget.
 #[tokio::test]
 async fn a_spent_quota_is_answered_before_the_upload_budget() {
-    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let capacity = Settings::for_tests().max_upload_total_bytes as u64;
     let settings = Settings {
         post_entities_daily_quota_max: 1,
         max_in_memory_deployment_bytes: capacity,
@@ -2253,7 +2390,7 @@ async fn a_request_without_a_client_address_skips_the_quota() {
 
 #[tokio::test]
 async fn a_chunked_body_reserves_the_whole_body_cap() {
-    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let cap = Settings::for_tests().max_upload_total_bytes as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: 2 * cap,
         ..Settings::for_tests()
@@ -2281,7 +2418,7 @@ async fn a_chunked_body_reserves_the_whole_body_cap() {
 
 #[tokio::test]
 async fn a_cancelled_request_returns_its_reservation_and_source_share() {
-    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let cap = Settings::for_tests().max_upload_total_bytes as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: cap,
         max_concurrent_uploads_per_source: 1,
@@ -2425,7 +2562,7 @@ async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_de
 /// its processing deadline, then lets both go; it never holds its pointer.
 #[tokio::test]
 async fn a_deploy_stalled_before_validation_holds_no_pointer_and_releases_its_budget_and_share() {
-    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let cap = Settings::for_tests().max_upload_total_bytes as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: cap,
         max_concurrent_uploads_per_source: 1,
@@ -2675,6 +2812,32 @@ async fn a_replay_proves_what_a_fresh_deploy_proves_first() {
         "a denylisted replay writes nothing"
     );
 
+    // A deploy whose text the database cannot store is the request's fault:
+    // 400 without `Retry-After`, nothing written.
+    deployer.clear_rate_limits();
+    let mut nul = scene(&[&parcel], &[]);
+    nul["metadata"]["display"]["title"] = json!("write\u{0}path");
+    let (nul_bytes, nul_id, nul_chain) = signed_entity(&owner, nul).await;
+    let (status, headers, body) = call(
+        &router,
+        deploy_request("/entities", &nul_id, &nul_chain, &[(&nul_id, &nul_bytes)]),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": [super::write_deployer::UNSTORABLE_TEXT_MESSAGE]})
+        )
+    );
+    assert!(headers.get(header::RETRY_AFTER).is_none());
+    let stored: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id=$1")
+            .bind(&nul_id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, 0);
     let _ = std::fs::remove_dir_all(&tmp);
     db.drop_now().await;
 }

@@ -31,10 +31,11 @@ CAST_PRESENTATION_CAP = "101m"
 CAMERA_REEL_UPLOAD_CAP = "7m"
 # The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
 CAMERA_REEL_ALIAS = "^~ /camera-reel/"
-# The content server's `POST /entities` route limit at the default field
-# count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
-# multipart framing), rounded up, so its own 413 is the one a client meets.
-CONTENT_DEPLOY_CAP = "248m"
+# The content server's `POST /entities` route limit at the default
+# `MAX_UPLOAD_*` values (`max_deployment_body_bytes`: 2 GiB of files and
+# fields plus multipart framing), rounded up, so its own 413 is the one a
+# client meets. A node that changes those values changes this too.
+CONTENT_DEPLOY_CAP = "2096m"
 # World storage bodies: the largest storage route maximum at the deployed
 # defaults (config/src/worlds.rs: WORLD_STORAGE_MAX_VALUE_SIZE_BYTES, 512 KiB,
 # plus the 1 KiB envelope slack; the export body's 256 KiB + 1 KiB is below

@@ -81,6 +81,19 @@ macro_rules! local_ms_sql {
 /// cause (a database, store or task error) is logged, never answered.
 pub(crate) const DEPLOY_ERROR_MESSAGE: &str = "There was an error deploying the entity";
 
+/// The refusal of an entity whose text the database cannot store.
+pub(crate) const UNSTORABLE_TEXT_MESSAGE: &str =
+    "The entity contains a NUL character (\\u0000), which cannot be stored.";
+
+/// Whether the deploy statement refused the request's own text: a NUL in
+/// the metadata (`22P05`) or in a text column (`22021`). Only the entity
+/// carries these, so the refusal is the request's (400), not this node's.
+fn is_unstorable_text(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|e| e.code())
+        .is_some_and(|code| matches!(code.as_ref(), "22P05" | "22021"))
+}
+
 /// `Unavailable` with [`DEPLOY_ERROR_MESSAGE`], `cause` logged.
 fn deploy_error(entity_id: &str, cause: &str) -> DeployFailure {
     tracing::error!(entity_id, cause, "deployment failed on this node");
@@ -1706,7 +1719,17 @@ impl WriteDeployer {
                 gone.join(", ")
             )]));
         }
-        let outcome = query.fetch_one(&mut *tx).await.map_err(write_failed)?;
+        let outcome = query.fetch_one(&mut *tx).await.map_err(|e| {
+            if is_unstorable_text(&e) {
+                info!(entity_id = %entity.id, error = %e, "deployment refused: unstorable text");
+                DeployFailure::Rejected(
+                    RejectionKind::Validation,
+                    vec![UNSTORABLE_TEXT_MESSAGE.to_string()],
+                )
+            } else {
+                write_failed(e)
+            }
+        })?;
         tx.commit().await.map_err(write_failed)?;
 
         tracing::debug!(target: "catalyst_perf", phase="persist", entity_id=%entity.id, storage_us, db_us=db_started.elapsed().as_micros() as u64);

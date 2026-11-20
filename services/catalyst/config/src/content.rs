@@ -173,9 +173,32 @@ pub struct ContentConfig {
     #[arg(long, env = "MAX_UPLOAD_FIELD_SIZE", default_value_t = 32 * 1024)]
     pub max_upload_field_size: usize,
 
+    /// Files a `POST /entities` form may carry.
+    #[arg(long, env = "MAX_UPLOAD_FILE_COUNT", default_value_t = 3000)]
+    pub max_upload_file_count: usize,
+
+    /// Bytes one `POST /entities` file may hold.
+    #[arg(long, env = "MAX_UPLOAD_FILE_SIZE", default_value_t = 100 * 1024 * 1024)]
+    pub max_upload_file_size: usize,
+
+    /// Bytes of every file and field value one `POST /entities` form may
+    /// carry together (2 GiB); the route's body limit is this plus the
+    /// multipart framing of its parts. The form is read into memory, so this
+    /// is also the most one deploy holds: `MAX_IN_MEMORY_DEPLOYMENT_BYTES` is
+    /// raised to it when lower. The gateway's body cap on the route
+    /// (`CONTENT_DEPLOY_CAP` in `infra/gateway/gateway.py`) is set for the
+    /// default and must follow a change.
+    #[arg(
+        long,
+        env = "MAX_UPLOAD_TOTAL_SIZE",
+        default_value_t = 2 * 1024 * 1024 * 1024
+    )]
+    pub max_upload_total_size: usize,
+
     /// Bytes of `POST /entities` bodies held in memory at once across every
     /// request, each holding at least 16 MiB; never below one maximum-size
-    /// deployment. A request that does not fit answers 503 unread.
+    /// deployment (`MAX_UPLOAD_TOTAL_SIZE`). A request that does not fit
+    /// answers 503 unread.
     #[arg(
         long,
         env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",
@@ -297,11 +320,12 @@ pub struct ContentConfig {
     )]
     pub max_concurrent_uploads_per_source: u32,
 
-    /// Bytes of `POST /entities` bodies (declared, else the 200 MiB cap) one
-    /// client address may have in flight. The worlds uploads read it too, so
-    /// a set value must fit one 350 MiB world deploy; below that the config
-    /// is refused. Unset, each route keeps one maximum-size upload of its
-    /// own (content 200 MiB, worlds 350 MiB): a source with one large or
+    /// Bytes of `POST /entities` bodies (declared, else `MAX_UPLOAD_TOTAL_SIZE`)
+    /// one client address may have in flight. The worlds uploads read it too,
+    /// so a set value must fit one 350 MiB world deploy and one
+    /// `MAX_UPLOAD_TOTAL_SIZE` content deploy; below either the config is
+    /// refused. Unset, each route keeps one maximum-size upload of its
+    /// own (content `MAX_UPLOAD_TOTAL_SIZE`, worlds 350 MiB): a source with one large or
     /// undeclared-length (chunked) body in flight is turned away (429) until
     /// it ends, whatever `MAX_CONCURRENT_UPLOADS_PER_SOURCE` allows; raise it
     /// to let one source upload several large bodies at once.
@@ -356,10 +380,10 @@ pub struct ContentConfig {
     pub deployment_rate_limit_max_outfits: Option<u64>,
 }
 
-/// The least `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`: one maximum-size
-/// upload of either route reading it, the larger being a world deploy
-/// (worlds' `MAX_UPLOAD_SIZE_BYTES`, 350 MiB; content's `MAX_DEPLOYMENT_BYTES`
-/// is 200 MiB).
+/// The least `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`: one maximum-size world
+/// deploy (worlds' `MAX_UPLOAD_SIZE_BYTES`, 350 MiB); the content route's
+/// `MAX_UPLOAD_TOTAL_SIZE` is checked at startup
+/// ([`ContentConfig::check_upload_limits`]).
 const MIN_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE: u64 = 350 * 1024 * 1024;
 
 /// A partial batch of the entity file (10 MiB) and one maximum-size
@@ -416,6 +440,30 @@ impl ContentConfig {
             );
         }
         Ok(Some(raw.to_string()))
+    }
+
+    /// The `POST /entities` limits that depend on each other: a set
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` must fit one
+    /// `MAX_UPLOAD_TOTAL_SIZE` form, and `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE`
+    /// a batch of the entity file (10 MiB) and one `MAX_UPLOAD_FILE_SIZE`
+    /// file; either below would refuse such a deploy every time.
+    pub fn check_upload_limits(&self) -> anyhow::Result<()> {
+        let total = self.max_upload_total_size as u64;
+        if let Some(per_source) = self.max_in_flight_upload_bytes_per_source {
+            anyhow::ensure!(
+                per_source >= total,
+                "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE ({per_source}) must fit one \
+                 MAX_UPLOAD_TOTAL_SIZE upload ({total} bytes)"
+            );
+        }
+        let batch = 10 * 1024 * 1024 + self.max_upload_file_size as u64;
+        anyhow::ensure!(
+            self.max_partial_upload_bytes_per_minute >= batch,
+            "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE ({}) must fit the entity file and one \
+             MAX_UPLOAD_FILE_SIZE file ({batch} bytes)",
+            self.max_partial_upload_bytes_per_minute
+        );
+        Ok(())
     }
 
     /// `DENYLIST_URLS`: the URLs, split on commas and whitespace (upstream
@@ -603,6 +651,30 @@ mod tests {
             Some(350 * 1024 * 1024)
         );
         assert!(with(&["--max-concurrent-uploads-per-source", "0"]).is_err());
+        // A source share below one MAX_UPLOAD_TOTAL_SIZE form, or a partial
+        // rate below the entity file and one MAX_UPLOAD_FILE_SIZE file, is
+        // refused at startup.
+        let checked = |extra: &[&str]| with(extra).unwrap().content.check_upload_limits();
+        assert!(checked(&["--max-in-flight-upload-bytes-per-source", &mib(350)]).is_err());
+        assert!(
+            checked(&[
+                "--max-in-flight-upload-bytes-per-source",
+                &mib(350),
+                "--max-upload-total-size",
+                &mib(350),
+            ])
+            .is_ok()
+        );
+        assert!(checked(&["--max-upload-file-size", &mib(600)]).is_err());
+        assert!(
+            checked(&[
+                "--max-upload-file-size",
+                &mib(600),
+                "--max-partial-upload-bytes-per-minute",
+                &mib(610),
+            ])
+            .is_ok()
+        );
     }
 
     #[test]
@@ -653,6 +725,15 @@ mod tests {
         assert_eq!(c.content.bloom_filter_expected_elements, 10_000_000);
         assert_eq!(c.content.sync_profile_max_age_days, 365);
         assert!(!c.content.read_through_enabled);
+        assert_eq!(
+            (
+                c.content.max_upload_file_count,
+                c.content.max_upload_file_size,
+                c.content.max_upload_total_size,
+            ),
+            (3000, 100 * 1024 * 1024, 2 * 1024 * 1024 * 1024)
+        );
+        assert!(c.content.check_upload_limits().is_ok());
         assert_eq!(
             (
                 c.content.max_upload_field_count,

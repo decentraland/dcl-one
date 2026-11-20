@@ -18,15 +18,23 @@
 //! replay right after the chain's shape check, unsigned and without the
 //! entity file; this node does not. 400
 //! `{errors}` for a refused deployment and `{error}` for a malformed form,
-//! 413 `{error}` for one past a form limit (upstream's multipart limits and
-//! texts, the total capped at [`MAX_DEPLOYMENT_BYTES`]), 408 `{error}` for a
+//! 413 `{error}` for one past a form limit (upstream's `MAX_UPLOAD_*`
+//! variables, defaults and texts: 3000 files of up to 100 MiB, 2 GiB in
+//! all), 408 `{error}` for a
 //! body still arriving at the upload timeout (`MULTIPART_UPLOAD_TIMEOUT_MS`,
 //! upstream's text with what arrived); 503 `{errors}` with `Retry-After`
-//! when this node could not decide (a source unset or down, the store
-//! unreadable), its cause logged, not answered, or did not decide a read
-//! form within `DEPLOYMENT_PROCESSING_TIMEOUT_MS` (worlds' text). The gates of
+//! only when this node could not decide for its own state, its cause
+//! logged, not answered ([`deployment_failure_response`] has the mapping).
+//! The gates of
 //! [`super::writes`] come before any of it (404 read-only, 503 disabled),
 //! then the 503 with `Retry-After: 60` while the node is bootstrapping.
+//!
+//! The form is read into memory, not spooled to disk as upstream does: a
+//! deploy holds up to `MAX_UPLOAD_TOTAL_SIZE` (2 GiB by default) while it
+//! is read, hashed and stored. The in-memory upload budget
+//! (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, never below `MAX_UPLOAD_TOTAL_SIZE`)
+//! bounds what every deploy of the process holds together; a body without
+//! a declared length reserves the whole `MAX_UPLOAD_TOTAL_SIZE`.
 //! Before the body is read, in upstream's order: a client address past its
 //! daily quota 429, a body that does not fit the in-memory upload budget
 //! 503, and a client with its uploads or bytes in flight 429
@@ -69,32 +77,35 @@ use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 use serde_json::{Value, json};
 
-use super::SharedState;
 use super::errors::{AppError, AppResult};
 use super::partial_deployments;
 use super::write_deployer::DeployFailure;
 use super::writes;
+use super::{Settings, SharedState};
 use crate::auth::MAX_AUTH_CHAIN_LINKS;
-
-/// Upstream's `MAX_UPLOAD_FILE_COUNT` and `MAX_UPLOAD_FILE_SIZE` defaults.
-pub const MAX_DEPLOY_FILES: usize = 3000;
-pub const MAX_DEPLOY_FILE_BYTES: usize = 100 * 1024 * 1024;
-
-/// The bytes of every file and field value a form may carry (upstream's
-/// `MAX_UPLOAD_TOTAL_SIZE`, 2 GiB there): the old `MAX_DEPLOYMENT_SIZE_BYTES`
-/// default. The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
-/// `infra/gateway/gateway.py`) sits just above [`max_deployment_body_bytes`];
-/// a gateway test reads these constants.
-pub const MAX_DEPLOYMENT_BYTES: usize = 200 * 1024 * 1024;
 
 /// The most framing a part adds (upstream `MULTIPART_PART_FRAMING_BYTES`):
 /// a 16 KiB header block plus a boundary line and CRLFs.
 const MULTIPART_PART_FRAMING_BYTES: usize = 16 * 1024 + 128;
 
-/// The largest body a form within the limits can have, framing included
-/// (upstream `maxMultipartBodySize`); the route's body limit.
-pub fn max_deployment_body_bytes(max_fields: usize) -> usize {
-    MAX_DEPLOYMENT_BYTES + (MAX_DEPLOY_FILES + max_fields + 1) * MULTIPART_PART_FRAMING_BYTES
+/// The largest body a form within the `MAX_UPLOAD_*` limits can have,
+/// framing included (upstream `maxMultipartBodySize`); the route's body
+/// limit. The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
+/// `infra/gateway/gateway.py`) sits just above it at the defaults; a gateway
+/// test reads this formula and the defaults.
+pub fn max_deployment_body_bytes(settings: &Settings) -> usize {
+    multipart_body_limit(
+        settings.max_upload_total_bytes,
+        settings.max_upload_file_count,
+        settings.max_upload_field_count,
+    )
+}
+
+fn multipart_body_limit(max_total: usize, max_files: usize, max_fields: usize) -> usize {
+    max_total.saturating_add(
+        (max_files.saturating_add(max_fields).saturating_add(1))
+            .saturating_mul(MULTIPART_PART_FRAMING_BYTES),
+    )
 }
 
 fn invalid(msg: impl Into<String>) -> AppError {
@@ -106,10 +117,11 @@ fn too_large(msg: impl Into<String>) -> AppError {
 }
 
 /// Upstream's 413 for a body past [`max_deployment_body_bytes`].
-fn body_too_large(max_fields: usize) -> AppError {
+fn body_too_large(settings: &Settings) -> AppError {
     too_large(format!(
-        "The request body is too large. The maximum allowed total upload size is {MAX_DEPLOYMENT_BYTES} bytes plus multipart framing ({} bytes in all).",
-        max_deployment_body_bytes(max_fields)
+        "The request body is too large. The maximum allowed total upload size is {} bytes plus multipart framing ({} bytes in all).",
+        settings.max_upload_total_bytes,
+        max_deployment_body_bytes(settings)
     ))
 }
 
@@ -121,9 +133,9 @@ const NOT_MULTIPART_MESSAGE: &str = "Invalid request: expected a multipart/form-
 
 /// A read error of the form: past the route's body limit, upstream's 413;
 /// any other parser failure its fixed 400, the parser's text logged.
-fn read_error(e: MultipartError, max_fields: usize) -> AppError {
+fn read_error(e: MultipartError, settings: &Settings) -> AppError {
     if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        return body_too_large(max_fields);
+        return body_too_large(settings);
     }
     tracing::debug!(error = %e, "POST /entities: unreadable multipart form");
     invalid("Invalid multipart/form-data request")
@@ -266,20 +278,24 @@ enum Form {
     Refused(Response),
 }
 
-/// Reads the whole form with upstream's multipart limits and answers
-/// (`multipart.ts`): text fields by name, at most `max_fields` of up to
-/// `max_field_bytes` each, and file parts in order with their field names,
-/// each up to [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of
-/// them, all values together up to [`MAX_DEPLOYMENT_BYTES`]; a limit passed
-/// is a 413, a name sent twice a 400. `before_files` sees the fields read
-/// before the first file part (the clients send theirs first) and may
-/// refuse the form there.
+/// Reads the whole form into memory with upstream's multipart limits and
+/// answers (`multipart.ts`): text fields by name, at most
+/// `MAX_UPLOAD_FIELD_COUNT` of up to `MAX_UPLOAD_FIELD_SIZE` each, and file
+/// parts in order with their field names, each up to `MAX_UPLOAD_FILE_SIZE`,
+/// at most `MAX_UPLOAD_FILE_COUNT` of them, all values together up to
+/// `MAX_UPLOAD_TOTAL_SIZE`; a limit passed is a 413, a name sent twice a
+/// 400. `before_files` sees the fields read before the first file part (the
+/// clients send theirs first) and may refuse the form there.
 async fn read_form(
     multipart: &mut Multipart,
-    max_fields: usize,
-    max_field_bytes: usize,
+    settings: &Settings,
     before_files: impl AsyncFnOnce(&BTreeMap<String, String>) -> Option<Response>,
 ) -> AppResult<Form> {
+    let max_fields = settings.max_upload_field_count;
+    let max_field_bytes = settings.max_upload_field_bytes;
+    let max_files = settings.max_upload_file_count;
+    let max_file_bytes = settings.max_upload_file_bytes;
+    let max_total = settings.max_upload_total_bytes;
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<(String, Bytes)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -289,9 +305,9 @@ async fn read_form(
     let duplicate = |name: &str| invalid(format!("Duplicate form field '{name}'"));
     let mut count_total = |bytes: usize| {
         total_bytes = total_bytes.saturating_add(bytes);
-        if total_bytes > MAX_DEPLOYMENT_BYTES {
+        if total_bytes > max_total {
             return Err(too_large(format!(
-                "The request body is too large. The maximum allowed total upload size is {MAX_DEPLOYMENT_BYTES} bytes."
+                "The request body is too large. The maximum allowed total upload size is {max_total} bytes."
             )));
         }
         Ok(())
@@ -300,7 +316,7 @@ async fn read_form(
     while let Some(mut field) = multipart
         .next_field()
         .await
-        .map_err(|e| read_error(e, max_fields))?
+        .map_err(|e| read_error(e, settings))?
     {
         let name = field.name().unwrap_or("").to_string();
 
@@ -310,9 +326,9 @@ async fn read_form(
             {
                 return Ok(Form::Refused(refused));
             }
-            if files.len() >= MAX_DEPLOY_FILES {
+            if files.len() >= max_files {
                 return Err(too_large(format!(
-                    "Too many files in the request. The maximum allowed is {MAX_DEPLOY_FILES}."
+                    "Too many files in the request. The maximum allowed is {max_files}."
                 )));
             }
             if !seen.insert(name.clone()) {
@@ -322,10 +338,10 @@ async fn read_form(
             // without one (the Explorer names its parts by hash only).
             let file_name = field.file_name().unwrap_or("undefined").to_string();
             let mut buf = BytesMut::new();
-            while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, max_fields))? {
-                if buf.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
+            while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, settings))? {
+                if buf.len().saturating_add(chunk.len()) > max_file_bytes {
                     return Err(too_large(format!(
-                        "File '{file_name}' is too large. The maximum allowed size per file is {MAX_DEPLOY_FILE_BYTES} bytes."
+                        "File '{file_name}' is too large. The maximum allowed size per file is {max_file_bytes} bytes."
                     )));
                 }
                 count_total(chunk.len())?;
@@ -340,7 +356,7 @@ async fn read_form(
             }
             field_count += 1;
             let mut buf = Vec::new();
-            while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, max_fields))? {
+            while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, settings))? {
                 if buf.len().saturating_add(chunk.len()) > max_field_bytes {
                     return Err(too_large(format!(
                         "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
@@ -381,21 +397,9 @@ fn entity_file_of(files: &[Bytes], entity_id: &str) -> Option<Value> {
 /// check past its deadline or into a non-revert failure.
 fn is_refundable(files: &[Bytes], entity_id: &str) -> bool {
     entity_file_of(files, entity_id).is_some_and(|entity| {
-        !has_nul(&entity)
-            && !asks_named_contracts(&entity)
+        !asks_named_contracts(&entity)
             && access_calls_of(&entity) <= crate::validator::onchain::CALLS_PER_BATCH
     })
-}
-
-/// Whether a string or key holds a NUL, which the metadata column refuses at the
-/// write: that 503 is the request's own.
-fn has_nul(value: &Value) -> bool {
-    match value {
-        Value::String(s) => s.contains('\0'),
-        Value::Array(items) => items.iter().any(has_nul),
-        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
-        _ => false,
-    }
 }
 
 /// Whether the access check calls contracts the entity names: a wearable's or
@@ -470,6 +474,22 @@ fn access_calls_of(entity: &Value) -> usize {
     calls + len(metadata.get("namesForExtraSlots"))
 }
 
+/// The answer to a refused or undecided deploy. A failure that follows
+/// from the request is a 400 `{errors}`, as upstream answers it; only a
+/// failure of this node's side is a 503 `{errors}` with `Retry-After`:
+///
+/// | failure | answer |
+/// |---|---|
+/// | the entity, its files, signature, rights, pointers, TTLs, rate limits, metadata the database cannot store (a NUL), more items than one access check asks about | 400 |
+/// | a contract-wallet (EIP-1654) contract answering no, or reverting | 400 |
+/// | the database or content store failing, a store collection racing the deploy | 503 |
+/// | an access-check RPC unreachable or failing, or past the access-check deadline | 503 |
+/// | a source unset: no `ETH_RPC_URL` for a contract-wallet signature | 503 |
+/// | a read form not decided within `DEPLOYMENT_PROCESSING_TIMEOUT_MS` | 503 |
+///
+/// Upstream answers a failed access-check RPC with the 400 of a refused
+/// right; this node answers 503, so a client retries what the chain did not
+/// refuse.
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
     let unavailable = !matches!(failure, DeployFailure::Rejected(_, _));
     let (status, errors) = match failure {
@@ -518,11 +538,12 @@ fn quota_exceeded_response(retry_after_secs: u64) -> Response {
     )
 }
 
-/// The bytes a body can occupy: its declared length, else the body cap.
-fn declared_body_bytes(headers: &HeaderMap) -> u64 {
+/// The bytes a body can occupy: its declared length, else
+/// `MAX_UPLOAD_TOTAL_SIZE`.
+fn declared_body_bytes(headers: &HeaderMap, settings: &Settings) -> u64 {
     declared_length(headers)
         .unwrap_or(u64::MAX)
-        .min(MAX_DEPLOYMENT_BYTES as u64)
+        .min(settings.max_upload_total_bytes as u64)
 }
 
 /// The declared `Content-Length`, if any.
@@ -634,7 +655,7 @@ pub async fn create_entity(
         return Ok(quota_exceeded_response(retry_after));
     }
 
-    let body_bytes = declared_body_bytes(&headers);
+    let body_bytes = declared_body_bytes(&headers, &state.settings);
     let Some(_reservation) = state.upload_budget.try_reserve(body_bytes) else {
         return Ok(with_retry_after(
             super::errors::json_error(
@@ -657,9 +678,10 @@ pub async fn create_entity(
     let multipart = Multipart::from_request(counting_body(request, Arc::clone(&received)), &())
         .await
         .map_err(|_| invalid(NOT_MULTIPART_MESSAGE))?;
-    let max_fields = state.settings.max_upload_field_count;
-    if declared_length(&headers).is_some_and(|n| n > max_deployment_body_bytes(max_fields) as u64) {
-        return Err(body_too_large(max_fields));
+    if declared_length(&headers)
+        .is_some_and(|n| n > max_deployment_body_bytes(&state.settings) as u64)
+    {
+        return Err(body_too_large(&state.settings));
     }
 
     let request = Request {
@@ -771,8 +793,7 @@ async fn deploy_form(
     };
     let read = read_form(
         &mut multipart,
-        settings.max_upload_field_count,
-        settings.max_upload_field_bytes,
+        settings,
         async |fields: &BTreeMap<String, String>| {
             if !request.declared_partial && !is_partial(fields) {
                 return None;
@@ -1087,18 +1108,6 @@ mod tests {
     }
 
     #[test]
-    fn metadata_the_write_refuses_is_never_refunded() {
-        let with = |description: &str| {
-            serde_json::json!({"type": "scene", "pointers": ["0,0"],
-                "metadata": {"avatars": [{"description": description}]}})
-        };
-        assert!(has_nul(&with("escaped \0 is invalid")));
-        assert!(!has_nul(&with(r"literal \u0000 is valid")));
-        let key = serde_json::json!({"metadata": {"a\u{0}b": 1}});
-        assert!(has_nul(&key));
-    }
-
-    #[test]
     fn checks_on_contracts_the_entity_names_are_never_refunded() {
         let wearing = |urn: &str| {
             serde_json::json!({
@@ -1325,9 +1334,15 @@ mod tests {
                 json!({ "errors": ["no"] })
             );
         }
-        let unavailable =
-            deployment_failure_response(DeployFailure::Unavailable(vec!["down".into()]));
-        assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(unavailable.headers()[header::RETRY_AFTER], "30");
+        // This node's side only: a source down or unset, the store, a contract-wallet
+        // signature it could not ask about.
+        for failure in [
+            DeployFailure::Unavailable(vec!["down".into()]),
+            DeployFailure::Unverifiable(vec!["The signature is invalid. rpc".into()]),
+        ] {
+            let unavailable = deployment_failure_response(failure);
+            assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(unavailable.headers()[header::RETRY_AFTER], "30");
+        }
     }
 }
