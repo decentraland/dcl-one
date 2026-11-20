@@ -74,19 +74,19 @@ describe('the mapping manifest', () => {
 
     it('should refuse a field the schema does not name', () => {
       expect(() => parseMappingManifest(manifestText([{ ...badge, fileKey: 'x' }]))).toThrow(
-        /schema at sets\.0/
+        /schema at sets\[0\] \(unrecognized_keys\)/
       )
     })
 
     it('should refuse a set id that is not a node id', () => {
       expect(() => parseMappingManifest(manifestText([{ ...badge, setId: '3-40' }]))).toThrow(
-        /schema at sets\.0\.setId/
+        /schema at sets\[0\]\.setId/
       )
     })
 
     it('should refuse a set with no variants', () => {
       expect(() => parseMappingManifest(manifestText([{ ...badge, variants: [] }]))).toThrow(
-        /schema at sets\.0\.variants/
+        /schema at sets\[0\]\.variants/
       )
     })
 
@@ -102,7 +102,7 @@ describe('the mapping manifest', () => {
         parseMappingManifest(
           manifestText([{ ...button, properties: { Hover: { type: 'VARIANT', default: url } } }])
         )
-      ).toThrow(/Figma URL or a key-shaped string at sets\[0\]\.properties\.Hover\.default/)
+      ).toThrow(/Figma URL or a key-shaped string at sets\[0\]\.properties\.<name>\.default/)
     })
 
     it('should refuse a key-shaped property name', () => {
@@ -111,6 +111,32 @@ describe('the mapping manifest', () => {
           manifestText([{ ...badge, properties: { aB3dE6gH9jK2mN5pQ8sT1v: { type: 'TEXT' } } }])
         )
       ).toThrow(/key-shaped string/)
+    })
+
+    it.each([
+      [
+        'a property name',
+        { ...badge, properties: { ['aB3dE6gH9jK2' + 'mN5pQ8sT1v']: { type: 'TEXT' } } }
+      ],
+      [
+        'a variant property name',
+        {
+          ...badge,
+          variants: [{ id: '3:40', name: 'x', props: { ['aB3dE6gH9jK2' + 'mN5pQ8sT1v']: 'x' } }]
+        }
+      ],
+      ['a value the schema refuses', { ...badge, kind: 'aB3dE6gH9jK2' + 'mN5pQ8sT1v' }],
+      ['a key under an unknown field', { ...badge, ['aB3dE6gH9jK2' + 'mN5pQ8sT1v']: 1 }]
+    ])('should not repeat %s in its diagnostic', (_label, set) => {
+      let message = ''
+      try {
+        parseMappingManifest(manifestText([set]))
+      } catch (error) {
+        message = (error as Error).message
+      }
+
+      expect(message).not.toBe('')
+      expect(message).not.toContain('aB3dE6gH9jK2' + 'mN5pQ8sT1v')
     })
 
     it('should accept an empty list of sets', () => {
@@ -157,7 +183,7 @@ describe('the mapping manifest', () => {
     it('should refuse a file edited into another shape', async () => {
       await writeFile(file, manifestText([{ ...badge, kind: 'frame' }]))
 
-      await expect(loadMappingManifest(file)).rejects.toThrow(/schema at sets\.0\.kind/)
+      await expect(loadMappingManifest(file)).rejects.toThrow(/schema at sets\[0\]\.kind/)
     })
   })
 

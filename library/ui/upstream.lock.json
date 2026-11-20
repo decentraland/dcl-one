@@ -2653,14 +2653,14 @@
           ]
         },
         "library/ui/figma/src/contract/manifest-refresh.test.ts": {
-          "sha256": "f454af737d566b07a49ca76db07a173d1b6fe550846ec2c4f73a6806a3ab0f69",
+          "sha256": "faa97cffd3d7024cb5ae2400811a33cf9b8e02f775222598ee093097e5cbe5dd",
           "fds": null,
           "deviation": [
             "mapping-manifest"
           ]
         },
         "library/ui/figma/src/contract/manifest-refresh.ts": {
-          "sha256": "0c04ac489369e55709740b5c96389fea9e02cf4b359d955e15aad204d545313b",
+          "sha256": "63933bb37e7c1b5a79d16b33b16fb96af5f5ea6600ccc657229395f8655700b1",
           "fds": null,
           "deviation": [
             "mapping-manifest"
@@ -2692,14 +2692,14 @@
           "note": "differed from figma-design-system before this pull request; this pull request removes its live Figma access"
         },
         "library/ui/figma/src/contract/mapping-manifest.test.ts": {
-          "sha256": "a62f6bfe96131b0ebf40347e0300996bedd115aa02f56e54271c09a901ae01f1",
+          "sha256": "f25e04bcf1ed0bf30e0ccaca5e9335cb8e1f8528b33864b39ba316b12a20daf1",
           "fds": null,
           "deviation": [
             "mapping-manifest"
           ]
         },
         "library/ui/figma/src/contract/mapping-manifest.ts": {
-          "sha256": "a3c60c273393adbcdee2440c3ea1ab58c4b36a7f5389d1cd98ca76415e0796fe",
+          "sha256": "6d0236219b875c8530540d07b88c51fc2bc168767194e42d49a2336f2200aa0f",
           "fds": null,
           "deviation": [
             "mapping-manifest"

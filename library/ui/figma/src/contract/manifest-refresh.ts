@@ -4,6 +4,7 @@ import type { FigmaClient } from '../figma/client.js'
 import type { FigmaSet } from './figma-index.js'
 import { findMappingFiles } from './library.js'
 import { readMappingFile } from './mapping-file.js'
+import { parseMappingManifest, serializeMappingManifest } from './mapping-manifest.js'
 
 type RestProperty = { type?: unknown; defaultValue?: unknown; variantOptions?: unknown }
 type RestNode = {
@@ -17,10 +18,17 @@ type RestNode = {
 /** Ids asked for in one request; the API takes them in the query string. */
 const NODE_BATCH = 50
 
+// Errors name a node only by the id a mapping gave, and a variant or property only by its position: names read
+// from the file are checked only once the set is complete (checkedLiveSets), so they never reach a message.
 const text = (value: unknown, what: string): string => {
   if (typeof value !== 'string') throw new Error(`${what} has no name`)
   return value
 }
+
+// A node type as the REST API spells it; anything else is not repeated in a message.
+const NODE_TYPE = /^[A-Z][A-Z_]{0,39}$/
+const typeLabel = (value: unknown) =>
+  typeof value === 'string' && NODE_TYPE.test(value) ? value : 'another kind of node'
 
 /** `Size=Large, State=Hover` as Figma names a variant: its properties by name. */
 function variantProps(name: string): Record<string, string> {
@@ -35,9 +43,11 @@ function variantProps(name: string): Record<string, string> {
 
 function properties(node: RestNode, nodeId: string): FigmaSet['properties'] {
   const out: FigmaSet['properties'] = {}
-  for (const [name, definition] of Object.entries(node.componentPropertyDefinitions ?? {})) {
-    if (typeof definition.type !== 'string')
-      throw new Error(`Figma node ${nodeId}: property "${name}" has no type`)
+  for (const [index, [name, definition]] of Object.entries(
+    node.componentPropertyDefinitions ?? {}
+  ).entries()) {
+    if (typeof definition?.type !== 'string')
+      throw new Error(`Figma node ${nodeId}: property ${index + 1} has no type`)
     const value = definition.defaultValue
     const options = definition.variantOptions
     out[name] = {
@@ -56,15 +66,15 @@ function figmaSetFromNode(nodeId: string, node: RestNode | null | undefined): Fi
   if (node.type === 'COMPONENT_SET') {
     const variants = (node.children ?? [])
       .filter((child) => child.type === 'COMPONENT')
-      .map((child) => {
-        const variantName = text(child.name, `A variant of Figma node ${nodeId}`)
+      .map((child, index) => {
+        const variantName = text(child.name, `Variant ${index + 1} of Figma node ${nodeId}`)
         return {
-          id: text(child.id, `A variant of Figma node ${nodeId}`),
+          id: text(child.id, `Variant ${index + 1} of Figma node ${nodeId}`),
           name: variantName,
           props: variantProps(variantName)
         }
       })
-    if (variants.length === 0) throw new Error(`Figma node ${nodeId} ("${name}") has no variants`)
+    if (variants.length === 0) throw new Error(`Figma node ${nodeId} has no variants`)
     return {
       setId: nodeId,
       name,
@@ -84,7 +94,7 @@ function figmaSetFromNode(nodeId: string, node: RestNode | null | undefined): Fi
       variants: [{ id: nodeId, name, props: {} }]
     }
   throw new Error(
-    `Figma node ${nodeId} ("${name}") is a ${String(node.type)}, not a component or a component set`
+    `Figma node ${nodeId} is ${typeLabel(node.type)}, not a component or a component set`
   )
 }
 
@@ -118,10 +128,29 @@ async function readMappedSets(
 
 type Difference = { setId: string; name: string; changes: string[] }
 
+// Both sides are compared as the manifest stores them: a read keeps Figma's order of a variant's properties,
+// the manifest sorts them, and that order is not a difference.
+const canonical = (sets: FigmaSet[]): FigmaSet[] =>
+  parseMappingManifest(serializeMappingManifest(sets))
+
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
+/** Live sets that passed the manifest's own checks, in its canonical form; a refused read names no value. */
+function checkedLiveSets(live: FigmaSet[]): FigmaSet[] {
+  try {
+    return canonical(live)
+  } catch (error) {
+    throw new Error(
+      `The live file gave data the manifest refuses: ${(error as Error).message.replace(/^\S+ /, '')}`,
+      { cause: error }
+    )
+  }
+}
+
 /** What differs between the tracked manifest and a fresh read, per set, in plain words. */
-function manifestDifferences(tracked: FigmaSet[], live: FigmaSet[]): Difference[] {
+function manifestDifferences(trackedSets: FigmaSet[], liveSets: FigmaSet[]): Difference[] {
+  const tracked = canonical(trackedSets)
+  const live = checkedLiveSets(liveSets)
   const differences: Difference[] = []
   const trackedById = new Map(tracked.map((set) => [set.setId, set]))
   const liveIds = new Set(live.map((set) => set.setId))
@@ -151,5 +180,12 @@ function manifestDifferences(tracked: FigmaSet[], live: FigmaSet[]): Difference[
   return differences
 }
 
-export { figmaSetFromNode, manifestDifferences, mappedNodeIds, readMappedSets, variantProps }
+export {
+  checkedLiveSets,
+  figmaSetFromNode,
+  manifestDifferences,
+  mappedNodeIds,
+  readMappedSets,
+  variantProps
+}
 export type { Difference, RestNode }

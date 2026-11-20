@@ -1,6 +1,14 @@
+import { mkdtemp, readFile, readdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FigmaClient } from '../figma/client.js'
 import type { FigmaSet } from './figma-index.js'
+import {
+  parseMappingManifest,
+  serializeMappingManifest,
+  writeMappingManifest
+} from './mapping-manifest.js'
 import {
   figmaSetFromNode,
   manifestDifferences,
@@ -73,14 +81,14 @@ describe('reading a mapped node from the live file', () => {
 
     it('should refuse a frame', () => {
       expect(() => figmaSetFromNode('1:1', { id: '1:1', name: 'Hero', type: 'FRAME' })).toThrow(
-        'Figma node 1:1 ("Hero") is a FRAME, not a component or a component set'
+        'Figma node 1:1 is FRAME, not a component or a component set'
       )
     })
 
     it('should refuse a component set with no variants', () => {
       expect(() =>
         figmaSetFromNode('1:1', { id: '1:1', name: 'Empty', type: 'COMPONENT_SET', children: [] })
-      ).toThrow('Figma node 1:1 ("Empty") has no variants')
+      ).toThrow('Figma node 1:1 has no variants')
     })
 
     it('should refuse a property with no type', () => {
@@ -91,7 +99,7 @@ describe('reading a mapped node from the live file', () => {
           type: 'COMPONENT',
           componentPropertyDefinitions: { Label: {} }
         })
-      ).toThrow('Figma node 1:1: property "Label" has no type')
+      ).toThrow('Figma node 1:1: property 1 has no type')
     })
   })
 
@@ -217,6 +225,111 @@ describe('comparing the tracked manifest with a fresh read', () => {
     expect(manifestDifferences([tracked], [other])).toEqual([
       { setId: '3:40', name: 'Badge', changes: ['not in the manifest'] },
       { setId: '20:1', name: 'Button', changes: ['no mapping names it'] }
+    ])
+  })
+})
+
+// Built by concatenation so the tree holds no literal that looks like a Figma key.
+const SECRET = 'aB3dE6gH9jK2' + 'mN5pQ8sT1v'
+
+describe('a refresh followed by a verify', () => {
+  it('should find no difference when Figma lists variant properties in another order', () => {
+    const live = figmaSetFromNode('20:1', {
+      id: '20:1',
+      name: 'Toggle',
+      type: 'COMPONENT_SET',
+      componentPropertyDefinitions: {
+        Z: { type: 'VARIANT', defaultValue: 'On', variantOptions: ['On', 'Off'] },
+        A: { type: 'VARIANT', defaultValue: 'Off', variantOptions: ['Off', 'On'] }
+      },
+      children: [{ id: '20:2', name: 'Z=On, A=Off', type: 'COMPONENT' }]
+    })
+    const tracked = parseMappingManifest(serializeMappingManifest([live]))
+
+    expect(Object.keys(tracked[0]!.variants[0]!.props)).toEqual(['A', 'Z'])
+    expect(manifestDifferences(tracked, [live])).toEqual([])
+  })
+})
+
+describe('when the live file gives a name the manifest refuses', () => {
+  const leaking = (where: 'name' | 'property' | 'variant'): RestNode => ({
+    id: '20:1',
+    name: where === 'name' ? `Card ${SECRET}` : 'Card',
+    type: 'COMPONENT_SET',
+    componentPropertyDefinitions: {
+      [where === 'property' ? SECRET : 'Size']: {
+        type: 'VARIANT',
+        defaultValue: 'L',
+        variantOptions: ['L']
+      }
+    },
+    children: [
+      { id: '20:2', name: where === 'variant' ? `Size=${SECRET}` : 'Size=L', type: 'COMPONENT' }
+    ]
+  })
+  const tracked = [figmaSetFromNode('20:1', leaking('name'))].map((set) => ({
+    ...set,
+    name: 'Card'
+  }))
+
+  it.each(['name', 'property', 'variant'] as const)(
+    'should refuse the %s in verify without repeating it',
+    (where) => {
+      const read = () => manifestDifferences(tracked, [figmaSetFromNode('20:1', leaking(where))])
+
+      expect(read).toThrow(/The live file gave data the manifest refuses/)
+      try {
+        read()
+      } catch (error) {
+        expect((error as Error).message).not.toContain(SECRET)
+      }
+    }
+  )
+
+  it.each(['name', 'property', 'variant'] as const)(
+    'should refuse the %s in refresh without repeating it and keep the previous manifest',
+    async (where) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'manifest-refresh-'))
+      const file = path.join(directory, 'figma-mapping-manifest.json')
+      await writeMappingManifest(file, tracked)
+      const before = await readFile(file, 'utf8')
+
+      const error = await writeMappingManifest(file, [
+        figmaSetFromNode('20:1', leaking(where))
+      ]).catch((caught: Error) => caught)
+
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).not.toContain(SECRET)
+      expect(await readFile(file, 'utf8')).toBe(before)
+      expect(await readdir(directory)).toEqual(['figma-mapping-manifest.json'])
+    }
+  )
+
+  it('should not repeat a refused node type or property name in a read error', () => {
+    const errors = [
+      () => figmaSetFromNode('1:1', { id: '1:1', name: SECRET, type: SECRET }),
+      () =>
+        figmaSetFromNode('1:1', {
+          id: '1:1',
+          name: SECRET,
+          type: 'COMPONENT',
+          componentPropertyDefinitions: { [SECRET]: {} }
+        }),
+      () =>
+        figmaSetFromNode('1:1', { id: '1:1', name: SECRET, type: 'COMPONENT_SET', children: [] })
+    ].map((read) => {
+      try {
+        read()
+        return ''
+      } catch (error) {
+        return (error as Error).message
+      }
+    })
+
+    expect(errors).toEqual([
+      'Figma node 1:1 is another kind of node, not a component or a component set',
+      'Figma node 1:1: property 1 has no type',
+      'Figma node 1:1 has no variants'
     ])
   })
 })

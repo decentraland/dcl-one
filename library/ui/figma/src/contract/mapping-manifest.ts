@@ -51,16 +51,51 @@ function manifestPath(mappingRoot: string): string {
   return path.resolve(mappingRoot, '..', MANIFEST_FILE)
 }
 
-function privateStrings(value: unknown, at: string, found: string[]): void {
+// Field names of the schema. Any other path segment is a property or variant-property name taken from the
+// design, which can be what the parser refuses, so diagnostics replace it with its position.
+const FIELDS = new Set([
+  'schema',
+  'sets',
+  'setId',
+  'name',
+  'page',
+  'kind',
+  'properties',
+  'variants',
+  'id',
+  'props',
+  'type',
+  'default',
+  'options'
+])
+
+/** A path that names schema fields and positions only, never a value or a name read from the design. */
+function safePath(segments: readonly PropertyKey[]): string {
+  return (
+    segments
+      .map((segment) =>
+        typeof segment === 'number'
+          ? `[${segment}]`
+          : FIELDS.has(String(segment))
+            ? `.${String(segment)}`
+            : '.<name>'
+      )
+      .join('')
+      .replace(/^\./, '') || 'the root'
+  )
+}
+
+function privateStrings(value: unknown, at: PropertyKey[], found: string[]): void {
   if (typeof value === 'string') {
-    if (FIGMA_URL.test(value) || KEY_SHAPE.test(value)) found.push(at)
+    if (FIGMA_URL.test(value) || KEY_SHAPE.test(value)) found.push(safePath(at))
   } else if (Array.isArray(value)) {
-    value.forEach((item, index) => privateStrings(item, `${at}[${index}]`, found))
+    value.forEach((item, index) => privateStrings(item, [...at, index], found))
   } else if (value && typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) {
-      privateStrings(key, `${at}.${key} (name)`, found)
-      privateStrings(item, `${at}.${key}`, found)
-    }
+    Object.entries(value).forEach(([key, item], index) => {
+      if (FIGMA_URL.test(key) || KEY_SHAPE.test(key))
+        found.push(`${safePath(at)} (name of entry ${index})`)
+      privateStrings(item, [...at, key], found)
+    })
   }
 }
 
@@ -74,13 +109,14 @@ function parseMappingManifest(text: string, label = MANIFEST_FILE): FigmaSet[] {
   }
   const parsed = manifestSchema.safeParse(raw)
   if (!parsed.success) {
+    // The issue's message can quote the refused value, so only its code and a safe path are reported.
     const issue = parsed.error.issues[0]
     throw new Error(
-      `${label} does not match the mapping manifest schema at ${issue?.path.join('.') || 'the root'}: ${issue?.message}`
+      `${label} does not match the mapping manifest schema at ${safePath(issue?.path ?? [])} (${issue?.code ?? 'invalid'})`
     )
   }
   const leaked: string[] = []
-  privateStrings(parsed.data.sets, 'sets', leaked)
+  privateStrings(parsed.data.sets, ['sets'], leaked)
   if (leaked.length > 0)
     throw new Error(`${label} holds a Figma URL or a key-shaped string at ${leaked[0]}`)
   const seen = new Set<string>()
@@ -151,6 +187,7 @@ function serializeMappingManifest(sets: FigmaSet[]): string {
 
 /** Replaces the manifest in one step; a failure before the rename leaves the previous file as it was. */
 async function writeMappingManifest(file: string, sets: FigmaSet[]): Promise<void> {
+  // serializeMappingManifest parses what it would write, so refused data throws here, before any file exists.
   const text = serializeMappingManifest(sets)
   const staged = `${file}.${process.pid}.tmp`
   await writeFile(staged, text, { flag: 'wx' })
