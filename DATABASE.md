@@ -1853,10 +1853,11 @@ Invariants:
   reason gives way to a rent of the listing: an incremental fold also
   revisits a cancelled listing whose own `rented` log is past its block. The
   fold reads the distinct signatures of the venue's `rented` rows past that
-  block once and hash-joins the venue's listings to them, so the leg costs
-  one read of the range's rents plus one hash probe per listing in the scan
-  the fold already makes, with no event lookup per cancelled listing. A set
-  larger than the session's hash memory spills to disk in batches and stays
+  block once and joins the venue's listings to them. In the measured custom
+  and generic plans that is a hash join, so the leg costs one read of the
+  range's rents plus one pass over the venue's listings, which the fold
+  already scans, with no event lookup per cancelled listing. A set larger
+  than the session's hash memory spills to disk in batches and stays
   linear. A rebuild and the refresh route never read that set. The refresh
   route, which folds one listing over every block, makes one
   `rental_event_signature_idx` probe for that listing's signature instead.

@@ -295,13 +295,14 @@ pub async fn insert_events(
 /// fold also revisits a cancelled listing whose own rent is past `$1`: a
 /// rent indexed after an expiry or transfer cancellation still executes it.
 /// The fold reads the distinct signatures of the venue's rents past `$1`
-/// once (`new_rent`) and joins the venue's listings to them, a hash join
-/// under custom and generic plans alike, so the leg costs one read of the
-/// range's rents and one probe per listing, with no event lookup per
-/// cancelled listing. `new_rent` is empty and never read for a rebuild or
-/// a one-listing read; the one-listing read probes
-/// `rental_event_signature_idx` for its own signature instead. `$2` is the
-/// Rentals address, lowercase; the nonces are `[contract, signer, asset]`.
+/// once (`new_rent`) and joins the venue's listings to them. In the
+/// measured custom and generic plans that is a hash join, so the leg costs
+/// one read of the range's rents and one pass over the venue's listings,
+/// with no event lookup per cancelled listing. `new_rent` is empty and its
+/// rents are never read for a rebuild or a one-listing read; the
+/// one-listing read probes `rental_event_signature_idx` for its own
+/// signature instead. `$2` is the Rentals address, lowercase; the nonces
+/// are `[contract, signer, asset]`.
 /// `$3`, when set, narrows it to one listing (the refresh route).
 const VERDICT_SQL: &str = "
 WITH new_rent AS (
