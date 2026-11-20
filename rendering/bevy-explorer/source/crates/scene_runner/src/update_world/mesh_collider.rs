@@ -29,6 +29,7 @@ use crate::{
 use common::{
     dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
     sets::PostUpdateSets,
+    structs::ShowOutOfBounds,
 };
 use console::DoAddConsoleCommand;
 use dcl_component::{
@@ -36,8 +37,12 @@ use dcl_component::{
     SceneComponentId, SceneEntityId,
 };
 use dcl_types::interface::ComponentPosition;
+use scene_material::BoundRegion;
 
 use super::AddCrdtInterfaceExt;
+
+mod bounds;
+use bounds::ColliderBounds;
 
 pub struct MeshColliderPlugin;
 
@@ -169,6 +174,7 @@ impl Plugin for MeshColliderPlugin {
             propagate_disabled::<CtCollider>.in_set(SceneSets::Init),
         );
 
+        app.init_resource::<ShowOutOfBounds>();
         app.add_systems(
             Update,
             update_scene_collider_data.in_set(SceneSets::PostInit),
@@ -214,6 +220,10 @@ struct ColliderState {
     translation: Vec3,
     rotation: Quat,
     scale: Vec3,
+    /// its scaled size was at least `COLLIDER_DISABLE_SIZE` at its last rescale
+    large_enough: bool,
+    /// it lies within the scene's bounds
+    in_bounds: bool,
 }
 
 #[derive(Component, Default)]
@@ -226,11 +236,35 @@ pub struct SceneColliderData {
     removed_colliders: HashSet<ColliderHandle>,
     dummy_rapier_structs: (IslandManager, RigidBodySet),
     disabled: HashSet<ColliderHandle>,
+    bounds: ColliderBounds,
 }
 
 impl SceneColliderData {
     pub(crate) fn collider_count(&self) -> usize {
         self.collider_set.len()
+    }
+
+    /// Collider data of a scene of `parcels` parcels in `regions`. A collider placed with
+    /// [`Self::update_collider_transform`] is on only while it lies within the rectangle around
+    /// them and under their height limit; triggers are exempt. No regions: no limit.
+    pub(crate) fn for_regions(regions: &[BoundRegion], parcels: usize) -> Self {
+        Self {
+            bounds: ColliderBounds::new(regions, parcels),
+            ..Default::default()
+        }
+    }
+
+    /// The height above which the scene's colliders are off; none when they have no limit.
+    pub(crate) fn height_limit(&self) -> Option<f64> {
+        self.bounds.height()
+    }
+
+    /// Colliders that are off because they reach outside the scene's bounds.
+    pub(crate) fn out_of_bounds_count(&self) -> usize {
+        self.collider_state
+            .values()
+            .filter(|state| !state.in_bounds)
+            .count()
     }
 }
 
@@ -300,6 +334,8 @@ impl SceneColliderData {
                 translation: Vec3::ZERO,
                 rotation: Quat::IDENTITY,
                 scale: Vec3::ONE,
+                large_enough: true,
+                in_bounds: true,
             },
         );
 
@@ -409,10 +445,12 @@ impl SceneColliderData {
                     translation: init_translation,
                     scale: init_scale,
                     rotation: init_rotation,
+                    large_enough,
                     ..
                 } = self.collider_state.get(id).unwrap();
+                let mut large_enough = *large_enough;
 
-                if (&req_scale, &req_rotation, &req_translation)
+                let initial_transform = if (&req_scale, &req_rotation, &req_translation)
                     != (init_scale, init_rotation, init_translation)
                 {
                     self.changed_colliders.insert(handle);
@@ -434,7 +472,7 @@ impl SceneColliderData {
                         let size_change = (extents * (req_scale - *init_scale).abs()).max_element();
                         if size_change > COLLIDER_RESCALE_SIZE {
                             let scaled_max = (extents * req_scale.abs()).max_element();
-                            collider.set_enabled(scaled_max >= COLLIDER_DISABLE_SIZE);
+                            large_enough = scaled_max >= COLLIDER_DISABLE_SIZE;
                             new_scale = req_scale;
                             // colliders don't have a scale, we have to modify the shape directly when scale changes (significantly)
                             collider.set_shape(base_collider.shape().scale_ext(req_scale));
@@ -450,8 +488,26 @@ impl SceneColliderData {
                         req_translation.as_dvec3().into(),
                         req_rotation.as_dquat().into(),
                     ));
-                    return Some(initial_transform);
+                    Some(initial_transform)
+                } else {
+                    None
+                };
+
+                let state_mut = self.collider_state.get_mut(id).unwrap();
+                state_mut.large_enough = large_enough;
+                state_mut.in_bounds = collider.is_sensor() || self.bounds.contains(collider);
+                let enabled = state_mut.large_enough && state_mut.in_bounds;
+                if enabled != collider.is_enabled() {
+                    collider.set_enabled(enabled);
+                    // the bvh skips a collider that is off, so one turned off has to leave it
+                    if enabled {
+                        self.removed_colliders.remove(&handle);
+                        self.changed_colliders.insert(handle);
+                    } else {
+                        self.removed_colliders.insert(handle);
+                    }
                 }
+                return initial_transform;
             }
         }
 
@@ -1062,7 +1118,7 @@ impl SceneColliderData {
             let Some(collider) = self.collider_set.get(*handle) else {
                 continue;
             };
-            if !collider.collision_groups().test(groups) {
+            if !collider.is_enabled() || !collider.collision_groups().test(groups) {
                 continue;
             }
             let proj = collider
@@ -1181,9 +1237,15 @@ pub struct GlobalGroundCollider;
 fn update_scene_collider_data(
     mut commands: Commands,
     scenes: Query<(Entity, &RendererSceneContext), Without<SceneColliderData>>,
+    show_out_of_bounds: Res<ShowOutOfBounds>,
 ) {
     for (scene_ent, ctx) in scenes.iter() {
-        let mut scene_data = SceneColliderData::default();
+        // a run that draws what reaches out of bounds keeps it solid and selectable too
+        let mut scene_data = if show_out_of_bounds.0 {
+            SceneColliderData::default()
+        } else {
+            SceneColliderData::for_regions(&ctx.bounds, ctx.parcels.len())
+        };
         for (index, parcel) in ctx.parcels.iter().enumerate() {
             let floor_panel = ColliderBuilder::cuboid(8.0, 8.0, 8.0)
                 .translation(
@@ -1639,6 +1701,8 @@ fn waits_for_reveal(
     model_in_progress && !has_collider && entity != container.container
 }
 
+#[cfg(test)]
+mod bounds_tests;
 #[cfg(test)]
 mod initial_transform_tests;
 #[cfg(test)]

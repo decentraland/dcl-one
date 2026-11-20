@@ -2,5 +2,6 @@
   "core": [],
   "data": ["core"],
   "features": ["core", "data"],
-  "routes": ["core", "data", "features"]
+  "pages": ["core", "data", "features"],
+  "routes": ["core", "data", "features", "pages"]
 }

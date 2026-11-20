@@ -129,7 +129,8 @@ async fn empty_admin_token_does_not_weaken_the_signed_fetch_branch() {
 
 #[tokio::test]
 async fn expired_signed_fetch_is_forbidden() {
-    let ts = now_ms() - 31 * 60 * 1000;
+    // Just past the 60 s window.
+    let ts = now_ms() - 65 * 1000;
     let (headers, signer) = signed_headers(ts).await;
     let admins = vec![signer];
 

@@ -1,9 +1,10 @@
 // The report form: one form with decentraland.org's fields, copy and order; the submission goes through the node (data/lib/catalyst/landings/report.ts).
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
-import { Button } from "@dcl/one-ui";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import { Button, CheckboxLabel, InputWebCreatorTools, WebSelect, WebTextarea } from "@dcl/one-ui";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
+import { GeneralClose, GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
@@ -20,10 +21,10 @@ import {
   type EvidenceUpload,
   type ReportReason,
 } from "@/data/lib/catalyst/landings/report";
-import { openSignIn } from "../../components/auth/signin-store";
+import { onBeforeBrowserSignIn, openSignIn } from "../../components/auth/signin-store";
 
-import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./ReportForm.module.css";
+import { saveSignInDraft, takeSignInDraft } from "./sign-in-draft";
 
 const REASONS: { value: ReportReason; label: string }[] = [
   { value: "scam_phishing", label: "Scam/Phishing" },
@@ -49,9 +50,12 @@ type FieldProps = {
 };
 
 /** The name and the description of a field's control: the field's label, and its helper and error lines. */
-function named(number: number) {
+function named(number: number, error?: string) {
   const id = `report-field-${number}`;
-  return { "aria-labelledby": `${id}-label`, "aria-describedby": `${id}-help ${id}-error` };
+  return {
+    "aria-labelledby": `${id}-label`,
+    "aria-describedby": error ? `${id}-help ${id}-error` : `${id}-help`,
+  };
 }
 
 function Field({ number, label, helper, optional, error, children }: FieldProps) {
@@ -63,165 +67,161 @@ function Field({ number, label, helper, optional, error, children }: FieldProps)
         <span id={`${id}-label`}>{label}</span>
         {optional ? <span className={styles.optional}>(Optional)</span> : <span className={styles.required}>*</span>}
       </p>
-      <p id={`${id}-help`} className={styles.helper}>{helper}</p>
+      <p id={`${id}-help`} className={styles.helper}>
+        {helper}
+      </p>
       {children}
-      {error && <p id={`${id}-error`} className={styles.error}>{error}</p>}
-    </div>
-  );
-}
-
-const ZWSP = "\u200b";
-
-/** MUI's outlined small Select markup: the placeholder is an InputLabel beside the combobox, which holds a zero-width
- * space until a reason is chosen. */
-function ReasonSelect({ value, onChange, invalid }: { value: ReportReason | ""; onChange: (v: ReportReason) => void; invalid: boolean }) {
-  const [open, setOpen] = useState(false);
-  const selected = REASONS.find((r) => r.value === value);
-  const choose = (v: ReportReason) => {
-    onChange(v);
-    setOpen(false);
-  };
-  return (
-    <div className={styles.select}>
-      {!selected && <label className={styles.selectLabel}>Choose a reason</label>}
-      <div className={`${styles.control}${invalid ? ` ${styles.invalid}` : ""}${open ? ` ${styles.focused}` : ""}`}>
-        <div
-          tabIndex={0}
-          role="combobox"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-label="Reason for Report"
-          className={styles.selectValue}
-          onClick={() => setOpen((o) => !o)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setOpen(false);
-            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
-              e.preventDefault();
-              setOpen(true);
-            }
-          }}
-        >
-          <span>{selected?.label ?? ZWSP}</span>
-        </div>
-        <svg className={styles.arrow} viewBox="0 0 24 24" aria-hidden="true" data-testid="ArrowDropDownIcon">
-          <path d="M7 10l5 5 5-5z" />
-        </svg>
-      </div>
-      {open && (
-        <ul className={styles.menu} role="listbox" aria-label="Reason for Report">
-          {REASONS.map((r) => (
-            <li
-              key={r.value}
-              role="option"
-              aria-selected={r.value === value}
-              tabIndex={0}
-              className={styles.option}
-              onClick={() => choose(r.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setOpen(false);
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                choose(r.value);
-              }}
-            >
-              {r.label}
-            </li>
-          ))}
-        </ul>
+      {error && (
+        <p id={`${id}-error`} className={styles.error}>
+          {error}
+        </p>
       )}
     </div>
   );
 }
 
-/** MUI's Checkbox inside a FormControlLabel: a 42px round hit area around a 24px box icon. */
-function ConfirmCheckbox({ checked, onChange, error }: { checked: boolean; onChange: (v: boolean) => void; error: boolean }) {
-  const [testId, d] = checked
-    ? ["CheckBoxIcon", "M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.11 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"]
-    : ["CheckBoxOutlineBlankIcon", "M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"];
-  return (
-    <label className={styles.confirm}>
-      <span className={`${styles.checkbox}${checked ? ` ${styles.checked}` : ""}${error ? ` ${styles.checkboxError}` : ""}`}>
-        <input type="checkbox" className={styles.checkboxInput} checked={checked} onChange={(e) => onChange(e.target.checked)} />
-        <svg className={styles.checkboxIcon} viewBox="0 0 24 24" aria-hidden="true" data-testid={testId}>
-          <path d={d} />
-        </svg>
-      </span>
-      <span className={styles.confirmLabel}>I confirm this report is accurate.</span>
-    </label>
-  );
-}
-
-function FileUpload({ files, onChange }: { files: EvidenceUpload[]; onChange: (files: EvidenceUpload[]) => void }) {
+function FileUpload({
+  files,
+  onChange,
+  invalid,
+}: {
+  files: EvidenceUpload[];
+  onChange: (files: EvidenceUpload[]) => void;
+  invalid: boolean;
+}) {
   const input = useRef<HTMLInputElement>(null);
+  const nextAttachmentId = useRef(0);
   const [problem, setProblem] = useState<string | null>(null);
 
   const select = (e: ChangeEvent<HTMLInputElement>) => {
     const chosen = Array.from(e.target.files ?? []);
     const picked = chosen.slice(0, REPORT_LIMITS.maxFiles - files.length);
-    const badType = picked.filter((f) => !ACCEPTED_TYPES.includes(f.type));
-    const tooBig = picked.filter((f) => ACCEPTED_TYPES.includes(f.type) && f.size > MAX_FILE_BYTES);
-    setProblem(
-      badType.length
-        ? `${badType.map((f) => f.name).join(", ")} is not a supported file type`
-        : tooBig.length
-          ? `${tooBig.map((f) => f.name).join(", ")} exceeded the ${REPORT_LIMITS.maxFileSizeMb}MB limit`
-          : chosen.length > picked.length
-            ? `A report takes ${REPORT_LIMITS.maxFiles} files: ${chosen.slice(picked.length).map((f) => f.name).join(", ")} was not added`
-            : null,
-    );
-    const next = picked
-      .filter((f) => ACCEPTED_TYPES.includes(f.type) && f.size <= MAX_FILE_BYTES)
-      .map((f) => ({ id: crypto.randomUUID(), name: f.name, size: f.size, blob: f, contentType: f.type }));
+    const next: EvidenceUpload[] = [];
+    const problems: string[] = [];
+    for (const file of picked) {
+      if (!ACCEPTED_TYPES.includes(file.type)) {
+        problems.push(`${file.name} is not a supported file type.`);
+      } else if (file.size === 0) {
+        problems.push(`${file.name} is empty.`);
+      } else if (file.size > MAX_FILE_BYTES) {
+        problems.push(`${file.name} exceeded the ${REPORT_LIMITS.maxFileSizeMb}MB limit.`);
+      } else {
+        next.push({
+          id: String(nextAttachmentId.current++),
+          name: file.name,
+          size: file.size,
+          blob: file,
+          contentType: file.type,
+        });
+      }
+    }
+    if (chosen.length > picked.length) {
+      problems.push(`Add up to ${REPORT_LIMITS.maxFiles} files per report.`);
+    }
+    setProblem(problems.join(" ") || null);
     if (next.length) onChange([...files, ...next]);
     if (input.current) input.current.value = "";
   };
 
   return (
     <div className={styles.upload}>
-      <input ref={input} className={styles.fileInput} type="file" multiple accept={ACCEPTED_TYPES.join(",")} onChange={select} />
+      <input
+        ref={input}
+        className={styles.fileInput}
+        type="file"
+        aria-label="Evidence"
+        multiple
+        accept={ACCEPTED_TYPES.join(",")}
+        onChange={select}
+      />
       {files.length > 0 && (
-        <div className={styles.chips}>
+        <ul className={styles.chips} aria-label="Attached evidence">
           {files.map((f) => (
-            <span key={f.id} className={styles.chip}>
-              {f.name}
-              <button type="button" className={styles.chipRemove} aria-label={`Remove ${f.name}`} onClick={() => onChange(files.filter((x) => x.id !== f.id))}>
-                ✕
-              </button>
-            </span>
+            <li key={f.id} className={styles.chip}>
+              <span className={styles.fileName}>{f.name}</span>
+              <Button
+                type="button"
+                variant="text"
+                size="sm"
+                iconOnly
+                aria-label={`Remove ${f.name}`}
+                onClick={() => onChange(files.filter((x) => x.id !== f.id))}
+              >
+                <GeneralClose size={16} aria-hidden="true" />
+              </Button>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-      <Button variant="secondary" size="md" className={styles.addFile} onClick={() => input.current?.click()} disabled={files.length >= REPORT_LIMITS.maxFiles}>
+      <Button
+        variant="secondary"
+        size="md"
+        className={styles.addFile}
+        data-missing-evidence={invalid || undefined}
+        aria-describedby={invalid ? "report-field-5-help report-field-5-error" : "report-field-5-help"}
+        onClick={() => input.current?.click()}
+        disabled={files.length >= REPORT_LIMITS.maxFiles}
+      >
         Add File
       </Button>
-      {problem && <p className={styles.error}>{problem}</p>}
+      {problem && (
+        <p className={styles.error} role="alert">
+          {problem}
+        </p>
+      )}
     </div>
   );
 }
 
 export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   const navigate = useNavigate();
+  const { pathname, search, hash } = useLocation();
+  const returnTo = pathname + search + hash;
   const [params] = useSearchParams();
   const { identity, address, isConnected } = useAuth();
   const submitReport = useMemo(() => buildSubmitReport(identity), [identity]);
 
   const playerParam = params.get("player_address") ?? "";
   const reportedParam = params.get("reported_address") ?? "";
+  const reportedAddressLocked = isEthAddress(reportedParam);
   const wallet = address ?? "";
 
   const [reportedAddress, setReportedAddress] = useState(reportedParam);
   const [reason, setReason] = useState<ReportReason | "">("");
   const [description, setDescription] = useState("");
   const [evidence, setEvidence] = useState<EvidenceUpload[]>([]);
+  const [reattachEvidence, setReattachEvidence] = useState(false);
   const [comments, setComments] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitAttempts, setSubmitAttempts] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
+  const lastReportedParam = useRef(reportedParam);
   useEffect(() => {
+    if (lastReportedParam.current === reportedParam) return;
+    lastReportedParam.current = reportedParam;
     if (reportedParam) setReportedAddress(reportedParam);
   }, [reportedParam]);
+
+  const restoreSignInDraft = useEffectEvent(() => {
+    const saved = takeSignInDraft(returnTo);
+    if (!saved) return;
+    setReportedAddress(reportedAddressLocked ? reportedParam : saved.reportedAddress);
+    setReason(saved.reason);
+    setDescription(saved.description);
+    setComments(saved.comments);
+    setReattachEvidence(saved.hadEvidence);
+  });
+  useEffect(() => {
+    restoreSignInDraft();
+  }, []);
+
+  const saveBrowserDraft = useEffectEvent((destination: string) => {
+    if (destination !== returnTo) return;
+    saveSignInDraft(returnTo, { reportedAddress, reason, description, comments, hadEvidence: reattachEvidence || evidence.length > 0 });
+  });
+  useEffect(() => onBeforeBrowserSignIn((destination) => saveBrowserDraft(destination)), []);
 
   const [startCtx] = useState(trackCtx);
   useEffect(() => {
@@ -229,7 +229,15 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   }, [startCtx]);
 
   const mismatch = !!wallet && !!playerParam && wallet.toLowerCase() !== playerParam.toLowerCase();
-  const draft: ReportDraft = { playerAddress: wallet, reportedAddress, reason, description, evidence, additionalComments: comments, confirmAccuracy: confirmed };
+  const draft: ReportDraft = {
+    playerAddress: wallet,
+    reportedAddress,
+    reason,
+    description,
+    evidence,
+    additionalComments: comments,
+    confirmAccuracy: confirmed,
+  };
   // The report builder's own checks, under the names the form's fields and its telemetry use.
   const checked = validateDraft(draft);
   const errors = {
@@ -240,15 +248,24 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     evidence: checked.evidence,
     confirm: checked.confirmAccuracy,
   };
-  const shown = (e: string) => (submitted ? e || undefined : undefined);
+  const shown = (e: string) => (submitAttempts > 0 ? e || undefined : undefined);
+
+  const formContent = useRef<HTMLDivElement>(null);
+  const focusInvalid = useRef(false);
+  useEffect(() => {
+    if (!focusInvalid.current) return;
+    focusInvalid.current = false;
+    formContent.current?.querySelector<HTMLElement>('[aria-invalid="true"]:not(:disabled), button[data-missing-evidence]')?.focus();
+  }, [submitAttempts]);
 
   const busy = useRef(false);
   const submit = async () => {
     if (busy.current) return;
-    setSubmitted(true);
+    setSubmitAttempts((attempts) => attempts + 1);
     track("report_review_reached", {}, trackCtx);
     const invalid = Object.entries(errors).flatMap(([field, e]) => (e ? [field] : []));
     if (invalid.length || mismatch) {
+      focusInvalid.current = !mismatch;
       track("report_validation_failed", { fields: mismatch ? [...invalid, "player"] : invalid, step: "form" }, trackCtx);
       return;
     }
@@ -276,14 +293,14 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
       <main className={styles.page}>
         <AnimatedBackground />
         <div className={styles.content}>
-          <div className={styles.card}>
+          <div className={styles.card} ref={formContent}>
             <div className={styles.logoWrap}>
               <GeneralDecentralandColor className={styles.logo} aria-hidden="true" />
-              <h3 className={styles.title}>Report User</h3>
+              <h1 className={styles.title}>Report User</h1>
             </div>
 
             {mismatch && (
-              <div className={styles.mismatch}>
+              <div className={styles.mismatch} role="alert">
                 The connected wallet does not match the player address. Please connect with the correct wallet to submit this report.
               </div>
             )}
@@ -292,51 +309,69 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               number={1}
               label="Your Wallet Address"
               helper="Reports are tied to your wallet to prevent abuse. Your identity will not be publicly shared."
-              error={shown(errors.player)}
             >
-              <div className={`${styles.control} ${styles.disabled}`}>
-                <input {...named(1)} className={styles.input} placeholder="Write or paste your address here..." value={wallet} disabled readOnly />
-              </div>
+              <InputWebCreatorTools
+                {...named(1)}
+                label="Your Wallet Address"
+                labelHidden
+                error={shown(errors.player)}
+                placeholder="Write or paste your address here..."
+                value={wallet}
+                disabled
+                readOnly
+              />
             </Field>
 
             {!isConnected && (
               <div className={styles.signIn}>
                 Please sign in with your wallet to submit a report.
-                <Button variant="text" size="sm" className={styles.signInButton} onClick={() => openSignIn({ inPlace: true })}>
+                <Button variant="text" size="sm" className={styles.signInButton} onClick={() => openSignIn()}>
                   Sign In
                 </Button>
               </div>
             )}
 
-            <Field
-              number={2}
-              label="Reported User Wallet"
-              helper="This is the wallet address of the user you are reporting."
-              error={shown(errors.reported)}
-            >
-              <div className={`${styles.control}${reportedParam ? ` ${styles.disabled}` : ""}`}>
-                <input
-                  {...named(2)}
-                  aria-required="true"
-                  aria-invalid={!!shown(errors.reported)}
-                  className={styles.input}
-                  placeholder="Write or paste an address here..."
-                  value={reportedAddress}
-                  onChange={(e) => setReportedAddress(e.target.value)}
-                  onBlur={() => isEthAddress(reportedAddress) && track("report_target_set", { has_reporter: isEthAddress(wallet) }, trackCtx)}
-                  disabled={!!reportedParam}
-                />
-              </div>
+            <Field number={2} label="Reported User Wallet" helper="This is the wallet address of the user you are reporting.">
+              <InputWebCreatorTools
+                {...named(2)}
+                label="Reported User Wallet"
+                labelHidden
+                aria-required="true"
+                error={shown(errors.reported)}
+                placeholder="Write or paste an address here..."
+                value={reportedAddress}
+                onChange={(e) => setReportedAddress(e.target.value)}
+                onBlur={() => isEthAddress(reportedAddress) && track("report_target_set", { has_reporter: isEthAddress(wallet) }, trackCtx)}
+                disabled={reportedAddressLocked}
+              />
             </Field>
 
-            <Field number={3} label="Reason for Report" helper="Select the option that best describes the issue." error={shown(errors.reason)}>
-              <ReasonSelect
+            <Field
+              number={3}
+              label="Reason for Report"
+              helper="Select the option that best describes the issue."
+              error={shown(errors.reason)}
+            >
+              <WebSelect
+                {...named(3, shown(errors.reason))}
+                aria-required="true"
+                aria-invalid={!!shown(errors.reason)}
                 value={reason}
-                onChange={(v) => {
-                  setReason(v);
-                  track("report_category_set", { reason: v }, trackCtx);
+                onChange={(e) => {
+                  const selected = e.currentTarget.value as ReportReason;
+                  setReason(selected);
+                  track("report_category_set", { reason: selected }, trackCtx);
                 }}
-                invalid={submitted && !!errors.reason} />
+              >
+                <option value="" disabled>
+                  Choose a reason
+                </option>
+                {REASONS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </WebSelect>
             </Field>
 
             <Field
@@ -346,19 +381,16 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
               error={shown(errors.description)}
             >
               <div className={styles.inputGroup}>
-                <div className={`${styles.control} ${styles.multiline}`}>
-                  <textarea
-                    {...named(4)}
-                    aria-required="true"
-                    aria-invalid={!!shown(errors.description)}
-                    className={`${styles.textarea} ${styles.rows4}`}
-                    rows={4}
-                    placeholder="Write your description here..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value.slice(0, REPORT_LIMITS.descriptionMax))}
-                    onBlur={() => description.trim() && track("report_details_set", { description_len: description.trim().length }, trackCtx)}
-                  />
-                </div>
+                <WebTextarea
+                  {...named(4, shown(errors.description))}
+                  aria-required="true"
+                  aria-invalid={!!shown(errors.description)}
+                  rows={4}
+                  placeholder="Write your description here..."
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value.slice(0, REPORT_LIMITS.descriptionMax))}
+                  onBlur={() => description.trim() && track("report_details_set", { description_len: description.trim().length }, trackCtx)}
+                />
                 <p className={styles.counter}>{`${description.length} / ${REPORT_LIMITS.descriptionMax}`}</p>
                 <p className={styles.hint}>The more detail you provide, the easier it is for moderators to review your report.</p>
               </div>
@@ -372,35 +404,56 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
             >
               <FileUpload
                 files={evidence}
+                invalid={!!shown(errors.evidence)}
                 onChange={(files) => {
                   if (files.length > evidence.length) track("report_evidence_added", { file_count: files.length }, trackCtx);
+                  if (files.length) setReattachEvidence(false);
                   setEvidence(files);
                 }}
               />
+              {reattachEvidence && <p className={styles.helper}>Add your evidence files again after signing in.</p>}
             </Field>
 
-            <Field number={6} label="Additional Comments" optional helper="Provide any extra information that might help moderators investigate.">
+            <Field
+              number={6}
+              label="Additional Comments"
+              optional
+              helper="Provide any extra information that might help moderators investigate."
+            >
               <div className={styles.inputGroup}>
-                <div className={`${styles.control} ${styles.multiline}`}>
-                  <textarea
-                    {...named(6)}
-                    className={`${styles.textarea} ${styles.rows3}`}
-                    rows={3}
-                    placeholder="Write your comments here..."
-                    value={comments}
-                    onChange={(e) => setComments(e.target.value.slice(0, REPORT_LIMITS.commentsMax))}
-                  />
-                </div>
+                <WebTextarea
+                  {...named(6)}
+                  rows={3}
+                  placeholder="Write your comments here..."
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value.slice(0, REPORT_LIMITS.commentsMax))}
+                />
                 <p className={styles.counter}>{`${comments.length} / ${REPORT_LIMITS.commentsMax}`}</p>
               </div>
             </Field>
 
             <div className={styles.field}>
-              <ConfirmCheckbox checked={confirmed} onChange={setConfirmed} error={submitted && !!errors.confirm} />
-              {submitted && errors.confirm && <p className={styles.error}>{errors.confirm}</p>}
+              <CheckboxLabel
+                size="lg"
+                label="I confirm this report is accurate."
+                checked={confirmed}
+                onCheckedChange={setConfirmed}
+                aria-required="true"
+                aria-invalid={!!shown(errors.confirm)}
+                aria-describedby={shown(errors.confirm) ? "report-confirm-error" : undefined}
+              />
+              {shown(errors.confirm) && (
+                <p id="report-confirm-error" className={styles.error}>
+                  {errors.confirm}
+                </p>
+              )}
             </div>
 
-            {failure && <p className={styles.submitError} role="alert">{failure}</p>}
+            {failure && (
+              <p className={styles.submitError} role="alert">
+                {failure}
+              </p>
+            )}
 
             <Button size="md" className={styles.submit} onClick={submit} disabled={mismatch || !isConnected || submitting}>
               {submitting ? "Submitting..." : "Submit Report"}

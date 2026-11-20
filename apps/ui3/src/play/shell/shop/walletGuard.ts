@@ -73,7 +73,7 @@ function refuse(why: string): never {
 }
 
 /** Whether `got` names exactly the units of `want`, each as often (in any order). */
-function sameUnits(got: { contract: string; itemId: bigint }[], want: PurchaseIntent['units']): boolean {
+export function sameUnits(got: { contract: string; itemId: bigint }[], want: PurchaseIntent['units']): boolean {
   if (want.length === 0 || got.length !== want.length) return false
   const count = new Map<string, number>()
   for (const u of want) count.set(`${u.contract}:${u.itemId}`, (count.get(`${u.contract}:${u.itemId}`) ?? 0) + 1)

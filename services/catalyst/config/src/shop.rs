@@ -469,6 +469,12 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_BUYERS", hide_env_values = true)]
     pub credits_trial_buyers: Option<String>,
 
+    /// Under CREDITS_TRIAL_MODE, the relay pays gas for every wallet's meta-transactions instead
+    /// of CREDITS_TRIAL_BUYERS' alone. New credits still go to those buyers only, and the relay
+    /// keeps its own capped signer and the per-address daily quota. Ignored outside a trial.
+    #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_trial_relay_all_wallets: bool,
+
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,
@@ -477,7 +483,7 @@ pub struct ShopConfig {
     pub credits_checkout_cancel_url: String,
 
     // The shop-server fold (src/shop/{outfits,subscriptions,treasury}).
-    /// The outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); empty refuses every outfit write.
+    /// A local override of the outfit authoring allowlist (comma or newline separated wallets, the signed-fetch signer compared lowercase); blank reads the `dapps-shop-outfit-creators` flag variant per request, and a set value with no valid wallet lets no one author.
     #[arg(long, env = "SHOP_OUTFIT_CREATORS", default_value = "")]
     pub shop_outfit_creators: String,
 
@@ -651,6 +657,10 @@ mod tests {
         assert!(
             c.economy.names_signer_enabled,
             "the NAMEs chain signer is on unless turned off"
+        );
+        assert!(
+            !c.shop.credits_trial_relay_all_wallets,
+            "a trial relays for its buyers alone unless told otherwise"
         );
         assert!(c.economy.mana_usd_aggregator_address.is_none());
         assert_eq!(

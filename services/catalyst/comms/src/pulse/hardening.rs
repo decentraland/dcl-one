@@ -530,14 +530,20 @@ impl Drop for ReplayJournal {
     }
 }
 
-/// Admits each `(wallet, signed timestamp)` at most once. The production constructor journals a
-/// valid pair before it is answered, including a clock-ahead pair that is refused for now, so
-/// restart cannot turn observed signed bytes into a first use. Journal writes run on a dedicated
-/// thread and are group-committed: an admission issues its record and returns, and the caller
-/// holds the answer until [`Self::journal_progress`] covers [`Self::journal_issued`] as it was
-/// after the admission. A crash before that sync loses only pairs that were never answered. An entry is dropped only after the wall
-/// clock has left its freshness window, and every dropped timestamp raises
-/// `forgotten_through_ms`, at or below which nothing is admitted. A stepped-back wall clock
+/// Admits each `(wallet, signed timestamp)` at most once. The freshness window, `skew_ms`, applies
+/// on both sides of the wall clock: a pair signed up to `skew_ms` ahead, by a client whose clock
+/// runs ahead of this server's, is admitted. One signed further ahead is refused as
+/// [`ReplayRejection::FutureDated`] and still recorded, so its bytes stay used. The server builds
+/// the policy with the signature check's own window, which refuses such a handshake before it gets
+/// here, so that refusal happens only with a narrower `skew_ms`. The production constructor
+/// journals a valid pair before it is answered, so restart cannot turn observed signed bytes into
+/// a first use. Journal writes run on a dedicated thread and are group-committed: an
+/// admission issues its record and returns, and the caller holds the answer until
+/// [`Self::journal_progress`] covers [`Self::journal_issued`] as it was after the admission. A
+/// crash before that sync loses only pairs that were never answered. An entry is dropped only
+/// after the wall clock has left its freshness window, `skew_ms` after its signed time, so a pair
+/// admitted ahead stays used for as long as its signature is accepted. Every dropped timestamp
+/// raises `forgotten_through_ms`, at or below which nothing is admitted. A stepped-back wall clock
 /// therefore cannot make a dropped timestamp fresh again, and `forget_before` puts everything
 /// signed before this process started under the same floor.
 ///
@@ -545,8 +551,9 @@ impl Drop for ReplayJournal {
 /// whitelisted sources together by `max_entries_whitelisted`, and per wallet by
 /// `max_entries_per_wallet`: a source, the whitelisted bucket or a wallet at its quota is refused a
 /// new pair, which is then neither recorded nor answered, and no existing entry is dropped early. A
-/// clock-ahead pair stays recorded, and counted, because it was answered. Pairs read back from the
-/// journal count per wallet but not per source, so the source and whitelisted counts restart empty.
+/// `FutureDated` pair stays recorded, and counted, because it was answered. Pairs read back from
+/// the journal count per wallet but not per source, so the source and whitelisted counts restart
+/// empty.
 pub struct HandshakeReplayPolicy {
     enabled: bool,
     skew_ms: i64,
@@ -810,7 +817,7 @@ impl HandshakeReplayPolicy {
         {
             journal.compact(&self.seen, self.forgotten_through_ms);
         }
-        if signed_ms > now_ms {
+        if signed_ms > now_ms.saturating_add(self.skew_ms) {
             Err(ReplayRejection::FutureDated)
         } else {
             Ok(())
@@ -1378,6 +1385,30 @@ mod tests {
     }
 
     #[test]
+    fn replay_admits_a_pair_signed_ahead_inside_the_freshness_window_once() {
+        let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
+        // A device clock 310 ms fast (measured against a deployed Pulse), and the edge.
+        for (wallet, ahead) in [("0xabc", 310), ("0xdef", SKEW)] {
+            let signed = (SIGNED + ahead).to_string();
+            assert_eq!(p.try_admit(SIGNED, None, wallet, &signed), Ok(()));
+            assert_eq!(
+                p.try_admit(SIGNED + ahead, None, wallet, &signed),
+                Err(ReplayRejection::Duplicate)
+            );
+        }
+        // Further ahead the pair is refused, and still recorded so its bytes stay used.
+        let beyond = (SIGNED + SKEW + 1).to_string();
+        assert_eq!(
+            p.try_admit(SIGNED, None, "0x123", &beyond),
+            Err(ReplayRejection::FutureDated)
+        );
+        assert_eq!(
+            p.try_admit(SIGNED + SKEW + 1, None, "0x123", &beyond),
+            Err(ReplayRejection::Duplicate)
+        );
+    }
+
+    #[test]
     fn replay_same_pair_is_never_admitted_again_after_its_entry_is_dropped() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
         let used = SIGNED.to_string();
@@ -1400,11 +1431,8 @@ mod tests {
     #[test]
     fn replay_floor_never_reaches_a_timestamp_inside_the_freshness_window() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 2);
-        let future_dated = (SIGNED + SKEW).to_string();
-        assert_eq!(
-            p.try_admit(SIGNED, None, "0xabc", &future_dated),
-            Err(ReplayRejection::FutureDated)
-        );
+        let ahead = (SIGNED + SKEW).to_string();
+        assert_eq!(p.try_admit(SIGNED, None, "0xabc", &ahead), Ok(()));
         let later = SIGNED + 2 * SKEW + 1;
         assert_eq!(p.try_admit(later, None, "0x1", &later.to_string()), Ok(()));
         assert_eq!(p.seen.len(), 1);
@@ -1490,14 +1518,12 @@ mod tests {
     #[test]
     fn replay_retention_includes_entire_freshness_window() {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 1);
-        let future_dated = (SIGNED + SKEW).to_string();
-        assert_eq!(
-            p.try_admit(SIGNED, None, "wallet", &future_dated),
-            Err(ReplayRejection::FutureDated)
-        );
+        // Admitted a whole window ahead, the pair stays used until it leaves the window.
+        let ahead = (SIGNED + SKEW).to_string();
+        assert_eq!(p.try_admit(SIGNED, None, "wallet", &ahead), Ok(()));
         for delta in [7_000, 31_000, 60_000, 120_000] {
             assert_eq!(
-                p.try_admit(SIGNED + delta, None, "wallet", &future_dated),
+                p.try_admit(SIGNED + delta, None, "wallet", &ahead),
                 Err(ReplayRejection::Duplicate)
             );
             assert_eq!(
@@ -1513,13 +1539,19 @@ mod tests {
     }
 
     #[test]
-    fn durable_replay_journal_consumes_future_dated_bytes_across_restart() {
+    fn durable_replay_journal_consumes_clock_ahead_bytes_across_restart() {
         let path = ReplayPath::new("future-restart");
-        let future = SIGNED + SKEW;
+        // Signed after the restart: only the journal, not the start-up floor, keeps them used.
+        let admitted = SIGNED + SKEW;
+        let refused = SIGNED + SKEW + 1;
         {
             let mut first = HandshakeReplayPolicy::durable(true, SKEW, 4, &path.0, SIGNED).unwrap();
             assert_eq!(
-                first.try_admit(SIGNED, None, "0xabc", &future.to_string()),
+                first.try_admit(SIGNED, None, "0xabc", &admitted.to_string()),
+                Ok(())
+            );
+            assert_eq!(
+                first.try_admit(SIGNED, None, "0xdef", &refused.to_string()),
                 Err(ReplayRejection::FutureDated)
             );
         }
@@ -1527,10 +1559,12 @@ mod tests {
             HandshakeReplayPolicy::durable_after_restart(true, SKEW, 4, &path.0, SIGNED + 1)
                 .unwrap();
         restarted.forget_before(SIGNED + 1);
-        assert_eq!(
-            restarted.try_admit(future, None, "0xabc", &future.to_string()),
-            Err(ReplayRejection::Duplicate)
-        );
+        for (wallet, signed) in [("0xabc", admitted), ("0xdef", refused)] {
+            assert_eq!(
+                restarted.try_admit(signed, None, wallet, &signed.to_string()),
+                Err(ReplayRejection::Duplicate)
+            );
+        }
     }
 
     #[test]
@@ -1734,9 +1768,10 @@ mod tests {
         let mut p = HandshakeReplayPolicy::new(true, SKEW, 4096);
         p.set_max_entries_per_wallet(2);
         let current = SIGNED.to_string();
-        let ahead = (SIGNED + SKEW).to_string();
+        let ahead = (SIGNED + SKEW + 1).to_string();
         assert_eq!(p.try_admit(SIGNED, None, "0xABC", &current), Ok(()));
-        // A clock-ahead pair is answered, so it stays recorded and counts against the wallet.
+        // A pair signed beyond the window ahead is answered with a refusal, so it stays
+        // recorded and counts against the wallet.
         assert_eq!(
             p.try_admit(SIGNED, None, "0xabc", &ahead),
             Err(ReplayRejection::FutureDated)
@@ -1751,7 +1786,7 @@ mod tests {
         assert_eq!(p.try_admit(SIGNED + 1, None, "0xdef", &refused), Ok(()));
         // The answered clock-ahead pair is still consumed once it becomes current.
         assert_eq!(
-            p.try_admit(SIGNED + SKEW, None, "0xabc", &ahead),
+            p.try_admit(SIGNED + SKEW + 1, None, "0xabc", &ahead),
             Err(ReplayRejection::Duplicate)
         );
         // Once the current pair leaves the window, the wallet has room for one more.

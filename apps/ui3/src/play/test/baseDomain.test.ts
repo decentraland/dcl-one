@@ -135,3 +135,35 @@ describe('the Pulse host behind the gateway', () => {
     expect(m.serviceUrl('pulseServer')).toBe(window.location.host)
   })
 })
+
+describe('the site a link opens', () => {
+  const load = async (onSites: boolean, search: string) => {
+    vi.resetModules()
+    if (onSites) window.__DCL_PUBLIC__ = {}
+    else delete window.__DCL_PUBLIC__
+    window.history.replaceState(null, '', search)
+    return import('../lib/baseDomain')
+  }
+  afterEach(() => {
+    delete window.__DCL_PUBLIC__
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('on Sites, under another deployment the Explorer selected: help follows it, funding the checkout stays on this site', async () => {
+    const m = await load(true, '/?baseDomain=decentraland.org')
+    expect(m.siteUrl('/help')).toBe('https://decentraland.org/help')
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe(`${window.location.origin}/shop/credits`)
+  })
+
+  it('on Sites, with no deployment selected: both on this site', async () => {
+    const m = await load(true, '/')
+    expect(m.siteUrl('/help')).toBe(`${window.location.origin}/help`)
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe(`${window.location.origin}/shop/credits`)
+  })
+
+  it('off Sites (the upstream page): funding follows the Explorer’s site, as before', async () => {
+    const m = await load(false, '/?baseDomain=decentraland.zone')
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe('https://decentraland.zone/shop/credits')
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe(m.siteUrl('/shop/credits'))
+  })
+})

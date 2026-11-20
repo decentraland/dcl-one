@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use axum::Json;
-use axum::extract::{OriginalUri, Path, Query, State};
+use axum::extract::{FromRequest, OriginalUri, Path, Query, Request, State};
 use axum::http::{HeaderMap, Uri};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::drafts::signer;
 use crate::SharedState;
-use crate::http::ApiData;
+use crate::http::{ApiData, ApiError};
 use crate::project_packs::{self, PackIn};
 use crate::projects::{
     self as store, FileSet, FileSetIn, Precondition, Project, ProjectError, ProjectPage,
@@ -21,6 +21,16 @@ use crate::projects::{
 };
 
 type Reply<T> = Result<Json<ApiData<T>>, ProjectError>;
+
+/// Upload routes take the body as a `Request` and read it with this after
+/// the signer is checked, so upload time does not count against the
+/// signed-fetch window.
+async fn read_json(request: Request) -> Result<Value, ProjectError> {
+    let Json(body) = Json::<Value>::from_request(request, &())
+        .await
+        .map_err(|e| ApiError::http(e.status().as_u16(), e.body_text()))?;
+    Ok(body)
+}
 
 async fn owner(
     state: &SharedState,
@@ -155,11 +165,12 @@ pub async fn put_manifest(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    request: Request,
 ) -> Result<Response, ProjectError> {
     let owner = owner(&state, &headers, "put", &original, &uri).await?;
     let id = parse_id(&id)?;
     let precondition = Precondition::from_headers(&headers)?;
+    let body = read_json(request).await?;
     let project = store::put_manifest(state.items.pool(), &owner, id, body, precondition).await?;
     let revision = project.manifest_revision;
     let mut resp = Json(ApiData::ok(project)).into_response();
@@ -208,10 +219,11 @@ pub async fn put_files(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    request: Request,
 ) -> Reply<FileSet> {
     let owner = owner(&state, &headers, "put", &original, &uri).await?;
     let project = owned_project(state.items.pool(), &id, &owner).await?;
+    let body = read_json(request).await?;
     let body: FileSetIn = serde_json::from_value(body).map_err(invalid_schema)?;
     Ok(Json(ApiData::ok(
         store::put_files(state.items.pool(), &project, body).await?,
@@ -226,10 +238,13 @@ pub async fn put_blob(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-    body: Bytes,
+    request: Request,
 ) -> Reply<Value> {
     let owner = owner(&state, &headers, "put", &original, &uri).await?;
     owned_project(state.items.pool(), &id, &owner).await?;
+    let body = Bytes::from_request(request, &())
+        .await
+        .map_err(|e| ApiError::http(e.status().as_u16(), e.body_text()))?;
     let size =
         store::accept_blob(state.items.pool(), &state.items.blobs, &owner, &hash, body).await?;
     Ok(Json(ApiData::ok(json!({ "hash": hash, "size": size }))))

@@ -457,6 +457,7 @@ pub(super) async fn comms_states(
     room_event_store: Option<Arc<dyn comms::gatekeeper::events::RoomEventStore>>,
     presence: Arc<comms::presence::Presence>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
+    content_denylist: Arc<content::Denylist>,
     primary: bool,
     jobs: &Arc<jobs::Jobs>,
 ) -> anyhow::Result<CommsStage> {
@@ -493,6 +494,7 @@ pub(super) async fn comms_states(
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(Arc::new(super::adapters::ShopNameOwners(market.clone())))
     .with_deny_list_url(config.worlds.deny_list())
+    .with_content_denylist(content_denylist)
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
         nats_url: non_empty(&config.worlds.nats_url),
         takeover_retry_delay_ms: config.worlds.cluster_takeover_retry_delay_ms,

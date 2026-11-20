@@ -783,7 +783,7 @@ fn update_render_avatar(
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
     mut removed_selections: RemovedComponents<AvatarSelection>,
-    children: Query<(&Children, &AttachPoints)>,
+    children: Query<(&Children, Option<&AttachPoints>)>,
     mut avatar_render_entities: Query<(&mut AvatarDefinition, Has<AvatarProcessed>)>,
     mut wearable_loader: CollectibleManager<Wearable>,
     mut reports: EventWriter<AvatarLoadReport>,
@@ -795,10 +795,11 @@ fn update_render_avatar(
         // the outfit's hashes leave the request-slot queue with the component
         commands.entity(entity).try_remove::<PartitionedDownloads>();
         if let Ok((children, attach_points)) = children.get(entity) {
-            // reparent attach points
-            commands
-                .entity(entity)
-                .try_push_children(&attach_points.entities());
+            if let Some(attach_points) = attach_points {
+                commands
+                    .entity(entity)
+                    .try_push_children(&attach_points.entities());
+            }
             for render_child in children
                 .iter()
                 .filter(|child| avatar_render_entities.get(*child).is_ok())
