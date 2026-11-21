@@ -533,7 +533,12 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     if (settled.kind === "expiring") {
       // Its credit expired unspent: noted, so the grace runs from now in every tab, and the item stays held until it ends.
       const noted = await noteSplitHoldExpiry(services.locks, account, lineId, record);
-      setSent(readSplitHold(account, lineId));
+      // Read again for its note, the record may still lack the hash this dialog knows (its save failed): that hash stays
+      // beside it while it is this very attempt's, buyer's and chain's. A record another run replaced or cleared is taken
+      // as it is.
+      const after = readSplitHold(account, lineId);
+      const sameRun = after && record.txHash && !after.txHash && after.attempt !== null && after.attempt === record.attempt && after.sale?.buyer === record.sale?.buyer && after.chainId === record.chainId;
+      setSent(sameRun ? { ...after, txHash: record.txHash } : after);
       setNotice(noted === "busy" ? (services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE) : noted === "noted" ? EXPIRING : null);
       return;
     }

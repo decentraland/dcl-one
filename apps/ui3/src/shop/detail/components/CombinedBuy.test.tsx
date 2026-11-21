@@ -777,6 +777,64 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
+  it("a hash it couldn't save survives its credit's expiry being noted: the next Check again reads its receipt and completes the purchase, sent once", async () => {
+    const credit = `0x${"a1".repeat(32)}`;
+    const { demo } = setup(undefined, undefined, MANA, undefined, {
+      userPurchases: () => ({ purchases: [{ id: `${credit}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null }], total: 1 }),
+    });
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const removeItem = Storage.prototype.removeItem;
+    const setItem = Storage.prototype.setItem;
+    let writes = 0;
+    const stuckRemove = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+    });
+    // Written before the sale leaves (its terms, then its envelope); every write after that fails: its hash isn't saved.
+    const stuckWrite = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith("dcl-shop-buynow-split:") && ++writes > 2) throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      setItem.call(this, key, value);
+    });
+    try {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+      expect(await screen.findByTestId("combined-check-notice", {}, { timeout: 5000 })).toHaveTextContent("couldn't save this purchase's transaction");
+    } finally {
+      stuckRemove.mockRestore();
+      stuckWrite.mockRestore();
+    }
+    // The storage is back and the credit's expiry has passed; its receipt is missing on the first look only.
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start + 20 * 60_000);
+    const reads: string[] = [];
+    const receipt = demo.chain.receipt.bind(demo.chain);
+    let missing = true;
+    demo.chain.receipt = async (chainId, hash, ...rest) => {
+      reads.push(hash.toLowerCase());
+      if (missing) {
+        missing = false;
+        return null;
+      }
+      return receipt(chainId, hash, ...rest);
+    };
+    try {
+      // First check: no receipt yet, and the node lists its credit EXPIRED: expiring, noted, still held.
+      await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+      await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+      expect(await screen.findByText(/Credits expired unspent/, {}, { timeout: 5000 })).toBeTruthy();
+      expect(screen.queryByText(/Purchase complete/)).toBeNull();
+      // Past the grace: the second check reads the receipt again, with the hash it kept, and completes it.
+      clock.mockReturnValue(start + 20 * 60_000 + SPLIT_EXPIRY_CONFIRM_MS + 1_000);
+      await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+      await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+      expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(reads).toHaveLength(2);
+    expect(new Set(reads).size).toBe(1);
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+  });
+
   it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
     const { demo, line } = setup(undefined, undefined, MANA, undefined, { userPurchases: () => ({ purchases: [], total: 0 }) });
     demo.chain.allowances.set(managerKey(), 10n ** 21n);
