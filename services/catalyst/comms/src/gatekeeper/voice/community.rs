@@ -144,6 +144,13 @@ pub async fn community_voice_credentials_for(
     Ok(connection_url)
 }
 
+/// Upstream answers inactive when the store fails; the counter keeps the outage visible.
+fn status_read_failed(route: &'static str, error: &dyn std::fmt::Display) {
+    metrics::counter!("comms_community_voice_status_read_failures_total", "route" => route)
+        .increment(1);
+    tracing::error!(route, error = %error, "community voice status unreadable; answering inactive");
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct CommunityVoiceChatStatusResponse {
     pub active: bool,
@@ -179,15 +186,14 @@ pub async fn community_voice_chat_status(
 ) -> Result<Json<CommunityVoiceChatStatusResponse>, ApiError> {
     let community_id = parse_community_id(&community_id)?;
     // Upstream answers inactive when the store fails.
-    let (active, participant_count, moderator_count) = match community_status(&state, community_id)
-        .await
-    {
-        Ok(status) => status,
-        Err(error) => {
-            tracing::warn!(%community_id, error = %error, "community voice status unreadable; answering inactive");
-            (false, 0, 0)
-        }
-    };
+    let (active, participant_count, moderator_count) =
+        match community_status(&state, community_id).await {
+            Ok(status) => status,
+            Err(error) => {
+                status_read_failed("status", &error);
+                (false, 0, 0)
+            }
+        };
     let (participant_count, moderator_count) = if active {
         (participant_count, moderator_count)
     } else {
@@ -234,7 +240,7 @@ pub async fn community_voice_chat_bulk_status(
         .bulk_community_status(&ids)
         .await
         .unwrap_or_else(|error| {
-            tracing::warn!(error = %error, "bulk community voice status unreadable; answering inactive");
+            status_read_failed("bulk_status", &error);
             Default::default()
         });
     let data: Vec<Value> = body
@@ -264,7 +270,7 @@ pub async fn community_voice_chat_active(
         .all_active_community_voice_chats()
         .await
         .unwrap_or_else(|error| {
-            tracing::warn!(error = %error, "active community voice chats unreadable; answering none");
+            status_read_failed("active", &error);
             Vec::new()
         });
     let data: Vec<Value> = active
@@ -522,7 +528,7 @@ pub async fn check_user_community_status(
         .is_user_in_any_community_voice_chat(&address)
         .await
         .unwrap_or_else(|error| {
-            tracing::warn!(error = %error, "community voice membership unreadable; answering false");
+            status_read_failed("user_status", &error);
             false
         });
     Ok(Json(

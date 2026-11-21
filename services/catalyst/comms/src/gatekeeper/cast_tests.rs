@@ -2980,7 +2980,7 @@ async fn an_expired_key_is_retired_after_its_broadcast_ends() {
     let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
     let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
     ingress_webhook(&h, "ingress_started", &ingress).await;
-    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = created_at WHERE id = $1")
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = streaming_start_time WHERE id = $1")
         .bind(id)
         .execute(&pool)
         .await
@@ -3014,6 +3014,40 @@ async fn an_expired_key_is_retired_after_its_broadcast_ends() {
         (false, Some("streaming_key_expired".into())),
         "the ended broadcast's key expires"
     );
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
+}
+
+/// The grace is for the broadcast live at the deadline: one restarted after
+/// it (a reconnect between two passes) loses the expired key.
+#[tokio::test]
+async fn a_broadcast_restarted_after_the_deadline_loses_the_expired_key() {
+    // A database of its own: the pass reads every active credential.
+    let Some(pool) = own_db().await else { return };
+    let (_, room, metadata) = seeded_scene(&pool).await;
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = streaming_start_time WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    report_ingress(&h, &ingress, "ENDPOINT_INACTIVE");
+    ingress_webhook(&h, "ingress_ended", &ingress).await;
+    report_ingress(&h, &ingress, "ENDPOINT_PUBLISHING");
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    assert!(streaming_flag(&pool, id).await, "the broadcast restarted");
+
+    crate::gatekeeper::streaming::key_expiry_pass_for_test(&h.state).await;
+    let retired: (bool, Option<String>) = sqlx::query_as(
+        "SELECT a.active, c.notification_kind FROM social.scene_stream_access a \
+         LEFT JOIN social.scene_stream_cleanup c ON c.access_id = a.id WHERE a.id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retired, (false, Some("streaming_key_expired".into())));
     crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
 }
 

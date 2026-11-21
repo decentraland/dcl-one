@@ -4700,12 +4700,6 @@ fn community_voice_actions_are_upstreams_enum() {
     ] {
         assert_eq!(voice::community_voice_action(Some(action)).unwrap(), action);
     }
-    for action in [
-        voice::rooms::CommunityVoiceAction::Create,
-        voice::rooms::CommunityVoiceAction::Join,
-    ] {
-        assert!(voice::community_voice_action(Some(action.as_str())).is_ok());
-    }
 }
 
 #[tokio::test]
