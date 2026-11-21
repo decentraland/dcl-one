@@ -700,7 +700,6 @@ impl MarketplaceState {
                 marketplace: self.settings.market.marketplace_base_url.clone(),
                 land_images: self.settings.land_image_base_url.clone(),
                 items_mirror_enabled: self.settings.market.mirrors_enabled,
-                from_block: self.settings.market.indexes.bid_notices_from_block,
             },
             self.settings.market.indexes.sales_enabled,
             self.pool.clone(),

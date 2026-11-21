@@ -16171,8 +16171,7 @@ CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WH
 -- shop::market::notice_cursor::PRODUCERS), advanced in the transaction that
 -- inserts the page's notifications: the last chain position handled;
 -- `rental_ended` orders by the rental's end time first. Seeded on the first
--- pass at the published head (kept in seed_*), so history is never announced;
--- `bid_received` may instead seed at an operator's MARKETPLACE_BID_NOTICES_FROM_BLOCK.
+-- pass at the published head (kept in seed_*), so history is never announced.
 -- A reorg rewind or a late nft backfill within 1,000 blocks of the head moves
 -- the rows of the producers that read that index back, never below their
 -- seed (notice_cursor::plan_replay); reorg-stable ids keep the replay

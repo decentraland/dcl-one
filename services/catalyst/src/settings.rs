@@ -84,7 +84,6 @@ pub(crate) fn market_settings(
             start_block_matic: config.marketplace.marketplace_index_start_block_matic,
             stop_block_ethereum: config.marketplace.marketplace_index_stop_block_ethereum,
             stop_block_matic: config.marketplace.marketplace_index_stop_block_matic,
-            bid_notices_from_block: config.marketplace.marketplace_bid_notices_from_block,
             neighbours_interval: Duration::from_secs(
                 config.marketplace.marketplace_neighbours_interval_secs,
             ),
