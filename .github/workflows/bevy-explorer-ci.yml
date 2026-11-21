@@ -427,12 +427,14 @@ jobs:
       # its own workspace. Only this job rebuilds that workspace, at ../bevy. It has no lock file:
       # it starts from this one, so the crates.io dependencies both share keep their versions.
       # These are the crates the explorer patches for KTX2 and glTF loading, with the features the
-      # explorer enables on them.
+      # explorer enables on them, and `bevy_pbr`, whose skinning the explorer patches: a run of its
+      # own, so its dependencies add no feature to the first two.
       - name: Test the patched Bevy crates
         run: |
           cp Cargo.lock ../bevy/Cargo.lock
           cargo test --manifest-path ../bevy/Cargo.toml -p bevy_image -p bevy_gltf --lib \
             --features bevy_gltf/dds,bevy_gltf/bevy_animation,bevy_image/ktx2,bevy_image/zstd --target-dir target/fork-tests
+          cargo test --manifest-path ../bevy/Cargo.toml -p bevy_pbr --lib --target-dir target/fork-tests
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}

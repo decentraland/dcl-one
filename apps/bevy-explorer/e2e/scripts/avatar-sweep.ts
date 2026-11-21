@@ -7,22 +7,25 @@
 //
 //   pnpm run avatar-sweep [--counts 0,10,20,50,100,200,400,800] [--caps 20,all]
 //     [--emotes none,dance] [--nametags on] [--layout grid|around] [--setup "<console line>"]...
-//     [--seed 1|none] [--window 10] [--settle 3] [--load-timeout 180]
+//     [--seed 1|none] [--wearables <file>] [--window 10] [--settle 3] [--load-timeout 180]
 //     [--realm <url>] [--position x,y] [--web-app <dir> [--port <n>] | --url <served app>]
 //     [--profile <dir>] [--out <file>]
 //
-// The demo avatars wear random base wearables, a few hundred files from the catalyst. Run after
+// The demo avatars wear random base wearables, or with `--wearables <file>` (one URN per line,
+// blank lines and `#` lines ignored) random ones from those URNs: a few hundred files from the
+// catalyst either way. Run after
 // run that adds up to more than the catalyst allows one client, so `--profile <dir>` keeps
 // Chrome's profile there: the engine's content cache then answers later runs. The cache belongs
 // to the page's origin, so `--profile` takes a fixed `--port`. The last stderr line is
 // `/content_request_state`: what the run downloaded and what the cache answered.
 //
-// Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "seed", "samples",
+// Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "seed", "wearables", "samples",
 // "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
 // are {median, p95, max} over the window's samples. `/avatar_demo cap` is session-only, so the
 // stored setting never changes; at the end the session goes back to it, and nametags and the
 // demo emote to what they were.
-import { appendFile, writeFile } from 'node:fs/promises'
+import { appendFile, readFile, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromeArgs } from '../driver/chrome.ts'
 import { DEFAULT_WEB_APP } from '../driver/paths.ts'
@@ -36,6 +39,8 @@ const READY_TIMEOUT_MS = 180_000
 const IN_WORLD_TIMEOUT_MS = 300_000
 /** `/avatar_demo cap`'s highest number (`debug_avatars.rs`); `all` is no cap. */
 const MAX_CAP = 1025
+/** URNs per `/avatar_demo catalog` line, so one console line stays short. */
+const CATALOG_BATCH = 20
 /** `/avatar_demo spawn`'s population ceiling (`MAX_DEMOS`). */
 const MAX_DEMOS = 1024
 
@@ -47,6 +52,7 @@ const { values } = parseArgs({
     nametags: { type: 'string', default: 'on' },
     layout: { type: 'string', default: 'grid' },
     seed: { type: 'string', default: '1' },
+    wearables: { type: 'string' },
     setup: { type: 'string', multiple: true, default: [] },
     window: { type: 'string', default: '10' },
     settle: { type: 'string', default: '3' },
@@ -92,6 +98,10 @@ function port(name: string, value: string): number {
 const appPort = port('port', values.port)
 // the browser keeps a page's caches by its origin, which a port picked anew each run changes
 if (values.profile != null && values.url == null && appPort === 0) throw new Error('--profile needs a fixed --port, so the page keeps one origin from run to run')
+const catalog = values.wearables == null
+  ? []
+  : (await readFile(values.wearables, 'utf8')).split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'))
+if (values.wearables != null && catalog.length === 0) throw new Error(`--wearables ${values.wearables} lists no URNs`)
 const windowMs = seconds('window', values.window) * 1000
 const settleMs = seconds('settle', values.settle) * 1000
 const loadTimeoutMs = seconds('load-timeout', values['load-timeout']) * 1000
@@ -180,6 +190,12 @@ try {
   if (values.out) await writeFile(values.out, '')
   await run(`/avatar_demo layout ${values.layout}`)
   await run(`/avatar_demo seed ${seed}`.trim())
+  if (values.wearables != null) {
+    await run('/avatar_demo catalog')
+    for (let i = 0; i < catalog.length; i += CATALOG_BATCH) {
+      await run(`/avatar_demo catalog ${catalog.slice(i, i + CATALOG_BATCH).join(',')}`)
+    }
+  }
   // console lines that set the build up for this run, such as an engine tunable under comparison
   for (const line of values.setup) log(`setup ${line}: ${JSON.stringify(await run(line))}`)
 
@@ -223,6 +239,7 @@ try {
             nametags: tags ? 'on' : 'off',
             layout: values.layout,
             seed: seed === '' ? null : Number(seed),
+            wearables: values.wearables == null ? null : basename(values.wearables),
             samples: samples.length,
             fps: stats(samples.map((s) => s.fps)),
             frameMs: stats(samples.map((s) => s.frameMs)),
@@ -250,6 +267,7 @@ try {
   await run('/avatar_demo seed').catch(() => undefined)
   // what this run asked the content servers for, and what the engine's cache answered
   log(`content requests: ${JSON.stringify(await run('/content_request_state').catch(() => null))}`)
+  await run('/avatar_demo catalog').catch(() => undefined)
   await driver.close()
   await server?.close()
 }
