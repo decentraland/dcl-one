@@ -146,8 +146,18 @@ consistent; completed progress does not regress on repeat imports. The first ref
 and existing IP and transition timestamps are retained. The older referral-server only fills
 gaps for the same referrer. Reward images retain their IDs and historical snapshots.
 No reward requests, retry state or deliveries are created; existing target reward execution
-fields are untouched. Redis login-day counters are not in this PostgreSQL database and
-require a separate cutover decision before referral logins are enabled.
+fields are untouched.
+
+Legacy login state outside PostgreSQL is not imported. Operator steps at cutover:
+
+- Queued logins: point the Segment destination at this node, let the legacy
+  `logged_in` consumer drain its queue, then stop it and run the final
+  `referral_progress` import. Undrained messages are lost: they carry no user signature
+  to replay.
+- Login days: the Redis sets `referral:invited-user:<wallet>` hold the distinct UTC days
+  of invitees still short of the minimum. Without a manual copy into
+  `social.referral_progress.login_days` (only rows where `tier_granted` is false and the
+  status is not `rejected_ip_match`), those invitees start counting again from zero.
 
 After upgrading an earlier import, restart `referral_progress` to populate fields whose
 source watermark has not changed. The reward-image step has its own checkpoint.

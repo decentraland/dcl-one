@@ -825,6 +825,7 @@ pub(super) fn social_states(
         },
         onboarding,
     ));
+    segment_webhooks.set_referral(communities.referral.clone());
 
     let media = Arc::new(
         media::MediaState::new(

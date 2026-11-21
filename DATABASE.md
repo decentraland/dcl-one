@@ -1174,6 +1174,17 @@ The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
 
+Explorers that do not call that route are credited from the Segment webhook
+(`POST /events-notifier/forward`): a `logged_in` or `logged_in_cached` event
+whose `[SIGNER, ECDSA_EPHEMERAL]` login chain verifies for its
+`dcl_eth_address` runs the same login recording for the chain owner, before
+the event's `social.client_events` row. Its login ID is a UUID v5 of the
+Segment `messageId`, so a redelivery is a duplicate receipt, and its
+occurrence is Segment's `receivedAt`. A lock or statement timeout answers 503
+and Segment redelivers; a stale occurrence or a full quota is logged and the
+event is still stored. Each such event adds the indexed invited-wallet lookup;
+the receipts, quota and locks below are shared by both sources.
+
 Most logins have no referral attribution and require only the indexed invited
 wallet lookup. For an attributed wallet, `social.referral_login_receipts` stores
 one receipt keyed by `(invited_user, login_id)` in the same transaction as the
