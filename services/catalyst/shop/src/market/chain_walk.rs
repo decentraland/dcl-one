@@ -16,9 +16,10 @@
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
 //! [`READY_WINDOW`] old at the caller's clock. Accepting work that waits on
 //! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
-//! or a full-history walk advancing near the head.
+//! or a full-history walk advancing near the head, bound to its chain and out
+//! of quarantine.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -328,30 +329,66 @@ const STARTED_AGE: ChronoDuration = READY_WINDOW
     .checked_add(&ChronoDuration::seconds(1))
     .expect("a small sum");
 
-/// Marks the cursor of a walk this process just started as advanced
-/// [`STARTED_AGE`] ago, unless it advanced later: [`is_walked`] reads it as
-/// behind, not abandoned and not live, until its first window really lands.
-/// The block, its time and the history flag are unchanged, and nothing
-/// publishes earlier.
-pub async fn touch_started(pool: &PgPool, indexer: &str, net: ChainNet) -> sqlx::Result<()> {
-    sqlx::query(
+/// Marks the cursor of a walk `owner` just started, standing at `at`, as
+/// advanced [`STARTED_AGE`] ago, unless it advanced later: [`is_walked`] reads
+/// it as behind, not abandoned and not live, until its first window really
+/// lands. The block, its time and the history flag are unchanged, and nothing
+/// publishes earlier. A fenced write, like any other: a cursor no longer at
+/// `at`, or one `owner` no longer holds, is left as it is.
+pub async fn touch_started(
+    pool: &PgPool,
+    owner: &Owner,
+    at: (i64, Option<&str>),
+) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let set = sqlx::query(
         "UPDATE shop.chain_cursor \
-         SET updated_at = GREATEST(updated_at, timezone('UTC', now()) - make_interval(secs => $3)) \
-         WHERE indexer = $1 AND network = $2",
+         SET updated_at = GREATEST(updated_at, timezone('UTC', now()) - make_interval(secs => $5)) \
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
     )
-    .bind(indexer)
-    .bind(net.db_name())
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(at.0)
+    .bind(at.1)
     .bind(STARTED_AGE.num_seconds() as f64)
-    .execute(pool)
-    .await?;
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if set != 1 {
+        return Err(owner
+            .fenced("the checkpoint a started walk read moved".into())
+            .into());
+    }
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
-/// The walks this process has started, touched once each.
-/// Process-wide and keyed without the database: tests over several databases
-/// must not rely on the touch through `run_pass`.
-static STARTED_WALKS: std::sync::LazyLock<parking_lot::Mutex<BTreeSet<(String, &'static str)>>> =
-    std::sync::LazyLock::new(Default::default);
+/// Whether the walk of one lease acquisition's generation already touched its
+/// cursor ([`touch_started`]): set only once that touch committed, so a
+/// failed or fenced one is tried again on the next pass, and a new
+/// generation starts untouched.
+#[derive(Clone, Debug, Default)]
+pub struct Started(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Started {
+    pub fn done(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn mark(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Owners compare by what they hold, not by whether their walk touched yet.
+impl PartialEq for Started {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Started {}
 
 /// One projection as the job that walks it holds it: the cursor row
 /// (`indexer`, `net`), the chain its history is bound to and the generation
@@ -363,6 +400,8 @@ pub struct Owner {
     pub net: ChainNet,
     pub chain_id: i64,
     pub generation: i64,
+    /// Whether this generation's walk touched its cursor at its start.
+    pub started: Started,
 }
 
 /// A source that serves another chain than the index reads: the pass stops
@@ -471,8 +510,9 @@ pub struct Holdings {
 /// A projection's key: (`indexer`, network).
 type Projection = (&'static str, ChainNet);
 
-/// A held projection: (lease acquisition, generation).
-type Held = (u64, i64);
+/// A held projection: (lease acquisition, generation, whether its walk
+/// touched its cursor).
+type Held = (u64, i64, Started);
 
 impl Holdings {
     /// The owner of `ix`'s projection for this pass, bound to `ix`'s chain
@@ -487,9 +527,9 @@ impl Holdings {
     ) -> anyhow::Result<Owner> {
         let (indexer, net, chain_id) = (ix.indexer(), ix.net(), ix.chain_id());
         let acquisition = lease.map_or(0, |l| l.acquisition());
-        let held = self.held.lock().get(&(indexer, net)).copied();
-        let generation = match held {
-            Some((at, generation)) if at == acquisition => generation,
+        let held = self.held.lock().get(&(indexer, net)).cloned();
+        let (generation, started) = match held {
+            Some((at, generation, started)) if at == acquisition => (generation, started),
             _ => {
                 let start = settings.start_override(net).unwrap_or(ix.start_block());
                 let full_history = start <= ix.start_block();
@@ -505,10 +545,11 @@ impl Holdings {
                         claim(&mut conn, indexer, net, start, full_history, chain_id).await?
                     }
                 };
+                let started = Started::default();
                 self.held
                     .lock()
-                    .insert((indexer, net), (acquisition, generation));
-                generation
+                    .insert((indexer, net), (acquisition, generation, started.clone()));
+                (generation, started)
             }
         };
         Ok(Owner {
@@ -516,6 +557,7 @@ impl Holdings {
             net,
             chain_id,
             generation,
+            started,
         })
     }
 
@@ -699,13 +741,21 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
 pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
-/// ready, or with its whole history walked, advanced within [`READY_WINDOW`]
-/// and its last block under `horizon` old. It does not measure the walk's speed
+/// ready, or bound to its network's mainnet chain, out of quarantine, with its
+/// whole history walked, advanced within [`READY_WINDOW`] and its last block
+/// under `horizon` old. It does not measure the walk's speed
 /// or publish lag. An `updated_at` ahead of `now` (written by the database
 /// clock) counts as advanced up to [`MAX_CLOCK_SKEW`], and not past it.
 pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> bool {
     if is_ready(c, now) {
         return true;
+    }
+    // As readiness asks: bound to the chain its readers expect, and out of
+    // quarantine; otherwise no claim it takes can settle.
+    let bound =
+        ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(mainnet_chain(net)));
+    if !bound || c.quarantined_at.is_some() {
+        return false;
     }
     let advanced = now.naive_utc().signed_duration_since(c.updated_at);
     if advanced < -MAX_CLOCK_SKEW {
@@ -1393,11 +1443,16 @@ async fn walk(
     anyhow::ensure!(safe_head <= head, "safe head exceeds latest head");
     let target = target_block(safe_head, stop);
     // Only once the head reads answered, and not at the stop block: a walk with
-    // its RPC down or held there keeps its age.
-    let key = (name.to_string(), net.db_name());
-    if !held_at_stop(cur.last_block, stop) && !STARTED_WALKS.lock().contains(&key) {
-        touch_started(pool, name, net).await?;
-        STARTED_WALKS.lock().insert(key);
+    // its RPC down or held there keeps its age. Once per generation, marked
+    // only after the fenced touch committed.
+    if !held_at_stop(cur.last_block, stop) && !owner.started.done() {
+        touch_started(
+            pool,
+            owner,
+            (cur.last_block, cur.last_block_hash.as_deref()),
+        )
+        .await?;
+        owner.started.mark();
     }
     let anchor = match cur.last_block_time {
         Some(t) => (cur.last_block.max(0) as u64, t),

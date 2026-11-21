@@ -4820,3 +4820,80 @@ async fn a_rebuilt_cursor_keeps_its_chain_against_a_switch_before_the_replay() {
     );
     db.drop().await;
 }
+
+/// The first pass's touch of a started walk is a fenced write. A job that
+/// lost the projection at the same height and hash leaves an aged cursor as
+/// it is (its pass fails fenced, and it stays untouched, to try again), and
+/// the job that took the projection still touches it.
+#[tokio::test]
+async fn a_started_walk_touch_is_fenced_by_its_owner() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(100, vec![], 10_000, 1_000);
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    let mana = super::mana_transfers::ManaTransfersIndex {
+        net: ChainNet::Matic,
+    };
+    assert!(publish(&st, &url, &mana).await.published);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET updated_at = timezone('UTC', now()) - interval '5 hours' \
+         WHERE indexer = 'mana_transfers'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let updated_at = async || {
+        chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap()
+            .updated_at
+    };
+    let aged = updated_at().await;
+    let settings = &st.settings.market.indexes;
+    let stale = chain_walk::test_owner(&db.pool, &mana, settings).await;
+    let current = chain_walk::test_owner(&db.pool, &mana, settings).await;
+    let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+    let err = chain_walk::run_pass(&db.pool, &source, &mana, settings, &stale, None, &|_| {})
+        .await
+        .unwrap_err();
+    assert!(
+        err.chain()
+            .any(|c| c.downcast_ref::<chain_walk::Fenced>().is_some()),
+        "{err:#}"
+    );
+    assert_eq!(
+        updated_at().await,
+        aged,
+        "the stale job's touch changed nothing"
+    );
+    assert!(!stale.started.done(), "a fenced touch is not marked done");
+    // The current job, at a checkpoint the cursor no longer stands on.
+    let c = chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        chain_walk::touch_started(
+            &db.pool,
+            &current,
+            (c.last_block - 1, c.last_block_hash.as_deref())
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        updated_at().await,
+        aged,
+        "a touch at a moved checkpoint changed nothing"
+    );
+    chain_walk::run_pass(&db.pool, &source, &mana, settings, &current, None, &|_| {})
+        .await
+        .unwrap();
+    assert!(updated_at().await > aged, "the current job touched it");
+    assert!(current.started.done());
+    db.drop().await;
+}
