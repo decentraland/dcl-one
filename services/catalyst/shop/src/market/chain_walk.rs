@@ -390,6 +390,24 @@ impl PartialEq for Started {
 
 impl Eq for Started {}
 
+/// [`touch_started`] once per generation `owner` holds, for its cursor at
+/// `at`: only once its head reads answered, and not while it is held at its
+/// stop block, so a walk with its RPC down or held there keeps its age. Marked
+/// only after the fenced touch committed; a failed one is tried again on the
+/// next pass.
+pub(crate) async fn touch_once(
+    pool: &PgPool,
+    owner: &Owner,
+    at: (i64, Option<&str>),
+    stop: Option<u64>,
+) -> anyhow::Result<()> {
+    if !held_at_stop(at.0, stop) && !owner.started.done() {
+        touch_started(pool, owner, at).await?;
+        owner.started.mark();
+    }
+    Ok(())
+}
+
 /// One projection as the job that walks it holds it: the cursor row
 /// (`indexer`, `net`), the chain its history is bound to and the generation
 /// [`claim`] granted. Every transaction that writes the projection ends with
@@ -969,6 +987,18 @@ pub trait ChainIndex: Send + Sync {
     /// walk's collection set and pending contracts) after a pass failed past
     /// it: the next pass reloads it from the database.
     fn abandon(&self) {}
+    /// The start of a pass that does not run [`ChainIndex::lanes`] (a shared
+    /// walk): what the index keeps in memory is reloaded, as lanes does first.
+    fn begin_pass(&self) {}
+    /// After each window's rows and cursor advance committed, in every walk:
+    /// a test holds a commit's return here. Test builds only.
+    #[cfg(test)]
+    async fn window_committed(&self) {}
+    /// Whether this pass must walk alone, with its lanes (the nft walk owing
+    /// a backfill): a shared walk runs no lanes.
+    async fn walks_alone(&self, _pool: &PgPool) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Whether the pass may walk the cursor, after [`bind`].
@@ -1292,9 +1322,40 @@ pub async fn job_pass(
     cancel: Option<&tokio_util::sync::CancellationToken>,
     progress: &(dyn Fn(String) + Send + Sync),
 ) -> anyhow::Result<PassOutcome> {
+    job_pass_with(
+        pool,
+        source,
+        ix,
+        settings,
+        holdings,
+        lease,
+        Budget::fresh(settings),
+        cancel,
+        progress,
+    )
+    .await
+}
+
+/// [`job_pass`] spending at most `budget`: a shared walk's member that fell
+/// back goes on alone with what it had left.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "job_pass's inputs and the budget"
+)]
+pub async fn job_pass_with(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    holdings: &Holdings,
+    lease: Option<&crate::jobs::LeaseControl>,
+    budget: Budget,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
     super::ensure_chain(source, ix.chain_id()).await?;
     let owner = holdings.owner(pool, lease, ix, settings).await?;
-    let outcome = run_pass(pool, source, ix, settings, &owner, cancel, progress).await;
+    let outcome = run_pass_with(pool, source, ix, settings, &owner, budget, cancel, progress).await;
     match outcome {
         Ok(mut o) => {
             o.requests += 1;
@@ -1309,6 +1370,25 @@ pub async fn job_pass(
     }
 }
 
+/// What a logical pass may still spend on log reads, and whether its first
+/// window (which runs even over the budget, so every pass progresses) was
+/// already read. A member of a shared walk carries it into its fallback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Budget {
+    pub remaining: usize,
+    pub first_window_used: bool,
+}
+
+impl Budget {
+    /// A pass's whole budget, `requests_per_pass`.
+    pub fn fresh(settings: &IndexSettings) -> Self {
+        Self {
+            remaining: settings.requests_per_pass.max(1),
+            first_window_used: false,
+        }
+    }
+}
+
 /// One pass of `ix` over `net`, read from `source`, as `owner` (the
 /// projection's generation, which every transaction checks before its
 /// commit):
@@ -1318,7 +1398,7 @@ pub async fn job_pass(
 /// 4. the backfill lanes;
 /// 5. the windows from the cursor to the confirmed head under the request
 ///    budget, each committed with its cursor advance;
-/// 6. once caught up, the fold and the publish.
+/// 6. once caught up, the fold and the publish ([`close`]).
 pub async fn run_pass(
     pool: &PgPool,
     source: &dyn LogSource,
@@ -1328,23 +1408,61 @@ pub async fn run_pass(
     cancel: Option<&tokio_util::sync::CancellationToken>,
     progress: &(dyn Fn(String) + Send + Sync),
 ) -> anyhow::Result<PassOutcome> {
-    let outcome = walk(pool, source, ix, settings, owner, cancel, progress).await;
+    run_pass_with(
+        pool,
+        source,
+        ix,
+        settings,
+        owner,
+        Budget::fresh(settings),
+        cancel,
+        progress,
+    )
+    .await
+}
+
+/// [`run_pass`] spending at most `budget`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "run_pass's inputs and the budget"
+)]
+pub async fn run_pass_with(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    budget: Budget,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
+    let outcome = walk(pool, source, ix, settings, owner, budget, cancel, progress).await;
     if outcome.is_err() {
         ix.abandon();
     }
     outcome
 }
 
-async fn walk(
+/// What a pass's opening steps came to.
+pub(crate) enum Opening {
+    /// The pass ended there: a rebuild, a quarantine or a reorg rewind.
+    Ended(PassOutcome),
+    /// The cursor stands at its checkpoint, proven on the chain.
+    Walk(Box<Cursor>, PassOutcome),
+}
+
+/// The opening of a pass as `owner`: the cursor, an operator's rebuild, the
+/// binding to the owner's chain and the reorg check, whose header
+/// `at_checkpoint` gives when a shared walk already read it.
+pub(crate) async fn open(
     pool: &PgPool,
     source: &dyn LogSource,
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
     owner: &Owner,
-    cancel: Option<&tokio_util::sync::CancellationToken>,
-    progress: &(dyn Fn(String) + Send + Sync),
-) -> anyhow::Result<PassOutcome> {
-    let started = std::time::Instant::now();
+    started: std::time::Instant,
+    at_checkpoint: Option<&BlockHeader>,
+) -> anyhow::Result<Opening> {
     let net = ix.net();
     let name = ix.indexer();
     anyhow::ensure!(
@@ -1382,21 +1500,26 @@ async fn walk(
             Some(why) => out.quarantined = Some(why),
         }
         out.elapsed_ms = started.elapsed().as_millis() as u64;
-        return Ok(out);
+        return Ok(Opening::Ended(out));
     }
     if let Bound::Quarantined(why) = bind(pool, source, owner, &cur, &mut out).await? {
         out.quarantined = Some(why);
         out.elapsed_ms = started.elapsed().as_millis() as u64;
-        return Ok(out);
+        return Ok(Opening::Ended(out));
     }
     if cur.last_block >= cur.start_block {
         let stored = cur.last_block_hash.as_deref().unwrap_or("");
-        let header = source
-            .header(cur.last_block as u64)
-            .await
-            .context("eth_getBlockByNumber at the cursor")?;
-        out.requests += header.requests;
-        let header = header.value;
+        let header = match at_checkpoint.filter(|h| h.number as i64 == cur.last_block) {
+            Some(h) => h.clone(),
+            None => {
+                let header = source
+                    .header(cur.last_block as u64)
+                    .await
+                    .context("eth_getBlockByNumber at the cursor")?;
+                out.requests += header.requests;
+                header.value
+            }
+        };
         if header.hash != stored {
             let to = cur.start_block - 1;
             let mut tx = pool.begin().await?;
@@ -1424,36 +1547,87 @@ async fn walk(
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
             out.reorg_rewound_to = Some(to);
             out.elapsed_ms = started.elapsed().as_millis() as u64;
-            return Ok(out);
+            return Ok(Opening::Ended(out));
         }
     }
+    Ok(Opening::Walk(Box::new(cur), out))
+}
+
+/// The latest head and the safe head of `net` (Polygon's finalized block,
+/// Ethereum's head less its confirmations), with Polygon's finalized header.
+pub(crate) async fn safe_head(
+    source: &dyn LogSource,
+    net: ChainNet,
+    out: &mut PassOutcome,
+) -> anyhow::Result<(u64, u64, Option<BlockHeader>)> {
     let head = source.head().await.context("eth_blockNumber")?;
     out.requests += head.requests;
     let head = head.value;
-    out.head = head;
-    let stop = settings.stop_block(net);
-    let safe_head = match net {
+    let (safe, finalized) = match net {
         ChainNet::Matic => {
             let finalized = source.finalized().await.context("Polygon finalized head")?;
             out.requests += finalized.requests;
-            finalized.value.number
+            (finalized.value.number, Some(finalized.value))
         }
-        ChainNet::Ethereum => head.saturating_sub(net.confirmations()),
+        ChainNet::Ethereum => (head.saturating_sub(net.confirmations()), None),
     };
-    anyhow::ensure!(safe_head <= head, "safe head exceeds latest head");
+    anyhow::ensure!(safe <= head, "safe head exceeds latest head");
+    Ok((head, safe, finalized))
+}
+
+/// Commits one window of `ix`: its rows and the cursor's advance from
+/// `expected` to `header`, in one transaction fenced by `owner`.
+pub(crate) async fn commit_window(
+    pool: &PgPool,
+    ix: &dyn ChainIndex,
+    owner: &Owner,
+    expected: (i64, Option<&str>),
+    header: &BlockHeader,
+    logs: &[RpcLog],
+    times: &HashMap<i64, i64>,
+) -> anyhow::Result<usize> {
+    let mut tx = pool.begin().await?;
+    let written = ix.write(&mut tx, logs, times).await?;
+    advance(&mut tx, ix.indexer(), ix.net(), expected, header)
+        .await
+        .context("advancing the cursor")?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(written)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "run_pass's inputs and the budget"
+)]
+async fn walk(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    budget: Budget,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
+    let started = std::time::Instant::now();
+    let net = ix.net();
+    let name = ix.indexer();
+    let (cur, mut out) = match open(pool, source, ix, settings, owner, started, None).await? {
+        Opening::Ended(out) => return Ok(out),
+        Opening::Walk(cur, out) => (cur, out),
+    };
+    let (head, safe_head, _) = safe_head(source, net, &mut out).await?;
+    out.head = head;
+    let stop = settings.stop_block(net);
     let target = target_block(safe_head, stop);
-    // Only once the head reads answered, and not at the stop block: a walk with
-    // its RPC down or held there keeps its age. Once per generation, marked
-    // only after the fenced touch committed.
-    if !held_at_stop(cur.last_block, stop) && !owner.started.done() {
-        touch_started(
-            pool,
-            owner,
-            (cur.last_block, cur.last_block_hash.as_deref()),
-        )
-        .await?;
-        owner.started.mark();
-    }
+    touch_once(
+        pool,
+        owner,
+        (cur.last_block, cur.last_block_hash.as_deref()),
+        stop,
+    )
+    .await?;
     let anchor = match cur.last_block_time {
         Some(t) => (cur.last_block.max(0) as u64, t),
         None => {
@@ -1465,10 +1639,12 @@ async fn walk(
             (h.value.number, h.value.timestamp)
         }
     };
-    let budget = settings.requests_per_pass.max(1);
+    // What is left, not at least one: a fallback with nothing left reads
+    // nothing (`Budget::fresh` keeps a whole pass at one at least).
+    let total = budget.remaining;
     let mut chunk = settings.address_chunk.max(1);
     let mut log_requests = ix
-        .lanes(pool, source, anchor, budget, &mut chunk, owner)
+        .lanes(pool, source, anchor, total, &mut chunk, owner)
         .await?;
     out.requests += log_requests;
     let mut next = (cur.last_block + 1) as u64;
@@ -1481,7 +1657,7 @@ async fn walk(
         let to = (next + settings.window_blocks.max(1) - 1).min(target);
         let groups = ix.groups(pool, next, to, anchor).await?;
         let need = requests_for(&groups, chunk).max(1);
-        if log_requests + need > budget && log_requests > 0 {
+        if log_requests + need > total && (log_requests > 0 || budget.first_window_used) {
             out.paused = true;
             break;
         }
@@ -1512,19 +1688,18 @@ async fn walk(
             out.requests += reached.requests;
             reached.value
         };
-        let mut tx = pool.begin().await?;
-        let written = ix.write(&mut tx, &window.logs, &times).await?;
-        advance(
-            &mut tx,
-            name,
-            net,
+        let written = commit_window(
+            pool,
+            ix,
+            owner,
             (expected.0, expected.1.as_deref()),
             &header,
+            &window.logs,
+            &times,
         )
-        .await
-        .context("advancing the cursor")?;
-        owner.check(&mut tx).await?;
-        tx.commit().await?;
+        .await?;
+        #[cfg(test)]
+        ix.window_committed().await;
         out.logs += window.logs.len();
         out.rows_written += written;
         out.indexed_to = window.reached as i64;
@@ -1543,8 +1718,36 @@ async fn walk(
         out.elapsed_ms = started.elapsed().as_millis() as u64;
         return Ok(out);
     }
+    close(
+        pool,
+        source,
+        ix,
+        settings,
+        owner,
+        cur.fold_through,
+        &mut out,
+    )
+    .await?;
+    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    Ok(out)
+}
+
+/// The close of a pass that reached its target at `out.indexed_to`: the fold
+/// of what was touched since `fold_since`, its record, a fresh read of the
+/// heads, and the publish (or its withdrawal) against them.
+pub(crate) async fn close(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    fold_since: Option<i64>,
+    out: &mut PassOutcome,
+) -> anyhow::Result<()> {
+    let net = ix.net();
+    let stop = settings.stop_block(net);
     let may_publish = ix
-        .fold(pool, cur.fold_through, out.indexed_to, owner)
+        .fold(pool, fold_since, out.indexed_to, owner)
         .await
         .context("folding")?;
     record_fold(pool, owner, out.indexed_to).await?;
@@ -1577,8 +1780,7 @@ async fn walk(
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
     }
-    out.elapsed_ms = started.elapsed().as_millis() as u64;
-    Ok(out)
+    Ok(())
 }
 
 /// The owner of `ix`'s projection for a test that walks or folds it outside

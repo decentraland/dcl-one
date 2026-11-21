@@ -20,7 +20,7 @@ pub enum RpcError {
     Malformed(String),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct RpcLog {
     pub address: String,
     pub topics: Vec<String>,
@@ -87,16 +87,36 @@ pub struct BlockHeader {
 pub struct Rpc<'a> {
     http: &'a crate::http::Outbound,
     url: &'a str,
+    /// Counts every HTTP request as it is sent, whatever its outcome.
+    sent: Option<&'a std::sync::atomic::AtomicUsize>,
 }
 
 impl<'a> Rpc<'a> {
     /// The client over another endpoint, for callers that pass their own
     /// filter to [`Rpc::get_logs_matching`].
     pub fn at(http: &'a crate::http::Outbound, url: &'a str) -> Self {
-        Self { http, url }
+        Self {
+            http,
+            url,
+            sent: None,
+        }
     }
 
+    /// The same client, adding one to `sent` for every HTTP request it sends
+    /// (a call or a batch), before the request goes out: a read that fails
+    /// after several requests has still spent them.
+    pub fn counting(self, sent: &'a std::sync::atomic::AtomicUsize) -> Self {
+        Self {
+            sent: Some(sent),
+            ..self
+        }
+    }
+
+    /// One HTTP request about to be sent.
     fn jsonrpc(&self) -> crate::http::jsonrpc::Rpc<'a> {
+        if let Some(sent) = self.sent {
+            sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         crate::http::jsonrpc::Rpc::new(self.http, self.url)
             .with_timeout(RPC_TIMEOUT)
             .with_body_cap(RPC_BODY_CAP)

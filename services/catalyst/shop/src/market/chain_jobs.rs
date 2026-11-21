@@ -7,12 +7,15 @@
 //!
 //! Each lease acquisition gets a fresh index (the nft walk's memory never
 //! outlives it, and an attempt that panicked leaves its index behind), its
-//! own [`Holdings`] and backoff, and at most one attempt in flight, a whole
-//! [`chain_walk::job_pass`] in its own task. A lease request is a task of its
-//! own as well, run to its end. A projection keeps its own cadence: the
-//! interval after an attempt that ran, its own doubling backoff after one
-//! that failed, so one projection failing, waiting on its endpoint or
-//! waiting for its lease never holds another back. As with a leased periodic
+//! own [`Holdings`] and backoff, and at most one task in flight: an attempt
+//! alone (a whole [`chain_walk::job_pass`]), its part in a shared walk
+//! ([`chain_group::walk_together`]), or the close or walks-alone read that
+//! follows its part. A lease request is a task of its own as well, run to
+//! its end. A projection keeps its own cadence: the interval after an
+//! attempt that ran, its own doubling backoff after one that failed, so one
+//! projection failing, waiting on its endpoint or waiting for its lease
+//! never holds another back; one that reached the target may join a due
+//! companion's shared walk ahead of its own turn. As with a leased periodic
 //! job, every lease is asked for at once and each acquisition's first attempt
 //! waits the projection's first-pass delay (its jitter); a projection standing
 //! by asks again after the lease poll plus its jitter. A lost lease ends its
@@ -21,7 +24,9 @@
 //! lease and it holds none.
 //!
 //! An attempt ends as soon as its lease is lost or the process stops, even
-//! inside a fold: the supervisor collects it before the slot lets its lease
+//! inside a fold, and a shared walk ends for every member once one member's
+//! lease is lost (each reads its cursor again with a fresh index): the
+//! supervisor collects it before the slot lets its lease
 //! go or takes it again, and the attempts are the supervisor's tasks, so
 //! aborting the supervisor aborts them. Writes an attempt had already
 //! committed stay; the owner generation fences any later one.
@@ -43,7 +48,8 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::MarketplaceState;
-use super::chain_walk::{self, ChainIndex, ChainNet, Holdings, IndexSettings, PassOutcome};
+use super::chain_group::{self, Checkpoint, Member, MemberEnd};
+use super::chain_walk::{self, Budget, ChainIndex, ChainNet, Holdings, IndexSettings, PassOutcome};
 use crate::jobs::{JobContext, JobState, Jobs, LeaseGuard, Leases, PeriodicCfg};
 
 /// Decides whether an attempt walks now: `Ok(None)` walks, `Ok(Some(why))`
@@ -74,6 +80,25 @@ pub struct Supervisor {
     pub http: crate::http::Outbound,
     pub settings: IndexSettings,
     pub projections: Vec<Projection>,
+    /// How long a projection's own step in a shared walk (its gate, its
+    /// opening, its filters, its commit) may take before it leaves the walk.
+    pub member_deadline: Duration,
+    /// What the shared walks cost, summed.
+    pub stats: Arc<SharedStats>,
+}
+
+/// The shared walks of a supervisor, summed: how many ran, the requests they
+/// attempted (counted as each is sent, whatever its outcome; the members'
+/// closes are counted in their own outcomes), how many ended in a fallback
+/// or were cut short, and the members that left a walk on their deadline or
+/// a panic.
+#[derive(Debug, Default)]
+pub struct SharedStats {
+    pub walks: std::sync::atomic::AtomicUsize,
+    pub requests: std::sync::atomic::AtomicUsize,
+    pub fallbacks: std::sync::atomic::AtomicUsize,
+    pub interrupted: std::sync::atomic::AtomicUsize,
+    pub cut_short: std::sync::atomic::AtomicUsize,
 }
 
 /// The job name of `net`'s supervisor.
@@ -152,9 +177,16 @@ enum Attempt {
 enum Done {
     /// A lease request.
     Requested(sqlx::Result<Option<LeaseGuard>>),
-    Attempted(Attempt),
-    /// A task that panicked outside an attempt's own catch (a lease request)
-    /// or was aborted.
+    /// A projection's attempt alone, or its close after a shared walk, where
+    /// its cursor stood after it, and whether it still walks alone (a
+    /// backfill owed).
+    Attempted(Attempt, Option<Checkpoint>, bool),
+    /// A shared walk, member by member.
+    Grouped(Vec<(usize, MemberEnd)>),
+    /// A shared walk cut short by a lost lease or the stop.
+    GroupInterrupted,
+    /// A task that panicked outside its own catch (a lease request, a shared
+    /// walk's own steps) or was aborted.
     Crashed(String),
 }
 
@@ -198,8 +230,24 @@ enum Phase {
     Idle,
     /// A lease request is in flight.
     Requesting,
-    /// An attempt is in flight.
+    /// An attempt, a shared walk or a close is in flight.
     Running,
+}
+
+/// A task in flight: the slots it runs for and, for a shared walk, the count
+/// of the requests it attempts.
+struct Running {
+    members: Vec<usize>,
+    sent: Option<Arc<std::sync::atomic::AtomicUsize>>,
+}
+
+impl Running {
+    fn one(slot: usize) -> Self {
+        Self {
+            members: vec![slot],
+            sent: None,
+        }
+    }
 }
 
 struct Slot {
@@ -212,6 +260,31 @@ struct Slot {
     /// Its last lease request was answered without the lease: another
     /// process holds it, or the request failed.
     stood_by: bool,
+    /// Where its cursor stood after its last attempt, when known: a shared
+    /// walk gathers the projections standing at the same one.
+    checkpoint: Option<Checkpoint>,
+    /// Its last attempt walked to the target: it may join a shared walk
+    /// before it is due.
+    invitable: bool,
+    /// Its next attempt walks alone (backfill lanes owed, a rebuild asked,
+    /// filters a shared read does not take, a fallback). Cleared by an
+    /// attempt alone on a whole budget.
+    solo_once: bool,
+    /// What it may still spend, after a shared walk it fell back from.
+    carry: Option<Budget>,
+    /// Its attempt in flight runs on a carried budget.
+    carried: bool,
+}
+
+impl Slot {
+    /// Its state was cut short: a fresh index, its checkpoint read again.
+    fn suspect(&mut self, projection: &Projection) {
+        if let Some(a) = self.acquisition.as_mut() {
+            a.index = (projection.make)();
+        }
+        self.checkpoint = None;
+        self.invitable = false;
+    }
 }
 
 async fn run(
@@ -240,57 +313,79 @@ async fn run(
             due: start,
             line: "asking for the lease".into(),
             stood_by: false,
+            checkpoint: None,
+            invitable: false,
+            solo_once: false,
+            carry: None,
+            carried: false,
         })
         .collect();
     let mut tasks: JoinSet<Done> = JoinSet::new();
-    let mut running: HashMap<tokio::task::Id, usize> = HashMap::new();
+    let mut running: HashMap<tokio::task::Id, Running> = HashMap::new();
     // Stopping is terminal: nothing is dispatched once the token fires.
     while !ctx.cancel.is_cancelled() {
-        for (i, ((projection, cfg), slot)) in supervisor
-            .projections
-            .iter()
-            .zip(&cfgs)
-            .zip(&mut slots)
-            .enumerate()
-        {
+        for i in 0..slots.len() {
             if ctx.cancel.is_cancelled() {
                 break;
             }
-            if slot.phase != Phase::Idle {
+            let projection = &supervisor.projections[i];
+            if slots[i].phase != Phase::Idle {
                 continue;
             }
             let now = Instant::now();
-            if slot
+            if slots[i]
                 .acquisition
                 .as_ref()
                 .is_some_and(|a| a.lost.is_cancelled())
             {
                 lost_lease(
                     projection,
-                    slot,
+                    &mut slots[i],
                     now,
                     standby_wait(&leases, &projection.lease),
                 );
             }
-            if now < slot.due {
+            if now < slots[i].due {
                 continue;
             }
-            if slot.acquisition.is_none() {
+            if slots[i].acquisition.is_none() {
+                let slot = &mut slots[i];
                 let Some(leases) = &leases else {
                     slot.acquisition = Some(Acquisition::new(projection, None));
-                    slot.due = now + cfg.first_delay(&projection.lease);
+                    slot.due = now + cfgs[i].first_delay(&projection.lease);
                     slot.line = "waiting for the first pass".into();
                     continue;
                 };
                 let (leases, name) = (leases.clone(), projection.lease.clone());
                 let handle =
                     tasks.spawn(async move { Done::Requested(leases.try_acquire(&name).await) });
-                running.insert(handle.id(), i);
+                running.insert(handle.id(), Running::one(i));
                 slot.phase = Phase::Requesting;
                 slot.line = "asking for the lease".into();
                 continue;
             }
-            dispatch_attempt(&ctx, &supervisor, i, slot, &mut tasks, &mut running);
+            let others = companions(&supervisor, &slots, i, now);
+            if others.is_empty() {
+                dispatch_attempt(
+                    &ctx,
+                    &supervisor,
+                    i,
+                    &mut slots[i],
+                    &mut tasks,
+                    &mut running,
+                );
+            } else {
+                let mut members = vec![i];
+                members.extend(others);
+                dispatch_group(
+                    &ctx,
+                    &supervisor,
+                    members,
+                    &mut slots,
+                    &mut tasks,
+                    &mut running,
+                );
+            }
         }
         ctx.progress(progress_line(&supervisor, &slots));
         // Standing by once a request was answered without its lease and no
@@ -314,21 +409,22 @@ async fn run(
             biased;
             _ = ctx.cancel.cancelled() => break,
             Some(done) = tasks.join_next_with_id(), if !tasks.is_empty() => {
-                settle(&ctx, &supervisor, &cfgs, &mut slots, &mut running, done, &leases, false).await;
+                settle(&ctx, &supervisor, &cfgs, &mut slots, &mut tasks, &mut running, done, &leases, false).await;
             }
             _ = any_cancelled(idle_leases) => {}
             _ = sleep_until(next) => {}
         }
     }
     // Every attempt watches the process's token, and a lease request runs to
-    // its end: collect them all (a lease taken meanwhile is let go), then let
-    // the leases go.
+    // its end: collect them all (a lease taken meanwhile is let go, no close
+    // starts), then let the leases go.
     while let Some(done) = tasks.join_next_with_id().await {
         settle(
             &ctx,
             &supervisor,
             &cfgs,
             &mut slots,
+            &mut tasks,
             &mut running,
             done,
             &leases,
@@ -344,30 +440,265 @@ async fn run(
     Ok(())
 }
 
+/// The projections that walk with slot `i`, due now: idle ones holding their
+/// lease, out of backoff, reading the same endpoint and standing at the same
+/// checkpoint, and either due as well or ahead of their turn after an attempt
+/// that reached the target. None when `i` walks alone this time.
+fn companions(supervisor: &Supervisor, slots: &[Slot], i: usize, now: Instant) -> Vec<usize> {
+    let slot = &slots[i];
+    if slot.solo_once || slot.carry.is_some() {
+        return Vec::new();
+    }
+    let Some(at) = slot.checkpoint.as_ref() else {
+        return Vec::new();
+    };
+    let url = &supervisor.projections[i].url;
+    (0..slots.len())
+        .filter(|&j| j != i)
+        .filter(|&j| {
+            let other = &slots[j];
+            other.phase == Phase::Idle
+                && (other.due <= now || other.invitable)
+                && !other.solo_once
+                && other.carry.is_none()
+                && other
+                    .acquisition
+                    .as_ref()
+                    .is_some_and(|a| !a.lost.is_cancelled() && a.failures == 0)
+                && supervisor.projections[j].url == *url
+                && other.checkpoint.as_ref() == Some(at)
+        })
+        .collect()
+}
+
 fn dispatch_attempt(
     ctx: &JobContext,
     supervisor: &Arc<Supervisor>,
     i: usize,
     slot: &mut Slot,
     tasks: &mut JoinSet<Done>,
-    running: &mut HashMap<tokio::task::Id, usize>,
+    running: &mut HashMap<tokio::task::Id, Running>,
 ) {
     let acquisition = slot
         .acquisition
         .as_ref()
         .expect("an acquisition to attempt under");
+    let carried = slot.carry.take();
+    slot.carried = carried.is_some();
+    let budget = carried.unwrap_or_else(|| Budget::fresh(&supervisor.settings));
     let task = attempt(
         supervisor.clone(),
         i,
         acquisition.index.clone(),
         acquisition.holdings.clone(),
         acquisition.guard.as_ref().map(LeaseGuard::control),
+        budget,
         acquisition.lost.clone(),
         ctx.cancel.clone(),
         ctx.clone(),
     );
-    let handle = tasks.spawn(task.map(Done::Attempted));
-    running.insert(handle.id(), i);
+    let handle = tasks.spawn(task);
+    running.insert(handle.id(), Running::one(i));
+    slot.phase = Phase::Running;
+}
+
+/// A shared walk of `members` (the first is due) from its checkpoint, cut
+/// short when the stop comes or any member's lease is lost.
+fn dispatch_group(
+    ctx: &JobContext,
+    supervisor: &Arc<Supervisor>,
+    members: Vec<usize>,
+    slots: &mut [Slot],
+    tasks: &mut JoinSet<Done>,
+    running: &mut HashMap<tokio::task::Id, Running>,
+) {
+    let at = slots[members[0]]
+        .checkpoint
+        .clone()
+        .expect("a group gathers at a checkpoint");
+    let url = supervisor.projections[members[0]].url.clone();
+    let mut lost = Vec::new();
+    let walkers: Vec<Member> = members
+        .iter()
+        .map(|&j| {
+            let a = slots[j]
+                .acquisition
+                .as_ref()
+                .expect("a member holds its lease");
+            lost.push(a.lost.clone());
+            Member {
+                slot: j,
+                index: a.index.clone(),
+                holdings: a.holdings.clone(),
+                lease: a.guard.as_ref().map(LeaseGuard::control),
+                gate: supervisor.projections[j].gate.clone(),
+            }
+        })
+        .collect();
+    let names: Vec<&str> = members
+        .iter()
+        .map(|&j| supervisor.projections[j].lease.as_str())
+        .collect();
+    let line = format!("walking together: {}", names.join(", "));
+    let (sup, stop) = (supervisor.clone(), ctx.cancel.clone());
+    // The walk's count lives with the supervisor, so it outlives the task
+    // even when the task panics.
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = sent.clone();
+    let handle = tasks.spawn(async move {
+        let walk = chain_group::walk_together(
+            &sup.pool,
+            &sup.http,
+            &url,
+            &sup.settings,
+            walkers,
+            &at,
+            sup.member_deadline,
+            &counted,
+        );
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => Done::GroupInterrupted,
+            _ = any_cancelled(lost) => Done::GroupInterrupted,
+            ends = walk => Done::Grouped(ends),
+        }
+    });
+    for &j in &members {
+        slots[j].phase = Phase::Running;
+        slots[j].line = line.clone();
+    }
+    running.insert(
+        handle.id(),
+        Running {
+            members,
+            sent: Some(sent),
+        },
+    );
+}
+
+/// The close of slot `i` after a shared walk: its fold and publish, in a
+/// task of its own so a slow fold holds back only its projection.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the supervisor's state, the slot and what its walk left"
+)]
+fn dispatch_close(
+    ctx: &JobContext,
+    supervisor: &Arc<Supervisor>,
+    i: usize,
+    slot: &mut Slot,
+    out: PassOutcome,
+    fold_since: Option<i64>,
+    tasks: &mut JoinSet<Done>,
+    running: &mut HashMap<tokio::task::Id, Running>,
+) {
+    let acquisition = slot.acquisition.as_ref().expect("a member holds its lease");
+    let (sup, index, holdings, lease, lost, stop, checkpoint) = (
+        supervisor.clone(),
+        acquisition.index.clone(),
+        acquisition.holdings.clone(),
+        acquisition.guard.as_ref().map(LeaseGuard::control),
+        acquisition.lost.clone(),
+        ctx.cancel.clone(),
+        slot.checkpoint.clone(),
+    );
+    let handle = tasks.spawn(async move {
+        let close = async {
+            let projection = &sup.projections[i];
+            let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                &sup.http,
+                &projection.url,
+            ));
+            let owner = holdings
+                .owner(&sup.pool, lease.as_ref(), index.as_ref(), &sup.settings)
+                .await?;
+            let mut out = out;
+            let closed = chain_walk::close(
+                &sup.pool,
+                &source,
+                index.as_ref(),
+                &sup.settings,
+                &owner,
+                fold_since,
+                &mut out,
+            )
+            .await;
+            if let Err(e) = &closed
+                && e.chain()
+                    .any(|c| c.downcast_ref::<chain_walk::Fenced>().is_some())
+            {
+                holdings.forget(index.indexer(), index.net());
+            }
+            closed.map(|()| out)
+        };
+        let close = std::panic::AssertUnwindSafe(close).catch_unwind();
+        let attempt = tokio::select! {
+            biased;
+            _ = lost.cancelled() => Attempt::Interrupted,
+            _ = stop.cancelled() => Attempt::Interrupted,
+            outcome = close => match outcome {
+                Ok(result) => Attempt::Ran(result),
+                Err(panic) => Attempt::Panicked(panic_message(panic.as_ref())),
+            },
+        };
+        // The close's outcome stands; only then is the hint read, in this
+        // projection's own task.
+        let alone = match &attempt {
+            Attempt::Ran(Ok(_)) => hint(&sup, index.as_ref(), &lost, &stop).await,
+            _ => false,
+        };
+        Done::Attempted(attempt, checkpoint, alone)
+    });
+    running.insert(handle.id(), Running::one(i));
+    slot.phase = Phase::Running;
+    slot.line = "closing after a shared walk".into();
+}
+
+/// Whether `index` walks alone next, read in its slot's own task, raced
+/// against its lease and the stop (either says no; the walk itself stands).
+async fn hint(
+    supervisor: &Supervisor,
+    index: &dyn ChainIndex,
+    lost: &CancellationToken,
+    stop: &CancellationToken,
+) -> bool {
+    tokio::select! {
+        biased;
+        _ = lost.cancelled() => false,
+        _ = stop.cancelled() => false,
+        alone = chain_group::walks_alone(&supervisor.pool, index, supervisor.member_deadline) => alone,
+    }
+}
+
+/// A member a shared walk paused at its budget: its walk stands as it is,
+/// and its walks-alone hint is read in a task of its own, so a slow read
+/// holds back no one else. The read ends at once when `stop` fires.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the supervisor's state, the slot and what its walk left"
+)]
+fn dispatch_hint(
+    stop: &CancellationToken,
+    supervisor: &Arc<Supervisor>,
+    i: usize,
+    slot: &mut Slot,
+    out: PassOutcome,
+    checkpoint: Option<Checkpoint>,
+    tasks: &mut JoinSet<Done>,
+    running: &mut HashMap<tokio::task::Id, Running>,
+) {
+    let acquisition = slot.acquisition.as_ref().expect("a member holds its lease");
+    let (sup, index, lost, stop) = (
+        supervisor.clone(),
+        acquisition.index.clone(),
+        acquisition.lost.clone(),
+        stop.clone(),
+    );
+    let handle = tasks.spawn(async move {
+        let alone = hint(&sup, index.as_ref(), &lost, &stop).await;
+        Done::Attempted(Attempt::Ran(Ok(out)), checkpoint, alone)
+    });
+    running.insert(handle.id(), Running::one(i));
     slot.phase = Phase::Running;
 }
 
@@ -380,6 +711,10 @@ fn lost_lease(projection: &Projection, slot: &mut Slot, now: Instant, standby: D
     slot.due = now + standby;
     slot.line = "lease lost; standing by".into();
     slot.stood_by = false;
+    slot.checkpoint = None;
+    slot.invitable = false;
+    slot.solo_once = false;
+    slot.carry = None;
 }
 
 /// Resolves when any of `tokens` fires: an idle projection's lease lost
@@ -409,36 +744,192 @@ fn progress_line(supervisor: &Supervisor, slots: &[Slot]) -> String {
         .join("; ")
 }
 
-/// Records a task that ended and sets the slot's next step. While
-/// `stopping`, a lease just taken is let go at once. It runs none of the
-/// projection's code: a panicked attempt's index is dropped, not cleaned.
+/// Records a task that ended and sets its slots' next step. While
+/// `stopping`, a lease just taken is let go at once and no close starts. It
+/// runs none of the projection's code: a projection whose state was cut
+/// short gets a fresh index.
 #[allow(
     clippy::too_many_arguments,
     reason = "the supervisor's state, the task and the mode"
 )]
 async fn settle(
     ctx: &JobContext,
-    supervisor: &Supervisor,
+    supervisor: &Arc<Supervisor>,
     cfgs: &[PeriodicCfg],
     slots: &mut [Slot],
-    running: &mut HashMap<tokio::task::Id, usize>,
+    tasks: &mut JoinSet<Done>,
+    running: &mut HashMap<tokio::task::Id, Running>,
     done: Result<(tokio::task::Id, Done), tokio::task::JoinError>,
     leases: &Option<Arc<dyn TakeLease>>,
     stopping: bool,
 ) {
-    let (i, done) = match done {
+    let (Running { members, sent }, done) = match done {
         Ok((id, done)) => match running.remove(&id) {
-            Some(i) => (i, done),
+            Some(task) => (task, done),
             None => return,
         },
         Err(err) => match running.remove(&err.id()) {
-            Some(i) => (i, Done::Crashed(err.to_string())),
+            Some(task) => (task, Done::Crashed(err.to_string())),
             None => return,
         },
     };
+    let requests = sent
+        .as_ref()
+        .map_or(0, |s| s.load(std::sync::atomic::Ordering::SeqCst));
+    let now = Instant::now();
+    match done {
+        Done::Grouped(ends) => {
+            summarize(supervisor, &members, &ends, requests);
+            for &j in &members {
+                slots[j].phase = Phase::Idle;
+            }
+            for (j, end) in ends {
+                settle_member(
+                    ctx, supervisor, cfgs, slots, j, end, tasks, running, leases, stopping,
+                );
+            }
+        }
+        Done::GroupInterrupted => {
+            let stats = &supervisor.stats;
+            stats
+                .walks
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            stats
+                .requests
+                .fetch_add(requests, std::sync::atomic::Ordering::SeqCst);
+            stats
+                .interrupted
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tracing::warn!(members = ?names(supervisor, &members), requests, "marketplace chain index: a shared walk was cut short");
+            for &j in &members {
+                let projection = &supervisor.projections[j];
+                let slot = &mut slots[j];
+                slot.phase = Phase::Idle;
+                slot.suspect(projection);
+                slot.due = now;
+                slot.line = "a shared walk was cut short".into();
+                if slot
+                    .acquisition
+                    .as_ref()
+                    .is_some_and(|a| a.lost.is_cancelled())
+                {
+                    lost_lease(
+                        projection,
+                        slot,
+                        now,
+                        standby_wait(leases, &projection.lease),
+                    );
+                }
+            }
+        }
+        Done::Crashed(msg) if sent.is_some() => {
+            let stats = &supervisor.stats;
+            stats
+                .walks
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            stats
+                .requests
+                .fetch_add(requests, std::sync::atomic::Ordering::SeqCst);
+            stats
+                .interrupted
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tracing::error!(members = ?names(supervisor, &members), requests, panic = %msg, "marketplace chain index: a shared walk panicked");
+            for &j in &members {
+                slots[j].phase = Phase::Idle;
+                settle_member(
+                    ctx,
+                    supervisor,
+                    cfgs,
+                    slots,
+                    j,
+                    MemberEnd::Failed {
+                        error: anyhow::anyhow!("a shared walk panicked: {msg}"),
+                        tainted: true,
+                    },
+                    tasks,
+                    running,
+                    leases,
+                    stopping,
+                );
+            }
+        }
+        done => {
+            let i = members[0];
+            settle_one(
+                ctx,
+                supervisor,
+                cfgs,
+                &mut slots[i],
+                i,
+                done,
+                leases,
+                stopping,
+            )
+            .await;
+        }
+    }
+}
+
+fn names<'s>(supervisor: &'s Supervisor, members: &[usize]) -> Vec<&'s str> {
+    members
+        .iter()
+        .map(|&j| supervisor.projections[j].lease.as_str())
+        .collect()
+}
+
+/// One summary of a shared walk: its members, the requests it attempted and
+/// how each member's part ended.
+fn summarize(
+    supervisor: &Supervisor,
+    members: &[usize],
+    ends: &[(usize, MemberEnd)],
+    requests: usize,
+) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let stats = &supervisor.stats;
+    stats.walks.fetch_add(1, SeqCst);
+    stats.requests.fetch_add(requests, SeqCst);
+    let fell_back = ends
+        .iter()
+        .any(|(_, end)| matches!(end, MemberEnd::Fallback { .. }));
+    if fell_back {
+        stats.fallbacks.fetch_add(1, SeqCst);
+    }
+    let outcomes: Vec<String> = ends
+        .iter()
+        .map(|(j, end)| {
+            let what = match end {
+                MemberEnd::Walked { close: Some(_), .. } => "reached the target",
+                MemberEnd::Walked { close: None, .. } => "paused at its budget",
+                MemberEnd::Waiting(_) => "waiting",
+                MemberEnd::Ended(_) => "ended in its opening",
+                MemberEnd::Failed { .. } => "failed",
+                MemberEnd::Regroup { .. } => "regrouping",
+                MemberEnd::Fallback { .. } => "falling back alone",
+            };
+            format!("{}: {what}", supervisor.projections[*j].lease)
+        })
+        .collect();
+    tracing::info!(members = ?names(supervisor, members), requests, outcomes = ?outcomes, "marketplace chain index: a shared walk");
+}
+
+/// Records the end of slot `i`'s lease request, attempt or close.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the supervisor's state, the task and the mode"
+)]
+async fn settle_one(
+    ctx: &JobContext,
+    supervisor: &Supervisor,
+    cfgs: &[PeriodicCfg],
+    slot: &mut Slot,
+    i: usize,
+    done: Done,
+    leases: &Option<Arc<dyn TakeLease>>,
+    stopping: bool,
+) {
     let projection = &supervisor.projections[i];
     let cfg = &cfgs[i];
-    let slot = &mut slots[i];
     let now = Instant::now();
     let standby = standby_wait(leases, &projection.lease);
     // A crashed lease request fails like one, and is asked again after the
@@ -453,7 +944,7 @@ async fn settle(
         slot.stood_by = true;
         return;
     }
-    let outcome = match done {
+    let (outcome, checkpoint, alone) = match done {
         Done::Requested(Ok(Some(guard))) => {
             if stopping {
                 guard.release().await;
@@ -480,9 +971,11 @@ async fn settle(
             slot.stood_by = true;
             return;
         }
-        Done::Attempted(outcome) => outcome,
-        Done::Crashed(msg) => Attempt::Panicked(msg),
+        Done::Attempted(outcome, checkpoint, alone) => (outcome, checkpoint, alone),
+        Done::Crashed(msg) => (Attempt::Panicked(msg), None, false),
+        Done::Grouped(_) | Done::GroupInterrupted => return,
     };
+    after_alone(slot, alone);
     let Some(acquisition) = slot.acquisition.as_mut() else {
         return;
     };
@@ -492,6 +985,8 @@ async fn settle(
             ctx.pass_done();
             acquisition.failures = 0;
             slot.due = now + cfg.interval;
+            slot.invitable = o.folded && !o.paused && o.quarantined.is_none();
+            slot.checkpoint = checkpoint;
             slot.line = o.summary();
             tracing::info!(lease = %projection.lease, acquisition = number, summary = %slot.line, "marketplace chain index pass");
         }
@@ -499,6 +994,7 @@ async fn settle(
             ctx.pass_done();
             acquisition.failures = 0;
             slot.due = now + cfg.interval;
+            slot.invitable = false;
             slot.line = why;
         }
         Attempt::Ran(Err(err)) => {
@@ -506,33 +1002,200 @@ async fn settle(
             acquisition.failures += 1;
             let wait = cfg.wait_after_failure(acquisition.failures);
             slot.due = now + wait;
+            slot.checkpoint = None;
+            slot.invitable = false;
             slot.line = format!("failed; next in {} s", wait.as_secs());
             tracing::warn!(lease = %projection.lease, acquisition = number, error = %format!("{err:#}"), wait_ms = wait.as_millis() as u64, "marketplace chain index pass failed");
             ctx.error(format!("{}: {err:#}", projection.lease));
         }
         Attempt::Panicked(msg) => {
             ctx.pass_done();
-            // A fresh index for the retry; the old one's state may be poisoned.
-            acquisition.index = (projection.make)();
             acquisition.failures += 1;
             let wait = cfg.wait_after_failure(acquisition.failures);
             slot.due = now + wait;
+            // A fresh index for the retry; the old one's state may be poisoned.
+            slot.suspect(projection);
             slot.line = format!("panicked; next in {} s", wait.as_secs());
             tracing::error!(lease = %projection.lease, acquisition = number, panic = %msg, "marketplace chain index pass panicked");
             ctx.error(format!("{}: panic: {msg}", projection.lease));
         }
-        Attempt::Interrupted => {}
+        Attempt::Interrupted => {
+            slot.suspect(projection);
+        }
     }
-    if acquisition.lost.is_cancelled() {
+    if slot
+        .acquisition
+        .as_ref()
+        .is_some_and(|a| a.lost.is_cancelled())
+    {
         lost_lease(projection, slot, now, standby);
     }
 }
 
-/// One attempt of projection `i`: its gate, then a whole job pass. It ends
-/// at once when `lost` or `stop` fires, wherever it is waiting.
+/// Records how member `j` of a shared walk ended, starting its close when it
+/// reached the target.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the acquisition's parts, the tokens and the job's trace"
+    reason = "the supervisor's state, the member and the mode"
+)]
+fn settle_member(
+    ctx: &JobContext,
+    supervisor: &Arc<Supervisor>,
+    cfgs: &[PeriodicCfg],
+    slots: &mut [Slot],
+    j: usize,
+    end: MemberEnd,
+    tasks: &mut JoinSet<Done>,
+    running: &mut HashMap<tokio::task::Id, Running>,
+    leases: &Option<Arc<dyn TakeLease>>,
+    stopping: bool,
+) {
+    let projection = &supervisor.projections[j];
+    let cfg = &cfgs[j];
+    let now = Instant::now();
+    let slot = &mut slots[j];
+    slot.phase = Phase::Idle;
+    if slot.acquisition.is_none() {
+        return;
+    }
+    match end {
+        MemberEnd::Walked {
+            out,
+            checkpoint,
+            close: Some(fold_since),
+            ..
+        } if !stopping => {
+            slot.checkpoint = checkpoint;
+            dispatch_close(ctx, supervisor, j, slot, out, fold_since, tasks, running);
+            return;
+        }
+        MemberEnd::Walked {
+            out,
+            checkpoint,
+            close: None,
+        } if !stopping => {
+            slot.checkpoint = checkpoint.clone();
+            dispatch_hint(
+                &ctx.cancel,
+                supervisor,
+                j,
+                slot,
+                out,
+                checkpoint,
+                tasks,
+                running,
+            );
+            return;
+        }
+        MemberEnd::Walked {
+            out, checkpoint, ..
+        } => {
+            ctx.pass_done();
+            if let Some(a) = slot.acquisition.as_mut() {
+                a.failures = 0;
+            }
+            slot.due = now + cfg.interval;
+            slot.checkpoint = checkpoint;
+            slot.invitable = false;
+            slot.line = out.summary();
+        }
+        MemberEnd::Waiting(why) => {
+            ctx.pass_done();
+            if let Some(a) = slot.acquisition.as_mut() {
+                a.failures = 0;
+            }
+            slot.due = now + cfg.interval;
+            slot.invitable = false;
+            slot.line = why;
+        }
+        MemberEnd::Ended(out) => {
+            ctx.pass_done();
+            if let Some(a) = slot.acquisition.as_mut() {
+                a.failures = 0;
+            }
+            slot.due = now + cfg.interval;
+            slot.checkpoint = None;
+            slot.invitable = false;
+            slot.line = out.summary();
+        }
+        MemberEnd::Failed { error, tainted } => {
+            ctx.pass_done();
+            let failures = slot.acquisition.as_mut().map_or(1, |a| {
+                a.failures += 1;
+                a.failures
+            });
+            let wait = cfg.wait_after_failure(failures);
+            slot.due = now + wait;
+            if tainted {
+                supervisor
+                    .stats
+                    .cut_short
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                slot.suspect(projection);
+            }
+            slot.checkpoint = None;
+            slot.invitable = false;
+            slot.line = format!("failed in a shared walk; next in {} s", wait.as_secs());
+            tracing::warn!(lease = %projection.lease, error = %format!("{error:#}"), tainted, "marketplace chain index: a shared walk's member failed");
+            ctx.error(format!("{}: {error:#}", projection.lease));
+        }
+        MemberEnd::Regroup { checkpoint, solo } => regroup(slot, checkpoint, solo, now),
+        MemberEnd::Fallback { budget } => fall_back(slot, budget, now),
+    }
+    if slot
+        .acquisition
+        .as_ref()
+        .is_some_and(|a| a.lost.is_cancelled())
+    {
+        lost_lease(
+            projection,
+            slot,
+            now,
+            standby_wait(leases, &projection.lease),
+        );
+    }
+}
+
+/// After an attempt alone: the next one walks alone again only if this one
+/// ran on a carried budget (the whole one is still owed) or the projection
+/// still owes a backfill, whose lanes run alone without being gathered first.
+fn after_alone(slot: &mut Slot, alone: bool) {
+    if !std::mem::take(&mut slot.carried) {
+        slot.solo_once = false;
+    }
+    slot.solo_once |= alone;
+}
+
+/// A member out of step with its walk: it keeps where its cursor really
+/// stands (read again), and walks next, alone when `solo`.
+fn regroup(slot: &mut Slot, checkpoint: Option<Checkpoint>, solo: bool, now: Instant) {
+    slot.checkpoint = checkpoint;
+    slot.solo_once |= solo;
+    slot.invitable = false;
+    slot.due = now;
+    slot.line = if solo {
+        "walking alone next".into()
+    } else {
+        "regrouping".into()
+    };
+}
+
+/// A member whose shared read failed: it walks next, alone, with what it had
+/// left; the walk after that is alone too, on a whole budget.
+fn fall_back(slot: &mut Slot, budget: Budget, now: Instant) {
+    slot.carry = Some(budget);
+    slot.solo_once = true;
+    slot.invitable = false;
+    slot.due = now;
+    slot.line = "a shared read failed; walking alone".into();
+}
+
+/// One attempt of projection `i` alone: its gate, then a whole job pass on
+/// `budget`, then where its cursor stands. It ends at once when `lost` or
+/// `stop` fires, wherever it is waiting.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the acquisition's parts, the budget, the tokens and the job's trace"
 )]
 async fn attempt(
     supervisor: Arc<Supervisor>,
@@ -540,17 +1203,18 @@ async fn attempt(
     index: Arc<dyn ChainIndex>,
     holdings: Arc<Holdings>,
     lease: Option<crate::jobs::LeaseControl>,
+    budget: Budget,
     lost: CancellationToken,
     stop: CancellationToken,
     ctx: JobContext,
-) -> Attempt {
+) -> Done {
     let walk = async {
         let projection = &supervisor.projections[i];
         if let Some(gate) = &projection.gate {
             match gate().await {
-                Ok(Some(why)) => return Attempt::Waiting(why),
+                Ok(Some(why)) => return (Attempt::Waiting(why), None, false),
                 Ok(None) => {}
-                Err(err) => return Attempt::Ran(Err(err)),
+                Err(err) => return (Attempt::Ran(Err(err)), None, false),
             }
         }
         let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
@@ -558,32 +1222,49 @@ async fn attempt(
             &projection.url,
         ));
         let progress = |m: String| ctx.progress(format!("{}: {m}", projection.lease));
-        Attempt::Ran(
-            chain_walk::job_pass(
-                &supervisor.pool,
-                &source,
-                index.as_ref(),
-                &supervisor.settings,
-                &holdings,
-                lease.as_ref(),
-                // The select below owns the interruption: it drops this
-                // pass at once on a stop or a lost lease.
-                None,
-                &progress,
-            )
-            .await,
+        let outcome = chain_walk::job_pass_with(
+            &supervisor.pool,
+            &source,
+            index.as_ref(),
+            &supervisor.settings,
+            &holdings,
+            lease.as_ref(),
+            budget,
+            // The select below owns the interruption: it drops this pass at
+            // once on a stop or a lost lease.
+            None,
+            &progress,
         )
+        .await;
+        let (checkpoint, alone) = match &outcome {
+            Ok(_) => (
+                chain_walk::cursor(&supervisor.pool, index.indexer(), index.net())
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|c| Checkpoint::of(&c)),
+                chain_group::walks_alone(
+                    &supervisor.pool,
+                    index.as_ref(),
+                    supervisor.member_deadline,
+                )
+                .await,
+            ),
+            Err(_) => (None, false),
+        };
+        (Attempt::Ran(outcome), checkpoint, alone)
     };
     let walk = std::panic::AssertUnwindSafe(walk).catch_unwind();
-    tokio::select! {
+    let (attempt, checkpoint, alone) = tokio::select! {
         biased;
-        _ = lost.cancelled() => Attempt::Interrupted,
-        _ = stop.cancelled() => Attempt::Interrupted,
-        outcome = walk => outcome.unwrap_or_else(|panic| Attempt::Panicked(panic_message(panic.as_ref()))),
-    }
+        _ = lost.cancelled() => (Attempt::Interrupted, None, false),
+        _ = stop.cancelled() => (Attempt::Interrupted, None, false),
+        outcome = walk => outcome.unwrap_or_else(|panic| (Attempt::Panicked(panic_message(panic.as_ref())), None, false)),
+    };
+    Done::Attempted(attempt, checkpoint, alone)
 }
 
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         (*s).to_string()
     } else if let Some(s) = payload.downcast_ref::<String>() {
@@ -740,6 +1421,8 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
                 http: state.http.clone(),
                 settings: state.settings.market.indexes.clone(),
                 projections,
+                member_deadline: Duration::from_secs(60),
+                stats: Arc::default(),
             },
         );
     }
@@ -812,5 +1495,217 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
         } else {
             tracing::info!("rentals index off: {why}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn checkpoint(block: i64) -> Checkpoint {
+        Checkpoint {
+            block,
+            hash: format!("0x{block:064x}"),
+            full_history: true,
+        }
+    }
+
+    fn projection(lease: &str, url: &str) -> Projection {
+        Projection {
+            lease: lease.into(),
+            url: url.into(),
+            cfg: PeriodicCfg::every(Duration::from_secs(1)),
+            make: Arc::new(|| {
+                Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                    net: ChainNet::Matic,
+                }) as Arc<dyn ChainIndex>
+            }),
+            gate: None,
+        }
+    }
+
+    fn slot(projection: &Projection, at: Option<Checkpoint>, due: Instant) -> Slot {
+        Slot {
+            acquisition: Some(Acquisition::new(projection, None)),
+            phase: Phase::Idle,
+            due,
+            line: String::new(),
+            stood_by: false,
+            checkpoint: at,
+            invitable: false,
+            solo_once: false,
+            carry: None,
+            carried: false,
+        }
+    }
+
+    fn supervisor(projections: Vec<Projection>) -> Supervisor {
+        Supervisor {
+            name: "chain-walk-matic".into(),
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://localhost/unused")
+                .unwrap(),
+            http: crate::http::Outbound::for_tests(),
+            settings: IndexSettings::default(),
+            projections,
+            member_deadline: Duration::from_secs(60),
+            stats: Arc::default(),
+        }
+    }
+
+    /// A member out of step keeps the checkpoint it was read at, not the one
+    /// it was gathered at, so the next dispatch groups it by where it stands.
+    #[tokio::test]
+    async fn a_regroup_keeps_where_the_cursor_really_stands() {
+        let p = projection("trade-events-index-matic", "http://rpc");
+        let now = Instant::now();
+        let mut s = slot(&p, Some(checkpoint(98)), now + Duration::from_secs(5));
+        s.invitable = true;
+        regroup(&mut s, Some(checkpoint(50)), false, now);
+        assert_eq!(s.checkpoint, Some(checkpoint(50)));
+        assert!(!s.invitable && !s.solo_once && s.due == now);
+        regroup(&mut s, None, true, now);
+        assert_eq!(s.checkpoint, None);
+        assert!(s.solo_once);
+    }
+
+    /// After an attempt alone, a projection walks alone again while it owes a
+    /// backfill or still has a whole budget owed after a carried one.
+    #[tokio::test]
+    async fn an_attempt_alone_decides_whether_the_next_walks_alone() {
+        let p = projection("nft-index-matic", "http://rpc");
+        let now = Instant::now();
+        let mut s = slot(&p, None, now);
+        s.solo_once = true;
+        after_alone(&mut s, true);
+        assert!(s.solo_once, "a backfill still owed");
+        after_alone(&mut s, false);
+        assert!(!s.solo_once, "the backfill done");
+        s.solo_once = true;
+        s.carried = true;
+        after_alone(&mut s, false);
+        assert!(
+            s.solo_once && !s.carried,
+            "a whole budget still owed after a carried one"
+        );
+        after_alone(&mut s, false);
+        assert!(!s.solo_once);
+    }
+
+    /// An index whose walks-alone read answers `self.0`, and which is never
+    /// walked.
+    struct Answers(bool);
+
+    #[async_trait::async_trait]
+    impl ChainIndex for Answers {
+        fn indexer(&self) -> &'static str {
+            chain_walk::INDEXER_MANA
+        }
+        fn net(&self) -> ChainNet {
+            ChainNet::Matic
+        }
+        fn start_block(&self) -> u64 {
+            0
+        }
+        async fn groups(
+            &self,
+            _: &PgPool,
+            _: u64,
+            _: u64,
+            _: (u64, i64),
+        ) -> anyhow::Result<Vec<chain_walk::LogGroup>> {
+            unreachable!("never walked")
+        }
+        async fn write(
+            &self,
+            _: &mut sqlx::PgConnection,
+            _: &[crate::chain_index::rpc::RpcLog],
+            _: &HashMap<i64, i64>,
+        ) -> anyhow::Result<usize> {
+            unreachable!("never walked")
+        }
+        async fn rewind(&self, _: &mut sqlx::PgConnection, _: i64) -> anyhow::Result<()> {
+            unreachable!("never walked")
+        }
+        async fn fold(
+            &self,
+            _: &PgPool,
+            _: Option<i64>,
+            _: i64,
+            _: &chain_walk::Owner,
+        ) -> anyhow::Result<bool> {
+            unreachable!("never walked")
+        }
+        async fn walks_alone(&self, _: &PgPool) -> anyhow::Result<bool> {
+            Ok(self.0)
+        }
+    }
+
+    /// A member a shared walk paused at its budget: the hint read in its
+    /// own task carries the walk's outcome and checkpoint back as they were,
+    /// with the index's answer, which decides whether it walks alone next.
+    #[tokio::test]
+    async fn a_paused_members_hint_decides_whether_it_walks_alone_next() {
+        for answer in [true, false] {
+            let mut p = projection("mana-transfers-index-matic", "http://rpc");
+            p.make = Arc::new(move || Arc::new(Answers(answer)) as Arc<dyn ChainIndex>);
+            let sup = Arc::new(supervisor(vec![p]));
+            let mut s = slot(&sup.projections[0], None, Instant::now());
+            let (mut tasks, mut running) = (JoinSet::new(), HashMap::new());
+            let out = PassOutcome {
+                paused: true,
+                ..PassOutcome::default()
+            };
+            dispatch_hint(
+                &CancellationToken::new(),
+                &sup,
+                0,
+                &mut s,
+                out.clone(),
+                Some(checkpoint(70)),
+                &mut tasks,
+                &mut running,
+            );
+            assert!(s.phase == Phase::Running && running.len() == 1);
+            let Done::Attempted(Attempt::Ran(Ok(o)), at, alone) =
+                tasks.join_next().await.unwrap().unwrap()
+            else {
+                panic!("the hint ends as the paused walk's attempt");
+            };
+            assert_eq!((o, at, alone), (out, Some(checkpoint(70)), answer));
+            after_alone(&mut s, alone);
+            assert_eq!(s.solo_once, answer);
+        }
+    }
+
+    /// Two projections paused by their budget at one checkpoint: the second
+    /// is left out before its turn, and joins once it is due as well.
+    #[tokio::test]
+    async fn a_paused_projection_joins_a_shared_walk_once_due() {
+        let sup = supervisor(vec![
+            projection("mana-transfers-index-matic", "http://rpc"),
+            projection("trade-events-index-matic", "http://rpc"),
+        ]);
+        let now = Instant::now();
+        let mut slots = vec![
+            slot(&sup.projections[0], Some(checkpoint(98)), now),
+            slot(
+                &sup.projections[1],
+                Some(checkpoint(98)),
+                now + Duration::from_secs(1),
+            ),
+        ];
+        assert!(
+            companions(&sup, &slots, 0, now).is_empty(),
+            "not due yet, nor invitable"
+        );
+        slots[1].due = now;
+        assert_eq!(companions(&sup, &slots, 0, now), vec![1]);
+        // One in backoff, at another endpoint, or walking alone next stays out.
+        slots[1].acquisition.as_mut().unwrap().failures = 1;
+        assert!(companions(&sup, &slots, 0, now).is_empty());
+        slots[1].acquisition.as_mut().unwrap().failures = 0;
+        slots[1].solo_once = true;
+        assert!(companions(&sup, &slots, 0, now).is_empty());
     }
 }

@@ -781,6 +781,22 @@ impl ChainIndex for NftIndex {
         self.reset();
     }
 
+    fn begin_pass(&self) {
+        self.reset();
+    }
+
+    /// A walk that owes a backfill runs its lanes, alone.
+    async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
+             WHERE network = $1 AND backfill_from_block IS NOT NULL \
+               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
+        )
+        .bind(self.net.db_name())
+        .fetch_one(pool)
+        .await?)
+    }
+
     fn net(&self) -> ChainNet {
         self.net
     }

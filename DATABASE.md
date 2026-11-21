@@ -2093,8 +2093,22 @@ projection that process enables under the projection's own lease,
 `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
 `rentals-index-ethereum`), so
 processes with different projections enabled share a network. Each
-projection keeps its own cadence and backoff. A process that runs no fleet
+projection keeps its own cadence and backoff, though one that reached the
+target may join a due companion's shared walk ahead of its own turn, so
+projections walking together go at the faster cadence. A process that runs no fleet
 jobs (`FLEET_JOBS_ENABLED=false`) takes no lease and walks nothing.
+
+The projections a supervisor holds that read the same endpoint and stand at
+the same checkpoint (block, hash, whole history) walk their windows
+together: each window is read once for all of them, and each projection
+takes the logs its own filters take and commits them with its own cursor
+advance, in its own fenced transaction, nft before sales. Each closes (folds
+and publishes) on its own. A window read they share that fails sends each
+back to its own checkpoint, alone, with what is left of its budget, and its
+walk after that is alone too, on a whole budget. A read they all need first
+(the chain id, the checkpoint's header, the head and the finalized block) is
+tried again once after half a second; if it still fails, each one's attempt
+fails and waits out its own backoff.
 
 The supervisor claims a projection on the session that holds its lease. The
 claim raises `owner_generation` in one bounded transaction
