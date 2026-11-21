@@ -711,14 +711,16 @@ mod tests {
 
         cleanup_access(&state, id).await.unwrap();
 
-        let told = directory.streaming_notifications.lock().unwrap();
-        let mut recipients: Vec<&str> = told.iter().map(|n| n.recipient.as_str()).collect();
-        recipients.sort();
-        assert_eq!(recipients, [owner, approved, admin]);
-        for notice in told.iter() {
-            assert_eq!(notice.event_key, format!("streaming_key_revoke-{id}"));
-            assert_eq!(notice.metadata["title"], "snapshot");
-            assert_eq!(notice.metadata["address"], notice.recipient.as_str());
+        {
+            let told = directory.streaming_notifications.lock().unwrap();
+            let mut recipients: Vec<&str> = told.iter().map(|n| n.recipient.as_str()).collect();
+            recipients.sort();
+            assert_eq!(recipients, [owner, approved, admin]);
+            for notice in told.iter() {
+                assert_eq!(notice.event_key, format!("streaming_key_revoke-{id}"));
+                assert_eq!(notice.metadata["title"], "snapshot");
+                assert_eq!(notice.metadata["address"], notice.recipient.as_str());
+            }
         }
         let pending: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id=$1)",
