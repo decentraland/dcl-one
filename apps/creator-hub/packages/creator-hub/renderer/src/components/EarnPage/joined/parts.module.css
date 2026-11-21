@@ -476,3 +476,38 @@
   cursor: default;
   pointer-events: none;
 }
+
+.setupButton.setupButton.setupButton.setupButton {
+  flex-shrink: 0;
+  min-width: 0;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border-radius: var(--shape-borderRadiusLarge);
+  box-shadow: none;
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--ctl-fs-md);
+  font-weight: var(--fw-bold);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--palette-neutral-softWhite);
+  background-color: var(--primary);
+}
+
+.setupButton.setupButton.setupButton.setupButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.setupButton.setupButton.setupButton.setupButton:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+}
+
+.setupButton.setupButton.setupButton.setupButton:disabled {
+  color: var(--palette-neutral-softWhite);
+  opacity: 0.4;
+  cursor: default;
+  background-color: var(--primary);
+}

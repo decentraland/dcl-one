@@ -201,6 +201,9 @@ export type Events = {
   'Creator Fund Empty State Action': {
     action: 'create_scene' | 'start_from_template' | 'open_scene';
   };
+  'Creator Fund Payout Banner Clicked': {
+    step: 'verify_email' | 'add_wallet';
+  };
   'Creator Fund Email Verification Started': undefined;
   'Creator Fund Email Code Submitted': {
     result: 'verified' | 'incorrect' | 'expired' | 'locked';
