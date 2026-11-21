@@ -184,6 +184,7 @@ bevy = { version = "0.16.1", default-features = false, features = [
   "jpeg",
   "hdr",
   "x11",
+  "wayland",
   "dds",
   "webp",
   "bevy_gizmos",

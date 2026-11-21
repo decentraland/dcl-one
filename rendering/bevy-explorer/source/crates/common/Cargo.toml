@@ -38,6 +38,14 @@ tokio-util = { workspace = true }
 pin-project = "1"
 url = { workspace = true }
 
+# bevy's wayland feature builds winit's Wayland backend without dlopen. The explorer gets dlopen
+# from its clipboard crate; the dcl_deno_ipc sidecar, headless and the avatar renderer do not, so
+# they would link libwayland-client, which their images do not ship. Load it at run time in all.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = [
+  "wayland-dlopen",
+] }
+
 [dev-dependencies]
 itertools = { workspace = true }
 rand = { workspace = true }
