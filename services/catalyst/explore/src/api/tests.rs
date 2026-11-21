@@ -393,6 +393,7 @@ async fn node_on_pool(settings: Settings, pool: PgPool) -> Node {
         registry_denylist: Default::default(),
         eip1654: std::sync::OnceLock::new(),
         contract_checks: Default::default(),
+        land_authz: std::sync::OnceLock::new(),
     });
     Node { state, _tmp: tmp }
 }
@@ -1940,8 +1941,10 @@ async fn map_grid_mirror_persists_the_grid_resumes_after_restart_and_gates_downl
         assert_eq!((path, status), (path, StatusCode::OK));
         assert_eq!(headers["content-type"], "image/png");
     }
-    let (status, _, _) = call(&app, "GET", "/api/v1/estates/404/map.png", None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    // an estate the grid holds no parcel of redirects, as the atlas does
+    let (status, headers, _) = call(&app, "GET", "/api/v1/estates/404/map.png", None).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(headers["location"], "http://localhost/dissolved_estate.png");
 
     let (status, tiles) = call_json(
         &app,

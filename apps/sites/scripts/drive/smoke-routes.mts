@@ -53,6 +53,7 @@ export const ROUTES: Route[] = [
   { path: "/credits-terms", auth: "out" },
   { path: "/creator-fund-terms", auth: "out" },
   { path: "/ethics", auth: "out" },
+  { path: "/press", auth: "out" },
 ];
 
 // The HUD lane (`smoke.mts --hud`) walks every panel the overlay registers. Same

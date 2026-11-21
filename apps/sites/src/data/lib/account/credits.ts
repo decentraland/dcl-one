@@ -1,4 +1,6 @@
-import { createShopApi, ENDPOINTS, shopApiMode, type Endpoint, type ShopApiMode } from "@ui/shop/api";
+import { createShopApi, type ShopApiMode } from "@shop/api/client";
+import { ENDPOINTS, type Endpoint } from "@shop/api/endpoints";
+import { shopApiMode } from "@web-core/auth/shopRequest";
 import { z } from "zod";
 
 import type { AuthIdentity } from "../auth/types";

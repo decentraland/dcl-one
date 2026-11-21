@@ -6,7 +6,7 @@ import {
   AUTH_TIMESTAMP_HEADER,
   buildRequestPayload,
   signAuthChain,
-} from "@ui/data/auth/signerCore";
+} from "@web-core/auth/signerCore";
 
 import type { AuthIdentity, AuthLink, SignedFetchMetadata } from "./types";
 import { isIdentityExpired } from "./expiry";

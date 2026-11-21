@@ -17,7 +17,7 @@ import {
   SitesLocaleContext,
   saveSitesLocale,
   sitesLanguage,
-} from "@ui/web/frames/sites-locale";
+} from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import type { Route } from "./+types/download_success";
 
 function linkText(message: string, link: ReactNode) {

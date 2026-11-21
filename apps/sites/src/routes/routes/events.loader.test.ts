@@ -183,8 +183,19 @@ describe("the /events loader", () => {
       expect(result.data.tab).toBe("my");
     });
 
-    it("should not read the public feed", () => {
-      expect(fetchEvents).not.toHaveBeenCalled();
+    it("should render the public feed around it, since it is a section of the same page", () => {
+      expect(fetchEvents).toHaveBeenCalled();
+      expect(result.data.dehydratedState).not.toBeNull();
+    });
+  });
+
+  describe("when the tab value is unknown", () => {
+    beforeEach(async () => {
+      result = await load("/events?tab=other");
+    });
+
+    it("should mark no tab", () => {
+      expect(result.data.tab).toBeNull();
     });
   });
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";
 
@@ -34,7 +34,7 @@ export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.Com
   }, [sid, os]);
   const steps = CREATOR_HUB_STEPS[os === "windows" ? "windows" : "macos"];
   return (
-    <SitesChrome active="none" overlayNav>
+    <SitesLayout active="none" overlayNav>
       <DownloadSuccess
         title="You're almost done!"
         subtitle="Open the file you just downloaded to finish installing Decentraland and start creating"
@@ -48,6 +48,6 @@ export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.Com
           },
         ]}
       />
-    </SitesChrome>
+    </SitesLayout>
   );
 }

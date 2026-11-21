@@ -5,7 +5,7 @@ import type { PlaceCardData } from "@dcl/one-ui/apps/sites/places/cards/types";
 import type { Destination } from "@/data/lib/catalyst/places/destinations";
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
 
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 import { type CreatorProfiles, creatorAddresses, creatorBatches, modalPlace, placeCard, placeCreator } from "./cards";
 

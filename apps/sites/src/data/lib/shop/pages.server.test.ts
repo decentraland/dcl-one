@@ -29,6 +29,49 @@ function node(routes: Route[]) {
 const request = (path: string) => new Request(`https://sites.test${path}`);
 const now = () => 1_700_000_000_000;
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("when two Shop loaders overlap with different flag answers", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("should keep each listing and variant on the request that loaded it", async () => {
+    const flag = `dapps-${REMOTE_FLAG.creatorSales}`;
+    const variant = `dapps-${REMOTE_FLAG.myStore}`;
+    const firstStarted = deferred();
+    const releaseFirst = deferred();
+    const row = {
+      listingType: "primary", source: "native", contractAddress: C, itemId: "1",
+      name: "Discounted hat", priceCredits: 14, compareAtCredits: 20,
+    };
+    let listingReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("sortBy") === "newest" && ++listingReads === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      return Response.json({ data: [row], total: 1 });
+    });
+    const input = { request: request("/shop/overview"), params: {}, now, env: { CATALYST_URL: "https://flag-isolation.test" } };
+    const first = loadShopPage("overview", { ...input, flags: { [flag]: true }, flagVariants: { [variant]: "first" } });
+    await firstStarted.promise;
+    const second = loadShopPage("overview", { ...input, flags: { [flag]: false }, flagVariants: { [variant]: "second" } });
+    releaseFirst.resolve();
+    const [on, off] = await Promise.all([first, second]);
+    const listings = (page: typeof on) => page.data.queries.find(([key]) => key[0] === "overview-listings")?.[1];
+    expect(listings(on)).toMatchObject({ items: [{ name: "Discounted hat", compareAtCredits: 20 }] });
+    expect(listings(off)).toMatchObject({ items: [{ name: "Discounted hat", compareAtCredits: undefined }] });
+    expect(listingReads).toBe(2);
+    expect(on.data.featureFlagVariants).toEqual({ [variant]: "first" });
+    expect(off.data.featureFlagVariants).toEqual({ [variant]: "second" });
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
+  });
+});
+
 const ITEM_ROUTES: Route[] = [
   { path: "/shop-api/v1/items", body: { data: [{ name: "Pirate Hat", thumbnail: "https://img.test/hat.png", creator: "0x1", rarity: "rare", category: "wearable", chainId: 137, network: "MATIC", available: 3, data: { wearable: { description: " A hat for pirates. " } } }], total: 1 } },
   { path: "/shop-api/v1/collections", body: { data: [{ contractAddress: C, name: "Sea Things", creator: "0x1" }], total: 1 } },
@@ -320,7 +363,7 @@ describe("the other pages", () => {
     expect("featureFlagVariants" in overview.data).toBe(false);
   });
 
-  it("sends the flags' variants on with them, primed on the server as in the browser", async () => {
+  it("sends the flags and variants without modifying the browser store", async () => {
     const { client } = node([]);
     const list = "0x00000000000000000000000000000000000000aa";
     const flags = { "dapps-shop-my-store": true };
@@ -328,7 +371,7 @@ describe("the other pages", () => {
     const page = await loadShopPage("myStore", { request: request("/shop/my-store"), params: {}, client, now, env: {}, flags, flagVariants: variants });
     expect(page.data.featureFlags).toEqual(flags);
     expect(page.data.featureFlagVariants).toEqual(variants);
-    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(list);
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBeNull();
   });
 
   it("the collectibles grid primes its first page under the key the page asks for", async () => {
