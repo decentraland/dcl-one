@@ -581,9 +581,11 @@ async fn refuse_barred(
 /// has not caught up with a redeploy never lends another scene's admins.
 ///
 /// A world's place ignores `parcel`: the world has one credential for all its
-/// scenes. Several rows of one world (a local row beside the mirrored one it
-/// displaces) resolve to the same place on every call: the local leg first,
-/// then the lowest id.
+/// scenes. Every writer keys a world row by its lowercase name and the legs
+/// exclude each other, so one id is expected; the order is a defensive
+/// tie-break for a stray row (another id): the local leg, then the row keyed
+/// by the name, then the lowest id. Removal cleanup does not need this rule:
+/// it ends the key of the removed row's own id (`end_removed_place`).
 async fn resolve_place_id(
     pool: &PgPool,
     world: Option<&WorldName>,
@@ -593,10 +595,10 @@ async fn resolve_place_id(
     if let Some(world) = world {
         return Ok(sqlx::query_scalar(
             "SELECT id FROM ( \
-             SELECT id, 0 AS leg FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
+             SELECT id, world_name, 0 AS leg FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
              UNION ALL \
-             SELECT id, 1 AS leg FROM explore.place WHERE world AND lower(world_name) = lower($1) \
-             ) places ORDER BY leg, id LIMIT 1",
+             SELECT id, world_name, 1 AS leg FROM explore.place WHERE world AND lower(world_name) = lower($1) \
+             ) places ORDER BY leg, id = lower(world_name) DESC, id LIMIT 1",
         )
         .bind(world.display())
         .fetch_optional(pool)
@@ -1093,70 +1095,61 @@ mod moderation_boundary_tests {
 mod place_lookup_tests {
     use super::*;
 
-    async fn world_row(pool: &PgPool, table: &str, id: &str, world: &str, base: &str) {
-        let raw = serde_json::json!({ "world": true, "world_name": world, "positions": [base] });
-        let sql = match table {
-            "place" => "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3)",
-            _ => {
+    #[derive(Clone, Copy)]
+    enum Leg {
+        Mirrored,
+        Local,
+    }
+
+    async fn world_row(pool: &PgPool, leg: Leg, id: &str, world: &WorldName) {
+        let raw = serde_json::json!({ "world": true, "world_name": world.display(), "positions": ["0,0"] });
+        let sql = match leg {
+            Leg::Mirrored => {
+                "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)"
+            }
+            Leg::Local => {
                 "INSERT INTO explore.place_world_local (id, base_position, raw, world, world_name) \
-                 VALUES ($1, $2, $3, true, $3->>'world_name')"
+                 VALUES ($1, '0,0', $2, true, $2->>'world_name')"
             }
         };
         sqlx::query(sql)
             .bind(id)
-            .bind(base)
             .bind(raw)
             .execute(pool)
             .await
             .unwrap();
     }
 
-    /// Several catalogue rows of one world resolve to one place for every
-    /// scene of the world: the local leg, then the lowest id.
+    async fn resolved(pool: &PgPool, world: &WorldName) -> Vec<Option<String>> {
+        let mut out = Vec::new();
+        for (parcel, based_there) in [("0,0", true), ("5,5", true), ("", false)] {
+            out.push(
+                resolve_place_id(pool, Some(world), parcel, based_there)
+                    .await
+                    .unwrap(),
+            );
+        }
+        out
+    }
+
+    /// Every writer keys a world row by its lowercase name. A stray row of
+    /// the same world under another id (one a test or an older binary
+    /// seeded) never takes the credential from that row, whatever the
+    /// insertion order and the scene's parcel.
     #[tokio::test]
-    async fn a_world_resolves_one_place_for_every_scene_whatever_rows_it_has() {
+    async fn a_world_resolves_the_row_keyed_by_its_name_for_every_scene() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
         let tag = Uuid::new_v4().simple().to_string();
-        let world = WorldName::parse(&format!("lookup{}.dcl.eth", &tag[..10])).unwrap();
-        // Mirrored rows inserted highest id first, so heap order is not the answer.
-        world_row(
-            &pool,
-            "place",
-            &format!("m-z-{tag}"),
-            world.display(),
-            "0,0",
-        )
-        .await;
-        world_row(
-            &pool,
-            "place",
-            &format!("m-a-{tag}"),
-            world.display(),
-            "5,5",
-        )
-        .await;
-        for parcel in ["0,0", "5,5", ""] {
-            assert_eq!(
-                resolve_place_id(&pool, Some(&world), parcel, true)
-                    .await
-                    .unwrap(),
-                Some(format!("m-a-{tag}")),
-                "mirrored rows only, parcel {parcel:?}"
-            );
-        }
-        // A local row of the world wins over the mirrored rows it displaces,
-        // even when its id sorts after theirs.
-        world_row(&pool, "local", &format!("z-{tag}"), world.display(), "0,0").await;
-        for parcel in ["0,0", "5,5", ""] {
-            assert_eq!(
-                resolve_place_id(&pool, Some(&world), parcel, false)
-                    .await
-                    .unwrap(),
-                Some(format!("z-{tag}")),
-                "local row present, parcel {parcel:?}"
-            );
-        }
+        let world = WorldName::parse(&format!("Lookup{}.dcl.eth", &tag[..10])).unwrap();
+        let canonical = Some(world.key().to_owned());
+        // The stray row first, so heap order alone would answer it.
+        world_row(&pool, Leg::Mirrored, &Uuid::new_v4().to_string(), &world).await;
+        world_row(&pool, Leg::Mirrored, world.key(), &world).await;
+        assert_eq!(resolved(&pool, &world).await, vec![canonical.clone(); 3]);
+        // Both legs holding the name answer it as well.
+        world_row(&pool, Leg::Local, world.key(), &world).await;
+        assert_eq!(resolved(&pool, &world).await, vec![canonical; 3]);
     }
 }

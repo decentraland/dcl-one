@@ -41,7 +41,9 @@ impl RemovedPlaces {
     /// Enrich an already established world identity. A Place's base parcel
     /// does not identify a world deployment: sibling scenes may stand elsewhere.
     /// Distinct Place IDs remain ambiguous; local/mirrored copies of one ID
-    /// use the same preference as `place`.
+    /// use the same preference as `place`. The stream key lookup
+    /// (`streaming::resolve_place_id`) breaks that tie instead, because a key
+    /// needs one place to be stored under; context never guesses.
     pub async fn world(&self, world: &str) -> Result<Option<PlaceContext>, sqlx::Error> {
         let mut contexts: Vec<PlaceContext> = sqlx::query_as(
             "SELECT DISTINCT ON (id) id AS place_id, COALESCE(raw->>'owner', creator_address) AS owner_address, world, world_name, base_position, COALESCE(raw->'positions', jsonb_build_array(base_position)) AS positions \
