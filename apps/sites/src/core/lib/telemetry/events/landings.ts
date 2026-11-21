@@ -178,36 +178,6 @@ export type LandingsEvents = {
   lp_legal_viewed: {
     doc: "brand" | "content" | "creatorFund" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
   };
-  lp_rsvp_cancelled: {
-    count: number;
-    event_id: string;
-    stub: boolean;
-  };
-  lp_rsvp_cancelling: {
-    event_id: string;
-  };
-  lp_rsvp_confirmed: {
-    event_id: string;
-  };
-  lp_rsvp_error: {
-    event_id: string;
-    reason: string;
-  };
-  lp_rsvp_going: {
-    count: number;
-    event_id: string;
-    stub: boolean;
-  };
-  lp_rsvp_signin: {
-    event_id: string;
-    simulated: boolean;
-  };
-  lp_rsvp_started: {
-    event_id: string;
-  };
-  lp_rsvp_submitting: {
-    event_id: string;
-  };
   lp_whatson_viewed: {
     filter: null | string;
     live_count: number;

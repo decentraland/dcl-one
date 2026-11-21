@@ -12,7 +12,7 @@ import type { HomeContent } from "@/data/lib/catalyst/landings/home";
 import { VIBE_CREATORS } from "@/data/lib/catalyst/landings/vibe-creators";
 import { homeEventHref } from "./links";
 import { homeCopy } from "./locale";
-import type { SitesLocale } from "@ui/web/frames/sites-locale";
+import type { SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 
 // Home media and recurring events from decentraland/sites at cfdfa1a51216f9dc90c5b148686a95e7ee9c2862 (src/data/static-content.ts).
 

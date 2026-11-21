@@ -17,8 +17,12 @@ const auth = vi.hoisted(() => ({ identity: null as unknown }));
 vi.mock("@/data/lib/auth/context", () => ({
   useAuth: () => ({ identity: auth.identity, isConnected: Boolean(auth.identity) }),
 }));
-const signIn = vi.hoisted(() => ({ openSignIn: vi.fn() }));
-vi.mock("../components/auth/signin-store", () => signIn);
+const signIn = vi.hoisted(() => ({ openSignIn: vi.fn(), real: undefined as undefined | ((...args: never[]) => unknown) }));
+vi.mock("../components/auth/signin-store", async (original) => {
+  const real = await original<typeof import("../components/auth/signin-store")>();
+  signIn.real = real.openSignIn as never;
+  return { ...real, openSignIn: signIn.openSignIn };
+});
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 const http = vi.hoisted(() => ({ signedGetJSON: vi.fn(), postJSON: vi.fn() }));
 vi.mock("@/data/lib/catalyst/client", async (actual) => ({
@@ -36,6 +40,10 @@ vi.mock("@/data/lib/catalyst/places/index", async (original) => ({
   fetchMostActivePlaces: vi.fn(),
 }));
 vi.mock("@/data/lib/catalyst/jump/place-lookup", () => ({ loadJumpPlace: vi.fn() }));
+vi.mock("@/data/lib/catalyst/places/event-management", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/places/event-management")>()),
+  loadAllOwnedEvents: vi.fn(),
+}));
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
@@ -43,6 +51,7 @@ import { track } from "@/core/lib/telemetry/track";
 import { loadJumpPlace } from "@/data/lib/catalyst/jump/place-lookup";
 import { fetchEvent, fetchEvents, type Event } from "@/data/lib/catalyst/places/events";
 import { fetchMostActivePlaces } from "@/data/lib/catalyst/places/index";
+import { loadAllOwnedEvents, type ManagedEvent } from "@/data/lib/catalyst/places/event-management";
 import type { DetectedPlatform } from "../download/options";
 import { columnsFor, EventsView } from "./EventsView";
 import { eventRecord, placeRecord } from "./fixtures";
@@ -105,7 +114,8 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ ok: true, data: [{ id: "up", name: "Watch Party", attending: false }] });
   http.postJSON.mockReset();
-  signIn.openSignIn.mockReset();
+  // afterEach resets every mock, so the spy gets the real sign-in back here.
+  signIn.openSignIn.mockImplementation(signIn.real!);
   // Creator faces: no profiles unless a test says otherwise, and never the real network.
   vi.stubGlobal(
     "fetch",
@@ -126,17 +136,71 @@ const profilesReply = (address: string) =>
 
 describe("EventsView", () => {
   describe("when nothing is live", () => {
-    it("should render no Live Now section and mark empty days", async () => {
+    it("should open Live Now with the Foundation's Genesis Plaza at 0,0", async () => {
       setup("/events");
-      await screen.findByRole("heading", { name: "All Events" });
-      expect(screen.queryByRole("heading", { name: "Live Now" })).toBeNull();
+      const section = await screen.findByRole("region", { name: "Live Now" });
+      expect(within(section).getByRole("link", { name: "Genesis Plaza" }).getAttribute("href")).toBe(
+        "/events?position=0%2C0",
+      );
+      expect(
+        within(section)
+          .getByRole("link", { name: /Jump In/ })
+          .getAttribute("href"),
+      ).toMatch(/\/play\/\?position=0%2C0$/);
+      expect(within(section).getByText("Decentraland Foundation")).toBeTruthy();
+      expect(within(section).getByText("0 online")).toBeTruthy();
+    });
+
+    it("should mark empty days", async () => {
+      setup("/events");
       expect(await screen.findAllByText("No events this day.")).not.toHaveLength(0);
+    });
+
+    describe("and the node's Genesis Plaza is quiet", () => {
+      beforeEach(() => {
+        live.places = [placeRecord({ id: "plaza", title: "Genesis Plaza", positions: ["0,0"], user_count: 0 })];
+      });
+
+      it("should count nothing live although Genesis Plaza opens the rail", async () => {
+        setup("/events");
+        expect(await screen.findByRole("link", { name: "Genesis Plaza" })).toBeTruthy();
+        await waitFor(() =>
+          expect(vi.mocked(track)).toHaveBeenCalledWith("lp_whatson_viewed", expect.objectContaining({ live_count: 0 }), expect.anything()),
+        );
+      });
     });
 
     it("should link to the event hosting article on the site", async () => {
       setup("/events");
       expect((await screen.findByRole("link", { name: "Learn More" })).getAttribute("href")).toBe(
         "/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland",
+      );
+    });
+  });
+
+  describe("when the live feed is unavailable", () => {
+    beforeEach(() => {
+      vi.mocked(fetchMostActivePlaces).mockRejectedValue(new CatalystError("down", "/places", 503));
+    });
+
+    it("should render no Live Now section", async () => {
+      setup("/events");
+      await screen.findByRole("heading", { name: "All Events" });
+      await waitFor(() => expect(fetchMostActivePlaces).toHaveBeenCalled());
+      expect(screen.queryByRole("heading", { name: "Live Now" })).toBeNull();
+    });
+  });
+
+  describe("when one scene is live", () => {
+    beforeEach(() => {
+      live.places = [placeRecord({ id: "busy", title: "Busy Club", positions: ["9,9"], user_count: 30 })];
+    });
+
+    it("should count it as one live item", async () => {
+      setup("/events");
+      expect(await screen.findByRole("link", { name: "Busy Club" })).toBeTruthy();
+      await waitFor(() =>
+        expect(vi.mocked(track)).toHaveBeenCalledWith("lp_whatson_viewed", expect.objectContaining({ live_count: 1 }), expect.anything()),
       );
     });
   });
@@ -219,15 +283,32 @@ describe("EventsView", () => {
       auth.identity = { signer: "0xAB" } as unknown as AuthIdentity;
     });
 
-    it("should offer All Events and My Events as links, the current one marked", async () => {
+    it("should offer All Events and My Events as link tabs, the current one selected", async () => {
       const { router, user } = setup("/events");
-      const views = await screen.findByRole("navigation", { name: "Events views" });
-      expect(within(views).queryByRole("tab")).toBeNull();
-      expect(within(views).getByRole("link", { name: "All Events" }).getAttribute("aria-current")).toBe("page");
-      const mine = within(views).getByRole("link", { name: "My Events" });
+      const views = await screen.findByRole("tablist", { name: "Events views" });
+      expect(within(views).getByRole("tab", { name: "All Events" }).getAttribute("aria-selected")).toBe("true");
+      const mine = within(views).getByRole("tab", { name: "My Events" });
       expect(mine.getAttribute("href")).toBe("/events?tab=my");
       await user.click(mine);
       expect(router.state.location.search).toBe("?tab=my");
+    });
+
+    describe("and they click Remind me", () => {
+      beforeEach(async () => {
+        http.postJSON.mockResolvedValue({ ok: true });
+        const { user } = setup("/events");
+        const button = await screen.findByRole("button", { name: "Remind me: Watch Party" });
+        await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+        await user.click(button);
+      });
+
+      it("should save the reminder", async () => {
+        await waitFor(() => expect(http.postJSON).toHaveBeenCalled());
+      });
+
+      it("should not send them to sign in", () => {
+        expect(signIn.openSignIn).not.toHaveBeenCalled();
+      });
     });
 
     describe("and a reminder write fails", () => {
@@ -255,17 +336,23 @@ describe("EventsView", () => {
     it("should show the section title instead of the views", async () => {
       setup("/events");
       expect(await screen.findByRole("heading", { name: "All Events" })).toBeTruthy();
-      expect(screen.queryByRole("navigation", { name: "Events views" })).toBeNull();
+      expect(screen.queryByRole("tablist", { name: "Events views" })).toBeNull();
     });
 
     describe("and they click Remind me", () => {
+      let assign: ReturnType<typeof vi.fn>;
+
       beforeEach(async () => {
         const { user } = setup("/events");
-        await user.click(await screen.findByRole("button", { name: "Remind me: Watch Party" }));
+        const button = await screen.findByRole("button", { name: "Remind me: Watch Party" });
+        assign = vi.fn();
+        vi.stubGlobal("location", { origin: "https://example.org", pathname: "/events", search: "?tab=all", hash: "", assign });
+        await user.click(button);
+        vi.unstubAllGlobals();
       });
 
-      it("should ask them to sign in", () => {
-        expect(signIn.openSignIn).toHaveBeenCalledWith({ inPlace: true });
+      it("should send them to the sign-in page, to come back here", () => {
+        expect(assign).toHaveBeenCalledWith("/auth/login?redirectTo=%2Fevents%3Ftab%3Dall");
       });
 
       it("should read nothing signed", () => {
@@ -564,5 +651,134 @@ describe("columnsFor", () => {
     it(`should show ${columns} column(s)`, () => {
       expect(columnsFor(width)).toBe(columns);
     });
+  });
+});
+
+describe("when /events opens My Events", () => {
+  const SIGNER = "0x1111111111111111111111111111111111111111";
+  const owned = (over: Partial<Event>) => eventRecord({ user: SIGNER, ...over }) as unknown as ManagedEvent;
+  const at = (hours: number) => new Date(Date.now() + hours * HOUR).toISOString();
+  let scrolled: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled as unknown as Element["scrollIntoView"];
+  });
+
+  describe("and the member is signed in", () => {
+    beforeEach(() => {
+      auth.identity = { signer: SIGNER } as unknown as AuthIdentity;
+    });
+
+    it("should keep the whole page and list the member's upcoming events in start order, each opening its editor with its review status", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([
+          owned({ id: "later", name: "Later Party", start_at: at(48), finish_at: at(50), next_start_at: at(48), next_finish_at: at(50) }),
+          owned({ id: "draft", name: "Draft Night", approved: false, start_at: at(5), finish_at: at(6), next_start_at: at(5), next_finish_at: at(6) }),
+          owned({ id: "no", name: "Turned Down", approved: false, rejected: true, start_at: at(10), finish_at: at(11), next_start_at: at(10), next_finish_at: at(11) }),
+          owned({ id: "over", name: "Ended Show", start_at: at(-5), finish_at: at(-4), next_start_at: at(-5), next_finish_at: at(-4) }),
+          owned({ id: "gone", name: "Deleted One", deleted_by_user: true, start_at: at(3), finish_at: at(4), next_start_at: at(3), next_finish_at: at(4) }),
+          owned({ id: "theirs", name: "Not Mine", user: "0x2222222222222222222222222222222222222222", start_at: at(2), finish_at: at(3), next_start_at: at(2), next_finish_at: at(3) }),
+        ]);
+      setup("/events?tab=my");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      await within(panel).findByRole("heading", { name: "Hosted by me" });
+      const links = within(panel).getAllByRole("link").filter((link) => link.getAttribute("href")?.includes("/edit-event/"));
+      expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+        ["Draft Night", "/events/edit-event/draft"],
+        ["Turned Down", "/events/edit-event/no"],
+        ["Later Party", "/events/edit-event/later"],
+      ]);
+      const items = within(panel).getAllByRole("listitem");
+      expect(within(items[0]!).getByText("Pending")).toBeTruthy();
+      expect(within(items[1]!).getByText("Rejected")).toBeTruthy();
+      expect(within(items[2]!).getByText("Approved")).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "My Events" }).getAttribute("aria-selected")).toBe("true");
+      expect(screen.queryByRole("navigation", { name: "Event days" })).toBeNull();
+      expect(screen.getByRole("heading", { name: "Upcoming" })).toBeTruthy();
+      expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledWith(auth.identity, expect.anything());
+      await waitFor(() => expect(scrolled).toHaveBeenCalledOnce());
+      expect(scrolled.mock.contexts[0]).toBe(document.getElementById("all-events"));
+    });
+
+    it("should count a recurring event by its next occurrence", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([
+          owned({ id: "weekly", name: "Weekly", recurrent: true, start_at: at(-200), finish_at: at(-199), next_start_at: at(30), next_finish_at: at(31) }),
+        ]);
+      setup("/events?tab=my");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      expect((await within(panel).findByRole("link", { name: "Weekly" })).getAttribute("href")).toBe("/events/edit-event/weekly");
+    });
+
+    it("should show the empty card with Create event when the member has no upcoming events", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([owned({ id: "over", start_at: at(-5), finish_at: at(-4), next_start_at: at(-5), next_finish_at: at(-4) })]);
+      setup("/events?tab=my");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      expect(await within(panel).findByText("You don't have any event created")).toBeTruthy();
+      expect(within(panel).getByRole("link", { name: "Create event" }).getAttribute("href")).toBe("/events/new-event");
+      await waitFor(() => expect(scrolled).toHaveBeenCalledOnce());
+    });
+
+    it("should report a failed read with a Retry that reads again, and no empty card", async () => {
+      vi.mocked(loadAllOwnedEvents).mockRejectedValueOnce(new CatalystError("down", "/events/api/events", 503));
+      vi.mocked(loadAllOwnedEvents).mockResolvedValueOnce([]);
+      const { user } = setup("/events?tab=my");
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Couldn't load your events.");
+      expect(screen.queryByText("You don't have any event created")).toBeNull();
+      await user.click(within(alert).getByRole("button", { name: "Retry" }));
+      expect(await screen.findByText("You don't have any event created")).toBeTruthy();
+      expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledTimes(2);
+    });
+
+    it("should keep the listed events when a later read fails", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValueOnce([
+        owned({ id: "kept", name: "Kept Party", start_at: at(5), finish_at: at(6), next_start_at: at(5), next_finish_at: at(6) }),
+      ]);
+      vi.mocked(loadAllOwnedEvents).mockRejectedValueOnce(new CatalystError("down", "/events/api/events", 503));
+      const { client } = setup("/events?tab=my");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      await within(panel).findByRole("link", { name: "Kept Party" });
+
+      // The observer reports on a later task, so the failed read is rendered before the page is read.
+      await act(async () => {
+        await client.refetchQueries();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(client.getQueryState(["private", SIGNER, "events", "mine"])?.status).toBe("error");
+
+      expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledTimes(2);
+      expect(within(panel).getByRole("link", { name: "Kept Party" })).toBeTruthy();
+      expect(screen.queryByText("Couldn't load your events.")).toBeNull();
+    });
+
+    it("should go back to All Events from its tab without leaving the page", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([]);
+      const { router, user } = setup("/events?tab=my");
+      await screen.findByText("You don't have any event created");
+      await user.click(screen.getByRole("tab", { name: "All Events" }));
+      expect(router.state.location.search).toBe("");
+      expect(await screen.findByRole("tabpanel", { name: "All Events" })).toBeTruthy();
+    });
+
+    it("should fall back to All Events, without sending to sign in, when the member signs out on it", async () => {
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([]);
+      const { router } = setup("/events?tab=my");
+      await screen.findByText("You don't have any event created");
+      auth.identity = null;
+      await act(() => router.navigate("/events?tab=my&day=1"));
+      await waitFor(() => expect(router.state.location.search).toBe("?day=1"));
+      expect(await screen.findByRole("heading", { name: "All Events" })).toBeTruthy();
+      expect(signIn.openSignIn).not.toHaveBeenCalled();
+    });
+  });
+
+  it("should send a signed-out visitor to sign in and back to My Events, reading nothing", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { origin: "https://example.org", pathname: "/events", search: "?tab=my", hash: "", assign });
+    setup("/events?tab=my");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login?redirectTo=%2Fevents%3Ftab%3Dmy"));
+    expect(assign).toHaveBeenCalledOnce();
+    expect(vi.mocked(loadAllOwnedEvents)).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tabpanel", { name: "My Events" })).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 import { redirect, useNavigate } from "react-router";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { LegalPageLayout } from "@dcl/one-ui/apps/sites/legal/LegalPageLayout";
 import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
 import { LEGAL_SIDEBAR, legalPath, resolveLegalKey } from "@/data/legal/nav";
@@ -74,7 +74,7 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
       );
   };
   return (
-    <SitesChrome active="legal" overlayNav="mobile">
+    <SitesLayout active="legal" overlayNav="mobile">
       <main onClickCapture={onSectionClick}>
         <LegalPageLayout
           title={legal.title}
@@ -92,6 +92,6 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
           onNavigate={(href) => void navigate(href)}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

@@ -7,7 +7,7 @@ import { copyText } from "../../../../data/clipboard";
 import { shortAddress } from "@shop/model/address";
 import Icon from "../../components/Icon";
 import { useProfile } from "../../hooks";
-import { getAvatarBackgroundColor, getDisplayName } from "../../lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 const COPY = "Copy account";
 const COPIED = "Copied";

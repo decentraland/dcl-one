@@ -5,7 +5,7 @@ import { QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { concat, decodeFunctionData, encodeAbiParameters, keccak256, recoverTypedDataAddress, toBytes, type Hex } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthIdentity } from "../../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import { CHAIN } from "@shop/model/chain";
 import { BOOK } from "@shop/payment/fixtures";
 import { COUPON_MANAGER_ABI, COUPON_MANAGERS, MARKETPLACE_ABI, latestOffChainMarketplace } from "@shop/market/lib/contracts";

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { SitesLocaleContext } from "@ui/web/frames/sites-locale";
+import { SitesLocaleContext } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,7 +19,7 @@ vi.hoisted(() =>
   }),
 );
 
-vi.mock("@ui/web/frames/DclTopBar", () => ({
+vi.mock("@/features/components/chrome/SitesTopBar", () => ({
   default: () => null,
 }));
 vi.mock("@/data/lib/auth/context", () => ({

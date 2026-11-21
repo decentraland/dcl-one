@@ -19,7 +19,7 @@ vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   fetchCommunity: net.fetchCommunity,
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: null }) }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("../../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../../events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
 vi.mock("../../events/useEventReminders", () => ({
   useEventReminders: () => ({ get: () => ({ active: false, pending: false, toggle: () => {} }) }),

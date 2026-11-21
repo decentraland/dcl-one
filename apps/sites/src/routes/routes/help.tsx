@@ -1,4 +1,4 @@
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { useEffect, useRef } from "react";
 
 import { pageLoader, type PageDefaults } from "@/core/lib/telemetry/page-loader";
@@ -40,13 +40,13 @@ export default function Help({ loaderData }: Route.ComponentProps) {
 
   return (
     // No top-bar entry is highlighted on the help center, as on decentraland.org.
-    <SitesChrome active="play">
+    <SitesLayout active="play">
       <HelpView
         services={services}
         statusPageUrl={statusPageUrl}
         intercomAppId={intercomAppId}
         onCreatorFundClick={(button) => track("lp_help_creator_fund_clicked", { button }, context)}
       />
-    </SitesChrome>
+    </SitesLayout>
   );
 }

@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { SHOP_BASE } from "../../routes";
 import { useCreatorProfile } from "../../discovery/hooks";
 import { t } from "@shop/discovery/intl";
-import { addressAvatarColor, avatarInitial } from "../../discovery/lib/avatarColor";
+import { addressAvatarColor, avatarInitial } from "@web-core/profile/avatarColor";
 import { shortAddress } from "@shop/model/address";
 import styles from "./DetailBadges.module.css";
 

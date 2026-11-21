@@ -4,6 +4,7 @@
 // fails (a 0 there would read as "you have no credits"); a loaded 0 shows. It opens the pack picker, except in
 // the iOS web view, which may not sell credits: there the number shows without being a way to buy more.
 import { Link } from "react-router";
+import { formatCreditsBalance } from "@shop/credits/balance-query";
 
 import { EnsureQueryClient } from "../../checkout/services";
 import HeldCredits from "../../credits/components/HeldCredits";
@@ -12,11 +13,6 @@ import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { isIapMode } from "../flags";
 import styles from "./ShopCreditsChip.module.css";
-
-/** As ui2's formatBalance: whole credits, grouped ("1,234"). */
-export function formatCreditsBalance(credits: number): string {
-  return Math.floor(credits).toLocaleString("en-US");
-}
 
 /** The shop's hexagonal "C" mark, drawn in the chip's colour. */
 const ShopCreditsIcon = () => (
