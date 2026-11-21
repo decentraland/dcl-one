@@ -9921,3 +9921,271 @@ async fn a_started_walk_touch_is_fenced_by_its_owner() {
     assert!(current.started.done());
     db.drop().await;
 }
+
+/// `catalyst shop compare-sources` over a fake chain and a fake portal that
+/// serves the same chain's logs and headers.
+mod compare_sources_tests {
+    use super::*;
+    use crate::chain_index::portal::{AddressHistory, PortalReader};
+    use crate::market::compare_sources::{self, Request};
+    use axum::routing::get;
+
+    /// What the fake portal does differently from its chain.
+    #[derive(Default)]
+    struct Quirks {
+        /// At most this many blocks a page (an early end).
+        page_blocks: Option<u64>,
+        /// Logs it does not serve, by (block, log index).
+        drop: Vec<(u64, u64)>,
+    }
+
+    struct Portal {
+        chain: Arc<FakeChain>,
+        quirks: Mutex<Quirks>,
+    }
+
+    fn finalized(chain: &FakeChain) -> u64 {
+        chain
+            .head
+            .lock()
+            .saturating_sub(chain.finalized_lag.load(Ordering::SeqCst))
+    }
+
+    fn header(chain: &FakeChain, n: u64) -> Value {
+        json!({"number": n, "hash": chain.hash_of(n), "parentHash": chain.hash_of(n.saturating_sub(1)), "timestamp": time_of(n)})
+    }
+
+    async fn stream(State(p): State<Arc<Portal>>, body: String) -> axum::response::Response {
+        let q: Value = serde_json::from_str(&body).unwrap();
+        let from = q["fromBlock"].as_u64().unwrap();
+        let fin = finalized(&p.chain);
+        if from > fin {
+            return (
+                StatusCode::NO_CONTENT,
+                [("x-sqd-finalized-head-number", fin.to_string())],
+            )
+                .into_response();
+        }
+        let quirks = p.quirks.lock();
+        let mut to = q["toBlock"].as_u64().unwrap().min(fin);
+        if let Some(n) = quirks.page_blocks {
+            to = to.min(from + n - 1);
+        }
+        let wanted = |l: &Value| {
+            q["logs"].as_array().unwrap().iter().any(|r| {
+                let address = l["address"].as_str().unwrap().to_ascii_lowercase();
+                r["address"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a == &json!(address))
+                    && (0..4).all(|i| match r.get(format!("topic{i}")) {
+                        None => true,
+                        Some(alts) => l["topics"].get(i).is_some_and(|t| {
+                            alts.as_array()
+                                .unwrap()
+                                .contains(&json!(t.as_str().unwrap().to_ascii_lowercase()))
+                        }),
+                    })
+            })
+        };
+        let mut blocks: std::collections::BTreeMap<u64, Vec<Value>> = Default::default();
+        for l in p.chain.logs.lock().iter() {
+            let (b, i) = (hex_u64(&l["blockNumber"]), hex_u64(&l["logIndex"]));
+            if b < from || b > to || quirks.drop.contains(&(b, i)) || !wanted(l) {
+                continue;
+            }
+            blocks.entry(b).or_default().push(json!({
+                "logIndex": i, "transactionIndex": 0, "address": l["address"], "topics": l["topics"],
+                "data": l["data"], "transactionHash": l["transactionHash"],
+            }));
+        }
+        blocks.entry(to).or_default();
+        let body: String = blocks
+            .into_iter()
+            .map(|(b, logs)| {
+                let mut line = json!({"header": header(&p.chain, b)});
+                if !logs.is_empty() {
+                    line["logs"] = json!(logs);
+                }
+                format!("{line}\n")
+            })
+            .collect();
+        ([("content-type", "application/x-ndjson")], body).into_response()
+    }
+
+    async fn heads(State(p): State<Arc<Portal>>, uri: axum::http::Uri) -> axum::response::Response {
+        let n = if uri.path().ends_with("/finalized-head") {
+            finalized(&p.chain)
+        } else {
+            *p.chain.head.lock()
+        };
+        axum::Json(json!({"number": n, "hash": p.chain.hash_of(n)})).into_response()
+    }
+
+    async fn serve_portal(chain: Arc<FakeChain>, quirks: Quirks) -> String {
+        let portal = Arc::new(Portal {
+            chain,
+            quirks: Mutex::new(quirks),
+        });
+        let app = Router::new()
+            .route("/datasets/polygon-mainnet/finalized-stream", post(stream))
+            .route("/datasets/polygon-mainnet/head", get(heads))
+            .route("/datasets/polygon-mainnet/finalized-head", get(heads))
+            .with_state(portal);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn mana_log(block: u64, index: u64, amount: u64) -> crate::chain_index::rpc::RpcLog {
+        crate::chain_index::rpc::RpcLog {
+            address: super::super::mana_transfers::contract(ChainNet::Matic),
+            topics: vec![
+                super::super::mana_transfers::TRANSFER.into(),
+                format!("0x{:0>64}", &ALICE[2..]),
+                format!("0x{:0>64}", &BOB[2..]),
+            ],
+            data: format!("0x{amount:064x}"),
+            block_number: format!("0x{block:x}"),
+            log_index: format!("0x{index:x}"),
+            block_timestamp: Some(format!("0x{:x}", time_of(block))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", block * 1_000 + index)),
+        }
+    }
+
+    async fn compare(
+        db: &ScratchDb,
+        rpc: &str,
+        portal: &str,
+        from: u64,
+        to: u64,
+    ) -> compare_sources::Report {
+        compare_sources::run(
+            &db.pool,
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "mana_transfers".into(),
+                from,
+                to,
+                window: 100,
+                rpc_url: rpc.to_string(),
+                reader: PortalReader::new(portal, "polygon-mainnet", None, 1_000.0).unwrap(),
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    fn chain() -> Arc<FakeChain> {
+        let chain = FakeChain::new(
+            1_000,
+            vec![
+                mana_log(120, 0, 1),
+                mana_log(250, 3, 2),
+                mana_log(399, 1, 3),
+            ],
+            1_000,
+            1_000,
+        );
+        chain.finalized_lag.store(10, Ordering::SeqCst);
+        chain
+    }
+
+    #[tokio::test]
+    async fn equal_sources_compare_the_whole_range() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain, Quirks::default()).await,
+        );
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("equal", 0), "{r:#?}");
+        assert_eq!(r.compared, [(101, 200), (201, 300), (301, 400)]);
+        assert!(r.uncovered.is_empty());
+        assert_eq!(r.totals.missing + r.totals.extra + r.totals.mismatch, 0);
+        assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages >= 3);
+        assert_eq!(r.windows[0].filter_fingerprint.len(), 64);
+        db.drop().await;
+    }
+
+    /// The portal stops early each page: the RPC is read again to where it
+    /// stopped, and the next window starts after that block.
+    #[tokio::test]
+    async fn an_early_portal_end_is_compared_where_both_agree() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(
+            chain,
+            Quirks {
+                page_blocks: Some(30),
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!(r.outcome, "equal", "{r:#?}");
+        let mut next = 101;
+        for (a, b) in &r.compared {
+            assert_eq!(*a, next, "contiguous");
+            next = b + 1;
+        }
+        assert_eq!(next, 401, "the whole range");
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_missing_log_makes_the_run_different() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(
+            chain,
+            Quirks {
+                drop: vec![(250, 3)],
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("different", 1));
+        assert_eq!(r.totals.missing, 1);
+        assert!(r.different && !r.incomplete);
+        db.drop().await;
+    }
+
+    /// A range past the finalized head is reported uncovered; an empty
+    /// intersection is incomplete, never equal.
+    #[tokio::test]
+    async fn uncovered_blocks_make_the_run_incomplete() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain, Quirks::default()).await,
+        );
+        let r = compare(&db, &rpc, &portal, 901, 1_200).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2));
+        assert_eq!(r.compared, [(901, 990)]);
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (991, 1_200));
+        let r = compare(&db, &rpc, &portal, 995, 1_200).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2));
+        assert!(r.compared.is_empty());
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (995, 1_200));
+        db.drop().await;
+    }
+}

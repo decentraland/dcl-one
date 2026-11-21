@@ -64,6 +64,7 @@ pub mod chain_jobs;
 pub mod chain_walk;
 pub mod collections;
 pub mod committee_index;
+pub mod compare_sources;
 pub mod contracts;
 pub mod definitions;
 pub mod features;
