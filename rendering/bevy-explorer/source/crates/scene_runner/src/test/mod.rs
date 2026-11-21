@@ -38,9 +38,9 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed,
-        PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance,
-        ServerConfiguration, TimeOfDay, ToolTips,
+        AppConfig, AudioSettings, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings,
+        PermissionUsed, PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight,
+        SceneLoadDistance, ServerConfiguration, TimeOfDay, ToolTips,
     },
 };
 use comms::CommsPlugin;
@@ -120,6 +120,7 @@ fn init_test_app(entity_json: &str) -> App {
 
     // Add our systems
     app.insert_resource(ClientWindowFocus::Focused);
+    app.init_resource::<AudioSettings>();
     app.insert_resource(AppConfig {
         graphics: GraphicsSettings {
             fps_target: 0,

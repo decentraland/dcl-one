@@ -1242,6 +1242,8 @@ pub struct AudioSettings {
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
+    /// Whether [`Self::microphone_focus`] passes the client window's focus through.
+    pub mute_mic_in_background: bool,
 }
 
 impl Default for AudioSettings {
@@ -1253,11 +1255,20 @@ impl Default for AudioSettings {
             scene: 100,
             system: 100,
             avatar: 100,
+            mute_mic_in_background: true,
         }
     }
 }
 
 impl AudioSettings {
+    /// `focus` while `mute_mic_in_background` is on, `Focused` while it is off.
+    pub const fn microphone_focus(&self, focus: ClientWindowFocus) -> ClientWindowFocus {
+        if self.mute_mic_in_background {
+            focus
+        } else {
+            ClientWindowFocus::Focused
+        }
+    }
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
     }
@@ -2736,7 +2747,22 @@ mod tests {
                 scene: 30,
                 system: 20,
                 avatar: 10,
+                mute_mic_in_background: true,
             }
+        );
+    }
+
+    #[test]
+    fn the_mic_follows_the_window_focus_only_while_it_mutes_in_the_background() {
+        let mut audio = AudioSettings::default();
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::NoFocus
+        );
+        audio.mute_mic_in_background = false;
+        assert_eq!(
+            audio.microphone_focus(ClientWindowFocus::NoFocus),
+            ClientWindowFocus::Focused
         );
     }
 
