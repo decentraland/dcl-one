@@ -6,7 +6,7 @@ import SitesChrome from "@ui/web/frames/SitesChrome";
 import {
   SitesLocaleContext,
   type SitesLocaleHandle,
-} from "@ui/web/frames/sites-locale";
+} from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 
 import { pressCopy } from "@/features/press/locale";
 

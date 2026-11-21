@@ -95,12 +95,13 @@ class CiLocalTest(unittest.TestCase):
 
     def test_shared_ui_edits_run_the_sites_unit_tests_before_commit(self):
         names = lambda changed: [step.name for step in ci.pre_commit_steps(changed)]
-        for path in ('library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
+        for path in ('library/ui/components/Button/Button.tsx', 'library/ui/apps/sites/events/MyEvents.tsx',
                      'apps/sites/src/routes/root.tsx'):
             with self.subTest(path=path):
                 self.assertIn('sites unit tests', names({path}))
                 self.assertNotIn('ui3 unit tests', names({path}))
-        for path in ('library/ui/apps/shop/ShopChrome.tsx', 'library/ui/apps/hud/Panel.tsx'):
+        for path in ('library/ui/apps/shop/ShopChrome.tsx', 'library/ui/apps/hud/Panel.tsx',
+                     'library/ui/components/AppChrome/SiteLayout.tsx', 'library/ui/apps/sites/chrome/SitesFooter.tsx'):
             with self.subTest(path=path):
                 self.assertIn('ui3 unit tests', names({path}))
                 self.assertIn('sites unit tests', names({path}))

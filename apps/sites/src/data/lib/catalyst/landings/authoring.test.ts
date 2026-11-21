@@ -102,7 +102,7 @@ describe("when submitting a hangout", () => {
         await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: false });
       });
 
-      it("should report the event still rejected when another reviewer's rejection stands", async () => {
+      it("should report the event still rejected when the server answers that it is", async () => {
         vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: true, rejected_by: "0x4444444444444444444444444444444444444444" } });
         await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: true });
       });

@@ -10,7 +10,7 @@ import styles from "./SubmitSuccess.module.css";
 /**
  * The confirmation that covers the page below the site header once an event is created or saved.
  * The form it replaces held focus, so focus moves to the message instead of falling to the page.
- * An edit the server kept rejected (another reviewer's rejection stands) says so instead of claiming success.
+ * An edit the server answers as still rejected says so instead of claiming success.
  */
 export default function SubmitSuccess({ mode, approved, stillRejected = false }: {
   mode: "create" | "edit";
