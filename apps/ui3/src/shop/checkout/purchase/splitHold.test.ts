@@ -100,6 +100,18 @@ describe("an account's splits that may still spend its allowance", () => {
     expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
   });
 
+  it("rejects a field of the wrong type strictly, where the tolerant read takes it as absent, and reads every older format", () => {
+    for (const bad of [{ creditId: 12345 }, { chainId: "137" }, { creditExpiresAt: "1700000000" }, { attempt: 7 }, { sale: { buyer: "x" } }, { expiredSeenAt: "soon" }]) {
+      localStorage.setItem(splitHoldKey(ACCOUNT, OTHER), JSON.stringify({ ...hold(), ...bad }));
+      expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
+      expect(readSplitHoldRecord(ACCOUNT, OTHER)).not.toBeNull();
+    }
+    // A bare timestamp (the first format), and a record from before the credit, its terms or the expiry note were kept.
+    localStorage.setItem(splitHoldKey(ACCOUNT, OTHER), JSON.stringify(Date.now()));
+    localStorage.setItem(splitHoldKey(ACCOUNT, LINE), JSON.stringify({ at: Date.now(), attempt: null, txHash: null }));
+    expect(readAccountSplitHolds(ACCOUNT).map((h) => h.line).sort()).toEqual([LINE, OTHER].sort());
+  });
+
   it("throws without storage, and skips a key gone between listing and reading", () => {
     expect(writeSplitHold(ACCOUNT, LINE, hold())).toBe(true);
     const getItem = Storage.prototype.getItem;

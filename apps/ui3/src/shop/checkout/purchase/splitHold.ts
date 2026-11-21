@@ -99,12 +99,28 @@ export function readSplitHoldRecord(account: string | null, lineId: string): Spl
   }
 }
 
-/** A stored record read: null when it isn't one (not a hold's shape); throws when it isn't JSON. */
-function parseSplitHold(raw: string): SplitHold | null {
+/**
+ * A stored record read: null when it isn't one (not a hold's shape); throws when it isn't JSON. `strict`: a field that is
+ * there with the wrong type also makes it not one, where the tolerant read takes it as absent. Both read every format a
+ * hold was ever written in (a bare timestamp; fields added over time, absent or null on older records).
+ */
+function parseSplitHold(raw: string, strict = false): SplitHold | null {
   const parsed = JSON.parse(raw) as unknown;
   if (typeof parsed === "number") return { at: parsed, attempt: null, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
   const hold = parsed as Partial<SplitHold> | null;
-  if (!hold || typeof hold.at !== "number") return null;
+  if (!hold || typeof hold !== "object" || typeof hold.at !== "number") return null;
+  if (strict) {
+    const fits = (v: unknown, type: "string" | "number") => v === undefined || v === null || typeof v === type;
+    const typed =
+      fits(hold.attempt, "string") &&
+      fits(hold.txHash, "string") &&
+      fits(hold.chainId, "number") &&
+      fits(hold.creditId, "string") &&
+      fits(hold.creditExpiresAt, "number") &&
+      fits(hold.expiredSeenAt, "number") &&
+      (hold.sale === undefined || hold.sale === null || isSplitSale(hold.sale));
+    if (!typed) return null;
+  }
   return {
     at: hold.at,
     attempt: typeof hold.attempt === "string" ? hold.attempt : null,
@@ -158,7 +174,7 @@ export function readAccountSplitHolds(account: string): { line: string; hold: Sp
   return keys.flatMap((key) => {
     const raw = storage.getItem(key);
     if (raw === null) return [];
-    const hold = parseSplitHold(raw);
+    const hold = parseSplitHold(raw, true);
     if (!hold) throw new Error("A purchase's record in this browser can't be read.");
     return [{ line: key.slice(prefix.length), hold }];
   });

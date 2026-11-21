@@ -1047,13 +1047,15 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /**
    * Why a split of `line` by `buyer` can't start now, read at once (no wait, so the approval's `live` check under its lock
    * can ask it): a split of this item held by another purchase, another item's split that may still spend the allowance
-   * (splitsInFlight), or purchases it can't read. A hold of one of this page's own purchases that is over never counts,
-   * and neither does a credit proven over (proveCreditsOver). Null: nothing holds it.
+   * (splitsInFlight), or purchases it can't read. A hold of one of this page's own purchases that is over never counts.
+   * This item's hold counts for as long as it is kept (a credit proven over doesn't let it go: only its purchase found out
+   * does, as the item's claim reads it); another item's stops counting once its credit is proven over (proveCreditsOver).
+   * Null: nothing holds it.
    */
   const splitBlock = (buyer: string, line: string): string | null => {
     let live: { line: string; hold: SplitHold }[]
     try {
-      live = splitsInFlight(buyer, svc.now(), (l, hold) => ownFinished(buyer, l, hold) || (hold.creditId !== null && creditsOver.has(hold.creditId)))
+      live = splitsInFlight(buyer, svc.now(), (l, hold) => ownFinished(buyer, l, hold) || (l !== line && hold.creditId !== null && creditsOver.has(hold.creditId)))
     } catch {
       return SPLIT_UNCHECKABLE
     }
