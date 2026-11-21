@@ -4,7 +4,9 @@ Upstream: `github.com/decentraland/social-service-ea` at the `revision` in
 `source.toml`; table shapes are the result of every file in `src/migrations`.
 All wallet columns are lowercased. Rows whose wallet is not `0x` + 40 hex, self-pairs
 and self-referrals are skipped. When case variants of one key exist, the lowercase spelling
-wins. Upstream `timestamp` columns hold UTC; referral timestamps are epoch milliseconds.
+wins. Place ids are lowercased too, as the node stores them; of case variants in one
+community the lowercase spelling wins, then the earliest added. Upstream `timestamp`
+columns hold UTC; referral timestamps are epoch milliseconds.
 
 | Step | Upstream | Target | Cursor |
 | --- | --- | --- | --- |
@@ -19,7 +21,7 @@ wins. Upstream `timestamp` columns hold UTC; referral timestamps are epoch milli
 | community_bans | community_bans | social.community_bans (+ deletes banned member rows) | key (full re-scan) |
 | community_members | community_members (+ owner from communities) | social.community_members (+ deletes removed members) | whole set |
 | community_requests | community_requests | social.community_requests | updated_at |
-| community_places | community_places (id → place_id) | social.community_places | added_at |
+| community_places | community_places (id → place_id, lowercased) | social.community_places | added_at |
 | community_posts | community_posts | social.community_posts | created_at |
 | community_posts_reconcile | community_posts (ids) | deletes from social.community_posts | whole set |
 | community_post_likes | community_post_likes | social.community_post_likes | liked_at |

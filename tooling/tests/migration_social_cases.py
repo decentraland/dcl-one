@@ -496,3 +496,19 @@ class SocialMigrationCases:
         self.social_ea_run('blocks', 'user_mutes')
         self.assertEqual(self.sql(tgt, 'SELECT blocked_at FROM social.blocks UNION ALL SELECT muted_at FROM social.user_mutes;')
                          .strip().splitlines(), ['2026-02-01 00:00:00'] * 2)
+
+    def test_when_place_ids_differ_only_in_case_it_should_import_one_lowercase_row(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        self.social_ea_community(src, owner)
+        place = 'AbCdEf00-0000-4000-8000-0000000000aa'
+        self.sql(src, f"""CREATE TABLE community_places (id text, community_id uuid, added_by text, added_at timestamp);
+            INSERT INTO community_places VALUES
+            ('{place}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('{place.upper()}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-02'),
+            ('Mixed.DCL.eth', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-03'),
+            ('mixed.dcl.eth', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-04');""")
+        self.social_ea_run('communities', 'community_places')
+        self.assertEqual(self.sql(tgt, 'SELECT place_id, added_at FROM social.community_places ORDER BY 1;')
+                         .strip().splitlines(),
+                         [f'{place.lower()}\t2026-01-01 00:00:00', 'mixed.dcl.eth\t2026-01-04 00:00:00'])
