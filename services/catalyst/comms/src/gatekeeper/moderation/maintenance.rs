@@ -1,6 +1,8 @@
 //! Periodic removal cleanup and room metadata reconciliation.
 use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlace, RemovedPlaces};
-use crate::gatekeeper::streaming::notifications::{notification, owner};
+use crate::gatekeeper::streaming::notifications::{
+    notification, owner, place_info as info, recipients, to_each,
+};
 use crate::gatekeeper::{CommsState, SharedState, admission::scene, errors::ApiError, streaming};
 use crate::interfaces::StreamingNotificationKind;
 use serde_json::{Value, json};
@@ -15,23 +17,6 @@ use crate::{
 #[cfg(test)]
 use chrono::NaiveDateTime;
 
-fn info(context: &PlaceContext) -> scene::PlaceInfo {
-    scene::PlaceInfo {
-        world: context.world,
-        world_name: context.world_name.clone(),
-        base_position: Some(context.base_position.clone()),
-        positions: context
-            .positions
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![context.base_position.clone()]),
-    }
-}
 async fn cleanup(
     state: &SharedState,
     feed: &RemovedPlaces,
@@ -49,6 +34,13 @@ async fn cleanup(
     if let Ok(recipient) = &recipient {
         feed.save_owner(event.event_id, recipient.as_str()).await?;
     }
+    // Read before the transaction below revokes the place's admin grants.
+    let recipients = match recipient {
+        Ok(owner) => recipients(state, &context, owner.clone())
+            .await
+            .map(|all| (owner, all)),
+        Err(error) => Err(error),
+    };
     if event.cleaned_at.is_none() {
         let ingress: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id = $1 AND active AND ingress_id <> '')",
@@ -94,18 +86,18 @@ async fn cleanup(
             streaming::settle_cleanup(state, id, &event.place_id);
         }
     }
-    let recipient = recipient?;
+    let (owner, recipients) = recipients?;
     let key = format!("place-removed-{}", event.event_id);
-    state
-        .social
-        .notify_streaming_notification(&notification(
-            &context,
-            recipient,
-            &key,
-            StreamingNotificationKind::PlaceUpdated,
-            event.removed_at,
-        ))
-        .await?;
+    let notice = notification(
+        &context,
+        owner,
+        &key,
+        StreamingNotificationKind::PlaceUpdated,
+        event.removed_at,
+    );
+    for notice in to_each(&notice, &recipients) {
+        state.social.notify_streaming_notification(&notice).await?;
+    }
     feed.acknowledge(event.event_id).await?;
     Ok(())
 }
