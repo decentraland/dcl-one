@@ -4613,3 +4613,96 @@ async fn webhook_private_join_restart_reconstructs_old_room_after_delete_failure
     restarted.voice_db.delete_private_call(next).await.unwrap();
     server.abort();
 }
+
+#[tokio::test]
+async fn community_voice_join_refuses_a_missing_or_unknown_action_before_any_read() {
+    // Every store read fails: a refusal is the body check, not a later 500.
+    let state = lazy_state(Settings::for_tests());
+    let join = |action: Option<&str>| {
+        let mut body = serde_json::json!({
+            "community_id": Uuid::new_v4().to_string(),
+            "user_address": wallet().as_str(),
+            "user_role": "owner",
+        });
+        if let Some(action) = action {
+            body["action"] = serde_json::json!(action);
+        }
+        voice::community_voice_chat_create_or_join(
+            State(state.clone()),
+            Json(serde_json::from_value(body).unwrap()),
+        )
+    };
+    let err = join(None).await.unwrap_err();
+    assert_eq!(
+        (err.code, err.message.as_str()),
+        (400, "The property action is required")
+    );
+    for unknown in ["", "leave", "CREATE", "Join"] {
+        let err = join(Some(unknown)).await.unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (400, "The property action is invalid"),
+            "{unknown:?}"
+        );
+    }
+}
+
+#[test]
+fn community_voice_actions_are_upstreams_enum() {
+    for action in [
+        "create",
+        "join",
+        "request-to-speak",
+        "promote-speaker",
+        "demote-speaker",
+        "kick-player",
+    ] {
+        assert_eq!(voice::community_voice_action(Some(action)).unwrap(), action);
+    }
+}
+
+#[tokio::test]
+async fn community_voice_status_routes_answer_inactive_when_the_store_fails() {
+    let state = lazy_state(Settings::for_tests());
+    let community = CommunityId::new();
+    let Json(status) =
+        voice::community_voice_chat_status(State(state.clone()), Path(community.to_string()))
+            .await
+            .expect("a failed read answers inactive");
+    assert_eq!(
+        (
+            status.active,
+            status.participant_count,
+            status.moderator_count
+        ),
+        (false, 0, 0)
+    );
+    let Json(bulk) = voice::community_voice_chat_bulk_status(
+        State(state.clone()),
+        Json(voice::BulkCommunityStatusBody {
+            community_ids: vec![community.to_string(), "not-a-uuid".into()],
+        }),
+    )
+    .await
+    .expect("a failed read answers every id inactive");
+    assert_eq!(
+        bulk,
+        serde_json::json!({ "data": [
+            { "community_id": community.to_string(), "active": false, "participant_count": 0, "moderator_count": 0 },
+            { "community_id": "not-a-uuid", "active": false, "participant_count": 0, "moderator_count": 0 },
+        ]})
+    );
+    let Json(active) = voice::community_voice_chat_active(State(state.clone()))
+        .await
+        .expect("a failed read lists none");
+    assert_eq!(active, serde_json::json!({ "data": [], "total": 0 }));
+    let member = wallet();
+    let Json(user) =
+        voice::check_user_community_status(State(state.clone()), Path(member.to_string()))
+            .await
+            .expect("a failed read answers not in a chat");
+    assert_eq!(
+        user,
+        serde_json::json!({ "userAddress": member.as_str(), "isInCommunityVoiceChat": false })
+    );
+}
