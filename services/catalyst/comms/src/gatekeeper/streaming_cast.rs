@@ -638,6 +638,22 @@ async fn room_scene(state: &CommsState, room: &str) -> Result<Option<ResolvedRoo
     }
 }
 
+/// The key the bans of `scene`'s room live under.
+async fn scene_ban_key(
+    state: &CommsState,
+    scene: &ResolvedRoom,
+) -> Result<Option<SceneBanKey>, ApiError> {
+    scene
+        .resolve_ban_key(state.scenes.as_ref())
+        .await
+        .map_err(|error| match error {
+            ResolveError::Db(error) => {
+                AuthorityNotEstablished::store_unavailable("content.deployments", &error).into()
+            }
+            other => ApiError::internal(other.to_string()),
+        })
+}
+
 // ── tokens ──
 
 #[derive(Serialize)]
@@ -1360,8 +1376,8 @@ pub async fn watcher_token(
     let scene_room = room_scene(&state, &room)
         .await?
         .ok_or_else(|| no_active_stream(location))?;
-    let ban_key = scene_room
-        .ban_key()
+    let ban_key = scene_ban_key(&state, &scene_room)
+        .await?
         .ok_or_else(|| no_active_stream(location))?;
     if is_scene_banned(&state, &ban_key, watcher).await? {
         tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
@@ -1649,8 +1665,11 @@ pub async fn refuse_on_join(
         return refuse_revoked_publisher(state, room, identity).await;
     };
     let banned = super::barred(state, wallet, None).await?.is_some()
-        || match room_scene(state, room).await?.and_then(|s| s.ban_key()) {
-            Some(key) => is_scene_banned(state, &key, wallet).await?,
+        || match room_scene(state, room).await? {
+            Some(scene) => match scene_ban_key(state, &scene).await? {
+                Some(key) => is_scene_banned(state, &key, wallet).await?,
+                None => false,
+            },
             None => false,
         };
     if banned {

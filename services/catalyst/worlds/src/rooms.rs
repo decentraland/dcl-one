@@ -115,6 +115,28 @@ pub async fn ensure_scene_admin_place_release(pool: &PgPool) -> anyhow::Result<(
     Ok(())
 }
 
+/// Refuse serving while a Genesis scene ban of an active deployment still has
+/// the entity id for its key: requests read bans by place, so that ban would
+/// be lost. `schemas/releases/genesis-scene-ban-keys.sql` moves them.
+pub async fn ensure_genesis_scene_ban_release(pool: &PgPool) -> anyhow::Result<()> {
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.scene_bans b WHERE EXISTS (\
+           SELECT 1 FROM content.deployments d \
+            WHERE d.entity_id = b.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
+              AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id) \
+              AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
+    )
+    .fetch_one(pool)
+    .await?;
+    anyhow::ensure!(
+        !pending,
+        "Genesis scene bans require release conversion before serving: stop old replicas, \
+         back up the database, and run schemas/releases/genesis-scene-ban-keys.sql \
+         with the administrative database role; then restart"
+    );
+    Ok(())
+}
+
 /// The shared Places UUID explicitly bound to this active (world, entity)
 /// deployment. Discovery and storage consume this same identity.
 macro_rules! identity_column {
@@ -1299,6 +1321,106 @@ mod tests {
         places.extend([p2, p3, p4, no_parcel, "bafyGone".to_string()]);
         places.sort();
         assert_eq!(keys, places);
+    }
+
+    /// The release that moves Genesis scene bans from the scene entity to its
+    /// place: a ban of an active deployment is read where the resolver keys
+    /// it, two entities of one place keep the newest ban of a wallet, and a
+    /// ban on an entity that is not deployed, or has no parcel, stays. The
+    /// node does not serve before the release ran.
+    #[tokio::test]
+    async fn the_genesis_ban_release_moves_the_bans_of_active_deployments() {
+        const RELEASE: &str = include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/schemas/releases/genesis-scene-ban-keys.sql"
+        ));
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let wallet = || format!("0x{:040x}", Uuid::new_v4().as_u128());
+        let (banned, other) = (wallet(), wallet());
+        let ban = async |place: &str, who: &str, by: &str, days: i32| {
+            sqlx::query(
+                "INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) \
+                 VALUES ($1, $2, $3, timezone('UTC', now()) - make_interval(days => $4))",
+            )
+            .bind(place)
+            .bind(who)
+            .bind(by)
+            .bind(days)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        let [p1, p2, p3] = ["9,7", "9,8", "9,9"].map(str::to_owned);
+        // Two active entities of the base "9,8".
+        let first = deploy_genesis(&pool, &[&p1, &p2], " 09 , 08 ").await;
+        let second = deploy_genesis(&pool, &[&p2], &p2).await;
+        sqlx::query(
+            "UPDATE content.deployments SET deleter_deployment = NULL WHERE entity_id = $1",
+        )
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let no_parcel = deploy_genesis(&pool, &[&"none".to_string()], "junk").await;
+        let third = deploy_genesis(&pool, &[&p3], &p3).await;
+        ban(&first, &banned, "older", 9).await;
+        ban(&second, &banned, "newer", 2).await;
+        ban(&first, &other, "first", 5).await;
+        ban(&no_parcel, &banned, "kept", 1).await;
+        ban("bafyGone", &banned, "kept", 1).await;
+        // A row the place has: the moved ban is newer and wins.
+        ban(&third, &banned, "moved", 1).await;
+        ban(&p3, &banned, "stale", 4).await;
+
+        let unmoved = ensure_genesis_scene_ban_release(&pool).await.unwrap_err();
+        assert!(
+            unmoved.to_string().contains("genesis-scene-ban-keys.sql"),
+            "{unmoved}"
+        );
+        for _ in 0..2 {
+            sqlx::raw_sql(RELEASE).execute(&pool).await.unwrap();
+        }
+        ensure_genesis_scene_ban_release(&pool).await.unwrap();
+
+        let realm = RealmId::parse("main").unwrap();
+        for parcel in [&p1, &p3] {
+            let resolved = resolve(
+                &pool,
+                RoomRequest::Parcel {
+                    realm: &realm,
+                    parcel: Parcel::parse(parcel).unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+            let key = resolved.ban_key().unwrap();
+            let banned_here: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM social.scene_bans WHERE place_id = $1 AND banned_address = $2)",
+            )
+            .bind(key.as_str())
+            .bind(&banned)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(banned_here, "{parcel}: {}", key.as_str());
+        }
+        let mut rows: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT place_id, banned_address, banned_by FROM social.scene_bans")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        rows.sort();
+        let mut expected = vec![
+            (p2.clone(), banned.clone(), "newer".to_owned()),
+            (p2.clone(), other.clone(), "first".to_owned()),
+            (p3.clone(), banned.clone(), "moved".to_owned()),
+            (no_parcel.clone(), banned.clone(), "kept".to_owned()),
+            ("bafyGone".to_owned(), banned.clone(), "kept".to_owned()),
+        ];
+        expected.sort();
+        assert_eq!(rows, expected);
     }
 
     #[tokio::test]

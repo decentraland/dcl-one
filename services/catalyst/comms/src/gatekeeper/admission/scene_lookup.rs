@@ -181,11 +181,12 @@ pub(crate) async fn resolve_adapter_room(
 /// `worlds::rooms::genesis_scene`); whether it still holds a pointer in
 /// `content.active_pointers` is not checked. An unknown or denylisted id is
 /// 404 and an unreadable catalogue 503, never a mint. With
-/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked.
+/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked and
+/// answers `None`; else the deployment found, whose place keys its bans.
 pub(crate) async fn require_genesis_deployment(
     state: &CommsState,
     resolved: &ResolvedRoom,
-) -> Result<(), ApiError> {
+) -> Result<Option<crate::rooms::ActiveDeployment>, ApiError> {
     let scene = resolved
         .scene_id
         .as_ref()
@@ -193,7 +194,7 @@ pub(crate) async fn require_genesis_deployment(
     if state.settings.allow_local_preview
         && is_local_preview(resolved.realm.as_str(), scene.as_str())
     {
-        return Ok(());
+        return Ok(None);
     }
     let not_found = || ApiError::not_found(format!("No scene entity found for scene ID {scene}"));
     if state.content_denylist.contains(scene.as_str()) {
@@ -207,7 +208,10 @@ pub(crate) async fn require_genesis_deployment(
         })
         .await
     {
-        Ok(found) if found.deployment.is_some() => Ok(()),
+        Ok(ResolvedRoom {
+            deployment: Some(deployment),
+            ..
+        }) => Ok(Some(deployment)),
         Ok(_) | Err(ResolveError::NoParcels { .. }) => Err(not_found()),
         Err(error) => {
             tracing::error!(%error, scene = %scene, "genesis scene lookup failed");
