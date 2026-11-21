@@ -581,11 +581,19 @@ describe("a split whose outcome is not known", () => {
     // Its credit expired a minute ago, and the finalized block has reached it; whether that purchase went through is unknown.
     const expiresAt = nowSeconds() - 60;
     demo.chain.chainTime = expiresAt;
+    const asked: number[] = [];
+    const read = demo.chain.finalizedTime!.bind(demo.chain);
+    demo.chain.finalizedTime = (chainId, signal) => {
+      asked.push(chainId);
+      return read(chainId, signal);
+    };
     localStorage.setItem(holdKey(line), JSON.stringify({ at: Date.now() - 20 * 60 * 1000, attempt: "another", txHash: null, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: expiresAt }));
     await act(async () => fireEvent.click(approve));
     expect(await screen.findByText("A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.", {}, { timeout: 5000 })).toBeTruthy();
     expect(demo.relay.posts).toHaveLength(0);
     expect(authorizations(demo)).toBe(0);
+    // Such a proof never lets this item's hold go, so its credit's expiry isn't even asked.
+    expect(asked).toEqual([]);
   });
 
   it("a hold of this item another tab wrote once the approve had gone is read by the item's claim: no credit is authorized, the other shown confirming", async () => {
@@ -722,6 +730,33 @@ describe("a split whose outcome is not known", () => {
     expect([...locks.held]).toEqual([]);
     expect(authorizations(demo)).toBe(0);
     expect(demo.relay.posts).toHaveLength(1);
+  });
+
+  it("other items' credits are proven all at once: two hanging finalized time reads cost one deadline, not one each", async () => {
+    const { demo, line, unmount, again } = setup();
+    unmount();
+    demo.services.finalizedTimeMs = 50;
+    // Two other items' splits, their credits past expiry on this browser's clock only.
+    anotherItemHeld(line, { creditExpiresAt: nowSeconds() - 60 });
+    const third = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"cd".repeat(20)}`) });
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${third}`,
+      JSON.stringify({ at: Date.now(), attempt: "third", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"1f".repeat(32)}`, creditExpiresAt: nowSeconds() - 60 }),
+    );
+    // Each read hangs until its deadline aborts it; how many are open at once is counted.
+    let open = 0;
+    let most = 0;
+    demo.chain.finalizedTime = (_chainId, signal) => {
+      open++;
+      most = Math.max(most, open);
+      signal?.addEventListener("abort", () => open--);
+      return new Promise<number>(() => {});
+    };
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
+    expect(most).toBe(2);
+    expect(authorizations(demo)).toBe(0);
   });
 
   it("a record of another purchase this browser can't read stops this one before anything is asked, and says so", async () => {

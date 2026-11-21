@@ -520,4 +520,19 @@ describe("what settles a hold", () => {
     const past = { creditExpiresAt: seconds() - 20 * 60, expiryProvenAt: Date.now() - 10 * SPLIT_EXPIRY_CONFIRM_MS };
     expect(await settleSplitHold(hold(past), { ...d, finalizedTime: readerFinalizedTime(chain, 20) })).toBeNull();
   });
+
+  it("a reader whose finalized time throws at once rejects with that, with no deadline left to fire unhandled", async () => {
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const throwing = {
+        finalizedTime: (): Promise<number> => {
+          throw new Error("no chain here");
+        },
+      };
+      await expect(readerFinalizedTime(throwing, 20)(CHAIN.POLYGON)).rejects.toThrow("no chain here");
+      expect(timers).not.toHaveBeenCalled();
+    } finally {
+      timers.mockRestore();
+    }
+  });
 });

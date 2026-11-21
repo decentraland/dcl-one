@@ -210,12 +210,19 @@ export const FINALIZED_TIME_MS = 5_000;
 /**
  * The chain's finalized block time (unix seconds) read through `reader`, within `ms`: past it the read is aborted (its
  * `signal`, which the RPC reader passes to its request and its body) and rejects, so it proves no expiry and holds no one
- * up, whether the reader honours the signal or not. A reader without it proves no expiry either.
+ * up, whether the reader honours the signal or not. A reader without it proves no expiry either, and one that throws at once
+ * rejects with that, no deadline left running.
  */
 export function readerFinalizedTime(reader: Pick<ChainReader, "finalizedTime">, ms: number = FINALIZED_TIME_MS): (chainId: number) => Promise<number> {
   return (chainId) => {
     if (!reader.finalizedTime) return Promise.reject(new Error("This reader has no chain time"));
     const controller = new AbortController();
+    let reading: Promise<number>;
+    try {
+      reading = reader.finalizedTime(chainId as ChainId, controller.signal);
+    } catch (e) {
+      return Promise.reject(e);
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
@@ -223,7 +230,7 @@ export function readerFinalizedTime(reader: Pick<ChainReader, "finalizedTime">, 
         reject(new Error("The chain's finalized time took too long"));
       }, ms);
     });
-    return Promise.race([reader.finalizedTime(chainId as ChainId, controller.signal), late]).finally(() => clearTimeout(timer));
+    return Promise.race([reading, late]).finally(() => clearTimeout(timer));
   };
 }
 

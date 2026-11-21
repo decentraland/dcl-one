@@ -221,9 +221,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const finalizedTime = readerFinalizedTime(services.reader, services.finalizedTimeMs);
 
   /**
-   * Proves, by the chain's finalized time (splitCreditOverOnChain), which of `account`'s held splits can't spend anything
-   * any more, for splitBlock to read without waiting. Only those the local clock says are past their expiry are asked, each
-   * read bounded; it runs before any lock is taken, so no lock waits on the chain.
+   * Proves, by the chain's finalized time (splitCreditOverOnChain), which of `account`'s held splits of other items can't
+   * spend anything any more, for splitBlock to read without waiting. This item's own is never let go by such a proof, so it
+   * isn't asked. Only those the local clock says are past their expiry are asked, all at once, each read bounded; it runs
+   * before any lock is taken, so no lock waits on the chain.
    */
   async function proveCreditsOver(account: string): Promise<void> {
     let holds: { line: string; hold: SplitHold }[];
@@ -232,9 +233,12 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     } catch {
       return;
     }
-    for (const { hold } of holds) {
-      if (hold.creditId !== null && !creditsOver.current.has(hold.creditId) && (await splitCreditOverOnChain(hold, finalizedTime))) creditsOver.current.add(hold.creditId);
-    }
+    const unproven = holds.flatMap(({ line, hold }) => (line !== lineId && hold.creditId !== null && !creditsOver.current.has(hold.creditId) ? [{ hold, creditId: hold.creditId }] : []));
+    await Promise.all(
+      unproven.map(async ({ hold, creditId }) => {
+        if (await splitCreditOverOnChain(hold, finalizedTime)) creditsOver.current.add(creditId);
+      }),
+    );
   }
 
   /**
