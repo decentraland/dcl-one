@@ -1636,6 +1636,26 @@ The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying.
 
+## Camera reel World gallery lookup
+
+World gallery requests resolve a name to scene IDs before reading public photos.
+On a cache miss, Camera Reel reads enabled scene rows from
+`explore.place_indexed` and active `explore.world_scene_place` identities joined
+to their exact `(world_name, entity_id)` deployment in `worlds.world_scenes`
+and their parent in `worlds.worlds`. A known identity takes precedence over a
+catalogue row bearing its UUID, including a retired identity. The World-name
+aggregate is not a scene. Listing visibility does not control photo eligibility.
+Canonical scene resolution excludes blocked Worlds and disabled scenes or
+parents through `explore.place_moderation` and catalogue state.
+
+These are read-only shared SQL edges through the existing pool. The active
+identity index's World-name prefix, deployment key and moderation primary keys
+serve the lookup; no extra projection or index is maintained. The result is a
+sorted, deduplicated ID list held under the configured cache capacity and TTL,
+so changes to scene eligibility may remain cached until expiry. GET and batch
+POST use the same resolver; photo privacy, review and deletion filters apply
+after resolution. Production lookup rates and latency have not been measured.
+
 ## Camera reel photo events workload
 
 `camera_reel.photo_events` (`schemas/50_create.sql`) is the append-only outbox
