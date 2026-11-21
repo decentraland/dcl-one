@@ -7068,13 +7068,20 @@ mod supervisor {
             group(&[c1, shared], topic_c),
             Some(c_answer.clone()),
         );
+        // Half a second between turns: far more than the three take to
+        // settle once let out of their closes together (below).
+        let paced = |job: &str, make: MakeIndex| Projection {
+            cfg: PeriodicCfg::every(Duration::from_millis(500))
+                .with_error_backoff(Duration::from_millis(400)),
+            ..projection(job, ChainNet::Matic, &url, make)
+        };
         let sup = supervisor(
             &st,
             ChainNet::Matic,
             vec![
-                projection("trade-events-index", ChainNet::Matic, &url, b),
-                projection("committee-index", ChainNet::Matic, &url, c),
-                projection("mana-transfers-index", ChainNet::Matic, &url, a),
+                paced("trade-events-index", b),
+                paced("committee-index", c),
+                paced("mana-transfers-index", a),
             ],
         );
         let stats = sup.stats.clone();
@@ -7090,7 +7097,7 @@ mod supervisor {
         }
         // Hold the three in their closes at once, so no walk is in flight;
         // move the head; then let them out together. They settle within
-        // moments of each other, well inside the 50 ms before the first is
+        // moments of each other, well inside the 500 ms before the first is
         // due again, so the walk from 50 gathers all three.
         fold_armed.store(true, Ordering::SeqCst);
         eventually("the three held in their closes at once", || async {
