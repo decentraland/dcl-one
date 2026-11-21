@@ -834,12 +834,16 @@ one writer of `social.notifications` and its `social.notification_deliveries`
 email row, for every producer: Social's own and Shop's sale, royalty, transfer,
 rental, on-chain bid (`bid_received`, `shop/src/market/bid_notices.rs`), tip,
 favorite-discount, credits and goal notices. Each batch is one statement on the
-producer's executor, so the notice commits with the producer's transaction: an
-upsert by `id` (or by `(address, broadcast_key)` for keyed notices) and, for new
-rows only, a `pending` delivery row, or `skipped` with the reason when the type has
-no template or the recipient cannot receive it. Social owns both tables, reads
-them and delivers the email; `with_emailable_kinds!` is the one list of templated
-types the writer and Social's templates share.
+producer's executor, so the notice commits with the producer's transaction.
+Ordinary writes upsert by `id` (or by `(address, broadcast_key)` for keyed
+notices), refreshing metadata and occurrence time. Worlds' three quota kinds
+(`worlds_missing_resources`, `worlds_access_restricted`, `worlds_access_restored`)
+use `insert_notifications_once`: a repeated ID keeps the first row's metadata,
+occurrence time and read state, and its existing email delivery state. Only a
+new notification gets a `pending` delivery row, or `skipped` with the reason when
+the type has no template or the recipient cannot receive it. Social owns both
+tables, reads them and delivers the email; `with_emailable_kinds!` is the one
+list of templated types the writer and Social's templates share.
 
 ## Social realtime notification workload
 

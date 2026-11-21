@@ -187,7 +187,20 @@ pub async fn insert_notifications<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    insert_batch(executor, batch, false).await
+    insert_batch(executor, batch, false, OnConflict::Refresh).await
+}
+
+/// Inserts the batch and delivery rows once per id. Repeats preserve the
+/// original payload, time and read state and never create another delivery.
+/// If an id occurs more than once in the batch, its first entry wins.
+pub async fn insert_notifications_once<'e, E>(
+    executor: E,
+    batch: &[NewNotification],
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    insert_batch(executor, batch, false, OnConflict::KeepFirst).await
 }
 
 /// Social's event notices only; other producers use [`insert_notifications`].
@@ -201,7 +214,7 @@ pub async fn insert_event_notifications<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    insert_batch(executor, batch, true).await
+    insert_batch(executor, batch, true, OnConflict::Refresh).await
 }
 
 /// One notification deduplicated per `(address, broadcast_key)` (the
@@ -241,10 +254,16 @@ where
     Ok(inserted as u64)
 }
 
+enum OnConflict {
+    Refresh,
+    KeepFirst,
+}
+
 async fn insert_batch<'e, E>(
     executor: E,
     batch: &[NewNotification],
     event_preferences: bool,
+    on_conflict: OnConflict,
 ) -> Result<u64, sqlx::Error>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -252,11 +271,13 @@ where
     if batch.is_empty() {
         return Ok(0);
     }
-    // DO UPDATE may touch a row once per statement: the last of a repeated id
-    // wins; id order keeps overlapping batches locking rows in one order.
+    // Each statement touches an id once. Refresh takes the last entry;
+    // insert-once takes the first. Id order keeps row locking consistent.
     let mut seen = std::collections::HashSet::new();
-    let mut unique: Vec<&NewNotification> =
-        batch.iter().rev().filter(|n| seen.insert(n.id)).collect();
+    let mut unique: Vec<&NewNotification> = match on_conflict {
+        OnConflict::Refresh => batch.iter().rev().filter(|n| seen.insert(n.id)).collect(),
+        OnConflict::KeepFirst => batch.iter().filter(|n| seen.insert(n.id)).collect(),
+    };
     unique.sort_by_key(|n| n.id);
     let batch = unique;
     let ids: Vec<Uuid> = batch.iter().map(|n| n.id).collect();
@@ -264,6 +285,14 @@ where
     let kinds: Vec<&str> = batch.iter().map(|n| n.kind.as_str()).collect();
     let metadata: Vec<Json> = batch.iter().map(|n| n.metadata.clone()).collect();
     let occurred: Vec<NaiveDateTime> = batch.iter().map(|n| n.occurred_at).collect();
+    let conflict = match on_conflict {
+        OnConflict::Refresh => {
+            "ON CONFLICT (id) DO UPDATE
+                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type"
+        }
+        OnConflict::KeepFirst => "ON CONFLICT (id) DO NOTHING",
+    };
     let sql = format!(
         r#"
         WITH ups AS (
@@ -280,9 +309,7 @@ where
                 ) AS visible
             ) v
             ORDER BY n.id
-            ON CONFLICT (id) DO UPDATE
-                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
+            {conflict}
             RETURNING id, address, type, (xmax = 0) AS inserted
         ),
         {tail}
