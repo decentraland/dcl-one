@@ -28,6 +28,12 @@ export type ChainReader = {
    * (purchase/splitEvidence.ts). Optional: a reader without it attributes nothing, and a split it checks stays held.
    */
   transaction?(chainId: ChainId, txHash: string, signal?: AbortSignal): Promise<{ from: string | null; to: string | null; input: Hex } | null>;
+  /**
+   * The chain's finalized block time (unix seconds): what proves a credit can't be spent any more (the CreditsManager
+   * refuses one once `block.timestamp >= expiresAt`). Optional: a reader without it proves no expiry, and a split held on
+   * one stays held.
+   */
+  finalizedTime?(chainId: ChainId, signal?: AbortSignal): Promise<number>;
 };
 
 export class RpcError extends Error {
@@ -85,6 +91,11 @@ export function createRpcReader(opts: { url?: (chainId: ChainId) => string | nul
       const raw = await rpc<{ from?: string | null; to?: string | null; input?: Hex } | null>(chainId, "eth_getTransactionByHash", [txHash], signal);
       if (!raw || typeof raw.input !== "string") return null;
       return { from: raw.from ?? null, to: raw.to ?? null, input: raw.input };
+    },
+    async finalizedTime(chainId, signal) {
+      const block = await rpc<{ timestamp?: Hex } | null>(chainId, "eth_getBlockByNumber", ["finalized", false], signal);
+      if (!block || typeof block.timestamp !== "string") throw new RpcError("The finalized block has no time");
+      return Number(BigInt(block.timestamp));
     },
   };
 }

@@ -15,7 +15,7 @@ import type { ContractInfo } from "../chain/contracts";
 import { GaslessUnavailableError, readMetaTxNonce, relayMetaTransaction, type MetaTxTarget, type SignedCall } from "../chain/metatx";
 import { defaultSleep, waitForReceipt, type ChainReader } from "../chain/rpc";
 import { TxRevertedError } from "../chain/wallet";
-import { buildGroupUseCreditsArgs, groupPurchases, type AnyPurchase } from "./credits";
+import { buildGroupUseCreditsArgs, groupPurchases, type AnyPurchase, type BuiltUseCredits } from "./credits";
 import type { UseCreditsArgs } from "./encoding";
 import { encodeUseCredits } from "./encoding";
 import type { RailContext } from "./rail";
@@ -110,13 +110,17 @@ export async function sendUseCreditsGasless(
 }
 
 /**
- * One purchase (trade or mint), relayed. `onSignedCall`: the execution as signed, right before it goes to the relay (a
- * throw there stops it unsent).
+ * One purchase (trade or mint), relayed. `built`: the call already built for it (one the caller kept as what it sends),
+ * relayed as is, never built again. `onSignedCall`: the execution as signed, right before it goes to the relay (a throw
+ * there stops it unsent).
  */
-export async function buyOneGasless(ctx: RailContext, opts: { purchase: AnyPurchase; onSigned?: () => void; onSignedCall?: (call: SignedCall) => void }): Promise<Hex> {
+export async function buyOneGasless(
+  ctx: RailContext,
+  opts: { purchase: AnyPurchase; built?: BuiltUseCredits; onSigned?: () => void; onSignedCall?: (call: SignedCall) => void },
+): Promise<Hex> {
   if (!enabled(ctx)) throw new GaslessUnavailableError("gasless checkout disabled", "disabled");
   if (opts.purchase.credits.length === 0) throw new Error("No credits to spend");
-  const built = buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
+  const built = opts.built ?? buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
   const txHash = await sendUseCreditsGasless(ctx, { chainId: built.chainId, manager: built.manager, args: built.args, onSigned: opts.onSigned, onSignedCall: opts.onSignedCall });
   void reportSubmittedTx({ txHash, salts: built.salts, client: ctx.client });
   return txHash;
