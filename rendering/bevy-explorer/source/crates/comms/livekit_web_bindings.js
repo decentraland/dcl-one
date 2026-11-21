@@ -244,6 +244,8 @@ export function room_local_participant(room) {
  */
 function set_room_event_handler(room, handler, tracks) {
     room.on(LivekitClient.RoomEvent.Connected, () => {
+        // Preserve the connect snapshot before later partial metadata updates reach the engine.
+        handler({ type: 'roomMetadataChanged', metadata: room.metadata ?? '' });
         const participants_with_tracks = Array
             .from(room.remoteParticipants.values())
             .filter(remote_participant => room.localParticipant.sid != remote_participant.sid)

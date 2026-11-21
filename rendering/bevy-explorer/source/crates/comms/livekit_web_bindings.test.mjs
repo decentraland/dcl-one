@@ -17,6 +17,29 @@ import {
   room_drop,
 } from './livekit_web_bindings.js';
 
+test('room metadata captures the connect snapshot before a partial change', async (t) => {
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  const initial = { bannedAddresses: ['banned'], sceneAdmins: ['admin'] };
+  const partial = { bannedAddresses: [] };
+  class Room extends EventEmitter {
+    metadata = JSON.stringify(initial);
+    remoteParticipants = new Map();
+    localParticipant = { sid: 'local' };
+    async connect() {
+      this.emit(roomEvent.Connected);
+      this.metadata = JSON.stringify(partial);
+      this.emit(roomEvent.RoomMetadataChanged, this.metadata);
+    }
+  }
+  const previous = globalThis.LivekitClient;
+  t.after(() => { globalThis.LivekitClient = previous; });
+  globalThis.LivekitClient = { Room, RoomEvent: roomEvent };
+  const events = [];
+  await room_connect('wss://room.example', 'token', {}, {}, event => events.push(event));
+  assert.deepEqual(events.map(event => event.type), ['roomMetadataChanged', 'connected', 'roomMetadataChanged']);
+  assert.deepEqual(events.filter(event => event.type === 'roomMetadataChanged').map(event => JSON.parse(event.metadata)), [initial, partial]);
+});
+
 test('capture enable toggles the underlying media track', () => {
   const mediaStreamTrack = { enabled: false };
   const track = { mediaStreamTrack };
