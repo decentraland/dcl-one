@@ -332,13 +332,17 @@ class SocialMigrationCases:
             WHERE id = '{self.SOCIAL_COMMUNITY}';""")
         self.social_ea_run('community_ranking_metrics')
         self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['4', '7', '3', '40', '14', '0.9'])
+        # upstream's daily rescore alone is no change
+        self.sql(src, f"UPDATE communities SET ranking_score = 0.6 WHERE id = '{self.SOCIAL_COMMUNITY}';")
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['4', '7', '3', '40', '14', '0.9'])
         # upstream moves on: events are upstream's, photos and streams keep the node's additions
         self.sql(src, f"""UPDATE community_ranking_metrics SET events_count = 6, photos_count = 6,
             events_total_attendees = 55 WHERE community_id = '{self.SOCIAL_COMMUNITY}';""")
         self.social_ea_run('community_ranking_metrics')
-        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '8', '3', '55', '14', '0.5'])
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '8', '3', '55', '14', '0.6'])
         self.social_ea_run('community_ranking_metrics')
-        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '8', '3', '55', '14', '0.5'])
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '8', '3', '55', '14', '0.6'])
 
     def test_when_community_places_are_missing_from_the_catalogue_it_should_report_them(self):
         src, tgt = self.social_ea_dbs()

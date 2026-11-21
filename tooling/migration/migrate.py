@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
 );
--- Upstream's ranking row as last loaded (unchanged: the node's counters are left alone) and the
+-- Upstream's ranking counters as last loaded (unchanged: the node's are left alone) and the
 -- photo/stream counters written then (the node's own additions are what it holds above them).
 CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ranking_loaded (
     community_id uuid PRIMARY KEY,

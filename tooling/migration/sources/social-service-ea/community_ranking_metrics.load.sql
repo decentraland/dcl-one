@@ -1,11 +1,12 @@
 -- Upstream's lifetime ranking counters and score onto the imported (local)
 -- communities. dcl_migration.social_community_ranking_loaded holds upstream's
--- row as last loaded: while it is unchanged the node's counters are left alone.
+-- counters as last loaded: while they are unchanged the node's are left alone
+-- (upstream rescores daily as communities age, so its score alone is no change).
 -- On a change, events and attendees take upstream's values and
 -- ranking_tracking_since moves to the snapshot, so the node's ended-event scan
 -- never counts an imported event upstream already counted; photos and streams
 -- keep what the node added since the last load (its photos and calls are its own).
--- ranking_score is upstream's until the node's next ranking pass.
+-- ranking_score is upstream's, written with the counters, until the node's next pass.
 CREATE TEMP TABLE ranking_changed ON COMMIT DROP AS
 SELECT s.community_id, s.events_count, s.photos_count, s.streams_count,
        s.events_total_attendees, s.streams_total_participants, s.ranking_score,
@@ -16,9 +17,9 @@ JOIN social.communities c ON c.id = s.community_id AND c.origin = 'local'
 LEFT JOIN dcl_migration.social_community_ranking_loaded l ON l.community_id = s.community_id
 WHERE l.community_id IS NULL
    OR (l.events_count, l.photos_count, l.streams_count, l.events_total_attendees,
-       l.streams_total_participants, l.ranking_score)
+       l.streams_total_participants)
       IS DISTINCT FROM (s.events_count, s.photos_count, s.streams_count, s.events_total_attendees,
-                        s.streams_total_participants, s.ranking_score);
+                        s.streams_total_participants);
 
 WITH written AS (
     UPDATE social.communities c SET
