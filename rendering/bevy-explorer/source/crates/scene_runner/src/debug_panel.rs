@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
     initialize_scene::{
-        CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
+        CurrentSceneLoading, LiveScenes, PointerResult, SceneLoading, ScenePointers,
+        SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
     scene_traffic::{Batch, SceneTraffic, Tick},
@@ -18,6 +19,7 @@ use crate::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
+    util::settle::SceneWaits,
     vec3_to_parcel, ContainerEntity, ContainingScene,
 };
 
@@ -154,6 +156,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Running scenes", "running"),
                     ("Blocked scenes", "blocked"),
                     ("Broken scenes", "broken"),
+                    ("Commands waiting for a scene to settle", "settleWaits"),
                 ],
                 actions: &[("Reload current parcel scene", "/reload --current")],
                 inputs: &[],
@@ -275,18 +278,48 @@ fn parcel_root(
     if outside && !include_out_of_world {
         return Err("The player has not entered the world.");
     }
-    match containing
-        .pointers
-        .get(vec3_to_parcel(transform.translation()))
-    {
-        Some(PointerResult::Exists { hash, .. }) => containing
-            .live_scenes
+    scene_on_parcel(
+        Some(&*containing.pointers),
+        &containing.live_scenes,
+        vec3_to_parcel(transform.translation()),
+    )
+}
+
+/// Why [`scene_on_parcel`] finds no scene on a parcel that has none.
+pub(crate) const NO_SCENE: &str = "There is no scene on this parcel.";
+
+/// The live scene on `parcel`, or why there is none (yet).
+pub(crate) fn scene_on_parcel(
+    pointers: Option<&ScenePointers>,
+    live_scenes: &LiveScenes,
+    parcel: IVec2,
+) -> Result<Entity, &'static str> {
+    match pointers.and_then(|pointers| pointers.get(parcel)) {
+        Some(PointerResult::Exists { hash, .. }) => live_scenes
             .scenes
             .get(hash)
             .copied()
             .ok_or("Waiting for the parcel scene to load."),
-        Some(PointerResult::Nothing) => Err("There is no scene on this parcel."),
+        Some(PointerResult::Nothing) => Err(NO_SCENE),
         None => Err("Waiting for the parcel's scene definition."),
+    }
+}
+
+/// The stage a scene's load or run is at, as `/scene_loading_state` and `/scene_state` name it.
+pub(crate) fn stage_name(
+    loading: Option<&SceneLoading>,
+    context: Option<&RendererSceneContext>,
+) -> &'static str {
+    match (loading, context) {
+        (Some(SceneLoading::SceneSpawned), _) => "Spawning",
+        (Some(SceneLoading::SceneEntity), _) => "Reading definition",
+        (Some(SceneLoading::MainCrdt { .. }), _) => "Reading main.crdt",
+        (Some(SceneLoading::Javascript { .. }), _) => "Starting JavaScript",
+        (Some(SceneLoading::Failed), _) => "Failed",
+        (None, Some(context)) if context.broken() => "Broken",
+        (None, Some(context)) if !context.blocked.is_empty() => "Blocked",
+        (None, Some(_)) => "Running",
+        (None, None) => "Waiting for the parcel scene to start.",
     }
 }
 
@@ -558,6 +591,7 @@ fn loading_state(
     stages: Query<&SceneLoading>,
     scenes: Query<(&RendererSceneContext, Option<&GltfLoadingCount>)>,
     preloads: Query<&PreloadedAsset, With<LoadingPreloadedAsset>>,
+    waits: Option<Res<SceneWaits>>,
 ) {
     if input.take().is_none() {
         return;
@@ -575,28 +609,10 @@ fn loading_state(
     let [spawned, definition, crdt, javascript, failed] = stages_by_kind;
     let stage = parcel_root(&containing, player.single().ok(), true)
         .map(|root| {
-            if let Ok(stage) = stages.get(root) {
-                return match stage {
-                    SceneLoading::SceneSpawned => "Spawning",
-                    SceneLoading::SceneEntity => "Reading definition",
-                    SceneLoading::MainCrdt { .. } => "Reading main.crdt",
-                    SceneLoading::Javascript { .. } => "Starting JavaScript",
-                    SceneLoading::Failed => "Failed",
-                };
-            }
-            scenes
-                .get(root)
-                .ok()
-                .map(|(ctx, _)| {
-                    if ctx.broken() {
-                        "Broken"
-                    } else if !ctx.blocked.is_empty() {
-                        "Blocked"
-                    } else {
-                        "Running"
-                    }
-                })
-                .unwrap_or("Waiting for the parcel scene to start.")
+            stage_name(
+                stages.get(root).ok(),
+                scenes.get(root).ok().map(|(context, _)| context),
+            )
         })
         .unwrap_or_else(|reason| reason);
     let (mut running, mut blocked, mut broken, mut gltf) = (0, 0, 0, 0);
@@ -624,7 +640,8 @@ fn loading_state(
         }
     }
     input.reply_ok(json!({"current":current.0, "stage": stage, "spawned":spawned,"definition":definition,"crdt":crdt,"javascript":javascript,"failed":failed,
-        "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures}).to_string());
+        "running":running,"blocked":blocked,"broken":broken,"gltf":gltf,"preloads":preloads_count,"texturePreloads":textures,
+        "settleWaits":waits.map_or(0, |waits| waits.pending())}).to_string());
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

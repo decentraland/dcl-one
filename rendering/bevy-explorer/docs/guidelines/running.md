@@ -221,10 +221,29 @@ State, in every build:
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and
-  waits for it to grow with `inWorld`. `keyboardClaimed` is whether a text field (the HUD's or a
+  waits for it to grow with `inWorld` (`/teleport --wait` waits for the landing and the scene). `keyboardClaimed` is whether a text field (the HUD's or a
   scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
   waits for it to turn true after filling a field and false after leaving one (null where the
   client takes no input).
+- `/teleport x y [realm] --wait [--timeout-seconds S]`: teleports, then answers JSON once the
+  player has landed (`arrived`) and the parcel's scene is ready and drawn: `sceneReady`,
+  `sceneHash`, `title`, `sceneState`, `ticksWaited` (scene ticks during the wait),
+  `renderedFrames` (1 once a frame with the ready scene was presented), `settleMs` and `settled`.
+  A parcel with no scene settles on landing (`sceneState:"none"`, a `warning`); a failed, broken
+  or frozen scene ends the wait at once with `settled:false` and a `warning`; the timeout (60 s by
+  default, at most 300) answers `settled:false` with a `warning` naming what it waited for.
+  Without `--wait` it answers at once.
+- `/reload --current --wait [--timeout-seconds S]` (or `/reload <hash> --wait`): reloads the scene
+  and answers once the new instance runs, has reached tick 5 and a frame with it was presented:
+  `reloaded`, `sceneHash`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs`, `settled`, a
+  `hint` that the scene starts from scratch (its counters and scene-UI ids are new), or a
+  `warning` when it expired. A ready scene is `running` at tick 5, the tick the load timing counts
+  a scene loaded at. `/reload` with neither a hash nor `--current` reloads every scene and
+  takes no `--wait`.
+- `/scene_state`: JSON of the parcel scene under the player: `playerParcel`, `outOfWorld`,
+  `sceneId` (the hash), `title`, `parcel` (its base), `state` (`loading`, `failed`, `starting`,
+  `blocked` with `blocked` naming the holds, `broken`, `running`, or `none` on an empty parcel),
+  `isReady`, `loadingStage`, `sdkVersion`, `tick`.
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories), the files it
   could not be built from (`loadFailures`: bodies and wearables its builds leave out, `noBody`

@@ -9,8 +9,10 @@ use common::{
 use console::PendingConsoleResponses;
 use scene_runner::{
     initialize_scene::{parcels_in_range, ScenePointers},
+    util::settle::{self, SceneWaits},
     OutOfWorld,
 };
+use serde_json::json;
 
 /// set location
 #[derive(clap::Parser, ConsoleCommand)]
@@ -22,6 +24,13 @@ pub struct ChangeLocationCommand {
     y: i32,
     /// realm the parcel is in (a world name or realm url): change realm, then land on the parcel
     realm: Option<String>,
+    /// Reply once the player has landed and the parcel's scene runs, has reached tick 5 and a frame
+    /// with it was drawn: JSON with `arrived`, `sceneReady`, `sceneHash`, `ticksWaited`, `settled`.
+    #[arg(long)]
+    wait: bool,
+    /// How long --wait waits, in seconds (60 by default).
+    #[arg(long)]
+    timeout_seconds: Option<f32>,
 }
 
 pub fn change_location(
@@ -29,15 +38,30 @@ pub fn change_location(
     mut input: ConsoleCommand<ChangeLocationCommand>,
     mut player: Query<(Entity, &mut Transform), With<PrimaryUser>>,
     mut pending: ResMut<PendingConsoleResponses>,
+    mut waits: ResMut<SceneWaits>,
 ) {
     if let Some(Ok(command)) = input.take() {
+        let timeout = match (
+            command.wait,
+            settle::timeout_seconds(command.timeout_seconds),
+        ) {
+            (true, Err(e)) => return input.reply_failed(e),
+            (_, timeout) => timeout.unwrap_or(settle::DEFAULT_TIMEOUT_SECONDS),
+        };
+        let parcel = IVec2::new(command.x, command.y);
         if let Some(realm) = command.realm {
             let (response, rx) = RpcResultSender::channel();
             commands.send_event(RpcCallEvent::engine(RpcCall::TeleportPlayer {
-                to: Some(IVec2::new(command.x, command.y)),
+                to: Some(parcel),
                 realm: Some(realm.clone()),
                 response,
             }));
+            if command.wait {
+                let reply = json!({ "location": [parcel.x, parcel.y], "realm": realm });
+                let rx = waits.arrival(parcel, timeout, Some(rx), reply);
+                pending.push_oneshot(rx, |r| r, input.take_responder());
+                return;
+            }
             let location = (command.x, command.y);
             pending.push_receiver(
                 rx,
@@ -51,6 +75,12 @@ pub fn change_location(
             transform.translation.z = -command.y as f32 * 16.0 - 8.0;
             if let Ok(mut commands) = commands.get_entity(ent) {
                 commands.try_insert(OutOfWorld);
+            }
+            if command.wait {
+                let reply = json!({ "location": [parcel.x, parcel.y] });
+                let rx = waits.arrival(parcel, timeout, None, reply);
+                pending.push_oneshot(rx, |r| r, input.take_responder());
+                return;
             }
             input.reply_ok(format!("new location: {:?}", (command.x, command.y)));
             return;

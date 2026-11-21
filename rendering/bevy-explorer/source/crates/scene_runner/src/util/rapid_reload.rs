@@ -238,7 +238,7 @@ fn tick(
     };
     match step {
         Step::Reload => {
-            if reload_hash(&mut live, &target.hash) {
+            if reload_hash(&mut live, &target.hash).is_some() {
                 state.cycles += 1;
                 state.status = "Waiting for scene to restart";
             } else {

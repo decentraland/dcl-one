@@ -11,8 +11,9 @@ use scene_runner::{
         LiveScenes, PointerResult, SceneHash, SceneLoading, ScenePointers, SuperUserScene,
         PARCEL_SIZE,
     },
+    load_timing::scene_is_halted,
     permissions::Permission,
-    renderer_context::{RendererSceneContext, FROZEN_BLOCK},
+    renderer_context::RendererSceneContext,
     update_world::{gltf_container::GLTF_LOADING, mesh_collider::SceneColliderData},
     OutOfWorld,
 };
@@ -200,14 +201,13 @@ pub fn handle_out_of_world(
         // "ready" on its own, so don't keep the player out-of-world behind the loading screen. Do
         // still wait for gltfs though: they keep processing renderer-side while the scene is frozen,
         // and releasing early would drop the player in before the ground colliders exist.
-        let frozen =
-            context.blocked.contains(FROZEN_BLOCK) && !context.blocked.contains(GLTF_LOADING);
+        let halted = scene_is_halted(context)
+            && (context.broken() || !context.blocked.contains(GLTF_LOADING));
         // A broken scene (hung past the not-responding timeout, errored, or unreachable) will
         // never become ready; stop holding the player behind the loading screen and let them
         // into the world. An inspected scene never gates the player at all: it's a debugging
         // session, and it may sit at a breakpoint (or paused before its first tick) forever.
-        if !context.broken()
-            && !frozen
+        if !halted
             && !context.inspected
             && (context.tick_number <= 5 || !context.blocked.is_empty())
         {

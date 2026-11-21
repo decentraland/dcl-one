@@ -39,10 +39,19 @@ pub fn ring_of(parcel: IVec2, parcels: impl IntoIterator<Item = IVec2>) -> u16 {
         .unwrap_or(u16::MAX)
 }
 
-/// The scene has loaded as far as it ever will: five ticks (when `animate_ready_scene` raises
-/// it), or a terminal state.
+/// The tick a scene counts as loaded at (when `animate_ready_scene` raises it).
+pub const READY_TICK: u32 = 5;
+
+/// The scene will not load further on its own: it is broken, or frozen (`/freeze_scene`, the
+/// editor's freeze). The load timing, the teleport's release of the player and the settling
+/// commands (`util::settle`) all stop waiting for such a scene.
+pub fn scene_is_halted(context: &RendererSceneContext) -> bool {
+    context.broken() || context.blocked.contains(FROZEN_BLOCK)
+}
+
+/// The scene has loaded as far as it ever will: [`READY_TICK`], or a halted scene.
 pub fn scene_is_ready(context: &RendererSceneContext) -> bool {
-    context.tick_number >= 5 || context.broken() || context.blocked.contains(FROZEN_BLOCK)
+    context.tick_number >= READY_TICK || scene_is_halted(context)
 }
 
 pub fn report_scene_load_times(

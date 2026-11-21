@@ -35,6 +35,18 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/connectivity_state', '/connectivity_retry'])
   })
 
+  const settled = {
+    location: [10, 20],
+    arrived: true,
+    sceneReady: true,
+    sceneHash: 'bafy',
+    sceneState: 'running',
+    ticksWaited: 4,
+    renderedFrames: 1,
+    settleMs: 900,
+    settled: true
+  }
+
   test('teleport waits for a new arrival in the world', async () => {
     let arrivals = 1
     let teleported = false
@@ -45,20 +57,42 @@ describe('Explorer', () => {
         if (teleported && reads > 2) arrivals = 2
         return world({ arrivals, inWorld: arrivals === 2 || !teleported })
       },
-      teleport: (line) => {
+      teleport: () => {
         teleported = true
-        return `new location: ${line.slice(10)}`
+        return JSON.stringify(settled)
       }
     })
     const explorer = new Explorer(fake)
     const state = await explorer.teleport(10, 20, { timeoutMs: 5000 })
     assert.equal(state.arrivals, 2)
-    assert.deepEqual(fake.sent('teleport'), ['/teleport 10 20'])
+    assert.equal(state.teleport.sceneReady, true)
+    assert.deepEqual(fake.sent('teleport'), ['/teleport 10 20 --wait --timeout-seconds 5'])
     assert.ok(fake.sent('world_state').length >= 3)
   })
 
+  test('the engine waits at most 100 s of a longer teleport, under the command timeout', async () => {
+    let reads = 0
+    const fake = new FakeConsole({
+      world_state: () => world({ arrivals: ++reads > 1 ? 2 : 1, inWorld: true }),
+      teleport: JSON.stringify(settled)
+    })
+    await new Explorer(fake).teleport(1, 2, { timeoutMs: 180_000 })
+    assert.deepEqual(fake.sent('teleport'), ['/teleport 1 2 --wait --timeout-seconds 100'])
+  })
+
+  test('reload and scene state read the settling replies', async () => {
+    const fake = new FakeConsole({
+      reload: JSON.stringify({ reloaded: true, ...settled, hint: 'new scene' }),
+      scene_state: JSON.stringify({ playerParcel: [149, 149], outOfWorld: false, sceneId: 'bafy', state: 'running', isReady: true, loadingStage: 'Running' })
+    })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.reload()).settled, true)
+    assert.equal((await explorer.sceneState()).isReady, true)
+    assert.deepEqual(fake.lines, ['/reload --current --wait --timeout-seconds 60', '/scene_state'])
+  })
+
   test('teleport times out with the last state when the player never arrives', async () => {
-    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1, inWorld: false }), teleport: 'new location: (1, 2)' })
+    const fake = new FakeConsole({ world_state: () => world({ arrivals: 1, inWorld: false }), teleport: JSON.stringify({ ...settled, arrived: false, settled: false }) })
     const explorer = new Explorer(fake)
     await assert.rejects(explorer.teleport(1, 2, { timeoutMs: 300 }), /timed out after 300 ms waiting for the arrival at 1,2; last: .*"inWorld":false/)
   })

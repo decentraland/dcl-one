@@ -11,10 +11,10 @@ use bevy::{
 };
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
-    structs::{PreviewCommand, PrimaryUser},
+    structs::{PreviewCommand, PrimaryUser, ReturnedToWorld},
     util::{JoinRelativeExt, TaskExt},
 };
-use console::DoAddConsoleCommand;
+use console::{DoAddConsoleCommand, PendingConsoleResponses};
 use futures_lite::AsyncReadExt;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
@@ -30,6 +30,7 @@ use crate::{
 
 pub struct SceneUtilPlugin;
 mod rapid_reload;
+pub mod settle;
 
 impl Plugin for SceneUtilPlugin {
     fn build(&self, app: &mut App) {
@@ -37,9 +38,15 @@ impl Plugin for SceneUtilPlugin {
         app.insert_resource(ConsoleRelay { send, recv });
         app.add_preview_console_command::<DebugDumpScene, _>(debug_dump_scene);
         app.add_console_command::<ReloadCommand, _>(reload_command);
+        app.add_console_command::<settle::SceneStateCommand, _>(settle::scene_state_command);
+        app.init_resource::<settle::SceneWaits>();
+        app.add_event::<ReturnedToWorld>();
         app.add_plugins(rapid_reload::RapidReloadPlugin);
         app.add_preview_console_command::<ClearStoreCommand, _>(clear_store_command);
-        app.add_systems(Update, (console_relay, handle_preview_command));
+        app.add_systems(
+            Update,
+            (console_relay, handle_preview_command, settle::settle_scenes),
+        );
     }
 }
 
@@ -190,6 +197,7 @@ fn debug_dump_scene(
     tasks.retain_mut(|t| t.complete().is_none());
 }
 
+/// Reload a scene by hash, the parcel scene under the player (--current), or every scene
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/reload")]
 struct ReloadCommand {
@@ -197,14 +205,33 @@ struct ReloadCommand {
     /// Reload only the non-portable parcel scene under the player.
     #[arg(long, conflicts_with = "hash")]
     current: bool,
+    /// Reply once the new scene runs, has reached tick 5 and a frame with it was drawn: JSON with
+    /// `settled`, `sceneState`, `ticksWaited`, `renderedFrames`, `settleMs` (needs a scene).
+    #[arg(long)]
+    wait: bool,
+    /// How long --wait waits, in seconds (60 by default).
+    #[arg(long)]
+    timeout_seconds: Option<f32>,
 }
 
 fn reload_command(
     mut input: ConsoleCommand<ReloadCommand>,
     mut live_scenes: ResMut<LiveScenes>,
     targets: ParcelReloadTarget,
+    mut waits: ResMut<settle::SceneWaits>,
+    mut pending: ResMut<PendingConsoleResponses>,
 ) {
-    if let Some(Ok(ReloadCommand { mut hash, current })) = input.take() {
+    if let Some(Ok(ReloadCommand {
+        mut hash,
+        current,
+        wait,
+        timeout_seconds,
+    })) = input.take()
+    {
+        let timeout = match (wait, settle::timeout_seconds(timeout_seconds)) {
+            (true, Err(e)) => return input.reply_failed(e),
+            (_, timeout) => timeout.unwrap_or(settle::DEFAULT_TIMEOUT_SECONDS),
+        };
         if current {
             let Some(current) = targets.ready_hash(&live_scenes) else {
                 input.reply_failed("No running parcel scene under the player");
@@ -214,11 +241,19 @@ fn reload_command(
         }
         match hash {
             Some(hash) => {
-                if reload_hash(&mut live_scenes, &hash) {
-                    input.reply_ok(format!("{hash} reloaded"));
-                } else {
+                let Some(replaced) = reload_hash(&mut live_scenes, &hash) else {
                     input.reply_failed(format!("{hash} not found"));
+                    return;
+                };
+                if wait {
+                    let rx = waits.reload(hash, replaced, timeout);
+                    pending.push_oneshot(rx, |r| r, input.take_responder());
+                } else {
+                    input.reply_ok(format!("{hash} reloaded"));
                 }
+            }
+            None if wait => {
+                input.reply_failed("--wait waits for one scene: give its hash or --current")
             }
             None => {
                 live_scenes.scenes.clear();
@@ -256,8 +291,8 @@ impl ParcelReloadTarget<'_, '_> {
     }
 }
 
-fn reload_hash(scenes: &mut LiveScenes, hash: &str) -> bool {
-    scenes.scenes.remove(hash).is_some()
+fn reload_hash(scenes: &mut LiveScenes, hash: &str) -> Option<Entity> {
+    scenes.scenes.remove(hash)
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

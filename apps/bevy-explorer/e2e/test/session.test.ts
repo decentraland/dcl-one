@@ -73,18 +73,20 @@ describe('arrive', () => {
     assert.deepEqual(fake.sent('changerealm'), [])
   })
 
+  const ARRIVED = JSON.stringify({ location: [100, 100], arrived: true, sceneReady: false, sceneHash: null, sceneState: 'none', renderedFrames: 0, settleMs: 5, settled: true })
+
   test('teleports to the parcel in the same realm', async () => {
     let arrivals = 1
     const fake = new FakeConsole({
       world_state: () => world({ arrivals, position: arrivals === 1 ? [8, 0, 8] : [1608, 0, 1608] }),
       teleport: () => {
         arrivals = 2
-        return 'new location: (100, 100)'
+        return ARRIVED
       }
     })
     const state = await arrive(new Explorer(fake), 'https://peer.example.test', '100,100')
     assert.equal(state.arrivals, 2)
-    assert.deepEqual(fake.sent('teleport'), ['/teleport 100 100'])
+    assert.deepEqual(fake.sent('teleport'), ['/teleport 100 100 --wait --timeout-seconds 100'])
     assert.deepEqual(fake.sent('changerealm'), [])
   })
 
@@ -100,13 +102,13 @@ describe('arrive', () => {
       },
       teleport: () => {
         arrivals = 3
-        return 'new location: (100, 100)'
+        return ARRIVED
       }
     })
     const state = await arrive(new Explorer(fake), 'https://zone.example.test', '100,100')
     assert.equal(state.arrivals, 3)
     assert.deepEqual(fake.sent('changerealm'), ['/changerealm https://zone.example.test'])
-    assert.deepEqual(fake.sent('teleport'), ['/teleport 100 100'])
+    assert.deepEqual(fake.sent('teleport'), ['/teleport 100 100 --wait --timeout-seconds 100'])
   })
 })
 

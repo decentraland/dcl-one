@@ -48,6 +48,53 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+/** A scene's lifecycle state as `/scene_state` and the settling waits name it. */
+export type SceneLifecycle = 'loading' | 'failed' | 'starting' | 'blocked' | 'broken' | 'running' | 'none'
+
+/** What `/teleport --wait` and `/reload --wait` report: the scene settled (it runs, reached tick
+ *  5 and a frame with it was presented) or the wait ended, and why in `warning`. */
+export interface SettleReport {
+  sceneHash: string | null
+  title?: string
+  sceneState: SceneLifecycle
+  /** scene ticks run during the wait */
+  ticksWaited?: number
+  renderedFrames: number
+  settleMs: number
+  settled: boolean
+  /** what holds a blocked scene (`frozen`, `gltfs loading`, ...) */
+  blocked?: string[]
+  warning?: string
+}
+
+export interface TeleportReport extends SettleReport {
+  location: [number, number]
+  realm?: string
+  arrived: boolean
+  sceneReady: boolean
+}
+
+export interface ReloadReport extends SettleReport {
+  reloaded: true
+  hint?: string
+}
+
+/** What `/scene_state` reports of the parcel scene under the player. */
+export interface SceneStateReport {
+  playerParcel: [number, number]
+  outOfWorld: boolean
+  sceneId?: string
+  title?: string
+  /** the scene's base parcel */
+  parcel?: [number, number]
+  state: SceneLifecycle
+  isReady: boolean
+  loadingStage: string
+  sdkVersion?: string
+  tick?: number
+  blocked?: string[]
+}
+
 /**
  * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
  * entity reports `entity` and `container` as 4294967295.
@@ -539,6 +586,13 @@ const DEFAULT_HUD_TIMEOUT_MS = 10_000
 const ACTIONABLE_TIMEOUT_MS = 10_000
 
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
+/** The longest a settling command waits inside the engine: under the transports' 120 s command
+ *  timeout, so a slow load is reported by the engine rather than cut by the transport. */
+const MAX_SETTLE_MS = 100_000
+
+function settleSeconds(timeoutMs: number): number {
+  return Math.max(1, Math.min(timeoutMs, MAX_SETTLE_MS)) / 1000
+}
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
  *  quote the line, and the test runner prints the message and the stack. */
@@ -667,12 +721,27 @@ export class Explorer {
     return until(() => this.worldState(), (state) => state.inWorld, { timeoutMs, what: 'the player to be in the world' })
   }
 
-  /** Teleport to a parcel and wait for the arrival: every teleport takes the player out of the
-   *  world first, so the wait is for `arrivals` to grow, then `inWorld`. */
-  async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState> {
+  /** Teleport to a parcel and wait for the arrival and the scene: `/teleport --wait` replies once
+   *  the parcel's scene settled (or its wait ended: `teleport.settled` false, `teleport.warning`
+   *  says why), then the wait is for `arrivals` to grow and `inWorld`. */
+  async teleport(x: number, y: number, options: { timeoutMs?: number } = {}): Promise<WorldState & { teleport: TeleportReport }> {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS
+    const startedAt = Date.now()
     const before = (await this.worldState()).arrivals
-    await this.run(`/teleport ${x} ${y}`)
-    return this.#waitArrival(before, options.timeoutMs ?? DEFAULT_ARRIVAL_TIMEOUT_MS, `the arrival at ${x},${y}`)
+    const teleport = await this.json<TeleportReport>(`/teleport ${x} ${y} --wait --timeout-seconds ${settleSeconds(timeoutMs)}`)
+    const left = Math.max(1, timeoutMs - (Date.now() - startedAt))
+    return { ...(await this.#waitArrival(before, left, `the arrival at ${x},${y}`)), teleport }
+  }
+
+  /** Reload the parcel scene under the player and wait for the new one to settle
+   *  (`/reload --current --wait`); `settled` false with a `warning` when it did not in time. */
+  reload(options: { timeoutMs?: number } = {}): Promise<ReloadReport> {
+    return this.json<ReloadReport>(`/reload --current --wait --timeout-seconds ${settleSeconds(options.timeoutMs ?? 60_000)}`)
+  }
+
+  /** The parcel scene under the player: its id, state and whether it is ready. */
+  sceneState(): Promise<SceneStateReport> {
+    return this.json<SceneStateReport>('/scene_state')
   }
 
   /** Change realm (a realm URL or a world name) and wait for the arrival in it. */

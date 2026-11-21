@@ -20,7 +20,7 @@ also drives the Unity Explorer through its MCP server. It names arguments and re
 
 The console's automation commands follow these rules. `crates/console/src/line.rs` and
 `crates/console/src/reply.rs` hold the shared pieces. A rule for a kind of command the console
-does not have yet (durations, waits, refusals, entity ids) is added here with its first command.
+does not have yet (durations, refusals, entity ids) is added here with its first command.
 
 1. **Quoting.** A line is split into words on whitespace (Unicode's White_Space); a double-quoted
    run is part of a word with its quotes removed, and inside it `\"` and `\\` escape. A backslash
@@ -38,6 +38,10 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
    screenshot's pixels are `scale` times as many. The pixel commands (`/click_at`,
    `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
    form.
+3. **Waiting.** A command asked to wait for its effect (`--wait`) waits inside the engine, bounded
+   by `--timeout-seconds`, and replies what it observed. A wait that ends without the effect is
+   still a reply, not a failure: it says so in a field (`settled: false`) and carries a `warning`
+   naming what it waited for, or why the effect will not come.
 
 ## Consequences
 
@@ -53,6 +57,9 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
   own commands (`/goto`, `/world`, `/help`, bare `/reload`) and refuses the ones it hides.
 - `/click_at` replies JSON: `x`, `y`, `normalized`, `button`, `screen` and, on the web, `input`.
 - A value holding a lone `"` is quoted or escaped on non-JSON commands.
+- `/teleport --wait` and `/reload --wait` reply once the parcel scene has settled; a scene is
+  ready by the rule the load timing and the teleport's release of the player use
+  (`scene_runner::load_timing`), so a broken or frozen scene ends a wait at once.
 
 ## Alternatives considered
 
