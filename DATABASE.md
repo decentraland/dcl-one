@@ -2180,14 +2180,16 @@ assumption, the reached block's hash names the branch the logs came from,
 and the predecessor proves the window extends what was committed; a hash
 cannot attest logs from an endpoint that mixes branches. The nft backfill
 lanes read below the cursor, each read bracketed by the cursor block's
-header, which must stay its stored hash. A window that extends a hashed
-checkpoint costs one header read more for its predecessor, and a lane
-window two.
+header, which must stay its stored hash; each lane window's closing read
+opens the next. A window that extends a hashed checkpoint costs one header
+read more for its predecessor, and N lane windows in a pass cost N + 1
+header reads besides the pass's own check of the cursor block.
 
 Each advance records the block it reached, with its hash and time, in
-`shop.chain_checkpoint`, keeping the newest 64 per projection: one insert
-and one delete per committed window, a few hundred rows in all, read only
-once a reorg is seen.
+`shop.chain_checkpoint`, keeping the newest 64 per projection: per
+committed window, one delete of the points past the checkpoint it extends,
+one upsert and one delete below the newest 64; a few hundred rows in all,
+read only once a reorg is seen.
 
 A pass checks the cursor block's hash first. When it differs, or when a
 window's predecessor or a lane's bracket stands still on another branch
@@ -2197,9 +2199,9 @@ the rows, the recovery points and the notification cursors stay. Readers
 that use a cursor's height without its publication skip a diverged one, in
 the statement that reads its rows: the sales fold infers no seller from the
 nft walk's transfers, and the tips' global cap evicts no other sender's
-claim against the MANA index. The rewind clears `diverged_at`, and so does a
-pass that proves the cursor again (its first advance, or its close) when the
-chain flipped back before any rewind. The pass then reads the headers
+claim against the MANA index. The rewind clears `diverged_at`; when the
+chain flipped back before any rewind, the next pass that finds the cursor
+block on its stored hash clears it. The pass then reads the headers
 of the recovery points below the cursor, newest first and outside any
 transaction, and rewinds to the newest one still on the chain, keeping its
 hash and time. With none recorded, or every one compared and none on the
@@ -2224,10 +2226,13 @@ every bid created past the lowest point (a seller a sale event names stays),
 then deletes the rows it read; a row recorded meanwhile waits for the next
 fold. The table holds one row per nft rewind until a sales fold runs.
 
-A database that gains the table starts with no recovery points, so a reorg
-seen before its next advance rewinds to the start. The history it holds is
-trusted as found: the bracket certifies what is walked from then on, not
-rows already written.
+A database that gains the table starts with no recovery points. A search
+reads only the points below the cursor, and the first advance's point is
+the cursor itself, so a reorg seen before the second advance rewinds to the
+start, as after a bootstrap or a rebuild. The history it holds is trusted
+as found: the bracket certifies what is walked from then on, not rows
+already written. Each advance also drops the points past the checkpoint it
+extends, which no proven prefix holds.
 
 **Operator procedures.** Run each as one statement. Both raise the
 generation, which fences the current owner's writes in flight; its next
@@ -2275,11 +2280,14 @@ not exclude the new ones. Stop the process that runs the indexes
 (`catalyst index`) before starting a newer one, and before rolling back. A
 deployment that runs the index process as one replica replaced with the
 `Recreate` strategy already does this. A binary from before
-`shop.chain_checkpoint` neither records nor drops recovery points, so after
-running one, clear them before a newer binary starts again:
-`DELETE FROM shop.chain_checkpoint;`. Such a binary also leaves
-`diverged_at` as it finds it; a newer binary's next pass that proves the
-cursor clears it.
+`shop.chain_checkpoint` neither records nor drops recovery points, and its
+rewinds and walks can leave a point whose hash names a branch other than
+the rows below it. After running one, and before a newer binary starts
+again, clear them: `DELETE FROM shop.chain_checkpoint;`. (A newer binary's
+advance drops only the points past the checkpoint it extends, which does not
+cover a point below the cursor.) Such a binary also leaves `diverged_at` as
+it finds it; the newer binary's next pass that finds the cursor block on its
+stored hash clears it.
 
 ## Curation committee
 

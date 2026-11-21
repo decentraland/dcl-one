@@ -515,8 +515,9 @@ pub const CHECKPOINTS_KEPT: i64 = 64;
 
 /// Moves `last_block` from the checkpoint (`expected`, `expected_hash`) to
 /// `header` in the caller's transaction (the one that wrote the window's
-/// rows), and records `header` as a recovery point, keeping the newest
-/// [`CHECKPOINTS_KEPT`]; a cursor someone else moved fails the transaction
+/// rows), and records `header` as a recovery point (dropping any past
+/// `expected`), keeping the newest [`CHECKPOINTS_KEPT`]; a cursor someone
+/// else moved fails the transaction
 /// instead of skipping or repeating a range. `header` must have been read in
 /// the window's bracket, after a predecessor read that proved `expected`.
 /// The caller ends the transaction with [`Owner::check`].
@@ -529,7 +530,7 @@ pub async fn advance(
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
-             diverged_at = NULL, updated_at = timezone('UTC', now()) \
+             updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block < $5",
     )
@@ -545,6 +546,17 @@ pub async fn advance(
     if updated.rows_affected() != 1 {
         return Err(sqlx::Error::RowNotFound);
     }
+    // A point past the checkpoint this window extends belongs to no proven
+    // prefix: it goes before the insert (defense in depth; the points an
+    // older binary left are cleared by the operator, DATABASE.md "Deploys").
+    sqlx::query(
+        "DELETE FROM shop.chain_checkpoint WHERE indexer = $1 AND network = $2 AND block_number > $3",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(expected.0)
+    .execute(&mut *conn)
+    .await?;
     sqlx::query(
         "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
          VALUES ($1, $2, $3, $4, $5) ON CONFLICT (indexer, network, block_number) \
@@ -616,6 +628,32 @@ pub async fn rewind(
     Ok(())
 }
 
+/// Clears the divergence mark of the projection standing at `at`, whose
+/// block a pass found on its stored hash again, in a fenced transaction of
+/// its own. A cursor no longer at `at` is fenced.
+async fn undiverge(pool: &PgPool, owner: &Owner, at: (i64, Option<&str>)) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let set = sqlx::query(
+        "UPDATE shop.chain_cursor SET diverged_at = NULL, updated_at = timezone('UTC', now()) \
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(at.0)
+    .bind(at.1)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if set != 1 {
+        return Err(owner
+            .fenced("the checkpoint a pass proved again moved".into())
+            .into());
+    }
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Withdraws the publication of the projection standing at `at`, in a
 /// transaction of its own, before a divergence seen there is searched, and
 /// marks it diverged (`diverged_at`): its readers fall back at once, and the
@@ -676,7 +714,7 @@ pub async fn mark_folded(
 ) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4, diverged_at = NULL \
+        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4 \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL \
            AND fold_through = $3 AND quarantine_reason IS NULL",
     )
@@ -695,7 +733,7 @@ pub async fn mark_folded(
 /// publish, or one held short of the head.
 pub async fn unpublish(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, diverged_at = NULL WHERE indexer = $1 AND network = $2 AND last_block = $3")
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2 AND last_block = $3")
         .bind(owner.indexer)
         .bind(owner.net.db_name())
         .bind(block)
@@ -1526,6 +1564,16 @@ pub(crate) async fn open(
             out.elapsed_ms = started.elapsed().as_millis() as u64;
             return Ok(Opening::Ended(out));
         }
+        if cur.diverged_at.is_some() {
+            // The chain flipped back before any rewind: the cursor is proven
+            // again, so its readers may use its height again.
+            undiverge(
+                pool,
+                owner,
+                (cur.last_block, cur.last_block_hash.as_deref()),
+            )
+            .await?;
+        }
     }
     Ok(Opening::Walk(Box::new(cur), out))
 }
@@ -1731,10 +1779,9 @@ async fn walk(
         Ok(used) => used,
         Err(e) if e.downcast_ref::<Diverged>().is_some() => {
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
-            let at = (
-                cur.last_block,
-                cur.last_block_hash.clone().unwrap_or_default(),
-            );
+            // Lanes bracket only a cursor with a hash (`durable`).
+            let (block, hash) = durable.expect("a lane divergence is about the cursor's hash");
+            let at = (block as i64, hash.to_string());
             return diverged(pool, source, ix, owner, at, out, started).await;
         }
         Err(e) => return Err(e),

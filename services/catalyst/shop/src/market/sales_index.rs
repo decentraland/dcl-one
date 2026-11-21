@@ -646,7 +646,7 @@ pub async fn status(pool: &PgPool) -> Value {
     json!({
         "matic": c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
         })),
     })
 }

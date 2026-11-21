@@ -1024,6 +1024,9 @@ impl ChainIndex for NftIndex {
         .fetch_all(pool)
         .await?;
         let mut used = 0usize;
+        // The cursor block's header that closed the last lane window opens
+        // the next one: one read a window, the bracket unbroken.
+        let mut opened: Option<crate::chain_index::rpc::BlockHeader> = None;
         for contract in owed {
             let Some((mut next, last)) = contract.owed() else {
                 continue;
@@ -1039,13 +1042,14 @@ impl ChainIndex for NftIndex {
                 let to = (next + 10_000 - 1).min(last);
                 // Bracketed by the cursor block's header: rows below the
                 // cursor join its prefix only when read on its branch.
-                let before = match cursor {
-                    Some((block, _)) => {
+                let before = match (cursor, opened.take()) {
+                    (Some(_), Some(last)) => Some(last),
+                    (Some((block, _)), None) => {
                         let h = source.header(block).await?;
                         used += h.requests;
                         Some(h.value)
                     }
-                    None => None,
+                    (None, _) => None,
                 };
                 let w = source
                     .window(next as u64, to as u64, &group, chunk)
@@ -1074,6 +1078,7 @@ impl ChainIndex for NftIndex {
                         }
                         .into());
                     }
+                    opened = Some(after.value);
                 }
                 let mut rows = Vec::new();
                 for log in &w.logs {
@@ -1132,7 +1137,7 @@ pub async fn status(pool: &PgPool) -> serde_json::Value {
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "backfillsOwed": owed,
+            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)

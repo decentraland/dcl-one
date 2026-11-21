@@ -9173,9 +9173,9 @@ mod recovery {
     }
 
     /// A divergence that passes (the chain flips back before any search
-    /// rewinds) leaves the cursor as it was; the mark goes as soon as a pass
-    /// proves the cursor again: at its close when it has nothing to walk, at
-    /// its first advance when it pauses before closing.
+    /// rewinds) leaves the cursor as it was; the mark goes with the next
+    /// pass's check of the cursor block, whether that pass then closes with
+    /// nothing to walk or pauses after a window.
     #[tokio::test]
     async fn a_passing_divergence_is_unmarked_once_the_cursor_is_proven() {
         let Some(db) = ScratchDb::create().await else {
@@ -9206,7 +9206,7 @@ mod recovery {
             closed.published && closed.reorg_rewound_to.is_none(),
             "{closed:?}"
         );
-        assert!(!diverged().await, "the close clears the mark");
+        assert!(!diverged().await, "the next check clears the mark");
         flicker().await;
         *chain.head.lock() = 1_300;
         let paused = pass(
@@ -9216,7 +9216,7 @@ mod recovery {
         )
         .await;
         assert!(paused.paused && paused.indexed_to == 1_098, "{paused:?}");
-        assert!(!diverged().await, "the advance clears the mark");
+        assert!(!diverged().await, "and again");
         db.drop().await;
     }
 
@@ -9350,6 +9350,159 @@ mod recovery {
             .await
             .unwrap();
         assert_eq!(left, 0, "the fold deleted the recheck it read");
+        db.drop().await;
+    }
+
+    /// Points an older binary left past the cursor (its rewind drops none)
+    /// belong to no proven prefix: the next advance drops every point past
+    /// the checkpoint it extends, so they neither crowd the newest 64 nor
+    /// become recovery points.
+    #[tokio::test]
+    async fn an_advance_drops_the_points_past_the_checkpoint_it_extends() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        // An older binary's full rewind: the cursor back at the start with no
+        // hash, every point left behind, and one more at a height no window
+        // of this walk ends at.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = -1, last_block_hash = NULL, last_block_time = NULL, \
+                 fold_through = NULL, folded_block = NULL, folded_at = NULL WHERE indexer = 'mana_transfers'",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+             VALUES ('mana_transfers', 'matic', 650, $1, 0)",
+        )
+        .bind(format!("0x{}", "ff".repeat(32)))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(publish(&st, &url, &MANA).await.published);
+        let held: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT block_number, block_hash FROM shop.chain_checkpoint WHERE indexer = 'mana_transfers' ORDER BY 1",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        let fresh: Vec<(i64, String)> = hundreds()
+            .into_iter()
+            .map(|b| (b, chain.hash_of(b as u64)))
+            .collect();
+        assert_eq!(held, fresh);
+        db.drop().await;
+    }
+
+    /// A cursor that never publishes (its walk starts past the projection's
+    /// start) is unmarked by the next pass that finds its block on its
+    /// stored hash again, though that pass's close publishes nothing.
+    #[tokio::test]
+    async fn a_cursor_that_never_publishes_is_unmarked_when_proven_again() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(
+            db.pool.clone(),
+            &url,
+            IndexSettings {
+                start_block_matic: Some(10),
+                ..index_settings(100, 100)
+            },
+            false,
+        );
+        let walked = pass(&st, &url, &MANA).await;
+        assert_eq!(walked.indexed_to, 998, "{walked:?}");
+        assert!(!walked.published, "a partial history never publishes");
+        *chain.fork_from.lock() = Some((550, 0xee));
+        *chain.fail_probes_below.lock() = Some(998);
+        assert!(try_pass(&st, &url, &MANA).await.is_err());
+        let marked = |c: Option<chain_walk::Cursor>| c.unwrap().diverged_at.is_some();
+        assert!(marked(
+            cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+                .await
+                .unwrap()
+        ));
+        *chain.fork_from.lock() = None;
+        *chain.fail_probes_below.lock() = None;
+        let proven = pass(&st, &url, &MANA).await;
+        assert!(
+            proven.reorg_rewound_to.is_none() && !proven.published,
+            "{proven:?}"
+        );
+        assert!(!marked(
+            cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+                .await
+                .unwrap()
+        ));
+        db.drop().await;
+    }
+
+    /// A lane pass reads the cursor block's header once a lane window, plus
+    /// once to open the first: each window's closing read opens the next.
+    #[tokio::test]
+    async fn a_lane_pass_reads_the_cursor_block_once_a_window() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let late = "0x00000000000000000000000000000000000000c3";
+        seed_collection(
+            &db.pool,
+            "matic",
+            C1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(
+            s + 31_100,
+            vec![
+                transfer(C1, ZERO, ALICE, v2_token(0, 1), s + 100, 0),
+                transfer(late, ZERO, ALICE, v2_token(0, 7), s + 1_500, 0),
+            ],
+            1_000_000,
+            100,
+        );
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+        let nft = NftIndex::new(ChainNet::Matic);
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        seed_collection(
+            &db.pool,
+            "matic",
+            late,
+            s + 1_000,
+            "urn:decentraland:matic:collections-v2:0xc3",
+            "Late",
+        )
+        .await;
+        *chain.head.lock() = s + 31_200;
+        let taken = pass(&st, &url, &nft).await;
+        let cursor_block = taken.indexed_to;
+        let (from, walked): (i64, i64) = sqlx::query_as(
+            "SELECT backfill_from_block, walked_from_block FROM shop.nft_contract WHERE contract_address = $1",
+        )
+        .bind(late)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        let windows = (walked - from + 9_999) / 10_000;
+        assert!(windows >= 3, "{from}..{walked}");
+        let mark = chain.calls.lock().len();
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        let reads = calls_since(&chain, mark)
+            .iter()
+            .filter(|c| **c == format!("header {cursor_block}"))
+            .count() as i64;
+        // The pass's own check, the lane's opening read, one read a window.
+        assert_eq!(reads, 2 + windows);
         db.drop().await;
     }
 }
