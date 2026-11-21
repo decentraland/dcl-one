@@ -192,11 +192,7 @@ export function splitsInFlight(account: string, now: number, over: (line: string
   return readAccountSplitHolds(account).filter(({ line, hold }) => (hold.creditId === null ? splitHoldFresh(hold, now) : !over(line, hold)));
 }
 
-/**
- * Whether `hold`'s credit provably can't be spent any more: the chain's finalized block time (`finalizedTime`) has
- * reached its expiry, and the manager refuses a credit once `block.timestamp >= expiresAt`, in every block after. The local
- * clock (`now`) only says when that is worth asking. An unknown expiry or chain, or a read that fails: not proven.
- */
+/** `creditExpiredOnChain` for a hold's credit (none reserved: nothing to prove). */
 export async function splitCreditOverOnChain(hold: SplitHold, finalizedTime: (chainId: number) => Promise<number>, now: number = Date.now()): Promise<boolean> {
   if (hold.creditId === null) return false;
   return creditExpiredOnChain(hold.creditExpiresAt, hold.chainId, finalizedTime, now);

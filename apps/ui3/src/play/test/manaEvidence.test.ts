@@ -253,7 +253,7 @@ describe('a MANA sale on chain', () => {
     }
     const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
     const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
-    expect(await evidence.finalizedTime!(137)).toBe(0x6553f100)
+    expect(await evidence.finalizedTime(137)).toBe(0x6553f100)
   })
 
   it('lets an error answer’s body go instead of leaving it open', async () => {
