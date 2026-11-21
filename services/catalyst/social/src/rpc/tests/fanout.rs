@@ -254,6 +254,116 @@ async fn two_replicas_route_mutations_and_preserve_large_community_snapshots() {
     database.drop().await;
 }
 
+/// An accept processed on one replica announces each online new friend to the
+/// other party's sockets on every replica, from that replica's own topology.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn accept_announces_online_friends_on_every_replica() {
+    let Some(database) = OwnedDatabase::new("fanout", crate::db::scratch::Schema::Full, 8).await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (_broker, url) = Broker::start();
+    let left = replica(&pool);
+    let right = replica(&pool);
+    let jobs = Jobs::new();
+    let one = Arc::new(BrokerBus::new(Some(url.clone()), "social-test-one"));
+    let two = Arc::new(BrokerBus::new(Some(url), "social-test-two"));
+    left.start_fanout(&jobs, one.clone());
+    right.start_fanout(&jobs, two.clone());
+    one.connect();
+    two.connect();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !one.is_ready() || !two.is_ready() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let connectivity = |event: &SocialEvent| match event {
+        SocialEvent::TopologyFriendConnectivity(update, _) => Some((
+            update.friend.as_ref().unwrap().address.clone(),
+            update.status,
+        )),
+        _ => None,
+    };
+    let online = ConnectivityStatus::Online as i32;
+    // Only the requester is online in the second case: it hears nothing.
+    for accepter_online in [true, false] {
+        let (requester, accepter) = (addr("acc-req"), addr("acc-acc"));
+        seed_profiles(&left.ctx, &[&requester, &accepter]).await;
+        let mut wallets = vec![requester.clone()];
+        if accepter_online {
+            wallets.push(accepter.clone());
+        }
+        for side in [&left, &right] {
+            side.ctx
+                .topology()
+                .receive(&pulse_frame(wallets.clone()))
+                .unwrap();
+        }
+        let upsert = |me: &str, action| {
+            let ctx = left.ctx.clone();
+            let me = me.to_string();
+            async move {
+                SocialServiceImpl
+                    .upsert_friendship(
+                        UpsertFriendshipPayload {
+                            action: Some(action),
+                        },
+                        procedure_ctx(&ctx, &me, 9000 + u32::from(accepter_online)),
+                    )
+                    .await
+                    .unwrap()
+            }
+        };
+        upsert(
+            &requester,
+            upsert_friendship_payload::Action::Request(upsert_friendship_payload::RequestPayload {
+                user: Some(User {
+                    address: accepter.clone(),
+                }),
+                message: None,
+            }),
+        )
+        .await;
+        let mut requester_left = left.ctx.pubsub().subscribe(&requester);
+        let mut requester_right = right.ctx.pubsub().subscribe(&requester);
+        let mut accepter_left = left.ctx.pubsub().subscribe(&accepter);
+        let mut accepter_right = right.ctx.pubsub().subscribe(&accepter);
+        upsert(
+            &accepter,
+            upsert_friendship_payload::Action::Accept(upsert_friendship_payload::AcceptPayload {
+                user: Some(User {
+                    address: requester.clone(),
+                }),
+            }),
+        )
+        .await;
+        // The requester's announcement is the last one delivered on each replica.
+        for receiver in [&mut accepter_left, &mut accepter_right] {
+            assert_eq!(
+                connectivity(&*receive(receiver).await),
+                Some((requester.clone(), online))
+            );
+            silent(receiver).await;
+        }
+        for receiver in [&mut requester_left, &mut requester_right] {
+            let mut heard = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                heard.extend(connectivity(&event));
+            }
+            if accepter_online {
+                assert_eq!(heard, [(accepter.clone(), online)]);
+            } else {
+                assert!(heard.is_empty(), "offline accepter announced: {heard:?}");
+            }
+        }
+        cleanup_pair(left.ctx.db(), &requester, &accepter).await;
+    }
+    jobs.shutdown(Duration::from_secs(2)).await;
+}
+
 #[tokio::test]
 async fn notification_generation_survives_context_restart_and_expires_like_source_cache() {
     let Some(database) = OwnedDatabase::new("fanout", crate::db::scratch::Schema::Full, 8).await

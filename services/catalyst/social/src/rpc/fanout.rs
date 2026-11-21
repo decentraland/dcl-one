@@ -55,6 +55,11 @@ pub(crate) enum Event {
     CommunityDeleted {
         community: Uuid,
     },
+    /// Each replica announces the new friends to its own sockets from its own topology.
+    FriendshipAccepted {
+        actor: String,
+        friend: String,
+    },
     Reference {
         event_id: Uuid,
     },
@@ -220,6 +225,9 @@ impl Event {
             Self::CommunityMember { actor, status, .. } => {
                 address(actor) && ConnectivityStatus::try_from(*status).is_ok()
             }
+            Self::FriendshipAccepted { actor, friend } => {
+                address(actor) && address(friend) && actor != friend
+            }
             Self::CommunityDeleted { .. } | Self::Reference { .. } => true,
         }
     }
@@ -336,6 +344,9 @@ impl Event {
                 ctx.pubsub()
                     .deliver_community_deleted(ctx.db().pool(), community)
                     .await
+            }
+            Self::FriendshipAccepted { actor, friend } => {
+                super::service::announce_accepted_connectivity(ctx, &actor, &friend).await
             }
             Self::Reference { event_id } => match ctx.db().social_event_payload(event_id).await {
                 Ok(Some(bytes)) => {
@@ -491,6 +502,26 @@ mod tests {
             invalid["event"][field] = value;
             assert!(Event::decode(&serde_json::to_vec(&invalid).unwrap(), local).is_none());
         }
+    }
+    #[test]
+    fn friendship_accepted_carries_two_distinct_wallets() {
+        let other = "0x2222222222222222222222222222222222222222";
+        let event = |actor: &str, friend: &str| Event::FriendshipAccepted {
+            actor: actor.into(),
+            friend: friend.into(),
+        };
+        let bytes = event(WALLET, other).encode(Uuid::new_v4()).unwrap();
+        assert!(matches!(
+            Event::decode(&bytes, Uuid::new_v4()),
+            Some(Event::FriendshipAccepted { actor, friend }) if actor == WALLET && friend == other
+        ));
+        assert!(event(WALLET, WALLET).encode(Uuid::nil()).is_none());
+        assert!(event(WALLET, "0xinvalid").encode(Uuid::nil()).is_none());
+        assert!(
+            event(&format!("0x{}", "A".repeat(40)), other)
+                .encode(Uuid::nil())
+                .is_none()
+        );
     }
     #[test]
     fn wire_cap_is_inclusive_and_large_metadata_uses_lossless_nonrecursive_storage() {
