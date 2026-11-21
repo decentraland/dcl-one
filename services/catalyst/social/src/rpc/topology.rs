@@ -85,12 +85,12 @@ where
             offline
         };
         if batch.is_empty() {
-            let expiry = snapshot.received_at.map(|at| at + TOPOLOGY_RECEIPT_TTL);
+            let expiry = snapshot.expires_at();
             tokio::select! {
                 result = changes.changed() => { if result.is_err() { return; } }
                 _ = async { match expiry {
-                    Some(at) if at > tokio::time::Instant::now() => tokio::time::sleep_until(at).await,
-                    _ => std::future::pending::<()>().await,
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending::<()>().await,
                 }} => {}
             }
             continue;
@@ -381,6 +381,46 @@ mod tests {
         assert_eq!(peak.load(Ordering::SeqCst), 4);
         assert!(delivered.lock().unwrap().iter().all(|(_, online)| !online));
         assert!(topology.snapshot().wallets.is_empty());
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn world_presence_is_online_once_beside_an_island_and_its_expiry_owes_offline() {
+        let topology = Arc::new(Topology::default());
+        let wallet = format!("0x{:040x}", 9);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let task = {
+            let topology = topology.clone();
+            let events = events.clone();
+            tokio::spawn(async move {
+                run_notifications(&topology, |_, online, _, cursor| {
+                    let events = events.clone();
+                    async move {
+                        events.lock().unwrap().push(online);
+                        (cursor, true)
+                    }
+                })
+                .await;
+            })
+        };
+        let now = tokio::time::Instant::now;
+        topology.observe_world([wallet.as_str()], now());
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true], "World-only is online");
+        topology
+            .receive(&frame(std::slice::from_ref(&wallet)))
+            .unwrap();
+        topology.observe_world([], now());
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true], "still in an island");
+        topology.observe_world([wallet.as_str()], now());
+        topology.receive(&[]).unwrap();
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true], "still inside the World");
+        // No further observation (LiveKit unreachable): the World source expires.
+        tokio::time::advance(crate::comms::topology::WORLD_OCCUPANCY_TTL).await;
+        settle().await;
+        assert_eq!(*events.lock().unwrap(), [true, false]);
         task.abort();
     }
 }

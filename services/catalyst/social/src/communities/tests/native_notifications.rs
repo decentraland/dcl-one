@@ -268,21 +268,9 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
                     )),
                 );
                 ctx.set_communities(rig.state.clone());
-                use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
-                    IslandData, IslandStatusMessage,
-                };
-                use prost::Message as _;
+                // Online only inside a World: still in the started notice's audience.
                 ctx.topology()
-                    .receive(
-                        &IslandStatusMessage {
-                            data: vec![IslandData {
-                                peers: vec![target.address.to_string()],
-                                ..Default::default()
-                            }],
-                        }
-                        .encode_to_vec(),
-                    )
-                    .unwrap();
+                    .observe_world([target.address.as_str()], tokio::time::Instant::now());
                 crate::rpc::service::ops::start_community_voice_chat(
                     &ctx,
                     owner.address.as_str(),

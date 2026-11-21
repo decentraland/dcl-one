@@ -380,8 +380,14 @@ async fn the_data_bound_social_api_fixtures_replay_against_their_seeded_rows() {
             assert!(!online.contains(&owner), "the owner must be offline here");
             seed.member(COMMUNITY, &owner, "owner", "2025-01-01T00:00:00.000Z")
                 .await;
-            // held, not received: a frame's receipt could expire on a slow run before the read
-            topology.hold_for_tests(online.iter().map(String::as_str));
+            // held, not received: a frame's receipt could expire on a slow run before the read;
+            // half online in a Genesis island, half only inside a World
+            let (islands, world) = online.split_at(online.len() / 2);
+            topology.hold_for_tests(islands.iter().map(String::as_str));
+            topology.observe_world(
+                world.iter().map(String::as_str),
+                tokio::time::Instant::now(),
+            );
         }
         check(&rig, &mut got, &[name]).await;
     }

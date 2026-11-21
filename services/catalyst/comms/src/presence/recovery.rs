@@ -360,6 +360,9 @@ impl Presence {
                 "LiveKit rooms this node does not resolve are left out of the occupancy"
             );
         }
+        // Social needs no admission certification: a read a webhook overtook is still
+        // a complete observation, and the next pass corrects it.
+        self.observe_world(&rooms, &observed);
         let mut current = self.state.lock();
         if !Self::clean(&current, unknown, &generations) {
             return Err(RecoveryFailure::Changed);
@@ -542,10 +545,12 @@ impl Presence {
     pub(crate) fn spawn_recovery(
         self: &Arc<Self>,
         state: Arc<CommsState>,
+        hints: crate::gatekeeper::bus::NatsSubscription,
         jobs: &crate::jobs::Jobs,
     ) {
         let presence = self.clone();
         jobs.spawn("comms-occupancy-recovery", move |ctx| async move {
+            let _hints = hints;
             let mut retry = Duration::from_secs(1);
             loop {
                 let result = tokio::select! {
