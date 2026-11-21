@@ -63,16 +63,3 @@ export const jumpInLocation = (place: CreatorFundPlace) => {
 /** A metric's whole-population value (series `all`, or the single series), or `null` when absent. */
 export const metricValue = (location: LocationMetrics | undefined, name: string) =>
   location?.metrics[name]?.find(row => row.series === 'all' || row.series === null)?.value ?? null;
-
-/**
- * A place's total playtime over the last 30 days, in seconds, AFK time included; `null` when
- * either input is absent.
- *
- * The analytics API exports no total, but `avg_playtime_seconds_30d` averages over exactly the
- * visits `unique_visits_30d` counts, so their product is the sum.
- */
-export const totalPlaytimeSeconds30d = (location: LocationMetrics | undefined) => {
-  const average = metricValue(location, 'avg_playtime_seconds_30d');
-  const visits = metricValue(location, 'unique_visits_30d');
-  return average === null || visits === null ? null : average * visits;
-};

@@ -116,6 +116,50 @@ describe('fetchMetrics', () => {
     });
   });
 
+  describe('when a range of days is asked for', () => {
+    const range = { from: '2026-11-15', to: '2026-11-30' };
+
+    it('should send the range beside the locations of every chunk', async () => {
+      await fetchMetrics(
+        Array.from({ length: MAX_LOCATIONS_PER_REQUEST + 1 }, (_, index) => ({ x: index, y: 0 })),
+        range,
+      );
+
+      const bodies = requestBodies();
+      expect(bodies).toHaveLength(2);
+      expect(bodies.every(body => body.range === range)).toBe(true);
+    });
+
+    it('should keep the range the service echoes back', async () => {
+      vi.mocked(metrics.request).mockImplementation(async (request: any) => ({
+        ok: true,
+        status: 200,
+        data: {
+          exported_at: '2026-11-20T00:17:01.099Z',
+          source: 'dcl_next.exports.export_creators_hub_scene_metrics',
+          range: request.body.range,
+          locations: request.body.locations.map((location: any) => ({
+            location_key: 'do-not-read-me',
+            builder_project_id: null,
+            ...location,
+            metrics: {},
+          })),
+        },
+      }));
+
+      expect((await fetchMetrics([{ x: 0, y: 0 }], range)).range).toEqual(range);
+    });
+  });
+
+  describe('when no range is asked for', () => {
+    it('should send no range, so the service answers its own windows', async () => {
+      const batch = await fetchMetrics([{ x: 0, y: 0 }]);
+
+      expect(requestBodies()[0]).not.toHaveProperty('range');
+      expect(batch).not.toHaveProperty('range');
+    });
+  });
+
   describe('when there are more locations than one request allows', () => {
     const many = Array.from({ length: MAX_LOCATIONS_PER_REQUEST + 1 }, (_, index) => ({
       x: index,

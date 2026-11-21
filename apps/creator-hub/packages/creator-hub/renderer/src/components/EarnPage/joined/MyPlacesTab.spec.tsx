@@ -9,6 +9,7 @@ import type { Project } from '/shared/types/projects';
 import { analytics, fs, workspace } from '#preload';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+import { actions as creatorFundActions } from '/@/modules/store/creatorFund';
 import { actions as workspaceActions } from '/@/modules/store/workspace';
 import * as api from '/@/lib/creatorFundApi';
 import * as metricsApi from '/@/lib/metricsApi';
@@ -194,15 +195,18 @@ describe('MyPlacesTab', () => {
       ]);
     });
 
-    it('should ask the analytics API for the places by base position or world', async () => {
+    it("should ask the analytics API for the places by base position or world, over the running cycle's UTC days", async () => {
       renderTab();
       await screen.findByRole('article', { name: 'Example Place a' });
 
       await waitFor(() =>
-        expect(metricsApi.fetchMetrics).toHaveBeenCalledWith([
-          { x: 5, y: 7 },
-          { world: 'example-world.dcl.eth', x: 0, y: 0 },
-        ]),
+        expect(metricsApi.fetchMetrics).toHaveBeenCalledWith(
+          [
+            { x: 5, y: 7 },
+            { world: 'example-world.dcl.eth', x: 0, y: 0 },
+          ],
+          { from: '2026-11-01', to: '2026-11-15' },
+        ),
       );
     });
   });
@@ -392,7 +396,7 @@ describe('MyPlacesTab', () => {
       try {
         act(() => info.focus());
 
-        await expectTooltip(info, 'Total time players spent in your place over the last 30 days.');
+        await expectTooltip(info, 'Total time players spent in your place so far this cycle.');
       } finally {
         keyboardFocus.mockRestore();
       }
@@ -406,7 +410,7 @@ describe('MyPlacesTab', () => {
 
       await expectTooltip(
         info,
-        'Wallets new to Decentraland whose first day was spent mostly in your place, over the last 30 days.',
+        'Wallets new to Decentraland whose first day was spent mostly in your place, so far this cycle.',
       );
     });
 
@@ -425,7 +429,7 @@ describe('MyPlacesTab', () => {
 
     it('should show "-" named "No data" for a missing metric', async () => {
       vi.mocked(metricsApi.fetchMetrics).mockResolvedValue(
-        metricsBatch(PLACES, { new_decentraland_players_30d: 3 }),
+        metricsBatch(PLACES, { new_decentraland_players_range: 3 }),
       );
       renderTab();
 
@@ -442,35 +446,29 @@ describe('MyPlacesTab', () => {
     });
 
     it.each([
-      [95.4, 3, '5 minutes'],
-      [50, 1, '1 minute'],
-      [20, 1, '0 minutes'],
-    ])(
-      'should show Total Playtime for an average of %ss over %s visits as %j',
-      async (average, visits, shown) => {
-        vi.mocked(metricsApi.fetchMetrics).mockResolvedValue(
-          metricsBatch(PLACES, { avg_playtime_seconds_30d: average, unique_visits_30d: visits }),
-        );
-        renderTab();
-
-        const entry = await screen.findByRole('article', { name: 'Example Place a' });
-        expect(await within(entry).findByText(shown)).toBeTruthy();
-      },
-    );
-
-    it('should show Total Playtime as "No data" when the visit count is missing', async () => {
+      [286.2, '5 minutes'],
+      [50, '1 minute'],
+      [20, '0 minutes'],
+    ])('should show a Total Playtime of %ss as %j', async (seconds, shown) => {
       vi.mocked(metricsApi.fetchMetrics).mockResolvedValue(
-        metricsBatch(PLACES, {
-          new_decentraland_players_30d: 3,
-          d3_retention_rate_30d: 0.102,
-          avg_playtime_seconds_30d: 7680,
-        }),
+        metricsBatch(PLACES, { total_playtime_seconds_range: seconds }),
       );
       renderTab();
 
       const entry = await screen.findByRole('article', { name: 'Example Place a' });
-      await within(entry).findByText('3');
-      expect(within(entry).getAllByText('No data')).toHaveLength(1);
+      expect(await within(entry).findByText(shown)).toBeTruthy();
+    });
+
+    it('should show "No data" for every metric when the answer carries no cycle totals, never a 30-day value', async () => {
+      // What a service that ignores the range, or an export without daily rows, answers.
+      vi.mocked(metricsApi.fetchMetrics).mockResolvedValue(
+        metricsBatch(PLACES, { unique_visitors_30d: 40 }),
+      );
+      renderTab();
+
+      const entry = await screen.findByRole('article', { name: 'Example Place a' });
+      await waitFor(() => expect(within(entry).getAllByText('No data')).toHaveLength(3));
+      expect(within(entry).queryByText('0')).toBeNull();
     });
 
     it('should hold every metric in a busy placeholder named "Loading" while the metrics load', async () => {
@@ -890,6 +888,36 @@ describe('MyPlacesTab', () => {
       } finally {
         loading.stop();
       }
+    });
+  });
+
+  describe('when the cached metrics were summed over another cycle', () => {
+    it("should hold the metrics as loading, never the other cycle's numbers", async () => {
+      const store = createTestStore();
+      const earlier = { places: PLACES, cycle: LATEST_CLOSED };
+      store.dispatch(creatorFundActions.fetchPlaceMetrics.pending('earlier', earlier));
+      store.dispatch(
+        creatorFundActions.fetchPlaceMetrics.fulfilled(
+          {
+            exported_at: '2026-11-01T15:24:00Z',
+            range: { from: '2026-10-16', to: '2026-10-31' },
+            byPlaceId: Object.fromEntries(
+              metricsBatch(PLACES, { new_decentraland_players_range: 999 }).locations.map(
+                (location, index) => [PLACES[index].id, location],
+              ),
+            ),
+          },
+          'earlier',
+          earlier,
+        ),
+      );
+      vi.mocked(metricsApi.fetchMetrics).mockReturnValue(new Promise(() => {}));
+
+      mountTab(store);
+
+      const entry = await screen.findByRole('article', { name: 'Example Place a' });
+      expect(within(entry).getAllByText('Loading')).toHaveLength(3);
+      expect(within(entry).queryByText('999')).toBeNull();
     });
   });
 

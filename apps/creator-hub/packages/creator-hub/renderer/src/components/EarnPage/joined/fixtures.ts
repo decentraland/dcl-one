@@ -107,26 +107,26 @@ export const myPlaces = (places: CreatorFundPlace[], forCycle: Cycle = RUNNING):
 
 type Values = Partial<
   Record<
-    | 'new_decentraland_players_30d'
-    | 'd3_retention_rate_30d'
-    | 'avg_playtime_seconds_30d'
-    | 'unique_visits_30d',
+    | 'new_decentraland_players_range'
+    | 'd3_retention_rate_range'
+    | 'total_playtime_seconds_range'
+    | 'unique_visitors_30d',
     number
   >
 >;
 
-/** A metrics answer for `places`, positionally; each place gets `values` unless overridden. */
+/** A range metrics answer for `places`, positionally; each place gets `values` unless overridden. */
 export const metricsBatch = (
   places: CreatorFundPlace[],
   values: Values = {
-    new_decentraland_players_30d: 1234,
-    d3_retention_rate_30d: 0.102,
-    avg_playtime_seconds_30d: 7680,
-    unique_visits_30d: 40,
+    new_decentraland_players_range: 1234,
+    d3_retention_rate_range: 0.102,
+    total_playtime_seconds_range: 307200,
   },
 ): MetricsBatch => ({
   exported_at: '2026-11-03T15:24:00Z',
   source: 'test',
+  range: { from: '2026-11-01', to: '2026-11-15' },
   locations: places.map(entry => ({
     location_key: entry.base_position,
     builder_project_id: null,

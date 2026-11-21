@@ -6,7 +6,7 @@ import { analytics } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import type { LocationMetrics } from '/@/lib/metricsApi';
 import { actions, selectors } from '/@/modules/store/creatorFund';
-import { formatCycleLabel } from '/@/modules/store/creatorFund/utils';
+import { cycleDayRange, formatCycleLabel } from '/@/modules/store/creatorFund/utils';
 import { t } from '/@/modules/store/translation/utils';
 
 import { MapPinIcon, NewPlayersIcon, PlaytimeIcon, RetentionIcon } from '../icons';
@@ -18,7 +18,6 @@ import {
   metricValue,
   placeLocation,
   placeTitle,
-  totalPlaytimeSeconds30d,
 } from './format';
 import { MyPlacesEmpty } from './MyPlacesEmpty';
 import {
@@ -54,17 +53,13 @@ type PlaceMetricsReading =
   | { status: 'loading' }
   | { status: 'ready'; metrics: LocationMetrics | undefined };
 
+/** Each stat is summed over the running cycle's days; absent until the export carries them. */
 function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale: string }) {
-  const readStat = (
-    read: (metrics: LocationMetrics | undefined) => number | null,
-    format: (value: number) => string,
-  ): MetricReading => {
+  const stat = (name: string, format: (value: number) => string): MetricReading => {
     if (reading.status === 'loading') return reading;
-    const value = read(reading.metrics);
+    const value = metricValue(reading.metrics, name);
     return { status: 'ready', value: value === null ? null : format(value) };
   };
-  const stat = (name: string, format: (value: number) => string) =>
-    readStat(metrics => metricValue(metrics, name), format);
   return (
     <div className={styles.stats}>
       <dl className={styles.statsList}>
@@ -75,7 +70,7 @@ function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale:
             name: t('earn.joined.my_places.metrics.new_players_info_label'),
             tooltip: t('earn.joined.my_places.metrics.new_players_info'),
           }}
-          reading={stat('new_decentraland_players_30d', value => formatCount(value, locale))}
+          reading={stat('new_decentraland_players_range', value => formatCount(value, locale))}
         />
         <MetricStat
           icon={<RetentionIcon />}
@@ -84,7 +79,7 @@ function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale:
             name: t('earn.joined.my_places.metrics.d3_retention_info_label'),
             tooltip: t('analytics.metrics.day_3_retention.tooltip'),
           }}
-          reading={stat('d3_retention_rate_30d', value => formatRatio(value, locale))}
+          reading={stat('d3_retention_rate_range', value => formatRatio(value, locale))}
         />
         <MetricStat
           icon={<PlaytimeIcon />}
@@ -93,7 +88,7 @@ function PlaceStats({ reading, locale }: { reading: PlaceMetricsReading; locale:
             name: t('earn.joined.my_places.metrics.playtime_info_label'),
             tooltip: t('earn.joined.my_places.metrics.playtime_info'),
           }}
-          reading={readStat(totalPlaytimeSeconds30d, seconds => {
+          reading={stat('total_playtime_seconds_range', seconds => {
             const minutes = Math.round(seconds / SECONDS_PER_MINUTE);
             return t('earn.joined.my_places.metrics.minutes', {
               minutes,
@@ -216,18 +211,24 @@ export function MyPlacesTab() {
       ? places.data
       : null;
 
-  const running = shown?.cycle?.status === 'running';
+  const runningCycle = shown?.cycle?.status === 'running' ? shown.cycle : null;
+  const running = !!runningCycle;
+  const cycleDays = useMemo(() => runningCycle && cycleDayRange(runningCycle), [runningCycle]);
 
   useEffect(() => {
-    if (!running || !shown?.places.length) return;
-    void dispatch(actions.fetchPlaceMetrics(shown.places)).then(
+    if (!runningCycle || !shown?.places.length) return;
+    void dispatch(actions.fetchPlaceMetrics({ places: shown.places, cycle: runningCycle })).then(
       () => mounted.current && setMetricsLoaded(true),
     );
-  }, [running, shown, dispatch]);
+  }, [runningCycle, shown, dispatch]);
 
   const cachedMetrics = placeMetrics.data;
   const metricsCoverShown =
-    !!shown && !!cachedMetrics && shown.places.every(place => place.id in cachedMetrics.byPlaceId);
+    !!shown &&
+    !!cachedMetrics &&
+    cachedMetrics.range.from === cycleDays?.from &&
+    cachedMetrics.range.to === cycleDays.to &&
+    shown.places.every(place => place.id in cachedMetrics.byPlaceId);
   const metricsFailed = metricsLoaded && placeMetrics.status === 'failed';
   const metricsPending = !metricsLoaded || (!metricsFailed && !metricsCoverShown);
   const metrics = running && !metricsPending && !metricsFailed ? placeMetrics.data : null;

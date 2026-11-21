@@ -1,6 +1,10 @@
 import type { Cycle } from '/shared/types/creator-fund';
 
+import type { DayRange } from '/@/lib/metricsApi';
+
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const utcDay = (time: number) => new Date(time).toISOString().slice(0, 10);
 
 /**
  * Formats a cycle as `Oct 1 - Oct 15, 2026` in UTC days.
@@ -31,4 +35,16 @@ export function formatCycleDays(cycle: Pick<Cycle, 'start_at' | 'end_at'>, local
   const day = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const end = new Date(new Date(cycle.end_at).getTime() - DAY_MS);
   return `${day.format(new Date(cycle.start_at))} - ${day.format(end)}`;
+}
+
+/**
+ * The UTC days a cycle's metrics are summed over: from the day `start_at` falls on through the day
+ * before `end_at`, the same days `formatCycleLabel` names. The analytics API sums whole UTC days, so
+ * a cycle bounded at 03:00 UTC is read as the half-month it is labelled with.
+ */
+export function cycleDayRange(cycle: Pick<Cycle, 'start_at' | 'end_at'>): DayRange {
+  return {
+    from: utcDay(new Date(cycle.start_at).getTime()),
+    to: utcDay(new Date(cycle.end_at).getTime() - DAY_MS),
+  };
 }

@@ -430,7 +430,7 @@ describe('creatorFund slice', () => {
   });
 
   describe('when fetching the metrics of my places', () => {
-    it('should ask by world name or base position and key the answer by place', async () => {
+    it('should ask by world name or base position over the cycle days, and key the answer by place', async () => {
       vi.mocked(metricsApi.fetchMetrics).mockResolvedValue({
         exported_at: '2026-11-03T15:24:00Z',
         source: 'test',
@@ -448,22 +448,29 @@ describe('creatorFund slice', () => {
       });
 
       await store.dispatch(
-        actions.fetchPlaceMetrics([
-          place('genesis'),
-          place('world', {
-            world: true,
-            world_name: 'example-world.dcl.eth',
-            base_position: '0,0',
-          }),
-        ]),
+        actions.fetchPlaceMetrics({
+          places: [
+            place('genesis'),
+            place('world', {
+              world: true,
+              world_name: 'example-world.dcl.eth',
+              base_position: '0,0',
+            }),
+          ],
+          cycle: { start_at: '2026-11-15T03:00:00.000Z', end_at: '2026-12-01T03:00:00.000Z' },
+        }),
       );
 
-      expect(metricsApi.fetchMetrics).toHaveBeenCalledWith([
-        { x: 23, y: -14 },
-        { world: 'example-world.dcl.eth', x: 0, y: 0 },
-      ]);
+      expect(metricsApi.fetchMetrics).toHaveBeenCalledWith(
+        [
+          { x: 23, y: -14 },
+          { world: 'example-world.dcl.eth', x: 0, y: 0 },
+        ],
+        { from: '2026-11-15', to: '2026-11-30' },
+      );
       const { data } = store.getState().creatorFund.placeMetrics;
       expect(data?.exported_at).toBe('2026-11-03T15:24:00Z');
+      expect(data?.range).toEqual({ from: '2026-11-15', to: '2026-11-30' });
       expect(Object.keys(data?.byPlaceId ?? {})).toEqual(['genesis', 'world']);
       expect(data?.byPlaceId.world.metrics).toEqual({ b: [] });
     });
