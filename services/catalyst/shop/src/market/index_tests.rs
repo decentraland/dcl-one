@@ -4802,11 +4802,12 @@ mod supervisor {
         /// `write_entered`.
         committed_gate: Option<Arc<tokio::sync::Semaphore>>,
         commit_armed: Arc<std::sync::atomic::AtomicBool>,
-        /// While `alone_armed`, `walks_alone` lets `alone_pass` calls through
-        /// and then waits for `alone_gate`, counting in `alone_held`.
+        /// While `alone_armed`, `walks_alone` waits for `alone_gate` once the
+        /// projection's cursor stands at `alone_from` or past it (counting in
+        /// `alone_held`): a read before that commit answers.
         alone_gate: Option<Arc<tokio::sync::Semaphore>>,
         alone_armed: Arc<std::sync::atomic::AtomicBool>,
-        alone_pass: Arc<AtomicUsize>,
+        alone_from: Arc<std::sync::atomic::AtomicI64>,
         alone_held: Arc<AtomicUsize>,
     }
 
@@ -4918,13 +4919,14 @@ mod supervisor {
         async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
             if let Some(gate) = &self.alone_gate
                 && self.alone_armed.load(Ordering::SeqCst)
-                && self
-                    .alone_pass
-                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-                    .is_err()
             {
-                self.alone_held.fetch_add(1, Ordering::SeqCst);
-                gate.acquire().await.unwrap().forget();
+                let at = chain_walk::cursor(pool, self.indexer(), self.net())
+                    .await?
+                    .map_or(-1, |c| c.last_block);
+                if at >= self.alone_from.load(Ordering::SeqCst) {
+                    self.alone_held.fetch_add(1, Ordering::SeqCst);
+                    gate.acquire().await.unwrap().forget();
+                }
             }
             self.inner().walks_alone(pool).await
         }
@@ -6859,8 +6861,8 @@ mod supervisor {
     }
 
     /// The walks-alone hint after a shared walk is each member's own: nft's
-    /// read at the walk's opening answers, the one after its close is held,
-    /// and sales walks, closes and publishes meanwhile.
+    /// read at the walk's opening answers, the one after it committed (in
+    /// its close) is held, and sales walks, closes and publishes meanwhile.
     #[tokio::test]
     async fn a_held_walks_alone_read_holds_back_no_companion() {
         let Some(db) = ScratchDb::create().await else {
@@ -6888,10 +6890,10 @@ mod supervisor {
         };
         let mut projections = nft_and_sales(&url);
         projections[0].make = {
-            let (gate, armed, pass, held) = (
+            let (gate, armed, from, held) = (
                 hooks.alone_gate.clone(),
                 hooks.alone_armed.clone(),
-                hooks.alone_pass.clone(),
+                hooks.alone_from.clone(),
                 hooks.alone_held.clone(),
             );
             Arc::new(move || {
@@ -6899,7 +6901,7 @@ mod supervisor {
                     inner: Some(Arc::new(NftIndex::new(ChainNet::Matic))),
                     alone_gate: gate.clone(),
                     alone_armed: armed.clone(),
-                    alone_pass: pass.clone(),
+                    alone_from: from.clone(),
                     alone_held: held.clone(),
                     ..Hooked::default()
                 }) as Arc<dyn ChainIndex>
@@ -6913,13 +6915,13 @@ mod supervisor {
             })
             .await;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        // The opening's read answers; the next one, after nft's close, waits.
-        hooks.alone_pass.store(1, Ordering::SeqCst);
+        // Reads before nft commits the new window answer (the walk's opening);
+        // the one after it, in nft's close, waits.
+        let target = (s + 1_498) as i64;
+        hooks.alone_from.store(target, Ordering::SeqCst);
         hooks.alone_armed.store(true, Ordering::SeqCst);
         add_sale(&chain, c1, v2_token(0, 2), s + 700);
         *chain.head.lock() = s + 1_500;
-        let target = (s + 1_498) as i64;
         eventually("nft's read after its close is held", || async {
             hooks.alone_held.load(Ordering::SeqCst) >= 1
         })

@@ -624,33 +624,77 @@ fn dispatch_close(
             {
                 holdings.forget(index.indexer(), index.net());
             }
-            let closed = closed.map(|()| out);
-            // Whether a backfill is owed now, read in this projection's own
-            // task: a slow read holds back no one else.
-            let alone = match &closed {
-                Ok(_) => {
-                    chain_group::walks_alone(&sup.pool, index.as_ref(), sup.member_deadline).await
-                }
-                Err(_) => false,
-            };
-            Ok::<_, anyhow::Error>((closed, alone))
+            closed.map(|()| out)
         };
         let close = std::panic::AssertUnwindSafe(close).catch_unwind();
-        let (attempt, alone) = tokio::select! {
+        let attempt = tokio::select! {
             biased;
-            _ = lost.cancelled() => (Attempt::Interrupted, false),
-            _ = stop.cancelled() => (Attempt::Interrupted, false),
+            _ = lost.cancelled() => Attempt::Interrupted,
+            _ = stop.cancelled() => Attempt::Interrupted,
             outcome = close => match outcome {
-                Ok(Ok((result, alone))) => (Attempt::Ran(result), alone),
-                Ok(Err(e)) => (Attempt::Ran(Err(e)), false),
-                Err(panic) => (Attempt::Panicked(panic_message(panic.as_ref())), false),
+                Ok(result) => Attempt::Ran(result),
+                Err(panic) => Attempt::Panicked(panic_message(panic.as_ref())),
             },
+        };
+        // The close's outcome stands; only then is the hint read, in this
+        // projection's own task.
+        let alone = match &attempt {
+            Attempt::Ran(Ok(_)) => hint(&sup, index.as_ref(), &lost, &stop).await,
+            _ => false,
         };
         Done::Attempted(attempt, checkpoint, alone)
     });
     running.insert(handle.id(), Running::one(i));
     slot.phase = Phase::Running;
     slot.line = "closing after a shared walk".into();
+}
+
+/// Whether `index` walks alone next, read in its slot's own task, raced
+/// against its lease and the stop (either says no; the walk itself stands).
+async fn hint(
+    supervisor: &Supervisor,
+    index: &dyn ChainIndex,
+    lost: &CancellationToken,
+    stop: &CancellationToken,
+) -> bool {
+    tokio::select! {
+        biased;
+        _ = lost.cancelled() => false,
+        _ = stop.cancelled() => false,
+        alone = chain_group::walks_alone(&supervisor.pool, index, supervisor.member_deadline) => alone,
+    }
+}
+
+/// A member a shared walk paused at its budget: its walk stands as it is,
+/// and its walks-alone hint is read in a task of its own, so a slow read
+/// holds back no one else.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the supervisor's state, the slot and what its walk left"
+)]
+fn dispatch_hint(
+    ctx: &JobContext,
+    supervisor: &Arc<Supervisor>,
+    i: usize,
+    slot: &mut Slot,
+    out: PassOutcome,
+    checkpoint: Option<Checkpoint>,
+    tasks: &mut JoinSet<Done>,
+    running: &mut HashMap<tokio::task::Id, Running>,
+) {
+    let acquisition = slot.acquisition.as_ref().expect("a member holds its lease");
+    let (sup, index, lost, stop) = (
+        supervisor.clone(),
+        acquisition.index.clone(),
+        acquisition.lost.clone(),
+        ctx.cancel.clone(),
+    );
+    let handle = tasks.spawn(async move {
+        let alone = hint(&sup, index.as_ref(), &lost, &stop).await;
+        Done::Attempted(Attempt::Ran(Ok(out)), checkpoint, alone)
+    });
+    running.insert(handle.id(), Running::one(i));
+    slot.phase = Phase::Running;
 }
 
 /// Ends an acquisition whose lease was lost: the slot asks for the lease
@@ -1023,11 +1067,16 @@ fn settle_member(
         MemberEnd::Walked {
             out,
             checkpoint,
-            alone,
-            ..
+            close: None,
+        } if !stopping => {
+            slot.checkpoint = checkpoint.clone();
+            dispatch_hint(ctx, supervisor, j, slot, out, checkpoint, tasks, running);
+            return;
+        }
+        MemberEnd::Walked {
+            out, checkpoint, ..
         } => {
             ctx.pass_done();
-            slot.solo_once |= alone;
             if let Some(a) = slot.acquisition.as_mut() {
                 a.failures = 0;
             }

@@ -84,10 +84,6 @@ pub enum MemberEnd {
         out: PassOutcome,
         checkpoint: Option<Checkpoint>,
         close: Option<Option<i64>>,
-        /// It owes a backfill now (taken in during the walk), or that could
-        /// not be read: its next walk is alone. Read here for a member paused
-        /// by its budget; one that reached the target reads it in its close.
-        alone: bool,
     },
     /// Its gate said wait.
     Waiting(String),
@@ -181,29 +177,6 @@ pub(crate) async fn walks_alone(pool: &PgPool, ix: &dyn ChainIndex, deadline: Du
             true
         }
     }
-}
-
-/// Settles the walks-alone hint of each member paused by its budget, side by
-/// side, each under its deadline: none holds back the others' closes for
-/// longer than that.
-async fn with_hints(
-    mut ends: Vec<(usize, MemberEnd)>,
-    hints: Vec<(usize, Arc<dyn ChainIndex>)>,
-    pool: &PgPool,
-    deadline: Duration,
-) -> Vec<(usize, MemberEnd)> {
-    let read = futures::future::join_all(
-        hints
-            .into_iter()
-            .map(|(at, ix)| async move { (at, walks_alone(pool, ix.as_ref(), deadline).await) }),
-    )
-    .await;
-    for (at, hint) in read {
-        if let Some((_, MemberEnd::Walked { alone, .. })) = ends.get_mut(at) {
-            *alone = hint;
-        }
-    }
-    ends
 }
 
 /// The first topics a filter takes: `None` when it takes any.
@@ -553,7 +526,6 @@ pub async fn walk_together(
     }
 
     // The windows.
-    let mut hints: Vec<(usize, Arc<dyn ChainIndex>)> = Vec::new();
     let mut chunk = settings.address_chunk.max(1);
     let mut next = (at.block + 1).max(0) as u64;
     let mut first = true;
@@ -612,15 +584,12 @@ pub async fn walk_together(
                 w.out.requests = 0;
                 w.out.elapsed_ms = started.elapsed().as_millis() as u64;
                 let checkpoint = Some(w.checkpoint(at.full_history));
-                // Its walks-alone hint is read once the walk is over.
-                hints.push((ends.len(), w.member.index.clone()));
                 ends.push((
                     w.member.slot,
                     MemberEnd::Walked {
                         out: w.out,
                         checkpoint,
                         close: None,
-                        alone: false,
                     },
                 ));
                 continue;
@@ -670,7 +639,7 @@ pub async fn walk_together(
                 for w in walking {
                     ends.push((w.member.slot, MemberEnd::Fallback { budget: w.budget }));
                 }
-                return with_hints(ends, hints, pool, deadline).await;
+                return ends;
             }
         };
         // Each member's share, committed in the fixed order.
@@ -726,21 +695,16 @@ pub async fn walk_together(
         w.out.elapsed_ms = started.elapsed().as_millis() as u64;
         let reached = (w.out.indexed_to.max(0) as u64) >= target;
         let checkpoint = Some(w.checkpoint(at.full_history));
-        if !reached {
-            hints.push((ends.len(), w.member.index.clone()));
-        }
-        // A member that reached the target reads its hint in its own close.
         ends.push((
             w.member.slot,
             MemberEnd::Walked {
                 close: reached.then_some(w.fold_since),
                 out: w.out,
                 checkpoint,
-                alone: false,
             },
         ));
     }
-    with_hints(ends, hints, pool, deadline).await
+    ends
 }
 
 #[cfg(test)]
