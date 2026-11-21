@@ -144,7 +144,6 @@ fn apply(response: &mut Response, headers: &[(&'static str, String)]) {
     }
 }
 
-/// The stored file with its sniffed type, ranges and the accel redirect.
 /// A stored file, filled from the sync sources first when read-through is on.
 async fn open_blob(
     state: &ContentState,

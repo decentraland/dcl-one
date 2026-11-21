@@ -19,22 +19,34 @@ pub struct ContentQuery {
     pub include_mime_type: Option<String>,
 }
 
-/// [`sniff`]'s answer for `key`'s `window`, kept per window (a cut stream can answer differently
-/// from the whole file): content is immutable by key, and a sniff can fetch up to 16 MiB of the
-/// file. A kept answer reads nothing, so the window stays
-/// unread. A storage fault is an error and is not kept.
+/// [`sniff`]'s answer for `key`'s `window`, kept per window, since a cut stream can answer
+/// differently from the whole file. Content is immutable by key, and a sniff can fetch up to
+/// 16 MiB of the file. Whole-file answers and range answers are kept in separate caches, so a
+/// client cycling through ranges cannot evict the whole-file answers. A kept answer reads nothing,
+/// so the window stays unread. A storage fault is an error and is not kept.
 pub(crate) async fn content_type(
     state: &ContentState,
     key: &str,
     window: &mut Window<'_>,
 ) -> AppResult<&'static str> {
     let (start, end) = window.bounds();
-    let cache_key = (key.to_string(), start, end);
-    if let Some(mime) = state.sniffed.lock().get(&cache_key).copied() {
+    if (start, end) == (0, window.file_size()) {
+        kept_sniff(&state.sniffed, key.to_string(), window).await
+    } else {
+        kept_sniff(&state.sniffed_ranges, (key.to_string(), start, end), window).await
+    }
+}
+
+async fn kept_sniff<K: std::hash::Hash + Eq>(
+    cache: &parking_lot::Mutex<hashlink::LruCache<K, &'static str>>,
+    cache_key: K,
+    window: &mut Window<'_>,
+) -> AppResult<&'static str> {
+    if let Some(mime) = cache.lock().get(&cache_key).copied() {
         return Ok(mime);
     }
     let mime = sniff(window).await?;
-    state.sniffed.lock().insert(cache_key, mime);
+    cache.lock().insert(cache_key, mime);
     Ok(mime)
 }
 
@@ -298,6 +310,10 @@ async fn serve(
         None => {}
     }
 
+    // nginx serves the body of a GET when the gateway is in front, so the app reads none of it.
+    let accel = x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &key)
+        .filter(|_| method != Method::HEAD);
+
     // Upstream sniffs for HEAD as for GET: the headers are the same. The
     // worlds mount sniffs every HEAD, as WCS does.
     let head = if sniff || (method == Method::HEAD && mount.always_sniff) {
@@ -306,7 +322,7 @@ async fn serve(
         } else {
             let mut window = Window::new(&mut opened, total);
             let mime = content_type(&state, &key, &mut window).await?;
-            let head = if method == Method::HEAD {
+            let head = if method == Method::HEAD || accel.is_some() {
                 Bytes::new()
             } else {
                 window.into_head().await?
@@ -325,8 +341,7 @@ async fn serve(
         return Ok(response);
     }
 
-    if let Some(accel) = x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &key)
-    {
+    if let Some(accel) = accel {
         base_headers.retain(|(n, _)| *n != "Content-Length");
         let mut response = (StatusCode::OK, Body::empty()).into_response();
         apply_headers(&mut response, &base_headers);
@@ -1059,6 +1074,63 @@ mod tests {
             "application/octet-stream",
             "a whole file is not a range"
         );
+    }
+
+    /// Ranges are kept apart from whole files: more distinct ranges than every cache holds leave
+    /// a whole file's kept type in place (other bytes under the key, which a real key cannot
+    /// hold, keep the kept type).
+    #[tokio::test]
+    async fn cycling_ranges_keeps_the_whole_file_type() {
+        let node = TestNode::without_db("content-mime-ranges").await;
+        let file = |head: &[u8]| {
+            let mut bytes = vec![0u8; 5000];
+            bytes[..head.len()].copy_from_slice(head);
+            Bytes::from(bytes)
+        };
+        node.store(TEST_CID, file(b"GIF89a\x01\x00\x01\x00")).await;
+        let whole = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(header(&whole, "content-type").unwrap(), "image/gif");
+
+        let mut opened = node.state.storage.open(TEST_CID).await.unwrap().unwrap();
+        let ranges = crate::SNIFFED_ENTRIES.max(crate::SNIFFED_RANGES) as u64 + 1;
+        for i in 0..ranges {
+            let (start, len) = (i % 4000, 1 + i / 4000);
+            let mut window = Window::range(&mut opened, start, start + len);
+            content_type(&node.state, TEST_CID, &mut window)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            node.state.sniffed_ranges.lock().len(),
+            crate::SNIFFED_RANGES
+        );
+
+        node.store(TEST_CID, file(b"BM\x36\x00\x00\x00")).await;
+        let whole = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(header(&whole, "content-type").unwrap(), "image/gif", "kept");
+    }
+
+    /// Behind the gateway a sniffed GET answers the sniffed type and the redirect, with no body,
+    /// whether the type is sniffed or kept.
+    #[tokio::test]
+    async fn x_accel_base_serves_the_sniffed_type() {
+        let mut settings = crate::Settings::for_tests();
+        settings.storage_x_accel_base = Some("/__protected_storage".into());
+        let node = TestNode::without_db_settings("content-accel-mime", settings).await;
+        let mut bytes = vec![0u8; 5000];
+        bytes[..6].copy_from_slice(b"GIF89a");
+        node.store(TEST_CID, Bytes::from(bytes)).await;
+        for pass in ["sniffed", "kept"] {
+            let resp = get(&node, Method::GET, Some(""), None).await.unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "image/gif",
+                "{pass}"
+            );
+            assert!(header(&resp, "x-accel-redirect").is_some(), "{pass}");
+            assert_eq!(header(&resp, "content-length").unwrap(), "0", "{pass}");
+            assert!(body_of(resp).await.is_empty(), "{pass}");
+        }
     }
 
     /// A type a browser opens as a document is `application/octet-stream`: `text/*`, `*/xml`,

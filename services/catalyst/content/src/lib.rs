@@ -578,9 +578,13 @@ pub struct ContentState {
     /// The worlds mount's sniffed Content-Type per (content key, ranged window): a sniff can read
     /// up to 10 MiB of a file, and content does not change under its key.
     pub(crate) worlds_sniffed: parking_lot::Mutex<hashlink::LruCache<(String, bool), &'static str>>,
-    /// The content server's sniffed Content-Type per (content key, window start, window end): a
-    /// sniff can fetch up to 16 MiB of a file, and content does not change under its key.
-    pub(crate) sniffed: parking_lot::Mutex<hashlink::LruCache<(String, u64, u64), &'static str>>,
+    /// The content server's sniffed Content-Type per content key, for the whole file: a sniff can
+    /// fetch up to 16 MiB of a file, and content does not change under its key.
+    pub(crate) sniffed: parking_lot::Mutex<hashlink::LruCache<String, &'static str>>,
+    /// The content server's sniffed Content-Type per (content key, window start, window end), for
+    /// a range. Clients choose the ranges, so they are kept apart from [`Self::sniffed`].
+    pub(crate) sniffed_ranges:
+        parking_lot::Mutex<hashlink::LruCache<(String, u64, u64), &'static str>>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -590,7 +594,9 @@ pub type SharedState = Arc<ContentState>;
 
 /// The sniffed Content-Types each cache keeps ([`ContentState::worlds_sniffed`],
 /// [`ContentState::sniffed`]).
-const SNIFFED_ENTRIES: usize = 16_384;
+pub(crate) const SNIFFED_ENTRIES: usize = 16_384;
+/// The range answers [`ContentState::sniffed_ranges`] keeps.
+pub(crate) const SNIFFED_RANGES: usize = 4_096;
 
 impl ContentState {
     pub fn new(pool: PgPool, settings: Settings, storage: Arc<Storage>) -> Self {
@@ -646,6 +652,7 @@ impl ContentState {
             content_get_limit,
             worlds_sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_ENTRIES)),
             sniffed: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_ENTRIES)),
+            sniffed_ranges: parking_lot::Mutex::new(hashlink::LruCache::new(SNIFFED_RANGES)),
         }
     }
 
