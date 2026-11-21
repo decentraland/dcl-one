@@ -107,11 +107,10 @@ export function creditsManagerFor(chainId: ChainId, credits: SpendableCredit[]):
 }
 
 /** The useCredits call of ONE group and the credit ids it spends, shared by both rails. */
-export function buildGroupUseCreditsArgs(
-  group: PurchaseGroup,
-  buyer: string,
-  env?: EnvelopeOptions,
-): { args: UseCreditsArgs; salts: string[]; chainId: ChainId; manager: ContractInfo; data: Hex } {
+/** A group's useCredits as built: its arguments, its credits' salts, its chain and manager, and its encoded call. */
+export type BuiltUseCredits = { args: UseCreditsArgs; salts: string[]; chainId: ChainId; manager: ContractInfo; data: Hex };
+
+export function buildGroupUseCreditsArgs(group: PurchaseGroup, buyer: string, env?: EnvelopeOptions): BuiltUseCredits {
   const credits = dedupeCredits(group.purchases.flatMap((p) => p.credits));
   const maxCreditedValue = groupMaxCreditedValue(group.purchases);
   const maxUncreditedValue = groupMaxUncreditedValue(group.purchases);
@@ -152,6 +151,8 @@ export async function buyOneWithCredits(
   ctx: RailContext,
   opts: {
     purchase: AnyPurchase;
+    /** The call already built for `purchase` (one the caller kept as what it sends): sent as is, never built again. */
+    built?: BuiltUseCredits;
     /**
      * Right before the transaction is handed to the wallet, with the exact call data it is handed: from here it may be
      * broadcast. A throw here stops it before the wallet is asked.
@@ -162,7 +163,7 @@ export async function buyOneWithCredits(
   },
 ): Promise<Hex> {
   if (opts.purchase.credits.length === 0) throw new Error("No credits to spend");
-  const built = buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
+  const built = opts.built ?? buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
   try {
     return await sendUseCredits(ctx, {
       ...built,

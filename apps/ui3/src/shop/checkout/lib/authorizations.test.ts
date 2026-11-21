@@ -22,6 +22,8 @@ import {
   ExactGrantUnavailableError,
   getManaSpendingAuthorization,
   GrantCancelledError,
+  GrantNotInEffectError,
+  GrantUncheckedError,
   GrantNotRecordedError,
   metaTxTargetFor,
   PENDING_GRANT_HOLD_MS,
@@ -401,21 +403,54 @@ describe("an exact grant that may still land", () => {
     expect({ signed: signed(), posts: relay.posts.length }).toEqual(before);
   });
 
-  it("a successful receipt with the nonce passed but the allowance short (another call took the nonce) waits, and the next try approves anew", async () => {
+  it.each(SENDS)("%s whose receipt succeeds with its nonce passed but the allowance short (another call took the nonce) didn't take effect: the record goes, and the next try approves anew", async (_, lost) => {
     const { chain, relay, ctx, signed } = rail("fail-after-send");
+    if (lost !== null) await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: lost })).rejects.toBeInstanceOf(AuthorizationPendingError);
     relay.state.mode = "ok";
     const fetchImpl = (async () => {
       chain.receipts.set(FOREIGN, "success");
       chain.nonces.set(nonceKey, 1n);
       return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
     }) as unknown as typeof fetch;
-    await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      // Not "still confirming": nothing recorded is left to land, so trying again is what helps.
+      await expect(setAuthorization({ ...ctx, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(GrantNotInEffectError);
+    } finally {
+      clock.mockRestore();
+    }
     // Nonce 0 is spent, so that approve can never run: its record goes, and the allowance says no.
     expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
     expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(false);
+    const before = signed().length;
+    await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
+    expect(signed().slice(before)).toEqual(["1"]);
+    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(true);
+  });
+
+  it("a grant past its nonce whose allowance can't then be read says it couldn't be checked, not that it didn't take effect", async () => {
+    const { chain, relay, ctx, signed } = rail("fail-after-send");
+    relay.state.mode = "ok";
+    let down = false;
+    const reader: ChainReader = {
+      ...chain,
+      call: async (chainId, to, data) => {
+        if (down && data.startsWith("0xdd62ed3e")) throw new Error("upstream unavailable");
+        return chain.call(chainId, to, data);
+      },
+    };
+    // That hash succeeded and nonce 0 is spent; the allowance read that follows fails.
+    const fetchImpl = (async () => {
+      chain.receipts.set(FOREIGN, "success");
+      chain.nonces.set(nonceKey, 1n);
+      down = true;
+      return new Response(JSON.stringify({ ok: true, txHash: FOREIGN }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(setAuthorization({ ...ctx, reader, fetchImpl, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(GrantUncheckedError);
+    expect(readPendingGrant(allowance, BOOK.buyer)).toBeNull();
+    // Read again, it is short: a new approve is signed at the next nonce.
     await setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP });
     expect(signed()).toEqual(["0", "1"]);
-    expect(await exactAllowanceReady(allowance, BOOK.buyer, GAP, ctx.reader)).toBe(true);
   });
 
   it("a successful receipt whose nonce can't be read keeps its record: no answer is no proof", async () => {
@@ -599,6 +634,27 @@ describe("an exact grant that may still land", () => {
     await setAuthorization({ ...ctx, live: () => true, auth: allowance, active: true, amount: 1n });
     expect(relay.posts.map((p) => relayedApproval(p)?.amount)).toEqual([1n]);
     expect(signed()).toEqual(["0", "0"]);
+  });
+
+  it("a replacement cancelled while the wallet signs it leaves the approve it was to replace recorded as it was, and sends nothing", async () => {
+    const { relay, wallet, ctx } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const replaced = readPendingGrant(allowance, BOOK.buyer)!;
+    relay.state.mode = "ok";
+    let live = true;
+    const signer = signingLater(wallet);
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      const pending = setAuthorization({ ...ctx, provider: signer.provider, live: () => live, auth: allowance, active: true, amount: 1n });
+      await vi.waitFor(() => expect(signer.asked()).toBe(1));
+      live = false;
+      signer.sign();
+      await expect(pending).rejects.toBeInstanceOf(GrantCancelledError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(replaced);
+    expect(relay.posts).toHaveLength(1);
   });
 
   it("a cancelled purchase sends no recorded approve again, nor a replacement: the record stays as it was", async () => {

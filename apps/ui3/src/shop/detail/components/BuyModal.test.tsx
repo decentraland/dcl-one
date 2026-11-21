@@ -1,7 +1,7 @@
 // Buy now's dialog over the cart's own fakes (checkout/demo): the screens upstream's BuyModal shows, and that the
 // purchase goes through the cart's checkout without ever touching the buyer's cart.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
 
@@ -12,6 +12,7 @@ import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, relayedApproval, type FakeHandlers } from "../../checkout/fakes";
+import { evmAddress } from "@shop/model/address";
 import { CHAIN } from "@shop/model/chain";
 import { usdCents } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
@@ -40,6 +41,8 @@ type Opts = {
   onResumeUsed?: () => void;
   /** When the server quoted the offer the page showed (epoch ms); the fixture's is long ago. */
   seenAt?: number;
+  /** More pages the dialog may lead to. */
+  routes?: Record<string, ReactNode>;
 };
 
 function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
@@ -55,7 +58,7 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   let closed = 0;
   const resume = opts.resume ? { account: opts.resume.account ?? BOOK.buyer.toLowerCase(), lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
   const dialog = (
-    <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p> }}>
+    <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p>, ...opts.routes }}>
       <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={opts.onResumeUsed} onClose={() => (closed += 1)} />
     </DemoShell>
   );
@@ -500,6 +503,32 @@ describe("Buy now's dialog", () => {
     expect(authorizations(demo)).toHaveLength(1);
   });
 
+  it("a split held back by another item's purchase names that item, with a link to its page, and asks for nothing", async () => {
+    const { demo, line } = renderBuy(
+      { session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } },
+      { tweak: holdMana(2n * 10n ** 18n), routes: { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> } },
+    );
+    // Another item's split, from another tab, its credit still spendable.
+    const other = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ab".repeat(20)}`) });
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${other}`,
+      JSON.stringify({ at: Date.now(), attempt: "another", txHash: null, chainId: 137, creditId: `0x${"0f".repeat(32)}`, creditExpiresAt: Math.floor(Date.now() / 1000) + 300, itemName: "Neon Visor" }),
+    );
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    expect(await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("Your purchase of Neon Visor with Credits and MANA is still confirming.");
+    const itemId = line.asset.token.kind === "item" ? line.asset.token.itemId : "";
+    expect(within(dialog).getByTestId("buy-error-link")).toHaveTextContent("Open Neon Visor");
+    expect(within(dialog).getByTestId("buy-error-link")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+    // It opens that page within the Shop.
+    await act(async () => fireEvent.click(within(dialog).getByTestId("buy-error-link")));
+    expect(await screen.findByText("THE OTHER ITEM'S PAGE")).toBeTruthy();
+  });
+
   it("during the split's MANA approval nothing closes the dialog: not Escape, not a close; only the approval's own Cancel", async () => {
     const { demo, closed } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
@@ -515,18 +544,36 @@ describe("Buy now's dialog", () => {
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
-  it("an approval that lands after the dialog is gone buys nothing", async () => {
+  it("an approval signed after the dialog is gone is neither recorded nor sent, and nothing is bought", async () => {
     const { demo, unmount } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
     const dialog = await settledDialog();
     const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
+    // The wallet holds its signature until the dialog is gone.
+    let sign!: () => void;
+    const signing = new Promise<void>((resolve) => (sign = resolve));
+    const request = demo.wallet.request.bind(demo.wallet);
+    let asked = 0;
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method === "eth_signTypedData_v4") {
+        asked++;
+        await signing;
+      }
+      return request(args);
+    }) as typeof demo.wallet.request;
     await act(async () => fireEvent.click(confirm));
     fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 5000 });
     unmount();
-    // The approval lands after the dialog is gone: the allowance is granted on chain, and nothing goes on to buy.
+    // The wallet signs once the dialog is gone: that approval goes no further, and no grant is left to reconcile.
+    await act(async () => {
+      sign();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
     const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
-    await waitFor(() => expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBeGreaterThan(0n), { timeout: 5000 });
-    await act(async () => {});
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([]);
+    expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBe(0n);
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("dcl-shop-exact-grant:"))).toEqual([]);
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
@@ -614,6 +661,31 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(within(pending).getByRole("button", { name: "Check again" })));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
     expect(readSplitHold(BOOK.buyer, lineId)).toBeNull();
+  });
+
+  it("a split that provably sent nothing, whose record the storage keeps, says what happened beside the notice: never that it is still being confirmed", async () => {
+    const { demo } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    // The relay refuses it as not sent, and the buyer declines it in the wallet: nothing left.
+    demo.relay.state.mode = "refuse";
+    demo.wallet.next = "reject";
+    const removeItem = Storage.prototype.removeItem;
+    const stuck = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key: string) {
+      if (!key.startsWith("dcl-shop-buynow-split:")) return removeItem.call(this, key);
+    });
+    try {
+      const dialog = await settledDialog();
+      const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+      await waitFor(() => expect(confirm).toBeEnabled());
+      await act(async () => fireEvent.click(confirm));
+      const pending = await within(screen.getByTestId("buy-modal")).findByTestId("buy-modal-pending", undefined, { timeout: 5000 });
+      expect(pending).toHaveTextContent("You cancelled the request in your wallet. Nothing was charged.");
+      expect(pending).not.toHaveTextContent("Your purchase is still being confirmed");
+      expect(screen.getByTestId("buy-modal-check-notice")).toHaveTextContent("This browser couldn't update its record of this purchase. Check again in a moment.");
+    } finally {
+      stuck.mockRestore();
+    }
   });
 
   it("Check again on a remembered split whose own bytes reverted keeps it held, no credit retired, until the node settles its credit", async () => {

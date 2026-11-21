@@ -10,7 +10,7 @@
 
 import { decodeFunctionData, keccak256, type Hex } from 'viem'
 import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
-import type { TxReceipt } from '../chain/rpc'
+import { defaultSleep, type TxReceipt } from '../chain/rpc'
 import { idToSalt } from './encoding'
 
 /**
@@ -50,19 +50,29 @@ export interface SplitSale {
   envelope?: Hex
   /** Its line in the hold the web Shop and /play share (shop/checkout/purchase/splitHold), and the attempt it wrote there. */
   hold?: { line: string; attempt: string }
+  /**
+   * When the issued credit stops being spendable (unix seconds), kept with its terms before anything was sent, so finding
+   * the sale out never depends on another record. None on a sale kept before it was: no expiry of its own to prove.
+   */
+  creditExpiresAt?: number
 }
 
 /**
  * - `bought`: a mined, successful execution of exactly this purchase;
  * - `reverted`: the very bytes this purchase dispatched (`SplitSale.envelope`), mined and reverted: that invocation failed
- *   (the same execution may still run in another transaction: what the node's record of the credit says comes first);
- * - `other`: a useCredits this page can read that is provably not this purchase: another sender, another credit, or this
- *   credit with other terms (another venue, function, call, share or gap);
+ *   (the same execution may still run in another transaction: what the node's record of the credit says comes first).
+ *   Only the in-world Shop acts on it (an own revert there waits on the node's record by name); the web Shop's
+ *   `settleSplitHold` holds it as it holds `unknown`. The envelope is kept on both surfaces so that both can tell it;
+ * - `other`: the buyer's useCredits spending this very credit, alone or in a batch, on other terms (another venue,
+ *   function, call, share or gap), mined and successful: the credit went into another purchase;
+ * - `foreign`: provably not this purchase (its hash is no sale's own), and nothing of where this credit went: a useCredits
+ *   by another account or of other credits (a record that points at it is wrong, not proof), or the buyer's call of this
+ *   credit on other terms that isn't seen to succeed (reverted, it spent nothing; not mined yet, it proves nothing);
  * - `unknown`: nothing that says either way: no transaction or receipt yet, a read that failed, a transaction whose
  *   wrapper or target this page can't read (its destination alone says nothing about where the credit went), or a revert
  *   of these terms in bytes other than the ones dispatched (or with none kept to compare).
  */
-export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'unknown'
+export type SplitOutcome = 'bought' | 'reverted' | 'other' | 'foreign' | 'unknown'
 
 const lower = (v: unknown): string => (typeof v === 'string' ? v.toLowerCase() : '')
 
@@ -91,16 +101,19 @@ export function isSplitSale(v: unknown): v is SplitSale {
     hex(s.callData) &&
     (s.envelope === undefined || (typeof s.envelope === 'string' && /^0x[0-9a-fA-F]{64}$/.test(s.envelope))) &&
     (s.hold === undefined ||
-      (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string'))
+      (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string')) &&
+    (s.creditExpiresAt === undefined || (typeof s.creditExpiresAt === 'number' && Number.isSafeInteger(s.creditExpiresAt)))
   )
 }
 
 /**
  * What `tx` says of the sale: `match` (the buyer's useCredits at the sale's manager carrying exactly its terms, relayed or
- * sent by the buyer's own wallet), `other` (a readable useCredits that provably isn't it) or `unreadable` (another target
- * or wrapper, calldata this page can't decode, or a direct call whose sender the reader didn't give).
+ * sent by the buyer's own wallet), `other` (the buyer's useCredits spending this very credit, alone or in a batch, on
+ * other terms: the credit went into something else), `foreign` (a useCredits by another account or of other credits: not
+ * this sale, and nothing of where its credit went) or `unreadable` (another target or wrapper, calldata this page can't
+ * decode, or a direct call whose sender the reader didn't give).
  */
-export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'other' | 'unreadable' {
+export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'other' | 'foreign' | 'unreadable' {
   if (lower(tx.to) !== lower(sale.manager)) return 'unreadable'
   let user: string
   let inner: Hex
@@ -123,14 +136,14 @@ export function readSale(tx: SplitTransaction, sale: SplitSale): 'match' | 'othe
   } catch {
     return 'unreadable'
   }
+  const salt = lower(idToSalt(sale.creditId))
+  if (lower(user) !== lower(sale.buyer) || !args.credits.some((c) => lower(c.salt) === salt)) return 'foreign'
   const creditWei = BigInt(sale.creditWei)
   const call = args.externalCall
   const [credit] = args.credits
   const same =
-    lower(user) === lower(sale.buyer) &&
     args.credits.length === 1 &&
     credit !== undefined &&
-    lower(credit.salt) === lower(idToSalt(sale.creditId)) &&
     credit.value === creditWei &&
     args.maxCreditedValue === creditWei &&
     args.maxUncreditedValue === BigInt(sale.gapWei) &&
@@ -146,8 +159,20 @@ export function carriesSale(tx: SplitTransaction, sale: SplitSale): boolean {
   return readSale(tx, sale) === 'match'
 }
 
-/** What the transaction at `hash` says about the sale (see SplitOutcome). A read that fails is `unknown`, never `other`. */
-export async function splitExecution(evidence: SplitEvidenceReader, sale: SplitSale, hash: string): Promise<SplitOutcome> {
+/** How long the one second look at a transaction waits, when its receipt is read and the transaction itself isn't yet. */
+export const SPLIT_TX_RETRY_MS = 1_000
+
+/**
+ * What the transaction at `hash` says about the sale (see SplitOutcome). A read that fails is `unknown`, never `other`. A
+ * node that serves a receipt a moment before the transaction it is for gets one more look, `SPLIT_TX_RETRY_MS` later
+ * (`sleep` stands in for the wait in tests), so a mined purchase isn't left confirming for that alone.
+ */
+export async function splitExecution(
+  evidence: SplitEvidenceReader,
+  sale: SplitSale,
+  hash: string,
+  opts: { sleep?: (ms: number) => Promise<void> } = {}
+): Promise<SplitOutcome> {
   let receipt: TxReceipt | null
   let tx: SplitTransaction | null
   try {
@@ -155,10 +180,17 @@ export async function splitExecution(evidence: SplitEvidenceReader, sale: SplitS
   } catch {
     return 'unknown'
   }
+  if (!tx && receipt) {
+    await (opts.sleep ?? defaultSleep)(SPLIT_TX_RETRY_MS)
+    tx = await evidence.transaction(sale.chainId, hash).catch(() => null)
+  }
   if (!tx) return 'unknown'
   const read = readSale(tx, sale)
   if (read === 'unreadable') return 'unknown'
-  if (read === 'other') return 'other'
+  if (read === 'foreign') return 'foreign'
+  // Its credit spent on another purchase needs that call to have run: a receipt that it succeeded. Without one, it is only
+  // not this sale.
+  if (read === 'other') return receipt?.status === 'success' ? 'other' : 'foreign'
   if (!receipt) return 'unknown'
   // A success carrying the terms is the purchase, whatever bytes carried it; a revert is only that invocation's.
   if (receipt.status === 'success') return 'bought'
