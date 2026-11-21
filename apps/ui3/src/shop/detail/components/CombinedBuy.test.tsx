@@ -1589,6 +1589,47 @@ describe("a split whose outcome is not known", () => {
   });
 
   it.each([
+    ["disconnects while both are out, the session staying", true],
+    ["says nothing while both are out", false],
+  ] as const)("when the wallet %s, its account read on opening and at the click (both seeing the buyer, answered late) decide accordingly", async (_, disconnects) => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // Each account read is answered as the wallet stood when it was asked, and only once the test lets it through.
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    // The page's own read on opening, and the purchase's at the click: both asked while the wallet was on the buyer.
+    await waitFor(() => expect(late).toHaveLength(2));
+    if (disconnects) act(() => demo.wallet.emit("accountsChanged", []));
+    await act(async () => {
+      for (const answer of late) answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    if (disconnects) {
+      // The disconnect wins over both answers, asked before it: no Approve, nothing signed, sent or authorized.
+      expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+      expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+      expect(signatures(demo)).toBe(0);
+      expect(demo.relay.posts).toHaveLength(0);
+      expect(authorizations(demo)).toBe(0);
+      expect([...locks.held]).toEqual([]);
+      return;
+    }
+    // Nothing said in between: the late answer is the buyer's, and the purchase goes on as a click at once does.
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(demo.relay.posts).toHaveLength(2), { timeout: 5000 });
+    expect(authorizations(demo)).toBe(1);
+  });
+
+  it.each([
     ["the wallet moves to another account", "wallet"],
     ["the session and its wallet both move to another account", "session"],
     ["the wallet disconnects, the session staying", "disconnect"],

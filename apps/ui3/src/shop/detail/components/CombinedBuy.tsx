@@ -76,6 +76,7 @@ import { itemRoute, tokenRoute } from "../../discovery/lib/routes";
 import { formatMana } from "@shop/model/money";
 import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
 import type { MixedPayment } from "@shop/payment/present";
+import { subscribeWallet } from "../../wallet/chain";
 import { useShopWallet } from "../../wallet/context";
 import "./legacyorderbuy.css";
 
@@ -342,6 +343,18 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   // A run that proved it sent nothing, whose record the storage kept: its attempt, and the outcome shown once it clears.
   const [unsent, setUnsent] = useState<{ attempt: string; message: string } | null>(null);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
+  // Each time the wallet has said its accounts changed while this dialog is open: an account read asked before the latest
+  // of them is stale, so a wallet gone (or moved) since is never read back as the buyer's.
+  const accountChanges = useRef(0);
+  useEffect(
+    () =>
+      subscribeWallet(provider, {
+        onAccountsChanged: () => {
+          accountChanges.current += 1;
+        },
+      }),
+    [provider],
+  );
   const busy = phase.kind === "working";
   const blocked = !provider || !wallet.account ? NO_WALLET_ACCOUNT : wallet.accountMismatch ? OTHER_WALLET_ACCOUNT : null;
 
@@ -406,10 +419,12 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     // Each is read again where it counts: under the approval's lock, and once the sale holds it.
     setPhase({ kind: "working" });
     // The wallet's active account signs the approval and the sale: it must be this buyer's. Asked of the wallet when the
-    // page hasn't heard it yet; none, or another, and nothing is asked.
+    // page hasn't heard it yet; none, or another, and nothing is asked. An answer asked before the wallet said its accounts
+    // changed (a disconnect among them) counts for nothing: what the wallet said since stands.
     if (activeAccount.current === null) {
+      const asked = accountChanges.current;
       const accounts = (await ctx.provider.request({ method: "eth_accounts" }).catch(() => [])) as string[] | undefined;
-      activeAccount.current ??= accounts?.[0]?.toLowerCase() || null;
+      if (accountChanges.current === asked) activeAccount.current ??= accounts?.[0]?.toLowerCase() || null;
     }
     if (activeAccount.current?.toLowerCase() !== ctx.buyer.toLowerCase()) {
       setPhase({ kind: "error", message: activeAccount.current ? OTHER_WALLET_ACCOUNT : NO_WALLET_ACCOUNT });
