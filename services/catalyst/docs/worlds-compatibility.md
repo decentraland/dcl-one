@@ -141,6 +141,16 @@ difference not listed here is a gap, not a decision.
   Mirrored worlds keep the suffix. The comms mints (`/worlds/<name>/comms`,
   `/get-comms-adapter/world-<name>`) take the stripped name for the
   `.dcl.eth` world when no world is stored under the bare label.
+  `/get-scene-adapter` takes it for that world's active scene when the
+  signed `sceneId` equals the signed `realmName` (the Unity explorer signs
+  a realm without a scene manifest this way, and no realm URL) and the
+  active scene was published here. `REALM_NAME`, the preview realm names
+  and a realm name signed beside a scene id keep their shared room.
+  A scene's signed request with the stripped name stands in that world when
+  the signed realm host is the realm URL (`<host>/world/<name>.dcl.eth`, the
+  web Explorer) or `worlds-content-server.<domain>` alone, with or without
+  a scheme and a trailing `/` (the Unity client); this node's `REALM_NAME`
+  signed there keeps its shared reading.
 - **Owner admission.** The owner is the name authority's current holder,
   memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
   one minute). It is asked only when the world's access setting refuses,
@@ -193,6 +203,11 @@ difference not listed here is a gap, not a decision.
   signed-login adapter.
 - **LiveKit only.** The comms adapter is always LiveKit; there is no
   ws-room mode and no `COMMS_ADAPTER` / `COMMS_FIXED_ADAPTER` setting.
+- **`place_id` on `GET /scene-admin`.** The signed scene names the place for
+  a scene and for the authoritative server, as upstream. A `place_id` query
+  (upstream reads none) must name that scene, by its entity id or by the key
+  of its place; another value answers 400. A signed scene that is not
+  deployed answers 400 and a resolver fault 503, never an empty list.
 - **Ban, deny-list and capacity on `/get-comms-adapter`.** The adapter route
   applies the same platform-ban, deny-list and capacity checks as the world
   comms mint.
@@ -496,7 +511,15 @@ difference not listed here is a gap, not a decision.
 - **Settings superset.** `GET`/`PUT /world/{name}/settings` also carry
   `realm_name_override` and `preview_wearable_urns` (always present, `null`
   or a list), and the PUT form accepts both; `preview_wearable_urns` may
-  repeat, like `categories`.
+  repeat, like `categories`. A `realm_name_override` that names another
+  world with a scene on this node answers 400: its label (read as
+  `<label>.dcl.eth` beside the worlds host) or its full `.eth` name, in any
+  case. The gatekeeper reads a signed realm name as the world it names, so
+  the override would seat this world's visitors in that world's room. Any
+  other override is accepted, and so is the world's own name. `/about` makes
+  the same check each time it answers: an override whose world was deployed
+  here after it was saved is not advertised, and `realmName` falls back to
+  the world's own name.
 - **Settings uploads.** `spawn_coordinates` must be two integers (spaces
   around them allowed); upstream's `parseInt` also takes `5abc,3` or
   `5.9,3` and stores them as sent. The form must be `multipart/form-data`

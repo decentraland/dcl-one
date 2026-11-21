@@ -54,88 +54,123 @@ describe('buildView with strokes', () => {
   })
 
   describe('when a frame has an inside gradient stroke', () => {
-    it('should draw a gradient ring overlay instead of a solid box-shadow', () => {
-      const view = buildView(
-        card({ strokes: [CERISE], strokeWeight: 4, strokeAlign: 'INSIDE' }),
-        env
-      )
+    let view: ReturnType<typeof buildView>
 
-      expect(decl(view.css.decls, 'box-shadow')).toBeUndefined()
-      expect(decl(view.css.decls, 'position')).toBe('relative')
-      expect(view.css.after).toEqual(
-        expect.arrayContaining([
-          ['content', "''"],
-          ['position', 'absolute'],
-          ['inset', '0'],
-          ['border-width', '4px 4px 4px 4px'],
-          ['border-radius', 'inherit'],
-          ['background', 'linear-gradient(180deg, #ff2d55 0%, #c640cd 100%) border-box'],
-          ['mask-composite', 'exclude'],
-          ['opacity', '1']
-        ])
-      )
+    describe('and its stops are literal', () => {
+      beforeEach(() => {
+        view = buildView(card({ strokes: [CERISE], strokeWeight: 4, strokeAlign: 'INSIDE' }), env)
+      })
+
+      it('should not draw a solid box-shadow', () => {
+        expect(decl(view.css.decls, 'box-shadow')).toBeUndefined()
+      })
+
+      it('should position the frame for the overlay', () => {
+        expect(decl(view.css.decls, 'position')).toBe('relative')
+      })
+
+      it('should draw a gradient ring overlay', () => {
+        expect(view.css.after).toEqual(
+          expect.arrayContaining([
+            ['content', "''"],
+            ['position', 'absolute'],
+            ['inset', '0'],
+            ['border-width', '4px 4px 4px 4px'],
+            ['border-radius', 'inherit'],
+            ['background', 'linear-gradient(180deg, #ff2d55 0%, #c640cd 100%) border-box'],
+            ['mask-composite', 'exclude'],
+            ['opacity', '1']
+          ])
+        )
+      })
     })
 
-    it('should reference the variables of bound stops and keep literal stops literal', () => {
-      const bound: RawPaint = {
-        ...CERISE,
-        stops: [
-          { position: 0, hex: '#ff2d55', alpha: 1, token: 'Primitives/Brand/Ruby' },
-          { position: 1, hex: '#c640cd', alpha: 1 }
-        ]
-      }
+    describe('and a stop is bound to a variable', () => {
+      let bound: RawPaint
 
-      const view = buildView(
-        card({ strokes: [bound], strokeWeight: 4, strokeAlign: 'INSIDE' }),
-        env
-      )
+      beforeEach(() => {
+        bound = {
+          ...CERISE,
+          stops: [
+            { position: 0, hex: '#ff2d55', alpha: 1, token: 'Primitives/Brand/Ruby' },
+            { position: 1, hex: '#c640cd', alpha: 1 }
+          ]
+        }
+        view = buildView(card({ strokes: [bound], strokeWeight: 4, strokeAlign: 'INSIDE' }), env)
+      })
 
-      expect(decl(view.css.after, 'background')).toBe(
-        'linear-gradient(180deg, var(Primitives/Brand/Ruby) 0%, #c640cd 100%) border-box'
-      )
+      it('should reference the variables of bound stops and keep literal stops literal', () => {
+        expect(decl(view.css.after, 'background')).toBe(
+          'linear-gradient(180deg, var(Primitives/Brand/Ruby) 0%, #c640cd 100%) border-box'
+        )
+      })
     })
 
-    it('should map a diagonal gradient onto the CSS gradient line of a non-square box', () => {
-      // A diagonal gradient across a 200 x 100 box: it runs down-right and its line spans the box.
-      const diagonal: RawPaint = {
-        ...CERISE,
-        transform: [
-          [0.5, 0.5, 0],
-          [-0.5, 0.5, 0.5]
-        ]
-      }
+    describe('and the gradient runs diagonally across a non-square box', () => {
+      let diagonal: RawPaint
 
-      const view = buildView(
-        card({ w: 200, h: 100, strokes: [diagonal], strokeWeight: 2, strokeAlign: 'INSIDE' }),
-        env
-      )
+      beforeEach(() => {
+        // A diagonal gradient across a 200 x 100 box: it runs down-right and its line spans the box.
+        diagonal = {
+          ...CERISE,
+          transform: [
+            [0.5, 0.5, 0],
+            [-0.5, 0.5, 0.5]
+          ]
+        }
+        view = buildView(
+          card({ w: 200, h: 100, strokes: [diagonal], strokeWeight: 2, strokeAlign: 'INSIDE' }),
+          env
+        )
+      })
 
-      expect(decl(view.css.after, 'background')).toBe(
-        'linear-gradient(153.43deg, #ff2d55 0%, #c640cd 100%) border-box'
-      )
+      it('should map the gradient onto the CSS gradient line', () => {
+        expect(decl(view.css.after, 'background')).toBe(
+          'linear-gradient(153.43deg, #ff2d55 0%, #c640cd 100%) border-box'
+        )
+      })
     })
   })
 
   describe('when a stroke paint cannot be drawn', () => {
-    it.each([
+    let view: ReturnType<typeof buildView>
+
+    describe.each([
       ['a radial gradient', { ...CERISE, type: 'GRADIENT_RADIAL' }],
       ['an image', { type: 'IMAGE', imageRef: 'photo' }]
-    ])('should report %s stroke as manual work instead of drawing it black', (_, paint) => {
-      const view = buildView(card({ strokes: [paint as RawPaint], strokeWeight: 4 }), env)
+    ])('and the stroke is %s', (_, paint) => {
+      beforeEach(() => {
+        view = buildView(card({ strokes: [paint as RawPaint], strokeWeight: 4 }), env)
+      })
 
-      expect(decl(view.css.decls, 'box-shadow')).toBeUndefined()
-      expect(view.css.after).toBeUndefined()
-      expect([...env.report.manual].join('\n')).toContain('unsupported-stroke-paint:PlaceCard')
+      it('should not draw a box-shadow', () => {
+        expect(decl(view.css.decls, 'box-shadow')).toBeUndefined()
+      })
+
+      it('should not draw a ring overlay', () => {
+        expect(view.css.after).toBeUndefined()
+      })
+
+      it('should report the stroke as manual work instead of drawing it black', () => {
+        expect([...env.report.manual].join('\n')).toContain('unsupported-stroke-paint:PlaceCard')
+      })
     })
 
-    it('should report a solid paint without a colour instead of defaulting to black', () => {
-      const view = buildView(
-        card({ strokes: [{ type: 'SOLID' }], strokeWeight: 1, strokeAlign: 'INSIDE' }),
-        env
-      )
+    describe('and a solid paint has no colour', () => {
+      beforeEach(() => {
+        view = buildView(
+          card({ strokes: [{ type: 'SOLID' }], strokeWeight: 1, strokeAlign: 'INSIDE' }),
+          env
+        )
+      })
 
-      expect(decl(view.css.decls, 'box-shadow')).toBeUndefined()
-      expect([...env.report.manual].join('\n')).toContain('unresolved-paint:stroke')
+      it('should not draw a box-shadow', () => {
+        expect(decl(view.css.decls, 'box-shadow')).toBeUndefined()
+      })
+
+      it('should report the paint instead of defaulting to black', () => {
+        expect([...env.report.manual].join('\n')).toContain('unresolved-paint:stroke')
+      })
     })
   })
 
@@ -144,7 +179,7 @@ describe('buildView with strokes', () => {
       ['included', true, '12px 12px 12px 12px'],
       ['excluded', false, '8px 8px 8px 8px'],
       ['not captured', undefined, '8px 8px 8px 8px']
-    ])('should offset content by the padding when the stroke is %s', (_, included, padding) => {
+    ])('should offset content by the padding of a stroke that is %s', (_, included, padding) => {
       const view = buildView(
         card({
           strokes: [CERISE],
@@ -158,19 +193,28 @@ describe('buildView with strokes', () => {
       expect(decl(view.css.decls, 'padding')).toBe(padding)
     })
 
-    it('should report an outside stroke included in layout instead of guessing its geometry', () => {
-      const view = buildView(
-        card({
-          strokes: [CERISE],
-          strokeWeight: 4,
-          strokeAlign: 'OUTSIDE',
-          strokesIncludedInLayout: true
-        }),
-        env
-      )
+    describe('and an outside stroke is included in layout', () => {
+      let view: ReturnType<typeof buildView>
 
-      expect(decl(view.css.decls, 'padding')).toBe('8px 8px 8px 8px')
-      expect([...env.report.manual].join('\n')).toContain('unsupported-stroke-layout:PlaceCard')
+      beforeEach(() => {
+        view = buildView(
+          card({
+            strokes: [CERISE],
+            strokeWeight: 4,
+            strokeAlign: 'OUTSIDE',
+            strokesIncludedInLayout: true
+          }),
+          env
+        )
+      })
+
+      it('should keep the padding unchanged', () => {
+        expect(decl(view.css.decls, 'padding')).toBe('8px 8px 8px 8px')
+      })
+
+      it('should report the stroke instead of guessing its geometry', () => {
+        expect([...env.report.manual].join('\n')).toContain('unsupported-stroke-layout:PlaceCard')
+      })
     })
   })
 })
@@ -210,8 +254,10 @@ describe('PlaceCard horizontal rest and hover states', () => {
   })
 
   describe('when the live design keeps the outer box (rest pad 8; hover pad 4 plus an included 4px stroke)', () => {
-    it('should keep size and content offset and only fade the ring in', () => {
-      const { rest, rules } = statesOf(
+    let states: ReturnType<typeof statesOf>
+
+    beforeEach(() => {
+      states = statesOf(
         card({ layout: pad(8) }),
         card({
           layout: pad(4),
@@ -221,17 +267,30 @@ describe('PlaceCard horizontal rest and hover states', () => {
           strokesIncludedInLayout: true
         })
       )
+    })
 
-      expect(decl(rest.css.decls, 'padding')).toBe('8px 8px 8px 8px')
-      expect(decl(rest.css.decls, 'position')).toBe('relative')
-      expect(decl(rest.css.after, 'opacity')).toBe('0')
-      expect(rules).toEqual([{ path: [], decls: [], after: [['opacity', '1']] }])
+    it('should keep the content offset at rest', () => {
+      expect(decl(states.rest.css.decls, 'padding')).toBe('8px 8px 8px 8px')
+    })
+
+    it('should position the rest box for the ring overlay', () => {
+      expect(decl(states.rest.css.decls, 'position')).toBe('relative')
+    })
+
+    it('should hide the ring at rest', () => {
+      expect(decl(states.rest.css.after, 'opacity')).toBe('0')
+    })
+
+    it('should keep size and content offset and only fade the ring in', () => {
+      expect(states.rules).toEqual([{ path: [], decls: [], after: [['opacity', '1']] }])
     })
   })
 
   describe('when the saved capture grows the hover by its stroke (pad 7 at rest and on hover)', () => {
-    it('should reproduce Figma faithfully: content at 11 and an outer box 8px larger', () => {
-      const { rules } = statesOf(
+    let states: ReturnType<typeof statesOf>
+
+    beforeEach(() => {
+      states = statesOf(
         card({ w: 372, h: 134, layout: pad(7) }),
         card({
           w: 380,
@@ -243,8 +302,10 @@ describe('PlaceCard horizontal rest and hover states', () => {
           strokesIncludedInLayout: true
         })
       )
+    })
 
-      expect(rules).toEqual([
+    it('should reproduce Figma faithfully: content at 11 and an outer box 8px larger', () => {
+      expect(states.rules).toEqual([
         {
           path: [],
           decls: [
@@ -259,13 +320,17 @@ describe('PlaceCard horizontal rest and hover states', () => {
   })
 
   describe('when the ring is only in the rest state', () => {
-    it('should keep the ring in the hover state and fade it out', () => {
-      const { rules } = statesOf(
+    let states: ReturnType<typeof statesOf>
+
+    beforeEach(() => {
+      states = statesOf(
         card({ strokes: [CERISE], strokeWeight: 4, strokeAlign: 'INSIDE' }),
         card({})
       )
+    })
 
-      expect(rules).toEqual([{ path: [], decls: [], after: [['opacity', '0']] }])
+    it('should keep the ring in the hover state and fade it out', () => {
+      expect(states.rules).toEqual([{ path: [], decls: [], after: [['opacity', '0']] }])
     })
   })
 })

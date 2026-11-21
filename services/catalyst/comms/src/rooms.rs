@@ -100,12 +100,12 @@ pub fn worlds_service_world_room(world: &WorldName) -> String {
 /// key, not its character count; both keys may themselves contain colons.
 /// Preserve entity ID bytes: case-bearing hashes name distinct deployments.
 pub fn worlds_service_scene_room(world: &WorldName, scene: &SceneId) -> String {
-    format!(
-        "{SCENE_ROOM_PREFIX}{}:{}{}",
-        base36(world.key().len()),
-        world.key(),
-        encode_scene_v1(scene)
-    )
+    world_scene_room_prefix(world.key()) + &encode_scene_v1(scene)
+}
+
+/// What the scene rooms of the world with this key start with, and no other room.
+pub fn world_scene_room_prefix(world: &str) -> String {
+    format!("{SCENE_ROOM_PREFIX}{}:{world}", base36(world.len()))
 }
 
 /// Decode identity without granting deployment or participant authority.
@@ -276,6 +276,19 @@ pub struct ActiveDeployment {
     /// deployment; `false` for a mirrored world scene, which grants no host
     /// authority.
     pub local: bool,
+}
+
+impl ActiveDeployment {
+    /// The place this scene's explicit admins are granted on
+    /// (`social.scene_admins.place_id`): its storage scope, which a redeploy
+    /// of the same place keeps. A world scene without an identity has its
+    /// entity id alone.
+    pub fn place_key(&self) -> String {
+        self.namespace.as_ref().map_or_else(
+            || self.scene_id.as_str().to_owned(),
+            SceneNamespace::scene_namespace,
+        )
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

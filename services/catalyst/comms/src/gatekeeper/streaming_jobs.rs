@@ -29,15 +29,16 @@ pub fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
     for (name, interval, workflow) in [
         ("comms-streaming-ttl", 60, Workflow::Streaming),
         ("comms-streaming-key-expiry", 600, Workflow::Keys),
+        ("comms-streaming-key-recheck", 600, Workflow::Recheck),
         ("comms-streaming-cleanup", 60, Workflow::Cleanup),
     ] {
-        let state = state.clone();
+        let (state, cursor) = (state.clone(), Arc::new(std::sync::Mutex::default()));
         jobs.spawn_periodic_leased(
             name,
             PeriodicCfg::every(Duration::from_secs(interval))
                 .with_error_backoff(Duration::from_secs(600)),
             move |ctx| {
-                let state = state.clone();
+                let (state, cursor) = (state.clone(), cursor.clone());
                 async move {
                     if !state.livekit.configured {
                         return Ok(());
@@ -49,6 +50,13 @@ pub fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
                                     .await
                             }
                             Workflow::Keys => expire_keys(&state).await,
+                            // A minter can lose the place with no event here: a
+                            // LAND or NAME transfer, a world permission edit.
+                            Workflow::Recheck => {
+                                let page = super::cast::Keys::After(&cursor);
+                                super::cast::recheck_keys(&state, page).await;
+                                Ok(())
+                            }
                             Workflow::Cleanup => drain_cleanup(&state).await,
                         }
                     })
@@ -59,12 +67,31 @@ pub fn spawn_jobs(state: &Arc<CommsState>, jobs: &Jobs) {
             },
         );
     }
+    // Stale keys at once: the writes PostgreSQL announces. The recheck job
+    // above stays for the notifications no session received.
+    let state = state.clone();
+    jobs.spawn_leased("comms-streaming-key-listener", move |ctx| {
+        let state = state.clone();
+        async move {
+            if state.livekit.configured {
+                let state = &state;
+                let check =
+                    |wake: String| async move { super::cast::recheck_notified(state, &wake).await };
+                tokio::select! {
+                    _ = ctx.cancel.cancelled() => {}
+                    _ = super::cast::listen(&state.pool, check) => {}
+                }
+            }
+            Ok(())
+        }
+    });
 }
 
 #[derive(Clone, Copy)]
 enum Workflow {
     Streaming,
     Keys,
+    Recheck,
     Cleanup,
 }
 
@@ -104,12 +131,14 @@ pub(super) enum CleanupCommand {
     Revoke,
     KeyExpiry,
     DurationExpiry,
+    /// The place left the catalogue: the removal tells the owner.
+    PlaceRemoval,
 }
 
 impl CleanupCommand {
     fn notification(self) -> Option<StreamingNotificationKind> {
         match self {
-            Self::IdleReplacement => None,
+            Self::IdleReplacement | Self::PlaceRemoval => None,
             Self::Reset => Some(StreamingNotificationKind::KeyReset),
             Self::Revoke => Some(StreamingNotificationKind::KeyRevoke),
             Self::KeyExpiry => Some(StreamingNotificationKind::KeyExpired),
@@ -239,7 +268,7 @@ fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> 
     }
 }
 
-async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
+pub(super) async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
     executor: E,
     id: Uuid,
     command: CleanupCommand,
@@ -396,11 +425,21 @@ const RESET_REPLACEMENT_GRACE: chrono::Duration = chrono::Duration::hours(1);
 /// Revokes first: the RTMP ingress is deleted (and `ingress_deleted`
 /// recorded) before anything else, so a room-service failure while evicting
 /// the WebRTC publishers never leaves the revoked key accepting RTMP. Eviction
-/// and the notification follow; either failing retries the row, which skips
-/// the ingress already deleted.
+/// and the notification follow, each also when the step before it failed (the
+/// key is refused since its intent was stored); a failure retries the row,
+/// which skips the ingress already deleted and tells the owner once.
 async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
+    // Each failure is logged here: the caller reports one of them.
+    let failed = |error: &ApiError| tracing::warn!(access_id = %row.access_id, %error, "stream cleanup step failed");
+    let ingress = delete_ingress(state, row, token).await.inspect_err(failed);
+    let evicted = evict_publishers(state, row).await.inspect_err(failed);
+    notify(state, row, token).await.and(ingress).and(evicted)
+}
+
+async fn delete_ingress(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
     if !row.ingress_deleted {
         if let Some(id) = row.ingress_id.as_deref().filter(|id| !id.is_empty()) {
+            // LiveKit answers when the ingress worker stopped the push.
             tokio::time::timeout(Duration::from_secs(5), state.ingress().delete_ingress(id))
                 .await
                 .map_err(|_| ApiError::internal("stream cleanup ingress timed out"))?
@@ -412,7 +451,10 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
             return Err(ApiError::internal("stream cleanup lease lost"));
         }
     }
-    evict_publishers(state, row).await?;
+    Ok(())
+}
+
+async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
     let Some(kind_str) = row.notification_kind.as_deref() else {
         return Ok(());
     };
@@ -507,6 +549,7 @@ async fn deliver(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), A
 struct Snapshot {
     id: Uuid,
     ingress_id: String,
+    streaming: bool,
     streaming_start_time: Option<NaiveDateTime>,
     streaming_state_version: i64,
     streaming_checked_at: Option<NaiveDateTime>,
@@ -515,27 +558,42 @@ struct Snapshot {
 impl Snapshot {
     fn eligible(&self, now: NaiveDateTime) -> bool {
         let (start, checked) = reconcile_bounds(now);
-        self.streaming_start_time.is_some_and(|at| at <= start)
+        (!self.streaming || self.streaming_start_time.is_some_and(|at| at <= start))
             && self.streaming_checked_at.is_none_or(|at| at <= checked)
     }
 }
 
-async fn reconcile(state: &CommsState) -> Result<(), ApiError> {
+/// Makes the `streaming` flag of the active credentials agree with LiveKit:
+/// a flag that is up with no stream comes down (a lost `ingress_ended`), and
+/// one that is down while the ingress publishes goes up (a lost
+/// `ingress_started`), so the four-hour cap and the renewal conflict hold
+/// for that stream. The streaming credentials are read first, then the idle
+/// ones, each kind with its own bound of 20 a pass and its own index.
+pub(super) async fn reconcile(state: &CommsState) -> Result<(), ApiError> {
+    for kind in ["streaming", "NOT streaming"] {
+        reconcile_kind(state, kind).await?;
+    }
+    Ok(())
+}
+
+async fn reconcile_kind(state: &CommsState, kind: &str) -> Result<(), ApiError> {
     let now = chrono::Utc::now().naive_utc();
     let (started_before, checked_before) = reconcile_bounds(now);
-    let rows: Vec<Snapshot> = sqlx::query_as("SELECT id,ingress_id,streaming_start_time,streaming_state_version,streaming_checked_at FROM social.scene_stream_access \
-        WHERE active AND streaming AND ingress_id IS NOT NULL AND ingress_id<>'' \
-        AND streaming_start_time<=$2 \
+    let rows: Vec<Snapshot> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT id,ingress_id,streaming,streaming_start_time,streaming_state_version,streaming_checked_at FROM social.scene_stream_access \
+        WHERE active AND {kind} AND ingress_id IS NOT NULL AND ingress_id<>'' \
+        AND (NOT streaming OR streaming_start_time<=$2) \
         AND (streaming_checked_at IS NULL OR streaming_checked_at<=$3) \
-        ORDER BY streaming_checked_at NULLS FIRST,id LIMIT $1")
+        ORDER BY streaming_checked_at NULLS FIRST,id LIMIT $1")))
         .bind(RECONCILE_BATCH).bind(started_before).bind(checked_before).fetch_all(&state.pool).await?;
     // At most 20 reads in groups of five; each group finishes before the next.
     for group in rows.chunks(5) {
         let results = futures::future::join_all(group.iter().map(|row| async {
             if !row.eligible(now) { return Ok(()); }
             let status = state.ingress().is_ingress_streaming(&row.ingress_id).await;
-            if matches!(status, Ok(Some(false))) {
+            if matches!(status, Ok(Some(false))) && row.streaming {
                 clear_stale(&state.pool,row,now).await?;
+            } else if matches!(status, Ok(Some(true))) && !row.streaming {
+                raise(&state.pool,row.id,row.streaming_state_version).await?;
             } else if let Err(error) = status {
                 tracing::warn!(access_id=%row.id,error=%error,"stream state reconciliation failed; flag preserved");
             }
@@ -549,6 +607,15 @@ async fn reconcile(state: &CommsState) -> Result<(), ApiError> {
         }
     }
     Ok(())
+}
+
+/// The flag of a credential whose ingress publishes goes up; the cap counts
+/// from now. False when the row changed since it was read.
+pub(super) async fn raise(pool: &PgPool, id: Uuid, version: i64) -> Result<bool, sqlx::Error> {
+    let raised = sqlx::query("UPDATE social.scene_stream_access SET streaming=true,streaming_start_time=timezone('UTC',now()),streaming_state_version=streaming_state_version+1 \
+        WHERE id=$1 AND active AND NOT streaming AND streaming_state_version=$2")
+        .bind(id).bind(version).execute(pool).await?;
+    Ok(raised.rows_affected() == 1)
 }
 
 async fn clear_stale(
@@ -719,6 +786,7 @@ mod tests {
         let mut row = Snapshot {
             id: Uuid::nil(),
             ingress_id: "IN_test".into(),
+            streaming: true,
             streaming_start_time: Some(now),
             streaming_state_version: 0,
             streaming_checked_at: None,
@@ -731,6 +799,9 @@ mod tests {
         assert!(row.eligible(now + chrono::Duration::seconds(180)));
         row.streaming_start_time = None;
         assert!(!row.eligible(now + chrono::Duration::hours(1)));
+        // A flag that is down has no settling window.
+        row.streaming = false;
+        assert!(row.eligible(now + chrono::Duration::hours(1)));
     }
 
     #[tokio::test]
@@ -874,6 +945,7 @@ mod tests {
         let mut snapshot = Snapshot {
             id: settling,
             ingress_id: "IN_settling".into(),
+            streaming: true,
             streaming_start_time: Some(now),
             streaming_state_version: 0,
             streaming_checked_at: None,

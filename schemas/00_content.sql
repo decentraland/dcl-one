@@ -317,7 +317,8 @@ CREATE INDEX pending_deployment_files_hash_idx ON content.pending_deployment_fil
 
 -- ── content: cache invalidation ────────────────────────────────────────────
 
--- Every new deployment row wakes the in-process entity cache listener.
+-- Every new deployment row is announced as `<entity type>:<entity id>`; the
+-- comms gatekeeper listens for the scenes (DATABASE.md "Stream key notifications").
 CREATE FUNCTION content.notify_new_deployment() RETURNS trigger AS $$
 BEGIN
     PERFORM pg_notify('new_deployment', NEW.entity_type || ':' || NEW.entity_id);

@@ -20,7 +20,8 @@ RTMP Ingress and Valkey, NATS and Pulse that outlive the shell and reload on edi
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 `.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
-monitor +9. The ingress takes the first free block 10000 above the base (`ingress_port`):
+monitor +9. Behind a [public origin](#serving-over-https) Pulse's ENet is UDP 7777 instead.
+The ingress takes the first free block 10000 above the base (`ingress_port`):
 Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
 saved port fails startup.
 
@@ -84,7 +85,7 @@ Status values:
 | Entry | Where | Owner | Exit criteria |
 | --- | --- | --- | --- |
 | Content peers `peer`, `peer-eu1` (`/content`: `/snapshots`, `/pointer-changes`, `/entities/active`, `/contents/{hash}`). `SYNC_SOURCE` (`DCL_PEERS` in `posture.rs`), `READ_THROUGH_ENABLED`, `SYNC_FROM_DAO`. Status: mirror | `services/catalyst/content/src/sync/`, `content/src/read_through.rs` | `@decentraland/apis` | No target yet: this is how the local content area is filled |
-| Chain RPC `rpc` (`/mainnet`, `/sepolia`, `/polygon`, `/amoy`, JSON-RPC). `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`. When unset, defaults to `rpc.decentraland.org/<chain>?project=catalyst-content` (`config/src/config.rs`, `default_rpc_urls`) under mirror or no posture. Status: production | `content/src/sync/worker.rs`, `content/src/validator/`, `land-authz/src/`, `shop/src/{evm,mana,market,coupons}/`, `builder/src/handlers/publication.rs`, `src/index.rs` | `@decentraland/apis` | No target yet |
+| Chain RPC `rpc` (`/mainnet`, `/sepolia`, `/polygon`, `/amoy`, JSON-RPC). `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`. When unset, defaults to `rpc.decentraland.org/<chain>?project=dcl-one` (`config/src/config.rs`, `default_rpc_urls`) under mirror or no posture. Status: production | `content/src/sync/worker.rs`, `content/src/validator/`, `land-authz/src/`, `shop/src/{evm,mana,market,coupons}/`, `builder/src/handlers/publication.rs`, `src/index.rs` | `@decentraland/apis` | No target yet |
 | RPC relay upstreams `rpc` (`RPC_UPSTREAM_{MAINNET,ETHEREUM,SEPOLIA,POLYGON,MATIC,AMOY}`); the OpenSea resolver's RPC legs reuse them. Status: mirror | `src/ops/rpc/routes.rs`, `explore/src/opensea.rs` | `@decentraland/apis` | No target yet |
 | Shop checkout RPC `rpc` (`/polygon`, `/mainnet`, `/amoy`, `/sepolia`). `DEFAULT_RPC`, overridden by `VITE_SHOP_RPC_*` (no deployment sets it), or in tests and local builds only by `window.__SHOP_CHAIN__.rpc` (`apps/ui3/src/shop/pageOverride.ts`). The market reader uses `rpc/amoy` only on Amoy. Status: production (browser) | `apps/ui3/src/shop/checkout/chain/config.ts`, `chain/rpc.ts`, `checkout/lib/authorizations.ts`; `apps/ui3/src/shop/market/lib/rpc.ts` | `@decentraland/web-applications` | Reads go through the node's relay (`${catalystBase()}/rpc/<network>`, as `apps/ui3/src/shop/land/evm.ts` already does), served by `services/catalyst/src/ops/rpc/` |
 | Feature flags `feature-flags` (`/dapps.json`, and `/builder.json` for the creators pages, Referer `FEATURE_FLAGS_ORIGIN`), read for the browser through `/internal/feature-flags`. Sites: `FEATURE_FLAGS_URL`, default `https://feature-flags.decentraland.org`. Shop browser fallback: `FLAGS_SERVICE`. Catalyst: `FF_URL`, `SHOP_FEATURE_FLAGS_URL` (mirror). Status: production | `apps/sites/src/data/lib/feature-flags.server.ts`, `auth/sign-in-flags.server.ts`; `library/shop/discovery/lib/rolloutFlags.ts`; `services/catalyst/social/src/communities/features.rs`, `shop/src/market/features.rs` | `@decentraland/web-applications`, `@decentraland/apis` | Sites and Shop read the node's `GET /feature-flags/<app>.json` (`services/catalyst/explore/src/api/feature_flags.rs`), which mirrors the document and applies local overrides |
@@ -99,6 +100,7 @@ Status values:
 | Explorer lists, flags and map: `dcl-lists` (`/pois`, `/banned-names`), `feature-flags` (`/explorer.json`), `api` (`/v2/tiles`, `/v2/tiles/info`). `EXPLORER_LISTS_SOURCE_URL`, `EXPLORER_FEATURE_FLAGS_SOURCE_URL`, `EXPLORER_MAP_SOURCE_URL`. Status: mirror | `explore/src/api/lists.rs`, `explore/src/api/feature_flags.rs`, `explore/src/api/map/mod.rs` | `@decentraland/apis` | No target yet |
 | Asset-bundle registry `asset-bundle-registry` (`/entities/{active,versions,status}`, `/worlds/{name}/manifest`, `/queues/status`). `EXPLORER_REGISTRY_SOURCE_URL`. Status: mirror | `explore/src/api/registry.rs` | `@decentraland/apis` | The local abgen runtime with native Registry state ([registry ADR](adr/2026-11-09-registry-local-catalyst.md)) |
 | Asset-bundle CDN `ab-cdn` (`/{key}`). `ABGEN_UPSTREAM_AB_CDN`. Status: mirror | `explore/src/api/ab_cdn.rs` | `@decentraland/apis` | Empty: every object comes from this node's cache and abgen (`config/src/explore.rs`) |
+| Imposter CDN `bevy-imposters.dclregenesislabs.xyz` (`/imposters/realms/{realm}/{level}/{x},{y}.{crc}.zip`). `BVIMPOSTERS_UPSTREAM_URL`, `BVIMPOSTERS_UPSTREAM_REALM`. Status: mirror | `explore/src/imposters/mod.rs` | `@decentraland/apis` | Temporary. Removed once bake-on-miss (`BVIMPOSTERS_BAKE_ENABLED`) runs with the `impost` renderer shipped in the node (#1711) |
 | Marketplace trades `marketplace-api` (`/v1/trades`, `/v1/trades/{id}`). `TRADES_SYNC_UPSTREAM_URL`. Status: mirror | `services/catalyst/shop/src/market/trades.rs` | `@decentraland/apis` | No target yet |
 | Subgraphs `subgraph` (`collections-ethereum-mainnet`, `collections-matic-mainnet`, `marketplace`, `land-manager`, `tpr-matic-mainnet`). `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL`, `MARKETPLACE_SUBGRAPH_URL`, `LAND_SUBGRAPH_URL`, `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` (not set in dev). Status: mirror | `chain-index/src/graph.rs`, `chain-index/src/land_graph.rs`, `builder/src/onchain.rs`, `shop/src/market/third_party.rs` | `@decentraland/apis` | LAND and permissions read the local land-authz and marketplace indexes once they are published (`config/src/shop.rs`); no target yet for collections and third-party registries |
 | NFT worker `nfts` (`/wallets/{owner}/networks/{network}/nfts`). `NFT_WORKER_BASE_URL`; mirror refuses to start without it. Status: mirror | `shop/src/market/third_party.rs` | `@decentraland/apis` | No target yet. When it is unset, holdings are read over JSON-RPC |
@@ -154,7 +156,10 @@ which the front cannot carry: the web Explorer dials the page's host on the
 origin's port (7743 when the origin names none), so Pulse listens there on every
 interface, presenting the given certificate and key (mkcert, or the front's
 own). Without them it presents its self-signed certificate for the host, and
-`status` prints the Chrome flags. `foundation-dev env` adds
+`status` prints the Chrome flags. Native clients (the desktop Explorer, the Unity
+client) dial ENet on UDP 7777 of `pulse-server.<base domain>`, so Pulse also
+listens there on every interface; point that name at the machine. `pulse_enet_port`
+in the settings moves it for a second stack on the machine. `foundation-dev env` adds
 `FOUNDATION_DEV_PUBLIC_URL`. The API trusts the forwarded client address from
 the front, its loopback peer (`HTTP_TRUSTED_PROXY_CIDRS`, see
 [the gateway](../infra/gateway/README.md)), so the `/contents` rate limit and the

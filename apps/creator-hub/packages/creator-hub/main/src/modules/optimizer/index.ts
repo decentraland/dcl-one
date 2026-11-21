@@ -1,6 +1,3 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { app } from 'electron';
 import log from 'electron-log/main';
 
 import {
@@ -14,6 +11,7 @@ import {
 
 import { MAIN_WINDOW_ID } from '../../mainWindow';
 import { StreamError, run as runBin } from '../bin';
+import { ensureWorkerPackage } from '../downloaded-tools';
 import { resolveNodeRuntime } from '../node-runtime';
 import { getWindow } from '../window';
 import { readManifest, revertFromManifest } from './backup';
@@ -66,31 +64,6 @@ export async function installTools(projectPath: string): Promise<OptimizeToolsIn
   return getToolsInfo();
 }
 
-// The worker bundle is copied out of the app on every run into a package under the tools dir:
-// real Node cannot execute a file inside the asar, and Node resolves `sharp` & co. by walking
-// up from the script's own directory, so living under <tools>/node_modules is what puts the
-// downloaded toolchain in scope. `npm ci` wipes node_modules, hence the copy is per run.
-async function ensureWorkerPackage(): Promise<void> {
-  const source = path.join(app.getAppPath(), 'main', 'dist', 'optimizer-worker.js');
-  const pkgDir = path.join(getToolsDir(), 'node_modules', ...WORKER_PKG.split('/'));
-  await fs.mkdir(pkgDir, { recursive: true });
-  await fs.copyFile(source, path.join(pkgDir, 'index.js'));
-  await fs.writeFile(
-    path.join(pkgDir, 'package.json'),
-    JSON.stringify(
-      {
-        name: WORKER_PKG,
-        version: app.getVersion(),
-        private: true,
-        type: 'module',
-        bin: { [WORKER_BIN]: 'index.js' },
-      },
-      null,
-      2,
-    ),
-  );
-}
-
 export function run(projectPath: string, options: OptimizeOptions): Promise<OptimizeResult> {
   return exclusive('start a run', () => runWorker(projectPath, options));
 }
@@ -114,7 +87,12 @@ function describeExit(exitError: Error, stderr: Buffer): string {
 async function runWorker(projectPath: string, options: OptimizeOptions): Promise<OptimizeResult> {
   const info = await getToolsInfo();
   if (info.status !== 'ready') throw new Error('The optimizer tools are not installed yet.');
-  await ensureWorkerPackage();
+  await ensureWorkerPackage({
+    toolsDir: getToolsDir(),
+    pkg: WORKER_PKG,
+    bin: WORKER_BIN,
+    bundle: 'optimizer-worker.js',
+  });
 
   // The toolchain is built for real Node's ABI. `resolveNodeRuntime` falls back to running the
   // script on Electron when no Node binary is found, and sharp has no prebuilt binary for that

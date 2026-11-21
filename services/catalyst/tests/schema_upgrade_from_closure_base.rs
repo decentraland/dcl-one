@@ -1563,6 +1563,28 @@ async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existi
     catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
         .await
         .expect("a fresh upgraded catalogue does not need a release conversion");
+    let notifications: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid \
+         WHERE f.oid = 'worlds.notify_world_authority'::regproc AND NOT t.tgisinternal",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        notifications, 5,
+        "the object pass adds the stream key triggers"
+    );
+    // The scene admin release runs after the migrate, which creates what it reads.
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/scene-admin-place-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_scene_admin_place_release(pool)
+        .await
+        .unwrap();
     // The previous main has the same schema version and throttle relation,
     // but not this additive queue. Only this test-owned database is changed.
     sqlx::query("DROP TABLE social.world_access_rechecks")

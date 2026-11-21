@@ -1,119 +1,110 @@
 import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BevyRealmExitEvent } from '/shared/types/ipc';
+import type { BevyRealmSupervisionEvent } from '/shared/types/ipc';
 
 const { editor } = await import('#preload');
-const { HEALTHY_UPTIME_MS, useBevyRealmRestart } = await import('./useBevyRealmRestart');
+const { useBevyRealmRestart } = await import('./useBevyRealmRestart');
 
 describe('useBevyRealmRestart', () => {
-  let emit: (event: BevyRealmExitEvent) => void;
+  let emit: (event: BevyRealmSupervisionEvent) => void;
   let unsubscribe: ReturnType<typeof vi.fn>;
-  let onRestart: ReturnType<typeof vi.fn>;
-  let onGiveUp: ReturnType<typeof vi.fn>;
-  let crash: (path: string, uptimeMs?: number) => void;
+  let handlers: {
+    onStopped: ReturnType<typeof vi.fn>;
+    onRestarting: ReturnType<typeof vi.fn>;
+    onRestarted: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     unsubscribe = vi.fn();
-    vi.mocked(editor.onBevyRealmExit).mockImplementation(callback => {
+    vi.mocked(editor.onBevyRealmSupervision).mockImplementation(callback => {
       emit = callback;
       return unsubscribe;
     });
-    onRestart = vi.fn();
-    onGiveUp = vi.fn();
-    crash = (path, uptimeMs = 1_000) => emit({ path, message: 'exited with code=1', uptimeMs });
+    handlers = { onStopped: vi.fn(), onRestarting: vi.fn(), onRestarted: vi.fn() };
   });
 
   describe('when the Bevy renderer is active for a project', () => {
-    describe('and another project’s realm exits', () => {
+    beforeEach(() => {
+      renderHook(() => useBevyRealmRestart('/scenes/demo', handlers));
+    });
+
+    describe('and main reports that its Multiplayer Server stopped', () => {
+      let event: BevyRealmSupervisionEvent;
+
       beforeEach(() => {
-        renderHook(() => useBevyRealmRestart('/scenes/demo', { onRestart, onGiveUp }));
-        crash('/scenes/other');
+        event = {
+          kind: 'stopped',
+          path: '/scenes/demo',
+          cause: 'server',
+          message: 'Multiplayer Server exited with code 1',
+          restartInMs: 1_000,
+        };
+        emit(event);
       });
 
-      it('should neither restart nor give up', () => {
-        expect([onRestart.mock.calls.length, onGiveUp.mock.calls.length]).toEqual([0, 0]);
+      it('should hand the event to onStopped', () => {
+        expect(handlers.onStopped).toHaveBeenCalledWith(event);
       });
     });
 
-    describe('and its realm exits 3 times', () => {
+    describe('and main starts replacing the realm', () => {
       beforeEach(() => {
-        renderHook(() => useBevyRealmRestart('/scenes/demo', { onRestart, onGiveUp }));
-        for (let i = 0; i < 3; i++) crash('/scenes/demo');
+        emit({ kind: 'restarting', path: '/scenes/demo' });
       });
 
-      it('should restart each time without giving up', () => {
-        expect([onRestart.mock.calls.length, onGiveUp.mock.calls.length]).toEqual([3, 0]);
+      it('should call onRestarting', () => {
+        expect(handlers.onRestarting).toHaveBeenCalledTimes(1);
       });
+    });
 
-      describe('and it exits again after serving for a healthy period', () => {
-        beforeEach(() => {
-          crash('/scenes/demo', HEALTHY_UPTIME_MS);
-        });
-
-        it('should restart with a fresh count instead of giving up', () => {
-          expect([onRestart.mock.calls.length, onGiveUp.mock.calls.length]).toEqual([4, 0]);
-        });
-
-        describe('and then crashes quickly 3 more times', () => {
-          beforeEach(() => {
-            for (let i = 0; i < 3; i++) crash('/scenes/demo');
-          });
-
-          it('should give up on the 3rd quick crash', () => {
-            expect([onRestart.mock.calls.length, onGiveUp.mock.calls.length]).toEqual([6, 1]);
-          });
+    describe('and the new realm serves', () => {
+      beforeEach(() => {
+        emit({
+          kind: 'restarted',
+          path: '/scenes/demo',
+          url: 'http://localhost:8005',
+          wsUrl: 'ws://localhost:8005/data-layer',
         });
       });
 
-      describe('and it exits a 4th time', () => {
-        beforeEach(() => {
-          crash('/scenes/demo');
-        });
-
-        it('should give up once instead of restarting', () => {
-          expect([onRestart.mock.calls.length, onGiveUp.mock.calls.length]).toEqual([3, 1]);
+      it('should hand its URLs to onRestarted', () => {
+        expect(handlers.onRestarted).toHaveBeenCalledWith({
+          url: 'http://localhost:8005',
+          wsUrl: 'ws://localhost:8005/data-layer',
         });
       });
     });
 
-    describe('and the project changes after 3 exits', () => {
+    describe('and another project’s realm is restarted', () => {
       beforeEach(() => {
-        const { rerender } = renderHook(
-          ({ path }) => useBevyRealmRestart(path, { onRestart, onGiveUp }),
-          { initialProps: { path: '/scenes/a' } },
-        );
-        for (let i = 0; i < 3; i++) crash('/scenes/a');
-        rerender({ path: '/scenes/b' });
-        crash('/scenes/b');
+        emit({ kind: 'restarting', path: '/scenes/other' });
       });
 
-      it('should restart the new project with a fresh count', () => {
-        expect([onRestart.mock.calls.length, onGiveUp.mock.calls.length]).toEqual([4, 0]);
+      it('should ignore it', () => {
+        expect(handlers.onRestarting).not.toHaveBeenCalled();
       });
     });
+  });
 
-    describe('and the hook unmounts', () => {
-      beforeEach(() => {
-        const { unmount } = renderHook(() =>
-          useBevyRealmRestart('/scenes/demo', { onRestart, onGiveUp }),
-        );
-        unmount();
-      });
+  describe('when the hook unmounts', () => {
+    beforeEach(() => {
+      const { unmount } = renderHook(() => useBevyRealmRestart('/scenes/demo', handlers));
+      unmount();
+    });
 
-      it('should unsubscribe', () => {
-        expect(unsubscribe).toHaveBeenCalled();
-      });
+    it('should unsubscribe', () => {
+      expect(unsubscribe).toHaveBeenCalled();
     });
   });
 
   describe('when the Bevy renderer is not active', () => {
     beforeEach(() => {
-      renderHook(() => useBevyRealmRestart(undefined, { onRestart, onGiveUp }));
+      renderHook(() => useBevyRealmRestart(undefined, handlers));
     });
 
     it('should not subscribe', () => {
-      expect(editor.onBevyRealmExit).not.toHaveBeenCalled();
+      expect(editor.onBevyRealmSupervision).not.toHaveBeenCalled();
     });
   });
 });

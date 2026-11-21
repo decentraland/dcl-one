@@ -4,12 +4,14 @@ import { createReadStream, existsSync, readFileSync, readdirSync, statSync } fro
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
-import { validateAliasObject } from "../ui3/vite.validate.js";
+import { validateAliasObject } from "../../library/web-core/validate/vite.mjs";
 
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+// The browser logic shared with ui3 (validation seam, auth signing, profile and notification views).
+const webCore = fileURLToPath(new URL("../../library/web-core", import.meta.url));
 // Decentraland's content hashes, which the creators code computes for the files and entities it publishes.
 const hashing = fileURLToPath(new URL("../../library/hashing/src/index.ts", import.meta.url));
 // Part of every cached item validation's key (data/lib/creators/validation/cache.ts).
@@ -293,7 +295,7 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core", "../../library/hashing"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core", "../../library/hashing", "../../library/web-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
@@ -303,6 +305,7 @@ export default defineConfig({
         "@ui": ui,
         "@catalyst-api": catalystApi,
         "@shop": shopCore,
+        "@web-core": webCore,
         "@dcl/hashing": hashing,
         "@hud-host": hudHost,
         "@shop-host": shopHost,
@@ -323,7 +326,7 @@ export default defineConfig({
       { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
     ],
-    dedupe: ["viem", "react", "react-dom", "zod"],
+    dedupe: ["viem", "react", "react-dom", "zod", "@walletconnect/sign-client"],
   },
   optimizeDeps: {
     include: ["@xstate/react", "xstate", "zod", "viem/accounts"],

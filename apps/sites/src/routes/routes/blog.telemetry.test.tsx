@@ -18,7 +18,7 @@ vi.hoisted(() => {
 
 const track = vi.hoisted(() => vi.fn());
 vi.mock("@/core/lib/telemetry/track", () => ({ track }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
 
 import { BlogIndexView } from "@/pages/blog/BlogIndexView";
 import { BlogPostView } from "@/pages/blog/BlogPostView";

@@ -519,7 +519,17 @@ pub async fn walk_together(
             return ends;
         }
     };
-    let target = chain_walk::target_block(safe, settings.stop_block(net));
+    let stop = settings.stop_block(net);
+    let target = chain_walk::target_block(safe, stop);
+    // Each member's first walk in this process marks its cursor's age, as a
+    // walk alone does once its head reads answered; a failed touch is tried
+    // again on the next pass.
+    for w in &walking {
+        let ix = &w.member.index;
+        if let Err(e) = chain_walk::touch_once(pool, ix.indexer(), net, w.expected.0, stop).await {
+            tracing::warn!(indexer = ix.indexer(), network = net.db_name(), error = %e, "marketplace chain index: could not mark a started walk");
+        }
+    }
     let anchor = (at_header.number, at_header.timestamp);
     for w in &mut walking {
         w.out.head = head;

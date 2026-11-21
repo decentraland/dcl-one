@@ -16,7 +16,7 @@ interface Common {
 // Renders a <button>, or — when `href` is given — an <a> styled identically, so links that need the
 // pill CTA reuse the primitive instead of re-rolling its CSS.
 type ButtonProps =
-  | (Common & React.ButtonHTMLAttributes<HTMLButtonElement> & { href?: undefined })
+  | (Common & React.ButtonHTMLAttributes<HTMLButtonElement> & { href?: undefined; ref?: React.Ref<HTMLButtonElement> })
   | (Common & React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string })
 
 const RADIUS = { md: 'radiusMd', button: 'radiusButton', pill: 'radiusPill' } as const

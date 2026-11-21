@@ -12,6 +12,7 @@ import {
   eventCreator,
   eventHref,
   eventPageShareUrl,
+  GENESIS_PLAZA,
   legacyEventsHref,
   liveNowItems,
   placeCreator,
@@ -48,13 +49,129 @@ describe("liveNowItems", () => {
   describe("when the live event's scene and the places are below the player threshold", () => {
     beforeEach(() => {
       data = {
-        events: [eventRecord({ live: true, x: 5, y: 5 })],
-        places: [placeRecord({ positions: ["5,5"], user_count: 4 })],
+        events: [eventRecord({ id: "quiet-event", live: true, x: 5, y: 5 })],
+        places: [placeRecord({ id: "quiet", positions: ["5,5"], user_count: 4 })],
       };
     });
 
     it("should leave out the live event and the quiet places", () => {
-      expect(liveNowItems(data)).toEqual([]);
+      expect(liveNowItems(data).map((item) => (item.kind === "event" ? item.event.id : item.place.id))).toEqual(["genesis-plaza"]);
+    });
+  });
+
+  describe("when no place reaches the player threshold", () => {
+    describe("and the feed has Genesis Plaza on parcel 0,0", () => {
+      let plaza: ReturnType<typeof placeRecord>;
+
+      beforeEach(() => {
+        plaza = placeRecord({ id: "plaza", title: "Genesis Plaza", positions: ["0,0"], user_count: 0 });
+        data = {
+          events: [eventRecord({ live: true, x: 5, y: 5 })],
+          places: [placeRecord({ id: "quiet", positions: ["5,5"], user_count: 2 }), plaza],
+        };
+      });
+
+      it("should still open the rail with it, with its real player count", () => {
+        expect(liveNowItems(data)).toEqual([{ kind: "place", place: plaza, users: 0, fallback: true }]);
+      });
+    });
+
+    describe("and the scene on parcel 0,0 has another title", () => {
+      beforeEach(() => {
+        data = { events: [], places: [placeRecord({ id: "spawn", title: "Spawn", positions: ["0,0", "0,1"], user_count: 1 })] };
+      });
+
+      it("should find Genesis Plaza by its parcel", () => {
+        expect(liveNowItems(data).map((item) => item.kind === "place" && item.place.id)).toEqual(["spawn"]);
+      });
+    });
+
+    describe("and another scene's title names Genesis Plaza", () => {
+      beforeEach(() => {
+        data = {
+          events: [],
+          places: [
+            placeRecord({ id: "afterparty", title: "Genesis Plaza Afterparty", positions: ["40,40"], user_count: 0 }),
+            placeRecord({ id: "spawn", title: "Spawn", positions: ["0,0"], user_count: 1 }),
+          ],
+        };
+      });
+
+      it("should take the scene on parcel 0,0", () => {
+        expect(liveNowItems(data).map((item) => item.kind === "place" && item.place.id)).toEqual(["spawn"]);
+      });
+    });
+
+    describe("and no scene covers parcel 0,0", () => {
+      beforeEach(() => {
+        data = { events: [], places: [placeRecord({ id: "plaza", title: "Genesis Plaza", positions: ["1,1"], user_count: 0 })] };
+      });
+
+      it("should find Genesis Plaza by its title", () => {
+        expect(liveNowItems(data).map((item) => item.kind === "place" && item.place.id)).toEqual(["plaza"]);
+      });
+    });
+
+    describe("and a World is on 0,0", () => {
+      beforeEach(() => {
+        data = { events: [], places: [placeRecord({ id: "world", world: true, world_name: "brai.dcl.eth", positions: ["0,0"], user_count: 0 })] };
+      });
+
+      it("should not take the World for Genesis Plaza", () => {
+        expect(liveNowItems(data)).toEqual([{ kind: "place", place: GENESIS_PLAZA, users: 0, fallback: true }]);
+      });
+    });
+
+    describe("and the feed has no Genesis Plaza", () => {
+      beforeEach(() => {
+        data = { events: [], places: [placeRecord({ id: "quiet", positions: ["5,5"], user_count: 2 })] };
+      });
+
+      it("should open the rail with the stand-in and no players", () => {
+        expect(liveNowItems(data)).toEqual([{ kind: "place", place: GENESIS_PLAZA, users: 0, fallback: true }]);
+      });
+
+      it("should make the stand-in the Foundation's Genesis Plaza on parcel 0,0", () => {
+        expect(GENESIS_PLAZA).toMatchObject({
+          id: "genesis-plaza",
+          title: "Genesis Plaza",
+          base_position: "0,0",
+          world: false,
+          contact_name: "Decentraland Foundation",
+          owner: null,
+        });
+        expect(GENESIS_PLAZA.image).toMatch(/genesis-plaza.*\.webp$/);
+      });
+    });
+
+    describe("and the feed is empty", () => {
+      beforeEach(() => {
+        data = { events: [], places: [] };
+      });
+
+      it("should open the rail with Genesis Plaza", () => {
+        expect(liveNowItems(data)).toEqual([{ kind: "place", place: GENESIS_PLAZA, users: 0, fallback: true }]);
+      });
+    });
+  });
+
+  describe("when a busy place fills the rail", () => {
+    beforeEach(() => {
+      data = {
+        events: [],
+        places: [
+          placeRecord({ id: "busy", positions: ["9,9"], user_count: 30 }),
+          placeRecord({ id: "plaza", title: "Genesis Plaza", positions: ["0,0"], user_count: 0 }),
+        ],
+      };
+    });
+
+    it("should not add Genesis Plaza", () => {
+      expect(liveNowItems(data).map((item) => item.kind === "place" && item.place.id)).toEqual(["busy"]);
+    });
+
+    it("should not mark the live item as a fallback", () => {
+      expect(liveNowItems(data)).toEqual([expect.not.objectContaining({ fallback: true })]);
     });
   });
 

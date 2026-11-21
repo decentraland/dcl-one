@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { onTestFinished } from "vitest";
 
-import type { AuthIdentity } from "../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import { shopRouteObjects } from "../routes";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost, WalletKind } from "../wallet/session";

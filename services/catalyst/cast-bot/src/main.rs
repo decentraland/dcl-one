@@ -20,6 +20,7 @@ use anyhow::{Context, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use livekit::options::{TrackPublishOptions, VideoCodec, VideoEncoding};
+use livekit::participant::ParticipantKind;
 use livekit::prelude::*;
 use livekit::webrtc::native::yuv_helper;
 use livekit::webrtc::prelude::{I420Buffer, VideoFrame, VideoRotation};
@@ -202,8 +203,18 @@ async fn publish_video(room: &Room, width: u32, height: u32) -> anyhow::Result<V
     Ok(video)
 }
 
+/// Whether a participant is audience. A presentation bot (the node's
+/// `BOT_IDENTITY_PREFIX`) and the RTMP ingress are not: nobody watches there.
+fn is_audience(identity: &str, kind: ParticipantKind) -> bool {
+    !identity.starts_with("presentation-bot:") && kind != ParticipantKind::Ingress
+}
+
+/// The room's audience: what keeps a presentation from idling out.
 fn participant_count(room: &Room) -> usize {
-    room.remote_participants().len()
+    room.remote_participants()
+        .values()
+        .filter(|p| is_audience(p.identity().as_str(), p.kind()))
+        .count()
 }
 
 /// The room metadata's `presenters`, lowercased, as the node reads them
@@ -460,5 +471,14 @@ mod tests {
         assert!(!is_command(&list, "0xdef", command));
         assert!(!is_command(&list, "0xabc", b"\x0a\x02movement"));
         assert!(presenters("not json").is_empty());
+    }
+
+    #[test]
+    fn bots_and_the_ingress_are_no_audience() {
+        use ParticipantKind::{Ingress, Standard};
+        assert!(is_audience("0xabc", Standard));
+        assert!(is_audience("stream:place:1", Standard));
+        assert!(!is_audience("presentation-bot:room:access:1", Standard));
+        assert!(!is_audience("1-streamer", Ingress));
     }
 }
