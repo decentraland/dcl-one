@@ -68,7 +68,8 @@ describe("useSettlement", () => {
     // The read in flight is cancelled and answers; the loop stops there: no wait for a next read, and no next read.
     view.unmount();
     expect(ownership.signals[0]!.aborted).toBe(true);
-    await new Promise((settled) => setTimeout(settled, 20));
+    // What follows the abort settles in microtasks: a macrotask runs after all of them.
+    await new Promise((settled) => setTimeout(settled, 0));
     expect(sleep.mock.calls.length).toBe(waitsBefore);
     expect(ownership.signals).toHaveLength(1);
   });

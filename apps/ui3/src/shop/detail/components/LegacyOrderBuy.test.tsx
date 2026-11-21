@@ -73,12 +73,14 @@ describe("LegacyOrderBuy", () => {
     expect(onPending).toHaveBeenCalledExactlyOnceWith(SALE);
   });
 
-  it("an approval still confirming sent no sale: it says so and reads nothing again", async () => {
+  it("an approval still confirming sent no sale: it says so, offers no second Buy and reads nothing again", async () => {
     // The MANA approval's wait ran out: the sale was never sent, so onSubmitted never ran.
     vi.mocked(executeLegacyOrder).mockRejectedValueOnce(new TxPendingError(`0x${"a".repeat(64)}`, "The MANA approval"));
     await buy();
     await screen.findByText(APPROVAL_STILL_PENDING);
     expect(screen.queryByText(/The purchase was sent/)).toBeNull();
+    // No second Buy while the approval confirms: it would send a second approval.
+    expect(screen.queryByTestId("order-buy")).toBeNull();
     expect(invalidated(balance)).toBe(false);
     expect(onPending).not.toHaveBeenCalled();
   });

@@ -125,8 +125,10 @@ describe.each<Listing>(["trade", "legacy order"])("a LAND bought from its page t
     expect(await screen.findByText(APPROVAL_STILL_PENDING)).toBeTruthy();
 
     close();
-    await waitFor(() => expect(screen.queryByTestId("order-buy")).toBeNull());
-    await new Promise((settled) => setTimeout(settled, 50));
+    // A read would empty the page until it answers: its Buy is still there at once, and nothing was asked for.
+    expect(screen.queryByTestId("land-trade-buy") ?? screen.queryByTestId("legacy-order-buy")).toBeNull();
+    expect(within(screen.getByTestId("bought")).getByTestId("land-buy")).toBeTruthy();
+    await act(async () => {});
     expect(reads).toEqual(before);
   });
 });

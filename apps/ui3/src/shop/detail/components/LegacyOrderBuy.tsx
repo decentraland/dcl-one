@@ -18,7 +18,7 @@ import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
 import { formatMana, type ManaWei } from "@shop/model/money";
-import { APPROVAL_STILL_PENDING, declined, isTxPending, isTxReverted, type WaitOptions } from "../../market/lib/tx";
+import { APPROVAL_STILL_PENDING, purchaseFailure, type PurchaseFailure, type WaitOptions } from "../../market/lib/tx";
 import { executeLegacyOrder, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";
 import { landCategoryOf } from "@shop/land/contracts";
@@ -44,7 +44,7 @@ export type LegacyOrderBuyProps = {
   reader?: ChainReader;
 };
 
-type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | { kind: "pending"; txHash: string } | { kind: "error"; message: string };
+type Phase = { kind: "review" } | { kind: "working"; step: OrderPhase } | { kind: "success"; txHash: string } | PurchaseFailure;
 
 const STEP_TEXT: Record<OrderPhase, string> = {
   approving: "Allow the marketplace to use your MANA in your wallet…",
@@ -115,20 +115,13 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
       invalidateAfterPurchase(qc, { contractAddress, tokenId });
       onDone?.(hash);
     } catch (e) {
-      // The sale sent but not confirmed: the MANA is probably spent, so the balances and the token are read again here too.
-      const salePending = (txHash: string) => {
-        setPhase({ kind: "pending", txHash });
+      const failure = purchaseFailure(e, sent);
+      setPhase(failure);
+      if (failure.kind === "pending") {
+        // The sale sent but not confirmed: the MANA is probably spent, so the balances are read again here too.
         invalidateAfterPurchase(qc, { contractAddress, tokenId });
-        onPending?.(txHash);
-      };
-      // Only the sale's hash says it was sent: a wait that ran out before it was the MANA approval's.
-      if (isTxPending(e)) {
-        if (sent) salePending(sent);
-        else setPhase({ kind: "error", message: APPROVAL_STILL_PENDING });
-      } else if (declined(e)) setPhase({ kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." });
-      else if (isTxReverted(e)) setPhase({ kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." });
-      else if (sent) salePending(sent);
-      else setPhase({ kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." });
+        onPending?.(failure.txHash);
+      }
     }
   }
 
@@ -144,6 +137,11 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
         ) : phase.kind === "pending" ? (
           <>
             <p role="status">The purchase was sent and is still confirming. It was not sent twice; check your activity in a moment.</p>
+            <Button onClick={onClose}>Close</Button>
+          </>
+        ) : phase.kind === "approval-pending" ? (
+          <>
+            <p role="status">{APPROVAL_STILL_PENDING}</p>
             <Button onClick={onClose}>Close</Button>
           </>
         ) : (
