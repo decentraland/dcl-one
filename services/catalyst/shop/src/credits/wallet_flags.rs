@@ -1,6 +1,7 @@
 //! Wallet flags over Postgres notifications. The `credits.wallet_flags`
-//! channel carries `{action: "flag", addresses, source, ip}` (the
-//! events-notifier's `/flag` body) or `{action: "unflag", address}`; one
+//! channel carries `{action: "flag", addresses, source, ip}`, the addresses
+//! also accepted under `addressesLinked` (the events-notifier's `/flag` body;
+//! naming both keys is refused), or `{action: "unflag", address}`; one
 //! leased listener per fleet applies them to `credits.wallet_flags` through
 //! the admin store, audited as the HTTP admin's flag is, where the node's
 //! writes are (`OPS_WRITES_ENABLED`). A notification reaches the listeners
@@ -94,5 +95,25 @@ pub async fn apply(credits: &Credits, payload: &str) -> Result<(), ApiError> {
                 .await
                 .map(drop)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Notification;
+
+    #[test]
+    fn a_flag_takes_either_address_key_but_not_both() {
+        for key in ["addresses", "addressesLinked"] {
+            let payload = format!(r#"{{"action":"flag","{key}":["0xab"],"source":"s"}}"#);
+            assert!(
+                matches!(serde_json::from_str::<Notification>(&payload), Ok(Notification::Flag(body)) if body.addresses == ["0xab"]),
+                "{key}"
+            );
+        }
+        let both =
+            r#"{"action":"flag","addresses":["0xab"],"addressesLinked":["0xab"],"source":"s"}"#;
+        let error = serde_json::from_str::<Notification>(both).err().unwrap();
+        assert!(error.to_string().contains("duplicate field"), "{error}");
     }
 }

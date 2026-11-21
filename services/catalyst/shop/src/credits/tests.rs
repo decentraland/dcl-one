@@ -30,6 +30,7 @@ use super::escrow::{Broker, BrokerError, BuyRequest, ManaPaymentVerification};
 use super::packs::{Charge, MarkPaidOutcome, PackRow, ReversalOutcome};
 use super::pricing::{ItemInfo, ListingRow, MARKETPLACE_V2_POLYGON, Market, TradeLookup};
 use super::store::Credits;
+use super::test_support::{TopupBroker, fresh_tx_hash, mana_payment_from};
 use super::{RawSettings, Settings, SharedState, State, router};
 use crate::auth::{AuthLink, AuthLinkType};
 use crate::http::Outbound;
@@ -187,7 +188,8 @@ pub(crate) struct MockBroker {
     pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
     /// What [`Broker::released_buy_mined`] answers.
     pub released_mined: Arc<parking_lot::Mutex<Result<bool, String>>>,
-    pub verifications: HashMap<String, ManaPaymentVerification>,
+    /// Answers [`Broker::verify_mana_payment`].
+    pub topups: TopupBroker,
 }
 
 impl MockBroker {
@@ -200,7 +202,7 @@ impl MockBroker {
             resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
             resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
             released_mined: Arc::new(parking_lot::Mutex::new(Ok(false))),
-            verifications: HashMap::new(),
+            topups: TopupBroker::default(),
         }
     }
 
@@ -272,10 +274,7 @@ impl Broker for MockBroker {
         &self,
         tx_hash: &str,
     ) -> Result<ManaPaymentVerification, ApiError> {
-        self.verifications
-            .get(tx_hash)
-            .cloned()
-            .ok_or_else(|| ApiError::bad_request("economy rejected the txHash"))
+        self.topups.verify_mana_payment(tx_hash).await
     }
 }
 
@@ -2069,9 +2068,10 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
         (&cheaper_then, block(at_fifth, 64)),
         (&unpriced, block(at_nothing, 64)),
     ] {
-        broker.verifications.insert(hash.clone(), payment(b));
+        broker.topups.verifications.insert(hash.clone(), payment(b));
     }
     broker
+        .topups
         .verifications
         .insert(pending.clone(), ManaPaymentVerification::Pending);
     let state = state_with(
@@ -5593,17 +5593,120 @@ async fn checkout_skips_the_buyers_own_listing() {
 async fn a_recovered_top_up_is_a_purchase_the_claim_replays() {
     let Some(pool) = pool().await else { return };
     let wallet = scratch_wallet();
-    let state = test_state(
+    let (hash, unpaid, foreign, shallow) = (
+        fresh_tx_hash(),
+        fresh_tx_hash(),
+        fresh_tx_hash(),
+        fresh_tx_hash(),
+    );
+    let mut broker = MockBroker::configured();
+    broker
+        .topups
+        .verifications
+        .insert(hash.clone(), mana_payment_from(&wallet.address, 64));
+    broker
+        .topups
+        .verifications
+        .insert(unpaid.clone(), ManaPaymentVerification::NoPayment);
+    broker.topups.verifications.insert(
+        foreign.clone(),
+        mana_payment_from("0x2222222222222222222222222222222222222222", 64),
+    );
+    broker
+        .topups
+        .verifications
+        .insert(shallow.clone(), mana_payment_from(&wallet.address, 1));
+    let state = state_with(
         pool.clone(),
         StateCfg {
             admin_token: Some("s3cret"),
             ..StateCfg::default()
         },
+        FakeMarket::default(),
+        broker,
     );
-    let app = app(state);
+    let app = app(state.clone());
     let mut bearer = HeaderMap::new();
     bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
-    let hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    for (tx, why) in [
+        (&unpaid, "no such transfer"),
+        (&foreign, "another wallet paid it"),
+    ] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/credits/grant",
+            bearer.clone(),
+            Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": format!("mana-topup:{tx}") })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{why}: {v}");
+    }
+    // A recovery booked under an earlier policy replays without verifying again.
+    let earlier = scratch_wallet().address;
+    let earlier_key = format!("mana-topup:{foreign}");
+    state
+        .credits
+        .admin_grant_credits(super::admin_store::GrantRequest {
+            address: &earlier,
+            amount: "40",
+            kind: "purchase",
+            reason: None,
+            actor: None,
+            idempotency_key: Some(&earlier_key),
+            detail: &json!({}),
+            studio_name: None,
+        })
+        .await
+        .unwrap();
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(json!({ "address": earlier, "amount": "40", "idempotencyKey": earlier_key })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "a booked recovery replays: {v}");
+    assert_eq!(v["replayed"], true, "{v}");
+    // A booked key retried with another amount or wallet is a mismatch, not a new verification (that
+    // transfer was paid by another wallet, so verifying would answer 422).
+    for (address, amount) in [(earlier.as_str(), "41"), (wallet.address.as_str(), "40")] {
+        let (status, _, v) = send(
+            &app,
+            "POST",
+            "/credits/admin/credits/grant",
+            bearer.clone(),
+            Some(json!({ "address": address, "amount": amount, "idempotencyKey": earlier_key })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{address} {amount}: {v}");
+    }
+    assert_eq!(
+        available(&pool, &earlier).await,
+        "40",
+        "nothing moved again"
+    );
+    assert_eq!(available(&pool, &wallet.address).await, "0");
+    cleanup(&pool, &earlier).await;
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": format!("mana-topup:{shallow}") })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a transfer not yet deep enough is retried later: {v}"
+    );
+    assert_eq!(
+        available(&pool, &wallet.address).await,
+        "0",
+        "nothing moved"
+    );
     let (status, _, v) = send(
         &app,
         "POST",
@@ -10430,6 +10533,260 @@ async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() 
     )
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+}
+
+/// An operator grant to a flagged wallet answers 409, naming the flag's source, and moves nothing; a grant
+/// made before the flag still replays its first outcome, a recovery of a top-up that wallet paid is still a
+/// purchase, and a recovery key naming no such payment is refused.
+#[tokio::test]
+async fn an_operator_grant_to_a_flagged_wallet_is_refused() {
+    let Some(pool) = pool().await else { return };
+    let (addr, linked) = (scratch_wallet().address, scratch_wallet().address);
+    let (paid, unpaid) = (fresh_tx_hash(), fresh_tx_hash());
+    let mut broker = MockBroker::configured();
+    broker
+        .topups
+        .verifications
+        .insert(paid.clone(), mana_payment_from(&addr, 64));
+    broker
+        .topups
+        .verifications
+        .insert(unpaid.clone(), ManaPaymentVerification::NoPayment);
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            admin_token: Some("s3cret"),
+            ..StateCfg::default()
+        },
+        FakeMarket::default(),
+        broker,
+    );
+    let app = app(state);
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let key = unique("g-flag");
+    let grant = |key: &str| json!({ "address": addr, "amount": "5", "reason": "qc", "idempotencyKey": key });
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(grant(&key)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/flags",
+        bearer.clone(),
+        Some(json!({ "addresses": [addr, linked], "source": "explorer_ip_multi_accounting", "ip": "203.0.113.9" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(grant(&key)),
+    )
+    .await;
+    assert_eq!(
+        (status, v["replayed"].as_bool()),
+        (StatusCode::OK, Some(true)),
+        "{v}"
+    );
+    let refused = unique("g-flag");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(grant(&refused)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    assert!(
+        v.to_string()
+            .contains("flagged (explorer_ip_multi_accounting)"),
+        "names the stored source: {v}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(grant(&format!("mana-topup:{unpaid}"))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "5",
+        "the refused grants moved nothing"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(grant(&format!("mana-topup:{paid}"))),
+    )
+    .await;
+    assert_eq!(
+        (status, v["replayed"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "the paid recovery credits the flagged wallet: {v}"
+    );
+    assert_eq!(available(&pool, &addr).await, "10");
+    let kinds = ledger_kinds(&pool, &addr).await;
+    assert!(
+        kinds.iter().any(|(kind, _, _)| kind == "purchase"),
+        "the paid recovery is a purchase: {kinds:?}"
+    );
+    // The refusal rolled its key back: after the unflag the same key grants.
+    let (status, _, v) = send(
+        &app,
+        "DELETE",
+        &format!("/credits/admin/flags/{addr}"),
+        bearer.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer,
+        Some(grant(&refused)),
+    )
+    .await;
+    assert_eq!(
+        (status, v["replayed"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "{v}"
+    );
+    assert_eq!(available(&pool, &addr).await, "15");
+    sqlx::query("DELETE FROM social.notifications WHERE address = $1")
+        .bind(&addr)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &addr).await;
+    cleanup(&pool, &linked).await;
+}
+
+/// A flag refuses free grants only: a grant answers 409 and books nothing, while a purchase (the kind a paid
+/// top-up recovery books) and a refund through the wallet's own refund path still credit the flagged wallet.
+#[tokio::test]
+async fn a_flag_refuses_only_free_grants() {
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    let credits = Credits::new(pool.clone());
+    let detail = json!({});
+    let request = |kind: &'static str| GrantRequest {
+        address: &addr,
+        amount: "3",
+        kind,
+        reason: None,
+        actor: Some("t"),
+        idempotency_key: None,
+        detail: &detail,
+        studio_name: None,
+    };
+    let flag = || {
+        sqlx::query("INSERT INTO credits.wallet_flags (address, source) VALUES ($1, 'test')")
+            .bind(&addr)
+            .execute(&pool)
+    };
+
+    flag().await.unwrap();
+    let err = credits
+        .admin_grant_credits(request("grant"))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ApiError::Conflict(m) if m.contains("flagged (test)")),
+        "{err:?}"
+    );
+    let booked: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM credits.wallets WHERE address = $1), \
+                (SELECT count(*) FROM credits.ledger WHERE address = $1), \
+                (SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND target = $1)",
+    )
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(booked, (0, 0, 0), "the refused grant booked nothing");
+    credits
+        .admin_grant_credits(request("purchase"))
+        .await
+        .unwrap_or_else(|e| panic!("a purchase credits a flagged wallet: {e:?}"));
+    assert_eq!(available(&pool, &addr).await, "3");
+    cleanup(&pool, &addr).await;
+
+    // A refund runs through `Credits::refund`, on a spend made before the flag.
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let spend_key = unique("test:flagged-refund");
+    credits.spend(&addr, "4", &spend_key, None).await.unwrap();
+    flag().await.unwrap();
+    let refund = credits
+        .refund(&addr, "4", &spend_key, None)
+        .await
+        .unwrap_or_else(|e| panic!("a refund credits a flagged wallet: {e:?}"));
+    assert_eq!(refund.applied.parse::<f64>().unwrap(), 4.0);
+    assert_eq!(available(&pool, &addr).await, "10");
+    cleanup(&pool, &addr).await;
+}
+
+/// The admin flag takes the body the events-notifier posts to `/flag`, its addresses under `addressesLinked`;
+/// a body naming both keys is refused and flags nothing.
+#[tokio::test]
+async fn the_admin_flag_accepts_the_events_notifier_body() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            admin_token: Some("s3cret"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let (addr, linked, other) = (
+        scratch_wallet().address,
+        scratch_wallet().address,
+        scratch_wallet().address,
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/flags",
+        bearer.clone(),
+        Some(json!({ "addressesLinked": [addr, linked], "ip": "203.0.113.9", "source": "explorer_ip_multi_accounting" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(flag_count(&pool, &addr).await, 1);
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/flags",
+        bearer,
+        Some(json!({ "addresses": [other], "addressesLinked": [other], "source": "explorer_ip_multi_accounting" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    assert_eq!(flag_count(&pool, &other).await, 0);
+    for wallet in [&addr, &linked, &other] {
+        cleanup(&pool, wallet).await;
+    }
 }
 
 #[test]

@@ -1525,10 +1525,12 @@ not carried over.
 notified on the `credits.wallet_flags` channel, `{action: "flag", addresses,
 source, ip}` (`shop/src/credits/wallet_flags.rs`), or posted through the
 admin, `POST /credits/admin/flags {addresses, source, ip}` (the shape the
-events-notifier posted to the credits server's `/flag`): one row per flagged
-wallet, keyed by address, with the source that raised it, the IP it reported
-and the wallets it was linked with (`linked_addresses`, the body's list). The
-node runs no detector: it keeps the flags it is told of.
+events-notifier posted to the credits server's `/flag`, which names the
+addresses `addressesLinked`; either key is accepted, a body naming both is
+refused): one row per flagged wallet, keyed by address, with the source that
+raised it, the IP it reported and the wallets it was linked with
+(`linked_addresses`, the body's list). The node runs no detector: it keeps the
+flags it is told of.
 
 Writers are the leased `credits-wallet-flags` listener (where
 `OPS_WRITES_ENABLED` is on) and the admin's `POST /credits/admin/flags`, the
@@ -1540,7 +1542,11 @@ operator's unblock
 transaction that clears its block. Readers are the credits claim (`EXISTS` by
 address, folded into the captcha claim and the balance reports as
 `is_blocked_for_claiming`; the spend and the reservation read the operator's
-block alone, so a flag never holds credits a wallet has) and the admin list
+block alone, so a flag never holds credits a wallet has), the operator grant
+on the bearer route and the console (its `source` by address in the grant's
+transaction: the flag refuses free grants only, so a grant answers 409 until
+the unflag; purchases are unaffected, including a verified top-up recovery
+under `mana-topup:<txHash>`, and so are refunds) and the admin list
 (`GET /credits/admin/flags`, by address or paged by `flagged_at`). Rows are
 small and few: a flag per wallet reported.
 
@@ -1553,13 +1559,13 @@ INSERT` to one role, or a `SECURITY DEFINER` function, would name the writer
 and keep the flags raised while no listener is up: the next step if the
 database gains other roles.
 
-Invariants: a flag is a signal, not a verdict: it holds the credits claim
-alone, and the admin's unflag or the operator's unblock deletes it; nothing
-else does, and a flag never expires. A wallet has at most one flag (the
-primary key); flagging it again keeps `flagged_at` and takes the new source,
-IP and links. Addresses are lower-cased and checked by the table; the handler
-normalises the body's. The bootstrap defines the table; an existing database
-gains it from the object pass, so no step exists.
+Invariants: a flag is a signal, not a verdict: it holds the credits claim and
+refuses free operator grants, and the admin's unflag or the operator's
+unblock deletes it; nothing else does, and a flag never expires. A wallet has
+at most one flag (the primary key); flagging it again keeps `flagged_at` and
+takes the new source, IP and links. Addresses are lower-cased and checked by
+the table; the handler normalises the body's. The bootstrap defines the
+table; an existing database gains it from the object pass, so no step exists.
 
 ## Credits checkout and broker claim edges
 
