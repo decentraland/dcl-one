@@ -3,7 +3,8 @@
 //! old crate's SQL: `metadata` is `rental_assets` keyed by
 //! `(contract_address, token_id numeric)` with the wire's `nft_id` as a
 //! UNIQUE (so a listing's asset is the chain identity, not a string), the
-//! asset row is refreshed on conflict (the reader just fetched it), every
+//! asset row is refreshed on conflict (the reader just fetched it; its
+//! `nft_updated_at` keeps the greater time), every
 //! row-stamping clock is a bound parameter (`now`), never `now()`, and the
 //! status values and numeric filters are validated before they reach the
 //! statement (the old crate let Postgres answer 500 on a bad `status` or
@@ -150,7 +151,10 @@ impl Database {
 
     /// The asset upsert, the rental, its listing row and its periods in one
     /// statement: a conflict on the one-open-listing index rolls every row
-    /// back. `now` stamps `fetched_at`, `created_at` and `updated_at`.
+    /// back. `now` stamps `fetched_at`, `created_at` and `updated_at`. A
+    /// reader row older than the stored asset row (`nft_updated_at`) creates
+    /// the listing and leaves the asset row as it is, `fetched_at` included;
+    /// the reply then carries the stored category and search text.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_listing(
         &self,
@@ -230,7 +234,10 @@ impl Database {
 
     /// Updates the listing's asset row from a fresh reader row and returns
     /// the refreshed listing in one statement; `None` when the rental (or
-    /// its periods) is missing.
+    /// its periods) is missing, or when the reader row is older than the
+    /// stored one (`nft_updated_at`): a reader answering from an older block
+    /// replaces nothing, so the stored time never moves backwards and
+    /// [`super::status::sync_listing`] keeps ignoring rows that old.
     pub async fn refresh_metadata_for_rental(
         &self,
         rental_id: &str,
@@ -503,9 +510,13 @@ WITH a AS ( \
      adjacent_to_road, estate_size, nft_created_at, nft_updated_at, fetched_at) \
   VALUES ($1, $2::numeric, $3, $4, $5, $6, $7, $8::smallint, $9, $10::smallint, $11, $12, $13) \
   ON CONFLICT (contract_address, token_id) DO UPDATE SET \
-    category = EXCLUDED.category, search_text = EXCLUDED.search_text, \
-    distance_to_plaza = EXCLUDED.distance_to_plaza, adjacent_to_road = EXCLUDED.adjacent_to_road, \
-    estate_size = EXCLUDED.estate_size, nft_updated_at = EXCLUDED.nft_updated_at, fetched_at = EXCLUDED.fetched_at \
+    category = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.category ELSE rental_assets.category END, \
+    search_text = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.search_text ELSE rental_assets.search_text END, \
+    distance_to_plaza = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.distance_to_plaza ELSE rental_assets.distance_to_plaza END, \
+    adjacent_to_road = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.adjacent_to_road ELSE rental_assets.adjacent_to_road END, \
+    estate_size = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.estate_size ELSE rental_assets.estate_size END, \
+    fetched_at = CASE WHEN EXCLUDED.nft_updated_at >= rental_assets.nft_updated_at THEN EXCLUDED.fetched_at ELSE rental_assets.fetched_at END, \
+    nft_updated_at = GREATEST(rental_assets.nft_updated_at, EXCLUDED.nft_updated_at) \
   RETURNING contract_address, token_id, nft_id, category, search_text, nft_created_at \
 ), r AS ( \
   INSERT INTO signatures.rentals \
@@ -533,9 +544,11 @@ const REFRESH_LISTING_SQL: &str = "\
 WITH upd AS ( \
   UPDATE signatures.rental_assets a SET \
     category = $2, search_text = $3, distance_to_plaza = $4::smallint, \
-    adjacent_to_road = $5, estate_size = $6::smallint, nft_updated_at = $7, fetched_at = $8 \
+    adjacent_to_road = $5, estate_size = $6::smallint, \
+    nft_updated_at = GREATEST(a.nft_updated_at, $7), fetched_at = $8 \
   FROM signatures.rentals r \
   WHERE r.id = $1 AND a.contract_address = r.contract_address AND a.token_id = r.token_id \
+    AND a.nft_updated_at <= $7 \
   RETURNING a.contract_address, a.token_id, a.nft_id, a.category, a.search_text, a.nft_created_at \
 ) \
 SELECT rentals.id, rentals.contract_address, rentals.token_id::text AS token_id, rentals.network, rentals.chain_id, \
