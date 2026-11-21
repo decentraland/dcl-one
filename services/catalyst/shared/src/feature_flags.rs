@@ -4,6 +4,7 @@
 //! Explore mirrors and serves the documents.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context as _;
 use parking_lot::RwLock;
@@ -32,6 +33,8 @@ pub fn validate(doc: &Value) -> anyhow::Result<()> {
 
 pub struct Snapshot {
     doc: RwLock<Arc<Value>>,
+    /// Whether the held document came from the flags service (directly or as stored).
+    sourced: AtomicBool,
 }
 
 impl Snapshot {
@@ -40,6 +43,7 @@ impl Snapshot {
     pub fn empty() -> Self {
         Self {
             doc: RwLock::new(Arc::new(json!({"flags": {}, "variants": {}}))),
+            sourced: AtomicBool::new(false),
         }
     }
 
@@ -47,12 +51,23 @@ impl Snapshot {
     pub fn from_document(doc: Value) -> Self {
         Self {
             doc: RwLock::new(Arc::new(doc)),
+            sourced: AtomicBool::new(true),
         }
     }
 
     /// Replaces the held document: a reader that keeps its own copy of an application's flags.
     pub fn replace(&self, doc: Value) {
         *self.doc.write() = Arc::new(doc);
+    }
+
+    /// Records whether the held document came from the flags service rather than a placeholder.
+    pub fn mark_sourced(&self, sourced: bool) {
+        self.sourced.store(sourced, Ordering::Release);
+    }
+
+    /// False until a document from the flags service is held: readers with a local fallback use it.
+    pub fn is_sourced(&self) -> bool {
+        self.sourced.load(Ordering::Acquire)
     }
 
     pub fn document(&self) -> Arc<Value> {

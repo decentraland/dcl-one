@@ -1124,6 +1124,11 @@ pub async fn serve(
     social
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
+    if !config.social.social_feature_flags_url.is_empty() {
+        comms_stage
+            .gatekeeper
+            .set_platform_moderator_flags(social.communities.flags.clone());
+    }
     social
         .communities
         .referral

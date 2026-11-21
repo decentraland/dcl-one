@@ -121,7 +121,8 @@ pub struct RawSettings {
     pub authoritative_server_address: Option<String>,
     /// `MODERATOR_TOKEN`: the bearer of the user-moderation routes.
     pub moderator_token: Option<String>,
-    /// `PLATFORM_USER_MODERATORS`: comma/space-separated moderator wallets.
+    /// `PLATFORM_USER_MODERATORS`: comma/space-separated moderator wallets,
+    /// read only while no `platform_user_moderators` flag document is held.
     pub moderator_addresses: String,
     /// `COMMS_GATEKEEPER_AUTH_TOKEN`: the platform service token in front of
     /// the voice routes and the world ban-status route; unset answers 503.
@@ -322,7 +323,7 @@ impl Settings {
         }
         if moderator_token.is_none() && moderator_addresses.is_empty() {
             tracing::warn!(
-                "neither MODERATOR_TOKEN nor PLATFORM_USER_MODERATORS set; the user-moderation routes reject every caller"
+                "neither MODERATOR_TOKEN nor PLATFORM_USER_MODERATORS set; until a platform_user_moderators flag document is held, the user-moderation routes reject every caller"
             );
         }
         if gatekeeper_auth_token.is_none() {
@@ -409,6 +410,9 @@ impl Settings {
     }
 }
 
+/// The dapps flag whose variant payload lists the moderator wallets.
+pub const PLATFORM_USER_MODERATORS_FLAG: &str = "platform_user_moderators";
+
 crate::shared::send_sync_once! {
     pub struct CommsState {
         pub deny_list: Arc<crate::deny_list::DenyList>,
@@ -469,6 +473,9 @@ crate::shared::send_sync_once! {
         /// holds this state through its gateway.
         island_feed: Mutex<Weak<admission::cluster::subscriber::ClusterSubscriber>>,
         pub(crate) island_safety: admission::cluster::safety::SafetyStore,
+        /// The dapps flags document whose `platform_user_moderators` variant
+        /// lists the moderator wallets; `serve` attaches it once.
+        platform_moderator_flags: std::sync::OnceLock<Arc<crate::shared::feature_flags::Snapshot>>,
     }
 }
 
@@ -518,6 +525,29 @@ impl CommsState {
             bus: Arc::new(bus::DisabledBus),
             assignments: None,
             island_feed: Mutex::new(Weak::new()),
+            platform_moderator_flags: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Attaches the refreshed dapps flags document the moderator gate reads (once).
+    pub fn set_platform_moderator_flags(&self, flags: Arc<crate::shared::feature_flags::Snapshot>) {
+        let _ = self.platform_moderator_flags.set(flags);
+    }
+
+    /// The wallets the moderator gate admits, read on every check: the
+    /// `platform_user_moderators` flag (none while it is off) once a flags
+    /// document is held, `PLATFORM_USER_MODERATORS` before that. A failed
+    /// refresh keeps the last document.
+    pub fn platform_moderators(&self) -> std::borrow::Cow<'_, [Address]> {
+        match self.platform_moderator_flags.get() {
+            Some(flags) if flags.is_sourced() => flags
+                .variant_values("dapps", PLATFORM_USER_MODERATORS_FLAG)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|value| Address::parse(value).ok())
+                .collect::<Vec<_>>()
+                .into(),
+            _ => std::borrow::Cow::Borrowed(&self.settings.moderator_addresses),
         }
     }
 
