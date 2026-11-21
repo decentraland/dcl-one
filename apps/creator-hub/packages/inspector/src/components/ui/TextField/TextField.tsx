@@ -30,6 +30,7 @@ const TextField = React.forwardRef<HTMLInputElement, Props>((props, ref) => {
     value,
     disabled,
     leftContent,
+    rightContent,
     debounceTime,
     onChange,
     onFocus,
@@ -166,8 +167,10 @@ const TextField = React.forwardRef<HTMLInputElement, Props>((props, ref) => {
           <span className="RightIcon">{rightIcon}</span>
         </div>
       );
+    } else if (rightContent) {
+      return <div className="RightContent">{rightContent}</div>;
     }
-  }, [rightLabel, rightIcon]);
+  }, [rightLabel, rightIcon, rightContent]);
 
   return (
     <div className={cx('Text Field', className, type, size)}>
