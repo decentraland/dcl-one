@@ -132,17 +132,29 @@ pub async fn remove<'e, E: PgExecutor<'e>>(executor: E, id: &str) -> sqlx::Resul
 /// Why a local deploy of `entity` is refused, one message per kind of
 /// listed id; `None` when nothing it names is listed.
 pub fn refusal(entity: &Entity, denylist: &super::Denylist) -> Option<Vec<String>> {
+    refusal_of(
+        &entity.id,
+        entity.content.iter().map(|c| c.hash.as_str()),
+        &entity.pointers,
+        denylist,
+    )
+}
+
+/// [`refusal`] of an entity known by its id, content hashes and pointers.
+pub fn refusal_of<'a>(
+    entity_id: &str,
+    hashes: impl IntoIterator<Item = &'a str>,
+    pointers: &[String],
+    denylist: &super::Denylist,
+) -> Option<Vec<String>> {
     let mut errors = Vec::new();
-    if denylist.contains(&entity.id) {
+    if denylist.contains(entity_id) {
         errors.push(format!(
-            "The entity {} is denylisted on this node.",
-            entity.id
+            "The entity {entity_id} is denylisted on this node."
         ));
     }
-    let mut hashes: Vec<&str> = entity
-        .content
-        .iter()
-        .map(|c| c.hash.as_str())
+    let mut hashes: Vec<&str> = hashes
+        .into_iter()
         .filter(|h| denylist.contains(h))
         .collect();
     hashes.sort_unstable();
@@ -153,8 +165,7 @@ pub fn refusal(entity: &Entity, denylist: &super::Denylist) -> Option<Vec<String
             hashes.join(", ")
         ));
     }
-    let mut pointers: Vec<String> = entity
-        .pointers
+    let mut pointers: Vec<String> = pointers
         .iter()
         .map(|p| p.to_lowercase())
         .filter(|p| denylist.denies_pointer(p))
