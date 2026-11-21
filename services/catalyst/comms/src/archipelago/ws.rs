@@ -75,7 +75,7 @@ async fn ws_upgrade(
     raw: Option<axum::Extension<raw_transport::Signal>>,
 ) -> impl IntoResponse {
     let start = std::time::Instant::now();
-    let client = crate::shared::client_ip::distinct_client_ip(
+    let client = crate::shared::client_ip::public_client_ip(
         &headers,
         peer.map(|axum::Extension(axum::extract::ConnectInfo(peer))| peer),
         &state.settings.server.trusted_proxy_cidrs,

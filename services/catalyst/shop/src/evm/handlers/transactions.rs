@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Extension, FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
@@ -17,17 +17,79 @@ use crate::evm::upstream::UpstreamForwarder;
 /// `POST /transactions`. An error answered before anything was sent, or after a send attempt
 /// that proves nothing went out, carries `"not_sent": true`: the only evidence a client takes
 /// that it may release the buyer's credit and sign again. Every other failure, and every answer
-/// forwarded from an upstream relay, is answered without it.
+/// forwarded from an upstream relay, is answered without it. The client limit runs before the
+/// body is read, so a limited caller's body is never read by the handler.
 pub async fn send_transaction(
     State(state): State<SharedState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
-    body: Result<Bytes, BytesRejection>,
+    request: Request,
 ) -> Response {
+    let peer = peer.map(|Extension(ConnectInfo(p))| p);
+    if let Some(refused) = refuse_over_client_limit(&state, &headers, peer).await {
+        return refused;
+    }
+    let body = Bytes::from_request(request, &()).await;
     match relay(&state, &headers, body).await {
         Ok(response) => response,
         Err(Failure::NotSent(err)) => not_sent(err).await,
         Err(Failure::MaybeSent(err)) => err.into_response(),
     }
+}
+
+/// Seconds until a client over its limit earns its next request: the bucket's refill interval,
+/// rounded up and never 0.
+pub(crate) const RETRY_AFTER_SECS: u64 = retry_after_secs(
+    crate::evm::RELAY_RATE_WINDOW.as_secs(),
+    crate::evm::RELAY_REQUESTS_PER_WINDOW as u64,
+);
+
+pub(crate) const fn retry_after_secs(window_secs: u64, requests: u64) -> u64 {
+    let secs = window_secs.div_ceil(if requests == 0 { 1 } else { requests });
+    if secs == 0 { 1 } else { secs }
+}
+
+/// The unix second a limited client may retry at: the first whole second at least `wait` after
+/// `now`, so it is never early.
+pub(crate) fn retry_at(now: chrono::DateTime<chrono::Utc>, wait: u64) -> i64 {
+    let ms = now.timestamp_millis() + wait as i64 * 1000;
+    ms.div_euclid(1000) + i64::from(ms.rem_euclid(1000) != 0)
+}
+
+/// 429 with `Retry-After` (and `retryAt`, as the quota refusals) once the caller's address, or
+/// its IPv6 /48, spent its window, before the body is read. Only a public address naming one
+/// client ([`crate::shared::client_ip::public_client_ip`]) is limited: an unlisted gateway's own
+/// address, or the internal `X-Real-IP` a trusted gateway forwards for an unlisted load balancer,
+/// would put every client in one bucket. The limiters are per process.
+async fn refuse_over_client_limit(
+    state: &SharedState,
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+) -> Option<Response> {
+    let ip = crate::shared::client_ip::public_client_ip(
+        headers,
+        peer,
+        &state.settings.trusted_proxy_cidrs,
+    )?;
+    use crate::shared::limits::RateLimitDecision::Allow;
+    let key = crate::shared::client_ip::source_key(&ip);
+    if state.relay_limiter.check(&key) == Allow {
+        match crate::shared::client_ip::ipv6_48_key(&ip) {
+            None => return None,
+            Some(net) if state.relay_limiter_per_48.check(&net) == Allow => return None,
+            // Refused by the /48: the address's own token was not used.
+            Some(_) => state.relay_limiter.refund(&key, 1),
+        }
+    }
+    let mut response = not_sent(ApiError::RateLimited {
+        message: format!("Too many requests. Retry in {RETRY_AFTER_SECS} seconds."),
+        retry_at: retry_at(chrono::Utc::now(), RETRY_AFTER_SECS),
+    })
+    .await;
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, RETRY_AFTER_SECS.into());
+    Some(response)
 }
 
 enum Failure {

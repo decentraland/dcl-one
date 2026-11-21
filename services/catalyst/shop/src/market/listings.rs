@@ -1334,7 +1334,7 @@ async fn post_trade_inner(
     peer: Option<std::net::SocketAddr>,
     body: &str,
 ) -> Result<Response, ApiError> {
-    if let Some(ip) = crate::shared::client_ip::distinct_client_ip(
+    if let Some(ip) = crate::shared::client_ip::public_client_ip(
         headers,
         peer,
         &state.settings.market.trusted_proxy_cidrs,
@@ -1708,6 +1708,29 @@ mod tests {
         }
         assert_eq!(status("[2001:db8:7:1::ffff]").await, 429);
         assert_ne!(status("[2001:db8:7:2::1]").await, 429, "another /64 posts");
+    }
+
+    /// A trusted proxy's internal or reserved `X-Real-IP` (an unlisted load
+    /// balancer in front of it) names no one client, so it builds no bucket.
+    #[tokio::test]
+    async fn a_trusted_proxys_non_public_client_address_shares_no_trade_bucket() {
+        let mut settings = crate::market::Settings::for_tests();
+        settings.market.trusted_proxy_cidrs = vec!["192.0.2.0/24".parse().unwrap()];
+        let state = crate::market::tests::support::state_without_db_settings(settings);
+        for real_ip in ["10.78.0.9", "240.78.0.9"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-real-ip", real_ip.parse().unwrap());
+            for _ in 0..3 * 120 {
+                let status =
+                    match post_trade_inner(&state, &headers, "192.0.2.5:443".parse().ok(), "{}")
+                        .await
+                    {
+                        Ok(r) => r.status().as_u16(),
+                        Err(e) => e.into_response().status().as_u16(),
+                    };
+                assert_ne!(status, 429, "{real_ip}");
+            }
+        }
     }
 
     /// A trade that verifies only against an older off-chain marketplace is answered 400 naming

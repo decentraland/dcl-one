@@ -33,7 +33,8 @@ export type GaslessReason = "disabled" | "contract-account" | "signing-failed" |
 
 /**
  * What a relay's refusal says of itself, when it does: its code (its daily limits name themselves:
- * `quota_reached` for the account's own fee-free quota, `relay_budget_spent` for the relay's), and for a spent quota
+ * `quota_reached` for the account's own fee-free quota, `relay_budget_spent` for the relay's; `api_limit_reached` is
+ * its per-connection request limit), and for a spent quota
  * when its next slot frees (`retryAt`, unix seconds) and how many it holds (`quota`).
  */
 export type RelayRefusal = { error?: string; retryAt?: number; quota?: number };

@@ -16,6 +16,7 @@ import { formatMana, type ManaWei } from "@shop/model/money";
 import { useShopWallet } from "../../wallet/context";
 import { isWrongNetworkError } from "../../wallet/chain";
 import { dataUnavailable } from "../lib/api";
+import { relayLimitText } from "../../checkout/lib/errors";
 import { declined, isTxPending, isTxReverted } from "../lib/tx";
 import "../market.css";
 
@@ -181,12 +182,14 @@ export function NetworkNotice({ chainId }: { chainId: number }) {
 
 export type WriteState = { kind: "idle" } | { kind: "working"; label: string } | { kind: "done"; hash: string | null; label: string } | { kind: "failed"; error: unknown };
 
-/** What a failed write means to its owner: declined, still pending, reverted, wrong network, or an error. */
+/** What a failed write means to its owner: declined, still pending, reverted, wrong network, a relay limit, or an error. */
 export function writeFailureText(error: unknown): string {
   if (declined(error)) return "You declined in your wallet. Nothing was sent.";
   if (isTxPending(error)) return "The transaction is still pending. It may still complete; check again before trying anything else.";
   if (isTxReverted(error)) return "The transaction was reverted on chain. Nothing changed.";
   if (isWrongNetworkError(error)) return (error as Error).message;
+  const limit = relayLimitText(error);
+  if (limit) return limit;
   return (error as Error)?.message || "Something went wrong.";
 }
 

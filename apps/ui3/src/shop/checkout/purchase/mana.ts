@@ -22,6 +22,7 @@ import { encodeMarketplaceCall, encodeStoreBuy, type ListingCoupon, type SignedT
 import { buyOneGasless, isSettlementPending, waitForSettlement } from "./gasless";
 import type { RailContext } from "./rail";
 import { confirmMetaTx, isMetaTxPending } from "./tx-confirm";
+import { isRequestLimited } from "../lib/errors";
 
 export type MintToBuy = { item: StoreItemToBuy; chainId: ChainId };
 
@@ -105,7 +106,7 @@ async function relayOrSend(
     } catch (e) {
       if (isSignatureDeclined(e) || isMetaTxPending(e)) throw e;
       if (isGaslessUnavailable(e) && e.reason === "relayer-unreachable") throw e;
-      if (!isGaslessUnavailable(e) || !canPayGasItself(ctx.walletKind) || ctx.relayOnly) throw e;
+      if (!isGaslessUnavailable(e) || isRequestLimited(e) || !canPayGasItself(ctx.walletKind) || ctx.relayOnly) throw e;
     }
   }
   return sendAndConfirm({
@@ -320,7 +321,7 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
         opts.onUnobservable?.();
         throw e;
       }
-      if (!canPayGasItself(ctx.walletKind)) throw e;
+      if (isRequestLimited(e) || !canPayGasItself(ctx.walletKind)) throw e;
     }
   }
   let handedOff = false;

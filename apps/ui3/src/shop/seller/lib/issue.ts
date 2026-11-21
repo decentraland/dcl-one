@@ -11,6 +11,7 @@ import type { Eip1193Provider } from "../../../data/auth/wallet";
 import type { ChainId } from "@shop/model/chain";
 import { COLLECTION_V2_ABI, collectionV2 } from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "../../market/lib/metaTx";
+import { isRequestLimited } from "../../checkout/lib/errors";
 import { declined, isTxPending, sendCall, waitForReceipt, type WaitOptions } from "../../market/lib/tx";
 
 export type IssueEntry = { address: string; amount: number };
@@ -75,7 +76,7 @@ export async function issueTokens(opts: {
       });
       return await waitForReceipt(opts.chainId, hash, "The mint", opts.wait);
     } catch (e) {
-      if (declined(e) || isTxPending(e) || !(e instanceof MetaTransactionError)) throw e;
+      if (declined(e) || isTxPending(e) || !(e instanceof MetaTransactionError) || isRequestLimited(e)) throw e;
     }
   }
   const hash = await sendCall(opts.provider, { chainId: opts.chainId, to: opts.contractAddress, abi: COLLECTION_V2_ABI, functionName: "issueTokens", args });

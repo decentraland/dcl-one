@@ -33,10 +33,11 @@ static REPORTS: std::sync::LazyLock<WindowLimiter> =
     std::sync::LazyLock::new(|| WindowLimiter::new(std::time::Duration::from_secs(3600), 100_000));
 
 /// The network a report comes from, IPv6 by its /64, when the address names
-/// one client: a trusted proxy's `X-Real-IP` or a public peer. An untrusted
-/// private peer (most likely a gateway missing from
-/// `HTTP_TRUSTED_PROXY_CIDRS`) would put every reporter in one bucket, so it
-/// gives none and only the wallet limit applies.
+/// one client: a trusted proxy's public `X-Real-IP` or a public peer. An
+/// untrusted private peer (most likely a gateway missing from
+/// `HTTP_TRUSTED_PROXY_CIDRS`) or a trusted proxy's non-public `X-Real-IP`
+/// would put every reporter in one bucket, so it gives none and only the
+/// wallet limit applies.
 fn report_source(
     headers: &HeaderMap,
     peer: Option<std::net::SocketAddr>,
@@ -54,7 +55,7 @@ fn report_source_with(
     trusted_proxies: &[ipnet::IpNet],
     warned: &std::sync::atomic::AtomicBool,
 ) -> Option<String> {
-    use crate::shared::client_ip::{distinct_client_ip, is_internal, is_trusted_proxy};
+    use crate::shared::client_ip::{is_internal, is_trusted_proxy, public_client_ip};
     if let Some(p) = peer.map(|p| p.ip().to_canonical())
         && !is_trusted_proxy(p, trusted_proxies)
         && is_internal(p)
@@ -62,14 +63,7 @@ fn report_source_with(
     {
         warn_untrusted_proxy_once(p, warned);
     }
-    let ip = distinct_client_ip(headers, peer, trusted_proxies)?;
-    // A trusted proxy forwarding a private address names no one client.
-    if ip
-        .parse::<std::net::IpAddr>()
-        .is_ok_and(crate::shared::client_ip::is_internal)
-    {
-        return None;
-    }
+    let ip = public_client_ip(headers, peer, trusted_proxies)?;
     Some(crate::shared::client_ip::source_key(&ip))
 }
 
