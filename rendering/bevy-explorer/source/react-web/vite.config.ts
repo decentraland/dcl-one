@@ -302,7 +302,8 @@ export function showcaseInEagerGraph(bundle: Record<string, BundleFile>, page: s
   }
   walk(entry.fileName)
   const html = bundle[page]
-  const source = html?.type === 'asset' ? String(html.source) : ''
+  const source =
+    html?.type !== 'asset' ? '' : typeof html.source === 'string' ? html.source : new TextDecoder().decode(html.source)
   for (const chunk of chunks)
     if (holdsShowcase(chunk) && source.includes(chunk.fileName)) problems.push(`${page} references ${chunk.fileName}, which holds the Showcase`)
   return problems

@@ -114,7 +114,7 @@ const chunk = (fileName: string, changes: Partial<Chunk> = {}): Chunk => ({
 })
 
 // app.html's entry imports the design chunk; the Showcase sits behind a lazy import.
-function bundle(changes: { entryImports?: string[]; html?: string; entry?: Partial<Chunk> } = {}) {
+function bundle(changes: { entryImports?: string[]; html?: string | Uint8Array; entry?: Partial<Chunk> } = {}) {
   const files = [
     chunk('assets/app-1.js', {
       isEntry: true,
@@ -149,8 +149,12 @@ describe('when the build checks what app.html loads eagerly', () => {
     ])
   })
 
-  it('should fail a page that preloads the Showcase chunk', () => {
-    const html = '<script src="./assets/app-1.js"></script><link rel="modulepreload" href="./assets/Showcase-1.js">'
+  // The bundler may hand the page over as a string or as UTF-8 bytes.
+  const preload = '<script src="./assets/app-1.js"></script><link rel="modulepreload" href="./assets/Showcase-1.js">'
+  it.each([
+    ['a string', preload],
+    ['UTF-8 bytes', new TextEncoder().encode(preload)]
+  ])('should fail a page that preloads the Showcase chunk, given as %s', (_, html) => {
     expect(showcaseInEagerGraph(bundle({ html }), 'app.html')).toEqual([
       'app.html references assets/Showcase-1.js, which holds the Showcase'
     ])
