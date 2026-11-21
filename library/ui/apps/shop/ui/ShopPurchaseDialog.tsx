@@ -133,7 +133,11 @@ export type ShopPurchaseStep =
       state: 'ready' | 'waiting' | 'failed'
       message?: string
       progress?: ShopPaymentProgress
-      /** `exact`: the allowance asked is exactly `required`, for this purchase alone (Credits and MANA together); else unlimited. */
+      /**
+       * `exact`: the allowance asked is exactly `required` (Credits and MANA together). Nothing revokes what a purchase that
+       * doesn't go through leaves unspent (only a signed purchase spends it, and the next exact approval replaces it), so the
+       * copy never promises it is for this purchase alone. Else unlimited.
+       */
       allowance?: 'exact'
     }
   /**
@@ -405,7 +409,8 @@ export function ShopPurchaseDialog({
             </p>
             {view.allowance === 'exact' ? (
               <p className={styles.text}>
-                The allowance is exactly {formatMana(view.required as ManaWei, { group: true })} MANA, for this purchase alone: the next one asks again.
+                The allowance is exactly {formatMana(view.required as ManaWei, { group: true })} MANA. If this purchase doesn’t go through, what it
+                leaves unspent stays allowed until a purchase you sign uses it, a new approval replaces it, or you revoke it.
               </p>
             ) : (
               <p className={styles.text}>

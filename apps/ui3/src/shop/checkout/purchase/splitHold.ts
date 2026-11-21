@@ -18,6 +18,7 @@ import { assetKey, type AssetId } from "@shop/model/asset";
 import type { ChainReader } from "../chain/rpc";
 import { newAttemptId, webLock } from "../lib/web-lock";
 import { isSplitSale, splitExecution, type SplitEvidenceReader, type SplitSale } from "./splitEvidence";
+import type { ChainId } from "@shop/model/chain";
 
 const KEY = "dcl-shop-buynow-split:v1:";
 /** How long a record from before credits were kept with it holds; and how long Check again waits on a fresh one. */
@@ -48,7 +49,11 @@ export const SPLIT_EXPIRY_CONFIRM_MS = 15 * 60 * 1000;
  * `chainId`: the sale's transaction, once one is known. `creditId`: the credit the split reserved. `creditExpiresAt` (unix
  * seconds): when that credit stops being spendable. `sale`: its terms, what an
  * execution must carry to count as this split (none on a record from before they were kept: nothing settles it then).
- * `expiredSeenAt`: when the node was first seen to report its credit EXPIRED.
+ * `expiryProvenAt`: when the node was first seen to report its credit EXPIRED with its expiry proven by the chain's
+ * finalized block time; the grace counts from it. `expiredSeenAt`: a sighting noted before that proof was asked (judged by
+ * the local clock alone), read so a record keeping one still reads, and counted for nothing. `itemName`: the item's name
+ * as the buyer saw it, so a purchase this one holds back can say which item to check (none on a record from before it was
+ * kept).
  */
 export type SplitHold = {
   at: number;
@@ -59,6 +64,8 @@ export type SplitHold = {
   creditExpiresAt: number | null;
   sale?: SplitSale | null;
   expiredSeenAt?: number | null;
+  expiryProvenAt?: number | null;
+  itemName?: string | null;
 };
 
 /**
@@ -93,23 +100,48 @@ function holdStorage(): Storage | null {
 export function readSplitHoldRecord(account: string | null, lineId: string): SplitHold | null {
   try {
     const raw = holdStorage()?.getItem(splitHoldKey(account, lineId)) ?? null;
-    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    if (typeof parsed === "number") return { at: parsed, attempt: null, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
-    const hold = parsed as Partial<SplitHold> | null;
-    if (!hold || typeof hold.at !== "number") return null;
-    return {
-      at: hold.at,
-      attempt: typeof hold.attempt === "string" ? hold.attempt : null,
-      txHash: typeof hold.txHash === "string" ? hold.txHash : null,
-      chainId: typeof hold.chainId === "number" ? hold.chainId : null,
-      creditId: typeof hold.creditId === "string" ? hold.creditId : null,
-      creditExpiresAt: typeof hold.creditExpiresAt === "number" ? hold.creditExpiresAt : null,
-      sale: isSplitSale(hold.sale) ? hold.sale : null,
-      expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
-    };
+    return raw ? parseSplitHold(raw) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * A stored record read: null when it isn't one (not a hold's shape); throws when it isn't JSON. `strict`: a field that is
+ * there with the wrong type also makes it not one, where the tolerant read takes it as absent. Both read every format a
+ * hold was ever written in (a bare timestamp; fields added over time, absent or null on older records).
+ */
+function parseSplitHold(raw: string, strict = false): SplitHold | null {
+  const parsed = JSON.parse(raw) as unknown;
+  if (typeof parsed === "number") return { at: parsed, attempt: null, txHash: null, chainId: null, creditId: null, creditExpiresAt: null };
+  const hold = parsed as Partial<SplitHold> | null;
+  if (!hold || typeof hold !== "object" || typeof hold.at !== "number") return null;
+  if (strict) {
+    const fits = (v: unknown, type: "string" | "number") => v === undefined || v === null || typeof v === type;
+    const typed =
+      fits(hold.attempt, "string") &&
+      fits(hold.txHash, "string") &&
+      fits(hold.chainId, "number") &&
+      fits(hold.creditId, "string") &&
+      fits(hold.creditExpiresAt, "number") &&
+      fits(hold.expiredSeenAt, "number") &&
+      fits(hold.expiryProvenAt, "number") &&
+      fits(hold.itemName, "string") &&
+      (hold.sale === undefined || hold.sale === null || isSplitSale(hold.sale));
+    if (!typed) return null;
+  }
+  return {
+    at: hold.at,
+    attempt: typeof hold.attempt === "string" ? hold.attempt : null,
+    txHash: typeof hold.txHash === "string" ? hold.txHash : null,
+    chainId: typeof hold.chainId === "number" ? hold.chainId : null,
+    creditId: typeof hold.creditId === "string" ? hold.creditId : null,
+    creditExpiresAt: typeof hold.creditExpiresAt === "number" ? hold.creditExpiresAt : null,
+    sale: isSplitSale(hold.sale) ? hold.sale : null,
+    expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
+    expiryProvenAt: typeof hold.expiryProvenAt === "number" ? hold.expiryProvenAt : null,
+    itemName: typeof hold.itemName === "string" && hold.itemName.trim() !== "" ? hold.itemName.trim() : null,
+  };
 }
 
 /** Recorded no later than now and less than `SPLIT_HOLD_MS` ago. */
@@ -134,6 +166,106 @@ export function splitHoldCheckable(hold: SplitHold, now: number = Date.now()): b
 export function readSplitHold(account: string | null, lineId: string, now: number = Date.now()): SplitHold | null {
   const hold = readSplitHoldRecord(account, lineId);
   return hold && splitHoldKeeps(hold, now) ? hold : null;
+}
+
+/**
+ * Every hold of `account`, read strictly: throws where the storage can't be reached, or where a record that is there
+ * can't be read or isn't a hold's, so a caller deciding whether another split may spend the allowance holds instead of
+ * reading nothing. A key gone between listing and reading is simply gone.
+ */
+export function readAccountSplitHolds(account: string): { line: string; hold: SplitHold }[] {
+  const storage = holdStorage();
+  if (!storage) throw new Error("This browser's storage can't be read.");
+  const prefix = splitHoldKey(account, "");
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key && key.startsWith(prefix) && key.length > prefix.length) keys.push(key);
+  }
+  return keys.flatMap((key) => {
+    const raw = storage.getItem(key);
+    if (raw === null) return [];
+    const hold = parseSplitHold(raw, true);
+    if (!hold) throw new Error("A purchase's record in this browser can't be read.");
+    return [{ line: key.slice(prefix.length), hold }];
+  });
+}
+
+/**
+ * The splits of `account` that may still spend its MANA allowance, on any surface (readAccountSplitHolds, so it throws
+ * where it can't read them all). An exact approval sets the allowance to one gap, so another split's approval would take
+ * an earlier one's, and another split finding the allowance covered could spend it: while one is listed, a split of
+ * another item doesn't start. A run still preparing (no credit yet, a fresh hold) is listed; one with a credit is listed
+ * until `over` proves that credit can't spend anything any more (its purchase over, or its expiry reached by the chain's
+ * own time: splitCreditOverOnChain). An unknown expiry, or a local clock past it, proves nothing.
+ */
+export function splitsInFlight(account: string, now: number, over: (line: string, hold: SplitHold) => boolean): { line: string; hold: SplitHold }[] {
+  return readAccountSplitHolds(account).filter(({ line, hold }) => (hold.creditId === null ? splitHoldFresh(hold, now) : !over(line, hold)));
+}
+
+/**
+ * What a purchase held back by another item's split (splitsInFlight) tells the buyer, on every surface: that item named
+ * when its record names it (`itemName`), so the buyer knows which item's page to check it on; said generically otherwise.
+ */
+export function splitInFlightMessage(itemName: string | null | undefined): string {
+  return itemName
+    ? `Your purchase of ${itemName} with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.`
+    : "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.";
+}
+
+/** Of the other items' splits holding a purchase back, the one to tell the buyer about: the first that names its item. */
+export function splitToName<T extends { hold: SplitHold }>(others: T[]): T | undefined {
+  return others.find((held) => held.hold.itemName) ?? others[0];
+}
+
+/** `creditExpiredOnChain` for a hold's credit (none reserved: nothing to prove). */
+export async function splitCreditOverOnChain(hold: SplitHold, finalizedTime: (chainId: number) => Promise<number>, now: number = Date.now()): Promise<boolean> {
+  if (hold.creditId === null) return false;
+  return creditExpiredOnChain(hold.creditExpiresAt, hold.chainId, finalizedTime, now);
+}
+
+/** How long one read of the chain's finalized time may take, its body included; past it, it proves nothing. */
+export const FINALIZED_TIME_MS = 5_000;
+
+/**
+ * The chain's finalized block time (unix seconds) read through `reader`, within `ms`: past it the read is aborted (its
+ * `signal`, which the RPC reader passes to its request and its body) and rejects, so it proves no expiry and holds no one
+ * up, whether the reader honours the signal or not. A reader without it proves no expiry either, and one that throws at once
+ * rejects with that, no deadline left running.
+ */
+export function readerFinalizedTime(reader: Pick<ChainReader, "finalizedTime">, ms: number = FINALIZED_TIME_MS): (chainId: number) => Promise<number> {
+  return (chainId) => {
+    if (!reader.finalizedTime) return Promise.reject(new Error("This reader has no chain time"));
+    const controller = new AbortController();
+    let reading: Promise<number>;
+    try {
+      reading = reader.finalizedTime(chainId as ChainId, controller.signal);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("The chain's finalized time took too long"));
+      }, ms);
+    });
+    return Promise.race([reading, late]).finally(() => clearTimeout(timer));
+  };
+}
+
+/**
+ * Whether a credit expiring at `expiresAt` (unix seconds) on `chainId` provably can't be spent any more: the chain's
+ * finalized block time has reached it (the manager refuses a credit once `block.timestamp >= expiresAt`). The local clock
+ * (`now`) only says when that is worth asking; an unknown expiry or chain, or a read that fails, proves nothing.
+ */
+export async function creditExpiredOnChain(expiresAt: number | null | undefined, chainId: number | null, finalizedTime: (chainId: number) => Promise<number>, now: number = Date.now()): Promise<boolean> {
+  if (expiresAt == null || chainId === null || now < expiresAt * 1000) return false;
+  try {
+    return (await finalizedTime(chainId)) >= expiresAt;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -223,13 +355,34 @@ function evidenceOf(reader: ChainReader): SplitEvidenceReader {
  * starts where the last one did) throws `HistoryUnfinishedError`, as a failed read does.
  */
 export async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
-  const salt = creditId.toLowerCase();
+  const found = await findCreditRecords(account, [creditId], client);
+  return found.get(creditId.toLowerCase())?.[0] ?? null;
+}
+
+/**
+ * The node's records of several credits, in one paged pass: every line read of each (`<salt>:<position>`), by its salt
+ * (lowercased), in the history's order. It reads on until each credit has a line, `stop` says it has enough, or the history
+ * ends; one that can't be read to its end (`HISTORY_MAX_PAGES`, or a page that starts where the last one did) throws
+ * `HistoryUnfinishedError`, as a failed read does. A credit with no line read has no entry.
+ */
+export async function findCreditRecords(
+  account: string,
+  creditIds: string[],
+  client: ShopClient,
+  stop?: (found: Map<string, PurchaseRecord[]>) => boolean,
+): Promise<Map<string, PurchaseRecord[]>> {
+  const salts = new Set(creditIds.map((id) => id.toLowerCase()));
+  const found = new Map<string, PurchaseRecord[]>();
+  if (salts.size === 0) return found;
   let head: string | null = null;
   for (let skip = 0, page = 0; ; page++) {
     if (page >= HISTORY_MAX_PAGES) throw new HistoryUnfinishedError();
     const { items, total, returned } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
-    const found = items.find((p) => p.id.split(":")[0]!.toLowerCase() === salt);
-    if (found) return found;
+    for (const item of items) {
+      const salt = item.id.split(":")[0]!.toLowerCase();
+      if (salts.has(salt)) found.set(salt, [...(found.get(salt) ?? []), item]);
+    }
+    if (found.size === salts.size || (stop && stop(found))) return found;
     // The same first line again: the server ignored the offset, and reading on would read the same page forever.
     const first = items[0]?.id ?? null;
     if (first !== null && first === head) throw new HistoryUnfinishedError();
@@ -237,7 +390,7 @@ export async function findCreditRecord(account: string, creditId: string, client
     // By the rows the server sent: the ones the decoder drops (a status it does not know) still take their place, and a
     // server that sends fewer than asked starts its next page right after them.
     skip += returned;
-    if (returned === 0 || skip >= total) return null;
+    if (returned === 0 || skip >= total) return found;
   }
 }
 
@@ -245,8 +398,9 @@ export async function findCreditRecord(account: string, creditId: string, client
  * What became of a held split, decided only by its terms (the same rules the in-world Shop follows):
  * - its own transaction, read and matched (`splitExecution`): bought completes it;
  * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by the buyer's own
- *   call of that credit on other terms is `elsewhere`; EXPIRED, once the credit's own expiry has passed here too, releases
- *   it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ *   call of that credit on other terms is `elsewhere`; EXPIRED, once the chain's finalized block time has reached the
+ *   credit's own expiry too (`creditExpiredOnChain`), releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS`
+ *   (`expiring` before);
  * - its own dispatched bytes mined and reverted settle nothing on their own: that invocation failed, but a sibling
  *   invocation of the same terms may have run (the index may not show it yet), and a credit the node retired stays
  *   spendable on chain until it expires. So it is held, as anything else is, until the node's record says one of the above;
@@ -257,7 +411,15 @@ export async function findCreditRecord(account: string, creditId: string, client
  */
 export async function settleSplitHold(
   hold: SplitHold,
-  deps: { account: string | null; reader: ChainReader; client: ShopClient; now?: number; sleep?: (ms: number) => Promise<void> },
+  deps: {
+    account: string | null;
+    reader: ChainReader;
+    client: ShopClient;
+    now?: number;
+    sleep?: (ms: number) => Promise<void>;
+    /** The chain's finalized block time; `readerFinalizedTime(reader)` unless given. */
+    finalizedTime?: (chainId: number) => Promise<number>;
+  },
 ): Promise<SplitSettlement | null> {
   const now = deps.now ?? Date.now();
   if (!hold.creditId) return splitHoldFresh(hold, now) ? null : { kind: "released" };
@@ -284,30 +446,36 @@ export async function settleSplitHold(
     return null;
   }
   if (credit?.status === "EXPIRED") {
-    // The node lists a credit EXPIRED only once the chain, as far as it has read it, is past its expiry. This browser waits
-    // for that expiry too, a second safeguard: with no expiry known to check, or before it, there is no answer, and the
-    // grace counts only from a sighting made past it (`expirySeenAt`).
-    if (hold.creditExpiresAt === null || now < hold.creditExpiresAt * 1000) return null;
-    const seen = expirySeenAt(hold);
+    // The node lists a credit EXPIRED only once the chain, as far as it has read it, is past its expiry. This browser proves
+    // that expiry itself too, by the chain's finalized block time (creditExpiredOnChain; the local clock only says when to
+    // ask): with no expiry known, no chain time, or a read that fails or runs late, there is no answer. The grace counts
+    // only from the first sighting with that proof (`expiryProvenSince`), noted once it holds; a sighting noted before the
+    // proof was asked counts for nothing.
+    const finalizedTime = deps.finalizedTime ?? readerFinalizedTime(deps.reader);
+    if (!(await creditExpiredOnChain(hold.creditExpiresAt, hold.chainId ?? sale.chainId, finalizedTime, now))) return null;
+    const seen = expiryProvenSince(hold);
     return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };
   }
   return null;
 }
 
 /**
- * When its credit was first seen EXPIRED past that credit's own expiry: the only sighting the grace may count from. One
- * made before the expiry (or with no expiry known) is none, and the next sighting past it takes its place.
+ * When its credit was first seen EXPIRED with its expiry proven by the chain's finalized time (`expiryProvenAt`): the only
+ * sighting the grace may count from. `expiredSeenAt`, noted before that proof was asked, is none; so is one made before
+ * the expiry (or with no expiry known). The next proven sighting takes its place.
  */
-function expirySeenAt(hold: SplitHold): number | null {
-  const seen = hold.expiredSeenAt ?? null;
+function expiryProvenSince(hold: SplitHold): number | null {
+  const seen = hold.expiryProvenAt ?? null;
   return seen !== null && hold.creditExpiresAt !== null && seen >= hold.creditExpiresAt * 1000 ? seen : null;
 }
 
 /**
- * Notes, under the line's lock and only on the attempt that was read, when its credit was first seen EXPIRED past its own
- * expiry: the grace runs from then, in every tab and surface, and survives a restart. A sighting kept from before that
- * expiry is replaced by this one. `noted` (or already), `replaced` (another attempt's record is there now, or none), or
- * `busy` (a run holds the line's lock, or there are no Web Locks).
+ * Notes, under the line's lock and only on the attempt that was read, when its credit was first seen EXPIRED with its expiry
+ * proven (`expiryProvenAt`): the grace runs from then, in every tab and surface, and survives a restart. Called once
+ * `settleSplitHold` answered `expiring`, so only once the chain's finalized block time proved that expiry; a sighting kept
+ * from before the proof was asked (`expiredSeenAt`), or from before the expiry, doesn't count and is replaced. `noted`
+ * (or already), `replaced` (another attempt's record is there now, or none), or `busy` (a run holds the line's lock, or
+ * there are no Web Locks).
  */
 export async function noteSplitHoldExpiry(
   locks: LockManager | null | undefined,
@@ -316,14 +484,14 @@ export async function noteSplitHoldExpiry(
   read: SplitHold,
   now: number = Date.now(),
 ): Promise<"noted" | "replaced" | "busy"> {
-  if (expirySeenAt(read) !== null) return "noted";
+  if (expiryProvenSince(read) !== null) return "noted";
   const release = await webLock(locks, splitHoldLockName(account, lineId));
   if (!release) return "busy";
   try {
     const current = readSplitHoldRecord(account, lineId);
     if (!current || current.attempt !== read.attempt || (read.attempt === null && current.at !== read.at)) return "replaced";
-    if (expirySeenAt(current) !== null) return "noted";
-    return writeSplitHold(account, lineId, { ...current, expiredSeenAt: now }) ? "noted" : "busy";
+    if (expiryProvenSince(current) !== null) return "noted";
+    return writeSplitHold(account, lineId, { ...current, expiryProvenAt: now }) ? "noted" : "busy";
   } finally {
     release();
   }

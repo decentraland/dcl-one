@@ -29,6 +29,7 @@ import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
 import { rarityCardPalette } from "@shop/discovery/lib/rarity";
 import type { CartLineDisplay } from "@shop/model/purchase";
+import { Link } from "react-router";
 import { SHOP_BASE } from "../../routes";
 import buyErrorArt from "../assets/buy-error.png?url";
 import packCoin from "../assets/pack-coin.webp?url";
@@ -448,7 +449,8 @@ export function ProcessingBody({ text }: { text: string }) {
 }
 
 /** The failure panel: the reason (or that the Credits are safe), and a retry when there is one to make. */
-export function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry?: () => void }) {
+/** The failure panel; `link`, a page that can clear it (another item whose purchase holds this one, say). */
+export function ErrorBody({ message, onClose, onRetry, link }: { message: string | null; onClose(): void; onRetry?: () => void; link?: { href: string; label: string } }) {
   return (
     <DialogBody>
       <div className={styles.error} data-testid="buy-error">
@@ -456,6 +458,11 @@ export function ErrorBody({ message, onClose, onRetry }: { message: string | nul
         <p className={styles.errorText}>
           <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
         </p>
+        {link ? (
+          <Link className={styles.errorLink} to={link.href} data-testid="buy-error-link">
+            {link.label}
+          </Link>
+        ) : null}
       </div>
       <DialogCtas>
         <DialogButton variant="outline" full={!onRetry} onClick={onClose}>

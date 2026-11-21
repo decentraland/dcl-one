@@ -50,6 +50,11 @@ export interface SplitSale {
   envelope?: Hex
   /** Its line in the hold the web Shop and /play share (shop/checkout/purchase/splitHold), and the attempt it wrote there. */
   hold?: { line: string; attempt: string }
+  /**
+   * When the issued credit stops being spendable (unix seconds), kept with its terms before anything was sent, so finding
+   * the sale out never depends on another record. None on a sale kept before it was: no expiry of its own to prove.
+   */
+  creditExpiresAt?: number
 }
 
 /**
@@ -96,7 +101,8 @@ export function isSplitSale(v: unknown): v is SplitSale {
     hex(s.callData) &&
     (s.envelope === undefined || (typeof s.envelope === 'string' && /^0x[0-9a-fA-F]{64}$/.test(s.envelope))) &&
     (s.hold === undefined ||
-      (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string'))
+      (typeof s.hold === 'object' && s.hold !== null && typeof (s.hold as Record<string, unknown>).line === 'string' && typeof (s.hold as Record<string, unknown>).attempt === 'string')) &&
+    (s.creditExpiresAt === undefined || (typeof s.creditExpiresAt === 'number' && Number.isSafeInteger(s.creditExpiresAt)))
   )
 }
 
