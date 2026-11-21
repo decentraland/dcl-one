@@ -143,6 +143,13 @@ enum ShopCommand {
         /// cursor (`logs_after`); write nothing.
         #[arg(long)]
         dry_run: bool,
+        /// The chain the node's trade-events walk reads on each network, as
+        /// it configures it: `--since` counts a trade_events history only
+        /// when it was proven on that chain.
+        #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
+        marketplace_index_chain_id_ethereum: i64,
+        #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
+        marketplace_index_chain_id_matic: i64,
         /// Who ran it, recorded as the `ops.admin_audit` actor: the
         /// operator's name, `$USER` when not given, `cli` when neither is set.
         #[arg(long, env = "USER", hide_env_values = true)]
@@ -692,6 +699,8 @@ async fn run(
                     from_block,
                     since,
                     dry_run,
+                    marketplace_index_chain_id_ethereum,
+                    marketplace_index_chain_id_matic,
                     actor,
                 },
         } => {
@@ -719,7 +728,11 @@ async fn run(
                 .map(str::trim)
                 .filter(|a| !a.is_empty())
                 .unwrap_or("cli");
-            let out = rewind(&pool, &producer, from, actor, dry_run).await?;
+            let trade_chains = (
+                marketplace_index_chain_id_ethereum,
+                marketplace_index_chain_id_matic,
+            );
+            let out = rewind(&pool, &producer, from, trade_chains, actor, dry_run).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }
