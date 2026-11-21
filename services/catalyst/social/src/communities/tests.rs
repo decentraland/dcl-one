@@ -1262,8 +1262,10 @@ async fn every_route_answers_its_contract() {
     let with_thumb = v["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(
         v["data"]["thumbnails"]["raw"],
-        rig.state
-            .thumbnail_url(CommunityId::parse(&with_thumb).unwrap())
+        rig.state.versioned_thumbnail_url(
+            CommunityId::parse(&with_thumb).unwrap(),
+            Some(&super::thumbnail::thumbnail_hash(&png(1500)))
+        )
     );
     let (status, _) = hit(
         app,
@@ -2604,6 +2606,123 @@ fn settings_fold_restricted_names_and_validate_moderators() {
         super::thumbnail_url("http://cdn/", "x"),
         "http://cdn/social/communities/x/raw-thumbnail.png"
     );
+    assert_eq!(
+        super::versioned_thumbnail_url("http://cdn/", "x", Some("bafkreiabc")),
+        "http://cdn/social/communities/x/raw-thumbnail.png?v=bafkreiabc"
+    );
+    for bare in [None, Some(""), Some("a&b"), Some("a b")] {
+        assert_eq!(
+            super::versioned_thumbnail_url("http://cdn/", "x", bare),
+            "http://cdn/social/communities/x/raw-thumbnail.png",
+            "{bare:?}"
+        );
+    }
+}
+
+/// The raw thumbnail's caching: long only for the current hash's URL, short
+/// with an ETag otherwise, and an update moves the versioned URL.
+#[tokio::test]
+async fn raw_thumbnail_cache_control_follows_the_url_version() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let get = |path: String, if_none_match: Option<String>| {
+        let app = rig.app.clone();
+        async move {
+            let mut builder = Request::builder().method("GET").uri(path);
+            if let Some(tag) = if_none_match {
+                builder = builder.header(header::IF_NONE_MATCH, tag);
+            }
+            let response = app
+                .oneshot(builder.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let header_of = |name: header::HeaderName| {
+                response
+                    .headers()
+                    .get(name)
+                    .map(|v| v.to_str().unwrap().to_string())
+            };
+            (
+                response.status(),
+                header_of(header::CACHE_CONTROL),
+                header_of(header::ETAG),
+            )
+        }
+    };
+    let owner = wallet();
+    let c = rig.community(&owner, false).await;
+    let path = format!("/social/communities/{c}/raw-thumbnail.png");
+
+    let (status, cache, _) = get(path.clone(), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        cache.as_deref(),
+        Some("public, max-age=60"),
+        "a miss is short-cached"
+    );
+
+    let first = png(1500);
+    let old_hash = super::thumbnail::store_thumbnail(&rig.pool, &rig.state.storage, c, &first)
+        .await
+        .unwrap();
+    let (status, cache, etag) = get(path.clone(), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cache.as_deref(), Some("public, max-age=60"));
+    assert_eq!(etag, Some(format!("\"{old_hash}\"")));
+    let (status, cache, _) = get(format!("{path}?v={old_hash}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache.as_deref(),
+        Some("public, max-age=86400, immutable"),
+        "the current version is long-cached"
+    );
+    let (status, cache, _) = get(path.clone(), Some(format!("\"{old_hash}\""))).await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert_eq!(cache.as_deref(), Some("public, max-age=60"));
+
+    let new_hash = super::thumbnail::store_thumbnail(&rig.pool, &rig.state.storage, c, &png(1600))
+        .await
+        .unwrap();
+    assert_ne!(old_hash, new_hash);
+    let (status, cache, etag) = get(format!("{path}?v={old_hash}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        cache.as_deref(),
+        Some("public, max-age=60"),
+        "a stale version serves the new image short-cached"
+    );
+    assert_eq!(etag, Some(format!("\"{new_hash}\"")));
+    let (status, _, _) = get(path.clone(), Some(format!("\"{old_hash}\""))).await;
+    assert_eq!(status, StatusCode::OK, "the old ETag no longer matches");
+    assert_eq!(
+        rig.state.versioned_thumbnail_url(c, Some(&new_hash)),
+        format!(
+            "{}{path}?v={new_hash}",
+            rig.state.settings.cdn_url.trim_end_matches('/')
+        )
+    );
+
+    // an update answers the URL of the new version
+    let third = png(1700);
+    let (mp, ct) = multipart(&[("thumbnail", &third)]);
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("put", format!("/v1/communities/{c}"))
+            .signed(&owner)
+            .await
+            .body(mp, &ct),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let third_hash = super::thumbnail::thumbnail_hash(&third);
+    assert_eq!(
+        v["data"]["thumbnails"]["raw"],
+        rig.state.versioned_thumbnail_url(c, Some(&third_hash))
+    );
+    let (_, cache, _) = get(format!("{path}?v={third_hash}"), None).await;
+    assert_eq!(cache.as_deref(), Some("public, max-age=86400, immutable"));
+    rig.finish();
 }
 
 mod friendship_parity;

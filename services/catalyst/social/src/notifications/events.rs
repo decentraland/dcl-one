@@ -48,7 +48,8 @@ struct Recipient {
     address: String,
     community: bool,
     community_name: Option<String>,
-    community_thumbnail: bool,
+    /// The stored thumbnail hash of the community, when one exists.
+    community_thumbnail: Option<String>,
 }
 
 /// The sites the notices point at and the Slack switch.
@@ -173,10 +174,10 @@ fn text<'a>(event: &'a Value, field: &str) -> &'a str {
 static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         "WITH candidates AS ( \
-            SELECT $3::text AS address,false AS community,NULL::text AS community_name,false AS community_thumbnail \
+            SELECT $3::text AS address,false AS community,NULL::text AS community_name,NULL::text AS community_thumbnail \
             WHERE $2 IN ('event_approved','event_rejected','event_deleted') AND $3 > $6 \
             UNION ALL \
-            (SELECT a.signer,false,NULL,false FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
+            (SELECT a.signer,false,NULL,NULL FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
             WHERE a.event_id=$1 AND a.signer > $6 AND a.action='going' AND $2 IN ('events_starts_soon','events_started') \
               AND e.approved AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
@@ -188,7 +189,7 @@ static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
                     AND EXISTS ({opt_out}))) \
             ORDER BY a.signer LIMIT $7) \
             UNION ALL \
-            (SELECT m.member_address,true,c.name,EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id=c.id) \
+            (SELECT m.member_address,true,c.name,(SELECT t.thumbnail_hash FROM social.community_thumbnails t WHERE t.community_id=c.id) \
             FROM social.community_members m \
             JOIN social.communities c ON c.id=m.community_id \
             JOIN explore.event e ON e.id=$1 AND CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END=$5::uuid AND e.origin='local' \
@@ -199,7 +200,7 @@ static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
               AND NOT EXISTS ({opt_out}) \
             ORDER BY m.member_address LIMIT $7) \
         ) SELECT address,bool_or(community) AS community,max(community_name) AS community_name, \
-                 bool_or(community_thumbnail) AS community_thumbnail \
+                 max(community_thumbnail) AS community_thumbnail \
           FROM candidates WHERE address > $6 GROUP BY address ORDER BY address LIMIT $7",
         opt_out = community_opt_out("m.member_address", "$5::uuid")
     )
@@ -313,11 +314,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         let community = text(&intent.event, "community_id");
         metadata["communityId"] = json!(community);
         metadata["communityName"] = json!(community_name);
-        if recipient.community_thumbnail {
+        if let Some(hash) = recipient.community_thumbnail.as_deref() {
             // The stored thumbnail lives under the canonical UUID.
             let id = Uuid::parse_str(community).map_or(community.to_string(), |id| id.to_string());
-            metadata["communityThumbnail"] =
-                json!(crate::communities::thumbnail_url(&links.community_cdn, &id));
+            metadata["communityThumbnail"] = json!(crate::communities::versioned_thumbnail_url(
+                &links.community_cdn,
+                &id,
+                Some(hash)
+            ));
         }
     }
     if matches!(
@@ -828,7 +832,7 @@ mod tests {
             .bind(&event).bind(HOST).fetch_one(&pool).await.unwrap();
         assert_eq!(
             hosted["communityThumbnail"],
-            format!("{CDN}/social/communities/{community}/raw-thumbnail.png")
+            format!("{CDN}/social/communities/{community}/raw-thumbnail.png?v=hash")
         );
         let (state,visible): (String,bool) = sqlx::query_as("SELECT d.state,n.in_app FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.metadata->>'eventId'=$1 AND n.type='events_starts_soon' AND n.address=$2")
             .bind(&event).bind(DUAL).fetch_one(&pool).await.unwrap();
@@ -1793,7 +1797,7 @@ mod tests {
             address: "0x1111111111111111111111111111111111111111".into(),
             community,
             community_name: community.then(|| "Club".to_string()),
-            community_thumbnail,
+            community_thumbnail: community_thumbnail.then(|| "bafkreihash".to_string()),
         }
     }
 
@@ -1943,7 +1947,7 @@ mod tests {
         assert_eq!(deleted["reason"], "Duplicate");
 
         let thumbnail = format!(
-            "{CDN}/social/communities/{}/raw-thumbnail.png",
+            "{CDN}/social/communities/{}/raw-thumbnail.png?v=bafkreihash",
             community.to_lowercase()
         );
         for kind in ["event_created", "events_started"] {
@@ -2042,7 +2046,7 @@ mod tests {
             address: "0x1111111111111111111111111111111111111111".into(),
             community: false,
             community_name: None,
-            community_thumbnail: false,
+            community_thumbnail: None,
         };
         let reminder = metadata(&intent, &attendee, &links);
         assert_eq!(reminder["title"], "Event starts in an hour");
@@ -2072,7 +2076,7 @@ mod tests {
             address: "0x2222222222222222222222222222222222222222".into(),
             community: true,
             community_name: Some("Builders".into()),
-            community_thumbnail: false,
+            community_thumbnail: None,
         };
         let community = metadata(&started, &member, &links);
         assert_eq!(community["title"], "Community Event starting");
