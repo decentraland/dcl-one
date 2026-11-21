@@ -2040,10 +2040,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         // The approval's lock, for the approval and then the sale: an earlier AUTHORIZE of this dialog may have let it go
         // just now, so it is asked for again while taken; held by another window, nothing is asked.
         const held = await relock(() => lockIfFree(svc.locks(), grantLock), (got) => got === null)
-        // The purchase may have ended while the lock was awaited (a CANCEL, another step, another session): then it goes at
-        // once and nothing is asked, read or sent.
+        // The purchase may have ended while the lock was awaited: then it goes at once and nothing is asked, read or sent.
+        // Closed (CANCEL) or replaced by another step: nothing more to do here, and another dialog is never touched. Still
+        // this purchase's dialog but signed in as someone else now: it ends here, cancelled, so it doesn't stay waiting.
         if (answered || !slot.holds(op) || !current()) {
           held?.()
+          if (!answered && slot.holds(op)) close(op, 'cancelled')
           answer(null)
           return
         }

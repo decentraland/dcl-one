@@ -1144,6 +1144,32 @@ describe('the in-world purchase with MANA', () => {
       expect(p.locks.held.has(grantLock)).toBe(false)
     })
 
+    it('ends the purchase, reading and sending nothing, when the session changes while AUTHORIZE waits for the approval\'s lock', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      let reads = 0
+      const reader = { ...w.chain, call: async (...a: Parameters<typeof w.chain.call>) => (reads++, w.chain.call(...a)) }
+      let who: StoredLogin | null = LOGIN
+      const p = page(w, { split: splitOn, creditsCents: 50, login: () => who, services: { ...managed, reader: () => reader } })
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      // Another window takes the approval's lock just before the click; the buyer signs out while this one waits for it.
+      p.locks.held.add(grantLock)
+      auth.handlers.onAuthorize?.()
+      who = null
+      const readsAtSignOut = reads
+      p.locks.held.delete(grantLock)
+      // The purchase doesn't stay waiting: it ends, cancelled, and its lock is let go.
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(reads).toBe(readsAtSignOut)
+      expect(w.relay.posts).toHaveLength(0)
+      expect(p.locks.held.has(grantLock)).toBe(false)
+    })
+
     it('keeps the approval\'s lock from AUTHORIZE\'s click to the sale\'s hand-off: taken once, held as the sale goes out', async () => {
       on()
       const w = world()
