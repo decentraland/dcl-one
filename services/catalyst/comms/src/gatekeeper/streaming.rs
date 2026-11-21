@@ -579,6 +579,11 @@ async fn refuse_barred(
 /// mirrored) by name, else the Genesis place holding `parcel`. With
 /// `based_there` only a place based on `parcel` counts, so a catalogue that
 /// has not caught up with a redeploy never lends another scene's admins.
+///
+/// A world's place ignores `parcel`: the world has one credential for all its
+/// scenes. Several rows of one world (a local row beside the mirrored one it
+/// displaces) resolve to the same place on every call: the local leg first,
+/// then the lowest id.
 async fn resolve_place_id(
     pool: &PgPool,
     world: Option<&WorldName>,
@@ -587,10 +592,11 @@ async fn resolve_place_id(
 ) -> Result<Option<String>, ApiError> {
     if let Some(world) = world {
         return Ok(sqlx::query_scalar(
-            "SELECT id FROM explore.place WHERE world AND lower(world_name) = lower($1) \
+            "SELECT id FROM ( \
+             SELECT id, 0 AS leg FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
              UNION ALL \
-             SELECT id FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
-             LIMIT 1",
+             SELECT id, 1 AS leg FROM explore.place WHERE world AND lower(world_name) = lower($1) \
+             ) places ORDER BY leg, id LIMIT 1",
         )
         .bind(world.display())
         .fetch_optional(pool)
@@ -1080,5 +1086,77 @@ mod moderation_boundary_tests {
                 .code,
             503
         );
+    }
+}
+
+#[cfg(test)]
+mod place_lookup_tests {
+    use super::*;
+
+    async fn world_row(pool: &PgPool, table: &str, id: &str, world: &str, base: &str) {
+        let raw = serde_json::json!({ "world": true, "world_name": world, "positions": [base] });
+        let sql = match table {
+            "place" => "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3)",
+            _ => {
+                "INSERT INTO explore.place_world_local (id, base_position, raw, world, world_name) \
+                 VALUES ($1, $2, $3, true, $3->>'world_name')"
+            }
+        };
+        sqlx::query(sql)
+            .bind(id)
+            .bind(base)
+            .bind(raw)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Several catalogue rows of one world resolve to one place for every
+    /// scene of the world: the local leg, then the lowest id.
+    #[tokio::test]
+    async fn a_world_resolves_one_place_for_every_scene_whatever_rows_it_has() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("lookup{}.dcl.eth", &tag[..10])).unwrap();
+        // Mirrored rows inserted highest id first, so heap order is not the answer.
+        world_row(
+            &pool,
+            "place",
+            &format!("m-z-{tag}"),
+            world.display(),
+            "0,0",
+        )
+        .await;
+        world_row(
+            &pool,
+            "place",
+            &format!("m-a-{tag}"),
+            world.display(),
+            "5,5",
+        )
+        .await;
+        for parcel in ["0,0", "5,5", ""] {
+            assert_eq!(
+                resolve_place_id(&pool, Some(&world), parcel, true)
+                    .await
+                    .unwrap(),
+                Some(format!("m-a-{tag}")),
+                "mirrored rows only, parcel {parcel:?}"
+            );
+        }
+        // A local row of the world wins over the mirrored rows it displaces,
+        // even when its id sorts after theirs.
+        world_row(&pool, "local", &format!("z-{tag}"), world.display(), "0,0").await;
+        for parcel in ["0,0", "5,5", ""] {
+            assert_eq!(
+                resolve_place_id(&pool, Some(&world), parcel, false)
+                    .await
+                    .unwrap(),
+                Some(format!("z-{tag}")),
+                "local row present, parcel {parcel:?}"
+            );
+        }
     }
 }
