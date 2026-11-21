@@ -527,14 +527,29 @@ pub async fn walk_together(
     };
     let stop = settings.stop_block(net);
     let target = chain_walk::target_block(safe, stop);
-    // Each member's first walk in this process marks its cursor's age, as a
-    // walk alone does once its head reads answered; a failed touch is tried
-    // again on the next pass.
-    for w in &walking {
-        let ix = &w.member.index;
-        if let Err(e) = chain_walk::touch_once(pool, ix.indexer(), net, w.expected.0, stop).await {
-            tracing::warn!(indexer = ix.indexer(), network = net.db_name(), error = %e, "marketplace chain index: could not mark a started walk");
+    // Each member's first walk under its generation marks its cursor's age, as
+    // a walk alone does once its head reads answered: the touches run side by
+    // side, each under the member deadline, so a row lock on one member holds
+    // back no other. A member whose touch fails, overruns or is fenced leaves
+    // the walk, and is touched again on its next pass.
+    let touched = futures::future::join_all(walking.into_iter().map(|w| async move {
+        let at = (w.expected.0, Some(w.expected.1.as_str()));
+        let done = timed(deadline, chain_walk::touch_once(pool, &w.owner, at, stop)).await;
+        (w, done)
+    }))
+    .await;
+    let mut walking = Vec::new();
+    for (w, done) in touched {
+        match done {
+            Ok(()) => walking.push(w),
+            Err(e) => {
+                let end = e.end("its start's touch");
+                ends.push((w.member.slot, failed(&w.member, end)));
+            }
         }
+    }
+    if walking.is_empty() {
+        return ends;
     }
     let anchor = (at_header.number, at_header.timestamp);
     for w in &mut walking {
