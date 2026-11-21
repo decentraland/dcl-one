@@ -27,7 +27,7 @@ footprint, otherwise the numerically first valid parcel.
 
 Both moderation steps read the complete source set in one transaction, so
 aliases of one target identity cannot land in separate batches and overwrite
-each other. Active/newest admin grants and earliest bans win deterministically.
+each other. Active/newest admin grants and the newest ban win deterministically, as in the node's ban release scripts.
 Size the cutover transaction for the complete moderation set.
 
 Missing or ambiguous bindings, including old world-name keys, abort the batch

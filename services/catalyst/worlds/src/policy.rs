@@ -1243,7 +1243,12 @@ impl Policy {
         prior: Option<AccessGrant>,
         now: NaiveDateTime,
     ) -> Result<Access, AuthorityNotEstablished> {
-        if let Some(ban) = self.is_banned(actor, scene, device_id, now).await? {
+        // A world scene's stable keys are read below; this is its entity-id alias.
+        let alias = scene.map(crate::comms::access::SceneBanKey::scene);
+        if let Some(ban) = self
+            .is_banned(actor, alias.as_ref(), device_id, now)
+            .await?
+        {
             return Ok(Access::Banned(ban));
         }
         let selected = match scene {
@@ -1387,16 +1392,14 @@ impl Policy {
     pub async fn is_banned(
         &self,
         actor: &Address,
-        scene: Option<&SceneId>,
+        scene: Option<&crate::comms::access::SceneBanKey>,
         device_id: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<Ban>, AuthorityNotEstablished> {
         if self.is_blocked(actor).await? {
             return Ok(Some(Ban::Blocked));
         }
-        // A world scene's stable keys are read by `can_access`; this is its entity-id alias.
-        let scene = scene.map(crate::comms::access::SceneBanKey::scene);
-        self.bans.ban(actor, scene.as_ref(), device_id, now).await
+        self.bans.ban(actor, scene, device_id, now).await
     }
 
     /// An explicit scene admin, else the owner of the world (world scene) or
@@ -1646,6 +1649,7 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
 mod tests {
     use super::*;
     use crate::chain_index::graph::test_support::{Names, index_with_names};
+    use crate::comms::access::SceneBanKey;
     use uuid::Uuid;
 
     const ADDR: &str = "0x4d02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7bf2";
@@ -1785,9 +1789,14 @@ mod tests {
         let p = Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
             .with_ban_status(Arc::new(StubBanStatus(Ok(Some(Ban::Platform)))));
         assert_eq!(
-            p.is_banned(&actor, Some(&scene), Some("device"), now())
-                .await
-                .unwrap(),
+            p.is_banned(
+                &actor,
+                Some(&SceneBanKey::scene(&scene)),
+                Some("device"),
+                now()
+            )
+            .await
+            .unwrap(),
             Some(Ban::Platform)
         );
         // Raw provider failure cannot override the definite blocked-wallet result.
@@ -1798,7 +1807,7 @@ mod tests {
             ),
         ))));
         assert!(
-            p.is_banned(&actor, Some(&scene), None, now())
+            p.is_banned(&actor, Some(&SceneBanKey::scene(&scene)), None, now())
                 .await
                 .is_err()
         );
@@ -1808,7 +1817,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            p.is_banned(&actor, Some(&scene), None, now())
+            p.is_banned(&actor, Some(&SceneBanKey::scene(&scene)), None, now())
                 .await
                 .unwrap(),
             Some(Ban::Blocked)
@@ -2720,7 +2729,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            p.is_banned(&visitor, Some(&scene), None, now())
+            p.is_banned(&visitor, Some(&SceneBanKey::scene(&scene)), None, now())
                 .await
                 .unwrap(),
             Some(Ban::Platform)
@@ -2728,7 +2737,7 @@ mod tests {
         assert_eq!(
             p.is_banned(
                 &visitor,
-                Some(&scene),
+                Some(&SceneBanKey::scene(&scene)),
                 None,
                 now() + chrono::Duration::hours(2)
             )

@@ -111,7 +111,26 @@ impl SceneIdentity for Catalogue {
                         .await?,
                 )
             }
-            // A Genesis scene this fixture does not hold: its bans keep the entity id.
+            // One Genesis scene; any other is not deployed here.
+            RoomRequest::Adapter {
+                realm: realm @ RealmId::Shared(_),
+                scene,
+            } if scene.as_str() == "GenesisA" => {
+                let base = Parcel::parse("5,5").unwrap();
+                return Ok(ResolvedRoom {
+                    room: crate::rooms::gatekeeper_scene_room(realm.as_str(), scene.as_str()),
+                    scene_id: Some(scene.clone()),
+                    deployment: Some(ActiveDeployment {
+                        title: None,
+                        scene_id: scene.clone(),
+                        parcels: [base].into_iter().collect(),
+                        base,
+                        namespace: crate::world_identity::SceneNamespace::new(realm, base, None),
+                        local: true,
+                    }),
+                    realm: realm.clone(),
+                });
+            }
             RoomRequest::Adapter {
                 realm: RealmId::Shared(_),
                 scene,
@@ -766,6 +785,27 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
             .await,
         Ok(()),
         "shared scenes preserve their own authority path"
+    );
+    // A Genesis room no deployment stands behind is refused, and a store
+    // fault is unavailable, never a ban list on the entity id.
+    assert_eq!(
+        policy
+            .authorize(&verified_room("scene:main:GenesisGone"))
+            .await,
+        Err(DenialReason::NotAuthorized)
+    );
+    let down = CurrentRoomPolicy::new(
+        Arc::new(crate::interfaces::test_support::StubScenes {
+            room: Err(ResolveError::Db(sqlx::Error::PoolClosed)),
+            ..Default::default()
+        }),
+        Arc::new(StubPolicy::default()),
+        Arc::new(StubBanStatus(Ok(None))),
+        None,
+    );
+    assert_eq!(
+        down.authorize(&verified_room("scene:main:GenesisA")).await,
+        Err(DenialReason::Unavailable)
     );
     for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
         let banned = CurrentRoomPolicy::new(

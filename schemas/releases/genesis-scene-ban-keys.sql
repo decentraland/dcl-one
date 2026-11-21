@@ -3,8 +3,10 @@ BEGIN;
 -- base parcel (social.scene_base_parcel) that its admins use, so a redeploy
 -- of the same place keeps them (schemas/40_social.sql). Two entities of one
 -- place keep the newest ban of a wallet, also against a row the place has.
--- Every moved entity row is removed. A row whose entity is not deployed, or
--- has no parcel that parses, stays. Stop old replicas before migration: old
+-- Every moved entity row is removed. A deployment counts while it is not
+-- deleted (`deleter_deployment IS NULL`), as the room resolver reads it, also
+-- an unpublished one. A row whose entity is not deployed, or has no parcel
+-- that parses, stays. Stop old replicas before migration: old
 -- readers and writers use the entity key. Run after `catalyst schema
 -- migrate`. Rollback needs the matching backup.
 WITH mapping AS (
@@ -12,7 +14,6 @@ WITH mapping AS (
            social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') AS ban_key
       FROM content.deployments d
      WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL
-       AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id)
        AND d.entity_id IN (SELECT place_id FROM social.scene_bans)
 ), moved AS (
     INSERT INTO social.scene_bans AS t (place_id, banned_address, banned_by, banned_at)

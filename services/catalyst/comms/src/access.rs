@@ -75,8 +75,9 @@ impl SceneBanKey {
         Self(format!("{}:{base}", world.key()))
     }
 
-    pub fn place(place: String) -> Self {
-        Self(place)
+    /// A Genesis deployment's key: its place.
+    pub fn genesis(deployment: &crate::rooms::ActiveDeployment) -> Self {
+        Self(deployment.place_key())
     }
 
     pub fn scene(scene: &SceneId) -> Self {

@@ -207,7 +207,10 @@ impl RelayPolicy for CurrentRoomPolicy {
                         let key = resolved
                             .resolve_ban_key(self.scenes.as_ref())
                             .await
-                            .map_err(|_| DenialReason::Unavailable)?
+                            .map_err(|error| match error {
+                                crate::rooms::ResolveError::Db(_) => DenialReason::Unavailable,
+                                _ => DenialReason::NotAuthorized,
+                            })?
                             .ok_or(DenialReason::NotAuthorized)?;
                         self.scene_gate(&principal, &key).await
                     }
@@ -299,7 +302,7 @@ mod moderation_boundary_tests {
     #[tokio::test]
     async fn relay_keeps_platform_scene_and_authority_fault_denials() {
         let actor = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
-        let scene = SceneBanKey::place("0,0".into());
+        let scene = SceneBanKey::scene(&SceneId::parse("test-scene").unwrap());
         for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
             let policy = CurrentRoomPolicy::new(
                 Arc::new(StubScenes::default()),

@@ -179,7 +179,8 @@ mod tests {
     async fn full_answer_forwards_scope_device_and_clock_exactly_once() {
         let probe = Probe(Mutex::new(vec![]));
         let actor = wallet();
-        let scene = SceneBanKey::place("scene-under-test".into());
+        let scene =
+            SceneBanKey::scene(&crate::world_identity::SceneId::parse("scene-under-test").unwrap());
         let now = chrono::Utc::now().naive_utc();
         assert_eq!(
             admission_ban(
@@ -221,7 +222,13 @@ mod tests {
             Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
         let other =
             Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
-        let scene = SceneBanKey::place(format!("scene-{}", uuid::Uuid::new_v4().simple()));
+        let scene = SceneBanKey::scene(
+            &crate::world_identity::SceneId::parse(&format!(
+                "scene-{}",
+                uuid::Uuid::new_v4().simple()
+            ))
+            .unwrap(),
+        );
         let device = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().naive_utc();
         let bans = super::super::Moderation::new(pool.clone());

@@ -267,10 +267,14 @@ async fn legacy_ban_key(
             _ => None,
         });
     if let Some(local) = genesis {
-        return local
-            .resolve_ban_key(state.scenes.as_ref())
-            .await
-            .map_err(|error| anyhow!("scene identity unavailable: {error:?}"));
+        return match local.resolve_ban_key(state.scenes.as_ref()).await {
+            Ok(key) => Ok(key),
+            Err(crate::rooms::ResolveError::Db(error)) => {
+                Err(anyhow!("scene identity unavailable: {error:?}"))
+            }
+            // An overwritten scene: no ban is read for it.
+            Err(_) => Ok(None),
+        };
     }
     let Some(world) = rooms
         .iter()

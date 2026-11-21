@@ -101,7 +101,6 @@ pub async fn ensure_scene_admin_place_release(pool: &PgPool) -> anyhow::Result<(
            EXISTS (SELECT 1 FROM explore.world_scene_place i WHERE i.active AND i.entity_id = a.place_id) \
            OR EXISTS (SELECT 1 FROM content.deployments d \
                       WHERE d.entity_id = a.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
-                        AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id) \
                         AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
     )
     .fetch_one(pool)
@@ -123,7 +122,6 @@ pub async fn ensure_genesis_scene_ban_release(pool: &PgPool) -> anyhow::Result<(
         "SELECT EXISTS (SELECT 1 FROM social.scene_bans b WHERE EXISTS (\
            SELECT 1 FROM content.deployments d \
             WHERE d.entity_id = b.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
-              AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id) \
               AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
     )
     .fetch_one(pool)
@@ -1370,9 +1368,11 @@ mod tests {
         ban(&first, &other, "first", 5).await;
         ban(&no_parcel, &banned, "kept", 1).await;
         ban("bafyGone", &banned, "kept", 1).await;
-        // A row the place has: the moved ban is newer and wins.
+        // Rows the place has: a newer moved ban wins, a newer place row stays.
         ban(&third, &banned, "moved", 1).await;
         ban(&p3, &banned, "stale", 4).await;
+        ban(&third, &other, "older-move", 6).await;
+        ban(&p3, &other, "place-newer", 3).await;
 
         let unmoved = ensure_genesis_scene_ban_release(&pool).await.unwrap_err();
         assert!(
@@ -1416,6 +1416,7 @@ mod tests {
             (p2.clone(), banned.clone(), "newer".to_owned()),
             (p2.clone(), other.clone(), "first".to_owned()),
             (p3.clone(), banned.clone(), "moved".to_owned()),
+            (p3.clone(), other.clone(), "place-newer".to_owned()),
             (no_parcel.clone(), banned.clone(), "kept".to_owned()),
             ("bafyGone".to_owned(), banned.clone(), "kept".to_owned()),
         ];
