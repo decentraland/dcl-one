@@ -13,6 +13,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(test)]
 mod cli_tests;
+#[cfg(test)]
+mod preflight_tests;
 
 #[derive(Parser)]
 #[command(name = "catalyst", version, about = "Decentraland Catalyst node")]
@@ -63,6 +65,11 @@ enum Command {
         #[command(subcommand)]
         command: CameraReelCommand,
     },
+    /// Shop operator commands.
+    Shop {
+        #[command(subcommand)]
+        command: ShopCommand,
+    },
     /// Explore (places, events) operator commands.
     Explore {
         #[command(subcommand)]
@@ -97,6 +104,56 @@ enum PostureCommand {
         #[arg(value_parser = ["mirror", "island", "journey"])]
         name: String,
         keys: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShopCommand {
+    /// Move a chain notification producer's cursor (`shop.notification_cursor`)
+    /// back, with its replay floor, so its next passes announce every sale,
+    /// royalty, rental or transfer after that point again (runbook:
+    /// docs/shop-notices.md). A producer no pass has seeded yet is seeded
+    /// there and its first pass keeps it: the cutover seed from a legacy
+    /// cursor. Never moves a cursor forward. A notice already stored keeps
+    /// its id, so it is neither stored nor emailed twice. `--since` resolves
+    /// through the logs of the indexes the producer reads and is refused
+    /// until they have indexed past it. Prints the outcome as JSON and
+    /// records it in `ops.admin_audit` as `--actor`. Not behind
+    /// OPS_WRITES_ENABLED: the producers' own switches decide whether
+    /// anything is emitted.
+    NoticeRewind {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(catalyst::shop::market::notice_cursor::PRODUCERS))]
+        producer: String,
+        /// Announce the logs of this block (1 or more) and later.
+        #[arg(
+            long,
+            conflicts_with = "since",
+            required_unless_present = "since",
+            value_parser = clap::value_parser!(i64).range(1..)
+        )]
+        from_block: Option<i64>,
+        /// Announce the logs mined at or after this time (for `rental_ended`,
+        /// the periods ending at or after it): RFC 3339, `YYYY-MM-DD` (UTC)
+        /// or epoch milliseconds, the legacy cursor's unit.
+        #[arg(long, value_parser = catalyst::shop::market::notice_cursor::parse_since)]
+        since: Option<i64>,
+        /// Resolve and print, with each index's logs after the resulting
+        /// cursor (`logs_after`); write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The chain the node's trade-events walk reads on each network, as
+        /// it configures it: `--since` counts a trade_events history only
+        /// when it was proven on that chain.
+        #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
+        marketplace_index_chain_id_ethereum: i64,
+        #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
+        marketplace_index_chain_id_matic: i64,
+        /// Who ran it, recorded as the `ops.admin_audit` actor: the
+        /// operator's name, `$USER` when not given, `cli` when neither is set.
+        #[arg(long, env = "USER", hide_env_values = true)]
+        actor: Option<String>,
     },
 }
 
@@ -404,7 +461,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(arguments) = matches.subcommand_matches("serve") {
                 config.refuse_argv_secrets(arguments)?;
             }
-            check_posture(config)?;
+            serve_preflight(config, &|key: &str| std::env::var(key).ok())?;
             catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
             // SAFETY: This startup thread performs the first common initialization.
             // All runtime/blocking workers descend from it afterwards. Prepared
@@ -435,6 +492,14 @@ fn main() -> anyhow::Result<()> {
 /// The refusals of [`posture::check`] against this process's environment.
 fn check_posture(config: &Config) -> anyhow::Result<()> {
     posture::check(config, &|key: &str| std::env::var(key).ok())
+}
+
+/// `serve`'s config refusals: the shared posture checks, then the DCL NAME
+/// reader that world writes need (`index` takes no world writes).
+fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()> {
+    posture::check(config, env)?;
+    posture::worlds_names_reader(config)?;
+    Ok(())
 }
 
 async fn run(
@@ -623,6 +688,51 @@ async fn run(
             };
             let out =
                 explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Shop {
+            command:
+                ShopCommand::NoticeRewind {
+                    database_url,
+                    producer,
+                    from_block,
+                    since,
+                    dry_run,
+                    marketplace_index_chain_id_ethereum,
+                    marketplace_index_chain_id_matic,
+                    actor,
+                },
+        } => {
+            use catalyst::shop::market::notice_cursor::{RewindFrom, rewind};
+            tracing_subscriber::fmt().with_target(false).init();
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    // A date far back walks every log since it.
+                    statement_timeout_ms: 900_000,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let from = match (from_block, since) {
+                (Some(b), _) => RewindFrom::Block(b),
+                (None, Some(t)) => RewindFrom::Time(t),
+                (None, None) => anyhow::bail!("give --from-block or --since"),
+            };
+            let actor = actor
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .unwrap_or("cli");
+            let trade_chains = (
+                marketplace_index_chain_id_ethereum,
+                marketplace_index_chain_id_matic,
+            );
+            let out = rewind(&pool, &producer, from, trade_chains, actor, dry_run).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }

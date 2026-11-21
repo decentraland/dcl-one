@@ -19,6 +19,8 @@ pub struct MarketUpstreamsConfig {
     /// L1 marketplace subgraph (names, and LAND before the indexes publish);
     /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
     /// and lands answer the 503 envelope; profiles and outfits claim no name.
+    /// It is also the DCL NAME world owner reader: `WORLDS_WRITES_ENABLED=true`
+    /// refuses to start without it unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
@@ -119,6 +121,15 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_trade_events_index_enabled: bool,
 
+    /// Walk Polygon MANA transfers, which confirm tip forwards. Forwards answer
+    /// 503 coded `tip-index-unavailable` when no walk can confirm them: no
+    /// cursor (off, or on but none five minutes after this API process
+    /// starts), a cursor without its whole history (an overridden start
+    /// block), or one not advanced for three hours (nothing walks it, or it is
+    /// held at a stop block). They answer 503 with `Retry-After` while a
+    /// whole-history walk lags or pauses, here or in another process, and while
+    /// on for the first five minutes after this API process starts, before the
+    /// walk's first pass creates its cursor.
     #[arg(long, env = "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mana_transfers_index_enabled: bool,
 
@@ -146,8 +157,19 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_COMMITTEE_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_committee_index_enabled: bool,
 
+    /// Pause between the end of one pass and the start of the next, for the nft, trade-events,
+    /// MANA transfers, sales, committee and rentals walks (30 under the mirror posture).
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
+
+    /// Pause between two passes of the MANA executions tracker. A pass reads receipts only for
+    /// the executions still open, so an idle one costs a database query and no RPC call.
+    #[arg(
+        long,
+        env = "MARKETPLACE_EXECUTIONS_TRACK_INTERVAL_SECS",
+        default_value_t = 5
+    )]
+    pub marketplace_executions_track_interval_secs: u64,
 
     /// eth_getLogs calls one network's pass may make; the catch-up backpressure.
     #[arg(
@@ -253,7 +275,7 @@ pub struct EconomyConfig {
     /// The collections chain's JSON-RPC (the old RPC_URL; public https, or
     /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path); the
     /// content validator's L2 deploy access checks read it too (https only).
-    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content
+    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=dcl-one
     /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
     #[arg(long, env = "RPC_ENDPOINT_POLYGON", hide_env_values = true)]
     pub rpc_endpoint_polygon: Option<String>,
@@ -687,9 +709,10 @@ mod tests {
                 c.marketplace.marketplace_index_interval_secs,
                 c.marketplace.marketplace_index_requests_per_pass,
                 c.marketplace.marketplace_index_window_blocks,
-                c.marketplace.marketplace_index_address_chunk
+                c.marketplace.marketplace_index_address_chunk,
+                c.marketplace.marketplace_executions_track_interval_secs
             ),
-            (5, 100, 10_000, 1_000)
+            (5, 100, 10_000, 1_000, 5)
         );
         assert!(
             c.marketplace

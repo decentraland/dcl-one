@@ -1,0 +1,21 @@
+/* decentraland.org's PendingEventsPage CardGrid: as many 320px-wide columns as fit. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: var(--dcl-space-24);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.grid > li {
+  min-width: 0;
+}
+
+.empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: var(--dcl-space-24) 0;
+  color: var(--dcl-text-secondary);
+  font-style: italic;
+}

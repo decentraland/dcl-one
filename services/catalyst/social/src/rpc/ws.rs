@@ -24,7 +24,6 @@ use tokio::time::Instant;
 use crate::rpc::State;
 use crate::rpc::limits::Protocol;
 use crate::shared::identity::Address;
-use crate::shared::rpc::handshake::{HandshakeError, validator_ref, verify_handshake_number_ms};
 use crate::shared::rpc::ws::{
     AxumWsTransport, IdleAction, IdleTimer, RPC_TRANSPORT_CLOSED, SocketClose, close_message,
 };
@@ -160,14 +159,7 @@ async fn auth_handshake(
             },
         }
     };
-    let verification = verify_handshake_number_ms(
-        &frame,
-        "get",
-        paths,
-        state.settings.auth_signature_expiration_ms(),
-        chrono::Utc::now().timestamp_millis(),
-        validator_ref(&state.eip1654),
-    );
+    let verification = super::auth::verify_frame(state, paths, &frame);
     tokio::pin!(verification);
     // Upstream's timer runs until the verdict, and a frame sent meanwhile is
     // answered and dropped (`ws-handler.ts:374-384`).
@@ -208,9 +200,10 @@ async fn auth_handshake(
     match verdict {
         Ok(address) => Some(address),
         Err(err) => {
-            let kind = match err {
-                HandshakeError::CatalystUnavailable(_) => "server_error",
-                _ => "client_rejected",
+            let kind = if err.is_unavailable() {
+                "server_error"
+            } else {
+                "client_rejected"
             };
             metrics::counter!(
                 "ws_auth_errors_by_protocol",

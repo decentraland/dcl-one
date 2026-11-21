@@ -210,6 +210,7 @@
         "/apps/sites/",
         "/apps/ui3/",
         "/library/ui/",
+        "/library/web-core/",
         "/tooling/creators-e2e/"
       ]
     },

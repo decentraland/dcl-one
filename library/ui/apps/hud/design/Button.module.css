@@ -95,6 +95,21 @@
   opacity: 0.5;
 }
 
+/* a dialog's CTA in the design system's Explorer modal (the Shop's purchase dialog): its button size=lg, 48px, bold
+   caps 0.5px apart, 12px corners, 40% opaque while off; the dialog sets its width */
+.dialog {
+  height: 48px;
+  padding: 0 24px;
+  border-radius: var(--r-md);
+  font-size: var(--type-15);
+  font-weight: var(--fw-bold);
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+}
+.dialog:disabled {
+  opacity: 0.4;
+}
+
 /* a page's CTA beside a field (the Shop's CLAIM NAME): 52px, semibold caps, 24px each side */
 .cta {
   height: 52px;

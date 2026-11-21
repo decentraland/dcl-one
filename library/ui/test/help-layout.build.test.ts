@@ -1,9 +1,10 @@
-import path from 'node:path'
-import { createServer, type ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
+import { serveConsumerPage } from './consumer-page.helpers'
 
 let server: ViteDevServer
+let disruptions: string[] = []
 let session: Awaited<ReturnType<typeof openSession>>
 
 type Box = { left: number; top: number; right: number; bottom: number; width: number }
@@ -79,25 +80,10 @@ async function layoutAt(width: number, height = 1024): Promise<Geometry> {
 }
 
 beforeAll(async () => {
-  server = await createServer({
-    configFile: false,
-    root: path.resolve(import.meta.dirname, '..'),
-    appType: 'custom',
-    logLevel: 'error',
-    resolve: { dedupe: ['react', 'react-dom'] },
-    server: { host: '127.0.0.1', port: 0 }
-  })
-  server.middlewares.use(async (request, response, next) => {
-    if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/') return next()
-    response.setHeader('Content-Type', 'text/html')
-    response.end(
-      await server.transformIndexHtml(
-        '/',
-        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><div id="root"></div><script type="module" src="/test/consumer/help-layout-browser.tsx"></script>'
-      )
-    )
-  })
-  await server.listen()
+  ;({ server, disruptions } = await serveConsumerPage(
+    'test/consumer/help-layout-browser.tsx',
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style>'
+  ))
   session = await openSession(
     await findBrowser([
       process.env.BROWSER_PATH,
@@ -119,70 +105,81 @@ afterAll(async () => {
 })
 
 describe('when the help center renders', () => {
-  it.each([390, 768, 1023, 1024, 1032, 1279, 1280, 1440])(
-    'should keep every part inside the viewport at %ipx',
-    async (width) => {
-      const geometry = await layoutAt(width)
-      expect(geometry.scrollWidth).toBe(geometry.viewport)
-      for (const part of [geometry.title, geometry.status, geometry.tabs, geometry.panel]) {
-        expect(part.left).toBeGreaterThanOrEqual(0)
-        expect(part.right).toBeLessThanOrEqual(geometry.viewport)
+  describe('and the viewport has any supported width', () => {
+    it.each([390, 768, 1023, 1024, 1032, 1279, 1280, 1440])(
+      'should keep every part inside the viewport at %ipx',
+      async (width) => {
+        const geometry = await layoutAt(width)
+        expect(geometry.scrollWidth).toBe(geometry.viewport)
+        for (const part of [geometry.title, geometry.status, geometry.tabs, geometry.panel]) {
+          expect(part.left).toBeGreaterThanOrEqual(0)
+          expect(part.right).toBeLessThanOrEqual(geometry.viewport)
+        }
       }
-    }
-  )
+    )
+  })
 
-  it.each([768, 1023])(
-    'should stack the section under one row of tabs on a %ipx tablet',
-    async (width) => {
+  describe('and the viewport is a tablet', () => {
+    it.each([768, 1023])(
+      'should stack the section under one row of tabs at %ipx',
+      async (width) => {
+        const geometry = await layoutAt(width)
+        expect(new Set(geometry.tabTops).size).toBe(1)
+        expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.tabs.bottom)
+        expect(geometry.panel.left).toBeCloseTo(geometry.title.left, 0)
+        expect(geometry.status.top).toBeLessThan(geometry.panel.top)
+        expect(geometry.status.right).toBeGreaterThan(geometry.panel.right - 1)
+      }
+    )
+  })
+
+  describe('and the viewport is a narrow desktop', () => {
+    it.each([1024, 1032, 1279])(
+      'should give the section the width the status column took, with the status above it at %ipx',
+      async (width) => {
+        const geometry = await layoutAt(width)
+        expect(geometry.panel.left).toBeGreaterThan(geometry.tabs.right)
+        expect(geometry.status.bottom).toBeLessThanOrEqual(geometry.panel.top)
+        expect(geometry.status.right).toBeCloseTo(geometry.panel.right, 0)
+        expect(geometry.panel.width).toBeGreaterThan(500)
+      }
+    )
+  })
+
+  describe('and the viewport is a wide desktop', () => {
+    it.each([1280, 1440])('should keep the status in its own column at %ipx', async (width) => {
       const geometry = await layoutAt(width)
-      expect(new Set(geometry.tabTops).size).toBe(1)
-      expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.tabs.bottom)
-      expect(geometry.panel.left).toBeCloseTo(geometry.title.left, 0)
+      expect(geometry.status.left).toBeGreaterThanOrEqual(geometry.panel.right)
       expect(geometry.status.top).toBeLessThan(geometry.panel.top)
-      expect(geometry.status.right).toBeGreaterThan(geometry.panel.right - 1)
-    }
-  )
-
-  it.each([1024, 1032, 1279])(
-    'should give the section the width the status column took, with the status above it at %ipx',
-    async (width) => {
-      const geometry = await layoutAt(width)
-      expect(geometry.panel.left).toBeGreaterThan(geometry.tabs.right)
-      expect(geometry.status.bottom).toBeLessThanOrEqual(geometry.panel.top)
-      expect(geometry.status.right).toBeCloseTo(geometry.panel.right, 0)
-      expect(geometry.panel.width).toBeGreaterThan(500)
-    }
-  )
-
-  it.each([1280, 1440])('should keep the status in its own column at %ipx', async (width) => {
-    const geometry = await layoutAt(width)
-    expect(geometry.status.left).toBeGreaterThanOrEqual(geometry.panel.right)
-    expect(geometry.status.top).toBeLessThan(geometry.panel.top)
+    })
   })
 
-  it.each([
-    [844, 390],
-    [932, 430],
-    [1024, 640],
-    [1280, 640],
-    [768, 1024],
-    [1440, 900]
-  ])('should end the section above the chat banner at %ix%i', async (width, height) => {
-    const geometry = await layoutAt(width, height)
-    expect(geometry.contentBottom).toBeLessThanOrEqual(geometry.bannerTop)
+  describe('and the page is scrolled to its end', () => {
+    it.each([
+      [844, 390],
+      [932, 430],
+      [1024, 640],
+      [1280, 640],
+      [768, 1024],
+      [1440, 900]
+    ])('should end the section above the chat banner at %ix%i', async (width, height) => {
+      const geometry = await layoutAt(width, height)
+      expect(geometry.contentBottom).toBeLessThanOrEqual(geometry.bannerTop)
+    })
   })
 
-  it.each([390, 768, 1032, 1440])(
-    'should open the system status inside the viewport and return focus on Escape at %ipx',
-    async (width) => {
-      await open(width, 1024)
-      const result = await evaluate<{
-        left: number
-        right: number
-        viewport: number
-        focused: boolean
-        closed: boolean
-      }>(`(async()=>{
+  describe('and the system status is opened, then closed with Escape', () => {
+    it.each([390, 768, 1032, 1440])(
+      'should open the status inside the viewport and return focus to its toggle at %ipx',
+      async (width) => {
+        await open(width, 1024)
+        const result = await evaluate<{
+          left: number
+          right: number
+          viewport: number
+          focused: boolean
+          closed: boolean
+        }>(`(async()=>{
         const toggle=document.querySelector('main [aria-controls]')
         toggle.click()
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
@@ -191,17 +188,28 @@ describe('when the help center renders', () => {
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
         return {left:popover.left,right:popover.right,viewport:document.documentElement.clientWidth,focused:document.activeElement===toggle,closed:toggle.getAttribute('aria-expanded')==='false'}
       })()`)
-      expect(result.left).toBeGreaterThanOrEqual(0)
-      expect(result.right).toBeLessThanOrEqual(result.viewport)
-      expect(result.closed).toBe(true)
-      expect(result.focused).toBe(true)
-    }
-  )
+        expect(result.left).toBeGreaterThanOrEqual(0)
+        expect(result.right).toBeLessThanOrEqual(result.viewport)
+        expect(result.closed).toBe(true)
+        expect(result.focused).toBe(true)
+      }
+    )
+  })
 
-  it('should keep the status beside the title on a 390px phone', async () => {
-    const geometry = await layoutAt(390)
-    expect(geometry.status.top).toBeLessThan(geometry.tabs.top)
-    expect(geometry.status.left).toBeGreaterThan(geometry.title.left)
-    expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.tabs.bottom)
+  describe('and the viewport is a 390px phone', () => {
+    it('should keep the status beside the title', async () => {
+      const geometry = await layoutAt(390)
+      expect(geometry.status.top).toBeLessThan(geometry.tabs.top)
+      expect(geometry.status.left).toBeGreaterThan(geometry.title.left)
+      expect(geometry.panel.top).toBeGreaterThanOrEqual(geometry.tabs.bottom)
+    })
+  })
+})
+
+describe('when the Help page is served', () => {
+  // A failed dependency scan or a re-optimization reloads the page under the tests above, which then fail with
+  // "Inspected target navigated or closed".
+  it('should load it without a dependency scan error or a dependency reload', () => {
+    expect(disruptions).toEqual([])
   })
 })

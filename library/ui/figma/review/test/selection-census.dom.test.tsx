@@ -10,7 +10,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { ComponentType } from 'react'
 import { renderToString } from 'react-dom/server'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as viewState from '../src/components/figma-view-state'
 import { pickView as oldPickView } from './fixtures/figma-view-state-fd9b4576'
 import oldDefaults from './fixtures/default-keys-fd9b4576.json'
@@ -21,7 +21,11 @@ vi.mock('../src/components/figma-view-state', async (importOriginal) => {
   return { ...actual, pickView: vi.fn(actual.pickView) }
 })
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  vi.resetAllMocks()
+  vi.restoreAllMocks()
+})
 
 const review = path.resolve(import.meta.dirname, '..')
 const figma = path.resolve(review, '..')
@@ -83,131 +87,136 @@ function chosen(
 const components = [...sources.keys()].sort()
 
 describe('selection census over every generated component', () => {
-  it('should have no nested generated references', () => {
-    for (const [name, source] of sources) expect(source.includes("kind: 'ref'"), name).toBe(false)
+  describe('when reading the generated sources', () => {
+    it('should have no nested generated references', () => {
+      for (const [name, source] of sources) expect(source.includes("kind: 'ref'"), name).toBe(false)
+    })
   })
 
-  it.each(components)(
-    '%s: every spelling of every drawn case and every flag subset picks the expected view',
-    (name) => {
-      const exports = generated as Record<string, unknown>
-      const lower = name[0]!.toLowerCase() + name.slice(1)
-      const Component = exports[name] as ComponentType<Record<string, unknown>>
-      const views = exports[`${lower}Views`] as Record<string, unknown>
-      const cases = exports[`${lower}Cases`] as Case[]
-      const source = sources.get(name)!
-      const fn = source.slice(source.indexOf(`export const ${name} = ({`))
-      const defaults: Record<string, unknown> = {}
-      for (const m of fn.matchAll(/^ {2}(\w+) = (?:'((?:[^'\\]|\\.)*)'|(true|false))/gm))
-        defaults[m[1]!] = m[2] ?? m[3] === 'true'
-      const flagProps = FLAGS.filter((flag) => new RegExp(`flags: \\{[^}]*\\b${flag}\\b`).test(fn))
-
-      for (const item of cases) {
-        const axes = Object.keys(item.props).filter((key) => !FLAGS.includes(key as never))
-        const defaulted = axes.filter((axis) => item.props[axis] === defaults[axis])
-        // Every subset of the default-valued axes left out, either omitted or passed as explicit undefined; the rest
-        // given explicitly (false booleans included).
-        for (let mask = 0; mask < 1 << defaulted.length; mask++)
-          for (const absent of mask === 0 ? ['omit'] : ['omit', 'undefined']) {
-            const props: Record<string, unknown> = { ...item.props }
-            defaulted.forEach((axis, index) => {
-              if (!(mask & (1 << index))) return
-              if (absent === 'omit') delete props[axis]
-              else props[axis] = undefined
-            })
-            const { client, server, old } = chosen(name, Component, props)
-            expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
-            expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
-            expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
-            rows.push({
-              component: name,
-              kind: 'spelling',
-              props,
-              expectedKey: item.key,
-              oldOutcome: item.key,
-              newOutcome: item.key
-            })
-          }
-      }
-
-      // Every non-empty flag subset over each flag-free case: the expected view is the first generated key found by
-      // dropping flags from the end, computed with the production viewKey.
-      for (const item of cases.filter((entry) =>
-        flagProps.every((flag) => entry.props[flag] !== true)
-      )) {
-        const base = Object.fromEntries(
-          Object.entries(item.props).filter(([key]) => !FLAGS.includes(key as never))
+  describe('when rendering every caller spelling and flag subset of each drawn case', () => {
+    it.each(components)(
+      '%s: should pick the expected view for every spelling and every flag subset',
+      (name) => {
+        const exports = generated as Record<string, unknown>
+        const lower = name[0]!.toLowerCase() + name.slice(1)
+        const Component = exports[name] as ComponentType<Record<string, unknown>>
+        const views = exports[`${lower}Views`] as Record<string, unknown>
+        const cases = exports[`${lower}Cases`] as Case[]
+        const source = sources.get(name)!
+        const fn = source.slice(source.indexOf(`export const ${name} = ({`))
+        const defaults: Record<string, unknown> = {}
+        for (const m of fn.matchAll(/^ {2}(\w+) = (?:'((?:[^'\\]|\\.)*)'|(true|false))/gm))
+          defaults[m[1]!] = m[2] ?? m[3] === 'true'
+        const flagProps = FLAGS.filter((flag) =>
+          new RegExp(`flags: \\{[^}]*\\b${flag}\\b`).test(fn)
         )
-        // Mask 0, every flag off: omitted, explicit false and explicit undefined all resolve to the case view.
-        if (flagProps.length)
-          for (const off of [
-            {},
-            Object.fromEntries(flagProps.map((flag) => [flag, false])),
-            Object.fromEntries(flagProps.map((flag) => [flag, undefined]))
-          ]) {
-            const props = { ...base, ...off }
+
+        for (const item of cases) {
+          const axes = Object.keys(item.props).filter((key) => !FLAGS.includes(key as never))
+          const defaulted = axes.filter((axis) => item.props[axis] === defaults[axis])
+          // Every subset of the default-valued axes left out, either omitted or passed as explicit undefined; the rest
+          // given explicitly (false booleans included).
+          for (let mask = 0; mask < 1 << defaulted.length; mask++)
+            for (const absent of mask === 0 ? ['omit'] : ['omit', 'undefined']) {
+              const props: Record<string, unknown> = { ...item.props }
+              defaulted.forEach((axis, index) => {
+                if (!(mask & (1 << index))) return
+                if (absent === 'omit') delete props[axis]
+                else props[axis] = undefined
+              })
+              const { client, server, old } = chosen(name, Component, props)
+              expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
+              expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+              expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
+              rows.push({
+                component: name,
+                kind: 'spelling',
+                props,
+                expectedKey: item.key,
+                oldOutcome: item.key,
+                newOutcome: item.key
+              })
+            }
+        }
+
+        // Every non-empty flag subset over each flag-free case: the expected view is the first generated key found by
+        // dropping flags from the end, computed with the production viewKey.
+        for (const item of cases.filter((entry) =>
+          flagProps.every((flag) => entry.props[flag] !== true)
+        )) {
+          const base = Object.fromEntries(
+            Object.entries(item.props).filter(([key]) => !FLAGS.includes(key as never))
+          )
+          // Mask 0, every flag off: omitted, explicit false and explicit undefined all resolve to the case view.
+          if (flagProps.length)
+            for (const off of [
+              {},
+              Object.fromEntries(flagProps.map((flag) => [flag, false])),
+              Object.fromEntries(flagProps.map((flag) => [flag, undefined]))
+            ]) {
+              const props = { ...base, ...off }
+              const { client, server, old } = chosen(name, Component, props)
+              expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
+              expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+              expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
+              rows.push({
+                component: name,
+                kind: 'flags',
+                props,
+                expectedKey: item.key,
+                oldOutcome: 'exact',
+                newOutcome: 'exact'
+              })
+            }
+          for (let mask = 1; mask < 1 << flagProps.length; mask++) {
+            const flags = Object.fromEntries(
+              flagProps.filter((_, index) => mask & (1 << index)).map((flag) => [flag, true])
+            )
+            const selection = {
+              values: Object.fromEntries(
+                Object.entries(base).filter(([, value]) => typeof value === 'string')
+              ) as Record<string, string>,
+              booleans: Object.fromEntries(
+                Object.entries(base).filter(([, value]) => typeof value === 'boolean')
+              ) as Record<string, boolean>,
+              flags
+            }
+            const count = Object.keys(flags).length
+            let expectedKey = ''
+            let dropped = 0
+            for (; dropped <= count; dropped++) {
+              const key = viewState.viewKey(selection, dropped)
+              if (key in views) {
+                expectedKey = key
+                break
+              }
+            }
+            expect(expectedKey, `${name} ${JSON.stringify(flags)} resolves`).not.toBe('')
+            const props = { ...base, ...flags }
             const { client, server, old } = chosen(name, Component, props)
-            expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
-            expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+            expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[expectedKey])
+            expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[expectedKey])
             expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
+            const outcome = dropped === 0 ? 'exact' : `flag-drop:${dropped}`
             rows.push({
               component: name,
               kind: 'flags',
               props,
-              expectedKey: item.key,
-              oldOutcome: 'exact',
-              newOutcome: 'exact'
+              expectedKey,
+              oldOutcome: outcome,
+              newOutcome: outcome
             })
           }
-        for (let mask = 1; mask < 1 << flagProps.length; mask++) {
-          const flags = Object.fromEntries(
-            flagProps.filter((_, index) => mask & (1 << index)).map((flag) => [flag, true])
-          )
-          const selection = {
-            values: Object.fromEntries(
-              Object.entries(base).filter(([, value]) => typeof value === 'string')
-            ) as Record<string, string>,
-            booleans: Object.fromEntries(
-              Object.entries(base).filter(([, value]) => typeof value === 'boolean')
-            ) as Record<string, boolean>,
-            flags
-          }
-          const count = Object.keys(flags).length
-          let expectedKey = ''
-          let dropped = 0
-          for (; dropped <= count; dropped++) {
-            const key = viewState.viewKey(selection, dropped)
-            if (key in views) {
-              expectedKey = key
-              break
-            }
-          }
-          expect(expectedKey, `${name} ${JSON.stringify(flags)} resolves`).not.toBe('')
-          const props = { ...base, ...flags }
-          const { client, server, old } = chosen(name, Component, props)
-          expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[expectedKey])
-          expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[expectedKey])
-          expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
-          const outcome = dropped === 0 ? 'exact' : `flag-drop:${dropped}`
-          rows.push({
-            component: name,
-            kind: 'flags',
-            props,
-            expectedKey,
-            oldOutcome: outcome,
-            newOutcome: outcome
-          })
         }
       }
-    }
-  )
+    )
+  })
 
   // The selections that must fail: an unknown enum value, a non-boolean boolean axis, and an undrawn base tuple even
   // with interaction flags added (dropping flags never reaches another base). Each throws on the client and on the
   // server, where the old runtime returned the default view.
-  it.each(components)(
-    '%s: unknown values and undrawn bases throw instead of rendering another view',
-    (name) => {
+  describe('when the selection holds an unknown value or an undrawn base', () => {
+    it.each(components)('%s: should throw instead of rendering another view', (name) => {
       const exports = generated as Record<string, unknown>
       const lower = name[0]!.toLowerCase() + name.slice(1)
       const Component = exports[name] as ComponentType<Record<string, unknown>>
@@ -277,57 +286,76 @@ describe('selection census over every generated component', () => {
       }
       // A component with no variant axes has no value a caller could get wrong.
       if (!attempts.length) expect(axes, name).toEqual([])
-    }
-  )
-
-  it('should throw for empty views, with or without flags, in the old and the new runtime', () => {
-    for (const flags of [{}, { disabled: true }]) {
-      expect(() => viewState.pickView({}, { values: {}, booleans: {}, flags }, 'Empty')).toThrow(
-        'Empty has no captured view for'
-      )
-      expect(() => oldPickView({}, 'default', { values: {}, booleans: {}, flags })).toThrow(
-        'A generated component must have at least one view'
-      )
-    }
+    })
   })
 
-  it('should write the provenance-bound report when CENSUS_OUT is set', () => {
-    const out = process.env.CENSUS_OUT
-    if (!out) return
-    const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex')
-    const tree = (dir: string) =>
-      sha(
-        files(dir)
-          .sort()
-          .map((file) => `${path.relative(dir, file)} ${sha(readFileSync(file))}`)
-          .join('\n')
-      )
-    const git = (...args: string[]) =>
-      execFileSync('git', ['-C', figma, ...args], { encoding: 'utf8' }).trim()
-    const report = {
-      provenance: {
-        commit: git('rev-parse', 'HEAD'),
-        tree: git('rev-parse', 'HEAD^{tree}'),
-        dirtyPaths: git('status', '--porcelain').split('\n').filter(Boolean).length,
-        configSha256: sha(readFileSync(path.join(figma, 'figma.config.json'))),
-        snapshotTreeSha256: tree(path.join(figma, 'figma-snapshot')),
-        generatedTreeSha256: tree(generatedDir),
-        runtimeSha256: tree(path.join(review, 'src/components')),
-        testSha256: sha(readFileSync(new URL(import.meta.url))),
-        command: 'CENSUS_OUT=<file> pnpm vitest run figma/review/test/selection-census.dom.test.tsx'
-      },
-      totals: {
-        components: components.length,
-        spellings: rows.filter((row) => row.kind === 'spelling').length,
-        flagSelections: rows.filter((row) => row.kind === 'flags').length,
-        flagExact: rows.filter((row) => row.kind === 'flags' && row.newOutcome === 'exact').length,
-        flagDropped: rows.filter((row) => row.kind === 'flags' && row.newOutcome !== 'exact')
-          .length,
-        throws: rows.filter((row) => row.kind === 'throw').length,
-        nestedReferences: 0
-      },
-      rows
+  describe.each([
+    ['no flags', {}],
+    ['a flag', { disabled: true }]
+  ])('when the views are empty and the selection has %s', (_label, flags) => {
+    let selection: {
+      values: Record<string, string>
+      booleans: Record<string, boolean>
+      flags: Record<string, boolean>
     }
-    writeFileSync(out, JSON.stringify(report, null, 1))
+    beforeEach(() => {
+      selection = { values: {}, booleans: {}, flags: { ...flags } }
+    })
+
+    it('should throw in the new runtime', () => {
+      expect(() => viewState.pickView({}, selection, 'Empty')).toThrow(
+        'Empty has no captured view for'
+      )
+    })
+
+    it('should throw in the old runtime', () => {
+      expect(() => oldPickView({}, 'default', selection)).toThrow(
+        'A generated component must have at least one view'
+      )
+    })
+  })
+
+  describe('when CENSUS_OUT is set', () => {
+    it('should write the provenance-bound report', () => {
+      const out = process.env.CENSUS_OUT
+      if (!out) return
+      const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex')
+      const tree = (dir: string) =>
+        sha(
+          files(dir)
+            .sort()
+            .map((file) => `${path.relative(dir, file)} ${sha(readFileSync(file))}`)
+            .join('\n')
+        )
+      const git = (...args: string[]) =>
+        execFileSync('git', ['-C', figma, ...args], { encoding: 'utf8' }).trim()
+      const report = {
+        provenance: {
+          commit: git('rev-parse', 'HEAD'),
+          tree: git('rev-parse', 'HEAD^{tree}'),
+          dirtyPaths: git('status', '--porcelain').split('\n').filter(Boolean).length,
+          configSha256: sha(readFileSync(path.join(figma, 'figma.config.json'))),
+          snapshotTreeSha256: tree(path.join(figma, 'figma-snapshot')),
+          generatedTreeSha256: tree(generatedDir),
+          runtimeSha256: tree(path.join(review, 'src/components')),
+          testSha256: sha(readFileSync(new URL(import.meta.url))),
+          command:
+            'CENSUS_OUT=<file> pnpm vitest run figma/review/test/selection-census.dom.test.tsx'
+        },
+        totals: {
+          components: components.length,
+          spellings: rows.filter((row) => row.kind === 'spelling').length,
+          flagSelections: rows.filter((row) => row.kind === 'flags').length,
+          flagExact: rows.filter((row) => row.kind === 'flags' && row.newOutcome === 'exact')
+            .length,
+          flagDropped: rows.filter((row) => row.kind === 'flags' && row.newOutcome !== 'exact')
+            .length,
+          throws: rows.filter((row) => row.kind === 'throw').length,
+          nestedReferences: 0
+        },
+        rows
+      }
+      writeFileSync(out, JSON.stringify(report, null, 1))
+    })
   })
 })

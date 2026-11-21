@@ -5,6 +5,7 @@ import type { AiAssetMention, AiAttachment, AiProvider } from '/shared/types/ai'
 
 import { useDispatch, useSelector } from '#store';
 import { actions as aiActions } from '/@/modules/store/ai';
+import { recordingAttachmentLabel } from '/@/modules/store/ai/labels';
 import { actions as aiSharingActions, selectSharingView } from '/@/modules/store/aiSharing';
 import { useAuth } from '/@/hooks/useAuth';
 
@@ -19,12 +20,26 @@ interface Props {
   onClearSelection: () => void;
   // Draggable panel width in px (owned by EditorPage).
   width: number;
+  // Press the Record button (EditorPage owns the recorder and its consent dialog).
+  onToggleRecording: () => void;
+  // Discard the running recording.
+  onCancelRecording: () => void;
+  /** Stop the running recording and send it once transcribed. */
+  onSendRecording: () => void;
 }
 
 // The inline chat panel: a thin container that wires the redux store + thunks to the shared
 // presentational ChatView. The turn event stream, persistence and provider detection live
 // in useAiSession (mounted in the editor), so this is purely a view over the store.
-export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Props) {
+export function AiChatPanel({
+  onClose,
+  onPopOut,
+  onClearSelection,
+  width,
+  onToggleRecording,
+  onCancelRecording,
+  onSendRecording,
+}: Props) {
   const dispatch = useDispatch();
   const {
     providers,
@@ -34,6 +49,8 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
     detecting,
     selection,
     assetMentions,
+    recording,
+    recorder,
     billingDismissed,
     sessions,
     currentSessionId,
@@ -41,8 +58,15 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
   } = useSelector(state => state.ai);
 
   const onSend = useCallback(
-    (text: string, attachments?: AiAttachment[]) => dispatch(aiActions.send({ text, attachments })),
-    [dispatch],
+    (text: string, attachments?: AiAttachment[]) =>
+      dispatch(
+        aiActions.send({
+          text,
+          attachments,
+          recordingLabel: recording === null ? undefined : recordingAttachmentLabel(recording),
+        }),
+      ),
+    [dispatch, recording],
   );
   const onStop = useCallback(() => dispatch(aiActions.stop()), [dispatch]);
   const onNewChat = useCallback(() => dispatch(aiActions.newChat()), [dispatch]);
@@ -91,6 +115,10 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
     (id: string, rating: 'up' | 'down' | null) => dispatch(aiActions.rateTurn({ id, rating })),
     [dispatch],
   );
+  const onRemoveRecording = useCallback(
+    () => void dispatch(aiActions.discardRecording()),
+    [dispatch],
+  );
 
   return (
     <ChatView
@@ -103,6 +131,11 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
       detecting={detecting}
       selection={selection}
       assetMentions={assetMentions}
+      recording={recording}
+      recorder={recorder}
+      onToggleRecording={onToggleRecording}
+      onCancelRecording={onCancelRecording}
+      onSendRecording={onSendRecording}
       billingDismissed={billingDismissed}
       sessions={sessions}
       currentSessionId={currentSessionId}
@@ -119,6 +152,7 @@ export function AiChatPanel({ onClose, onPopOut, onClearSelection, width }: Prop
       onDeleteSession={onDeleteSession}
       onClearSelection={onClearSelection}
       onRemoveAssetMention={onRemoveAssetMention}
+      onRemoveRecording={onRemoveRecording}
       onPopOut={onPopOut}
       onClose={onClose}
       sharing={sharing}

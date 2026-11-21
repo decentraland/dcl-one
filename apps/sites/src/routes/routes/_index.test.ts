@@ -1,5 +1,5 @@
 import { RouterContextProvider } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/data/lib/download/counts.server", () => ({
   loadDownloadCounts: vi.fn(),
@@ -27,36 +27,69 @@ const setCookies = (result: Wrapped) => new Headers(result.init?.headers).getSet
 
 describe("/ loader session", () => {
   beforeEach(() => {
-    vi.mocked(loadDownloadCounts).mockResolvedValue("+438K");
-    vi.mocked(loadHomeLive).mockResolvedValue({
+    vi.mocked(loadDownloadCounts).mockResolvedValueOnce("+438K");
+    vi.mocked(loadHomeLive).mockResolvedValueOnce({
       content: {},
       cards: [],
       profiles: {},
     } as never);
   });
 
-  it("uses the session the root middleware set and leaves the cookie to it", async () => {
-    const context = new RouterContextProvider();
-    context.set(requestSessionContext, { sid: "from-middleware", created: true });
-
-    const result = (await loader({ request: request(), context } as never)) as unknown as Wrapped;
-
-    expect(result.data.sid).toBe("from-middleware");
-    expect(setCookies(result)).toEqual([]);
+  afterEach(() => {
+    vi.resetAllMocks();
   });
 
-  it("mints a session and sets its cookie when no middleware ran", async () => {
-    const result = (await loader({ request: request(), context: new RouterContextProvider() } as never)) as unknown as Wrapped;
+  describe("when the root middleware set the session", () => {
+    let result: Wrapped;
 
-    expect(result.data.sid).toMatch(/.+/);
-    expect(setCookies(result)).toHaveLength(1);
-    expect(setCookies(result)[0]).toContain(`sid=${encodeURIComponent(result.data.sid)}`);
+    beforeEach(async () => {
+      const context = new RouterContextProvider();
+      context.set(requestSessionContext, { sid: "from-middleware", created: true });
+
+      result = (await loader({ request: request(), context } as never)) as unknown as Wrapped;
+    });
+
+    it("should use the session the middleware set", () => {
+      expect(result.data.sid).toBe("from-middleware");
+    });
+
+    it("should leave the cookie to the middleware", () => {
+      expect(setCookies(result)).toEqual([]);
+    });
   });
 
-  it("keeps an existing sid cookie and sets none", async () => {
-    const result = (await loader({ request: request("sid=s1"), context: new RouterContextProvider() } as never)) as unknown as Wrapped;
+  describe("when no middleware ran", () => {
+    describe("and the request has no sid cookie", () => {
+      let result: Wrapped;
 
-    expect(result.data.sid).toBe("s1");
-    expect(setCookies(result)).toEqual([]);
+      beforeEach(async () => {
+        result = (await loader({ request: request(), context: new RouterContextProvider() } as never)) as unknown as Wrapped;
+      });
+
+      it("should mint a session", () => {
+        expect(result.data.sid).toMatch(/.+/);
+      });
+
+      it("should set the session cookie", () => {
+        expect(setCookies(result)).toHaveLength(1);
+        expect(setCookies(result)[0]).toContain(`sid=${encodeURIComponent(result.data.sid)}`);
+      });
+    });
+
+    describe("and the request has a sid cookie", () => {
+      let result: Wrapped;
+
+      beforeEach(async () => {
+        result = (await loader({ request: request("sid=s1"), context: new RouterContextProvider() } as never)) as unknown as Wrapped;
+      });
+
+      it("should keep the existing sid", () => {
+        expect(result.data.sid).toBe("s1");
+      });
+
+      it("should set no cookie", () => {
+        expect(setCookies(result)).toEqual([]);
+      });
+    });
   });
 });

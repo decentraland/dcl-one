@@ -15,10 +15,11 @@ mod text;
 
 use alloy_core::primitives::Address;
 use bevy::{
-    color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
+    app::PropagateStop, color::Mix, ecs::system::SystemParam, math::Vec3A, pbr::NotShadowCaster,
     platform::collections::HashSet, prelude::*, render::primitives::Aabb,
 };
 use common::{
+    feature_flags::{FeatureFlags, FlagsSource},
     sets::{PostUpdateSets, SceneSets},
     structs::{
         AppConfig, AttachPoints, CameraView, MicState, PlayerModifiers, PrimaryCamera,
@@ -35,6 +36,7 @@ use comms::{
 };
 use console::{AddDebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
+use scene_material::highlight::Highlight;
 use scene_runner::{
     initialize_scene::SuperUserScene,
     update_world::{
@@ -117,6 +119,10 @@ impl Plugin for NametagPlugin {
         .add_systems(Startup, load_assets)
         .add_systems(
             Update,
+            fill_official_wallets.run_if(resource_exists_and_changed::<FeatureFlags>),
+        )
+        .add_systems(
+            Update,
             (
                 resolve_content,
                 resolve_scene_avatar_content,
@@ -155,9 +161,35 @@ impl Plugin for NametagPlugin {
     }
 }
 
-/// The wallets whose names carry the official badge. Empty until something fills it.
+/// The wallets whose names carry the official badge: the `alfa-official-wallets` flag's
+/// addresses once the feature-flags read settles, plus any `/nametag_official` adds this session.
 #[derive(Resource, Default)]
 pub struct OfficialWallets(pub HashSet<Address>);
+
+/// The flag whose `wallets` variant payload (type `csv`) lists the official wallets.
+const OFFICIAL_WALLETS_FLAG: &str = "alfa-official-wallets";
+
+/// The addresses in a csv payload, separated by commas or line breaks. Case does not matter and
+/// an entry that is not an address is skipped.
+fn parse_wallets(csv: &str) -> HashSet<Address> {
+    csv.split([',', '\n', '\r'])
+        .filter_map(|entry| entry.trim().as_h160())
+        .collect()
+}
+
+/// Adds the flag's wallets to [`OfficialWallets`] once the feature flags have settled.
+fn fill_official_wallets(flags: Res<FeatureFlags>, mut wallets: ResMut<OfficialWallets>) {
+    if flags.source() == FlagsSource::Pending {
+        return;
+    }
+    let Some(payload) = flags
+        .payload(OFFICIAL_WALLETS_FLAG, "wallets")
+        .filter(|payload| payload.kind == "csv")
+    else {
+        return;
+    };
+    wallets.0.extend(parse_wallets(&payload.value));
+}
 
 #[derive(Resource)]
 pub struct NametagAssets {
@@ -605,6 +637,8 @@ fn spawn_tag(
         MeshMaterial3d(assets.material.clone()),
         Aabb::default(),
         NotShadowCaster,
+        // the hover glow is the avatar's
+        PropagateStop::<Highlight>::default(),
     ));
 }
 

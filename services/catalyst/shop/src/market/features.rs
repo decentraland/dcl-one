@@ -29,6 +29,12 @@ pub const APP: &str = "dapps";
 /// Shop's paths would leave the same writes open one path over.
 pub const MARKETPLACE_FEATURES: &str = "shop-marketplace-features";
 
+/// Credits and MANA paying one line together (the Shop's Credits + MANA split): a Credits part (`creditsCents`) of one
+/// line of one unit, the rest pulled from the buyer's MANA in the same `useCredits`. Off, this node takes no Credits
+/// part on either credits authorize route, a replayed operation included, and its quotes mark no offer `splittable`.
+/// A whole price, and every credit already issued (its status, settlement, expiry and cancellation), are untouched.
+pub const CREDITS_MANA_SPLIT: &str = "shop-credits-mana-split";
+
 /// The outfit authoring allowlist (`shop::outfits`): the variant payload of `dapps-shop-outfit-creators`, the flag
 /// the Shop's pages read to show the studio.
 pub const OUTFIT_CREATORS: &str = "shop-outfit-creators";
@@ -87,6 +93,32 @@ impl DappsFlags {
     fn enabled(&self, feature: &str) -> bool {
         self.snapshot.enabled(APP, feature)
     }
+
+    /// Whether this node takes a Credits part (see [`CREDITS_MANA_SPLIT`]).
+    pub fn credits_mana_split(&self) -> bool {
+        self.enabled(CREDITS_MANA_SPLIT)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DappsFlags {
+    /// Flags as a node holds them after reading `flags` (`dapps-` keys): for a test of a service that reads them.
+    pub fn for_tests(flags: &[(&str, bool)]) -> Arc<Self> {
+        let held = Self::new();
+        held.snapshot
+            .replace(json!({ "flags": {}, "variants": {} }));
+        for (feature, on) in flags {
+            held.set_for_tests(feature, *on);
+        }
+        Arc::new(held)
+    }
+
+    /// Turns one `dapps` flag (`shop-x`) on or off, keeping the rest of the document.
+    pub fn set_for_tests(&self, feature: &str, on: bool) {
+        let mut doc = (*self.snapshot.document()).clone();
+        doc["flags"][format!("{APP}-{feature}")] = json!(on);
+        self.snapshot.replace(doc);
+    }
 }
 
 /// The refusal's message, the same on every route that answers it.
@@ -112,6 +144,16 @@ impl MarketplaceState {
     /// Whether this node offers the Marketplace's features (see [`MARKETPLACE_FEATURES`]).
     pub fn marketplace_features(&self) -> bool {
         self.dapps_flags.enabled(MARKETPLACE_FEATURES)
+    }
+
+    /// Whether this node takes a Credits part (see [`CREDITS_MANA_SPLIT`]).
+    pub fn credits_mana_split(&self) -> bool {
+        self.dapps_flags.credits_mana_split()
+    }
+
+    /// The flags as this node enforces them, for a service that reads them beside the market (the credits routes).
+    pub fn dapps_flags(&self) -> Arc<DappsFlags> {
+        self.dapps_flags.clone()
     }
 
     /// A `dapps` variant's payload value while its flag is on (`@dcl/features-component` `getFeatureVariant`);
@@ -244,6 +286,25 @@ mod tests {
             format!("{APP}-{MARKETPLACE_FEATURES}"),
             "dapps-shop-marketplace-features"
         );
+    }
+
+    #[test]
+    fn the_split_key_is_the_one_the_pages_read_and_reads_off_until_it_says_true() {
+        // library/shop discovery/lib/rolloutFlags.ts: REMOTE_FLAG.creditsManaSplit, read as `dapps-` + key.
+        assert_eq!(
+            format!("{APP}-{CREDITS_MANA_SPLIT}"),
+            "dapps-shop-credits-mana-split"
+        );
+        // A node starts with it off, the Marketplace's test default notwithstanding; absent and not `true` read off.
+        assert!(!DappsFlags::new().credits_mana_split());
+        let flags = DappsFlags::for_tests(&[]);
+        assert!(!flags.credits_mana_split());
+        flags
+            .snapshot
+            .replace(json!({ "flags": { "dapps-shop-credits-mana-split": "true" } }));
+        assert!(!flags.credits_mana_split(), "only `true` turns it on");
+        flags.set_for_tests(CREDITS_MANA_SPLIT, true);
+        assert!(flags.credits_mana_split());
     }
 
     #[test]

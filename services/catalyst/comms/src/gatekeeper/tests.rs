@@ -15,6 +15,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+use crate::access::LandOperators;
 use crate::http::Outbound;
 use crate::interfaces::test_support::{StubPolicy, StubScenes};
 use crate::{Address, CommunityId, PermissionDecision};
@@ -183,6 +184,93 @@ async fn seed_place(pool: &PgPool, id: &str, raw: serde_json::Value, base_positi
         .execute(pool)
         .await
         .unwrap();
+}
+
+/// Serves a lease authorizations document granting `holder` the `plot`; returns its URL and the server task.
+async fn lease_document(holder: &str, plot: &str) -> (String, tokio::task::JoinHandle<()>) {
+    let doc = serde_json::json!([{ "addresses": [holder], "plots": [plot] }]);
+    let lease = axum::Router::new().route(
+        "/authorizations.json",
+        axum::routing::get(move || async move { Json(doc) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/authorizations.json",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, lease).await.unwrap() });
+    (url, server)
+}
+
+/// The EIP-55 mixed-case form of `address`, so a test pins the lowercasing.
+fn checksummed(address: &str) -> String {
+    let mixed = Address::parse(address).unwrap().checksummed();
+    assert_ne!(mixed, address, "a mixed-case form");
+    mixed
+}
+
+/// A policy whose LAND document holds `doc`'s roles, owned by an unrelated
+/// address unless `doc` names the owner; `is_admin` refuses.
+fn land_policy(doc: LandOperators) -> StubPolicy {
+    let owner = if doc.owner.is_empty() {
+        "0x000000000000000000000000000000000000dead".into()
+    } else {
+        doc.owner.clone()
+    };
+    StubPolicy {
+        land: Ok(Some(Arc::new(Some(LandOperators { owner, ..doc })))),
+        ..StubPolicy::default()
+    }
+}
+
+/// Every LAND-document role held by `holder`, in checksummed form.
+fn extended_land_roles(holder: &str) -> [(&'static str, LandOperators); 5] {
+    // A new LAND-document field fails to build here until it gets a role below.
+    let LandOperators {
+        owner: _,
+        operator: _,
+        update_operator: _,
+        update_managers: _,
+        approved_for_all: _,
+    } = LandOperators::default();
+    [
+        // Admitted via the LAND document; `is_admin` refuses.
+        (
+            "LAND owner",
+            LandOperators {
+                owner: checksummed(holder),
+                ..Default::default()
+            },
+        ),
+        (
+            "LAND operator",
+            LandOperators {
+                operator: Some(checksummed(holder)),
+                ..Default::default()
+            },
+        ),
+        (
+            "update operator",
+            LandOperators {
+                update_operator: Some(checksummed(holder)),
+                ..Default::default()
+            },
+        ),
+        (
+            "update manager",
+            LandOperators {
+                update_managers: vec![checksummed(holder)],
+                ..Default::default()
+            },
+        ),
+        (
+            "approved for all",
+            LandOperators {
+                approved_for_all: vec![checksummed(holder)],
+                ..Default::default()
+            },
+        ),
+    ]
 }
 
 async fn seed_world_scene(pool: &PgPool, world: &str, entity_id: &str, parcels: &[&str]) {
@@ -1808,7 +1896,7 @@ fn ctx(place_id: &str, realm: &str, scene_id: &str, parcel: Option<&str>) -> Roo
     if let Some(parcel) = parcel {
         metadata["parcel"] = serde_json::json!(parcel);
     }
-    RoomContext::from_metadata(&metadata, place_id)
+    RoomContext::from_metadata(&metadata, place_id, "main")
 }
 
 #[tokio::test]
@@ -1858,7 +1946,7 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     let rooms = scene::resolve_rooms(
         &state,
         &ctx(&genesis, "main", "bafkreiabc", Some("10,21")),
-        &PlaceLookup::new(&state, &genesis),
+        &PlaceLookup::new(&state, &genesis, &genesis),
     )
     .await
     .unwrap();
@@ -1866,7 +1954,7 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     let err = scene::resolve_rooms(
         &state,
         &ctx(&genesis, "main", "bafkreiabc", Some("99,99")),
-        &PlaceLookup::new(&state, &genesis),
+        &PlaceLookup::new(&state, &genesis, &genesis),
     )
     .await
     .unwrap_err();
@@ -1877,7 +1965,7 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     let err = scene::resolve_rooms(
         &state,
         &ctx(&genesis, &world, "bafkreiabc", None),
-        &PlaceLookup::new(&state, &genesis),
+        &PlaceLookup::new(&state, &genesis, &genesis),
     )
     .await
     .unwrap_err();
@@ -1888,7 +1976,7 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     let rooms = scene::resolve_rooms(
         &state,
         &ctx(&world_place, &world, &world, None),
-        &PlaceLookup::new(&state, &world_place),
+        &PlaceLookup::new(&state, &world_place, &world_place),
     )
     .await
     .unwrap();
@@ -1905,8 +1993,8 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     );
     let rooms = scene::resolve_rooms(
         &state,
-        &RoomContext::from_metadata(&serde_json::json!({}), &world_place),
-        &PlaceLookup::new(&state, &world_place),
+        &RoomContext::from_metadata(&serde_json::json!({}), &world_place, "main"),
+        &PlaceLookup::new(&state, &world_place, &world_place),
     )
     .await
     .unwrap();
@@ -1918,7 +2006,7 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
     let err = scene::resolve_rooms(
         &state,
         &ctx("no-such-place", "main", "bafkreiabc", Some("10,20")),
-        &PlaceLookup::new(&state, "no-such-place"),
+        &PlaceLookup::new(&state, "no-such-place", "no-such-place"),
     )
     .await
     .unwrap_err();
@@ -1937,7 +2025,7 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
         scene::resolve_rooms(
             &unconfigured,
             &ctx("no-such-place", "main", "x", None),
-            &PlaceLookup::new(&unconfigured, "no-such-place")
+            &PlaceLookup::new(&unconfigured, "no-such-place", "no-such-place")
         )
         .await
         .unwrap()

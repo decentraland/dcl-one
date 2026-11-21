@@ -107,6 +107,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
       // One tab: every operation's lock is this page's.
       claim: async () => () => {},
       creatorName: async () => null,
+      creatorFace: async () => null,
       manager: (chainId) => ({ chainId, address: opts.trusted, name: 'Decentraland Credits', version: '1.0.0' }),
       rail: () => ({
         relayerUrl: 'https://node.test/transactions-api/v1',

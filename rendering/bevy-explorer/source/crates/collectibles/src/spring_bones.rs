@@ -9,7 +9,7 @@ use ipfs::ContentMap;
 use serde::{Deserialize, Deserializer};
 
 /// The only layout version this reader was written against. Another version is still read.
-const SUPPORTED_VERSION: i64 = 1;
+const SUPPORTED_VERSION: f64 = 1.0;
 
 /// Bound on `stiffness`, `gravityPower` and each part of `gravityDir`, far above any authored
 /// value, so their products stay finite.
@@ -99,7 +99,7 @@ pub fn spring_bone_models(
     };
 
     let version = value.get("version");
-    if version.and_then(|version| version.as_i64()) != Some(SUPPORTED_VERSION) {
+    if !is_supported_version(version) {
         warn!(
             "wearable {wearable} has spring bones version {}, read as version {SUPPORTED_VERSION}",
             version.unwrap_or(&serde_json::Value::Null)
@@ -143,10 +143,28 @@ pub fn model_spring_bones(
     models.get(hash.as_ref()).cloned()
 }
 
+/// `1` in any JSON number form (`1`, `1.0`, `1e0`), as the catalyst accepts it.
+fn is_supported_version(version: Option<&serde_json::Value>) -> bool {
+    version.and_then(serde_json::Value::as_f64) == Some(SUPPORTED_VERSION)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn version_one_is_supported_in_every_json_number_form() {
+        for version in ["1", "1.0", "1e0"] {
+            let value: serde_json::Value = serde_json::from_str(version).unwrap();
+            assert!(is_supported_version(Some(&value)), "{version}");
+        }
+        for version in ["2", "1.5", "\"1\""] {
+            let value: serde_json::Value = serde_json::from_str(version).unwrap();
+            assert!(!is_supported_version(Some(&value)), "{version}");
+        }
+        assert!(!is_supported_version(None));
+    }
 
     fn model(value: serde_json::Value) -> SpringBoneModel {
         let models = spring_bone_models(Some(&value), "test");

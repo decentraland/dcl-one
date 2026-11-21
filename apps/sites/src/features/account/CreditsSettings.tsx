@@ -8,7 +8,7 @@ import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CREDITS_COPY } from "./copy";
 import styles from "./CreditsSettings.module.css";
 import { useCreditsStatus, useOptOutOfCredits } from "./hooks";
-import { LeaveCreditsDialog } from "./LeaveCreditsDialog";
+import { LeaveCreditsDialog } from "@dcl/one-ui/apps/sites/account/LeaveCreditsDialog";
 
 const COPY = CREDITS_COPY;
 
@@ -94,6 +94,7 @@ export function CreditsSettings({ identity }: { identity: AuthIdentity }) {
       </div>
       {enrolled && confirming ? (
         <LeaveCreditsDialog
+          labels={COPY}
           pending={optOut.isPending}
           error={optOut.isError ? optOutFailureMessage(optOut.error) : undefined}
           onConfirm={confirm}

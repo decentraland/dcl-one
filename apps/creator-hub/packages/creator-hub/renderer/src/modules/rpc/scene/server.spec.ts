@@ -3,10 +3,11 @@ import { InMemoryTransport, RPC } from '@dcl/mini-rpc';
 
 import type { Project } from '/shared/types/projects';
 
-import { pkg } from '#preload';
+import { pkg, recording } from '#preload';
 
 import { store } from '/@/modules/store';
 import { actions as workspaceActions } from '/@/modules/store/workspace';
+import { setActiveRecordingSession } from '/@/modules/recording/session';
 
 import { SceneRpcServer } from './server';
 
@@ -157,6 +158,50 @@ describe('SceneRpcServer get_sdk_version', () => {
       vi.mocked(pkg.getPackageVersion).mockRejectedValue(new Error('unreadable'));
       expect(await inspector.request('get_sdk_version', {})).toEqual({ version: null });
       logError.mockRestore();
+    });
+  });
+});
+
+describe('SceneRpcServer record_events', () => {
+  let inspector: RPC<string, any, any>;
+  const click = { t: 1, kind: 'click', text: 'Clicked "Play"' };
+
+  beforeEach(() => {
+    const host = new InMemoryTransport();
+    const iframe = new InMemoryTransport();
+    host.connect(iframe);
+    iframe.connect(host);
+    new SceneRpcServer(host, PROJECT);
+    inspector = new RPC('SceneRpcOutbound', iframe);
+  });
+
+  afterEach(() => {
+    setActiveRecordingSession(null);
+  });
+
+  describe('when a recording is running', () => {
+    beforeEach(() => {
+      setActiveRecordingSession('s1');
+    });
+
+    it('should send what the inspector captured to main under that session', async () => {
+      await inspector.request('record_events', { events: [click] });
+
+      expect(recording.sendEvents).toHaveBeenCalledWith('s1', [click]);
+    });
+
+    it('should drop entries that are not events', async () => {
+      await inspector.request('record_events', { events: [null, click, 'nope'] });
+
+      expect(recording.sendEvents).toHaveBeenCalledWith('s1', [click]);
+    });
+  });
+
+  describe('when no recording is running', () => {
+    it('should forward nothing', async () => {
+      await inspector.request('record_events', { events: [click] });
+
+      expect(recording.sendEvents).not.toHaveBeenCalled();
     });
   });
 });

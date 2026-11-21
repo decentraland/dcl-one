@@ -296,7 +296,7 @@ async fn signer(
 ) -> Result<String, CommError> {
     let path = signed_path(original, local);
     Ok(
-        auth::require_signer(headers, method, &path, state.eip1654.as_deref())
+        auth::require_signer(headers, method, &path, state.eip1654.as_ref())
             .await?
             .into_string(),
     )

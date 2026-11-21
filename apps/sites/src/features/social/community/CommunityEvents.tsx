@@ -43,7 +43,7 @@ export function CommunityEvents({ communityId, now: initialNow }: { communityId:
   const events = useMemo(() => query.data?.pages.flatMap((page) => page.events) ?? [], [query.data]);
   const groups = useMemo(() => [creatorWallets(events)], [events]);
   const profiles = useCreatorProfiles(groups);
-  const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
+  const reminders = useEventReminders(identity, () => openSignIn());
   const loader = useLoadMore(
     Boolean(query.hasNextPage) && !query.isFetchNextPageError,
     query.isFetchingNextPage, () => void query.fetchNextPage());

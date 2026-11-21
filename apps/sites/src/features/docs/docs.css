@@ -48,7 +48,7 @@ html[data-docs-theme="dark"] html[data-docs-theme="dark"] .dcl-docs .search inpu
 .dcl-docs .spacebar .search-shortcut kbd{border-color:var(--line-strong);background:var(--surface)}
 .dcl-docs .spacebar .search-panel{top:38px;left:auto;right:0}
 @media(max-width:760px){.dcl-docs .mobile-search{width:32px;height:32px;flex:none;color:var(--muted);background:none;border:0}}
-/* The section sidebar in the shape of the site sidebar (ui3 sidenavitem.css, sitelayout.css): a flush panel,
+/* The section sidebar in the shape of the site sidebar: a flush panel,
    rounded rows, a filled current row with the brand marker. Dark uses the site's own colours. */
 .dcl-docs{--nav-bg:var(--surface-soft);--nav-line:var(--line);--nav-ink:var(--subtle);--nav-active:var(--ink);--nav-hover:rgba(22,21,24,.05);--nav-current:rgba(22,21,24,.07)}
 html[data-docs-theme="dark"] .dcl-docs{--nav-bg:#101014;--nav-line:rgba(255,255,255,.1);--nav-ink:rgba(255,255,255,.7);--nav-active:#fff;--nav-hover:rgba(255,255,255,.06);--nav-current:rgba(255,255,255,.08)}

@@ -6,7 +6,7 @@ import {
   EnclaveSignatureSchema,
   ThirdwebAuthResultSchema,
   WalletsMeSchema,
-} from "@ui/data/auth/thirdwebSchema";
+} from "@web-core/auth/thirdwebSchema";
 
 import {
   completeEmailLogin,
