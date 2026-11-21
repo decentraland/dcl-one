@@ -15,6 +15,7 @@ import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval, splitSaleTransaction, type FakeHandlers } from "../../checkout/fakes";
 import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
 import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
+import { evmAddress } from "@shop/model/address";
 import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
@@ -560,18 +561,148 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
   });
 
-  it("a hold another tab wrote while this one approved is read under the item's lock: no credit is authorized, the other shown confirming", async () => {
+  it("a hold of this item another tab wrote while the approval was open stops the approve itself, under its lock: nothing sent, no credit", async () => {
     const { demo, line } = setup();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     const approve = await screen.findByTestId("authorize-step-action");
     holdFromAnotherTab(line);
     await act(async () => fireEvent.click(approve));
+    expect(await screen.findByText("A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.", {}, { timeout: 5000 })).toBeTruthy();
+    // Not even the approve went out: it would have set the allowance from under the other purchase.
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.creditId).toBe(OTHER);
+  });
+
+  it("a hold of this item whose credit the chain proves expired still stops the approve: only that purchase found out lets the item go", async () => {
+    const { demo, line } = setup();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    // Its credit expired a minute ago, and the finalized block has reached it; whether that purchase went through is unknown.
+    const expiresAt = nowSeconds() - 60;
+    demo.chain.chainTime = expiresAt;
+    localStorage.setItem(holdKey(line), JSON.stringify({ at: Date.now() - 20 * 60 * 1000, attempt: "another", txHash: null, chainId: CHAIN.POLYGON, creditId: OTHER, creditExpiresAt: expiresAt }));
+    await act(async () => fireEvent.click(approve));
+    expect(await screen.findByText("A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+  });
+
+  it("a hold of this item another tab wrote once the approve had gone is read by the item's claim: no credit is authorized, the other shown confirming", async () => {
+    const { demo, line, unmount, again } = setup();
+    unmount();
+    // The approve is relayed; right after, another tab writes its hold of this item.
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      if (relayedApproval(JSON.parse(String(args[1]?.body)))) holdFromAnotherTab(line);
+      return answer;
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 5000 })).toBeTruthy();
     // The approval alone was relayed; no credit was reserved for a sale that was never going to be sent.
     expect(demo.relay.posts).toHaveLength(1);
     expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
     expect(authorizations(demo)).toBe(0);
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.creditId).toBe(OTHER);
+  });
+
+  /** Another item's line: the same collection's item on another contract. */
+  const anotherItem = (line: ReturnType<typeof setup>["line"]) => splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ab".repeat(20)}`) });
+  /** Another item's split, from any tab or surface of this browser: held, no hash, its credit spendable for five more minutes. */
+  const anotherItemHeld = (line: ReturnType<typeof setup>["line"], fields: Record<string, unknown> = {}) =>
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${anotherItem(line)}`,
+      JSON.stringify({ at: Date.now(), attempt: "another", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"0f".repeat(32)}`, creditExpiresAt: nowSeconds() + 300, ...fields }),
+    );
+  const IN_FLIGHT = "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.";
+  const signatures = (demo: ReturnType<typeof createDemo>) => demo.wallet.requests.filter((r) => r.method === "eth_signTypedData_v4").length;
+
+  it("another item's split that may still spend the allowance stops this one before anything is asked: no approve, no credit, nothing sent", async () => {
+    const { demo, line } = setup();
+    anotherItemHeld(line);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // A run of it still preparing (no credit yet, a fresh hold) holds this one the same.
+    anotherItemHeld(line, { creditId: null, creditExpiresAt: null });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await waitFor(() => expect(screen.getByTestId("combined-confirm")).toBeEnabled());
+    expect(screen.getByText(IN_FLIGHT)).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(signatures(demo)).toBe(0);
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("another item's split that appears while the wallet signs the approval stops the approve itself, under its lock: nothing sent", async () => {
+    const { demo, line } = setup();
+    // Another tab or surface writes its hold while this wallet signs.
+    const request = demo.wallet.request.bind(demo.wallet);
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      const answer = await request(args);
+      if (args.method === "eth_signTypedData_v4") anotherItemHeld(line);
+      return answer;
+    }) as typeof demo.wallet.request;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(IN_FLIGHT, {}, { timeout: 5000 })).toBeTruthy();
+    // Signed, but neither recorded nor sent: it would have set the allowance from under the other purchase.
+    expect(signatures(demo)).toBe(1);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("dcl-shop-exact-grant:"))).toEqual([]);
+    expect(authorizations(demo)).toBe(0);
+  });
+
+  it("another item's split that appears once the approve has gone stops the sale under the grant's lock: no credit, no sale", async () => {
+    const { demo, line, unmount, again } = setup();
+    unmount();
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      if (relayedApproval(JSON.parse(String(args[1]?.body)))) anotherItemHeld(line);
+      return answer;
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(IN_FLIGHT, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+  });
+
+  it("another item's credit holds this one until the chain's finalized block reaches its expiry; this browser's clock past it proves nothing", async () => {
+    const { demo, line } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    // Its credit's expiry is a minute behind this browser's clock, and a second ahead of the finalized block.
+    const expiresAt = nowSeconds() - 60;
+    anotherItemHeld(line, { creditExpiresAt: expiresAt });
+    demo.chain.chainTime = expiresAt - 1;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
+    expect(authorizations(demo)).toBe(0);
+    // The finalized block reaches it: the manager can't spend that credit any more, and this purchase goes ahead.
+    demo.chain.chainTime = expiresAt;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(authorizations(demo)).toBe(1);
+    expect(demo.relay.posts).toHaveLength(1);
+  });
+
+  it("a record of another purchase this browser can't read stops this one before anything is asked, and says so", async () => {
+    const { demo, line } = setup();
+    // A credit id that isn't a string: not a hold this browser can tell anything from.
+    anotherItemHeld(line, { creditId: 42 });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.")).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(signatures(demo)).toBe(0);
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
   });
 
   it("a browser that cannot keep the record sends nothing: the credit is released and the buyer told why", async () => {
@@ -1300,6 +1431,23 @@ describe("a held split with no transaction to read", () => {
       clock.mockRestore();
     }
     expect(demo.shop.log.filter((r) => r.name === "userPurchases")).toHaveLength(4);
+  });
+
+  it("EXPIRED, its expiry past on this browser's clock but not at the chain's finalized block, notes nothing: held, the grace not started", async () => {
+    const expiresAt = nowSeconds() - 60;
+    const demo = heldSplit({ value: "EXPIRED" }, expiresAt);
+    // A clock running ahead: the finalized block is a second short of the credit's expiry.
+    demo.chain.chainTime = expiresAt - 1;
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByText(/expired unspent/)).toBeNull();
+    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiredSeenAt ?? null).toBeNull();
+    // The finalized block reaches it: expiring, its sighting noted from this look.
+    demo.chain.chainTime = expiresAt;
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByTestId("combined-check-notice")).toHaveTextContent(/expired unspent/);
+    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiredSeenAt).toEqual(expect.any(Number));
   });
 
   it("a credit the node says this split spent completes the purchase, never offering it again", async () => {

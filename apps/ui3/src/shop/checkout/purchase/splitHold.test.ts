@@ -445,8 +445,10 @@ describe("what settles a hold", () => {
   });
 
   it("a sighting from before its credit's expiry doesn't start the grace: held until expiry, then the first sighting past it counts", async () => {
-    const { deps: d } = deps({ status: "EXPIRED" });
+    const { chain, deps: d } = deps({ status: "EXPIRED" });
     const expiry = (seconds() + 60) * 1000;
+    // The chain's finalized time has reached the expiry: only the local sightings are early or not.
+    chain.chainTime = expiry / 1000;
     // EXPIRED was noted a minute before the credit's own expiry.
     const early = hold({ attempt: "a", creditExpiresAt: expiry / 1000, expiredSeenAt: expiry - 60_000 });
     writeSplitHold(ACCOUNT, LINE, early);
@@ -464,5 +466,29 @@ describe("what settles a hold", () => {
   it("EXPIRED for a credit whose expiry isn't known is no answer, however old the sighting: held", async () => {
     const { deps: d } = deps({ status: "EXPIRED" });
     expect(await settleSplitHold(hold({ creditExpiresAt: null, expiredSeenAt: 1 }), d)).toBeNull();
+  });
+
+  it("EXPIRED with its expiry past on this browser's clock but not yet at the chain's finalized block is no answer: held, however old the sighting", async () => {
+    const { chain, deps: d } = deps({ status: "EXPIRED" });
+    const expiresAt = seconds() - 20 * 60;
+    // A clock running ahead: the finalized block is a second short of the credit's expiry, so the manager can still spend it.
+    chain.chainTime = expiresAt - 1;
+    expect(await settleSplitHold(hold({ creditExpiresAt: expiresAt }), d)).toBeNull();
+    expect(await settleSplitHold(hold({ creditExpiresAt: expiresAt, expiredSeenAt: Date.now() - 10 * SPLIT_EXPIRY_CONFIRM_MS }), d)).toBeNull();
+    // The finalized block reaches it: expiring, then released once seen so for the whole grace.
+    chain.chainTime = expiresAt;
+    expect(await settleSplitHold(hold({ creditExpiresAt: expiresAt }), d)).toEqual({ kind: "expiring" });
+    expect(await settleSplitHold(hold({ creditExpiresAt: expiresAt, expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS }), d)).toEqual({ kind: "released" });
+  });
+
+  it("EXPIRED with no finalized time to read (a read that fails, or a reader without it) is no answer: held", async () => {
+    const { chain, deps: d } = deps({ status: "EXPIRED" });
+    const past = { creditExpiresAt: seconds() - 20 * 60, expiredSeenAt: Date.now() - 10 * SPLIT_EXPIRY_CONFIRM_MS };
+    chain.finalizedTime = async () => {
+      throw new Error("rate limited");
+    };
+    expect(await settleSplitHold(hold(past), d)).toBeNull();
+    const { finalizedTime: _none, ...withoutTime } = chain;
+    expect(await settleSplitHold(hold(past), { ...d, reader: withoutTime })).toBeNull();
   });
 });

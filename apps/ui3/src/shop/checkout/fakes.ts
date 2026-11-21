@@ -138,6 +138,8 @@ export type FakeChain = ChainReader & {
   approvals: Map<string, boolean>;
   manaBalances: Map<string, bigint>;
   calls: { chainId: number; to: string; data: Hex }[];
+  /** The finalized block's time (unix seconds) `finalizedTime` answers; this moment's, unless a test sets it. */
+  chainTime: number | null;
 };
 
 /** A chain that answers the reads the rails make: getNonce, allowance, balanceOf, the MANA oracle. */
@@ -158,6 +160,10 @@ export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {})
     approvals,
     manaBalances,
     calls,
+    chainTime: null,
+    async finalizedTime() {
+      return this.chainTime ?? Math.floor(Date.now() / 1000);
+    },
     async call(chainId, to, data) {
       calls.push({ chainId, to, data });
       const selector = data.slice(0, 10);

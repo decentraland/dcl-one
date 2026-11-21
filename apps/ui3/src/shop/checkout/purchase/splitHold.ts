@@ -18,6 +18,7 @@ import { assetKey, type AssetId } from "@shop/model/asset";
 import type { ChainReader } from "../chain/rpc";
 import { newAttemptId, webLock } from "../lib/web-lock";
 import { isSplitSale, splitExecution, type SplitEvidenceReader, type SplitSale } from "./splitEvidence";
+import type { ChainId } from "@shop/model/chain";
 
 const KEY = "dcl-shop-buynow-split:v1:";
 /** How long a record from before credits were kept with it holds; and how long Check again waits on a fresh one. */
@@ -198,6 +199,11 @@ export async function splitCreditOverOnChain(hold: SplitHold, finalizedTime: (ch
   return creditExpiredOnChain(hold.creditExpiresAt, hold.chainId, finalizedTime, now);
 }
 
+/** The chain's finalized block time (unix seconds) read through `reader`; a reader without it proves no expiry. */
+export function readerFinalizedTime(reader: Pick<ChainReader, "finalizedTime">): (chainId: number) => Promise<number> {
+  return (chainId) => (reader.finalizedTime ? reader.finalizedTime(chainId as ChainId) : Promise.reject(new Error("This reader has no chain time")));
+}
+
 /**
  * Whether a credit expiring at `expiresAt` (unix seconds) on `chainId` provably can't be spent any more: the chain's
  * finalized block time has reached it (the manager refuses a credit once `block.timestamp >= expiresAt`). The local clock
@@ -342,8 +348,9 @@ export async function findCreditRecords(
  * What became of a held split, decided only by its terms (the same rules the in-world Shop follows):
  * - its own transaction, read and matched (`splitExecution`): bought completes it;
  * - else the node's record of its credit: SETTLED by an execution of exactly its terms completes it, by the buyer's own
- *   call of that credit on other terms is `elsewhere`; EXPIRED, once the credit's own expiry has passed here too, releases
- *   it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS` (`expiring` before);
+ *   call of that credit on other terms is `elsewhere`; EXPIRED, once the chain's finalized block time has reached the
+ *   credit's own expiry too (`creditExpiredOnChain`), releases it once that has been seen for `SPLIT_EXPIRY_CONFIRM_MS`
+ *   (`expiring` before);
  * - its own dispatched bytes mined and reverted settle nothing on their own: that invocation failed, but a sibling
  *   invocation of the same terms may have run (the index may not show it yet), and a credit the node retired stays
  *   spendable on chain until it expires. So it is held, as anything else is, until the node's record says one of the above;
@@ -381,10 +388,11 @@ export async function settleSplitHold(
     return null;
   }
   if (credit?.status === "EXPIRED") {
-    // The node lists a credit EXPIRED only once the chain, as far as it has read it, is past its expiry. This browser waits
-    // for that expiry too, a second safeguard: with no expiry known to check, or before it, there is no answer, and the
-    // grace counts only from a sighting made past it (`expirySeenAt`).
-    if (hold.creditExpiresAt === null || now < hold.creditExpiresAt * 1000) return null;
+    // The node lists a credit EXPIRED only once the chain, as far as it has read it, is past its expiry. This browser proves
+    // that expiry itself too, by the chain's finalized block time (creditExpiredOnChain; the local clock only says when to
+    // ask): with no expiry known, no chain time, or a read that fails, there is no answer. The grace counts only from a
+    // sighting made past it (`expirySeenAt`), which is only noted once this proof holds.
+    if (!(await creditExpiredOnChain(hold.creditExpiresAt, hold.chainId ?? sale.chainId, readerFinalizedTime(deps.reader), now))) return null;
     const seen = expirySeenAt(hold);
     return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };
   }
@@ -403,7 +411,8 @@ function expirySeenAt(hold: SplitHold): number | null {
 /**
  * Notes, under the line's lock and only on the attempt that was read, when its credit was first seen EXPIRED past its own
  * expiry: the grace runs from then, in every tab and surface, and survives a restart. A sighting kept from before that
- * expiry is replaced by this one. `noted` (or already), `replaced` (another attempt's record is there now, or none), or
+ * expiry is replaced by this one. Called once `settleSplitHold` answered `expiring`, so only once the chain's finalized
+ * block time proved that expiry. `noted` (or already), `replaced` (another attempt's record is there now, or none), or
  * `busy` (a run holds the line's lock, or there are no Web Locks).
  */
 export async function noteSplitHoldExpiry(

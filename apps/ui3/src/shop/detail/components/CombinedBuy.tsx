@@ -8,7 +8,10 @@
 // the buyer decides; then ONE credit is authorized at the line's whole price for its Credits part, the
 // MANA the contract would pull is checked against the amount shown, and the call is relayed (or sent by
 // the wallet when the relay cannot run). A credit is released only when nothing may have consumed it; a
-// broadcast that has not confirmed is pending, never re-sent.
+// broadcast that has not confirmed is pending, never re-sent. One split runs at a time per account, on every surface
+// (splitsInFlight): another item's split whose credit the chain hasn't proven expired, a hold of this item, or a record
+// this browser can't read stops a new one: before the approval, under the approval's lock, and once the sale holds the
+// grant's lock (where this item's own hold is the item's claim to read).
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -50,6 +53,10 @@ import {
   splitHoldCheckable,
   splitHoldLine,
   splitHoldReleasableAt,
+  splitCreditOverOnChain,
+  splitsInFlight,
+  readAccountSplitHolds,
+  readerFinalizedTime,
   writeSplitHold,
   type SplitHold,
   noteSplitHoldExpiry,
@@ -100,6 +107,13 @@ const SPENT_ELSEWHERE = "The Credits this purchase held were spent on another pu
 const EXPIRING = "This purchase's Credits expired unspent. The item is let go once that is confirmed, in a few minutes: check again then.";
 const UNCLEARED = "This browser couldn't update its record of this purchase. Check again in a moment.";
 const UNKEPT = "This browser couldn't save this purchase's transaction. Once you close this, checking it can take until its Credits expire.";
+
+// One split at a time per account, on every surface (checkout/purchase/splitHold.ts, splitsInFlight): an exact approval
+// sets the manager's allowance to one gap, so another split's approval would take an earlier one's MANA, and a split that
+// finds the allowance covered could spend another's.
+const SPLIT_IN_FLIGHT = "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.";
+const SPLIT_ITEM_HELD = "A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.";
+const SPLITS_UNREADABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.";
 /** How often, and how far apart, the sale asks again for the grant's lock right after this tab's own approval let it go. */
 const GRANT_LOCK_TRIES = 5;
 const GRANT_LOCK_RETRY_MS = 50;
@@ -201,6 +215,41 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const [checking, setChecking] = useState(false);
   // Set while a Check again runs, at once (the state that disables its button only lands on the next render).
   const checkingNow = useRef(false);
+  // Credits of other splits proven unable to spend anything any more, by the chain's own time: once proven, for good.
+  const creditsOver = useRef(new Set<string>());
+
+  /**
+   * Proves, by the chain's finalized time (splitCreditOverOnChain), which of `account`'s held splits can't spend anything
+   * any more, for splitBlock to read without waiting. Only those the local clock says are past their expiry are asked.
+   */
+  async function proveCreditsOver(account: string): Promise<void> {
+    let holds: { line: string; hold: SplitHold }[];
+    try {
+      holds = readAccountSplitHolds(account);
+    } catch {
+      return;
+    }
+    for (const { hold } of holds) {
+      if (hold.creditId !== null && !creditsOver.current.has(hold.creditId) && (await splitCreditOverOnChain(hold, readerFinalizedTime(services.reader)))) creditsOver.current.add(hold.creditId);
+    }
+  }
+
+  /**
+   * Why a split of this item by `account` can't start now, read at once (so the approval's `live` check, under its lock,
+   * can ask it): another item's split that may still spend the allowance (its credit not proven over by the chain), any
+   * hold of this item while it is kept (`sameItem`; a credit proven over doesn't let it go, only its purchase found out),
+   * or purchases this browser can't read. Null: nothing holds it.
+   */
+  function splitBlock(account: string, sameItem: boolean): string | null {
+    let live: { line: string; hold: SplitHold }[];
+    try {
+      live = splitsInFlight(account, Date.now(), (l, hold) => l !== lineId && hold.creditId !== null && creditsOver.current.has(hold.creditId));
+    } catch {
+      return SPLITS_UNREADABLE;
+    }
+    if (sameItem && live.some((held) => held.line === lineId)) return SPLIT_ITEM_HELD;
+    return live.some((held) => held.line !== lineId) ? SPLIT_IN_FLIGHT : null;
+  }
   const [notice, setNotice] = useState<string | null>(null);
   // A run that proved it sent nothing, whose record the storage kept: its attempt, and the outcome shown once it clears.
   const [unsent, setUnsent] = useState<{ attempt: string; message: string } | null>(null);
@@ -264,10 +313,19 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setPhase({ kind: "error", message: UNGUARDED });
       return;
     }
+    // Before anything is asked (no approval left behind for a purchase that can't go ahead): another item's split that may
+    // still spend the allowance, or purchases this browser can't read. This item's own hold is shown above, as confirming.
+    // Each is read again where it counts: under the approval's lock, and once the sale holds it.
+    setPhase({ kind: "working" });
+    await proveCreditsOver(ctx.buyer);
+    const blockedNow = splitBlock(ctx.buyer, false);
+    if (blockedNow) {
+      setPhase({ kind: "error", message: blockedNow });
+      return;
+    }
     const agreedTerms: Terms = { offer, mixed };
     terms.current = agreedTerms;
     setAgreed(mixed);
-    setPhase({ kind: "working" });
     try {
       const target = await resolveTarget(ctx, agreedTerms.offer);
       const auth = spendingAuth(target);
@@ -317,6 +375,14 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       return;
     }
     try {
+      // Under it, no other split of this account can start (each hands off holding it, its hold written by then): another
+      // item's split that may still spend the allowance holds this one. This item's own is the claim's to read, just below.
+      await proveCreditsOver(ctx.buyer);
+      const inFlight = splitBlock(ctx.buyer, false);
+      if (inFlight) {
+        setPhase({ kind: "error", message: inFlight });
+        return;
+      }
       // The item's claim, read under its lock: a split another tab or surface sent since this screen opened is shown
       // confirming, and nothing is authorized.
       const claim = await claimSplitHold(services.locks, ctx.buyer, lineId);
@@ -587,21 +653,33 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (!ctx) throw new Error("Connect your wallet again to approve.");
       const agreedTerms = terms.current;
       if (!agreedTerms) throw new Error("Start the purchase again to approve.");
-      // Exactly the MANA the buyer agreed to pay, never an unlimited allowance to the CreditsManager.
-      await setAuthorization({
-        auth: phase.auth,
-        active: true,
-        amount: agreedTerms.mixed.manaWei,
-        provider: ctx.provider,
-        account: ctx.buyer,
-        walletKind: ctx.walletKind,
-        reader: ctx.reader,
-        relayerUrl: ctx.relayerUrl,
-        fetchImpl: ctx.fetchImpl,
-        locks: ctx.locks,
-        // A dialog closed, or terms changed, while the wallet signs: that approval is recorded and sent no more.
-        live: stillAgreed(agreedTerms),
-      });
+      await proveCreditsOver(ctx.buyer);
+      // What held the approval back under its lock, said instead of a plain "cancelled".
+      let heldBack: string | null = null;
+      try {
+        // Exactly the MANA the buyer agreed to pay, never an unlimited allowance to the CreditsManager.
+        await setAuthorization({
+          auth: phase.auth,
+          active: true,
+          amount: agreedTerms.mixed.manaWei,
+          provider: ctx.provider,
+          account: ctx.buyer,
+          walletKind: ctx.walletKind,
+          reader: ctx.reader,
+          relayerUrl: ctx.relayerUrl,
+          fetchImpl: ctx.fetchImpl,
+          locks: ctx.locks,
+          // Read after the wallet signs and before anything is recorded or sent (or sent again), under the approval's lock:
+          // a dialog closed or terms changed meanwhile leave no grant, and neither does a hold of this item by another
+          // purchase, nor another item's split that may still spend the allowance (this approve would set it from under it).
+          live: () => {
+            heldBack = splitBlock(ctx.buyer, true);
+            return heldBack === null && stillAgreed(agreedTerms)();
+          },
+        });
+      } catch (e) {
+        throw e instanceof GrantCancelledError && heldBack ? new GrantCancelledError(heldBack) : e;
+      }
     },
     approved: () => {
       const ctx = context();
