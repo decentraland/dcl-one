@@ -7010,16 +7010,26 @@ mod supervisor {
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
         );
+        let (fold_gate, fold_armed, folding) = (
+            Arc::new(tokio::sync::Semaphore::new(0)),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::new(AtomicUsize::new(0)),
+        );
         let hooked = |inner: Arc<dyn ChainIndex>,
                       groups: Vec<chain_walk::LogGroup>,
                       answer: Option<Arc<std::sync::atomic::AtomicBool>>|
          -> MakeIndex {
             let (gate, armed, from, held) =
                 (gate.clone(), armed.clone(), from.clone(), held.clone());
+            let (fold_gate, fold_armed, folding) =
+                (fold_gate.clone(), fold_armed.clone(), folding.clone());
             Arc::new(move || {
                 let mut h = Hooked {
                     inner: Some(inner.clone()),
                     groups_override: Some(groups.clone()),
+                    armed_fold_gate: Some(fold_gate.clone()),
+                    armed: fold_armed.clone(),
+                    entered: folding.clone(),
                     ..Hooked::default()
                 };
                 if let Some(answer) = &answer {
@@ -7078,20 +7088,23 @@ mod supervisor {
             })
             .await;
         }
-        // Shared walks at the tip put the three in step, so the walk after
-        // the head moves gathers all three (one still closing its own first
-        // walk would be left out).
-        let walks = stats.walks.load(Ordering::SeqCst);
-        eventually("three shared walks at 50", || async {
-            stats.walks.load(Ordering::SeqCst) >= walks + 3
+        // Hold the three in their closes at once, so no walk is in flight;
+        // move the head; then let them out together. They settle within
+        // moments of each other, well inside the 50 ms before the first is
+        // due again, so the walk from 50 gathers all three.
+        fold_armed.store(true, Ordering::SeqCst);
+        eventually("the three held in their closes at once", || async {
+            folding.load(Ordering::SeqCst) >= 3
         })
         .await;
-        // The reads at the shared walk's opening (cursors at 50) answer; the
-        // ones after the pause at 70 wait.
+        // The reads after the closes and at the shared walk's opening
+        // (cursors at 50) answer; the ones after the pause at 70 wait.
         from.store(70, Ordering::SeqCst);
         armed.store(true, Ordering::SeqCst);
         let mixed = chain.watched.load(Ordering::SeqCst);
         *chain.head.lock() = 100;
+        fold_armed.store(false, Ordering::SeqCst);
+        fold_gate.add_permits(3);
         eventually("A's and C's hints after their pause are held", || async {
             held.load(Ordering::SeqCst) >= 2
         })

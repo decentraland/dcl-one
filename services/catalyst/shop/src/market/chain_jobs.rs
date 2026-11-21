@@ -7,12 +7,15 @@
 //!
 //! Each lease acquisition gets a fresh index (the nft walk's memory never
 //! outlives it, and an attempt that panicked leaves its index behind), its
-//! own [`Holdings`] and backoff, and at most one attempt in flight, a whole
-//! [`chain_walk::job_pass`] in its own task. A lease request is a task of its
-//! own as well, run to its end. A projection keeps its own cadence: the
-//! interval after an attempt that ran, its own doubling backoff after one
-//! that failed, so one projection failing, waiting on its endpoint or
-//! waiting for its lease never holds another back. As with a leased periodic
+//! own [`Holdings`] and backoff, and at most one task in flight: an attempt
+//! alone (a whole [`chain_walk::job_pass`]), its part in a shared walk
+//! ([`chain_group::walk_together`]), or the close or walks-alone read that
+//! follows its part. A lease request is a task of its own as well, run to
+//! its end. A projection keeps its own cadence: the interval after an
+//! attempt that ran, its own doubling backoff after one that failed, so one
+//! projection failing, waiting on its endpoint or waiting for its lease
+//! never holds another back; one that reached the target may join a due
+//! companion's shared walk ahead of its own turn. As with a leased periodic
 //! job, every lease is asked for at once and each acquisition's first attempt
 //! waits the projection's first-pass delay (its jitter); a projection standing
 //! by asks again after the lease poll plus its jitter. A lost lease ends its
@@ -21,7 +24,9 @@
 //! lease and it holds none.
 //!
 //! An attempt ends as soon as its lease is lost or the process stops, even
-//! inside a fold: the supervisor collects it before the slot lets its lease
+//! inside a fold, and a shared walk ends for every member once one member's
+//! lease is lost (each reads its cursor again with a fresh index): the
+//! supervisor collects it before the slot lets its lease
 //! go or takes it again, and the attempts are the supervisor's tasks, so
 //! aborting the supervisor aborts them. Writes an attempt had already
 //! committed stay; the owner generation fences any later one.
@@ -1587,7 +1592,8 @@ mod tests {
         assert!(!s.solo_once);
     }
 
-    /// An index whose walks-alone read gives `0`, and which is never walked.
+    /// An index whose walks-alone read answers `self.0`, and which is never
+    /// walked.
     struct Answers(bool);
 
     #[async_trait::async_trait]
