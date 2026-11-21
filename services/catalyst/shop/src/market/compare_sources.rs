@@ -532,7 +532,7 @@ async fn compare_range(
     let mut chunk = 1_000usize;
     while *next <= hi {
         let from = *next;
-        let to = (from + req.window.max(1) - 1).min(hi);
+        let to = from.saturating_add(req.window.max(1) - 1).min(hi);
         let groups = ix
             .groups(pool, from, to, anchor)
             .await

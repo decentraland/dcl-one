@@ -10113,6 +10113,18 @@ mod compare_sources_tests {
         from: u64,
         to: u64,
     ) -> compare_sources::Report {
+        compare_with(db, rpc, portal, dataset, from, to, 100).await
+    }
+
+    async fn compare_with(
+        db: &ScratchDb,
+        rpc: &str,
+        portal: &str,
+        dataset: &str,
+        from: u64,
+        to: u64,
+        window: u64,
+    ) -> compare_sources::Report {
         compare_sources::run(
             &db.pool,
             &crate::http::Outbound::for_tests(),
@@ -10121,7 +10133,7 @@ mod compare_sources_tests {
                 indexer: "mana_transfers".into(),
                 from,
                 to,
-                window: 100,
+                window,
                 rpc_url: rpc.to_string(),
                 reader: PortalReader::new(portal, dataset, None, 1_000.0).unwrap(),
                 history: AddressHistory::Unknown,
@@ -10441,5 +10453,22 @@ mod compare_sources_tests {
         .await;
         assert_eq!((r.outcome, r.exit_code()), ("refused", 4));
         assert!(!serde_json::to_string(&r).unwrap().contains("sk-example-db"));
+    }
+
+    /// The widest window is clamped to the range, never overflowing.
+    #[tokio::test]
+    async fn the_widest_window_is_clamped_to_the_range() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain, Quirks::default()).await,
+        );
+        let r = compare_with(&db, &rpc, &portal, "polygon-mainnet", 101, 400, u64::MAX).await;
+        assert_eq!((r.outcome, r.exit_code()), ("equal", 0), "{r:#?}");
+        assert_eq!(r.compared, [(101, 400)]);
+        db.drop().await;
     }
 }
