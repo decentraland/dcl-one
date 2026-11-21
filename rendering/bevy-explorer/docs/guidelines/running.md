@@ -329,6 +329,39 @@ State, in every build:
   `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/screenshot [--max-width N] [--jpg] [--world-only]`: the primary window's frame, read back at
+  the end of the frame it was rendered in. Alone, the reply is raw base64 PNG at full size (no
+  `data:` prefix; the scene editor's thumbnail reads it). With any option it is JSON: `image`
+  (base64), `format` (`png`, or `jpg` at quality 75), `width`, `height`, `frame` (the size
+  captured, device pixels), `screen` (as `/entity_screen_position`'s), `parcel`, `worldOnly`,
+  `blendWaitMs`, and `caption`, e.g. `640x325 (screen 1600x813, frame 3200x1626) full-view
+  capture at parcel (149,149)`. `--max-width` (64 to 1920) scales down, never up, on the CPU off
+  the main thread. `--world-only` hides the native HUD and every scene's window UI while the
+  capture runs (UI drawn to a texture stays); what `/show_ui` chose returns when it ends. A
+  capture first waits two frames, then while the camera is in a transition (a virtual camera
+  handing back, a mode area), at most 1.5 s: the caption then ends `, waited N ms for the camera
+  blend` or `, camera still blending after 1500 ms -- the frame may be mid-transition`. On the
+  web the capture is the engine's canvas, never the page's HUD, and the reply's `info` says so.
+  One capture runs at a time: another `/screenshot` or `/capture_sequence` fails with
+  `{"refused": "a capture is already in progress (<holder>); retry when it completes", "cause":
+  {"holder"}}`.
+- `/capture_sequence [--count N] [--interval-seconds S] [--max-width N] [--jpg] [--world-only]
+  [--dir <path>]`: `count` frames (1 to 20, default 5) `S` seconds apart (0.05 to 2, default
+  0.5; the burst spans at most 20 s), each scaled to `--max-width` (default 640). The schedule
+  runs from the first frame, so encoding never delays the next. Natively the frames are files in
+  `--dir` (created) or a new `captures/capture-<ms>` folder in the client's cache; the web client
+  cannot write the host's disk, refuses `--dir` and keeps the frames in memory (the last sequence
+  only), `capture://<n>/frame-000.png`, which `/capture_frame <path>` returns as base64. JSON
+  reply, no image: `directory`, `stored` (`disk` or `memory`), `count`, `format`, `worldOnly`,
+  `requestedIntervalSeconds`, `meanIntervalSeconds` (null for one frame), `late` (frames taken
+  more than half an interval after their time), `screen`, `parcel`, `note`, and `frames` (`index`,
+  `path`, `width`, `height`, `bytes`, `atSeconds` from the first, `intervalFromPreviousSeconds`,
+  `engineFrame`, `tick` of the scene under the player, `late`). It shares the gate and the camera
+  wait with `/screenshot`.
+- `/capture_state`: the capture gate as JSON, the Frame capture section of the debug panel:
+  `holder` (`screenshot`, `capture_sequence` or `none`), `framesTaken` and `count` of the running
+  capture, `worldOnly`, and the `framesInMemory` and `bytesInMemory` the last in-memory sequence
+  keeps.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
   `active`, the primary camera's `position`, `storage` (`[current, max]` photos kept, meaningful
   once `storageLoaded`), `phase` (`idle`, `capturing`, `encoding` or `uploading`), this session's

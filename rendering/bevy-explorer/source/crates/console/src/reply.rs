@@ -1,6 +1,6 @@
 //! What the automation commands' replies and arguments share
 //! (docs/adr/2026-11-17-console-command-conventions.md): the `screen` a coordinate is read
-//! against and normalized coordinates.
+//! against, normalized coordinates, and refusals that name their cause.
 
 use bevy::{prelude::*, window::PrimaryWindow};
 use serde_json::{json, Value};
@@ -15,7 +15,7 @@ pub struct Screen {
 }
 
 impl Screen {
-    fn of(window: &Window) -> Self {
+    pub fn of(window: &Window) -> Self {
         Self {
             width: window.width(),
             height: window.height(),
@@ -71,9 +71,32 @@ pub fn round_fine(v: f32) -> f64 {
     (f64::from(v) * 10000.0).round() / 10000.0
 }
 
+/// A refusal: the command did nothing, and says why and what stood in the way. Sent as the failed
+/// reply's text, `{"refused": reason, "cause": {...}}`, the cause naming the input, holder or
+/// entity that refused.
+pub fn refusal(reason: impl Into<String>, cause: Option<Value>) -> String {
+    let mut reply = json!({ "refused": reason.into() });
+    if let Some(cause) = cause {
+        reply["cause"] = cause;
+    }
+    reply.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_names_its_cause() {
+        let text = refusal(
+            "a capture is already in progress",
+            Some(json!({"holder": "screenshot"})),
+        );
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["refused"], "a capture is already in progress");
+        assert_eq!(value["cause"]["holder"], "screenshot");
+        assert_eq!(refusal("busy", None), r#"{"refused":"busy"}"#);
+    }
 
     const SCREEN: Screen = Screen {
         width: 1280.0,

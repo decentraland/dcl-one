@@ -502,6 +502,7 @@ impl Plugin for SceneUiPlugin {
         app.add_systems(PreUpdate, check_text_links.after(UiActionSet));
 
         app.add_console_command::<ToggleSceneUiCommand, _>(toggle_scene_ui_command);
+        app.add_systems(Update, apply_hidden_uis);
     }
 }
 
@@ -755,13 +756,7 @@ fn create_ui_roots(
                 || interactable_area.is_changed()
                 || mobile.is_changed())
         {
-            let display = if maybe_super.is_some()
-                || hidden_uis
-                    .scenes
-                    .get(&*context.hash)
-                    .copied()
-                    .unwrap_or(hidden_uis.show_all)
-            {
+            let display = if hidden_uis.shows(&context.hash, maybe_super.is_some()) {
                 Display::Flex
             } else {
                 Display::None
@@ -1508,6 +1503,9 @@ struct ToggleSceneUiCommand {
 pub struct HiddenSceneUis {
     pub scenes: HashMap<String, bool>,
     pub show_all: bool,
+    /// While set, no scene's window UI shows, a system scene's included: a `--world-only` capture
+    /// is running. `scenes` and `show_all` keep what `/show_ui` chose for when it clears.
+    pub suspended: bool,
 }
 
 impl Default for HiddenSceneUis {
@@ -1515,6 +1513,39 @@ impl Default for HiddenSceneUis {
         Self {
             scenes: Default::default(),
             show_all: true,
+            suspended: false,
+        }
+    }
+}
+
+impl HiddenSceneUis {
+    /// Whether the window UI of the scene with this hash shows.
+    pub fn shows(&self, hash: &str, system_scene: bool) -> bool {
+        !self.suspended && (system_scene || self.scenes.get(hash).copied().unwrap_or(self.show_all))
+    }
+}
+
+/// Shows or hides the window UI roots that are up when what hides them changes; a root made later
+/// reads the same rule in `create_ui_roots`.
+fn apply_hidden_uis(
+    hidden_uis: Res<HiddenSceneUis>,
+    ui_links: Query<(&RendererSceneContext, &UiLink, Has<SuperUserScene>), With<SceneUiData>>,
+    mut styles: Query<&mut Node>,
+) {
+    if !hidden_uis.is_changed() {
+        return;
+    }
+    for (context, link, system_scene) in &ui_links {
+        let Ok(mut style) = styles.get_mut(link.ui_entity) else {
+            continue;
+        };
+        let display = if hidden_uis.shows(&context.hash, system_scene) {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if style.display != display {
+            style.display = display;
         }
     }
 }

@@ -513,6 +513,22 @@ describe('Explorer', () => {
     assert.ok(Date.now() - started >= 350, 'two deployments between reads fill a burst of two')
   })
 
+  test('screenshot with options reads the caption; captureSequence passes its flags', async () => {
+    const shot = { caption: '640x325 (screen 1600x813, frame 3200x1626) full-view capture', format: 'jpg', width: 640, image: Buffer.from('jpg').toString('base64') }
+    const fake = new FakeConsole({ screenshot: JSON.stringify(shot), capture_sequence: '{"stored":"disk","frames":[]}' })
+    const explorer = new Explorer(fake)
+    const read = await explorer.screenshot({ maxWidth: 640, jpg: true })
+    assert.equal(read.caption, shot.caption)
+    assert.equal(read.image.toString(), 'jpg')
+    await explorer.screenshot({ worldOnly: true })
+    await explorer.captureSequence({ count: 3, intervalSeconds: 0.1, maxWidth: 320, dir: '/tmp/a b' })
+    assert.deepEqual(fake.lines, [
+      '/screenshot --max-width 640 --jpg',
+      '/screenshot --world-only',
+      '/capture_sequence --count 3 --interval-seconds 0.1 --max-width 320 --dir "/tmp/a b"'
+    ])
+  })
+
   test('a long reply is cut in the record, not in the result', async () => {
     const fake = new FakeConsole({ screenshot: Buffer.alloc(9000, 1).toString('base64') })
     const explorer = new Explorer(fake)

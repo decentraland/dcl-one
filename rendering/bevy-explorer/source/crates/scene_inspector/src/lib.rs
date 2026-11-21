@@ -7,6 +7,7 @@ use scene_runner::update_scene::raycast_result::SuperUserRaycastScene;
 
 mod active_scene;
 mod asset_commands;
+pub mod capture;
 mod manual_registry;
 mod mobile_ui;
 mod panel;
@@ -31,6 +32,7 @@ impl Plugin for SceneInspectorPlugin {
         app.add_plugins(manual_registry::EngineComponentsPlugin);
 
         app.add_plugins(read_commands::ReadCommandsPlugin);
+        app.add_plugins(capture::CapturePlugin);
         app.add_plugins(panel::SceneInspectorPanelPlugin);
         app.add_plugins(write_commands::WriteCommandsPlugin);
         app.add_plugins(asset_commands::AssetCommandsPlugin);

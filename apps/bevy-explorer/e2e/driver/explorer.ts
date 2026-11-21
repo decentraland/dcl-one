@@ -1,6 +1,8 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { type Console, ConsoleError, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
@@ -529,6 +531,114 @@ export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
+/** A console word the engine splits back into the same argument (`crates/console/src/line.rs`):
+ *  quoted when it is empty or holds whitespace or a double quote. */
+export function quoteWord(word: string): string {
+  return word === '' || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
+}
+
+/** `/screenshot` options; any of them makes the reply JSON (`CapturedShot`). */
+export interface ScreenshotOptions {
+  /** 64 to 1920 */
+  maxWidth?: number
+  jpg?: boolean
+  /** hides the HUD and the scenes' window UI for the frame */
+  worldOnly?: boolean
+}
+
+interface Size {
+  width: number
+  height: number
+}
+
+/** A `/screenshot` with options: the image and what it was scaled from. */
+export interface CapturedShot {
+  /** `640x325 (screen 1600x813, frame 3200x1626) full-view capture at parcel (149,149)[, waited N ms for the camera blend]` */
+  caption: string
+  format: 'png' | 'jpg'
+  width: number
+  height: number
+  frame: Size
+  screen: (Size & { scale: number }) | null
+  parcel: { x: number; y: number } | null
+  worldOnly: boolean
+  blendWaitMs: number
+  image: Buffer
+  info?: string
+}
+
+export interface CaptureSequenceOptions extends ScreenshotOptions {
+  /** 1 to 20, default 5 */
+  count?: number
+  /** 0.05 to 2, default 0.5 */
+  intervalSeconds?: number
+  /** native only: the folder the engine writes to */
+  dir?: string
+  /** where frames kept in the engine's memory (the web client's) are written; `savedTo` names each file */
+  saveTo?: string
+}
+
+export interface CapturedFrame {
+  index: number
+  /** a file natively, `capture://<sequence>/frame-<index>.<ext>` in the web client's memory */
+  path: string
+  width: number
+  height: number
+  bytes: number
+  atSeconds: number
+  intervalFromPreviousSeconds: number | null
+  engineFrame: number
+  /** the scene's tick when the frame was rendered */
+  tick: number | null
+  late: boolean
+  savedTo?: string
+}
+
+/** A `/capture_sequence` reply: paths, never images. */
+export interface CaptureSequence {
+  directory: string
+  stored: 'disk' | 'memory'
+  count: number
+  format: 'png' | 'jpg'
+  worldOnly: boolean
+  requestedIntervalSeconds: number
+  meanIntervalSeconds: number | null
+  late: number
+  screen: (Size & { scale: number }) | null
+  parcel: { x: number; y: number } | null
+  frames: CapturedFrame[]
+  note: string
+  info?: string
+}
+
+/** `/capture_state`: the capture gate. */
+export interface CaptureState {
+  holder: 'screenshot' | 'capture_sequence' | 'none'
+  framesTaken: number
+  count: number
+  worldOnly: boolean
+  framesInMemory: number
+  bytesInMemory: number
+}
+
+function captureFlags(options: ScreenshotOptions): string {
+  return `${options.maxWidth === undefined ? '' : ` --max-width ${options.maxWidth}`}${options.jpg ? ' --jpg' : ''}${options.worldOnly ? ' --world-only' : ''}`
+}
+
+/** Writes the frames a sequence kept in the engine's memory (`stored: "memory"`) into `dir`, read
+ *  with `/capture_frame`, and names each file in its `savedTo`. A sequence on disk is returned as is. */
+export async function saveCaptureFrames(explorer: Pick<Explorer, 'run'>, sequence: CaptureSequence, dir: string): Promise<CaptureSequence> {
+  if (sequence.stored !== 'memory') return sequence
+  await mkdir(dir, { recursive: true })
+  const frames: CapturedFrame[] = []
+  for (const frame of sequence.frames) {
+    const file = path.join(dir, path.posix.basename(frame.path))
+    await writeFile(file, Buffer.from(await explorer.run(`/capture_frame ${frame.path}`), 'base64'))
+    frames.push({ ...frame, savedTo: file })
+  }
+  return { ...sequence, frames }
+}
+
 /** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
 export const OLDER_CLIENT =
   "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
@@ -923,9 +1033,33 @@ export class Explorer {
     return { before: match[1]!, after: match[2]!, speed: Number(match[3]) }
   }
 
-  /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively). */
-  async screenshot(): Promise<Buffer> {
-    return Buffer.from(await this.run('/screenshot'), 'base64')
+  /** The engine's frame as PNG bytes (the canvas on the web, the HUD included natively); with
+   *  options, the scaled image and its caption. Refused while another capture runs. */
+  async screenshot(): Promise<Buffer>
+  async screenshot(options: ScreenshotOptions): Promise<CapturedShot>
+  async screenshot(options?: ScreenshotOptions): Promise<Buffer | CapturedShot> {
+    if (!options) return Buffer.from(await this.run('/screenshot'), 'base64')
+    const flags = captureFlags(options)
+    const shot = await this.json<Omit<CapturedShot, 'image'> & { image: string }>(`/screenshot${flags === '' ? ' --max-width 1920' : flags}`)
+    return { ...shot, image: Buffer.from(shot.image, 'base64') }
+  }
+
+  /** `count` frames `intervalSeconds` apart, as paths; with `saveTo`, frames the engine kept in
+   *  memory (the web client) are written there too. */
+  async captureSequence(options: CaptureSequenceOptions = {}): Promise<CaptureSequence> {
+    const flags = `${options.count === undefined ? '' : ` --count ${options.count}`}${options.intervalSeconds === undefined ? '' : ` --interval-seconds ${options.intervalSeconds}`}${captureFlags(options)}${options.dir ? ` --dir ${quoteWord(options.dir)}` : ''}`
+    const sequence = await this.json<CaptureSequence>(`/capture_sequence${flags}`)
+    return options.saveTo ? saveCaptureFrames(this, sequence, options.saveTo) : sequence
+  }
+
+  /** The capture running now, if any, and what the last in-memory sequence keeps. */
+  async captureState(): Promise<CaptureState> {
+    return this.json<CaptureState>('/capture_state')
+  }
+
+  /** One frame of the last in-memory sequence, by its `path`. */
+  async captureFrame(framePath: string): Promise<Buffer> {
+    return Buffer.from(await this.run(`/capture_frame ${framePath}`), 'base64')
   }
 
   // --- input --------------------------------------------------------------------------------

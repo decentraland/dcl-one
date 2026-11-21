@@ -20,7 +20,7 @@ also drives the Unity Explorer through its MCP server. It names arguments and re
 
 The console's automation commands follow these rules. `crates/console/src/line.rs` and
 `crates/console/src/reply.rs` hold the shared pieces. A rule for a kind of command the console
-does not have yet (durations, waits, refusals, entity ids) is added here with its first command.
+does not have yet (durations, waits, entity ids) is added here with its first command.
 
 1. **Quoting.** A line is split into words on whitespace (Unicode's White_Space); a double-quoted
    run is part of a word with its quotes removed, and inside it `\"` and `\\` escape. A backslash
@@ -38,6 +38,12 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
    screenshot's pixels are `scale` times as many. The pixel commands (`/click_at`,
    `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
    form.
+3. **Gates, not queues.** A command that holds a shared resource refuses a second caller while it
+   runs: it fails with `{"refused": "<reason>", "cause": {"holder": "capture_sequence"}}`
+   (`reply::refusal`), the cause naming the holder. `/screenshot` and `/capture_sequence` share
+   one capture gate. Frames a command produces in bulk are returned as paths, never inline: files
+   natively, and on the web, which cannot write the host's disk, a memory store read one frame
+   at a time.
 
 ## Consequences
 
@@ -53,6 +59,9 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
   own commands (`/goto`, `/world`, `/help`, bare `/reload`) and refuses the ones it hides.
 - `/click_at` replies JSON: `x`, `y`, `normalized`, `button`, `screen` and, on the web, `input`.
 - A value holding a lone `"` is quoted or escaped on non-JSON commands.
+- `/screenshot` with no option replies raw base64 PNG at full size, which the scene editor's
+  thumbnail reads; any option (`--max-width`, `--jpg`, `--world-only`) makes it JSON with a
+  `caption` naming the screen and frame the image was scaled from.
 
 ## Alternatives considered
 

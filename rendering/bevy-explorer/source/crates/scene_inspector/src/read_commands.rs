@@ -1,10 +1,7 @@
-use std::io::Cursor;
-
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::tasks::IoTaskPool;
-use bevy::window::PrimaryWindow;
 use bevy_console::ConsoleCommand;
 use console::{DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::{
@@ -37,7 +34,6 @@ impl Plugin for ReadCommandsPlugin {
         app.add_console_command::<SceneTreeCommand, _>(scene_tree_cmd);
         app.add_console_command::<CrdtSnapshotCommand, _>(crdt_snapshot_cmd);
         app.add_console_command::<CrdtInitialCommand, _>(crdt_initial_cmd);
-        app.add_console_command::<ScreenshotCommand, _>(screenshot_cmd);
         app.add_console_command::<TextureCameraScreenshotCommand, _>(texture_camera_screenshot_cmd);
         app.add_console_command::<ComponentNamesCommand, _>(component_names_cmd);
         app.add_console_command::<ComponentDefaultCommand, _>(component_default_cmd);
@@ -782,48 +778,6 @@ fn crdt_initial_cmd(
     }
 }
 
-// --- /screenshot ---
-
-/// Capture the current rendered frame of the primary window as a base64-encoded
-/// PNG (raw base64, no `data:` prefix — the editor host wraps it). Used to
-/// generate the scene thumbnail, matching the Babylon renderer's screenshot.
-/// Async: Bevy reads the frame back a tick later, so we reply via a oneshot the
-/// capture observer fulfils.
-#[derive(clap::Parser, ConsoleCommand)]
-#[command(name = "/screenshot")]
-struct ScreenshotCommand;
-
-fn screenshot_cmd(
-    mut input: ConsoleCommand<ScreenshotCommand>,
-    mut commands: Commands,
-    windows: Query<Entity, With<PrimaryWindow>>,
-    mut console_responses: ResMut<PendingConsoleResponses>,
-) {
-    if let Some(Ok(_)) = input.take() {
-        let Ok(window) = windows.single() else {
-            input.reply_failed("no primary window to capture");
-            return;
-        };
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        // The capture completes on a later frame; encode + base64 in the observer
-        // and hand the result to the pending console reply. `Option` so the FnMut
-        // observer can move the one-shot sender out on its single firing. Bevy
-        // despawns the screenshot entity itself once captured.
-        let mut tx = Some(tx);
-        commands.spawn(Screenshot::window(window)).observe(
-            move |mut trigger: Trigger<ScreenshotCaptured>| {
-                if let Some(tx) = tx.take() {
-                    let _ = tx.send(encode_screenshot_png_base64(
-                        std::mem::take(&mut trigger.0),
-                        None,
-                    ));
-                }
-            },
-        );
-        console_responses.push_oneshot(rx, |r| r, input.take_responder());
-    }
-}
-
 // --- /texture_camera_screenshot ---
 
 /// Capture what a system scene's texture camera on `layer` renders, as base64 PNG no larger than
@@ -879,10 +833,8 @@ fn encode_screenshot_png_base64(image: Image, max_size: Option<u32>) -> Result<S
     if let Some(max) = max_size.filter(|m| dynamic.width() > *m || dynamic.height() > *m) {
         dynamic = dynamic.resize(max, max, image::imageops::FilterType::Triangle);
     }
-    let mut png = Vec::new();
-    dynamic
-        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|e| format!("screenshot: PNG encode failed: {e}"))?;
+    let png = crate::capture::encode_image(&dynamic, crate::capture::Format::Png)
+        .map_err(|e| format!("screenshot: {e}"))?;
     Ok(BASE64_STANDARD.encode(&png))
 }
 
