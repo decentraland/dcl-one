@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { snapshotDir } from '../../test/snapshot.js'
 import { expandVariants } from '../capture/expand-variants.js'
 import { rawComponentPageSchema, type RawComponent } from '../ir/raw-components.js'
@@ -25,10 +25,12 @@ const mapped = async (page: string, name: string, options: Partial<VariantOption
 }
 
 describe('splitWords', () => {
-  it('should split camel case, separators and digits into lowercase words', () => {
-    expect(splitWords('SelectedHover')).toEqual(['selected', 'hover'])
-    expect(splitWords('Primary-Hover')).toEqual(['primary', 'hover'])
-    expect(splitWords('100%')).toEqual(['100'])
+  it.each([
+    ['camel case', 'SelectedHover', ['selected', 'hover']],
+    ['separators', 'Primary-Hover', ['primary', 'hover']],
+    ['digits', '100%', ['100']]
+  ])('should split %s into lowercase words', (_label, input, expected) => {
+    expect(splitWords(input)).toEqual(expected)
   })
 })
 
@@ -91,9 +93,11 @@ describe('mapVariants', () => {
   })
 
   describe('when a set uses numbered variants', () => {
-    it('should read Variant2..4 as hover, selected and selected+hover and say so', async () => {
+    let component: RawComponent
+
+    beforeEach(async () => {
       // No synthetic set uses numbered variants, so the button is renamed into that shape.
-      const component = structuredClone(await rawComponent('Demo Controls', 'Synthetic Button'))
+      component = structuredClone(await rawComponent('Demo Controls', 'Synthetic Button'))
       const names = ['Default', 'Variant2', 'Variant3', 'Variant4']
       component.base = {
         ...component.base,
@@ -108,6 +112,9 @@ describe('mapVariants', () => {
       component.properties = {
         'Property 1': { type: 'VARIANT', default: names[0]!, options: names }
       }
+    })
+
+    it('should read Variant2..4 as hover, selected and selected+hover and say so', () => {
       const result = mapVariants(component, expandVariants(component), defaults)
 
       expect(
@@ -132,12 +139,22 @@ describe('mapVariants', () => {
       ])
     })
 
-    it('should apply a configured prop name and avoid reserved words', async () => {
-      const renamed = await mapped('Demo Controls', 'Switch', { propNames: { Switch: 'checked' } })
-      const reserved = await mapped('Demo Controls', 'Switch')
+    describe('and a prop name is configured for the property', () => {
+      it('should apply the configured prop name', async () => {
+        const renamed = await mapped('Demo Controls', 'Switch', {
+          propNames: { Switch: 'checked' }
+        })
 
-      expect(renamed.props.map((prop) => prop.name)).toEqual(['checked', 'loading'])
-      expect(reserved.props.map((prop) => prop.name)).toContain('switchValue')
+        expect(renamed.props.map((prop) => prop.name)).toEqual(['checked', 'loading'])
+      })
+    })
+
+    describe('and the property name is a reserved word', () => {
+      it('should avoid the reserved word', async () => {
+        const reserved = await mapped('Demo Controls', 'Switch')
+
+        expect(reserved.props.map((prop) => prop.name)).toContain('switchValue')
+      })
     })
   })
 
@@ -183,8 +200,10 @@ describe('mapVariants', () => {
 })
 
 describe('when hidden variants were excluded from a capture', () => {
-  it('should offer only observed values and select a visible default without mutating source metadata', () => {
-    const component: RawComponent = {
+  let component: RawComponent
+
+  beforeEach(() => {
+    component = {
       kind: 'set',
       id: 'set',
       name: 'Profile',
@@ -203,6 +222,9 @@ describe('when hidden variants were excluded from a capture', () => {
       },
       others: [{ id: 'square', name: 'Style=Square', props: { Style: 'Square' }, patches: [] }]
     }
+  })
+
+  it('should offer only observed values and select a visible default', () => {
     const result = mapVariants(component, expandVariants(component), defaults)
     expect(result.props).toEqual([
       {
@@ -213,16 +235,26 @@ describe('when hidden variants were excluded from a capture', () => {
         default: 'round'
       }
     ])
+  })
+
+  it('should note the visible default it selected', () => {
+    const result = mapVariants(component, expandVariants(component), defaults)
     expect(result.notes).toContain('visible-variant-default:Style=Round')
+  })
+
+  it('should not mutate the source metadata', () => {
+    mapVariants(component, expandVariants(component), defaults)
     expect(component.properties.Style!.default).toBe('Hidden')
     expect(component.properties.Style!.options).toEqual(['Hidden', 'Round', 'Square'])
   })
 })
 
 describe('when a non-base enum option is the Figma default', () => {
-  it('should keep default and empty views distinct while grouping hover with default', () => {
+  let component: RawComponent
+
+  beforeEach(() => {
     const names = ['hover', 'default', 'empty']
-    const component: RawComponent = {
+    component = {
       kind: 'set',
       id: 'balance',
       name: 'NavCreditsBalance',
@@ -243,6 +275,9 @@ describe('when a non-base enum option is the Figma default', () => {
         patches: [{ at: [], set: { w: state === 'empty' ? 144 : 46 } }]
       }))
     }
+  })
+
+  it('should keep the Figma default as the enum default', () => {
     const result = mapVariants(component, expandVariants(component), defaults)
     expect(result.props).toContainEqual({
       name: 'state',
@@ -251,6 +286,10 @@ describe('when a non-base enum option is the Figma default', () => {
       default: 'empty',
       source: 'state'
     })
+  })
+
+  it('should keep default and empty views distinct while grouping hover with default', () => {
+    const result = mapVariants(component, expandVariants(component), defaults)
     expect(result.variants.map(viewKey)).toEqual(['state:default', 'state:default', 'state:empty'])
     expect(result.variants.map((variant) => variant.interaction)).toEqual(['hover', 'base', 'base'])
   })

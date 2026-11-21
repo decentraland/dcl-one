@@ -14,8 +14,8 @@ the node changed or removed since stays the node's. community_members and the
 *_reconcile steps delete imported rows upstream no longer holds.
 Not migrated: private_voice_chats (live call state, LiveKit rooms do not move),
 community_ranking_metrics and communities.ranking_score (upstream ranking job output, no
-writer on the node), community thumbnails (S3 objects, not in this database;
-blobs are out of scope). No chat tables live in this database.
+writer on the node), community thumbnails (CDN objects, not in this database: `blobs
+social-service-ea` copies them after the run). No chat tables live in this database.
 """
 
 [[step]]

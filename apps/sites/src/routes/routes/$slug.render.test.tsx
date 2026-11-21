@@ -12,6 +12,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
+import styles from "@/features/components/chrome/SitesLayout.module.css";
 
 import LegalSlugRoute, { loader } from "./$slug";
 
@@ -60,10 +61,10 @@ describe("when a legal document is rendered with Sites chrome", () => {
       );
 
       expect(html).toContain('data-header-layout="native"');
-      expect(html).toContain("site-layout--overlay-mobile");
-      expect(html).not.toMatch(
-        /(?:site-layout--overlay|data-header-overlay)(?=\s|"|=)/,
-      );
+      const layout = html.match(/<div[^>]*data-site-layout=""[^>]*>/)?.[0];
+      expect(layout).toContain(styles.mobileOverlay);
+      expect(layout).not.toContain(` ${styles.overlay}"`);
+      expect(layout).not.toContain("data-header-overlay");
     },
   );
 });

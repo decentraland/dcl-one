@@ -199,7 +199,7 @@ async fn unregistered_sources_allocate_no_slots_and_complete_new_generation_recl
     assert!(fence.recover_selected_target(&current, &target).await);
     assert_eq!(
         fence.selected_reconciliation_targets(),
-        vec![(wallet, target.session)]
+        vec![(wallet.clone(), target.session.clone())]
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM social.archipelago_v4_assignments")
@@ -208,8 +208,47 @@ async fn unregistered_sources_allocate_no_slots_and_complete_new_generation_recl
             .unwrap(),
         0
     );
+    // A wallet that owned its row under one generation takes it back under the next,
+    // inside the lease, after its old slot retired.
+    let selected =
+        |source: &str| catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterSnapshot {
+            selected_origin: 1,
+            selected_identity: Some(1),
+            assignment_state: 1,
+            wallet: wallet.clone(),
+            session: target.session.clone(),
+            cluster_id: "c1".into(),
+            realm: "realm".into(),
+            source_incarnation: source.into(),
+            assignment_version: 1,
+            token_not_before: Some(0),
+            pass: 1,
+            ..Default::default()
+        };
+    let owned = fence
+        .lock_selected(&selected(&current.source_incarnation))
+        .await
+        .unwrap()
+        .token_fence();
     successor.close().await;
-    drop((first, successor, fence));
+    let third =
+        catalyst::pulse_generation::HeldPulseGeneration::acquire(db.pool.clone(), audience.into())
+            .await
+            .unwrap();
+    let next = third.binding().clone();
+    assert!(fence.complete_generation_view(&next).await);
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    fence.retire_obsolete_generation(&next, 128, &[]).await;
+    fence.retire_obsolete_generation(&next, 128, &[]).await;
+    assert!(fence.selected_reconciliation_targets().is_empty());
+    let lease = fence
+        .lock_selected(&selected(&next.source_incarnation))
+        .await
+        .unwrap();
+    assert!(!lease.read_only() && lease.token_fence().owner_epoch > owned.owner_epoch);
+    drop(lease);
+    third.close().await;
+    drop((first, successor, third, fence));
     db.teardown().await;
 }
 

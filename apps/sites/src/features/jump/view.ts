@@ -9,7 +9,7 @@ import {
   type JumpCard,
 } from "@/data/lib/catalyst/jump/jump";
 import type { JumpCreator } from "@/data/lib/catalyst/jump/jump.server";
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 /** The serializable part of the card; event actions are added by the page. */
 export type JumpCardView = Omit<JumpCardProps, "actions">;

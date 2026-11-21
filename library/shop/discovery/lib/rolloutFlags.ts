@@ -26,6 +26,11 @@ export const REMOTE_FLAG = {
    */
   myStore: "shop-my-store",
   /**
+   * Not the Shop's: Sites' Places page reads it from the same `dapps` file (sites@production discover.flags.ts
+   * useLiveMinUsers). While on, its variant's payload is the head count a scene needs for Live Now.
+   */
+  placesLiveMinUsers: "places-live-min-user",
+  /**
    * Buying with Polygon MANA in the in-world Shop (/play): its purchase dialog lets a self-custody buyer pick Credits
    * or MANA for one item. Off, the in-world Shop buys with Credits only. Only the /play shell reads it
    * (play/shell/shop/purchase.ts); a host may declare it (`manaInWorld`).

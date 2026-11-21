@@ -130,7 +130,12 @@ async fn unsigned_scene_signed_and_missigned_requests_are_refused() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert_eq!(body["error"], json!("Unauthenticated: Invalid signature"));
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|e| e.starts_with("Invalid signature: ")),
+        "{body}"
+    );
 
     // notifications.<domain>/notifications and gateway.<domain>/notifications/notifications
     // are signed over the route alone; the front moves both under /notifications and

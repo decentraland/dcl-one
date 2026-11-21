@@ -11,7 +11,6 @@ import CommunityMemberActions from "./CommunityMemberActions";
 import { eventXY, fetchEvents } from "../data/catalyst/events";
 import { PLAY_EVENTS_PARAMS } from "../data/screens/play";
 import { publicThumbnail, useThumbnailPublicBase } from "../data/thumbnail";
-import "../web/frames/sitelayout.css";
 import "./social-page.css";
 
 type Props = {

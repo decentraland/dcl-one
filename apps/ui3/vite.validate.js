@@ -1,20 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { PERF, validateImplAlias } from "../../library/web-core/validate/vite.mjs";
 
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 
-export const PERF = process.env.DCL_PERF === "1";
+export { PERF };
 
 // The *.stub.ts modules the perf aliases below point at are generated, not
 // committed: render them from the real schema modules whenever a perf build
 // (or dev server) loads this config.
 if (PERF) execFileSync(process.execPath, [here("./scripts/gen-schema-stubs.mts")], { stdio: "inherit" });
-
-export function validateAliasObject() {
-  return {
-    "dcl-validate-impl": here("./src/validate/checked.ts"),
-  };
-}
 
 const CATALYST_SCHEMAS = [
   "backpack",
@@ -26,12 +21,7 @@ const CATALYST_SCHEMAS = [
 ];
 
 export function validateAlias() {
-  const alias = [
-    {
-      find: "dcl-validate-impl",
-      replacement: here(PERF ? "./src/validate/unchecked.ts" : "./src/validate/checked.ts"),
-    },
-  ];
+  const alias = [validateImplAlias()];
   if (PERF) {
     alias.push({
       find: /^(.*)\/generated\/bridge-schemas$/,
@@ -46,7 +36,7 @@ export function validateAlias() {
       replacement: here("./src/data/persisted-schemas.stub.ts"),
     });
     alias.push({
-      find: /^(?:\.{1,2}\/)+(?:.*\/)?thirdwebSchema$/,
+      find: "@web-core/auth/thirdwebSchema",
       replacement: here("./src/data/auth/thirdwebSchema.stub.ts"),
     });
     for (const name of CATALYST_SCHEMAS) {

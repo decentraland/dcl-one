@@ -34,10 +34,9 @@ pub trait Eip1654Validator: Send + Sync {
 
     /// Selects the contract-check block for a captured verification-start timestamp.
     /// This selector includes first/head shortcuts and strict predecessor selection.
-    async fn verification_time_block(&self, _started_ms: i64) -> Result<u64, AuthError> {
-        Err(AuthError::Eip1654ValidationFailed(
-            "this validator cannot select a verification-time block".into(),
-        ))
+    /// `None`: this validator keeps no history, so its latest answer stands.
+    async fn verification_time_block(&self, _started_ms: i64) -> Result<Option<u64>, AuthError> {
+        Ok(None)
     }
 }
 
@@ -90,13 +89,13 @@ pub(crate) async fn verify_eip1654_at_verification_time(
     signature: &[u8],
     started_ms: i64,
 ) -> Result<bool, AuthError> {
-    if matches!(
-        verify_eip1654(validator, contract_address, message, signature).await,
-        Ok(true)
-    ) {
+    let latest = verify_eip1654(validator, contract_address, message, signature).await;
+    if matches!(latest, Ok(true)) {
         return Ok(true);
     }
-    let block = validator.verification_time_block(started_ms).await?;
+    let Some(block) = validator.verification_time_block(started_ms).await? else {
+        return latest;
+    };
     verify_hash_pair(validator, contract_address, message, signature, Some(block)).await
 }
 

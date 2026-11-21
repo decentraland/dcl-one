@@ -311,3 +311,63 @@ describe('the one-time debug console promotion', () => {
     });
   });
 });
+
+describe('the Analytics watchlist setting', () => {
+  const WALLET = '0x0000000000000000000000000000000000000001';
+  const WATCHLIST = { [WALLET]: { version: 1, placeIds: ['world:example.dcl.eth@0,0'] } };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  const storedWithPromotionsDone = async () => {
+    const { getDefaultConfig } = await import('../src/modules/config');
+    const config = getDefaultConfig();
+    config.settings.aiAssistantPromoted = true;
+    config.settings.debugConsolePromoted = true;
+    config.settings.scenesPathPromoted = true;
+    vi.resetModules();
+    return config;
+  };
+
+  describe('when the stored config has none', () => {
+    it('should start without one and write nothing', async () => {
+      storedConfig = await storedWithPromotionsDone();
+      const { getConfig } = await import('../src/modules/config');
+
+      const config = await getConfig();
+
+      expect('analyticsWatchlist' in config.settings).toBe(false);
+      expect(storage.setAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the stored config has one', () => {
+    it('should keep it as stored and write nothing', async () => {
+      storedConfig = await storedWithPromotionsDone();
+      storedConfig.settings!.analyticsWatchlist = structuredClone(WATCHLIST);
+      const { getConfig } = await import('../src/modules/config');
+
+      const config = await getConfig();
+
+      expect(config.settings.analyticsWatchlist).toEqual(WATCHLIST);
+      expect(storage.setAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the renderer writes the settings with one', () => {
+    it('should persist it', async () => {
+      storedConfig = await storedWithPromotionsDone();
+      const { getConfig, writeConfig } = await import('../src/modules/config');
+      const stored = await getConfig();
+
+      await writeConfig({
+        ...stored,
+        settings: { ...stored.settings, analyticsWatchlist: WATCHLIST },
+      });
+
+      expect((await getConfig()).settings.analyticsWatchlist).toEqual(WATCHLIST);
+    });
+  });
+});

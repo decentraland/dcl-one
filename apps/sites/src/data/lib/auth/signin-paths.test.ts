@@ -20,7 +20,7 @@ vi.mock("./identity", () => ({
 vi.mock("./thirdweb/signer", () => ({
   makeInAppSigner: (auth: { walletAddress: string; token: string }) => ({ address: auth.walletAddress, token: auth.token, personalSign: async () => "0x" }),
 }));
-vi.mock("@ui/data/auth/walletconnect", () => ({
+vi.mock("@web-core/auth/walletconnect", () => ({
   hasWalletConnect: () => true,
   startWalletConnectSignIn: async () => ({ uri: "wc:x", connected: Promise.resolve(identityOf(B)) }),
 }));

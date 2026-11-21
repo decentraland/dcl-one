@@ -1,0 +1,24 @@
+/* The page the HUD draws on. Each host's global stylesheet imports it after the tokens (react-web's
+   src/styles/global.css, Sites' apps/ui3/src/play/styles/global.css) and adds what is its own; the UI
+   gallery's HUD canvas imports it too. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  /* no trackpad swipe-to-navigate: a horizontal overscroll must not unload the engine */
+  overscroll-behavior-x: none;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--color-text);
+  background: var(--color-bg);
+}

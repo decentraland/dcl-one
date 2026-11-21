@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { productionBrowser } from './production-browser.helpers'
 const browser = productionBrowser('test/consumer/tabsbar-browser.tsx')
 async function navigate(
@@ -397,12 +397,17 @@ describe('when tablet widths give routes less room than their labels', () => {
     expect([tray.fadeStart, tray.fadeEnd]).toEqual([true, true])
     expectFadedOverflow(tray)
   })
-  it('should leave no fade when every route fits', async () => {
-    await navigate('shop', 1440)
-    await paint()
-    const tray = await routeTray()
-    expect(tray.hidden).toBeLessThanOrEqual(1)
-    expect(tray.mask).toBe('none')
+  describe('and every route fits', () => {
+    beforeEach(async () => {
+      await navigate('shop', 1440)
+      await paint()
+    })
+
+    it('should leave no fade', async () => {
+      const tray = await routeTray()
+      expect(tray.hidden).toBeLessThanOrEqual(1)
+      expect(tray.mask).toBe('none')
+    })
   })
   for (const width of [768, 1024])
     for (const page of ['shop', 'learn'])

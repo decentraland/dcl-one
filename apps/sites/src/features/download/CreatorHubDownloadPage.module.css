@@ -112,7 +112,7 @@
 }
 
 /* The Create section's field behind Sites' top bar and the tabs, as on the section's other pages. */
-:global(.site-layout):has(.root) {
+:global([data-site-layout]):has(.root) {
   background: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%)
     fixed;
   background-color: #32134c;

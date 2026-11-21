@@ -15,6 +15,9 @@ impl State {
     /// Called unconditionally for social replicas, separately from primary socket assignment.
     pub fn start_topology(self: &Arc<Self>, jobs: &Jobs, topology: Arc<Topology>) {
         let state = self.clone();
+        if let Some(communities) = self.ctx.communities() {
+            communities.set_topology(topology.clone());
+        }
         self.ctx.set_topology(topology);
         jobs.spawn("social-pulse-topology", move |job| async move {
             tokio::select! {
