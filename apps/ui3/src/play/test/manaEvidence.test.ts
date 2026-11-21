@@ -38,6 +38,8 @@ function chain(opts: { now?: bigint; executions?: ManaExecution[] | Error; unlog
   const all = [...new Map([...logged, ...(opts.unlogged ?? [])].map((e) => [`${e.blockNumber}:${e.logIndex}`, e])).values()]
   const evidence: ManaEvidence = {
     finalized: vi.fn(async () => F),
+    // The finalized block's time: the epoch, so no credit's expiry is proven here.
+    finalizedTime: vi.fn(async () => 0),
     nonceAt: vi.fn(async (_c, _v, user, block) => (opts.now ?? 7n) - BigInt(all.filter((e) => e.user === user && e.blockNumber > block).length)),
     executions: vi.fn(async (_c, _v, from, to) => {
       if (opts.executions instanceof Error) throw opts.executions
@@ -228,6 +230,30 @@ describe('a MANA sale on chain', () => {
     expect(() => decodeExecution({ topics: ['0x01', '0x02'], data: '0x', transactionHash: HASH, blockNumber: '0x1', logIndex: '0x0' })).toThrow()
     // Without its place in the block it can't be ordered, so it can't be read.
     expect(() => decodeExecution({ topics: ['0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'], data: '0x', transactionHash: HASH, blockNumber: '0x1' } as never)).toThrow(/place/)
+  })
+
+  it('reads a transaction with its sender, so a useCredits the buyer’s own wallet sent can be told whose it is', async () => {
+    const answers: Record<string, unknown> = { [HASH]: { hash: HASH, from: BUYER, to: STORE, input: '0x1234', nonce: '0x1' }, [RELAY_HASH]: null }
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const { method, params, id } = JSON.parse(String(init?.body)) as { method: string; params: [string]; id: number }
+      expect(method).toBe('eth_getTransactionByHash')
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: answers[params[0]] }))
+    }
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    expect(await evidence.transaction(137, HASH)).toEqual({ from: BUYER, to: STORE, input: '0x1234' })
+    expect(await evidence.transaction(137, RELAY_HASH)).toBeNull()
+  })
+
+  it('reads the finalized block’s time, what proves a credit past its expiry can no longer be spent', async () => {
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const { method, params, id } = JSON.parse(String(init?.body)) as { method: string; params: [string, boolean]; id: number }
+      expect([method, params]).toEqual(['eth_getBlockByNumber', ['finalized', false]])
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { number: '0x10', timestamp: '0x6553f100' } }))
+    }
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    expect(await evidence.finalizedTime(137)).toBe(0x6553f100)
   })
 
   it('lets an error answer’s body go instead of leaving it open', async () => {

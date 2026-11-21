@@ -86,7 +86,7 @@ async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Vec<(String, St
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", w.signer.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,

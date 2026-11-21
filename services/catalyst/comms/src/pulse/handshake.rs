@@ -397,6 +397,46 @@ mod tests {
         );
     }
 
+    /// A scoped login (ADR-162) never opens a Pulse session.
+    #[test]
+    fn rejects_a_scoped_login() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let ts = "1700000000000";
+        let metadata = "{}";
+        let payload = build_signed_fetch_payload("connect", "/", ts, metadata);
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "comms".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                1_700_000_600_000,
+                &grants,
+                &payload,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let links: Vec<(usize, &AuthLink)> = chain.iter().enumerate().collect();
+        let req = HandshakeRequest {
+            auth_chain: header_bag_json(&links, ts, metadata).into_bytes(),
+            profile_version: 0,
+            initial_state: None,
+            protocol_features: 0,
+        };
+        let err = verify_handshake(&req, ts.parse().unwrap()).unwrap_err();
+        assert!(
+            matches!(&err, HandshakeError::InvalidAuthChain(m) if m.contains("without a service identifier")),
+            "{err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn accepts_real_signed_chain() {
         use crate::auth::AuthChain as Chain;

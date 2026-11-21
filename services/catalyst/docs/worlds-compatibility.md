@@ -413,7 +413,11 @@ difference not listed here is a gap, not a decision.
   the request's `Origin` with `Access-Control-Allow-Credentials: true` and
   `Vary: Origin`, allows `PATCH` as well, exposes `*` when the handler
   names no header, and sets `X-Content-Type-Options: nosniff`. Upstream
-  answers `Access-Control-Allow-Origin: *`.
+  answers `Access-Control-Allow-Origin: *`. `/world-storage` reflects any
+  `Origin` the same way but never sends `Access-Control-Allow-Credentials`:
+  signed fetch carries its auth in headers, not cookies. Upstream
+  world-storage reflects only the origins that match its `CORS_ORIGINS`
+  patterns and exposes `ETag, Retry-After`.
 - **`/available-content`** answers a cid on the content denylist as
   `available: false`.
 - **`POST /entities/active`** answers a body that is not JSON with 400
@@ -566,8 +570,81 @@ difference not listed here is a gap, not a decision.
 - **Genesis collaborators.** A wallet in a Genesis scene's
   `logsPermissions` is admitted only while the LAND index has complete,
   fresh ownership history for the whole footprint and no parcel changed
-  owner after the scene was deployed. Upstream admits it on the active
-  deployment alone.
+  owner after the scene was deployed (see "Genesis access"). Upstream
+  admits it on the active deployment alone.
+
+### Genesis access
+
+A Genesis request names one parcel in its signed metadata. Storage
+resolves the active scene standing there and admits the signer by its role
+at that parcel. Scene admins (`social.scene_admins`) get no Genesis storage
+access.
+
+- **Roles.** A LAND manager of the parcel is its owner (the estate's owner
+  when the parcel sits in an estate), its operator (the estate's operator
+  when the parcel sits in an estate), its update operator (a cleared parcel
+  update operator falls back to the estate's), an
+  `UpdateManager` of the owner or an `ApprovalForAll` operator of the
+  owner. A collaborator is a wallet in the active deployment's
+  `metadata.logsPermissions`.
+- **Routes.** A LAND manager reaches every owner and deployer route: the
+  world and player values (read, write, delete, list and the clears),
+  `GET /players` and its clear, `/usage/world`,
+  `/usage/players/{address}`, `/usage/env`, `POST /exports`, and the env
+  writes, key list and clear. A collaborator reaches the per-key and list
+  routes of world and player values, `GET /players` and `POST /exports`,
+  never a clear, `/usage` or `/env`. Neither role reads an env value:
+  `GET /env/{key}` admits only the authorized addresses and the scoped
+  delegation. `GET /collaborator` lists the Genesis scenes whose
+  `logsPermissions` name the signer and that pass the collaborator rule
+  below; a LAND manager missing from `logsPermissions` is not listed.
+- **Manager sources.** In order: the LAND authorization index while it is
+  published (below); else the manager document at
+  `COMMS_LAND_OPERATORS_URL` (`/parcels/{x}/{y}/operators`, memoized 60 s
+  per parcel, where a 404 refuses); else the owner alone, directly or
+  through the estate, from the marketplace subgraph
+  (`MARKETPLACE_SUBGRAPH_URL`). With none of them every manager is
+  refused. Operators, update operators, `UpdateManager`s and
+  `ApprovalForAll` operators therefore need the index or
+  `COMMS_LAND_OPERATORS_URL`. A source that fails answers 401
+  `Unauthorized: Failed to verify world permissions` before
+  `logsPermissions` is consulted.
+- **Collaborator source.** The index alone. `COMMS_LAND_OPERATORS_URL` and
+  the marketplace subgraph admit no Genesis collaborator, and without a
+  published index `GET /collaborator` lists no Genesis scene.
+- **Index publication.** `LAND_AUTHZ_INDEX_ENABLED=true` with
+  `ETH_RPC_URL` runs the indexer in `catalyst index` (`NODE_POSTURE=mirror`
+  turns the flag on); `catalyst serve` reads the published index from the
+  shared database whatever its own flag says. A pass runs every
+  `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120) and publishes a fold within 25
+  blocks of a head kept `LAND_AUTHZ_CONFIRMATIONS` (12) blocks back. The
+  managers read the index while it is caught up, its fold is at most 30
+  minutes old on the database clock and its registries are the node's; a
+  fold older than that drops them to the next source at once.
+  `GET /lambdas/land-authz/status` reports this as top-level `ready`, with
+  `readyWindowSecs` and the cursor's `cursor.foldAgeSecs`,
+  `cursor.foldedBlock` and `cursor.lastBlock` (caught up when the two
+  blocks are equal).
+- **Collaborator freshness.** Collaborator readiness is a separate
+  condition from status `ready`. The collaborator rule needs a full replay
+  started (`cursor.fullReplayStarted`), a published fold
+  (`cursor.foldedBlock` not null) at most 30 minutes old, registries
+  matching the node's and `history_timestamps_ready` (every indexed log
+  carries its block time). It does not need `cursor.foldedBlock` to equal
+  `cursor.lastBlock`. The status route does not report
+  `history_timestamps_ready`; the admin `GET /admin/api/mirrors` returns
+  the whole `land_authz.index_cursor` row under `body.landAuthz`. For
+  every parcel of the scene, the latest LAND transfer, the latest estate
+  membership change and the estate's latest transfer must be at or below
+  the fold and more than 15 minutes older than the deployment's signed
+  timestamp. That timestamp must not be ahead of the database clock, and
+  the deployer refuses one more than 15 minutes ahead of the node's clock
+  (`REQUEST_TTL_FORWARDS_MS` in `content/src/write_deployer.rs`). A parcel
+  the index does not know, or one held by the zero address, refuses the
+  scene; a transfer newer than the fold refuses it until folded. A scene
+  deployed less than 15 minutes after a transfer stays refused, since its
+  timestamp never changes: only a new deployment admits its collaborators
+  again.
 
 ### HTTP
 
@@ -591,6 +668,10 @@ difference not listed here is a gap, not a decision.
 - **`GET /collaborator` lists local scenes only.** Mirrored world scenes
   are left out, as their `logsPermissions` grant no storage access on this
   node; upstream lists every scene its deployment consumer indexed.
+- **Status checks.** `/health/live`, `/health/ready` and `/health/startup`
+  answer as upstream's status check component: live answers `alive`, ready
+  and startup a static pass of the `server` component
+  (`{"details":{"server":{"status":"pass"}},"status":"pass"}`).
 
 ### Quotas, export and configuration
 
