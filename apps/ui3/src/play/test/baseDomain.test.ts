@@ -57,6 +57,8 @@ describe('engineServiceOptions', () => {
     // not through the gateway yet (#631): Decentraland's public host, never one built from the
     // page's own host and port
     expect(options.abgenCdn).toBe('https://abgen-cdn.decentraland.org')
+    // each player's engine asks the flags service itself, for its own A/B group
+    expect(options.featureFlags).toBe('https://feature-flags.decentraland.org')
     // the node's own imposter store, not the engine's built-in default
     expect(options.imposterSource).toBe(`${window.location.origin}/bvimposters`)
   })

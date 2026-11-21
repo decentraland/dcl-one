@@ -78,14 +78,18 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'assets-cdn': '/assets-cdn',
   'dcl-lists': '/dcl-lists',
   'archipelago-ea-stats': '/archipelago-ea-stats',
-  'builder-api': '/builder-api',
-  'feature-flags': '/feature-flags'
+  'builder-api': '/builder-api'
 }
-// Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
-// CDN (Bevy variants), whose `/ab-cdn` route serves the asset-bundle CDN and refuses `bevy/` paths
-// (decentraland/dcl-one#631). Behind the gateway they compose from decentraland.org, never from
-// the page's own host, as the engine does (`Gateway::segment` → its default base domain).
-const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])
+// Services reached on Decentraland's public host instead of the gateway. Behind the gateway they
+// compose from decentraland.org, never from the page's own host, as the engine does
+// (`Gateway::segment` → its default base domain).
+// - abgen's CDN (Bevy variants): the gateway's `/ab-cdn` route serves the asset-bundle CDN and
+//   refuses `bevy/` paths (decentraland/dcl-one#631).
+// - The feature-flags service: Unleash picks a player's A/B group and rollout from the id each
+//   request carries, so every player's engine asks it directly. The node's `/feature-flags` copy
+//   is one document for everyone. The service has to allow this page's origin (CORS); where it
+//   does not, every flag reads off.
+const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn', 'feature-flags'])
 // The imposter store (distant-scene tiles) is a launch option, not a service table row; the
 // node serves it under this prefix (services/catalyst/src/serve_routes.rs, explore::imposters).
 const IMPOSTER_PREFIX = '/bvimposters'
