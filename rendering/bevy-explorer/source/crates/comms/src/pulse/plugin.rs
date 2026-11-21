@@ -835,6 +835,9 @@ fn follow_realm(
     // flight, or as the bucket refills, it would put the player back there.
     if realm_changed {
         session.pacer.drop_waiting(FrameKind::Teleport);
+        if let Some(link) = session.link.as_mut() {
+            link.withdraw_teleport();
+        }
         // The dropped teleport may be the edge placement; the server never saw that realm.
         session.placed_realm = None;
     }

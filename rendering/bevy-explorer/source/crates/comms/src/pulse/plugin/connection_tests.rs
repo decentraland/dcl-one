@@ -191,6 +191,8 @@ struct Harness {
     broadcasts: mpsc::Sender<NetworkMessage>,
     routing: Entity,
     user: Entity,
+    /// Teleport withdrawals the driver was handed, which carry no message.
+    withdrawals: usize,
 }
 
 impl Harness {
@@ -225,6 +227,7 @@ impl Harness {
             broadcasts,
             routing,
             user,
+            withdrawals: 0,
         }
     }
 
@@ -376,9 +379,15 @@ impl Harness {
             .unwrap();
     }
 
-    /// What the driver was handed since the last look.
+    /// What the driver was handed since the last look; withdrawals are counted apart.
     fn sent(&mut self) -> Vec<Sent> {
-        std::iter::from_fn(|| self.driver.outbound.try_recv().ok())
+        let frames: Vec<_> = std::iter::from_fn(|| self.driver.outbound.try_recv().ok()).collect();
+        let (withdrawals, frames): (Vec<_>, Vec<_>) = frames
+            .into_iter()
+            .partition(|frame| frame.kind == FrameKind::WithdrawTeleport);
+        self.withdrawals += withdrawals.len();
+        frames
+            .into_iter()
             .map(|frame| {
                 let message = pulse::ClientMessage::decode(frame.bytes.as_slice())
                     .unwrap()
@@ -1394,6 +1403,8 @@ fn a_realm_change_while_connected_teleports_with_the_drain() {
 
     harness.follow_realm();
     assert!(harness.sent().is_empty());
+    // A teleport the driver holds back names the realm left.
+    assert_eq!(harness.withdrawals, 1);
 
     harness.drain_at(5.0);
     let sent = harness.sent();
