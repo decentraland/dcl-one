@@ -4809,6 +4809,8 @@ mod supervisor {
         alone_armed: Arc<std::sync::atomic::AtomicBool>,
         alone_from: Arc<std::sync::atomic::AtomicI64>,
         alone_held: Arc<AtomicUsize>,
+        /// Once set, `walks_alone` answers yes.
+        alone_answer: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl Hooked {
@@ -4927,6 +4929,9 @@ mod supervisor {
                     self.alone_held.fetch_add(1, Ordering::SeqCst);
                     gate.acquire().await.unwrap().forget();
                 }
+            }
+            if self.alone_answer.load(Ordering::SeqCst) {
+                return Ok(true);
             }
             self.inner().walks_alone(pool).await
         }
@@ -6938,6 +6943,130 @@ mod supervisor {
         );
         hooks.alone_armed.store(false, Ordering::SeqCst);
         hooks.alone_gate.as_ref().unwrap().add_permits(100);
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A member a shared walk pauses at its budget reads its walks-alone
+    /// hint in a task of its own: held there, its companion still walks to
+    /// the target, closes and publishes; once the hint answers yes, it goes
+    /// on alone to the target.
+    #[tokio::test]
+    async fn a_held_hint_after_a_budget_pause_holds_back_no_companion() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (a1, a2, b1) = (
+            "0x00000000000000000000000000000000000000a1",
+            "0x00000000000000000000000000000000000000a2",
+            "0x00000000000000000000000000000000000000b1",
+        );
+        let chain = FakeChain::new(52, vec![], 1_000, 1_000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        // A owes two requests a window, B one; three a pass: from 50 to 98
+        // in windows of 20, B walks all three, A pauses after the first.
+        let settings = IndexSettings {
+            address_chunk: 1,
+            window_blocks: 20,
+            requests_per_pass: 3,
+            ..walk_settings()
+        };
+        let st = state_over(db.pool.clone(), &url, settings, false);
+        let hooks = Hooked {
+            alone_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            ..Hooked::default()
+        };
+        let a: MakeIndex = {
+            let (gate, armed, from, held, answer) = (
+                hooks.alone_gate.clone(),
+                hooks.alone_armed.clone(),
+                hooks.alone_from.clone(),
+                hooks.alone_held.clone(),
+                hooks.alone_answer.clone(),
+            );
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                        net: ChainNet::Matic,
+                    })),
+                    groups_override: Some(vec![chain_walk::LogGroup {
+                        addresses: vec![a1.into(), a2.into()],
+                        topics: json!([[super::super::mana_transfers::TRANSFER]]),
+                    }]),
+                    alone_gate: gate.clone(),
+                    alone_armed: armed.clone(),
+                    alone_from: from.clone(),
+                    alone_held: held.clone(),
+                    alone_answer: answer.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let b: MakeIndex = Arc::new(move || {
+            Arc::new(Hooked {
+                inner: Some(Arc::new(TradeEventsIndex {
+                    net: ChainNet::Matic,
+                    chain_id: 137,
+                })),
+                groups_override: Some(vec![chain_walk::LogGroup {
+                    addresses: vec![b1.into()],
+                    topics: json!([[
+                        "0x00000000000000000000000000000000000000000000000000000000000000b1"
+                    ]]),
+                }]),
+                ..Hooked::default()
+            }) as Arc<dyn ChainIndex>
+        });
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(
+            &jobs,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![
+                    projection("mana-transfers-index", ChainNet::Matic, &url, a),
+                    projection("trade-events-index", ChainNet::Matic, &url, b),
+                ],
+            ),
+        );
+        for indexer in [chain_walk::INDEXER_MANA, INDEXER_TRADE_EVENTS] {
+            eventually("each walked to 50", || async {
+                last_block(&db.pool, indexer).await == 50
+                    && published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        // A's read at the shared walk's opening (its cursor at 50) answers;
+        // the one after its pause at 70 waits.
+        hooks.alone_from.store(70, Ordering::SeqCst);
+        hooks.alone_armed.store(true, Ordering::SeqCst);
+        *chain.head.lock() = 100;
+        eventually("A's hint after its pause is held", || async {
+            hooks.alone_held.load(Ordering::SeqCst) >= 1
+        })
+        .await;
+        assert_eq!(
+            last_block(&db.pool, chain_walk::INDEXER_MANA).await,
+            70,
+            "A paused after one window"
+        );
+        eventually(
+            "B walks to the target, closes and publishes meanwhile",
+            || async {
+                last_block(&db.pool, INDEXER_TRADE_EVENTS).await == 98
+                    && published(&db.pool, INDEXER_TRADE_EVENTS, ChainNet::Matic).await
+            },
+        )
+        .await;
+        // The hint answers yes: A goes on alone, a window a pass.
+        hooks.alone_answer.store(true, Ordering::SeqCst);
+        hooks.alone_armed.store(false, Ordering::SeqCst);
+        hooks.alone_gate.as_ref().unwrap().add_permits(100);
+        eventually("A goes on alone to the target", || async {
+            last_block(&db.pool, chain_walk::INDEXER_MANA).await == 98
+        })
+        .await;
         assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
         db.drop().await;
     }
