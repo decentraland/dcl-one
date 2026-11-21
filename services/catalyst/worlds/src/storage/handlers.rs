@@ -143,7 +143,8 @@ pub fn parse_pagination(params: &HashMap<String, String>) -> Pagination {
 }
 
 /// As legacy's `!headers.get(...)`: missing or empty after Fetch's
-/// whitespace trim is a 400.
+/// whitespace trim is a 400. Only the first value is read, so a repeated
+/// header whose first value is empty is refused (legacy joined the values).
 pub fn require_confirm_delete_all(headers: &HeaderMap) -> Result<(), ApiError> {
     let confirmed = headers.get(CONFIRM_DELETE_ALL_HEADER).is_some_and(|v| {
         v.as_bytes()
@@ -964,6 +965,10 @@ mod tests {
 
         headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static("1"));
         assert!(require_confirm_delete_all(&headers).is_ok());
+
+        headers.insert(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static(""));
+        headers.append(CONFIRM_DELETE_ALL_HEADER, HeaderValue::from_static("1"));
+        assert!(require_confirm_delete_all(&headers).is_err());
     }
 
     #[tokio::test]
