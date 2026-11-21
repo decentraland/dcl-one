@@ -2028,7 +2028,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         } catch (e) {
           if (answered) return
           state = 'failed'
-          message = heldBack ?? (isRejection(e) ? 'You declined the authorization in your wallet.' : saysItself(e) ? e.message : friendlyError(e, "The authorization didn't go through. Try again."))
+          // What held it back under the lock first, then the approval's own outcome (a cancel reads like a refusal to
+          // isRejection), then the wallet's refusal, else the generic failure.
+          message = heldBack ?? (saysItself(e) ? e.message : isRejection(e) ? 'You declined the authorization in your wallet.' : friendlyError(e, "The authorization didn't go through. Try again."))
           draw()
           return
         } finally {

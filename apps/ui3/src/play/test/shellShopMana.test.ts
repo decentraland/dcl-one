@@ -603,6 +603,26 @@ describe('the in-world purchase with MANA', () => {
       expect(relayedTo(w)).toEqual([MANA, MANA, MANAGER])
     })
 
+    it('says an approval signed but cancelled before it went out as cancelled, never as declined in the wallet', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      let who: StoredLogin | null = LOGIN
+      const original = w.wallet.request.bind(w.wallet)
+      // The wallet signs; the session ends before the approve is recorded or sent.
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        const answer = await original(args)
+        if (args.method === 'eth_signTypedData_v4') who = null
+        return answer
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed, login: () => who })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: 'The approval was cancelled, so nothing was sent.' }))
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
     it('asks no authorization when the allowance already covers the gap', async () => {
       on()
       const w = world()
