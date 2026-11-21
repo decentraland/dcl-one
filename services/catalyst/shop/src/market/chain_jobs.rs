@@ -667,13 +667,13 @@ async fn hint(
 
 /// A member a shared walk paused at its budget: its walk stands as it is,
 /// and its walks-alone hint is read in a task of its own, so a slow read
-/// holds back no one else.
+/// holds back no one else. The read ends at once when `stop` fires.
 #[allow(
     clippy::too_many_arguments,
     reason = "the supervisor's state, the slot and what its walk left"
 )]
 fn dispatch_hint(
-    ctx: &JobContext,
+    stop: &CancellationToken,
     supervisor: &Arc<Supervisor>,
     i: usize,
     slot: &mut Slot,
@@ -687,7 +687,7 @@ fn dispatch_hint(
         supervisor.clone(),
         acquisition.index.clone(),
         acquisition.lost.clone(),
-        ctx.cancel.clone(),
+        stop.clone(),
     );
     let handle = tasks.spawn(async move {
         let alone = hint(&sup, index.as_ref(), &lost, &stop).await;
@@ -1070,7 +1070,16 @@ fn settle_member(
             close: None,
         } if !stopping => {
             slot.checkpoint = checkpoint.clone();
-            dispatch_hint(ctx, supervisor, j, slot, out, checkpoint, tasks, running);
+            dispatch_hint(
+                &ctx.cancel,
+                supervisor,
+                j,
+                slot,
+                out,
+                checkpoint,
+                tasks,
+                running,
+            );
             return;
         }
         MemberEnd::Walked {
@@ -1576,6 +1585,91 @@ mod tests {
         );
         after_alone(&mut s, false);
         assert!(!s.solo_once);
+    }
+
+    /// An index whose walks-alone read gives `0`, and which is never walked.
+    struct Answers(bool);
+
+    #[async_trait::async_trait]
+    impl ChainIndex for Answers {
+        fn indexer(&self) -> &'static str {
+            chain_walk::INDEXER_MANA
+        }
+        fn net(&self) -> ChainNet {
+            ChainNet::Matic
+        }
+        fn start_block(&self) -> u64 {
+            0
+        }
+        async fn groups(
+            &self,
+            _: &PgPool,
+            _: u64,
+            _: u64,
+            _: (u64, i64),
+        ) -> anyhow::Result<Vec<chain_walk::LogGroup>> {
+            unreachable!("never walked")
+        }
+        async fn write(
+            &self,
+            _: &mut sqlx::PgConnection,
+            _: &[crate::chain_index::rpc::RpcLog],
+            _: &HashMap<i64, i64>,
+        ) -> anyhow::Result<usize> {
+            unreachable!("never walked")
+        }
+        async fn rewind(&self, _: &mut sqlx::PgConnection, _: i64) -> anyhow::Result<()> {
+            unreachable!("never walked")
+        }
+        async fn fold(
+            &self,
+            _: &PgPool,
+            _: Option<i64>,
+            _: i64,
+            _: &chain_walk::Owner,
+        ) -> anyhow::Result<bool> {
+            unreachable!("never walked")
+        }
+        async fn walks_alone(&self, _: &PgPool) -> anyhow::Result<bool> {
+            Ok(self.0)
+        }
+    }
+
+    /// A member a shared walk paused at its budget: the hint read in its
+    /// own task carries the walk's outcome and checkpoint back as they were,
+    /// with the index's answer, which decides whether it walks alone next.
+    #[tokio::test]
+    async fn a_paused_members_hint_decides_whether_it_walks_alone_next() {
+        for answer in [true, false] {
+            let mut p = projection("mana-transfers-index-matic", "http://rpc");
+            p.make = Arc::new(move || Arc::new(Answers(answer)) as Arc<dyn ChainIndex>);
+            let sup = Arc::new(supervisor(vec![p]));
+            let mut s = slot(&sup.projections[0], None, Instant::now());
+            let (mut tasks, mut running) = (JoinSet::new(), HashMap::new());
+            let out = PassOutcome {
+                paused: true,
+                ..PassOutcome::default()
+            };
+            dispatch_hint(
+                &CancellationToken::new(),
+                &sup,
+                0,
+                &mut s,
+                out.clone(),
+                Some(checkpoint(70)),
+                &mut tasks,
+                &mut running,
+            );
+            assert!(s.phase == Phase::Running && running.len() == 1);
+            let Done::Attempted(Attempt::Ran(Ok(o)), at, alone) =
+                tasks.join_next().await.unwrap().unwrap()
+            else {
+                panic!("the hint ends as the paused walk's attempt");
+            };
+            assert_eq!((o, at, alone), (out, Some(checkpoint(70)), answer));
+            after_alone(&mut s, alone);
+            assert_eq!(s.solo_once, answer);
+        }
     }
 
     /// Two projections paused by their budget at one checkpoint: the second

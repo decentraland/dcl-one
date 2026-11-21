@@ -6962,13 +6962,15 @@ mod supervisor {
     }
 
     /// A member a shared walk pauses at its budget reads its walks-alone
-    /// hint in a task of its own. A and C, which share an address, pause at
-    /// 70 after a walk shared with B (a read that mixes A's and C's topics
-    /// shows it was shared); their hints are held while B walks on, closes
-    /// and publishes. Then A's hint answers yes and C's no. Both are due at
-    /// 70, and C would invite A; yet no shared walk starts until both pause
-    /// again at 90, since A walks alone (a `false` read from A's hint gathers
-    /// the two into a walk, which A then leaves at its opening).
+    /// hint in a task of its own. A and C, which share an address, walk
+    /// together from 50 (a read that mixes their topics shows it) and pause
+    /// at 70; their hints are held while B walks on to the target, closes
+    /// and publishes. Then A's hint answers yes and C's no, and no shared
+    /// walk starts until both pause again at 90: A walks alone. Had A's
+    /// answer been lost, the two would gather into a walk that A leaves at
+    /// its opening, but only when both come due on the same wake-up, which
+    /// is usual, not certain; the answer itself is pinned by
+    /// `chain_jobs::tests::a_paused_members_hint_decides_whether_it_walks_alone_next`.
     #[tokio::test]
     async fn a_held_hint_after_a_budget_pause_holds_back_no_companion() {
         let Some(db) = ScratchDb::create().await else {
@@ -7076,6 +7078,14 @@ mod supervisor {
             })
             .await;
         }
+        // Shared walks at the tip put the three in step, so the walk after
+        // the head moves gathers all three (one still closing its own first
+        // walk would be left out).
+        let walks = stats.walks.load(Ordering::SeqCst);
+        eventually("three shared walks at 50", || async {
+            stats.walks.load(Ordering::SeqCst) >= walks + 3
+        })
+        .await;
         // The reads at the shared walk's opening (cursors at 50) answer; the
         // ones after the pause at 70 wait.
         from.store(70, Ordering::SeqCst);
