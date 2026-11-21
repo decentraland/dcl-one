@@ -185,13 +185,21 @@ impl CursorRow {
 /// What an index the producer reads holds: the time resolution reads only
 /// its rows, so logs below `start_block` (when not `full_history`) cannot
 /// be announced again.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, sqlx::FromRow)]
 pub struct IndexCoverage {
     pub indexer: String,
     pub start_block: i64,
     pub full_history: bool,
     pub last_block: i64,
     pub last_block_time: Option<i64>,
+    /// On a dry run, how many of this index's logs lie after the resulting
+    /// cursor (`after`), up to its `last_block`: an upper bound on the logs
+    /// the next passes read (each producer reads only some kinds). Absent
+    /// otherwise, and for `rental_ended`, which reads rental periods by end
+    /// time. Counted after the transaction ends, holding no cursor row.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logs_after: Option<i64>,
 }
 
 /// What [`rewind`] did (or, on a dry run, would do).
@@ -208,6 +216,7 @@ pub struct Rewound {
     pub after: CursorRow,
     pub changed: bool,
     pub dry_run: bool,
+    /// The indexes the producer reads that have a cursor row.
     pub indexes: Vec<IndexCoverage>,
 }
 
@@ -218,14 +227,24 @@ pub enum RewindError {
     #[error("{0} is ordered by rental end time: give a date (--since), not a block")]
     NeedsDate(&'static str),
     #[error(
+        "block {0} is not a chain block: give 1 or more (block 0 or less would announce the whole index again)"
+    )]
+    BlockOutOfRange(i64),
+    #[error(
+        "time {0} is not after 1970-01-01T00:00:00Z: give a later date (an earlier one would announce the whole index again)"
+    )]
+    TimeOutOfRange(i64),
+    #[error(
         "the {network} {indexer} index has not indexed {since} yet (its last block time is {last_block_time:?}); \
-         run again once it has, or give a block"
+         run again once it has{}", if *.by_end_time { "" } else { ", or give a block" }
     )]
     NotReached {
         network: &'static str,
         indexer: String,
         since: i64,
         last_block_time: Option<i64>,
+        /// The producer orders by end time and takes no block.
+        by_end_time: bool,
     },
     #[error("the {network} {indexer} index has no cursor row; nothing is indexed yet")]
     NoIndex {
@@ -256,27 +275,33 @@ fn ends_by_time(producer: &str) -> bool {
 /// Parses an operator's `--since`: an RFC 3339 instant, a `YYYY-MM-DD` day
 /// (its UTC midnight), or epoch milliseconds as a legacy cursor stores them.
 /// Answers unix seconds. A bare number below 10^12 is refused: it is not a
-/// millisecond time (seconds, or a legacy cursor holding a sale id).
+/// millisecond time (seconds, or a legacy cursor holding a sale id). A time
+/// at or before 1970-01-01T00:00:00Z is refused: it would announce every
+/// indexed log again. An RFC 3339 time needs its zone (`Z` or an offset).
 pub fn parse_since(s: &str) -> Result<i64, String> {
     let s = s.trim();
-    if let Ok(ms) = s.parse::<i64>() {
-        return if ms >= 1_000_000_000_000 {
-            Ok(ms.div_euclid(1_000))
-        } else {
-            Err(format!(
+    let t = if let Ok(ms) = s.parse::<i64>() {
+        if ms < 1_000_000_000_000 {
+            return Err(format!(
                 "{s} is not epoch milliseconds (10^12 or more); give a date such as 2026-11-01T00:00:00Z"
-            ))
-        };
+            ));
+        }
+        ms.div_euclid(1_000)
+    } else if let Ok(t) = chrono::DateTime::parse_from_rfc3339(s) {
+        t.timestamp()
+    } else if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        d.and_time(chrono::NaiveTime::MIN).and_utc().timestamp()
+    } else {
+        return Err(format!(
+            "{s} is not a date: give RFC 3339 with its zone (2026-11-01T00:00:00Z), a day (2026-11-01) or epoch milliseconds"
+        ));
+    };
+    if t <= 0 {
+        return Err(format!(
+            "{s} is not after 1970-01-01T00:00:00Z; it would announce the whole index again"
+        ));
     }
-    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(s) {
-        return Ok(t.timestamp());
-    }
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_time(chrono::NaiveTime::MIN).and_utc().timestamp());
-    }
-    Err(format!(
-        "{s} is not a date: give RFC 3339 (2026-11-01T00:00:00Z), a day (2026-11-01) or epoch milliseconds"
-    ))
+    Ok(t)
 }
 
 /// Moves `producer`'s cursor back to `from`, and its seed with it, so the
@@ -288,11 +313,17 @@ pub fn parse_since(s: &str) -> Result<i64, String> {
 /// cursor row, recorded in `ops.admin_audit` (domain `market`) as `actor`;
 /// `dry_run` resolves and reports without writing.
 ///
-/// A date resolves through the logs of the indexes the producer reads
-/// ([`reads`]): the cursor goes after the last block mined before it, and
-/// every such index must already have indexed past it. For `rental_ended`
-/// the date is the end-time cursor itself. Cost: a backward walk of each
-/// index's log by its primary key from the head down to the date.
+/// A block below 1 or a time at or before the epoch is refused: it would
+/// announce every indexed log again. A date resolves through the logs of
+/// the indexes the producer reads ([`reads`]): the cursor goes after the
+/// last block mined before it, and every such index must have a cursor row
+/// and already have indexed past it. For `rental_ended` the date is the
+/// end-time cursor itself, refused likewise until the rentals index has
+/// reached it. A block needs no index; the ones with a cursor row are
+/// reported. Cost: a backward walk of each index's log by its primary key
+/// from the head down to the date; a dry run also counts each index's logs
+/// after the resulting cursor ([`IndexCoverage::logs_after`]), once the
+/// cursor row is released.
 pub async fn rewind(
     pool: &PgPool,
     producer: &str,
@@ -307,8 +338,13 @@ pub async fn rewind(
         .ok_or_else(|| RewindError::UnknownProducer(producer.to_string()))?;
     let (net, indexers) = reads(producer).ok_or(RewindError::UnknownProducer(producer.into()))?;
     let network = net.db_name();
-    if matches!(from, RewindFrom::Block(_)) && ends_by_time(producer) {
-        return Err(RewindError::NeedsDate(producer));
+    match from {
+        RewindFrom::Block(_) if ends_by_time(producer) => {
+            return Err(RewindError::NeedsDate(producer));
+        }
+        RewindFrom::Block(b) if b < 1 => return Err(RewindError::BlockOutOfRange(b)),
+        RewindFrom::Time(t) if t <= 0 => return Err(RewindError::TimeOutOfRange(t)),
+        _ => {}
     }
     let mut txn = pool.begin().await?;
     let mut indexes = Vec::with_capacity(indexers.len());
@@ -321,23 +357,37 @@ pub async fn rewind(
         .bind(network)
         .fetch_optional(&mut *txn)
         .await?;
-        indexes.push(coverage.ok_or(RewindError::NoIndex { network, indexer })?);
+        match (coverage, from) {
+            (Some(c), _) => indexes.push(c),
+            // A block needs no index: its coverage is only reported.
+            (None, RewindFrom::Block(_)) => {}
+            (None, RewindFrom::Time(_)) => {
+                return Err(RewindError::NoIndex { network, indexer });
+            }
+        }
+    }
+    if let RewindFrom::Time(t) = from {
+        // Logs (or, for `rental_ended`, period ends) the index has not
+        // reached would later be read as already handled.
+        if let Some(index) = indexes
+            .iter()
+            .find(|i| i.last_block_time.is_none_or(|lt| lt < t))
+        {
+            return Err(RewindError::NotReached {
+                network,
+                indexer: index.indexer.clone(),
+                since: t,
+                last_block_time: index.last_block_time,
+                by_end_time: ends_by_time(producer),
+            });
+        }
     }
     let target = match from {
-        RewindFrom::Block(b) if b <= 0 => (None, 0, -1),
         RewindFrom::Block(b) => (None, b - 1, i32::MAX),
         RewindFrom::Time(t) if ends_by_time(producer) => (Some(t), 0, -1),
         RewindFrom::Time(t) => {
             let mut before: Option<i64> = None;
             for index in &indexes {
-                if index.last_block_time.is_none_or(|lt| lt < t) {
-                    return Err(RewindError::NotReached {
-                        network,
-                        indexer: index.indexer.clone(),
-                        since: t,
-                        last_block_time: index.last_block_time,
-                    });
-                }
                 let table = event_table(&index.indexer).ok_or_else(|| {
                     sqlx::Error::InvalidArgument(format!(
                         "no log table is known for the {} index",
@@ -413,7 +463,7 @@ pub async fn rewind(
     };
     debug_assert!(before.is_some() || after == wanted);
     let changed = before != Some(after);
-    let out = Rewound {
+    let mut out = Rewound {
         producer,
         network,
         target_end_time: target.0,
@@ -427,6 +477,26 @@ pub async fn rewind(
     };
     if dry_run {
         txn.rollback().await?;
+        // Counted after the rollback, so the walk holds no cursor row.
+        if after.end_time.is_none() {
+            for index in &mut out.indexes {
+                let Some(table) = event_table(&index.indexer) else {
+                    continue;
+                };
+                index.logs_after = Some(
+                    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                        "SELECT count(*) FROM {table} WHERE network = $1 \
+                         AND (block_number, log_index) > ($2, $3) AND block_number <= $4"
+                    )))
+                    .bind(network)
+                    .bind(after.block_number)
+                    .bind(after.log_index)
+                    .bind(index.last_block)
+                    .fetch_one(pool)
+                    .await?,
+                );
+            }
+        }
         return Ok(out);
     }
     if changed {
@@ -863,6 +933,73 @@ mod tests {
         assert!(parse_since("1700000000").is_err());
         assert!(parse_since("48213").is_err());
         assert!(parse_since("yesterday").is_err());
+        // At or before the epoch would announce the whole index again.
+        for s in [
+            "1970-01-01",
+            "1970-01-01T00:00:00Z",
+            "1969-12-31T23:59:59Z",
+            "0001-01-01",
+            "-1700000000000",
+            "-1",
+        ] {
+            assert!(parse_since(s).is_err(), "{s}");
+        }
+        assert_eq!(parse_since("1970-01-01T00:00:01Z"), Ok(1));
+        // A time without its zone is ambiguous.
+        assert!(parse_since("2023-11-14T22:13:20").is_err());
+        assert!(parse_since("2023-11-14 22:13:20").is_err());
+    }
+
+    /// A rewind waits for a page holding the producer's row, then lowers
+    /// the cursor that page advanced: the page's progress does not undo it.
+    #[tokio::test]
+    async fn a_rewind_waits_for_a_running_page_and_then_applies() {
+        let Some(db) =
+            crate::market::transfer_notices::tests::PrivateDb::create("noticelock").await
+        else {
+            return;
+        };
+        let pool = db.pool.clone();
+        seed(&pool, SALES_TRADED_MATIC, None, 500, 0).await.unwrap();
+        let mut page = pool.begin().await.unwrap();
+        lock(&mut page, SALES_TRADED_MATIC).await.unwrap();
+        let task = tokio::spawn({
+            let pool = pool.clone();
+            async move {
+                rewind(
+                    &pool,
+                    SALES_TRADED_MATIC,
+                    RewindFrom::Block(100),
+                    "t",
+                    false,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!task.is_finished(), "the rewind waits for the page");
+        advance(&mut page, SALES_TRADED_MATIC, None, 900, 2)
+            .await
+            .unwrap();
+        page.commit().await.unwrap();
+        let out = tokio::time::timeout(std::time::Duration::from_secs(10), task)
+            .await
+            .expect("the rewind runs once the page commits")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            out.before.map(|r| r.cursor()),
+            Some((None, 900, 2)),
+            "it read the page's cursor"
+        );
+        assert_eq!(out.after, CursorRow::at(None, 99, i32::MAX));
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            lock(&mut conn, SALES_TRADED_MATIC).await.unwrap(),
+            (None, 99, i32::MAX)
+        );
+        drop(conn);
+        db.drop().await;
     }
 
     /// The operator rewind: a producer no pass seeded is seeded at the
@@ -1034,12 +1171,33 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.changed);
-        let out = rewind(pool, TRANSFER_RECEIVED, RewindFrom::Block(0), "t", true)
+        let out = rewind(pool, TRANSFER_RECEIVED, RewindFrom::Block(1), "t", true)
             .await
             .unwrap();
         assert!(out.changed && out.dry_run);
-        assert_eq!(out.after, at(None, 0, -1));
+        assert_eq!(out.after, at(None, 0, i32::MAX));
+        // The logs after block 0 up to each head: nft 100, 200, 300; trade 250.
+        let counts: Vec<_> = out.indexes.iter().map(|i| i.logs_after).collect();
+        assert_eq!(counts, [Some(3), Some(1)]);
         assert_eq!(row(TRANSFER_RECEIVED).await, Some(at(None, 49, i32::MAX)));
+        // Before the first block, or at or before the epoch: the whole index.
+        for from in [
+            RewindFrom::Block(0),
+            RewindFrom::Block(-5),
+            RewindFrom::Time(0),
+            RewindFrom::Time(-62_135_596_800),
+        ] {
+            let err = rewind(pool, TRANSFER_RECEIVED, from, "t", true)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    RewindError::BlockOutOfRange(_) | RewindError::TimeOutOfRange(_)
+                ),
+                "{from:?}: {err}"
+            );
+        }
 
         // rental_ended takes a date as its end-time cursor, never a block.
         publish(INDEXER_RENTALS, "ethereum").await;
@@ -1050,10 +1208,43 @@ mod tests {
         seed(pool, RENTAL_ENDED, Some(T0 + 9_000), 9_000, i32::MAX)
             .await
             .unwrap();
+        // An end time the rentals index has not reached would skip the
+        // periods ending before it.
+        let err = rewind(pool, RENTAL_ENDED, RewindFrom::Time(T0 + 9_001), "t", false)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, RewindError::NotReached { .. })
+                && !err.to_string().contains("give a block"),
+            "{err}"
+        );
+        let out = rewind(pool, RENTAL_ENDED, RewindFrom::Time(T0), "t", true)
+            .await
+            .unwrap();
+        assert_eq!(out.indexes[0].logs_after, None, "periods, not logs");
         rewind(pool, RENTAL_ENDED, RewindFrom::Time(T0), "t", false)
             .await
             .unwrap();
         assert_eq!(row(RENTAL_ENDED).await, Some(at(Some(T0), 0, -1)));
+
+        // A block needs no index: with no sales cursor row, the block
+        // rewind seeds the producer and reports no coverage; a date is refused.
+        assert!(matches!(
+            rewind(
+                pool,
+                SALES_MINT_MATIC,
+                RewindFrom::Time(T0 + 100),
+                "t",
+                false
+            )
+            .await,
+            Err(RewindError::NoIndex { .. })
+        ));
+        let out = rewind(pool, SALES_MINT_MATIC, RewindFrom::Block(120), "t", false)
+            .await
+            .unwrap();
+        assert!(out.indexes.is_empty());
+        assert_eq!(row(SALES_MINT_MATIC).await, Some(at(None, 119, i32::MAX)));
 
         let audited: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM ops.admin_audit WHERE domain = 'market' AND action = 'notice-cursor.rewind'",
@@ -1061,7 +1252,7 @@ mod tests {
         .fetch_one(pool)
         .await
         .unwrap();
-        assert_eq!(audited, 4, "the four changes; no refusal, no-op or dry run");
+        assert_eq!(audited, 5, "the five changes; no refusal, no-op or dry run");
         db.drop().await;
     }
 

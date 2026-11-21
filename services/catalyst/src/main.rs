@@ -118,24 +118,35 @@ enum ShopCommand {
     /// its id, so it is neither stored nor emailed twice. `--since` resolves
     /// through the logs of the indexes the producer reads and is refused
     /// until they have indexed past it. Prints the outcome as JSON and
-    /// records it in `ops.admin_audit`. Not behind OPS_WRITES_ENABLED: the
-    /// producers' own switches decide whether anything is emitted.
+    /// records it in `ops.admin_audit` as `--actor`. Not behind
+    /// OPS_WRITES_ENABLED: the producers' own switches decide whether
+    /// anything is emitted.
     NoticeRewind {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(catalyst::shop::market::notice_cursor::PRODUCERS))]
         producer: String,
-        /// Announce the logs of this block and later.
-        #[arg(long, conflicts_with = "since", required_unless_present = "since")]
+        /// Announce the logs of this block (1 or more) and later.
+        #[arg(
+            long,
+            conflicts_with = "since",
+            required_unless_present = "since",
+            value_parser = clap::value_parser!(i64).range(1..)
+        )]
         from_block: Option<i64>,
         /// Announce the logs mined at or after this time (for `rental_ended`,
         /// the periods ending at or after it): RFC 3339, `YYYY-MM-DD` (UTC)
         /// or epoch milliseconds, the legacy cursor's unit.
         #[arg(long, value_parser = catalyst::shop::market::notice_cursor::parse_since)]
         since: Option<i64>,
-        /// Resolve and print; write nothing.
+        /// Resolve and print, with each index's logs after the resulting
+        /// cursor (`logs_after`); write nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Who ran it, recorded as the `ops.admin_audit` actor: the
+        /// operator's name, `$USER` when not given, `cli` when neither is set.
+        #[arg(long, env = "USER", hide_env_values = true)]
+        actor: Option<String>,
     },
 }
 
@@ -681,6 +692,7 @@ async fn run(
                     from_block,
                     since,
                     dry_run,
+                    actor,
                 },
         } => {
             use catalyst::shop::market::notice_cursor::{RewindFrom, rewind};
@@ -702,7 +714,12 @@ async fn run(
                 (None, Some(t)) => RewindFrom::Time(t),
                 (None, None) => anyhow::bail!("give --from-block or --since"),
             };
-            let out = rewind(&pool, &producer, from, "cli", dry_run).await?;
+            let actor = actor
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .unwrap_or("cli");
+            let out = rewind(&pool, &producer, from, actor, dry_run).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }

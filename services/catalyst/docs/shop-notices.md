@@ -12,40 +12,52 @@ published head, so on its own it announces nothing mined before that pass.
 
 ```sh
 catalyst shop notice-rewind --database-url "$DATABASE_URL" --producer <name> \
-  (--since <time> | --from-block <block>) [--dry-run]
+  (--since <time> | --from-block <block>) [--dry-run] [--actor <name>]
 ```
 
 - `--producer` is one of `PRODUCERS` (`catalyst shop notice-rewind --help` lists them).
 - `--from-block N` announces the logs of block N and later: the cursor becomes
-  (N - 1, after its last log).
+  (N - 1, after its last log). N must be 1 or more.
 - `--since T` announces the logs mined at or after T: RFC 3339
   (`2026-11-01T00:00:00Z`), a day (`2026-11-01`, UTC midnight) or epoch milliseconds,
-  the unit a legacy producer cursor stores. A bare number below 10^12 is refused.
+  the unit a legacy producer cursor stores. A bare number below 10^12, a time without
+  its zone and a time at or before 1970-01-01T00:00:00Z are refused (block 0 or the epoch
+  would announce every indexed log again). Each index the producer reads needs a
+  `shop.chain_cursor` row for `--since`; `--from-block` needs none and only reports the
+  ones that exist.
   T resolves through the logs of the indexes the producer reads
   (`shop.nft_event`, `shop.trade_event`, `shop.sale_event`, `shop.rental_event`): the cursor
   goes after the last block mined before T on any of them. The command refuses while one of
   those indexes has not indexed past T (its `last_block_time`), since logs it has not reached
   would later be read as already handled. For `rental_ended`, T is the end-time cursor
-  itself: every period ending at or after T is announced; it takes no block.
+  itself: every period ending at or after T is announced; it takes no block, and it is
+  refused likewise while the rentals index's `last_block_time` is before T.
 - The cursor and the seed only move back. A target at or after the cursor changes nothing.
   A producer no pass has seeded yet is seeded at the target, and its first pass keeps that
   seed.
 - `--dry-run` resolves and prints without writing.
+- `--actor` names who ran it in the audit record; it defaults to `$USER`, or `cli` when
+  that is unset.
 
 It runs in one transaction holding the producer's row, so a running pass finishes its page
 first and the next page starts from the new cursor. It prints one JSON object: the
 `producer`, its `network`, the resolved `target_*`, the row `before` (absent when no pass
 had seeded it) and `after`, `changed`, `dry_run` and `indexes` (each index's `start_block`,
-`full_history`, `last_block` and `last_block_time`). An index that is not `full_history`
+`full_history`, `last_block` and `last_block_time`; on a dry run also `logs_after`, the
+count of its logs after the resulting cursor (`after`) up to `last_block`, an upper bound on what the
+next passes read since each producer reads only some kinds of log; `rental_ended`, which
+reads rental periods by end time, has none). An index that is not `full_history`
 holds no logs below its `start_block`; those cannot be announced. A change is recorded in
-`ops.admin_audit` (domain `market`, action `notice-cursor.rewind`, actor `cli`). The
+`ops.admin_audit` (domain `market`, action `notice-cursor.rewind`, the `--actor`). The
 command needs only database access; whether anything is emitted is still up to the
 producers' own jobs and switches.
 
 Cost: for `--since`, one backward walk of each index's log by its primary key from the
 head down to T, so a date far back reads every log since then once; the command allows each
-statement 15 minutes. If a walk still times out, give the block with `--from-block`. The passes that
-follow re-read the same range a page at a time.
+statement 15 minutes. If a walk still times out, give the block with `--from-block`. Any
+dry run, with `--since` or `--from-block`, also counts each index's logs from the resulting
+cursor (`after`) up to its head, after releasing the producer's row; a run without
+`--dry-run` skips that count. The passes that follow re-read the same range a page at a time.
 
 ## Duplicates
 
@@ -85,15 +97,15 @@ The table maps by notice type. events-notifier polled sales, bids and royalties 
 | `royalties-earned` | `royalties_earned`, `royalties:bid_accepted:matic` |
 | `land-rental-started` | `rental_started` (Ethereum) |
 | `land-rental-ended` | `rental_ended` (Ethereum) |
+| `bid-received` | `bid_received` |
 
 A producer fed by two legacy cursors (`sales:bid_accepted:matic` tells the seller "Item Sold"
 and the bidder "Bid Accepted") takes the earlier one; the notices of the other type between
 the two times are then announced a second time. `sales:traded:ethereum`,
 `sales:traded:matic` (off-chain trades, announced before by marketplace-server's accept
 events, not by events-notifier) and `transfer_received` have no events-notifier cursor;
-leave them to their first pass, or give them the cutover time. A producer added later is
-seeded the same way from its legacy cursor, if it has one (a `bid_received` producer from
-`bid-received`).
+leave them to their first pass, or give them the cutover time. `bid_received` has no start
+setting of its own: like the others, it is seeded with this command from its legacy cursor.
 
 Order, with the notifications import (`MAPPING.md`, "Node producers"):
 
@@ -110,6 +122,7 @@ Order, with the notifications import (`MAPPING.md`, "Node producers"):
 
 ## Rewinding later
 
-To announce again from a time or block, for instance after a delivery outage, run the
+To announce again from a time or block, for instance after a producer outage, run the
 same command. Notices the node had already stored are refreshed in place without an email;
-the ones it had missed are stored and emailed.
+the ones it had missed are stored and emailed. A rewind does not retry undelivered emails
+of notices already stored: delivery rows are only created for new notifications.
