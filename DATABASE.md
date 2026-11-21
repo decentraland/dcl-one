@@ -2594,8 +2594,9 @@ that scene storage uses.
 Workload: one primary-key read for each scene-signed gatekeeper request of a
 wallet that is not the owner (`Policy::is_admin`: `/scene-admin`, `/scene-bans`,
 `/scene-stream-access`, `/cast/*`, the stream key recheck), and one read of a
-place's rows (tens at most) for `GET /scene-admin` and for a room metadata
-refresh. Writes are rare: one row for `POST` or `DELETE /scene-admin`, and the
+place's rows (tens at most) for `GET /scene-admin`, for a room metadata
+refresh and for each streaming notice of a Genesis place (its base parcel; a
+world's place holds no grant). Writes are rare: one row for `POST` or `DELETE /scene-admin`, and the
 place removal cleanup.
 
 Invariants:
