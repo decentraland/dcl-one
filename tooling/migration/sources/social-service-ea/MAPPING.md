@@ -126,12 +126,15 @@ copies upstream's `community_ranking_metrics` (zeros when a community has no row
 node reads it from `social.community_thumbnails`, which `blobs social-service-ea` fills.
 
 What the step last loaded is recorded in `dcl_migration.social_community_ranking_loaded`. A
-re-run whose upstream row is unchanged leaves the node's counters alone, so after the cutover
-they keep counting. When upstream's row changed, events and attendees take upstream's
+re-run whose upstream counters are unchanged leaves the node's counters and score alone, so
+after the cutover, once upstream's event, photo and streaming handlers are stopped, the node
+keeps counting; upstream's daily rescore alone changes nothing. The score is copied with the
+counters. When upstream's counters changed, events and attendees take upstream's
 values and `ranking_tracking_since` moves to the moment upstream was read, so the node's
 ended-event scan does not count again an imported event upstream counted; events that ended
 on the node only before that moment are dropped. Photos and streams are upstream's plus what
-the node added since the previous load. A taken-over mirrored community starts its tracking
+the node added since the previous load (imported photos are published without a ranking
+increment, so the node never counts one of them). A taken-over mirrored community starts its tracking
 there too.
 
 Order: `run` (communities before community_ranking_metrics), then `blobs social-service-ea`,
