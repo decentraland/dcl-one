@@ -28,6 +28,11 @@ export type RailContext = {
   locks?: LockManager | null;
   /** The caller already holds the exact grant's lock (`exactGrantLock`): a credits + MANA sale takes it before its item's. */
   grantLockHeld?: boolean;
+  /**
+   * Whether the purchase this run serves is still its caller's (its dialog open, its terms the ones agreed): an exact MANA
+   * grant whose purchase is gone while the wallet signs records and sends nothing (`GrantCancelledError`).
+   */
+  live?: () => boolean;
   /** Receipt/nonce wait tuning, for tests. */
   wait?: { timeoutMs?: number; pollMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> };
 };

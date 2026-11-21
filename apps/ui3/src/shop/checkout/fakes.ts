@@ -13,7 +13,9 @@ import { CHAIN } from "@shop/model/chain";
 import { BOOK, ITEM, TOKEN } from "@shop/payment/fixtures";
 import { AGGREGATOR_ABI, ERC20_ABI, ERC721_ABI, MARKETPLACE_ABI, NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 import type { ChainReader, TxReceipt } from "./chain/rpc";
-import { ASSET_TYPE, type SignedTrade } from "./purchase/encoding";
+import { encodeExecuteMetaTransaction } from "./chain/metatx";
+import { ASSET_TYPE, encodeUseCredits, idToSalt, type SignedTrade } from "./purchase/encoding";
+import type { SplitSale } from "./purchase/splitEvidence";
 
 export type FakeRequest = {
   name: EndpointName;
@@ -128,17 +130,22 @@ export function resaleTrade(overrides: Partial<SignedTrade> = {}): SignedTrade {
 export type FakeChain = ChainReader & {
   /** Receipts by hash; a hash with no entry has none (pending). */
   receipts: Map<string, TxReceipt["status"]>;
+  /** Transactions by hash (lowercase), as `transaction` answers them; a hash with no entry is unknown. */
+  transactions: Map<string, { from: string | null; to: string | null; input: Hex }>;
   nonces: Map<string, bigint>;
   allowances: Map<string, bigint>;
   /** `${chainId}:${collection}:${owner}:${operator}` -> approved. */
   approvals: Map<string, boolean>;
   manaBalances: Map<string, bigint>;
   calls: { chainId: number; to: string; data: Hex }[];
+  /** The finalized block's time (unix seconds) `finalizedTime` answers; this moment's, unless a test sets it. */
+  chainTime: number | null;
 };
 
 /** A chain that answers the reads the rails make: getNonce, allowance, balanceOf, the MANA oracle. */
 export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {}): FakeChain {
   const receipts = new Map<string, TxReceipt["status"]>();
+  const transactions: FakeChain["transactions"] = new Map();
   const nonces = new Map<string, bigint>();
   const allowances = new Map<string, bigint>();
   const manaBalances = new Map<string, bigint>();
@@ -147,11 +154,16 @@ export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {})
   const nowSeconds = () => BigInt(Math.floor(Date.now() / 1000));
   return {
     receipts,
+    transactions,
     nonces,
     allowances,
     approvals,
     manaBalances,
     calls,
+    chainTime: null,
+    async finalizedTime() {
+      return this.chainTime ?? Math.floor(Date.now() / 1000);
+    },
     async call(chainId, to, data) {
       calls.push({ chainId, to, data });
       const selector = data.slice(0, 10);
@@ -188,6 +200,7 @@ export function createFakeChain(opts: { rate?: bigint; decimals?: number } = {})
     },
     balance: async () => 10n ** 18n,
     code: async () => "0x",
+    transaction: async (_chainId, txHash) => transactions.get(txHash.toLowerCase()) ?? null,
   };
 }
 
@@ -255,10 +268,29 @@ export function createFakeWallet(opts: { chainId?: number; account?: string; onS
 }
 
 /**
- * The Web Locks of one browser, shared by every dialog (tab) given the same one: a lock asked `ifAvailable` while another
- * holds it is refused. Waiting for one is not modeled.
+ * The relayed meta-transaction a split's sale lands as, carrying exactly `sale`'s terms (purchase/splitEvidence.ts reads it
+ * back as that sale), signed by `user` (the buyer unless said) with `signature` (one fixed one unless said): what a test
+ * puts on the fake chain for a hash. Another signature is the same terms in another envelope.
  */
-export function createFakeLocks(): LockManager & { held: Set<string> } {
+export function splitSaleTransaction(sale: SplitSale, over: { user?: string; signature?: Hex } = {}): { from: null; to: string; input: Hex } {
+  const never = 4_102_444_800n;
+  const call = encodeUseCredits({
+    credits: [{ value: BigInt(sale.creditWei), expiresAt: never, salt: idToSalt(sale.creditId) }],
+    creditsSignatures: [`0x${"cc".repeat(65)}`],
+    externalCall: { target: sale.target as Hex, selector: sale.selector, data: sale.callData, expiresAt: never, salt: `0x${"00".repeat(32)}` },
+    customExternalCallSignature: "0x",
+    maxUncreditedValue: BigInt(sale.gapWei),
+    maxCreditedValue: BigInt(sale.creditWei),
+  });
+  return { from: null, to: sale.manager, input: encodeExecuteMetaTransaction("functionData", over.user ?? sale.buyer, call, over.signature ?? `0x${"11".repeat(65)}`) };
+}
+
+/**
+ * The Web Locks of one browser, shared by every dialog (tab) given the same one: a lock asked `ifAvailable` while another
+ * holds it is refused. Waiting for one is not modeled. With `freesAfterMs`, a released lock stays taken that long, as a
+ * real browser frees one a turn after its release: a page asking again at once for a lock it just let go is refused.
+ */
+export function createFakeLocks(config: { freesAfterMs?: number } = {}): LockManager & { held: Set<string> } {
   const held = new Set<string>();
   const request = async (name: string, options: LockOptions | LockGrantedCallback<unknown>, callback?: LockGrantedCallback<unknown>) => {
     const opts = typeof options === "function" ? {} : options;
@@ -271,10 +303,11 @@ export function createFakeLocks(): LockManager & { held: Set<string> } {
     try {
       return await granted({ name, mode: "exclusive" } as Lock);
     } finally {
-      held.delete(name);
+      if (config.freesAfterMs == null) held.delete(name);
+      else setTimeout(() => held.delete(name), config.freesAfterMs);
     }
   };
-  return { held, request, query: async () => ({ held: [], pending: [] }) } as unknown as LockManager & { held: Set<string> };
+  return { held, request, query: async () => ({ held: [...held].map((name) => ({ name, mode: "exclusive" })), pending: [] }) } as unknown as LockManager & { held: Set<string> };
 }
 
 /** The MANA approve a relayed NativeMetaTransaction carries, if any: (owner, spender, amount). */
@@ -331,6 +364,9 @@ export function createFakeRelay(
     }
     const hash = `0x${"f".repeat(56)}${(++n).toString(16).padStart(8, "0")}` as Hex;
     if (opts.chain) {
+      // What the relay sends on chain: its own transaction to the target, carrying the signed execution.
+      const params = (body as { transactionData?: { params?: [string, Hex] } })?.transactionData?.params;
+      if (params) opts.chain.transactions.set(hash.toLowerCase(), { from: null, to: params[0], input: params[1] });
       const approval = relayedApproval(body);
       if (approval) {
         opts.chain.allowances.set(`${opts.chainId ?? CHAIN.POLYGON}:${approval.owner}:${approval.spender}`, approval.amount);

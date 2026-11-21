@@ -3,8 +3,10 @@
 // (shell/shop/manaPurchase). The Shop server, the chain, the relay and the wallet are the checkout's fakes.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, keccak256, maxUint256, parseAbi, type Hex } from 'viem'
-import { createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
-import { ASSET_TYPE, encodeStoreBuy } from '../../shop/checkout/purchase/encoding'
+import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
+import { CREDITS_MANAGER_ABI, OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
+import { claimSplitHold, readSplitHold, readSplitHoldRecord, settleSplitHold, splitHoldKey, splitHoldLine, writeSplitHold } from '../../shop/checkout/purchase/splitHold'
+import { ASSET_TYPE, buildStoreUseCreditsArgs, encodeStoreBuy, encodeUseCredits, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
 import { encodeExecuteMetaTransaction } from '../../shop/checkout/chain/metatx'
 import { manaFingerprint } from '../shell/shop/manaPurchase'
 import { createLedger } from '../shell/shop/ledger'
@@ -14,10 +16,11 @@ import type { PurchaseOffer } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
 import { BOOK, ITEM, serverOffer, storeMint, storePrice } from '@shop/payment/fixtures'
 import { itemAsset } from '@shop/model/asset'
+import { exactGrantLock, getManaSpendingAuthorization } from '../../shop/checkout/lib/authorizations'
 import { CHAIN } from '@shop/model/chain'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
-import { createShellShop, RETRY_AFTER_MS, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
+import { createShellShop, RETRY_AFTER_MS, splitQuoteFor, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices } from '../shell/shop/purchase'
 import type { ManaEvidence, ManaExecution } from '../shell/shop/manaEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -95,14 +98,15 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
   const chain = createFakeChain()
   if (opts.allowance != null) chain.allowances.set(`137:${BUYER}:${STORE}`, opts.allowance)
   // What the relay put on chain: each hash's target and signed input, as the chain would answer for it.
-  const txs = new Map<string, { to: string; input: Hex }>()
+  const txs = new Map<string, { to: string; input: Hex; from?: string }>()
   const relay = createFakeRelay({
     chain,
     confirm: 'success',
     onRelay: (hash, body) => {
       const [to, input] = (body as { transactionData: { params: [string, Hex] } }).transactionData.params
       // `foreignHash`: the relay answers the hash of some other transaction than the one it was given.
-      txs.set(hash.toLowerCase(), { to, input: onChain.foreignHash ? ('0xdeadbeef' as Hex) : input })
+      // `rewrite`: what mined at the hash is another call than the one signed.
+      txs.set(hash.toLowerCase(), { to, input: onChain.foreignHash ? ('0xdeadbeef' as Hex) : onChain.rewrite ? onChain.rewrite(input) : input })
       // `advancing`: it lands just past the latest finalized block read (its sale's checkpoint).
       if (opts.advancing) onChain.blocks.set(hash.toLowerCase(), onChain.head + 1n)
     }
@@ -123,6 +127,9 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
     /** Where the relay's transactions land: past the checkpoint, and final. */
     receiptBlock: 1050n,
     foreignHash: false,
+    /** The finalized block's time (unix seconds). */
+    chainTime: 0,
+    rewrite: null as ((input: Hex) => Hex) | null,
     /** Holds every finalized-block read after the first (the pre-dispatch checkpoint) until released. */
     hold: null as Promise<void> | null,
     finalizedReads: 0,
@@ -160,6 +167,8 @@ function world(opts: { gasless?: boolean; allowance?: bigint; walletChain?: numb
       return onChain.executions.filter((e) => e.blockNumber >= from && e.blockNumber <= to)
     },
     transaction: async (_c, hash) => txs.get(hash.toLowerCase()) ?? null,
+    // The finalized block's time (unix seconds): `chainTime`, the epoch unless a test moves it.
+    finalizedTime: async () => onChain.chainTime,
     receipt: async (_c, hash) => {
       const status = chain.receipts.get(hash.toLowerCase())
       return status ? { transactionHash: hash as Hex, status, blockNumber: onChain.blocks.get(hash.toLowerCase()) ?? onChain.receiptBlock } : null
@@ -197,12 +206,17 @@ function page(
     foreign?: boolean
     /** The page's own flag reading (a host's `__SHOP_FLAGS__`, else the flags file), not a stub. */
     liveFlag?: boolean
+    /** `dapps-shop-credits-mana-split` (off unless said). */
+    split?: boolean
     /** Who is signed in now (LOGIN by default). */
     login?: () => StoredLogin | null
+    /** Web Locks freed a moment after their release, as a real browser frees them (not at once). */
+    lateLocks?: boolean
   } = {}
 ) {
   const shown: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }[] = []
   const events: ShopOperationEvent[] = []
+  const locks = createFakeLocks(opts.lateLocks ? { freesAfterMs: 20 } : {})
   const manaReads: number[] = []
   let clock = 0
   const cents = opts.creditsCents ?? 7000
@@ -236,6 +250,8 @@ function page(
       now: () => w.clock.now,
       manaEvidence: () => w.evidence,
       ...(opts.liveFlag ? {} : { manaInWorld: () => opts.flag ?? true }),
+      creditsManaSplit: () => opts.split ?? false,
+      locks: () => locks,
       manaBalance: async (_buyer, chainId) => {
         manaReads.push(chainId)
         if (opts.manaBalance === 'fail') throw new Error('rpc down')
@@ -254,7 +270,7 @@ function page(
     await open()
     ;(await until('method')).handlers.onPay?.('mana')
   }
-  return { shell, shown, events, manaReads, until, open, payMana }
+  return { shell, shown, events, manaReads, until, open, payMana, locks }
 }
 
 const relayedTo = (w: World) => w.relay.posts.map((p) => String((p as { transactionData: { params: unknown[] } }).transactionData.params[0]).toLowerCase())
@@ -409,6 +425,1541 @@ describe('the in-world purchase with MANA', () => {
       // The Credits path runs as before (it asks the Shop for a credit), and nothing reaches MANA's rails.
       await vi.waitFor(() => expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(true))
       expect(relayedTo(w)).not.toContain(MANA)
+    })
+  })
+
+  describe('Credits and MANA together (one item)', () => {
+    // `dapps-shop-credits-mana-split` on for the page (its own service); off unless a test turns it on.
+    let splitOn = false
+    afterEach(() => {
+      splitOn = false
+      // An exact approval's record and a split's shared hold (any tab's, in localStorage) never carry over to the next test.
+      for (const key of Object.keys(localStorage)) if (key.startsWith('dcl-shop-exact-grant') || key.startsWith('dcl-shop-buynow-split')) localStorage.removeItem(key)
+    })
+    const on = () => (splitOn = true)
+
+    it('splits whole credits from the balance and MANA for the rest, rounded up, as the web Shop does', () => {
+      // 1,000 cents for 100 MANA; 370 cents held: 37 credits (370 cents) pay, and 630 cents' worth, 63 MANA, the rest.
+      const MANA_WEI = 10n ** 18n
+      expect(splitQuoteFor(1000 as UsdCents, 375 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toEqual({ creditsCents: 370, credits: 37, manaWei: 63n * MANA_WEI })
+      // A third of a wei is still owed: rounded up, never down.
+      expect(splitQuoteFor(300 as UsdCents, 100 as UsdCents, 1000n as never, 10_000n)?.manaWei).toBe(667n)
+      // None when the balance holds no whole credit, covers the price, or the MANA can't pay the rest.
+      expect(splitQuoteFor(1000 as UsdCents, 9 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
+      expect(splitQuoteFor(1000 as UsdCents, 1000 as UsdCents, (100n * MANA_WEI) as never, 100n * MANA_WEI)).toBeNull()
+      expect(splitQuoteFor(1000 as UsdCents, 370 as UsdCents, (100n * MANA_WEI) as never, 63n * MANA_WEI - 1n)).toBeNull()
+    })
+
+    it('offers both together when the Credits are short of one item and MANA pays the rest', async () => {
+      on()
+      const w = world()
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ step: 'method', credits: { price: 12, balance: 5, pays: false }, mana: { pays: true }, split: { credits: 5 } })
+      const mana = (view as { split: { mana: bigint } }).split.mana
+      expect(mana > 0n && mana < BigInt(PRICE)).toBe(true)
+    })
+
+    it('offers them together even where MANA alone can’t pay, and Insufficient Funds where it can’t pay the rest either', async () => {
+      on()
+      const p = page(world(), { split: splitOn, creditsCents: 50, manaBalance: (3n * WEI) / 2n })
+      await p.open()
+      const { view } = await p.until('method')
+      expect(view).toMatchObject({ credits: { pays: false }, mana: { pays: false }, split: { credits: 5 } })
+      const short = page(world(), { split: splitOn, creditsCents: 50, manaBalance: WEI })
+      await short.open()
+      expect((await short.until('insufficient')).view).not.toHaveProperty('split')
+    })
+
+    it('isn’t offered while the rule is off, for a cart, or for an in-app wallet', async () => {
+      const off = page(world(), { split: splitOn, creditsCents: 50 })
+      await off.open()
+      expect((await off.until('method')).view).not.toHaveProperty('split')
+      on()
+      const cart = page(world(), { split: splitOn, creditsCents: 50 })
+      await cart.open(true)
+      expect((await cart.until('method')).view).not.toHaveProperty('split')
+      const managed = page(world(), { split: splitOn, creditsCents: 50, kind: 'managed' })
+      await managed.open()
+      await managed.until('insufficient')
+    })
+
+    // The book's Polygon CreditsManager: the credit names it, and the rails encode for it alone.
+    const MANAGER = '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5'
+    const managed = { manager: (chainId: number) => ({ chainId, address: MANAGER, name: 'Decentraland Credits', version: '1.0.0' }) } as Partial<ShellShopServices>
+    /** The node signs exactly the share the split asks for: floor(P * part / quote), P the store's price. */
+    /** A watch's wait that moves the page's clock 16 minutes, six times at most; then it waits for good (no endless loop). */
+    const boundedSleep = (w: World) => {
+      let left = 6
+      return () => (left-- > 0 ? Promise.resolve(void (w.clock.now += 16 * 60_000)) : new Promise<void>(() => {}))
+    }
+    /** `expiresAt` (unix seconds): when the issued credit stops being spendable; by default 15 minutes from now (real time). */
+    const splitShop = (w: World, credit: (share: bigint) => bigint = (x) => x, expiresAt?: number) =>
+      (w.shop = createFakeShop({
+        authorizeCreditBatch: ({ body }) => {
+          const [line] = (body as { items: { usdPriceCents: number; creditsCents?: number }[] }).items
+          const share = (BigInt(PRICE) * BigInt(line.creditsCents ?? 0)) / BigInt(line.usdPriceCents)
+          const value = credit(share).toString()
+          const answer = batchAuthorization([line])
+          return { ...answer, credit: { ...answer.credit, amount: value, availableAmount: value, ...(expiresAt != null ? { expiresAt } : {}) }, maxCreditedValue: value }
+        },
+        cancelCreditAuthorizations: ({ body }) => ({ released: (body as { salts: string[] }).salts.length, retired: 0, spendableAtSeconds: null }),
+        reportCreditSubmission: () => ({ recorded: 1 })
+      }))
+    const useCreditsOf = (body: unknown) => {
+      const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data })
+      return decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args[0] as { maxCreditedValue: bigint; maxUncreditedValue: bigint }
+    }
+    const approvalOf = (body: unknown) => {
+      const data = (body as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      const meta = decodeFunctionData({ abi: parseAbi(['function executeMetaTransaction(address userAddress, bytes functionSignature, bytes32 sigR, bytes32 sigS, uint8 sigV) payable returns (bytes)']), data })
+      return decodeFunctionData({ abi: parseAbi(['function approve(address spender, uint256 amount)']), data: meta.args[1] as Hex }).args
+    }
+
+    it('pays with both: Authorize MANA for exactly the gap to the Credits manager, then one useCredits with the credit and the gap', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      const method = await p.until('method')
+      const gap = (method.view as { split: { mana: bigint } }).split.mana
+      method.handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      expect(auth.view).toMatchObject({ step: 'authorize', venue: 'Decentraland Credits', required: gap })
+      auth.handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
+      const [spender, amount] = approvalOf(w.relay.posts[0])
+      expect([spender.toLowerCase(), amount]).toEqual([MANAGER, gap])
+      const authorized = w.shop.log.find((q) => q.name === 'authorizeCreditBatch')!
+      expect(authorized.body).toMatchObject({ items: [{ creditsCents: 50 }] })
+      expect(useCreditsOf(w.relay.posts[1])).toEqual(expect.objectContaining({ maxCreditedValue: BigInt(PRICE) - gap, maxUncreditedValue: gap }))
+      expect(w.wallet.sent).toHaveLength(0)
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
+    })
+
+    it('completes with Web Locks the browser frees a moment after their release, from the approval to the sale', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed, lateLocks: true })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
+      expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' })
+    })
+
+    it('reads the terms anew when the balance fell short before anything was reserved, never offering the old split', async () => {
+      on()
+      const w = world()
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The balance read for the terms holds 50 cents; by the authorization it holds 20, and every read after says so.
+      let cents = 50
+      const p = page(w, { split: splitOn, creditsBalance: async () => ({ balanceCents: cents as UsdCents, credits: cents / 10 }), services: managed })
+      w.shop = createFakeShop({
+        authorizeCreditBatch: () => {
+          cents = 20
+          return { status: 402, body: { error: 'insufficient', balanceCents: 20, requiredCents: 50 } }
+        }
+      })
+      await p.open()
+      const first = await p.until('method')
+      expect((first.view as { split: { credits: number } }).split.credits).toBe(5)
+      first.handlers.onPay?.('split')
+      // A fresh look at the terms: the split at 2 credits, not the 5 the balance no longer holds.
+      await vi.waitFor(() => expect(p.shown.filter((s) => s.view.step === 'method')).toHaveLength(2))
+      const again = p.shown.at(-1)!
+      expect((again.view as { split: { credits: number } }).split.credits).toBe(2)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('says when the approval didn\'t take effect, as the approval says it, and AUTHORIZE signs anew', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const relay = w.relay.fetchImpl
+      let first = true
+      // The first approve runs (its nonce is spent) but the allowance stays short: another call took it, or it didn't take.
+      w.relay.fetchImpl = (async (...args: Parameters<typeof relay>) => {
+        const answer = await relay(...args)
+        if (first) {
+          first = false
+          w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, 0n)
+        }
+        return answer
+      }) as typeof relay
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: "The approval didn't take effect. Try again." }))
+      p.shown.at(-1)!.handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANA, MANAGER])
+    })
+
+    it('says an approval signed but cancelled before it went out as cancelled, never as declined in the wallet', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      let who: StoredLogin | null = LOGIN
+      const original = w.wallet.request.bind(w.wallet)
+      // The wallet signs; the session ends before the approve is recorded or sent.
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        const answer = await original(args)
+        if (args.method === 'eth_signTypedData_v4') who = null
+        return answer
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed, login: () => who })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: 'The approval was cancelled, so nothing was sent.' }))
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('offers the same split again when the node refused the balance but every read of it still covers its part, sending nothing', async () => {
+      on()
+      const w = world()
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The balance read says 50 cents, before and after; the node says it doesn't cover the part.
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      w.shop = createFakeShop({ authorizeCreditBatch: () => ({ status: 402, body: { error: 'insufficient', balanceCents: 20, requiredCents: 50 } }) })
+      await p.open()
+      const first = await p.until('method')
+      first.handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.shown.filter((s) => s.view.step === 'method')).toHaveLength(2))
+      expect((p.shown.at(-1)!.view as { split: { credits: number } }).split.credits).toBe((first.view as { split: { credits: number } }).split.credits)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('asks no authorization when the allowance already covers the gap', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+      expect(p.shown.some((s) => s.view.step === 'authorize')).toBe(false)
+      expect(relayedTo(w)).toEqual([MANAGER])
+    })
+
+    it('sends no approval when the buyer cancels while the wallet signs it, and reserves nothing', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const original = w.wallet.request.bind(w.wallet)
+      let sign: () => void = () => {}
+      const held = new Promise<void>((r) => (sign = r))
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === 'eth_signTypedData_v4') await held
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      const asking = await p.until('wallet')
+      asking.handlers.onClose()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      sign()
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      // No grant was kept for the cancelled signature: nothing to resend, nothing holding the next approval back.
+      expect(Object.keys(localStorage).some((k) => k.startsWith('dcl-shop-exact-grant'))).toBe(false)
+      w.wallet.request = original as typeof w.wallet.request
+      const before = p.shown.length
+      await p.open()
+      await vi.waitFor(() => expect(p.shown.slice(before).some((s) => s.view.step === 'method')).toBe(true))
+      p.shown.slice(before).find((s) => s.view.step === 'method')!.handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.shown.slice(before).some((s) => s.view.step === 'authorize')).toBe(true))
+      p.shown.slice(before).find((s) => s.view.step === 'authorize')!.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      // A fresh approval, signed anew: the cancelled one was never sent.
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
+    })
+
+    it('reserves nothing when the buyer cancels Authorize MANA', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onClose()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('refuses before reserving when the price moved past the MANA the buyer confirmed', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      let price = PRICE
+      const p = page(w, { split: splitOn, creditsCents: 50, priceWei: () => price, services: managed })
+      await p.open()
+      const method = await p.until('method')
+      price = (BigInt(PRICE) * 2n).toString()
+      method.handlers.onPay?.('split')
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ message: expect.stringContaining('price changed') })
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('refuses a credit that isn\'t its share before anything is signed, and releases it', async () => {
+      on()
+      const w = world()
+      splitShop(w, (share) => share + 1n)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('failed')
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(true)
+    })
+
+    it('keeps a sent split pending, its credit held, when its receipt can\'t be read', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const abort = async () => Promise.reject(new DOMException('The read was aborted.', 'AbortError'))
+      const aborted = { ...w.chain, receipt: abort }
+      // Every read of its outcome fails, the evidence's too: nothing says what became of it.
+      const unread = { ...w.evidence, receipt: abort, transaction: abort }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, reader: () => aborted as never, manaEvidence: () => unread as never } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      expect(w.relay.posts).toHaveLength(1)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+    })
+
+    /** The node's record of the split's credit: spent in the transaction `txHash` (SETTLED). */
+    const settledIn = (txHash: () => string | undefined) => ({
+      creditRecordOf: async () => {
+        const hash = txHash()
+        return hash ? ({ id: `0x${'a1'.repeat(32)}:0`, tradeId: null, contractAddress: null, itemId: null, registeredName: null, usdCents: 50, credits: 5, status: 'SETTLED', createdAt: 0, manaSettledWei: null, txHash: hash, submittedTxHash: null } as const) : null
+      }
+    })
+
+    it('never takes a successful receipt for a hash that isn\'t its sale as bought', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The relay answers the hash of some other transaction than the one it was given.
+      w.onChain.foreignHash = true
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it.each([
+      ['by the buyer, of another gap (its credit spent elsewhere)', BUYER, 1n],
+      ['by another account (not its sale, nor its credit)', `0x${'cc'.repeat(20)}`, 0n]
+    ])('never takes a confirmed useCredits %s at its hash as bought, nor keeps that hash as its own', async (_, by, extraGap) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // What mined at the hash the relay answered is a successful useCredits, but not this sale.
+      w.onChain.rewrite = (input) => {
+        const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: input })
+        const [args] = decodeFunctionData({ abi: CREDITS_MANAGER_ABI, data: meta.args[1] as Hex }).args as unknown as [UseCreditsArgs]
+        return encodeExecuteMetaTransaction('functionData', by, encodeUseCredits({ ...args, maxUncreditedValue: args.maxUncreditedValue + extraGap }), `0x${'33'.repeat(65)}` as Hex)
+      }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      // Pending with no hash of its own: another call's success is never what it is watched or published by.
+      const other = [...w.txs.keys()][0]!
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending', txHash: null })
+      expect(createLedger(() => w.storage).load(BUYER).every((r) => r.txHash !== other)).toBe(true)
+    })
+
+    it('reads a hash it found to be another transaction no more: its next check goes to the node\'s record of its credit', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // Another account's useCredits mined at the hash the relay answered.
+      w.onChain.rewrite = (input) => {
+        const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: input })
+        return encodeExecuteMetaTransaction('functionData', `0x${'cc'.repeat(20)}`, meta.args[1] as Hex, `0x${'33'.repeat(65)}` as Hex)
+      }
+      const reads: string[] = []
+      const evidence = { ...w.evidence, transaction: async (c: number, h: string) => (reads.push(h.toLowerCase()), w.evidence.transaction(c, h)) }
+      let records = 0
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, creditRecordOf: async () => (records++, null) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      // The check that follows the live outcome reads the node's record of the credit, not that hash again.
+      await vi.waitFor(() => expect(records).toBeGreaterThan(0))
+      const foreign = [...w.txs.keys()][0]!
+      expect(reads.filter((h) => h === foreign)).toHaveLength(1)
+      expect(p.events.some((e) => e.state === 'succeeded' || e.state === 'failed')).toBe(false)
+    })
+
+    it('finds a sale whose answer was lost by the transaction the node indexed its credit in, and completes it', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => [...w.txs.keys()][0]) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      expect(w.relay.posts).toHaveLength(1)
+    })
+
+    it('neither completes nor gives back a credit the node says another call spent', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      // The same credit, spent in a successful transaction for another item.
+      const elsewhere = `0x${'f'.repeat(63)}1`
+      const share = (BigInt(PRICE) * 50n) / 120n
+      const otherCall = buildStoreUseCreditsArgs(STORE, [{ collection: BOOK.collection, itemId: '8', priceWei: PRICE }], BUYER, [{ id: `0x${'a1'.repeat(32)}`, amount: share.toString(), availableAmount: share.toString(), expiresAt: Math.floor(Date.now() / 1000) + 900, signature: `0x${'cc'.repeat(65)}`, contract: MANAGER }], share.toString(), { maxUncreditedValue: BigInt(PRICE) - share })
+      w.txs.set(elsewhere, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', BUYER, encodeUseCredits(otherCall), `0x${'11'.repeat(65)}` as Hex) })
+      w.chain.receipts.set(elsewhere, 'success')
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => elsewhere) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    // The item's line in the hold the web Shop and /play share, as both compute it for this listing.
+    const HOLD_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, String(ITEM)))
+    const webHold = { at: Date.now(), attempt: 'web-attempt', txHash: null, chainId: 137, creditId: `0x${'d4'.repeat(32)}`, creditExpiresAt: Math.floor(Date.now() / 1000) + 900 }
+
+    it('waits on a split the web Shop left unanswered for this item: no credit asked, nothing sent', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const failed = await p.until('failed')
+      expect(failed.view).toMatchObject({ message: expect.stringContaining('still confirming') })
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+      // The web's record stays as it was.
+      expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ attempt: 'web-attempt' })
+    })
+
+    // Another item of the buyer's, and a web Shop split of it whose credit can still be spent (it may still pull the allowance).
+    const OTHER_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, '8'))
+    const otherHold = { ...webHold, attempt: 'other-web-attempt', creditId: `0x${'d5'.repeat(32)}` }
+    const authorizeShown = (p: ReturnType<typeof page>) => p.shown.some((s) => s.view.step === 'authorize')
+
+    it('asks for no approval while this item is held, and says so before anything is asked', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('this item with Credits and MANA is still confirming') })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('asks for no approval while another window runs one for this account', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      p.locks.held.add(exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER))
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('in progress in another window') })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('starts no split while another item\'s split may still spend the allowance, asking for nothing', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      expect(writeSplitHold(BUYER, OTHER_LINE, otherHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA is still confirming') })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+    })
+
+    it('names the other item when its record does, and says it generically when the record is from before names were kept', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, itemName: 'Neon Visor' })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: "Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here." })
+      expect(authorizeShown(p)).toBe(false)
+      // A record with no name: the generic notice.
+      localStorage.setItem(splitHoldKey(BUYER, OTHER_LINE), JSON.stringify(otherHold))
+      const again = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await again.open()
+      ;(await again.until('method')).handlers.onPay?.('split')
+      expect((await again.until('failed')).view).toMatchObject({ message: "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here." })
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('names an item whose record names it over one whose record doesn\'t, whichever comes first', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      // An older record with no name first, then one that names its item.
+      expect(writeSplitHold(BUYER, OTHER_LINE, otherHold)).toBe(true)
+      const named = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, '9'))
+      expect(writeSplitHold(BUYER, named, { ...otherHold, attempt: 'named-attempt', creditId: `0x${'d6'.repeat(32)}`, itemName: 'Neon Visor' })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Your purchase of Neon Visor') })
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('reads a record whose item name is not text as one it can\'t read: nothing asked', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      localStorage.setItem(splitHoldKey(BUYER, OTHER_LINE), JSON.stringify({ ...otherHold, itemName: 42 }))
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining("can't read your other purchases") })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('starts no split over another item\'s even where the allowance already covers the gap', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      // The other split's approval, not yet spent: this sale would spend it.
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      expect(writeSplitHold(BUYER, OTHER_LINE, otherHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('sends no approval when another item\'s split starts while the wallet signs it, and says why', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const original = w.wallet.request.bind(w.wallet)
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        // Another tab's split of another item hands off meanwhile.
+        if (args.method === 'eth_signTypedData_v4') writeSplitHold(BUYER, OTHER_LINE, otherHold)
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('Another purchase with Credits and MANA') }))
+      expect(w.relay.posts).toHaveLength(0)
+      expect(Object.keys(localStorage).some((k) => k.startsWith('dcl-shop-exact-grant'))).toBe(false)
+    })
+
+    it('says what stopped each AUTHORIZE: one held back, then one declined, never the first one\'s reason again', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const original = w.wallet.request.bind(w.wallet)
+      let first = true
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        // The first time the wallet signs, another tab's split of another item hands off.
+        if (args.method === 'eth_signTypedData_v4' && first) {
+          first = false
+          writeSplitHold(BUYER, OTHER_LINE, otherHold)
+        }
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('Another purchase with Credits and MANA') }))
+      // That split is found out; the buyer tries again and declines in the wallet.
+      localStorage.removeItem(splitHoldKey(BUYER, OTHER_LINE))
+      w.wallet.next = 'reject'
+      p.shown.at(-1)!.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: 'You declined the authorization in your wallet.' }))
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('hands off no sale when another item\'s split started after the approval, checked again under the approval\'s lock', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const relay = w.relay.fetchImpl
+      // Once the approve has gone, another tab's split of another item hands off before this sale takes the lock.
+      w.relay.fetchImpl = (async (...args: Parameters<typeof relay>) => {
+        const answer = await relay(...args)
+        writeSplitHold(BUYER, OTHER_LINE, otherHold)
+        return answer
+      }) as typeof relay
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(relayedTo(w)).toEqual([MANA])
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+    })
+
+    it('asks for no approval while this item is held by another tab, even where that hold\'s credit is proven expired', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      // Its credit expired at 500 s and the chain (600 s) would prove it: that unblocks another item, never this one, so the
+      // chain isn't even asked about it.
+      w.onChain.chainTime = 600
+      const finalizedTime = w.evidence.finalizedTime
+      let asked = 0
+      w.evidence.finalizedTime = (chainId: number) => (asked++, finalizedTime(chainId))
+      const held = { ...webHold, creditExpiresAt: 500 }
+      expect(writeSplitHold(BUYER, HOLD_LINE, held)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('this item with Credits and MANA is still confirming') })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toMatchObject({ attempt: 'web-attempt', creditExpiresAt: 500 })
+      expect(asked).toBe(0)
+    })
+
+    it('sends no approval when this item gets held while the wallet signs, even by a hold whose credit is proven expired', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.onChain.chainTime = 600
+      const original = w.wallet.request.bind(w.wallet)
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === 'eth_signTypedData_v4') writeSplitHold(BUYER, HOLD_LINE, { ...webHold, creditExpiresAt: 500 })
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('this item with Credits and MANA is still confirming') }))
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('holds the split when another item\'s hold has a field of the wrong type, as a record it can\'t read', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      // An older hold whose credit id was kept as a number: not a hold this page can read, so nothing proves it can't spend.
+      localStorage.setItem(splitHoldKey(BUYER, OTHER_LINE), JSON.stringify({ ...otherHold, creditId: 12345 }))
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('can\'t read your other purchases with Credits and MANA') })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('sends no approval when this item gets held while AUTHORIZE waits, and leaves that hold as it is', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      // Another tab's split of this very item hands off before the buyer confirms.
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      auth.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('this item with Credits and MANA is still confirming') }))
+      expect(w.relay.posts).toHaveLength(0)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toMatchObject({ attempt: 'web-attempt', creditId: webHold.creditId })
+    })
+
+    it.each([
+      ['its record can\'t be read', 'throws'],
+      ['its record isn\'t a hold\'s', 'garbage']
+    ] as const)('holds the split when another item\'s hold is there but %s: nothing asked or sent', async (_, kind) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const key = splitHoldKey(BUYER, OTHER_LINE)
+      if (kind === 'garbage') localStorage.setItem(key, JSON.stringify({ not: 'a hold' }))
+      else expect(writeSplitHold(BUYER, OTHER_LINE, otherHold)).toBe(true)
+      const getItem = Storage.prototype.getItem
+      const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, k: string) {
+        if (kind === 'throws' && k === key) throw new Error('storage read failed')
+        return getItem.call(this, k)
+      })
+      try {
+        const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+        await p.open()
+        ;(await p.until('method')).handlers.onPay?.('split')
+        expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('can\'t read your other purchases with Credits and MANA') })
+        expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+        expect(w.relay.posts).toHaveLength(0)
+      } finally {
+        spy.mockRestore()
+        localStorage.removeItem(key)
+      }
+    })
+
+    it.each([
+      ['its credit\'s expiry isn\'t known', { creditExpiresAt: null }, 0],
+      ['only this device\'s clock is past its expiry, not the chain', { creditExpiresAt: 500 }, 400]
+    ] as const)('keeps holding a split while another item\'s may still spend: %s', async (_, over, chainTime) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.onChain.chainTime = chainTime
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, ...over })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('asks, reads and sends nothing when the buyer cancels while AUTHORIZE waits for the approval\'s lock, and lets it go', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      let reads = 0
+      const reader = { ...w.chain, call: async (...a: Parameters<typeof w.chain.call>) => (reads++, w.chain.call(...a)) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, reader: () => reader } })
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      // Another window takes the approval's lock just before the click; the buyer cancels while this one waits for it.
+      p.locks.held.add(grantLock)
+      auth.handlers.onAuthorize?.()
+      p.shown.at(-1)!.handlers.onClose()
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      const readsAtCancel = reads
+      // That window lets it go while this one still asks for it.
+      p.locks.held.delete(grantLock)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(reads).toBe(readsAtCancel)
+      expect(w.relay.posts).toHaveLength(0)
+      expect(p.locks.held.has(grantLock)).toBe(false)
+    })
+
+    it('ends the purchase, reading and sending nothing, when the session changes while AUTHORIZE waits for the approval\'s lock', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      let reads = 0
+      const reader = { ...w.chain, call: async (...a: Parameters<typeof w.chain.call>) => (reads++, w.chain.call(...a)) }
+      let who: StoredLogin | null = LOGIN
+      const p = page(w, { split: splitOn, creditsCents: 50, login: () => who, services: { ...managed, reader: () => reader } })
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      const auth = await p.until('authorize')
+      // Another window takes the approval's lock just before the click; the buyer signs out while this one waits for it.
+      p.locks.held.add(grantLock)
+      auth.handlers.onAuthorize?.()
+      who = null
+      const readsAtSignOut = reads
+      p.locks.held.delete(grantLock)
+      // The purchase doesn't stay waiting: it ends, cancelled, and its lock is let go.
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'cancelled' }))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(reads).toBe(readsAtSignOut)
+      expect(w.relay.posts).toHaveLength(0)
+      expect(p.locks.held.has(grantLock)).toBe(false)
+    })
+
+    it('keeps the approval\'s lock from AUTHORIZE\'s click to the sale\'s hand-off: taken once, held as the sale goes out', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      let taken = 0
+      const request = p.locks.request.bind(p.locks) as (...args: unknown[]) => Promise<unknown>
+      ;(p.locks as { request: unknown }).request = (name: string, ...rest: unknown[]) => {
+        if (name === grantLock) taken++
+        return request(name, ...rest)
+      }
+      const relay = w.relay.fetchImpl
+      const heldAtSale: boolean[] = []
+      w.relay.fetchImpl = (async (...args: Parameters<typeof relay>) => {
+        const target = String((JSON.parse(String(args[1]?.body)) as { transactionData: { params: [string] } }).transactionData.params[0]).toLowerCase()
+        if (target === MANAGER) heldAtSale.push(p.locks.held.has(grantLock))
+        return relay(...args)
+      }) as typeof relay
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANAGER])
+      // One hold of the lock for the approval and the sale: no moment between them where another split could start.
+      expect(taken).toBe(1)
+      expect(heldAtSale).toEqual([true])
+      expect(p.locks.held.has(grantLock)).toBe(false)
+    })
+
+    it('reads the chain only before taking the approval\'s lock', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      // Another item's split whose credit expired (500 s): the page's clock (1,000 s) says to ask the chain, which proves it.
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, creditExpiresAt: 500 })).toBe(true)
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      const lockedAtRead: boolean[] = []
+      let held: () => boolean = () => false
+      const evidence = { ...w.evidence, finalizedTime: async () => (lockedAtRead.push(held()), 600) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never } })
+      held = () => p.locks.held.has(grantLock)
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await p.until('success')
+      expect(lockedAtRead.length).toBeGreaterThan(0)
+      expect(lockedAtRead.every((locked) => !locked)).toBe(true)
+    })
+
+    it('never reads the chain under the approval\'s lock, even for a split that shows up after the approval: it holds the sale', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const relay = w.relay.fetchImpl
+      // Once the approve has gone, another tab's split of another item shows up, past its expiry by this page's clock.
+      w.relay.fetchImpl = (async (...args: Parameters<typeof relay>) => {
+        const answer = await relay(...args)
+        writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, creditExpiresAt: 500 })
+        return answer
+      }) as typeof relay
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      const lockedAtRead: boolean[] = []
+      let held: () => boolean = () => false
+      // The chain would prove it (600 s): asking under the lock is what must not happen, so it isn't proven and holds.
+      const evidence = { ...w.evidence, finalizedTime: async () => (lockedAtRead.push(held()), 600) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never } })
+      held = () => p.locks.held.has(grantLock)
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(lockedAtRead.filter((locked) => locked)).toEqual([])
+      expect(relayedTo(w)).toEqual([MANA])
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+    })
+
+    it('isn\'t held by another item\'s split that can\'t spend anything any more: its credit expired, or its purchase here is over', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const THIRD_LINE = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, '9'))
+      // Its credit expired at 500 s: the page's clock (1,000 s) says it's worth asking, and the chain's finalized time (600 s)
+      // proves it can't be spent any more.
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, creditExpiresAt: 500 })).toBe(true)
+      w.onChain.chainTime = 600
+      const finalizedTime = w.evidence.finalizedTime
+      let asked = 0
+      w.evidence.finalizedTime = (chainId: number) => (asked++, finalizedTime(chainId))
+      // A finished purchase of this page's whose hold on its item stayed.
+      const ledger = createLedger(() => w.storage)
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e6'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: THIRD_LINE, attempt: 'over' } }
+      expect(ledger.save({ id: 'abcdef01-0003', buyer: BUYER, items: [{ contract: CONTRACT, itemId: '9', quantity: 1 }], state: 'succeeded', createdAt: 1, updatedAt: 2, split: sale })).toBe(true)
+      expect(writeSplitHold(BUYER, THIRD_LINE, { ...otherHold, attempt: 'over', creditId: sale.creditId })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+      // The expired credit was let go by the chain's proof, not by this page's clock alone.
+      expect(asked).toBeGreaterThan(0)
+    })
+
+    it('leaves an unanswered split held for the web Shop too, and clears its hold once it is bought', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      // The node lists nothing yet: the sale stays unknown.
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      const held = readSplitHold(BUYER, HOLD_LINE)
+      // With the item's name, so a purchase of another item this one holds back can say which item to check.
+      expect(held).toMatchObject({ creditId: `0x${'a1'.repeat(32)}`, itemName: 'Golden Armour' })
+      // What the web Shop's Buy finds: this item is held.
+      expect(await claimSplitHold(createFakeLocks(), BUYER, HOLD_LINE)).toMatchObject({ kind: 'held' })
+    })
+
+    it('clears its own hold once its sale is bought', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it('keeps its credit and hold when the relay answers someone else\'s reverted transaction', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.onChain.foreignHash = true
+      w.relay.state.confirm = 'reverted'
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
+      expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+    })
+
+    it('keeps an own-reverted split held, its credit and hold kept, while the node lists nothing of its credit', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+      expect(readSplitHold(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+    })
+
+    it.each([
+      ['PENDING', 'PENDING' as const],
+      ['not yet listed', null]
+    ])('waits on an own revert while its credit reads %s, and completes once the node settles it in a replay that is this sale', async (_, first) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const B = `0x${'c'.repeat(63)}4`
+      const evidence = {
+        ...w.evidence,
+        transaction: async (c: number, h: string) => (h === B ? resigned(w) : w.evidence.transaction(c, h)),
+        receipt: async (c: number, h: string) => (h === B ? { transactionHash: h as Hex, status: 'success' as const, blockNumber: 1n } : w.evidence.receipt(c, h))
+      }
+      let reads = 0
+      const creditRecordOf = async () => (reads++ === 0 ? (first ? { ...record('SETTLED', null), status: first } : null) : record('SETTLED', B))
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, creditRecordOf: creditRecordOf as never } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: B }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(w.relay.posts).toHaveLength(1)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it('keeps an own revert\'s expiry clock through a history it couldn\'t read: it ends once that expiry has held long enough', async () => {
+      on()
+      const w = world()
+      // The credit's own expiry (500 s) is already past by the page's clock (1,000 s), and the chain's finalized time (600 s)
+      // proves it.
+      splitShop(w, undefined, 500)
+      w.onChain.chainTime = 600
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      // EXPIRED, then a read that fails, then EXPIRED again: the clock from the first read still counts.
+      let calls = 0
+      const creditRecordOf = async () => {
+        if (calls++ === 1) throw new Error('upstream unavailable')
+        return record('EXPIRED', null)
+      }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: creditRecordOf as never, sleep: boundedSleep(w) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(calls).toBe(3)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('ends an own-reverted split unbought once its credit reads expired unspent past the index\'s lag', async () => {
+      on()
+      const w = world()
+      // The credit's own expiry, by the page's clock (it starts at 1,000 s), passes with the first wait, and the chain's
+      // finalized time (2,000 s) proves it.
+      splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 2_000
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: { ...managed, creditRecordOf: async () => record('EXPIRED', null), sleep: boundedSleep(w) }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull()
+    })
+
+    it.each([
+      ['after its own revert', 'reverted', undefined, 0],
+      ['with its own hash gone', 'none', undefined, 0],
+      // Past its expiry by this device's clock after the first wait, never by the chain's finalized time.
+      ['with only this device\'s clock past its expiry', 'reverted', 1_500, 1_000]
+    ] as const)('doesn\'t believe EXPIRED before its credit\'s own expiry is proven, %s: held, and the grace doesn\'t start', async (_, confirm, expiresAt, chainTime) => {
+      on()
+      const w = world()
+      // By default the credit stays spendable for the whole test by the page's clock.
+      splitShop(w, undefined, expiresAt)
+      w.onChain.chainTime = chainTime
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = confirm
+      let reads = 0
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        // Each wait moves the clock 16 minutes, well past the grace, four times; then the watch waits for good. A lost hash
+        // reads as nothing (losingA), so the node's record decides.
+        services: {
+          ...managed,
+          ...(confirm === 'none' ? { manaEvidence: () => losingA(w) as never } : {}),
+          creditRecordOf: async () => (reads++, record('EXPIRED', null)),
+          sleep: () => (reads > 4 ? new Promise<void>(() => {}) : Promise.resolve(void (w.clock.now += 16 * 60_000)))
+        }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(4), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+      expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('can buy again on the same page after a purchase stopped while it was prepared', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      expect(writeSplitHold(BUYER, HOLD_LINE, webHold)).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('failed')).handlers.onClose()
+      localStorage.removeItem(splitHoldKey(BUYER, HOLD_LINE))
+      const before = p.shown.length
+      await p.open()
+      await vi.waitFor(() => expect(p.shown.slice(before).some((s) => s.view.step === 'method')).toBe(true))
+      p.shown.slice(before).find((s) => s.view.step === 'method')!.handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+    })
+
+    /** Evidence that never finds the hash the relay answered (A): it was dropped, or never existed. */
+    const losingA = (w: World, B?: string) => ({
+      ...w.evidence,
+      transaction: async (_c: number, h: string) => (B && h === B ? (w.txs.get([...w.txs.keys()][0]!) ?? null) : null),
+      receipt: async (_c: number, h: string) => (B && h === B ? { transactionHash: h as Hex, status: 'success' as const, blockNumber: 1n } : null)
+    })
+    const record = (status: 'SETTLED' | 'EXPIRED', txHash: string | null) =>
+      ({ id: `0x${'a1'.repeat(32)}:0`, tradeId: null, contractAddress: null, itemId: null, registeredName: null, usdCents: 50, credits: 5, status, createdAt: 0, manaSettledWei: null, txHash, submittedTxHash: null }) as const
+
+    it('completes from the node when its own hash is gone, by the indexed transaction that is this sale', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const B = `0x${'b'.repeat(63)}2`
+      // Found out right after its sale let the item's lock go, which the browser frees a moment later.
+      const p = page(w, { split: splitOn, creditsCents: 50, lateLocks: true, services: { ...managed, manaEvidence: () => losingA(w, B) as never, creditRecordOf: async () => record('SETTLED', B) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded' }), { timeout: 5000 })
+      await vi.waitFor(() => expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull())
+    })
+
+    it('ends unbought when its own hash is gone and the node says its credit expired unspent, past the index\'s lag', async () => {
+      on()
+      const w = world()
+      splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 2_000
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: { ...managed, manaEvidence: () => losingA(w) as never, creditRecordOf: async () => record('EXPIRED', null), sleep: boundedSleep(w) }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+    })
+
+    it.each([
+      ['gone', 'gone'],
+      ['unreadable', 'throws']
+    ] as const)('ends an expired split by the expiry kept with its sale when its hold is %s, once the chain proves it and the grace has run', async (_, hold) => {
+      on()
+      const w = world()
+      splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 2_000
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const key = splitHoldKey(BUYER, HOLD_LINE)
+      const getItem = Storage.prototype.getItem
+      // From the first look at the node's record, the shared hold can't tell anything: removed, or every read of it fails.
+      const lose = () => {
+        if (hold === 'gone') localStorage.removeItem(key)
+        else
+          vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, k: string) {
+            if (k === key) throw new Error('storage read failed')
+            return getItem.call(this, k)
+          })
+      }
+      let lost = false
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: {
+          ...managed,
+          manaEvidence: () => losingA(w) as never,
+          creditRecordOf: async () => {
+            if (!lost) (lost = true), lose()
+            return record('EXPIRED', null)
+          },
+          sleep: boundedSleep(w)
+        }
+      })
+      try {
+        await p.open()
+        ;(await p.until('method')).handlers.onPay?.('split')
+        await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+        expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      } finally {
+        vi.restoreAllMocks()
+      }
+    })
+
+    it('keeps an older record\'s split pending, its expiry its own record never kept and no hold to say it, however long EXPIRED', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.onChain.chainTime = 4_000_000_000
+      // A purchase recorded by a build that didn't keep the credit's expiry with its sale, its hold gone.
+      const ledger = createLedger(() => w.storage)
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e8'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: HOLD_LINE, attempt: 'older' } }
+      const hash = `0x${'f1'.repeat(32)}`
+      expect(ledger.save({ id: 'abcdef01-0005', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'pending', createdAt: 1, updatedAt: 2, txHash: hash, split: sale })).toBe(true)
+      let reads = 0
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: { ...managed, creditRecordOf: async () => (reads++, record('EXPIRED', null)), sleep: () => (reads > 4 ? new Promise<void>(() => {}) : Promise.resolve(void (w.clock.now += 16 * 60_000))) }
+      })
+      await p.open()
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(4), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+      expect(createLedger(() => w.storage).load(BUYER).find((r) => r.id === 'abcdef01-0005')?.state).toBe('pending')
+    })
+
+    it.each([
+      ['after its own revert', 'reverted'],
+      ['with its own hash gone', 'none']
+    ] as const)('starts the grace only once the chain reaches its credit\'s expiry, %s, then ends it', async (_, confirm) => {
+      on()
+      const w = world()
+      // Spendable until 1,500 s; the chain's finalized time is 1,200 s until the third wait, then 1,500 s.
+      splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 1_200
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = confirm
+      let sleeps = 0
+      const readAt: number[] = []
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: {
+          ...managed,
+          ...(confirm === 'none' ? { manaEvidence: () => losingA(w) as never } : {}),
+          creditRecordOf: async () => (readAt.push(sleeps), record('EXPIRED', null)),
+          sleep: () => {
+            if (++sleeps > 8) return new Promise<void>(() => {})
+            w.clock.now += 16 * 60_000
+            if (sleeps === 3) w.onChain.chainTime = 1_500
+            return Promise.resolve()
+          }
+        }
+      })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+      // Proven at the read after the third wait; the grace (15 minutes) runs past the next one, never before.
+      expect(readAt.at(-1)).toBeGreaterThanOrEqual(4)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('stays pending while neither its hash nor the node says anything', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => losingA(w) as never, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.at(-1)).toMatchObject({ state: 'pending' })
+      expect(readSplitHold(BUYER, HOLD_LINE)).not.toBeNull()
+    })
+
+    const keysOf = (storage: Storage) => Array.from({ length: storage.length }, (_, i) => storage.key(i) ?? '')
+
+    it('keeps a pending split apart from what an older build reads: nothing under the Credits records', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      const id = p.events.at(-1)!.operation
+      const keys = keysOf(w.storage)
+      expect(keys.some((k) => k.startsWith('dcl-inworld-shop:record:v1:') && k.endsWith(id))).toBe(false)
+      expect(keys.some((k) => k.startsWith('dcl-inworld-shop:record:split-v1:') && k.endsWith(id))).toBe(true)
+    })
+
+    it('reads a split as the purchase over a Credits copy of it left beside it, older or newer', () => {
+      const w = world()
+      const ledger = createLedger(() => w.storage)
+      const base = { id: 'abcdef01-0001', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'pending' as const, createdAt: 1, updatedAt: 2 }
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'a1'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex }
+      expect(ledger.save({ ...base, split: sale })).toBe(true)
+      for (const updatedAt of [1, 99]) {
+        w.storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:abcdef01-0001`, JSON.stringify({ ...base, state: 'cancelled', updatedAt }))
+        expect(ledger.saved(BUYER, 'abcdef01-0001')).toMatchObject({ state: 'pending', split: { creditId: sale.creditId } })
+      }
+    })
+
+    it('lets the item go when a reload takes over a split whose sale was never signed, and buys it again', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The sale's signature never comes back on the first page.
+      const original = w.wallet.request.bind(w.wallet)
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === 'eth_signTypedData_v4') return new Promise(() => {})
+        return original(args)
+      }) as typeof w.wallet.request
+      const first = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await first.open()
+      ;(await first.until('method')).handlers.onPay?.('split')
+      await first.until('wallet')
+      expect(readSplitHold(BUYER, HOLD_LINE)).not.toBeNull()
+      // A reload takes the purchase over: provably never sent, so its credit and its hold on the item go.
+      w.wallet.request = original as typeof w.wallet.request
+      const again = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await again.open()
+      await vi.waitFor(() => expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toBeNull())
+      expect(w.relay.posts).toHaveLength(0)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(true)
+      // And the next BUY claims the item.
+      const next = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await next.open()
+      ;(await next.until('method')).handlers.onPay?.('split')
+      await next.until('success')
+    })
+
+    it('clears a hold its own finished purchase left behind before buying, and never another attempt\'s', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // A cancelled purchase of this page's, whose hold on the item stayed (its cleanup found the item busy).
+      const ledger = createLedger(() => w.storage)
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e5'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: HOLD_LINE, attempt: 'stranded' } }
+      expect(ledger.save({ id: 'abcdef01-0002', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'cancelled', createdAt: 1, updatedAt: 2, split: sale })).toBe(true)
+      expect(writeSplitHold(BUYER, HOLD_LINE, { ...webHold, attempt: 'stranded', creditId: sale.creditId })).toBe(true)
+      // The item's lock, let go by the read that found the hold, frees a moment later, as in a real browser.
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed, lateLocks: true })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+    })
+
+    it('counts a split of this page\'s still unsettled as one that may spend the allowance, and keeps its hold', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // This page's own purchase of another item, its record still pending: its hold is what holds the allowance.
+      const ledger = createLedger(() => w.storage)
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e7'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: OTHER_LINE, attempt: 'live' } }
+      expect(ledger.save({ id: 'abcdef01-0004', buyer: BUYER, items: [{ contract: CONTRACT, itemId: '8', quantity: 1 }], state: 'pending', createdAt: 1, updatedAt: 2, split: sale })).toBe(true)
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, attempt: 'live', creditId: sale.creditId })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(readSplitHold(BUYER, OTHER_LINE)).toMatchObject({ attempt: 'live' })
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('carries its sale\'s terms in the shared hold, so the web Shop\'s Check again keeps it held on a foreign hash', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The relay answers the hash of some other transaction (successful), never this sale's.
+      w.onChain.foreignHash = true
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      const hold = readSplitHoldRecord(BUYER, HOLD_LINE)!
+      expect(hold.sale).toMatchObject({ creditId: `0x${'a1'.repeat(32)}`, manager: MANAGER, target: STORE })
+      // What the web Shop's Check again reads, given that foreign hash: nothing attributable, so it stays held.
+      const foreign = [...w.txs.keys()][0]!
+      const reader = { ...w.chain, transaction: (c: number, h: string) => w.evidence.transaction(c, h) }
+      expect(await settleSplitHold({ ...hold, txHash: foreign }, { account: BUYER, reader: reader as never, client: w.shop.client })).toBeNull()
+    })
+
+    /** The relayed execution at `hash`, signed again: the same terms in other bytes (another envelope). */
+    const resigned = (w: World) => {
+      const posted = [...w.txs.values()][0]!
+      const meta = decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: posted.input })
+      return { to: posted.to, input: encodeExecuteMetaTransaction('functionData', BUYER, meta.args[1] as Hex, `0x${'22'.repeat(65)}` as Hex) }
+    }
+
+    it('keeps a split held, its credit kept, when a revert carries its terms in bytes it never sent', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const evidence = { ...w.evidence, transaction: async (c: number, h: string) => (w.txs.has(h.toLowerCase()) ? resigned(w) : w.evidence.transaction(c, h)) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, creditRecordOf: async () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+    })
+
+    it('completes a split whose own bytes reverted when the node settled its credit in a replay that is this sale', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const B = `0x${'c'.repeat(63)}3`
+      const evidence = {
+        ...w.evidence,
+        transaction: async (c: number, h: string) => (h === B ? resigned(w) : w.evidence.transaction(c, h)),
+        receipt: async (c: number, h: string) => (h === B ? { transactionHash: h as Hex, status: 'success' as const, blockNumber: 1n } : w.evidence.receipt(c, h))
+      }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never, ...settledIn(() => B) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      // Published with the replay's hash, never the reverted one it sent.
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'succeeded', txHash: B }), { timeout: 5000 })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    /** The useCredits spending this split's credit (`creditId`, its share; the rest the gap) on the store's item `itemId`. */
+    const useCreditsFor = (itemId: string, creditId = `0x${'a1'.repeat(32)}`) => {
+      const share = (BigInt(PRICE) * 50n) / 120n
+      const credit = { id: creditId, amount: share.toString(), availableAmount: share.toString(), expiresAt: Math.floor(Date.now() / 1000) + 900, signature: `0x${'cc'.repeat(65)}`, contract: MANAGER }
+      return encodeUseCredits(buildStoreUseCreditsArgs(STORE, [{ collection: BOOK.collection, itemId, priceWei: PRICE }], BUYER, [credit], share.toString(), { maxUncreditedValue: BigInt(PRICE) - share }))
+    }
+    /** A successful transaction put on chain at `hash`. */
+    const minedAt = (w: World, hash: string, tx: { to: string; input: Hex; from?: string }) => {
+      w.txs.set(hash, tx)
+      w.chain.receipts.set(hash, 'success')
+      return hash
+    }
+    /** The useCredits this split relayed: its own call, unwrapped. */
+    const relayedCall = (w: World) => {
+      const body = w.relay.posts[0] as { transactionData: { params: [string, Hex] } }
+      return decodeFunctionData({ abi: OFFCHAIN_META_TX_ABI, data: body.transactionData.params[1] }).args[1] as Hex
+    }
+
+    it.each([
+      ['its answer lost', 'lost'],
+      ['its own bytes reverted', 'reverted']
+    ] as const)('keeps a split held, %s, when the node settles its credit in a transaction that doesn\'t spend it for this buyer', async (_, how) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      if (how === 'lost') Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      else w.relay.state.confirm = 'reverted'
+      // Another account's useCredits: a node record that points at it is wrong, not where this credit went.
+      const S = minedAt(w, `0x${'e'.repeat(63)}5`, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', `0x${'cc'.repeat(20)}`, useCreditsFor('8'), `0x${'11'.repeat(65)}` as Hex) })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => S) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it.each([
+      ['its own bytes reverted', 'reverted', 'reverted'],
+      ['its own bytes reverted', 'reverted', null],
+      ['its answer lost', 'lost', 'reverted'],
+      ['its answer lost', 'lost', null]
+    ] as const)('keeps a split held, %s, when the node settles its credit in the buyer\'s own call for another item that isn\'t seen to succeed (%s / %s)', async (_, how, status) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      if (how === 'lost') Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      else w.relay.state.confirm = 'reverted'
+      // The buyer's own call of this credit, for another item: reverted, or not mined yet. It spent nothing provably.
+      const E = `0x${'e'.repeat(63)}9`
+      w.txs.set(E, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', BUYER, useCreditsFor('8'), `0x${'11'.repeat(65)}` as Hex) })
+      if (status) w.chain.receipts.set(E, status)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => E) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
+      expect(p.shown.some((s) => s.view.step === 'failed')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('ends an own-reverted split as spent elsewhere when the node settles its credit in the buyer\'s own call for another item', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'reverted'
+      const E = minedAt(w, `0x${'e'.repeat(63)}6`, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', BUYER, useCreditsFor('8'), `0x${'11'.repeat(65)}` as Hex) })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => E) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      // Seen live, it ends the purchase with that said: nothing bought, and nothing to give back.
+      const ended = await p.until('failed')
+      expect(ended.view).toMatchObject({ message: expect.stringContaining('spent by another transaction') })
+      expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it.each([
+      ['is this very sale: bought', 'this', 'succeeded'],
+      ['spends its credit on another item: spent elsewhere', 'other', 'failed']
+    ] as const)('reads a useCredits the buyer\'s own wallet sent, by its sender, when the node settles the credit in one that %s', async (_, which, state) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      const D = `0x${'d'.repeat(63)}7`
+      // Sent by the buyer's own wallet, not relayed: only its sender says whose it is.
+      const direct = () => minedAt(w, D, { to: MANAGER, input: which === 'this' ? relayedCall(w) : useCreditsFor('8'), from: BUYER })
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(direct) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state }), { timeout: 5000 })
+      if (state === 'succeeded') expect(p.events.at(-1)).toMatchObject({ txHash: D })
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
+    it('keeps the identity of the bytes it sends before they go, in its record and the shared hold', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      let atPost: string | undefined
+      const fetchImpl = (async (url: string, init?: RequestInit) => {
+        atPost = readSplitHoldRecord(BUYER, HOLD_LINE)?.sale?.envelope
+        return w.relay.fetchImpl(url, init)
+      }) as unknown as typeof fetch
+      const rail = { relayerUrl: 'https://node.test/transactions-api/v1', fetchImpl, gasless: true, wait: { timeoutMs: 30, pollMs: 10 } }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, rail: () => rail } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('success')
+      const sent = (w.relay.posts[0] as { transactionData: { params: [string, Hex] } }).transactionData.params[1]
+      expect(atPost).toBe(keccak256(sent))
+    })
+
+    it('reserves nothing and asks nothing of the wallet without Web Locks', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, locks: () => null } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('failed')
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      expect(signatures(w)).toHaveLength(0)
+    })
+
+    it('offers no split for an offer the node doesn\'t mark splittable', async () => {
+      on()
+      const p = page(world(), { split: splitOn, creditsCents: 50, offer: (s) => ({ ...storeMint(s), splittable: false }) })
+      await p.open()
+      expect((await p.until('method')).view).not.toHaveProperty('split')
     })
   })
 

@@ -17,7 +17,7 @@ import { isRevertedTxError, isWalletRefusal, revertedTxHash, sendAndConfirm, TxP
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
 import { canPayGasItself } from "../lib/wallet-kind";
-import { buyOneWithCredits, creditsManagerFor, type AnyPurchase } from "./credits";
+import { buildGroupUseCreditsArgs, buyOneWithCredits, creditsManagerFor, groupPurchases, type AnyPurchase } from "./credits";
 import { encodeMarketplaceCall, encodeStoreBuy, type ListingCoupon, type SignedTrade, type SpendableCredit, type StoreItemToBuy } from "./encoding";
 import { buyOneGasless, isSettlementPending, waitForSettlement } from "./gasless";
 import type { RailContext } from "./rail";
@@ -67,6 +67,7 @@ async function ensureManaAllowance(ctx: RailContext, chainId: ChainId, spender: 
     fetchImpl: ctx.fetchImpl,
     locks: ctx.locks,
     grantLockHeld: ctx.grantLockHeld,
+    live: ctx.live,
     requiredWei,
     exact,
   });
@@ -226,15 +227,41 @@ export function splitTerms(opts: {
   return { creditWei: share, gapWei };
 }
 
+/**
+ * The purchase stopped being its caller's (`RailContext.live`: its dialog closed, or its terms changed) before its sale was
+ * kept or sent: after its approval, or while its own signature was asked. Nothing of the sale was sent, and its credit is
+ * released like any purchase that failed before it left.
+ */
+export class SaleCancelledError extends Error {
+  constructor() {
+    super("The purchase was closed before it was sent, so nothing was bought.");
+    this.name = "SaleCancelledError";
+  }
+}
+
+/**
+ * The call a split's sale makes: the CreditsManager it goes to, the external call it runs there, and the useCredits call
+ * itself, encoded (`useCredits`), exactly as either rail sends it (the relay inside its meta-transaction).
+ */
+export type SplitDispatch = { manager: string; target: Hex; selector: Hex; callData: Hex; useCredits: Hex };
+
 type GapOptions = {
   credits: SpendableCredit[];
   manaGapWei: bigint;
   /**
    * Right before the sale goes to the relay or the wallet, once the allowance is in place: from here on it may be sent,
-   * so a failure after this is a sale whose outcome must be found out, not one that never left. A throw here stops the
-   * sale before anything is sent (the caller could not record it).
+   * so a failure after this is a sale whose outcome must be found out, not one that never left. It is given the call the
+   * sale makes (its CreditsManager and its external call), which the caller keeps to tell this sale's execution apart
+   * (splitEvidence.ts). A throw here stops the sale before anything is sent (the caller could not record it).
    */
-  onDispatch?: () => void;
+  onDispatch?: (call: SplitDispatch) => void;
+  /**
+   * The exact bytes the sale leaves as, right before they leave: the relayed execution as signed (the call data the relay
+   * sends to the manager), or the useCredits call the wallet is handed (after a relay that proved it sent nothing, these
+   * are the ones that may leave). The caller keeps their identity with the sale (`splitEnvelope`): only a revert of these
+   * very bytes says this sale failed. A throw here stops them unsent.
+   */
+  onEnvelope?: (dispatched: Hex) => void;
   onBroadcast?: (info: { txHash: Hex }) => void;
   onReverted?: (info: { txHash: string | null }) => void;
   onUnobservable?: () => void;
@@ -253,19 +280,34 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   // The book's manager, which pulls the gap: a credit signed for any other is refused before this approves.
   const spender = creditsManagerFor(chainId, opts.credits).address;
   await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei, true);
+  // Its approval may have taken a while (signed, relayed, confirmed): a purchase gone meanwhile is neither kept nor signed.
+  if (ctx.live?.() === false) throw new SaleCancelledError();
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const purchase: AnyPurchase = { ...purchaseFor(target, opts.credits, creditsValue.toString()), maxUncreditedValue: opts.manaGapWei.toString() };
-  opts.onDispatch?.();
+  // The call both rails send (the relay's meta-transaction wraps it; the wallet sends it as is), built once: what the caller
+  // keeps of it is what leaves, never a second build (its external call carries a salt of its own each time).
+  const built = buildGroupUseCreditsArgs(groupPurchases([purchase])[0]!, ctx.buyer);
+  const call = built.args.externalCall;
+  opts.onDispatch?.({ manager: built.manager.address, target: call.target, selector: call.selector, callData: call.data, useCredits: built.data });
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {
-      relayed = await buyOneGasless(ctx, { purchase });
+      relayed = await buyOneGasless(ctx, {
+        purchase,
+        built,
+        // Signed, not yet kept or sent: a purchase gone while its wallet prompt was open sends nothing (as its approval).
+        onSignedCall: ({ data }) => {
+          if (ctx.live?.() === false) throw new SaleCancelledError();
+          opts.onEnvelope?.(data);
+        },
+      });
       opts.onBroadcast?.({ txHash: relayed });
       await waitForSettlement(ctx.reader, chainId, relayed, ctx.wait);
       return relayed;
     } catch (e) {
-      // The relay answered its hash: only that hash's receipt, mined and reverted, says the credit went unspent. Any other
-      // failure (a receipt read aborted or failed, no receipt in time) leaves the sale pending, never sent again.
+      // The relay answered its hash: only that hash's receipt, mined and reverted, may say the credit went unspent (the caller
+      // checks it carries the bytes this sale left as, `onEnvelope`). Any other failure (a receipt read aborted or failed, no
+      // receipt in time) leaves the sale pending, never sent again.
       if (relayed) {
         if (isRevertedTxError(e) && revertedTxHash(e)?.toLowerCase() === relayed.toLowerCase()) opts.onReverted?.({ txHash: relayed });
         throw e;
@@ -285,7 +327,11 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   try {
     return await buyOneWithCredits(ctx, {
       purchase,
-      onHandoff: () => {
+      built,
+      onHandoff: (data) => {
+        // Right before the wallet is asked to send it: a purchase gone by now isn't handed over.
+        if (ctx.live?.() === false) throw new SaleCancelledError();
+        opts.onEnvelope?.(data);
         handedOff = true;
       },
       onBroadcast: opts.onBroadcast,

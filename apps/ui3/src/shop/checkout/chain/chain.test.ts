@@ -324,7 +324,7 @@ describe("relaying a meta-transaction", () => {
     expect(asked).toEqual(["eth_signTypedData_v4"]);
   });
 
-  it("an exact nonce and a minimum above it can't both hold: refused before the wallet is asked or anything is sent", async () => {
+  it("an exact nonce and a minimum, which the type keeps apart, passed both anyway: one above it is refused before the wallet is asked", async () => {
     const asked: { method: string; params?: unknown[] }[] = [];
     const provider = {
       request: async (args: { method: string; params?: unknown[] }) => {
@@ -337,12 +337,14 @@ describe("relaying a meta-transaction", () => {
       posts.push(init?.body);
       return new Response(JSON.stringify({ ok: true, txHash: `0x${"ab".repeat(32)}` }), { status: 200 });
     }) as unknown as typeof fetch;
-    // The contract's nonce reads 7.
-    await expect(relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce: 7n, minNonce: 8n })).rejects.toBeInstanceOf(RangeError);
+    // The contract's nonce reads 7. Both options at once, as an untyped caller could pass them.
+    const both = (exactNonce: bigint, minNonce: bigint) =>
+      ({ provider, reader: fakeReader(), target, from, functionData: "0x12" as Hex, fetchImpl, exactNonce, minNonce }) as unknown as Parameters<typeof relayMetaTransaction>[0];
+    await expect(relayMetaTransaction(both(7n, 8n))).rejects.toBeInstanceOf(RangeError);
     expect(asked).toEqual([]);
     expect(posts).toEqual([]);
     // A minimum at or below it is no conflict: the exact nonce is the one signed.
-    expect(await relayMetaTransaction({ provider, reader: fakeReader(), target, from, functionData: "0x12", fetchImpl, exactNonce: 7n, minNonce: 6n })).toMatchObject({ nonce: 7n });
+    expect(await relayMetaTransaction(both(7n, 6n))).toMatchObject({ nonce: 7n });
     expect(asked.map((r) => r.method)).toEqual(["eth_signTypedData_v4"]);
     expect((JSON.parse(String(asked[0]!.params![1])) as { message: { nonce: string } }).message.nonce).toBe("7");
     expect(posts).toHaveLength(1);
@@ -492,6 +494,32 @@ describe("the RPC reader", () => {
       },
     });
     expect(await waitForReceipt(flaky, 137, "0x02", { sleep: async () => {} })).toMatchObject({ transactionHash: "0x02" });
+  });
+
+  it("reads a transaction's sender, target and input; one the chain doesn't know is null", async () => {
+    const answers: Record<string, unknown> = { "0x01": { hash: "0x01", from: "0xab", to: "0xcd", input: "0x1234", nonce: "0x1" }, "0x02": null };
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: [string] };
+      expect(method).toBe("eth_getTransactionByHash");
+      return new Response(JSON.stringify({ result: answers[params[0]] }));
+    }) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    expect(await reader.transaction!(137, "0x01")).toEqual({ from: "0xab", to: "0xcd", input: "0x1234" });
+    expect(await reader.transaction!(137, "0x02")).toBeNull();
+  });
+
+  it("reads the finalized block's time, in seconds; a finalized block it can't read is an error, never a time", async () => {
+    const answers: unknown[] = [{ number: "0x10", timestamp: "0x6553f100" }, null, { number: "0x11" }];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      const { method, params } = JSON.parse(String(init?.body)) as { method: string; params: [string, boolean] };
+      expect(method).toBe("eth_getBlockByNumber");
+      expect(params).toEqual(["finalized", false]);
+      return new Response(JSON.stringify({ result: answers.shift() }));
+    }) as unknown as typeof fetch;
+    const reader = createRpcReader({ url: () => "https://rpc.example", fetchImpl });
+    expect(await reader.finalizedTime!(137)).toBe(0x6553f100);
+    await expect(reader.finalizedTime!(137)).rejects.toThrow(/finalized block has no time/);
+    await expect(reader.finalizedTime!(137)).rejects.toThrow(/finalized block has no time/);
   });
 
   it("lets an error answer's body go instead of leaving it open, so polling through errors leaks nothing", async () => {
