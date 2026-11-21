@@ -1,12 +1,12 @@
 # Third-party assets
 
-The files in `src/assets/lobby_stage/` are made from art in
+The files in `src/assets/lobby_stage/` and `src/assets/sky/` are made from art in
 [decentraland/unity-explorer](https://github.com/decentraland/unity-explorer), under the Apache
 License 2.0 (`LICENSE` at the root of this workspace); the licence applies to these files.
 Copyright Decentraland.
 
-`tooling/lobby-stage-assets.py` converts them: each model becomes one GLB holding its own
-textures, and the pictures are re-encoded (JPEG) or resized. They are otherwise unchanged.
+`tooling/lobby-stage-assets.py` converts the lobby stage: each model becomes one GLB holding its
+own textures, and the pictures are re-encoded (JPEG) or resized. They are otherwise unchanged.
 
 | Files | Source in unity-explorer, under `Explorer/Assets/` |
 |---|---|
@@ -15,6 +15,8 @@ textures, and the pictures are re-encoded (JPEG) or resized. They are otherwise 
 | `podium.glb` | the character preview platform (`DCL/Character/CharacterPreview/Assets/PreviewPlatform`) |
 | `halloween_backdrop.jpg`, `game_world_backdrop.jpg`, `ground.jpg` | the lobby's backgrounds and ground (`DCL/Lobby/Textures`) |
 | `blob_shadow.png` | the radial glow (`Textures/Common/RadialGlow.png`), baked to one grey channel |
+| `sky/horizon_noise.png` | the stylized skybox's horizon noise (`DCL/StylizedSkybox/Textures/Noise4.png`), halved to 1024 a side, the size Unity imports it at, and stored as its one grey channel |
+| `sky/clouds_overhead.png`, `sky/clouds_low.png`, `sky/clouds_cumulus.png` | the stylized skybox's cloud strips (`DCL/StylizedSkybox/Textures/Clouds/SkyboxCloudsOverhead_V2.png`, `SkyboxCloudsLow_V2.png`, `SkyboxCloudsCumulus_V2.png`), unchanged |
 
 These files in `src/assets/sounds/ui/` are unchanged copies of sounds in unity-explorer, under the
 same licence. Copyright Decentraland.

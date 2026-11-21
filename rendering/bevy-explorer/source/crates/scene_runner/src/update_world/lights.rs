@@ -384,8 +384,8 @@ const SUNRISE: f32 = 6.422;
 const SUNSET: f32 = 18.828;
 
 /// Unity's moonrise and moonset (hours): the moon is up for six and a half hours around 00:45.
-const MOONRISE: f32 = 21.504;
-const MOONSET: f32 = 4.008;
+pub const MOONRISE: f32 = 21.504;
+pub const MOONSET: f32 = 4.008;
 
 /// Unity's moon arc leans this far from the zenith, so the moon stays low for long shadows.
 const MOON_TILT_DEGREES: f32 = 40.0;
@@ -411,7 +411,7 @@ fn celestial_direction(hours: f32, rise: f32, set: f32, tilt_degrees: f32) -> Ve
 
 /// Direction the sunlight travels at `hours` past midnight: straight over the zenith in a
 /// vertical plane diagonal to the parcel grid.
-fn sun_direction(hours: f32) -> Vec3 {
+pub fn sun_direction(hours: f32) -> Vec3 {
     celestial_direction(hours, SUNRISE, SUNSET, 0.0)
 }
 
@@ -421,12 +421,27 @@ pub fn moon_direction(hours: f32) -> Vec3 {
     celestial_direction(hours, MOONRISE, MOONSET, MOON_TILT_DEGREES)
 }
 
+/// How far a body is along its circle at `day_fraction`: 0 at moonrise to 1 at moonset above the
+/// horizon, then 1 to 2 below it until the next moonrise. Unity's
+/// `SkyboxCelestialMath.CelestialProgress` for the moon.
+pub fn moon_progress(day_fraction: f32) -> f32 {
+    const MIN_ARC_FRACTION: f32 = 1e-4;
+    let (rise, set) = (MOONRISE / 24.0, MOONSET / 24.0);
+    let above = (set - rise).rem_euclid(1.0).max(MIN_ARC_FRACTION);
+    let since_rise = (day_fraction - rise).rem_euclid(1.0);
+    if since_rise < above {
+        since_rise / above
+    } else {
+        1.0 + (since_rise - above) / (1.0 - above).max(MIN_ARC_FRACTION)
+    }
+}
+
 /// The directional light's colour at phase 0.5, the ramp's noon key (sRGB).
 pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.98, 0.94);
 
 /// The fraction of a day over which the light swings from the sun's arc to the moon's before
 /// moonrise, and back after moonset.
-const MOON_SWAP_DURATION: f32 = 0.042;
+pub const MOON_SWAP_DURATION: f32 = 0.042;
 /// How far the light dims mid-swing to hide the move.
 const SWAP_INTENSITY_DIP: f32 = 0.99;
 
@@ -1242,5 +1257,18 @@ mod tests {
         // night: a blue-violet moon
         let night = colour(0.0);
         assert!(night.z > night.x && night.x < 0.5);
+    }
+
+    #[test]
+    fn moon_progress_spans_rise_to_set() {
+        let (rise, set) = (MOONRISE / 24.0, MOONSET / 24.0);
+        assert!(moon_progress(rise).abs() < 1e-5);
+        // halfway between moonrise and moonset, across midnight
+        let mid = (rise + (set - rise).rem_euclid(1.0) / 2.0).rem_euclid(1.0);
+        assert!((moon_progress(mid) - 0.5).abs() < 1e-5);
+        assert!((moon_progress(set) - 1.0).abs() < 1e-5);
+        // by day the moon is below the horizon, past 1
+        let noon = moon_progress(0.5);
+        assert!(noon > 1.0 && noon < 2.0, "{noon}");
     }
 }

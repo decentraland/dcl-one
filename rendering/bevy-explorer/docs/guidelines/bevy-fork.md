@@ -65,6 +65,9 @@ across workers:
 - The DoF gather weights each sample by the ratio of its circle of confusion to the gathering
   pixel's, so sharp neighbours don't smear into a blurred pixel. Earlier: distant-only blur and
   alpha blending in the DoF shader.
+- Cleared depth counts as the focal distance, so the backdrop that nothing drew, the explorer's
+  sky, stays sharp while geometry as far away blurs. Stock bevy clamps it to `max_depth` and
+  blurs it most.
 - Per-asset write ticks in `RenderAssets` so entities respecialize when a prepared asset is
   swapped render-world-only (fallback material to real, deferred mesh re-upload).
 - `Transparent3d` sorts by euclidean distance from the camera rather than view-space z.
