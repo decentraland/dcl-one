@@ -4,14 +4,12 @@
 // A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
 // sale) is offered on the web Shop's item page.
 
-import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
 import type { CardPrice } from '@shop/discovery/cardPrice'
 import { formatMana, formatManaPrice, type ManaWei } from '@shop/model/money'
 import { GeneralClose, GeneralFavorites, GeneralPolygonMana } from '@dcl/one-ui'
 import { MaskIcon } from '@hud/design'
 import hiddenIcon from '@hud/assets/backpack/icon-hidden.webp'
 import cartIcon from '../assets/cart.svg'
-import creditsCoin from '../assets/modal/credits-coin.svg'
 import externalIcon from '../assets/external.svg'
 import { buyableInWorld, PriceTag } from './PriceTag'
 import { pressedWith, type PressedWith } from './pressedWith'
@@ -81,15 +79,8 @@ export function ShopItemPanel({
           </span>
           <span className={styles.prices}>
             <span className={styles.price}>
-              {/* Credits with the design's full-colour coin (Figma shop/credits-coin); any other price as the cards say it. */}
-              {price.kind === 'credits' ? (
-                <span title={`${formatCreditsFull(price.credits)} Credits`}>
-                  <img src={creditsCoin} alt="" aria-hidden="true" width={24} height={24} />
-                  {formatCredits(price.credits)}
-                </span>
-              ) : (
-                <PriceTag price={price} size={24} />
-              )}
+              {/* Credits with the design's full-colour coin (Figma shop/credits-coin). */}
+              <PriceTag price={price} size={24} coin="full" />
             </span>
             {price.kind === 'credits' && manaPrice != null && manaPrice > 0n && (
               <span className={styles.manaPrice} title={`${formatMana(manaPrice, { group: true })} MANA`}>

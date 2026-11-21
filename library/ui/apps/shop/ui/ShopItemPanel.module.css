@@ -13,7 +13,7 @@
   overflow: hidden;
   border-radius: var(--r-lg);
   /* The design's fills, top to bottom: the rarity's glow behind the image, its Light glow along the
-     bottom edge, and the rarity at 20% under both. */
+     bottom edge (placed from it, so a shorter panel keeps it), and the rarity at 20% under both. */
   background:
     radial-gradient(
       433.97px 421.58px at 191px 53.17px,
@@ -27,7 +27,7 @@
       transparent
     ),
     radial-gradient(
-      531.89px 227.11px at 191.5px 852.99px,
+      531.89px 227.11px at 191.5px calc(100% + 14.99px),
       color-mix(in srgb, var(--rarity-light) 39.9%, transparent),
       color-mix(in srgb, var(--rarity-light) 36%, transparent) 15%,
       color-mix(in srgb, var(--rarity-light) 26.2%, transparent) 30%,
@@ -40,7 +40,7 @@
     color-mix(in srgb, var(--rarity) 20%, transparent);
   pointer-events: auto;
 }
-/* The design's light behind the image: Snow, added (plus-lighter) over the fills. */
+/* The design's light behind the image: Snow (--text), added (plus-lighter) over the fills. */
 .panel::before {
   content: '';
   position: absolute;
@@ -48,13 +48,13 @@
   z-index: 0;
   background: radial-gradient(
     187.59px 179.98px at 191px 134.33px,
-    rgba(252, 252, 252, 0.401),
-    rgba(252, 252, 252, 0.361) 15%,
-    rgba(252, 252, 252, 0.262) 30%,
-    rgba(252, 252, 252, 0.152) 45%,
-    rgba(252, 252, 252, 0.07) 60%,
-    rgba(252, 252, 252, 0.025) 75%,
-    rgba(252, 252, 252, 0.007) 90%,
+    color-mix(in srgb, var(--text) 40.1%, transparent),
+    color-mix(in srgb, var(--text) 36.1%, transparent) 15%,
+    color-mix(in srgb, var(--text) 26.2%, transparent) 30%,
+    color-mix(in srgb, var(--text) 15.2%, transparent) 45%,
+    color-mix(in srgb, var(--text) 7%, transparent) 60%,
+    color-mix(in srgb, var(--text) 2.5%, transparent) 75%,
+    color-mix(in srgb, var(--text) 0.7%, transparent) 90%,
     transparent
   );
   mix-blend-mode: plus-lighter;
@@ -274,7 +274,7 @@
   height: 26px;
   padding: 0 8px;
   border-radius: var(--r-pill);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--shop-chip-bg);
   color: var(--text);
   font-size: var(--type-12);
   font-weight: var(--fw-semibold);
