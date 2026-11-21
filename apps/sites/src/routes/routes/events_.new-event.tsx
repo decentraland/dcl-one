@@ -131,6 +131,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
   const original = current?.event;
   const owner = Boolean(original && original.user?.toLowerCase() === auth.address?.toLowerCase());
   const canEditAny = options?.profile?.permissions.includes("edit_any_event") ?? false;
+  const canScheduleLongDailyEvents = canEditAny || (options?.profile?.permissions.includes("approve_any_event") ?? false);
   const accessPending = Boolean(original) && !owner && !optionsResult;
   const canEdit = d.mode === "create" || Boolean(original && (owner || canEditAny));
   const waiting = (d.mode === "edit" && Boolean(d.eventId) && auth.isConnected && !current) || accessPending;
@@ -190,6 +191,7 @@ function SubmitHangoutForm({ loaderData }: Route.ComponentProps) {
         onSignIn={openSignIn}
         options={options}
         canEditAny={canEditAny}
+        canScheduleLongDailyEvents={canScheduleLongDailyEvents}
         privateFieldsEditable={d.mode === "create" || owner}
         canChangeCommunity={canChangeCommunity}
         upload={(file, vertical, signal) => {

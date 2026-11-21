@@ -1,6 +1,6 @@
 import { useEventsCopy, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
 import { EventDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
-import { GeneralAdd, GeneralCamera, GeneralInfoButton } from "@dcl/one-ui/foundations/icons";
+import { GeneralAdd, GeneralCamera, GeneralInfoButton, GeneralWarning } from "@dcl/one-ui/foundations/icons";
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMachine } from "@xstate/react";
@@ -44,6 +44,9 @@ type SubmitHangoutProps = {
   upload?: UploadFn;
   options?: HangoutOptions | null;
   canEditAny?: boolean;
+  // Team members (approve_any_event or edit_any_event) may schedule daily hangouts longer than 2 hours,
+  // so they don't see the daily-duration disclaimer.
+  canScheduleLongDailyEvents?: boolean;
   privateFieldsEditable?: boolean;
   canChangeCommunity?: boolean;
   editor?: boolean;
@@ -65,6 +68,7 @@ export default function SubmitHangout({
   upload,
   options = null,
   canEditAny = false,
+  canScheduleLongDailyEvents = false,
   privateFieldsEditable = mode === "create",
   canChangeCommunity = mode === "create",
   editor = false,
@@ -94,6 +98,7 @@ export default function SubmitHangout({
       upload={upload}
       options={options}
       canEditAny={canEditAny}
+      canScheduleLongDailyEvents={canScheduleLongDailyEvents}
       privateFieldsEditable={privateFieldsEditable}
       canChangeCommunity={canChangeCommunity}
     />
@@ -117,6 +122,7 @@ type InnerProps = {
   upload?: UploadFn;
   options: HangoutOptions | null;
   canEditAny: boolean;
+  canScheduleLongDailyEvents: boolean;
   privateFieldsEditable: boolean;
   canChangeCommunity: boolean;
 };
@@ -144,6 +150,7 @@ function SubmitHangoutInner({
   upload,
   options,
   canEditAny,
+  canScheduleLongDailyEvents,
   privateFieldsEditable,
   canChangeCommunity,
 }: InnerProps) {
@@ -238,6 +245,7 @@ function SubmitHangoutInner({
           privateFieldsEditable={privateFieldsEditable}
           options={options}
           inline={editingInline}
+          dailyDurationDisclaimer={d.recurrent && d.recurrence === "every_day" && !canScheduleLongDailyEvents}
         />
         {section === "details" && !editingInline && (
           <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={onEdit} />
@@ -425,6 +433,7 @@ function StepFields({
   privateFieldsEditable,
   options,
   inline,
+  dailyDurationDisclaimer,
 }: {
   step: HangoutStateId;
   draft: HangoutDraft;
@@ -436,6 +445,7 @@ function StepFields({
   privateFieldsEditable: boolean;
   options: HangoutOptions | null;
   inline: boolean;
+  dailyDurationDisclaimer: boolean;
 }) {
   const { locale, text } = useEventsCopy();
   const [verticalCoverOpen, setVerticalCoverOpen] = useState(Boolean(draft.verticalImagePreviewUrl));
@@ -624,6 +634,12 @@ function StepFields({
               onChange={(e) => onEdit({ recurrentUntil: e.target.value, recurrentCount: null })}
             />
           </label>
+        )}
+        {dailyDurationDisclaimer && (
+          <p className={styles.dailyDurationDisclaimer}>
+            <GeneralWarning size={16} aria-hidden="true" />
+            {text("Daily events limited to 2 hours. Longer ones will be rejected in review.")}
+          </p>
         )}
       </div>
     );

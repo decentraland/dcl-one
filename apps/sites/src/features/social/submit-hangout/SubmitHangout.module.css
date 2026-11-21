@@ -203,6 +203,18 @@
   left: 20px;
 }
 
+.dailyDurationDisclaimer {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0;
+  color: var(--dcl-feedback-error);
+  font-size: 14px;
+}
+
+.dailyDurationDisclaimer svg { flex: none; }
+
 .authoring textarea.field {
   height: auto;
   min-height: 112px;

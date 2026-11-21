@@ -619,6 +619,13 @@ const messages = {
   ],
   Repeat: ['Repetición', 'Répétition', '重复频率', '반복', '繰り返し'],
   Ends: ['Finaliza', 'Se termine', '结束日期', '종료', '終了日'],
+  'Daily events limited to 2 hours. Longer ones will be rejected in review.': [
+    'Eventos diarios: máx. 2 horas. Si duran más, se rechazan en revisión.',
+    'Événements quotidiens : 2 h max. Au-delà, refusés à la vérification.',
+    '每日活动限时 2 小时。超时的活动将在审核中被拒绝。',
+    '매일 이벤트는 2시간까지. 초과 시 검토에서 거부됩니다.',
+    '毎日のイベントは2時間まで。超えると審査で却下されます。'
+  ],
   'Review your hangout': [
     'Revisá tu evento',
     'Vérifiez votre événement',
