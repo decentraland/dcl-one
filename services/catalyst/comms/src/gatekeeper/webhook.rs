@@ -466,6 +466,7 @@ pub async fn livekit_webhook(
         if let Some(sink) = state.room_events.as_ref() {
             sink.observe_room_event(&room_event);
         }
+        publish_room_event(&state, &room_event).await;
     }
     state
         .webhooks
@@ -526,6 +527,28 @@ async fn room_event(
         event_time_ms: event.at as u64,
         event_id: event.id.clone(),
     }))
+}
+
+/// A hint for every replica's presence (and `multiplayer-hosting`); never fails the
+/// webhook, since each replica's periodic LiveKit read recovers a lost one.
+async fn publish_room_event(
+    state: &CommsState,
+    event: &crate::protocol::bus::room_events::RoomEvent,
+) {
+    let Ok(payload) = event.encode() else {
+        return;
+    };
+    let outcome = state
+        .bus
+        .publish(crate::protocol::bus::room_events::SUBJECT, payload)
+        .await;
+    if outcome != super::bus::PublishOutcome::Submitted && state.bus.is_enabled() {
+        tracing::debug!(
+            ?outcome,
+            event_id = event.event_id,
+            "room event not published"
+        );
+    }
 }
 
 /// Stores the event before the webhook is acknowledged; a failure is a 503.

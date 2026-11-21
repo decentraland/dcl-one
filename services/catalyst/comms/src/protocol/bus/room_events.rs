@@ -1,5 +1,6 @@
 //! The room event: one LiveKit join or leave in a scene or world room, which the gatekeeper's
-//! LiveKit webhook publishes for the `multiplayer-hosting` scheduler.
+//! LiveKit webhook publishes for every `serve` (a World room event wakes its occupancy read,
+//! which feeds social online status) and the `multiplayer-hosting` scheduler.
 //!
 //! Its nine fields are the ones that scheduler reads, plus the session, the time and the id it
 //! uses to order and deduplicate events; they are not the set of fields the gatekeeper's former
@@ -7,8 +8,8 @@
 //!
 //! Hand-written rather than generated, in the style of the generated messages; the `.proto`
 //! beside this file (`catalyst.comms.bus.v1`) documents it. Delivery is at most once: the
-//! scheduler reconciles against `GET /scene-participants`, so a lost event is a late start,
-//! not a wrong one.
+//! scheduler reconciles against `GET /scene-participants` and each `serve` reads LiveKit every
+//! 30 s, so a lost event is a late change, not a wrong one.
 
 use super::BusError;
 

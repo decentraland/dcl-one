@@ -297,7 +297,7 @@ The name deny list: `isWorldValid` asks `checkNameDenyList` before the row
 | other event or room | 200 `{"message":"Skipping event"}` | 200 empty body | intended (WC-16) |
 | join/leave applied | 200, body = the request body echoed | 200 empty body | intended (WC-16) |
 | effect: NATS | `peer.<identity>.world.join` / `.leave` | `comms.room_events.v1` only | intended (worlds-compatibility.md "Room events"; WC-17) |
-| effect: presence | the in-process `peersRegistry` (feeds `connected-world`) | invalidates the presence generation, which triggers a LiveKit re-read (~5 s); voice, streaming, room metadata and the access log run too | intended (worlds-compatibility.md "Presence from LiveKit"; WC-21) |
+| effect: presence | the in-process `peersRegistry` (feeds `connected-world`) | invalidates the presence generation, which triggers a LiveKit re-read (~5 s), and every other `serve` re-reads on the published room event; World occupancy feeds social online status; voice, streaming, room metadata and the access log run too | intended (worlds-compatibility.md "Presence from LiveKit"; WC-21) |
 
 LiveKit only looks at the status, so the body differences reach no client. A status other than
 2xx on a bad signature (500 here, 401 in dcl-one) is a failure either way.
@@ -575,7 +575,8 @@ Both trees advertise
 17. **WC-17 · `/livekit-webhook` · NATS `peer.<identity>.world.join|leave` is not published.** Status: intended (worlds-compatibility.md "Room events").
     - Upstream: `nats.publish('peer.<identity>.world.<join|leave>')` for `.dcl.eth` lobby rooms
       (`livekit-webhook-handler.ts:62`).
-    - dcl-one: `comms.room_events.v1` only.
+    - dcl-one: `comms.room_events.v1` only. Social online status still covers World players
+      through each replica's occupancy read (docs/adr/2026-11-21-world-presence-counts-as-online.md).
     - Drop-in impact: a consumer outside this tree on the same NATS that listens for the upstream
       subjects gets nothing. None exists in this tree.
     - Decision: keep. A compatibility publisher is added only if such a consumer is attached.
