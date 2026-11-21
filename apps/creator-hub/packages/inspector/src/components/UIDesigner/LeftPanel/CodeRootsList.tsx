@@ -8,7 +8,7 @@ import { withContextMenu } from '../../../hoc/withContextMenu';
 import { ContextMenu } from '../../Tree/ContextMenu';
 import { getMobileHudSelected, selectMobileHud, selectNode } from '../../../redux/ui-designer';
 import { UI_DESIGNER_DND_TYPE, type UIDesignerDragItem } from '../shared/dnd';
-import { GuiGridIcon, MobileHudIcon } from '../shared/widget-icons';
+import { GUIRoot, Mobile } from '../../Icons/figma';
 import { EyeIcon, EyeOffIcon } from '../icons';
 import {
   type CodeRoot,
@@ -47,7 +47,7 @@ const MobileHudRow: React.FC = () => {
       }}
       title="Customize the mobile touch-screen controls"
     >
-      <MobileHudIcon />
+      <Mobile fontSize="small" />
       <span className="ui-designer-mobile-hud-row-name">MobileHUD</span>
     </div>
   );
@@ -127,7 +127,7 @@ const RootRowImpl: React.FC<RootRowProps & { contextMenuId: string }> = ({
         onRemove={onRemove}
         onDuplicate={onDuplicate}
       />
-      <GuiGridIcon />
+      <GUIRoot fontSize="small" />
       {editing ? (
         <RenameField
           name={root.name}

@@ -32,7 +32,9 @@ const PaletteCard: React.FC<{ entry: WidgetDef; enabled: boolean; disabledTitle:
       aria-disabled={!enabled}
       title={enabled ? `Drag onto the canvas to add a ${entry.label}` : disabledTitle}
     >
-      <span className="ui-designer-palette-icon">{entry.icon}</span>
+      <span className="ui-designer-palette-icon">
+        <entry.Icon fontSize="inherit" />
+      </span>
       <span className="ui-designer-palette-label">{entry.label}</span>
     </div>
   );

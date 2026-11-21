@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { IoCubeOutline } from 'react-icons/io5';
 import type { Entity } from '@dcl/ecs';
 
 import { Container } from '../../../Container';
+import { Prefab } from '../../../Icons/figma';
 import { CheckboxField, TextField } from '../../../ui';
 import { BindIcon } from '../BindIcon';
 import type { PropVar } from '../../code/props-convention';
@@ -151,7 +151,7 @@ export const ComponentRefPanel: React.FC<{ node: CodeUINode }> = ({ node }) => {
   return (
     <>
       <div className="ui-designer-code-gui-header">
-        <IoCubeOutline aria-hidden="true" />
+        <Prefab fontSize="inherit" />
         <span className="ui-designer-code-gui-name">{name}</span>
       </div>
       <Container

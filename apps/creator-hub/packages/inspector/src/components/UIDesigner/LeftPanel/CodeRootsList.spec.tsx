@@ -1,7 +1,9 @@
+import React from 'react';
 import { contextMenu } from 'react-contexify';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
+import { GUIRoot, Mobile } from '../../Icons/figma';
 import { CodeRootsList } from './CodeRootsList';
 
 const mocks = vi.hoisted(() => ({
@@ -251,5 +253,24 @@ describe('when a GUI is renamed', () => {
 
     expect(screen.queryByLabelText('Rename Hud')).toBeNull();
     expect(document.activeElement).toBe(rowFor('Hud'));
+  });
+});
+
+describe('when the rows draw their glyphs', () => {
+  afterEach(cleanup);
+
+  const svgOf = (ui: React.ReactElement) => {
+    const html = render(ui).container.querySelector('svg')!.outerHTML;
+    cleanup();
+    return html;
+  };
+
+  it('should draw GUIRoot on a GUI row and the small Mobile on the MobileHUD row, at 16', () => {
+    const gui = svgOf(<GUIRoot fontSize="small" />);
+    const mobile = svgOf(<Mobile fontSize="small" />);
+    render(<CodeRootsList />);
+
+    expect(rowFor('Hud').querySelector('svg')!.outerHTML).toBe(gui);
+    expect(document.querySelector('.ui-designer-mobile-hud-row svg')!.outerHTML).toBe(mobile);
   });
 });

@@ -82,7 +82,7 @@ export const WidgetPicker: React.FC<WidgetPickerProps> = ({
                 className="ui-designer-widget-picker-icon"
                 aria-hidden="true"
               >
-                {item.icon}
+                <item.Icon fontSize="small" />
               </span>
               <span>{item.label}</span>
             </button>
