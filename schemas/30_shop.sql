@@ -389,6 +389,11 @@ CREATE TABLE shop.chain_cursor (
     -- Set by an operator: the owner rebuilds the projection from its start
     -- block with its own cleanup, in a fenced transaction.
     rebuild_requested_at timestamp without time zone,
+    -- Set when the cursor block was found on another branch than its stored
+    -- hash, with the publication withdrawn, while the recovery searches;
+    -- cleared by the rewind or by a pass that proves the cursor again.
+    -- Readers of the height without the publication skip it meanwhile.
+    diverged_at timestamp without time zone,
     PRIMARY KEY (indexer, network),
     CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales', 'committee')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),

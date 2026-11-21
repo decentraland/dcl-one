@@ -2192,8 +2192,14 @@ once a reorg is seen.
 A pass checks the cursor block's hash first. When it differs, or when a
 window's predecessor or a lane's bracket stands still on another branch
 than the stored hash, the publication is withdrawn at once, in a fenced
-transaction of its own on that exact checkpoint; the rows, the recovery
-points and the notification cursors stay. The pass then reads the headers
+transaction of its own on that exact checkpoint, and `diverged_at` is set;
+the rows, the recovery points and the notification cursors stay. Readers
+that use a cursor's height without its publication skip a diverged one, in
+the statement that reads its rows: the sales fold infers no seller from the
+nft walk's transfers, and the tips' global cap evicts no other sender's
+claim against the MANA index. The rewind clears `diverged_at`, and so does a
+pass that proves the cursor again (its first advance, or its close) when the
+chain flipped back before any rewind. The pass then reads the headers
 of the recovery points below the cursor, newest first and outside any
 transaction, and rewinds to the newest one still on the chain, keeping its
 hash and time. With none recorded, or every one compared and none on the
@@ -2263,7 +2269,9 @@ deployment that runs the index process as one replica replaced with the
 `Recreate` strategy already does this. A binary from before
 `shop.chain_checkpoint` neither records nor drops recovery points, so after
 running one, clear them before a newer binary starts again:
-`DELETE FROM shop.chain_checkpoint;`.
+`DELETE FROM shop.chain_checkpoint;`. Such a binary also leaves
+`diverged_at` as it finds it; a newer binary's next pass that proves the
+cursor clears it.
 
 ## Curation committee
 

@@ -144,6 +144,9 @@ struct FakeChain {
     /// Once the header at the first block was read this many times, header
     /// reads below the third wait for the gate (as `probe_gate`).
     gate_after: Mutex<Option<GateAfter>>,
+    /// Header reads of exactly this block wait for this gate (counted in
+    /// `probes_waiting`): one projection's probe, not another's.
+    gate_at: Mutex<Option<(u64, Arc<tokio::sync::Semaphore>)>>,
 }
 
 /// The logs and the fork a fork lasting one log read restores.
@@ -203,6 +206,7 @@ impl FakeChain {
             probe_delay: Mutex::new(None),
             revert_after_logs: Mutex::new(None),
             gate_after: Mutex::new(None),
+            gate_at: Mutex::new(None),
         })
     }
 
@@ -296,6 +300,13 @@ async fn rpc(
             && n < below
         {
             tokio::time::sleep(wait).await;
+        }
+        let exact = chain.gate_at.lock().clone();
+        if let Some((block, gate)) = exact
+            && n == block
+        {
+            chain.probes_waiting.fetch_add(1, Ordering::SeqCst);
+            gate.acquire().await.unwrap().forget();
         }
         let gate = chain.probe_gate.lock().clone();
         if let Some((below, gate)) = gate
@@ -9059,6 +9070,153 @@ mod recovery {
             owner_of(&db.pool, "matic", late, t7).await,
             Some(Some(CARL.to_string()))
         );
+        db.drop().await;
+    }
+
+    /// The sales fold infers a bid's seller from the nft walk's transfers
+    /// only while the nft cursor is not diverged, read in the same statement:
+    /// while the nft recovery's search waits, sales recovers on its own and
+    /// refolds the bid without reading the orphaned transfer to ALICE, and
+    /// once the nft walk recovers with the replacement transfer to CARL, the
+    /// next fold sets CARL without any further sale event.
+    #[tokio::test]
+    async fn a_diverged_nft_cursor_lends_no_seller_to_the_sales_fold() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
+        let t1 = v2_token(0, 1);
+        seed_collection(
+            &db.pool,
+            "matic",
+            C1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let bid = || {
+            sales_index::tests::bid_created_log(C1, t1, DAVE, 0x22, 8, 4_000_000_000, b + 400, 0)
+        };
+        let chain = FakeChain::new(
+            b + 1_000,
+            vec![
+                transfer(C1, ZERO, BOB, t1, s + 100, 0),
+                transfer(C1, BOB, ALICE, t1, b + 300, 0),
+                bid(),
+            ],
+            10_000_000,
+            100,
+        );
+        let url = serve(chain.clone()).await;
+        // Different windows, so the two recover at different points: nft at
+        // s+6,999,999, sales at s+5,999,999.
+        let by_million = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let by_1_5m = state_over(db.pool.clone(), &url, index_settings(100, 1_500_000), false);
+        let nft = NftIndex::new(ChainNet::Matic);
+        assert!(publish_nft(&by_million, &url, &nft).await.published);
+        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        let seller = async || bids_of(&db.pool).await[0].3.clone();
+        assert_eq!(seller().await, Some(ALICE.to_string()));
+        // The chain reorganizes from b+200: BOB sold to CARL, not ALICE; the
+        // bid stands on both branches.
+        chain.fork(
+            b + 200,
+            0xee,
+            vec![transfer(C1, BOB, CARL, t1, b + 250, 0), bid()],
+        );
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *chain.gate_at.lock() = Some((s + 6_999_999, gate.clone()));
+        let (st, u) = (by_million.clone(), url.clone());
+        let nft_recovery =
+            tokio::spawn(async move { try_pass(&st, &u, &NftIndex::new(ChainNet::Matic)).await });
+        for _ in 0..200 {
+            if chain.probes_waiting.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            chain.probes_waiting.load(Ordering::SeqCst),
+            1,
+            "nft's search waits"
+        );
+        let c = cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(c.diverged_at.is_some(), "the nft cursor is marked diverged");
+        // Sales recovers on its own and refolds the bid meanwhile.
+        let recovered = pass(&by_1_5m, &url, &SalesIndex).await;
+        assert_eq!(
+            recovered.reorg_rewound_to,
+            Some((s + 5_999_999) as i64),
+            "{recovered:?}"
+        );
+        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert_eq!(seller().await, None, "no seller from an orphaned transfer");
+        // The nft walk recovers with the transfer to CARL; the next sales
+        // fold sets the seller, with no further sale event.
+        gate.add_permits(10);
+        let nft_rewound = nft_recovery.await.unwrap().unwrap();
+        assert_eq!(nft_rewound.reorg_rewound_to, Some((s + 6_999_999) as i64));
+        let c = cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(c.diverged_at.is_none(), "the rewind clears the mark");
+        assert!(publish_nft(&by_million, &url, &nft).await.published);
+        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert_eq!(seller().await, Some(CARL.to_string()));
+        db.drop().await;
+    }
+
+    /// A divergence that passes (the chain flips back before any search
+    /// rewinds) leaves the cursor as it was; the mark goes as soon as a pass
+    /// proves the cursor again: at its close when it has nothing to walk, at
+    /// its first advance when it pauses before closing.
+    #[tokio::test]
+    async fn a_passing_divergence_is_unmarked_once_the_cursor_is_proven() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        let diverged = async || {
+            cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+                .await
+                .unwrap()
+                .unwrap()
+                .diverged_at
+                .is_some()
+        };
+        let flicker = async || {
+            *chain.fork_from.lock() = Some((550, 0xee));
+            *chain.fail_probes_below.lock() = Some(998);
+            assert!(try_pass(&st, &url, &MANA).await.is_err());
+            assert!(diverged().await && !ready(&db.pool, INDEXER_MANA).await);
+            *chain.fork_from.lock() = None;
+            *chain.fail_probes_below.lock() = None;
+        };
+        flicker().await;
+        let closed = pass(&st, &url, &MANA).await;
+        assert!(
+            closed.published && closed.reorg_rewound_to.is_none(),
+            "{closed:?}"
+        );
+        assert!(!diverged().await, "the close clears the mark");
+        flicker().await;
+        *chain.head.lock() = 1_300;
+        let paused = pass(
+            &state_over(db.pool.clone(), &url, index_settings(1, 100), false),
+            &url,
+            &MANA,
+        )
+        .await;
+        assert!(paused.paused && paused.indexed_to == 1_098, "{paused:?}");
+        assert!(!diverged().await, "the advance clears the mark");
         db.drop().await;
     }
 }

@@ -263,9 +263,12 @@ pub struct Cursor {
     pub quarantined_at: Option<NaiveDateTime>,
     pub quarantine_reason: Option<String>,
     pub rebuild_requested_at: Option<NaiveDateTime>,
+    /// Its block was found on another branch than its stored hash, its
+    /// publication withdrawn, while its recovery searches.
+    pub diverged_at: Option<NaiveDateTime>,
 }
 
-const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at";
+const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
 
 /// Runs `ANALYZE <table>` in the fold's transaction only when the fold needs
 /// statistics the table does not have yet: a rebuild (`since` -1), a table
@@ -526,7 +529,7 @@ pub async fn advance(
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
-             updated_at = timezone('UTC', now()) \
+             diverged_at = NULL, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block < $5",
     )
@@ -585,7 +588,8 @@ pub async fn rewind(
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
-             fold_through = NULL, folded_block = NULL, folded_at = NULL, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
+             fold_through = NULL, folded_block = NULL, folded_at = NULL, diverged_at = NULL, \
+             reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
            AND last_block >= $5",
     )
@@ -613,10 +617,11 @@ pub async fn rewind(
 }
 
 /// Withdraws the publication of the projection standing at `at`, in a
-/// transaction of its own, before a divergence seen there is searched: its
-/// readers fall back at once, while its rows, its recovery points and its
-/// notification cursors stay as they are until the search decides. A cursor
-/// no longer at `at` is fenced.
+/// transaction of its own, before a divergence seen there is searched, and
+/// marks it diverged (`diverged_at`): its readers fall back at once, and the
+/// ones that use its height without its publication skip it, while its rows,
+/// its recovery points and its notification cursors stay as they are until
+/// the search decides. A cursor no longer at `at` is fenced.
 pub(crate) async fn withdraw(
     pool: &PgPool,
     owner: &Owner,
@@ -624,7 +629,8 @@ pub(crate) async fn withdraw(
 ) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
     let set = sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, updated_at = timezone('UTC', now()) \
+        "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, \
+             diverged_at = COALESCE(diverged_at, timezone('UTC', now())), updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
     )
     .bind(owner.indexer)
@@ -670,7 +676,7 @@ pub async fn mark_folded(
 ) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4 \
+        "UPDATE shop.chain_cursor SET folded_block = last_block, folded_at = $4, diverged_at = NULL \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND full_history AND last_block_hash IS NOT NULL \
            AND fold_through = $3 AND quarantine_reason IS NULL",
     )
@@ -689,7 +695,7 @@ pub async fn mark_folded(
 /// publish, or one held short of the head.
 pub async fn unpublish(pool: &PgPool, owner: &Owner, block: i64) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1 AND network = $2 AND last_block = $3")
+    sqlx::query("UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, diverged_at = NULL WHERE indexer = $1 AND network = $2 AND last_block = $3")
         .bind(owner.indexer)
         .bind(owner.net.db_name())
         .bind(block)
@@ -1245,7 +1251,7 @@ async fn rebuild(
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
-             quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, \
+             quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
     )
@@ -1556,9 +1562,11 @@ pub(crate) async fn recover(
     .bind(CHECKPOINTS_KEPT)
     .fetch_all(pool)
     .await?;
-    let compared = candidates.len();
+    let candidate_count = candidates.len();
+    let mut probed = 0usize;
     let mut found = None;
     for (block, hash, time) in candidates {
+        probed += 1;
         let header = source
             .header(block as u64)
             .await
@@ -1618,7 +1626,8 @@ pub(crate) async fn recover(
         network = net.db_name(),
         from = cur.last_block,
         rewound_to = to,
-        compared,
+        candidates = candidate_count,
+        probed,
         bounded = found.is_some(),
         "marketplace index: recovered from a reorg past the confirmation depth"
     );
@@ -2005,6 +2014,7 @@ mod tests {
             quarantined_at: None,
             quarantine_reason: None,
             rebuild_requested_at: None,
+            diverged_at: None,
         }
     }
 
