@@ -499,6 +499,7 @@ async fn test_orchestrator(
         pool.clone(),
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             4,
             SyncValidation::AuthChainOnly,
         )),
