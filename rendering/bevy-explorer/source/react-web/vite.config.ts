@@ -217,6 +217,14 @@ const designPath = (id: string): string | null => {
 }
 const isDesign = (id: string): boolean => designPath(id) != null
 const isDesignEntry = (id: string): boolean => designPath(id) === 'index.ts'
+// The heavy full-screen menu pages, in the shared HUD and the Explorer page core: one chunk, out of the core HUD
+// chunk. Resolved like the design folder, so a dependency's own features/ folder is never one of them.
+const MENU_ROOTS = [sharedSource('@hud'), sharedSource('@explorer-core')].map(
+  (root) => `${realpathSync(join(root, 'features')).replaceAll('\\', '/')}/`
+)
+const MENUS = /^(map|backpack|communities|gallery|places)\//
+export const isMenu = (id: string): boolean =>
+  MENU_ROOTS.some((root) => id.startsWith(root) && MENUS.test(id.slice(root.length)))
 /** The dev-only Showcase (?showcase=1) and the index of its sections: design modules whose name starts Showcase. */
 export const isShowcase = (id: string): boolean => designPath(id)?.startsWith('Showcase') ?? false
 
@@ -421,7 +429,7 @@ export default defineConfig(({ command, mode }) => ({
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
                 if (isDesign(id) && !isShowcase(id)) return 'design'
-                if (/\/(src|apps\/hud|explorer-core)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
+                if (isMenu(id)) return 'menus'
                 return null
               }
             }

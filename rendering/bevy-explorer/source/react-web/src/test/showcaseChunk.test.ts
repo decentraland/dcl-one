@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { statSync } from 'node:fs'
-import { DESIGN_ROOTS, designSideEffects, isShowcase, showcaseInEagerGraph, showcaseOnly } from '../../vite.config'
+import { DESIGN_ROOTS, designSideEffects, isMenu, isShowcase, showcaseInEagerGraph, showcaseOnly } from '../../vite.config'
 
 // The build's chunking of the design modules: what only the dev-only Showcase uses stays out of the eager chunks.
 // The shared HUD's design folder, as the bundler names its modules.
@@ -95,6 +95,20 @@ describe('when the build tree-shakes the design modules', () => {
       expect(designSideEffects(id)).toBeUndefined()
       expect(showcaseOnly(graph())(id)).toBe(false)
     }
+  })
+
+  it('should put only the menu pages of the shared HUD and the Explorer page core in the menus chunk', () => {
+    const hud = DESIGN.slice(0, -'design'.length)
+    const core = `${hud.slice(0, -'ui/apps/hud/'.length)}explorer-core/`
+    expect(isMenu(`${hud}features/map/MapPage.tsx`)).toBe(true)
+    expect(isMenu(`${core}features/places/placesApi.ts`)).toBe(true)
+    for (const id of [
+      `${hud}features/shop/ShopPage.tsx`,
+      `${hud}node_modules/some-pkg/src/features/map/index.js`,
+      '/elsewhere/apps/hud/features/map/MapPage.tsx',
+      '/elsewhere/explorer-core/features/places/placesApi.ts'
+    ])
+      expect(isMenu(id), id).toBe(false)
   })
 
   it('should tell the Showcase by its design module name, not by a path that merely contains the word', () => {

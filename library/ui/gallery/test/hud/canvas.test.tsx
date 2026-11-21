@@ -62,7 +62,7 @@ describe('when the HUD pages render with local data', () => {
     const names = [...container.querySelectorAll('[aria-haspopup="listbox"][aria-label]')].map(
       (node) => node.getAttribute('aria-label')
     )
-    expect(names).toContain('Resolution')
+    expect(names).toEqual(expect.arrayContaining(['Resolution', 'Reference resolution']))
     expect(names.filter((name, i) => names.indexOf(name) !== i)).toEqual([])
   })
 

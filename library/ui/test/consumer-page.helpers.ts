@@ -4,12 +4,14 @@ import { createLogger, createServer, type Logger, type ViteDevServer } from 'vit
 /** A Vite dev server that serves one consumer test page at `/`, and what went wrong while it served it. */
 export interface ConsumerPage {
   server: ViteDevServer
-  /** Dependency-scan errors and dependency re-optimizations, each of which reloads an open page. */
+  /** Dependency-scan errors, dependencies optimized while the page loads, reloads and optimizer failures. */
   disruptions: string[]
 }
 
+// What Vite 8 logs when the scan fails, when it finds a dependency while the page loads (it re-optimizes), when it
+// reloads the page for it, and when that optimization fails.
 const DISRUPTION =
-  /Failed to run dependency scan|new dependencies optimized|optimized dependencies changed/
+  /Failed to run dependency scan|dependenc(?:y|ies) optimized|optimized dependencies changed|error while updating dependencies/
 
 /**
  * Serves `head` and the module `entry` (a path under library/ui, such as `test/consumer/button-browser.tsx`) from
