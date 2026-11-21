@@ -104,6 +104,12 @@ const UNKEPT = "This browser couldn't save this purchase's transaction. Once you
 const GRANT_LOCK_TRIES = 5;
 const GRANT_LOCK_RETRY_MS = 50;
 
+/** `message` with "Nothing was bought." said before its closing "Try again…", if it has one, or after it. */
+function nothingBought(message: string): string {
+  const retry = /^(.*?)\s*(Try again[^.]*\.)$/.exec(message);
+  return retry ? `${retry[1]} Nothing was bought. ${retry[2]}` : `${message} Nothing was bought.`;
+}
+
 /** The split could not be recorded before leaving, so it was not sent. */
 class SplitNotRecorded extends Error {}
 
@@ -487,7 +493,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
                 e instanceof GrantCancelledError ||
                 e instanceof GrantNotInEffectError ||
                 e instanceof GrantUncheckedError
-              ? `${e.message} Nothing was bought.`
+              ? nothingBought(e.message)
             : isAuthorizationPending(e) || (stillPending && !dispatched)
               ? "Your MANA approval is still confirming, so nothing was bought. Try again in a moment."
               : isRejection(e) || isSignatureDeclined(e)
@@ -509,21 +515,33 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     }
   }
 
+  /**
+   * Clears the record Check again settled, under the item's lock and only while it is still that attempt's
+   * (clearSettledSplitHold). `cleared`: its outcome may now show. `busy`: the notice says why not. `replaced`: another run
+   * settled it and wrote another (shown) or none (the item is offered again).
+   */
+  async function clearChecked(record: SplitHold, account: string): Promise<"cleared" | "busy" | "replaced"> {
+    const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
+    if (clearing.kind === "busy") {
+      setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
+      return "busy";
+    }
+    if (clearing.kind === "replaced") {
+      setSent(clearing.current);
+      if (!clearing.current && phase.kind === "pending") setPhase({ kind: "review" });
+      return "replaced";
+    }
+    return "cleared";
+  }
+
   /** What Check again does with the record it read, while it holds `checking` throughout. */
   async function checkRecord(record: SplitHold, account: string | null) {
     // This run proved it sent nothing: only its record is left to go, and then its outcome shows.
     if (unsent && record.attempt === unsent.attempt && account) {
-      const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
-      if (clearing.kind === "busy") {
-        setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
-        return;
-      }
+      const cleared = await clearChecked(record, account);
+      if (cleared === "busy") return;
       setUnsent(null);
-      if (clearing.kind === "replaced") {
-        setSent(clearing.current);
-        if (!clearing.current) setPhase({ kind: "review" });
-        return;
-      }
+      if (cleared === "replaced") return;
       setSent(null);
       setPhase({ kind: "error", message: unsent.message });
       return;
@@ -544,16 +562,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     }
     // Applied under the item's lock, and only to the attempt that was read: another tab or surface may have settled it
     // meanwhile and sent a new split, whose record an outcome of this one never wipes.
-    const clearing = await clearSettledSplitHold(services.locks, account, lineId, record);
-    if (clearing.kind === "busy") {
-      setNotice(clearing.unremoved ? UNCLEARED : services.locks ? CHECKING_ELSEWHERE : UNCHECKABLE);
-      return;
-    }
-    if (clearing.kind === "replaced") {
-      setSent(clearing.current);
-      if (!clearing.current && phase.kind === "pending") setPhase({ kind: "review" });
-      return;
-    }
+    if ((await clearChecked(record, account)) !== "cleared") return;
     setSent(null);
     if (settled.kind === "spent") {
       setPhase({ kind: "success", txHash: settled.txHash });
