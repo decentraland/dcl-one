@@ -1077,7 +1077,7 @@ async fn a_presenter_added_during_creation_is_obeyed() {
             ),
         )
         .await;
-    settle().await;
+    settle_until(|| data_messages(&bot).len() >= 2).await;
     assert_eq!(data_messages(&bot).last().unwrap().0["currentSlide"], 1);
 }
 

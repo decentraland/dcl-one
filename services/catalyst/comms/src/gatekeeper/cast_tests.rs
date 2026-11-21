@@ -1845,7 +1845,17 @@ async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
 /// once the revocation is stored, and the eviction is retried on its own.
 #[tokio::test]
 async fn an_eviction_failure_still_revokes_the_ingress() {
-    let Some(pool) = scratch().await else { return };
+    // The cleanup worker drains the whole queue using this test's LiveKit fixture.
+    let Some(database) = crate::db::scratch::OwnedDatabase::new(
+        "cast_eviction",
+        crate::db::scratch::Schema::Full,
+        8,
+    )
+    .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
     let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
@@ -1897,6 +1907,8 @@ async fn an_eviction_failure_still_revokes_the_ingress() {
     crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, intent).await;
     assert!(h.livekit.connected(&scene.room).is_empty());
     assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 1);
+    drop(h);
+    database.drop().await;
 }
 
 /// An expired credential the expiry job has not deactivated yet does not
@@ -2504,7 +2516,17 @@ async fn a_reset_that_loses_to_a_concurrent_change_keeps_the_old_key() {
 /// retrying forever; a recent one keeps waiting.
 #[tokio::test]
 async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
-    let Some(pool) = scratch().await else { return };
+    // Keep this drain's queue with its own LiveKit fixture.
+    let Some(database) = crate::db::scratch::OwnedDatabase::new(
+        "cast_orphaned_reset",
+        crate::db::scratch::Schema::Full,
+        8,
+    )
+    .await
+    else {
+        return;
+    };
+    let pool = database.pool.clone();
     let scene = genesis_scene();
     seed_genesis_place(&pool, &scene, None).await;
     let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
@@ -2560,6 +2582,8 @@ async fn an_orphaned_reset_becomes_a_revocation_after_an_hour() {
         kind(intents[1]).await.as_deref(),
         Some("streaming_key_reset")
     );
+    drop(h);
+    database.drop().await;
 }
 
 /// A Cast publisher of no live credential joins as session `sid`, and
