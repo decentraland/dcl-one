@@ -18,9 +18,19 @@ import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { track } from "@/core/lib/telemetry/track";
 import { useSceneChat, type SceneChat } from "@/features/explorer/scene-chat/useSceneChat";
 
+import { PLACES_SECTION, placeDetailMeta, sectionCard } from "../lib/destination-meta";
+import { publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/places_.$id";
 
 export const handle = { agentMarkdown: "placeDetail" } satisfies AgentMarkdownHandle;
+
+/**
+ * The place's card, canonical at its own row's page and with its schema.org Place. An unknown place
+ * answers 404 and gets no card; while the catalogue is unreachable the page keeps the section card.
+ */
+export function meta({ loaderData, matches, params }: Route.MetaArgs) {
+  return placeDetailMeta(loaderData, publicBase(matches), sectionCard(PLACES_SECTION), `/places/${encodeURIComponent(params.id)}`);
+}
 
 export function loader({ request, params, context }: Route.LoaderArgs) {
   const { id } = params;

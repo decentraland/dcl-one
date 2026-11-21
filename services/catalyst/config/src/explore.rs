@@ -368,6 +368,15 @@ pub struct AbCdnConfig {
     /// The marketplace the metadata's `external_url` links to; unset yields no link.
     #[arg(long, env = "MAP_EXTERNAL_BASE_URL")]
     pub map_external_base_url: Option<String>,
+
+    /// Where an estate's `map.png` redirects when the grid holds none of its
+    /// parcels (a dissolved or unknown estate), as the atlas does.
+    #[arg(
+        long,
+        env = "MAP_DISSOLVED_ESTATE_IMAGE_URL",
+        default_value = "https://ui.decentraland.org/dissolved_estate.png"
+    )]
+    pub map_dissolved_estate_image_url: String,
 }
 
 #[cfg(test)]

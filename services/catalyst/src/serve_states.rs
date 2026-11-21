@@ -703,7 +703,6 @@ pub(super) fn social_states(
                 .trim_end_matches('/')
                 .to_string(),
             faces: faces.clone(),
-            archipelago_stats_url: non_empty(&config.social.archipelago_stats_url),
             places_ownership_check: config.social.communities_places_ownership_check,
             mirror_interval: Duration::from_secs(
                 config.social.communities_mirror_interval_secs.max(1),
