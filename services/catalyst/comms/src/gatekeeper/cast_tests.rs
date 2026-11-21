@@ -288,6 +288,50 @@ fn resolved_room(realm: RealmId, scene: &str, parcel: &str) -> ResolvedRoom {
     }
 }
 
+/// Answers a Genesis lookup with `genesis` and any other with `world`.
+struct TwoScenes {
+    genesis: ResolvedRoom,
+    world: ResolvedRoom,
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::SceneIdentity for TwoScenes {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+        crate::interfaces::test_support::classify_fixture(self, room).await
+    }
+
+    async fn resolve(
+        &self,
+        request: crate::rooms::RoomRequest<'_>,
+    ) -> Result<ResolvedRoom, crate::rooms::ResolveError> {
+        Ok(match request {
+            crate::rooms::RoomRequest::Adapter {
+                realm: RealmId::Shared(_),
+                ..
+            } => self.genesis.clone(),
+            _ => self.world.clone(),
+        })
+    }
+
+    async fn world_scene(
+        &self,
+        _: &WorldName,
+        _: &SceneId,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        Ok(self.world.deployment.clone())
+    }
+
+    async fn world_active_scene(
+        &self,
+        _: &WorldName,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        Ok(self.world.deployment.clone())
+    }
+}
+
 struct Harness {
     state: SharedState,
     app: axum::Router,
@@ -1240,11 +1284,21 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
         "0,0",
     )
     .await;
-    let h = harness(
+    let genesis_room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness_tuned(
         pool.clone(),
-        Some(world_room.clone()),
-        PermissionDecision::Allowed,
         None,
+        StubPolicy {
+            admin: PermissionDecision::Allowed,
+            ..Default::default()
+        },
+        None,
+        |state| {
+            state.scenes = Arc::new(TwoScenes {
+                genesis: genesis_room,
+                world: world_room.clone(),
+            })
+        },
     )
     .await;
     let watch = |location: String| json!({"location": location, "identity": "Viewer #1"});
@@ -1327,11 +1381,10 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     assert_eq!(body["roomId"], world_room.room);
     assert_eq!(body["placeName"], world.display());
 
-    // Banned from the scene the stream runs in; this resolver holds no
-    // deployment for it, so the ban is on its entity id.
+    // Banned from the scene the stream runs in, on its place.
     h.state
         .moderation
-        .scene_ban(&scene.id, &viewer, &wallet(), &[], "Scene")
+        .scene_ban(&scene.parcel, &viewer, &wallet(), &[], "Scene")
         .await
         .unwrap();
     let (status, body) = h
@@ -1428,7 +1481,8 @@ async fn platform_bans_refuse_watchers_by_wallet_or_recorded_device() {
     }
 
     // Another wallet's ban on the device this wallet last connected from.
-    let h = harness(pool.clone(), None, PermissionDecision::Allowed, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
     let key = random_key();
     let viewer = Address::parse(&address_of(&key)).unwrap();
     let device = format!("cast-device-{}", tag());
@@ -3113,6 +3167,41 @@ async fn a_genesis_redeploy_keeps_the_bans_and_admins_until_the_place_is_removed
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // A redeploy on another base parcel is another place, without the ban.
+    let parcel = unique_parcel();
+    seed_place(
+        &pool,
+        &format!("cast-moved-{}", tag()),
+        json!({ "positions": [parcel] }),
+        &parcel,
+    )
+    .await;
+    let (moved, moved_metadata) = redeployed_at(&new, &metadata, &parcel);
+    let m = authority_harness(&pool, &moved, actor_policy(&pool, &[])).await;
+    let (status, body) = m
+        .signed(KEY, "GET", "/scene-bans/addresses", &moved_metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.to_string().contains(&address_of(&banned)), "{body}");
+    // A resolver fault refuses the watcher with 503, never without the ban.
+    let down = harness_tuned(pool.clone(), None, StubPolicy::default(), None, |state| {
+        state.scenes = Arc::new(StubScenes {
+            room: Err(crate::rooms::ResolveError::Db(sqlx::Error::PoolClosed)),
+            scene: Ok(None),
+        });
+    })
+    .await;
+    let watch = json!({"location": scene.parcel, "identity": "viewer"});
+    let (status, body) = down
+        .signed(
+            &banned,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 
     sqlx::query("DELETE FROM explore.place WHERE id = $1")
         .bind(&scene.place_id)

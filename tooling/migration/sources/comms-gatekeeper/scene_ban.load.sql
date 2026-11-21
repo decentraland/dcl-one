@@ -33,7 +33,7 @@ END $$;
 INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at)
 SELECT DISTINCT ON (m.target_id, banned_address) m.target_id, banned_address, banned_by, banned_at AT TIME ZONE 'UTC'
 FROM stage s JOIN migration_scene_ban_identity m ON m.source_id=s.place_id
-ORDER BY m.target_id, banned_address, banned_at, s.place_id, banned_by
+ORDER BY m.target_id, banned_address, banned_at DESC, s.place_id, banned_by
 ON CONFLICT (place_id, banned_address) DO UPDATE
 SET banned_by = EXCLUDED.banned_by,
     banned_at = EXCLUDED.banned_at;

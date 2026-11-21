@@ -100,7 +100,7 @@ class CommsMigrationCases:
         self.assertEqual(self.sql(db, 'SELECT place_id, active, added_by FROM social.scene_admins;').strip(),
                          '0,0\tt\tactive')
         self.assertEqual(self.sql(db, 'SELECT place_id, banned_by FROM social.scene_bans;').strip(),
-                         '0,0\tearliest')
+                         '0,0\tlater')
 
     # ── re-runs keep moderation and credential changes made on the node ──
 

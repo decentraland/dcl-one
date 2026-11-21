@@ -146,11 +146,8 @@ pub async fn get_scene_adapter(
         .as_ref()
         .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?
         .as_str();
-    // A Genesis scene's bans are on the place of its deployment.
-    let ban_key = match &genesis {
-        Some(deployment) => Some(crate::access::SceneBanKey::place(deployment.place_key())),
-        None => resolved.ban_key(),
-    };
+    // A Genesis scene's bans are on the place of the deployment found.
+    let ban_key = genesis.as_ref().unwrap_or(&resolved).ban_key();
     let ban_key = ban_key
         .as_ref()
         .map_or(resolved_scene_id, |key| key.as_str());

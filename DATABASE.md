@@ -2302,7 +2302,8 @@ Invariants:
   world-scene identity is not bound to a deployment again, so no request
   reads its grants.
 - The release script `schemas/releases/scene-admin-place-keys.sql` moves the
-  grants of active deployments from the entity id to the place. Stop all old
+  grants of active deployments (a world scene's active identity, a Genesis
+  deployment that is not deleted) from the entity id to the place. Stop all old
   API replicas before `catalyst schema migrate`, apply the script with the
   administrative database role, then start the updated binaries: an old
   binary reads and writes grants by entity id. `catalyst serve` refuses
@@ -2332,10 +2333,15 @@ row for each `(place_id, banned_address)`, under a key stable across redeploys
 (`ResolvedRoom::ban_key`): `<world>:<base parcel>` for a world scene (above),
 the place of a Genesis scene, the canonical base parcel its admins use. A
 Genesis room name carries no deployment; `ResolvedRoom::resolve_ban_key` reads
-it (one resolver lookup) for the relay and Cast checks.
+it for the relay and Cast checks, and refuses a room no deployment stands
+behind (an overwritten scene) instead of reading its entity id. The scene-state
+socket and its sweep read the key from the deployment they host.
 
 Workload: one primary-key read for each scene join (`/get-scene-adapter`, a
-relay admission, a Cast watcher) and moderation request, one read of a
+relay admission, a Cast watcher, a scene-state socket and its sweep) and
+moderation request; each Genesis relay admission and Cast watcher check adds
+one resolver lookup of the deployment (`content.deployments` by entity id);
+one read of a
 place's rows for a room metadata refresh and a ban listing
 (`scene_bans_place_time_idx`). Writes are rare: `POST` or `DELETE
 /scene-bans`, and the place removal cleanup.
@@ -2350,9 +2356,11 @@ Invariants:
   scenes too), or the rows on the base parcel of a Genesis place when no
   enabled `explore.place` row has that base.
 - The release script `schemas/releases/genesis-scene-ban-keys.sql` moves the
-  bans of active Genesis deployments from the entity id to the base parcel
-  (`social.scene_base_parcel`), keeping the newest ban of a wallet when two
-  entities name one place, also against a row the place has. Stop all old
+  bans of Genesis deployments that are not deleted (`deleter_deployment IS
+  NULL`, as the resolver reads them, unpublished ones too) from the entity id
+  to the base parcel (`social.scene_base_parcel`), keeping the newest ban of a
+  wallet when two entities name one place, also against a row the place has.
+  The cutover import keeps the newest ban of aliases too. Stop all old
   API replicas before `catalyst schema migrate`, apply the script with the
   administrative database role, then start the updated binaries. `catalyst
   serve` refuses startup while a ban of an active Genesis deployment has the

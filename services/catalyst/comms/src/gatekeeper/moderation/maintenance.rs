@@ -150,11 +150,12 @@ fn metadata_batch(mut rooms: Vec<String>, after: Option<&str>) -> (Vec<String>, 
     (batch, next)
 }
 
-/// The scene behind `room`, with the key its explicit admins are granted on.
+/// The scene behind `room`, with the key its explicit admins are granted on
+/// and the key its bans live under.
 async fn metadata_scene_context(
     state: &CommsState,
     room: &str,
-) -> Result<Option<(PlaceContext, String)>, ApiError> {
+) -> Result<Option<(PlaceContext, String, crate::access::SceneBanKey)>, ApiError> {
     use crate::rooms::{ParsedRoom, parse_room, resolve_room_name};
     let resolved = match parse_room(room) {
         Some(ParsedRoom::WorldScene(_)) => resolve_room_name(state.scenes.as_ref(), room)
@@ -241,14 +242,17 @@ async fn metadata_scene_context(
         base_position: deployment.base.canonical(),
         positions: json!(deployment.parcels.canonical()),
     };
-    Ok(Some((context, deployment.place_key())))
+    let Some(ban_key) = resolved.ban_key() else {
+        return Ok(None);
+    };
+    Ok(Some((context, deployment.place_key(), ban_key)))
 }
 
 async fn room_metadata_fields(
     state: &CommsState,
     room: &str,
 ) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
-    let Some((context, admin_key)) = metadata_scene_context(state, room).await? else {
+    let Some((context, admin_key, ban_key)) = metadata_scene_context(state, room).await? else {
         return Ok(None);
     };
     let mut admins = scene::try_get_extra_addresses(state, &info(&context)).await?;
@@ -265,15 +269,10 @@ async fn room_metadata_fields(
     {
         admins.insert(admin.admin);
     }
-    let ban_key = match (&context.world_name, context.world) {
-        (Some(world), true) => format!("{}:{}", world, context.base_position),
-        // A Genesis scene's bans share its admins' place.
-        _ => admin_key.clone(),
-    };
     let bans: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
     )
-    .bind([ban_key, context.place_id.clone()].as_slice())
+    .bind([ban_key.as_str().to_owned(), context.place_id.clone()].as_slice())
     .fetch_all(&state.pool)
     .await?;
     Ok(Some(
@@ -759,7 +758,7 @@ mod tests {
                 }),
                 ..Default::default()
             });
-            let (context, _) = metadata_scene_context(&state, &room)
+            let (context, _, _) = metadata_scene_context(&state, &room)
                 .await
                 .unwrap()
                 .unwrap();
