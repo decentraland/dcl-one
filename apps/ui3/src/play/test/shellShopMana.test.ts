@@ -1160,6 +1160,32 @@ describe('the in-world purchase with MANA', () => {
       expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
     })
 
+    it.each([
+      ['its own bytes reverted', 'reverted', 'reverted'],
+      ['its own bytes reverted', 'reverted', null],
+      ['its answer lost', 'lost', 'reverted'],
+      ['its answer lost', 'lost', null]
+    ] as const)('keeps a split held, %s, when the node settles its credit in the buyer\'s own call for another item that isn\'t seen to succeed (%s / %s)', async (_, how, status) => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      if (how === 'lost') Object.assign(w.relay.state, { mode: 'fail-after-send', failStatus: 504 })
+      else w.relay.state.confirm = 'reverted'
+      // The buyer's own call of this credit, for another item: reverted, or not mined yet. It spent nothing provably.
+      const E = `0x${'e'.repeat(63)}9`
+      w.txs.set(E, { to: MANAGER, input: encodeExecuteMetaTransaction('functionData', BUYER, useCreditsFor('8'), `0x${'11'.repeat(65)}` as Hex) })
+      if (status) w.chain.receipts.set(E, status)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, ...settledIn(() => E) } })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      await p.until('pending')
+      await new Promise((r) => setTimeout(r, 50))
+      expect(p.events.some((e) => e.state === 'failed' || e.state === 'succeeded')).toBe(false)
+      expect(p.shown.some((s) => s.view.step === 'failed')).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+    })
+
     it('ends an own-reverted split as spent elsewhere when the node settles its credit in the buyer\'s own call for another item', async () => {
       on()
       const w = world()

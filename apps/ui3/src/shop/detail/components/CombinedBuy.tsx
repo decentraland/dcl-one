@@ -608,12 +608,17 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setNotice(null);
       const account = wallet.account;
       // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
-      const record = readSplitHoldRecord(account, lineId);
-      if (!record) {
+      const stored = readSplitHoldRecord(account, lineId);
+      if (!stored) {
         setSent(null);
         if (phase.kind === "pending") setPhase({ kind: "review" });
         return;
       }
+      // A hash this dialog learned but couldn't save (the record kept is the one written before the sale left): read with
+      // it while that record is this account's and this very attempt's. Its outcome still applies, under the item's lock,
+      // only to that attempt.
+      const known = sent && sent.txHash && !stored.txHash && stored.attempt !== null && stored.attempt === sent.attempt && stored.sale?.buyer === account?.toLowerCase();
+      const record = known ? { ...stored, txHash: sent.txHash, chainId: sent.chainId } : stored;
       checkingNow.current = true;
       setChecking(true);
       try {

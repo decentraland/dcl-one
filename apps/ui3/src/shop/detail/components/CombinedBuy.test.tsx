@@ -763,6 +763,18 @@ describe("a split whose outcome is not known", () => {
       stuckRemove.mockRestore();
       stuckWrite.mockRestore();
     }
+    // The storage recovers with the dialog still open: Check again reads the hash it kept, and completes the purchase.
+    const reads: string[] = [];
+    const receipt = demo.chain.receipt.bind(demo.chain);
+    demo.chain.receipt = async (chainId, hash, ...rest) => {
+      reads.push(hash.toLowerCase());
+      return receipt(chainId, hash, ...rest);
+    };
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(reads.length).toBeGreaterThan(0);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
   it("a successful receipt for a transaction that is not this sale's, with nothing in the history, is held confirming with that hash, never complete", async () => {
@@ -1155,6 +1167,22 @@ describe("a held split with no transaction to read", () => {
     expect(screen.queryByTestId("combined-confirm")).toBeNull();
   });
 
+  it.each([
+    ["reverted", "reverted" as const],
+    ["not mined yet", null],
+  ])("its credit SETTLED in the buyer's own call for another purchase, %s, is no proof it was spent: held, no credit cancelled", async (_, status) => {
+    const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { settledBy: "other" });
+    if (status) demo.chain.receipts.set(SETTLED_BY, status);
+    else demo.chain.receipts.delete(SETTLED_BY);
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "userPurchases")).toBe(true));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled(), { timeout: 5000 });
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(screen.queryByText(/spent on another purchase/)).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(false);
+    expect(readSplitHold(BOOK.buyer, demo.lineId)).not.toBeNull();
+  });
+
   it("a credit the node says another purchase spent: nothing was bought here, nothing to give back, and the item is let go", async () => {
     const demo = heldSplit({ value: "SETTLED" }, nowSeconds() - 1, { settledBy: "other" });
     await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
@@ -1301,8 +1329,8 @@ describe("a held split with no transaction to read", () => {
       ["EXPIRED", false],
     ] as const) {
       const own = `0x${"5a".repeat(32)}`;
-      // EXPIRED seen so for the whole grace already, so it decides on this click.
-      const demo = heldSplit({ value }, nowSeconds() - 1, { txHash: own, expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000 });
+      // Its credit expired twenty minutes ago, and EXPIRED was seen past that for the whole grace: it decides on this click.
+      const demo = heldSplit({ value }, nowSeconds() - 20 * 60, { txHash: own, expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000 });
       // Its own receipt can't be read; the node's evidence (the SETTLED transaction) can.
       const read = demo.chain.receipt;
       demo.chain.receipt = async (chainId, hash) => {
@@ -1344,7 +1372,7 @@ describe("a held split with no transaction to read", () => {
     // Every 25th line has a status this page doesn't know: decoded, the first page holds 144 lines of the 150 sent.
     const lines = Array.from({ length: 400 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 25 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[170] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
-    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+    const demo = heldSplit({ value: null }, nowSeconds() - 20 * 60, {
       expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       // It sends 150 rows a page whatever was asked.
       userPurchases: ({ query }) => {
@@ -1360,7 +1388,7 @@ describe("a held split with no transaction to read", () => {
   it("pages the history by the rows the server sent, so rows the decoder drops neither repeat a page nor end it early", async () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 20 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
-    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+    const demo = heldSplit({ value: null }, nowSeconds() - 20 * 60, {
       expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
@@ -1376,7 +1404,7 @@ describe("a held split with no transaction to read", () => {
   it("finds its credit past the newest lines: the history is read page by page until it is found", async () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
-    const demo = heldSplit({ value: null }, nowSeconds() - 1, {
+    const demo = heldSplit({ value: null }, nowSeconds() - 20 * 60, {
       expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);

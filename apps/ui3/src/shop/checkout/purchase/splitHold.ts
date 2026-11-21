@@ -285,19 +285,29 @@ export async function settleSplitHold(
   }
   if (credit?.status === "EXPIRED") {
     // The node lists a credit EXPIRED only once the chain, as far as it has read it, is past its expiry. This browser waits
-    // for that expiry too, a second safeguard: a credit that may still be spent never lets its split go, and the grace
-    // only starts once both say so.
-    if (!splitHoldCreditOver(hold, now)) return null;
-    const seen = hold.expiredSeenAt ?? null;
+    // for that expiry too, a second safeguard: with no expiry known to check, or before it, there is no answer, and the
+    // grace counts only from a sighting made past it (`expirySeenAt`).
+    if (hold.creditExpiresAt === null || now < hold.creditExpiresAt * 1000) return null;
+    const seen = expirySeenAt(hold);
     return seen !== null && now >= seen && now - seen >= SPLIT_EXPIRY_CONFIRM_MS ? { kind: "released" } : { kind: "expiring" };
   }
   return null;
 }
 
 /**
- * Notes, under the line's lock and only on the attempt that was read, when its credit was first seen EXPIRED: the grace
- * runs from then, in every tab and surface, and survives a restart. `noted` (or already), `replaced` (another attempt's
- * record is there now, or none), or `busy` (a run holds the line's lock, or there are no Web Locks).
+ * When its credit was first seen EXPIRED past that credit's own expiry: the only sighting the grace may count from. One
+ * made before the expiry (or with no expiry known) is none, and the next sighting past it takes its place.
+ */
+function expirySeenAt(hold: SplitHold): number | null {
+  const seen = hold.expiredSeenAt ?? null;
+  return seen !== null && hold.creditExpiresAt !== null && seen >= hold.creditExpiresAt * 1000 ? seen : null;
+}
+
+/**
+ * Notes, under the line's lock and only on the attempt that was read, when its credit was first seen EXPIRED past its own
+ * expiry: the grace runs from then, in every tab and surface, and survives a restart. A sighting kept from before that
+ * expiry is replaced by this one. `noted` (or already), `replaced` (another attempt's record is there now, or none), or
+ * `busy` (a run holds the line's lock, or there are no Web Locks).
  */
 export async function noteSplitHoldExpiry(
   locks: LockManager | null | undefined,
@@ -306,13 +316,13 @@ export async function noteSplitHoldExpiry(
   read: SplitHold,
   now: number = Date.now(),
 ): Promise<"noted" | "replaced" | "busy"> {
-  if (read.expiredSeenAt != null) return "noted";
+  if (expirySeenAt(read) !== null) return "noted";
   const release = await webLock(locks, splitHoldLockName(account, lineId));
   if (!release) return "busy";
   try {
     const current = readSplitHoldRecord(account, lineId);
     if (!current || current.attempt !== read.attempt || (read.attempt === null && current.at !== read.at)) return "replaced";
-    if (current.expiredSeenAt != null) return "noted";
+    if (expirySeenAt(current) !== null) return "noted";
     return writeSplitHold(account, lineId, { ...current, expiredSeenAt: now }) ? "noted" : "busy";
   } finally {
     release();

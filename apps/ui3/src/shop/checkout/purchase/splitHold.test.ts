@@ -240,10 +240,10 @@ describe("what settles a hold", () => {
       mined(reverted.chain, HASH, tx, "reverted");
       expect(await settleSplitHold(hold({ txHash: HASH, sale: dispatchedAs(tx) }), reverted.deps), JSON.stringify(listed)).toBeNull();
     }
-    // Expired unspent, its credit past its expiry: let go only past the grace, as any other.
+    // Expired unspent, its credit past its expiry (twenty minutes ago): let go only past the grace, as any other.
     const expired = deps({ status: "EXPIRED" });
     mined(expired.chain, HASH, tx, "reverted");
-    const over = { creditExpiresAt: seconds() - 1 };
+    const over = { creditExpiresAt: seconds() - 20 * 60 };
     expect(await settleSplitHold(hold({ ...over, txHash: HASH, sale: dispatchedAs(tx) }), expired.deps)).toEqual({ kind: "expiring" });
     const seen = Date.now() - SPLIT_EXPIRY_CONFIRM_MS;
     expect(await settleSplitHold(hold({ ...over, txHash: HASH, sale: dispatchedAs(tx), expiredSeenAt: seen }), expired.deps)).toEqual({ kind: "released" });
@@ -299,6 +299,16 @@ describe("what settles a hold", () => {
     expect(await settleSplitHold(hold({ txHash: HASH }), { ...unread.deps, sleep: async () => {} })).toBeNull();
   });
 
+  it.each([
+    ["reverted", "reverted" as const],
+    ["not mined yet", null],
+  ])("its credit SETTLED in the buyer's own call on other terms, %s, is no proof it was spent elsewhere: held", async (_, status) => {
+    const { chain, deps: d } = deps({ status: "SETTLED", txHash: SETTLED_BY });
+    chain.transactions.set(SETTLED_BY.toLowerCase(), splitSaleTransaction({ ...SALE, callData: "0x0bad" }));
+    if (status) chain.receipts.set(SETTLED_BY.toLowerCase(), status);
+    expect(await settleSplitHold(hold(), { ...d, sleep: async () => {} })).toBeNull();
+  });
+
   it("then the node's record of its credit: SETTLED by this split completes it, by another purchase is spent elsewhere, unread holds", async () => {
     const own = deps({ status: "SETTLED", txHash: SETTLED_BY });
     mined(own.chain, SETTLED_BY, splitSaleTransaction(SALE));
@@ -314,7 +324,8 @@ describe("what settles a hold", () => {
 
   it("EXPIRED, its credit past its expiry, lets it go only once seen so for the whole grace: before, it is expiring", async () => {
     const { deps: d } = deps({ status: "EXPIRED" });
-    const over = { creditExpiresAt: seconds() - 1 };
+    // Its credit expired twenty minutes ago: every sighting below is past it.
+    const over = { creditExpiresAt: seconds() - 20 * 60 };
     expect(await settleSplitHold(hold(over), d)).toEqual({ kind: "expiring" });
     const seen = Date.now() - SPLIT_EXPIRY_CONFIRM_MS + 1_000;
     expect(await settleSplitHold(hold({ ...over, expiredSeenAt: seen }), d)).toEqual({ kind: "expiring" });
@@ -337,15 +348,38 @@ describe("what settles a hold", () => {
 
   it("when its credit was first seen EXPIRED is noted on the attempt that was read, under the line's lock", async () => {
     const locks = createFakeLocks();
-    const read = hold({ attempt: "a" });
+    // Its credit expired at 1 s: the sightings below, at 5 s and 9 s, are past it.
+    const read = hold({ attempt: "a", creditExpiresAt: 1 });
     writeSplitHold(ACCOUNT, LINE, read);
     expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, read, 5_000)).toBe("noted");
     expect(readSplitHoldRecord(ACCOUNT, LINE)?.expiredSeenAt).toBe(5_000);
     // Noted once: a later look does not move it.
     expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, read, 9_000)).toBe("noted");
     expect(readSplitHoldRecord(ACCOUNT, LINE)?.expiredSeenAt).toBe(5_000);
-    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, hold({ attempt: "older" }))).toBe("replaced");
+    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, hold({ attempt: "older", creditExpiresAt: 1 }))).toBe("replaced");
     locks.held.add(splitHoldLockName(ACCOUNT, LINE));
-    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, hold({ attempt: "a" }))).toBe("busy");
+    expect(await noteSplitHoldExpiry(locks, ACCOUNT, LINE, hold({ attempt: "a", creditExpiresAt: 1 }))).toBe("busy");
+  });
+
+  it("a sighting from before its credit's expiry doesn't start the grace: held until expiry, then the first sighting past it counts", async () => {
+    const { deps: d } = deps({ status: "EXPIRED" });
+    const expiry = (seconds() + 60) * 1000;
+    // EXPIRED was noted a minute before the credit's own expiry.
+    const early = hold({ attempt: "a", creditExpiresAt: expiry / 1000, expiredSeenAt: expiry - 60_000 });
+    writeSplitHold(ACCOUNT, LINE, early);
+    expect(await settleSplitHold(early, { ...d, now: expiry - 1 })).toBeNull();
+    // Just past its expiry: expiring, not released on the early sighting.
+    expect(await settleSplitHold(early, { ...d, now: expiry + 1 })).toEqual({ kind: "expiring" });
+    // That look is noted in its place, under the attempt's lock, and the grace runs from it.
+    expect(await noteSplitHoldExpiry(createFakeLocks(), ACCOUNT, LINE, early, expiry + 1)).toBe("noted");
+    const noted = readSplitHoldRecord(ACCOUNT, LINE)!;
+    expect(noted.expiredSeenAt).toBe(expiry + 1);
+    expect(await settleSplitHold(noted, { ...d, now: expiry + SPLIT_EXPIRY_CONFIRM_MS })).toEqual({ kind: "expiring" });
+    expect(await settleSplitHold(noted, { ...d, now: expiry + 1 + SPLIT_EXPIRY_CONFIRM_MS })).toEqual({ kind: "released" });
+  });
+
+  it("EXPIRED for a credit whose expiry isn't known is no answer, however old the sighting: held", async () => {
+    const { deps: d } = deps({ status: "EXPIRED" });
+    expect(await settleSplitHold(hold({ creditExpiresAt: null, expiredSeenAt: 1 }), d)).toBeNull();
   });
 });

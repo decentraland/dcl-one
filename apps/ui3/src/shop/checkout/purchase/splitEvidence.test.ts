@@ -78,6 +78,15 @@ describe('which transaction is an in-world split purchase', () => {
   })
 
   it.each([
+    ['reverted', 'reverted' as const],
+    ['not mined yet', null]
+  ])('takes the buyer spending this credit on other terms as spent elsewhere only once it succeeded: %s, it is only not this sale', async (_, status) => {
+    const input = relayed({ items: [{ ...item, itemId: '8' }] })
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, status) as never, sale, '0xabc', { sleep: async () => {} })).toBe('foreign')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('other')
+  })
+
+  it.each([
     ['another credit', relayed({ credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })],
     ['another sender', relayed({ user: '0x' + 'cc'.repeat(20) })],
     ['another sender spending another credit', relayed({ user: '0x' + 'cc'.repeat(20), credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })]
