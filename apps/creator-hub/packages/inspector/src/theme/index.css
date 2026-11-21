@@ -38,12 +38,14 @@ textarea::selection {
 }
 
 .contexify_submenu::-webkit-scrollbar,
-.OptionList::-webkit-scrollbar {
+.OptionList::-webkit-scrollbar,
+.ui-designer-widget-picker::-webkit-scrollbar {
   width: 6px;
 }
 
 .contexify_submenu::-webkit-scrollbar-track,
-.OptionList::-webkit-scrollbar-track {
+.OptionList::-webkit-scrollbar-track,
+.ui-designer-widget-picker::-webkit-scrollbar-track {
   background: transparent;
   margin: var(--contexify-menu-padding) 0;
 }
@@ -53,7 +55,10 @@ textarea::selection {
 .contexify_submenu::-webkit-scrollbar-thumb:window-inactive,
 .OptionList::-webkit-scrollbar-thumb,
 .OptionList::-webkit-scrollbar-thumb:hover,
-.OptionList::-webkit-scrollbar-thumb:window-inactive {
+.OptionList::-webkit-scrollbar-thumb:window-inactive,
+.ui-designer-widget-picker::-webkit-scrollbar-thumb,
+.ui-designer-widget-picker::-webkit-scrollbar-thumb:hover,
+.ui-designer-widget-picker::-webkit-scrollbar-thumb:window-inactive {
   background: var(--palette-blackTransparent-blurry) padding-box;
   border-inline: 1px solid transparent;
   border-radius: var(--shape-borderRadiusPill);
@@ -62,7 +67,8 @@ textarea::selection {
 
 @supports not selector(::-webkit-scrollbar) {
   .contexify_submenu,
-  .OptionList {
+  .OptionList,
+  .ui-designer-widget-picker {
     scrollbar-color: var(--palette-whiteTransparent-backdrop) transparent;
     scrollbar-width: thin;
   }

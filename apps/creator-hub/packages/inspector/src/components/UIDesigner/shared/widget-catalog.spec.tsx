@@ -13,7 +13,7 @@ import {
   Prefab,
 } from '../../Icons/figma';
 import type { UINode } from './tree-model';
-import { NodeIcon, WIDGET_LIST } from './widget-catalog';
+import { matchWidgets, NodeIcon, WIDGET_CATALOG, WIDGET_LIST } from './widget-catalog';
 
 const svgOf = (ui: React.ReactElement) => {
   const html = render(ui).container.querySelector('svg')!.outerHTML;
@@ -77,5 +77,35 @@ describe('NodeIcon', () => {
         />,
       ),
     ).toBe(svgOf(<Icon fontSize="inherit" />));
+  });
+});
+
+describe('matchWidgets', () => {
+  const labels = (query: string) =>
+    matchWidgets(query).map(c => [c.category, c.items.map(i => i.label)]);
+
+  it('should return the whole catalog for an empty or blank query', () => {
+    expect(matchWidgets('')).toEqual(WIDGET_CATALOG);
+    expect(matchWidgets('   ')).toEqual(WIDGET_CATALOG);
+  });
+
+  it('should match a category name, its keywords and labels, case-insensitively', () => {
+    expect(labels('Text')).toEqual([
+      ['Containers', ['Image']],
+      ['Text', ['Label', 'Button']],
+      ['Input', ['Input']],
+    ]);
+  });
+
+  it('should match a keyword alone', () => {
+    expect(labels('box')).toEqual([['Containers', ['Container']]]);
+  });
+
+  it('should match a label in any case', () => {
+    expect(labels('LAB')).toEqual([['Text', ['Label']]]);
+  });
+
+  it('should drop every category when nothing matches', () => {
+    expect(matchWidgets('zzz')).toEqual([]);
   });
 });

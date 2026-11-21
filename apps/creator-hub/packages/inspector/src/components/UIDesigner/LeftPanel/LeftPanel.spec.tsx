@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 
@@ -8,10 +10,9 @@ import { LeftPanel } from './LeftPanel';
 
 const mocks = vi.hoisted(() => ({
   createRoot: vi.fn(),
-  spliceSetRootChild: vi.fn(),
   selectedNodes: [1] as number[],
   mobileHudSelected: false,
-  picker: null as null | { parent?: unknown; onAdd?: (type: string) => void },
+  picker: null as null | { parent?: unknown; offset?: number; onDismiss?: () => void },
   track: vi.fn(),
   roots: [] as { name: string; filename: string; topLevel: boolean }[],
   filename: null as string | null,
@@ -26,7 +27,6 @@ vi.mock('../../../lib/logic/analytics', async importActual => ({
 
 vi.mock('../code/store', () => ({
   createRoot: mocks.createRoot,
-  spliceSetRootChild: mocks.spliceSetRootChild,
   useCodeState: () => ({
     roots: mocks.roots,
     filename: mocks.filename,
@@ -54,7 +54,7 @@ vi.mock('./CodeRootsList', () => ({
   CodeRootsList: ({ filter }: { filter?: string }) => <div data-testid="guis">{filter}</div>,
 }));
 vi.mock('./WidgetPicker', () => ({
-  WidgetPicker: (props: { parent?: unknown; onAdd?: (type: string) => void }) => {
+  WidgetPicker: (props: { parent?: unknown; offset?: number; onDismiss?: () => void }) => {
     mocks.picker = props;
     return null;
   },
@@ -90,7 +90,6 @@ beforeEach(() => {
   mocks.selectedNodes = [1];
   mocks.mobileHudSelected = false;
   mocks.picker = null;
-  mocks.spliceSetRootChild.mockClear();
 });
 
 const header = (name: 'New GUI' | 'Add Node') => {
@@ -174,7 +173,13 @@ describe('when adding a node', () => {
     fireEvent.click(header('Add Node'));
 
     expect(mocks.picker?.parent).toBe(7);
-    expect(mocks.picker?.onAdd).toBeUndefined();
+  });
+
+  it('should place the menu 8px below the NODES chip', () => {
+    renderRail();
+    fireEvent.click(header('Add Node'));
+
+    expect(mocks.picker?.offset).toBe(8);
   });
 
   describe('and nothing is selected', () => {
@@ -193,8 +198,6 @@ describe('when adding a node', () => {
       fireEvent.click(header('Add Node'));
 
       expect(mocks.picker?.parent).toBe(1);
-      expect(mocks.picker?.onAdd).toBeUndefined();
-      expect(mocks.spliceSetRootChild).not.toHaveBeenCalled();
     });
   });
 
@@ -205,10 +208,8 @@ describe('when adding a node', () => {
       mocks.emptyRoot = true;
       renderRail();
       fireEvent.click(header('Add Node'));
-      mocks.picker?.onAdd?.('UiEntity');
 
-      expect(mocks.picker?.parent).toBeUndefined();
-      expect(mocks.spliceSetRootChild).toHaveBeenCalledWith('UiEntity', undefined);
+      expect(mocks.picker?.parent).toBeNull();
     });
   });
 });
@@ -243,5 +244,43 @@ describe('when searching', () => {
 
     expect(guis()!.textContent).toBe('');
     expect(nodes()!.textContent).toBe('');
+  });
+});
+
+describe('when the Add Node menu opens from the NODES row', () => {
+  it('should announce the row as a dialog opener, expanded only while the menu is open', () => {
+    renderRail();
+    const row = header('Add Node');
+
+    expect(row.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(row);
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    act(() => mocks.picker?.onDismiss?.());
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('should leave New GUI without a popup, since it opens nothing', () => {
+    renderRail();
+
+    expect(header('New GUI').hasAttribute('aria-haspopup')).toBe(false);
+    expect(header('New GUI').hasAttribute('aria-expanded')).toBe(false);
+  });
+
+  it('should keep the row and its chip in their On look from aria-expanded, not the pointer', () => {
+    const stylesheet = readFileSync(join(__dirname, '..', 'UIDesigner.css'), 'utf8');
+    const rules = new Map(
+      Array.from(stylesheet.matchAll(/([^{}]+)\{([^}]*)\}/g), ([, selector, body]) => [
+        selector.replace(/\s+/g, ' ').trim(),
+        body.replace(/\s+/g, ' ').trim(),
+      ]),
+    );
+
+    expect(rules.get('.ui-designer-rail-header[aria-expanded="true"]')).toContain(
+      'background-color: var(--palette-whiteTransparent-faint);',
+    );
+    expect(
+      rules.get('.ui-designer-rail-header[aria-expanded="true"] .ui-designer-rail-add'),
+    ).toContain('background-color: var(--palette-whiteTransparent-subtle);');
   });
 });

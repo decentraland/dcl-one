@@ -6,7 +6,7 @@ import { getMobileHudSelected, getSelectedNode } from '../../../redux/ui-designe
 import { Box } from '../../Box';
 import { Close, Plus, Search } from '../../Icons/figma';
 import { TextField } from '../../ui';
-import { createRoot, spliceSetRootChild, useCodeState } from '../code/store';
+import { createRoot, useCodeState } from '../code/store';
 import { useUINodeTree } from '../shared/useUINodeTree';
 import { NodeTree } from './NodeTree';
 import { WidgetPicker } from './WidgetPicker';
@@ -14,26 +14,32 @@ import { CodeRootsList } from './CodeRootsList';
 
 import '../UIDesigner.css';
 
-const SectionHeader = React.forwardRef<
-  HTMLSpanElement,
-  { label: string; name: 'New GUI' | 'Add Node'; onClick: () => void }
->(({ label, name, onClick }, chipRef) => (
-  <button
-    type="button"
-    className="ui-designer-rail-header"
-    aria-label={name}
-    onClick={onClick}
-  >
-    <span>{label}</span>
-    <span
-      ref={chipRef}
-      className="ui-designer-rail-add"
-      aria-hidden="true"
+type SectionHeaderProps = {
+  label: string;
+  name: 'New GUI' | 'Add Node';
+  onClick: () => void;
+} & Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'aria-haspopup' | 'aria-expanded'>;
+
+const SectionHeader = React.forwardRef<HTMLSpanElement, SectionHeaderProps>(
+  ({ label, name, onClick, ...popup }, chipRef) => (
+    <button
+      type="button"
+      className="ui-designer-rail-header"
+      aria-label={name}
+      onClick={onClick}
+      {...popup}
     >
-      <Plus fontSize="inherit" />
-    </span>
-  </button>
-));
+      <span>{label}</span>
+      <span
+        ref={chipRef}
+        className="ui-designer-rail-add"
+        aria-hidden="true"
+      >
+        <Plus fontSize="inherit" />
+      </span>
+    </button>
+  ),
+);
 
 const LeftPanel: React.FC = () => {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -101,16 +107,17 @@ const LeftPanel: React.FC = () => {
             ref={addNodeRef}
             label="Nodes"
             name="Add Node"
+            aria-haspopup="dialog"
+            aria-expanded={pickerOpen}
             onClick={() => setPickerOpen(true)}
           />
           <NodeTree filter={search} />
           {pickerOpen ? (
             <WidgetPicker
               anchorRef={addNodeRef}
+              offset={8}
               onDismiss={() => setPickerOpen(false)}
-              {...(emptyRoot || parent === null
-                ? { onAdd: (type, preset) => void spliceSetRootChild(type, preset) }
-                : { parent })}
+              parent={emptyRoot ? null : parent}
             />
           ) : null}
         </div>
