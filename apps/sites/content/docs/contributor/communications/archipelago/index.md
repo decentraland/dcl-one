@@ -1,34 +1,18 @@
-# archipelago
+# Realm WebSocket connector
 
-Archipelago is the realm service that groups nearby players into islands, reassigning them as they move around and providing the information required to connect to the actual backend that will relay their messages.
+The primary Catalyst API serves a signed WebSocket connector for realm signaling. Pulse clusters players, and Gatekeeper authorizes assignments and issues the room credentials sent over the connector. The adapter prefix `archipelago:` identifies the compatible protobuf protocol.
 
+## Connecting
 
-> [!NOTE]
-> You can see the Archipelago protocol in action and experiment with it using the open-source [Comms Station](https://decentraland.github.io/comms-station/).
+Read `comms.adapter` in the realm’s `/about` response and use the advertised WebSocket URL. For example, `archipelago:archipelago:wss://realm.example/ws` advertises `wss://realm.example/ws`. Catalyst allows 60 seconds per handshake step by default.
 
+A realm may instead advertise a fixed transport through `comms.fixedAdapter`. In that case, use that transport directly.
 
-To use the service, clients must connect to their realm's Archipelago websocket endpoint and authenticate to begin their session. They can then start sending positional updates and receiving island assignments (see the [client life-cycle](/docs/contributor/communications/overview/#lifecycle)).
+## Authenticating
 
-All messages exchanged with the Archipelago service are encoded using protocol buffers, as defined in the Decentraland [protocol repository](https://github.com/decentraland/protocol).
+After opening a connection to the connector, clients must begin by requesting and signing a challenge from the service to verify their identity.
 
-## Connecting {#connecting}
-
-To begin, clients must open a secure websocket connection (`wss:`) to the `/archipelago/ws` endpoint of the realm.
-
-Once connected, clients have a time window defined by realm policy (60 seconds, by default) to send each message of the [authentication](#authenticating) flow.
-
-
-> [!WARNING]
-> While the larger realms run the Archipelago service, smaller ones may choose to provide a fixed backend connection string for all players. The URI, if present, can be found in the `comms.fixedAdapter` property of the realm's `/about`.
-
-
-In these cases, dynamic island assignment won't be available, and the realm's RPC interface should not be used for that purpose.
-
-## Authenticating {#authenticating}
-
-After opening a connection to Archipelago, clients must begin by requesting and signing a challenge from the service to verify their identity.
-
-The first message a client sends is a [`ChallengeRequestMessage`](#challengerequestmessage) with their Ethereum address (i.e. their public key). They will receive a [`ChallengeResponseMessage`](#challengeresponsemessage) with a randomly generated string to sign, and must respond with a [`SignedChallengeMessage`](#signedchallengemessage).
+The first message a client sends is a [`ChallengeRequestMessage`](#challengerequestmessage) with their Ethereum address. They will receive a [`ChallengeResponseMessage`](#challengeresponsemessage) with a randomly generated string to sign, and must respond with a [`SignedChallengeMessage`](#signedchallengemessage).
 
 The [`SignedChallengeMessage`](#signedchallengemessage) carries a JSON-serialized [authentication chain](/docs/contributor/authentication/authchain/) that begins with the provided address, and ends with the challenge signature.
 
@@ -37,29 +21,26 @@ If the signature is successfully verified by the service, the client is authenti
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Archipelago
+    participant Connector
     
-    Note over Client,Archipelago: Connect
-    Client->>Archipelago: ChallengeRequestMessage
-    Archipelago->>Client: ChallengeResponseMessage
-    Client->>Archipelago: SignedChallengeMessage
-    Archipelago->>Client: WelcomeMessage
+    Note over Client,Connector: Connect
+    Client->>Connector: ChallengeRequestMessage
+    Connector->>Client: ChallengeResponseMessage
+    Client->>Connector: SignedChallengeMessage
+    Connector->>Client: WelcomeMessage
 ```
 
-## Sending Heartbeat {#heartbeat}
+<span id="heartbeat"></span>
 
-During their session, clients must periodically send a [`Heartbeat`](#heartbeat-message) message to keep Archipelago updated with the necessary information to issue island assignments.
+## Sending Heartbeat
 
+The connector accepts [`Heartbeat`](#heartbeat-message) position reports from an authenticated socket. These reports feed the compatibility statistics view and can provide position or room intent to Pulse. Explorer also sends movement updates over its separate Pulse connection. WebSocket ping and pong frames maintain the transport connection.
 
-> [!NOTE]
-> The recommended heartbeat frequency for comms clients is about one update per second.
+<span id="assignment"></span>
 
+## Getting Island Assignments
 
-If a client stops sending [`Heartbeat`](#heartbeat-message) messages, Archipelago (depending on its current policy) may close the connection.
-
-## Getting Island Assignments {#assignment}
-
-Shortly after the first heartbeat, Archipelago will send the client their first [`IslandChangedMessage`][IslandChangedMessage].
+After authentication, the connector announces the session to Gatekeeper. It sends an [`IslandChangedMessage`][IslandChangedMessage] when a room assignment is available.
 
 The main field is `conn_str`, which can be used to initialize a transport and connect to the island. Values typically look like this:
 
@@ -69,17 +50,15 @@ livekit:wss://comms.example.com?access_token=eyJhbGciOiJI...
 
 The label before the first `:` is the transport type, the rest is a specialized URI for it. It can include pre-authorized tokens or other parameters.
 
-During the session, Archipelago may send a new assignment at any time, for a number of reasons:
-
-1. Position changes: the client reported moving away from others in the island.
-2. Island requests: the client requested being assigned to a specific island.
-3. Archipelago policy: the service decided to create or divide islands to better balance the population.
+The connector can send a new assignment when the selected room changes or refreshed credentials are available.
 
 Clients must listen for these assignments, closing and opening transport connections as indicated, and changing the type of transport in use when required.
 
 ## Client Messages
 
-### `ChallengeRequestMessage` <small>[↗ source][ChallengeRequestMessage]</small> {#challengerequestmessage}
+<span id="challengerequestmessage"></span>
+
+### `ChallengeRequestMessage` <small>[↗ source][ChallengeRequestMessage]</small>
 
 Sent by the client as the first message of a session, to start the authentication flow.
 
@@ -91,7 +70,9 @@ The `address` field must be derived from the first private key of the [authentic
 
 ---
 
-### `SignedChallengeMessage` <small>[↗ source][SignedChallengeMessage]</small> {#signedchallengemessage}
+<span id="signedchallengemessage"></span>
+
+### `SignedChallengeMessage` <small>[↗ source][SignedChallengeMessage]</small>
 
 Sent by the client after receiving a [`ChallengeResponseMessage`](#challengeresponsemessage), to complete the authentication flow.
 
@@ -103,24 +84,28 @@ The first key in the [authentication chain](/docs/contributor/authentication/aut
 
 ---
 
-### `Heartbeat` <small>[↗ source][Heartbeat]</small> {#heartbeat-message}
+<span id="heartbeat-message"></span>
 
-Sent by the client at regular intervals (typically once per second), to update Archipelago on their position and/or request an island assignment.
+### `Heartbeat` <small>[↗ source][Heartbeat]</small>
+
+Sent by the client at regular intervals (typically once per second), to update the connector on their position and/or request an island assignment.
 
 | Field          | Type       | Value                                                       |
 | -------------- | ---------- | ----------------------------------------------------------- |
 | `position`     | `Position` | The client's 3D position in the world map                   |
-| `desired_room` | `string?`  | The ID of an island the client would like to be assigned to |
+| `desired_room` | `string?`  | Realm hint for the position update |
 
-The first `Heartbeat` message a client sends is quickly followed by an [`IslandChangedMessage`](#islandchangedmessage) from Archipelago. Subsequent updates, however, are independent of island assignments. Clients should not expect a `Heartbeat` to be responded.
+Assignments arrive asynchronously. An individual `Heartbeat` has no corresponding acknowledgement.
 
-When the `desired_room` parameter is included, the service will attempt to honor the request, but a reassignment to that island is not guaranteed. It depends on Archipelago's policy (e.g. limits on island population).
+Catalyst interprets `desired_room` as a realm hint. Gatekeeper still applies room access policy.
 
 ## Server Messages
 
-### `ChallengeResponseMessage` <small>[↗ source][ChallengeResponseMessage]</small> {#challengeresponsemessage}
+<span id="challengeresponsemessage"></span>
 
-Sent by Archipelago in response to a [`ChallengeRequestMessage`](#challengerequestmessage)
+### `ChallengeResponseMessage` <small>[↗ source][ChallengeResponseMessage]</small>
+
+Sent by the connector in response to a [`ChallengeRequestMessage`](#challengerequestmessage)
 
 | Field               | Type     | Value                                                                                               |
 | ------------------- | -------- | --------------------------------------------------------------------------------------------------- |
@@ -129,9 +114,11 @@ Sent by Archipelago in response to a [`ChallengeRequestMessage`](#challengereque
 
 ---
 
-### `WelcomeMessage` <small>[↗ source][WelcomeMessage]</small> {#welcomemessage}
+<span id="welcomemessage"></span>
 
-Sent by Archipelago after successful authentication.
+### `WelcomeMessage` <small>[↗ source][WelcomeMessage]</small>
+
+Sent by the connector after successful authentication.
 
 | Field     | Type     | Value                                                                      |
 | --------- | -------- | -------------------------------------------------------------------------- |
@@ -139,32 +126,34 @@ Sent by Archipelago after successful authentication.
 
 ---
 
-### `IslandChangedMessage` <small>[↗ source][IslandChangedMessage]</small> {#islandchangedmessage}
+<span id="islandchangedmessage"></span>
 
-Sent by Archipelago when the client is (re)assigned to an island.
+### `IslandChangedMessage` <small>[↗ source][IslandChangedMessage]</small>
 
-Description.
+Sent by the connector when the client is (re)assigned to an island.
 
 | Field            | Type                    | Value                                                                          |
 | ---------------- | ----------------------- | ------------------------------------------------------------------------------ |
 | `island_id`      | `string`                | The ID of the new island                                                       |
 | `from_island_id` | `string?`               | The ID of the old island, if this is a reassignment                            |
 | `conn_str`       | `string`                | The connection string for the island [transport](/docs/contributor/communications/transports/). |
-| `peers`          | `map<string, Position>` | Description.                                                                   |
+| `peers`          | `map<string, Position>` | Peer positions, when the assignment includes them |
 
-Clients that receive an `IslandChangedMessage` should end their connection to the island backend, and connect to the one given in `conn_str`.
+Use `conn_str` to join the assigned room. Keep a healthy connection when an update refers to the same room.
 
-The `peers` field contains the current identities and positions of all peers in the island, so that clients can populate their initial set. After this point, they should rely on messages received via the island [transport](/docs/contributor/communications/transports/) to get positional updates.
+The protobuf schema defines the `peers` field. Use the appropriate room or Pulse transport for ongoing player updates.
 
 ---
 
-### `KickedMessage` <small>[↗ source][KickedMessage]</small> {#kickedmessage}
+<span id="kickedmessage"></span>
 
-Sent by Archipelago before closing a connection.
+### `KickedMessage` <small>[↗ source][KickedMessage]</small>
+
+Sent by the connector before closing a connection.
 
 | Field    | Type           | Value                                           |
 | -------- | -------------- | ----------------------------------------------- |
-| `reason` | `KickedReason` | Archipelago's reason for closing the connection |
+| `reason` | `KickedReason` | the connector's reason for closing the connection |
 
 The standard values for the `reason` field are:
 
@@ -172,9 +161,11 @@ The standard values for the `reason` field are:
 
 ---
 
-### `JoinIslandMessage` <small>[↗ source][JoinIslandMessage]</small> {#joinislandmessage}
+<span id="joinislandmessage"></span>
 
-Sent by Archipelago when a peer is assigned to the client's island.
+### `JoinIslandMessage` <small>[↗ source][JoinIslandMessage]</small>
+
+This message is defined by the compatibility schema. Catalyst sends room assignments through `IslandChangedMessage`.
 
 | Field       | Type     | Value                                                        |
 | ----------- | -------- | ------------------------------------------------------------ |
@@ -185,9 +176,11 @@ The `island_id` field will match the client's current assignment.
 
 ---
 
-### `LeftIslandMessage` <small>[↗ source][LeftIslandMessage]</small> {#leftislandmessage}
+<span id="leftislandmessage"></span>
 
-Sent by Archipelago when a peer is removed from the client's island.
+### `LeftIslandMessage` <small>[↗ source][LeftIslandMessage]</small>
+
+This message is defined by the compatibility schema. Catalyst sends room assignments through `IslandChangedMessage`.
 
 | Field       | Type     | Value                                                        |
 | ----------- | -------- | ------------------------------------------------------------ |
