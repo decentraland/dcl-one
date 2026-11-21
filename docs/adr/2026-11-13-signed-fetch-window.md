@@ -1,7 +1,7 @@
 # ADR: Signed fetch accepts timestamps at most 60 seconds old or ahead
 
 - Status: Accepted
-- Date: 2026-11-13, window decided 2026-11-19
+- Date: 2026-11-13, window decided 2026-11-19, social socket exception decided 2026-11-21
 
 ## Context
 
@@ -34,7 +34,7 @@ window.
 
 `check_timestamp_window` caps the future side at `MAX_FUTURE_SKEW_SECS`, 60
 seconds, on every surface that verifies a signed fetch: the node's routes and
-sockets and the SDK's preview server. `check_past_window`, which camera reel
+sockets, except the social sockets below, and the SDK's preview server. `check_past_window`, which camera reel
 uses for its 60-second past-only window, applies the same future cap.
 
 ## Consequences
@@ -48,10 +48,15 @@ uses for its 60-second past-only window, applies the same future cap.
   watch the signed-fetch refusal rate after rollout.
 - The future cap matches `@dcl/crypto-middleware` at its default expiration
   and is stricter than `@dcl/platform-crypto-middleware`, which had none.
-- Outside this decision: the social RPC socket handshake reads its window from
-  operator configuration (`AUTH_WINDOW_SECS`, default 300 s, which also sets
-  its first-frame deadline, or `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`), and the
-  SDK's local preview server keeps its own tolerance.
+- Outside this decision: the social sockets (the `/social-rpc` first frame
+  and the `/v1/stream` first frame or upgrade headers) read their window from
+  operator configuration (`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`, else
+  `AUTH_WINDOW_SECS`, default 300 s, which also sets the first-frame
+  deadline), and the SDK's local preview server keeps its own tolerance.
+- The social sockets apply that window to the future side too
+  (`future_bound_follows_window`), not the 60-second cap, as the source
+  service's `@dcl/crypto-middleware` does: decided on 2026-11-21 to keep the
+  window the TypeScript service uses today on both sides.
 
 ## Alternatives
 

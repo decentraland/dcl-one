@@ -5,7 +5,7 @@ import { isIdentityExpired } from '../../auth/expiry'
 import { browserProvider, currentWalletKind, managedShopProvider } from '../../auth/shop-wallet'
 import type { AuthIdentity, AuthLink } from '../../auth/types'
 import { WalletError, type Eip1193Provider } from '../../auth/wallet'
-import { signAuthChain } from '@ui/data/auth/signerCore'
+import { signAuthChain } from '@web-core/auth/signerCore'
 import { resyncServerClock, serverClockOffset, serverNow } from './serverClock'
 
 export type { Eip1193Provider }

@@ -49,6 +49,26 @@ describe("decentraland.org's rollout flags, read by the server", () => {
     expect((fetchMock.mock.calls[0]![1] as RequestInit).headers).toEqual({ Referer: "https://decentraland.zone/" });
   });
 
+  it("after its minute, serves the last answer at once while one read runs behind it, for five minutes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    answer({ flags: { "dapps-shop-creator-sales": true } });
+    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    vi.setSystemTime(Date.now() + 61_000);
+    let reply: (res: Response) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => (reply = resolve)));
+    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    reply(new Response(JSON.stringify({ flags: {} })));
+    await vi.waitFor(async () => expect(await dappsFlags()).toEqual({}));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Past the five minutes, a request waits for the read.
+    vi.setSystemTime(Date.now() + 6 * 60_000 + 1_000);
+    answer({ flags: { "dapps-shop-creator-sales": true } });
+    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+  });
+
   it("keeps the last good answer through a failure", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     answer({ flags: { "dapps-shop-creator-sales": true } });
@@ -56,9 +76,12 @@ describe("decentraland.org's rollout flags, read by the server", () => {
     vi.setSystemTime(Date.now() + 61_000);
     fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
     expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("is all off for a minute when the service fails before any answer, releasing the failed answer", async () => {
+  it("is all off for a minute when the service fails before any answer, releasing the failed answer, then takes the next answer", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const cancel = vi.fn(async () => {});
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503, body: { cancel } } as unknown as Response);
@@ -68,7 +91,8 @@ describe("decentraland.org's rollout flags, read by the server", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     vi.setSystemTime(Date.now() + 61_000);
     answer({ flags: { "dapps-shop-creator-sales": true } });
-    expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true });
+    expect(await dappsFlags()).toEqual({});
+    await vi.waitFor(async () => expect(await dappsFlags()).toEqual({ "dapps-shop-creator-sales": true }));
   });
 
   it("reads another application's file as a separate answer", async () => {

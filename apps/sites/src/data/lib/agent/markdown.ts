@@ -338,14 +338,6 @@ function eventLine(e: Event): string {
 }
 
 export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
-  if (data.tab === "my") {
-    return joinBlocks([
-      heading(1, "My Hangouts"),
-      "Open My Hangouts in a browser and sign in to load your private hangout catalogue and manage authorized approvals.",
-      "[Open My Hangouts](/events?tab=my)",
-      "[Browse public hangouts](/events)",
-    ]);
-  }
   const live = data.live ?? [];
   const upcoming = data.upcoming ?? [];
   const blocks: string[] = [
@@ -355,6 +347,12 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
   if (live.length) blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
   if (upcoming.length) blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));
   if (!live.length && !upcoming.length) blocks.push("_No events right now. Check back soon._");
+  if (data.tab === "my") {
+    blocks.push(
+      heading(2, "My Events"),
+      "Sign in in a browser to see the events you created, including those pending review: [Open My Events](/events?tab=my)",
+    );
+  }
 
   return joinBlocks(blocks);
 }

@@ -685,11 +685,21 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
         state.livekit.api_key = "key".into();
         state.livekit.api_secret = "secret".into();
         state.settings.lease_authorizations_url = Some(format!("{url}/leases"));
+        // Admins are granted on the place: a Genesis scene's base parcel.
+        let granted = if case == "genesis" {
+            "5,6"
+        } else {
+            scene.as_str()
+        };
         for (place, address) in [(scene.as_str(), admin), (realm.as_str(), unrelated)] {
             state
                 .moderation
                 .add_admin(
-                    place,
+                    if place == scene.as_str() {
+                        granted
+                    } else {
+                        place
+                    },
                     &crate::Address::parse(address).unwrap(),
                     &crate::Address::parse(owner).unwrap(),
                 )
@@ -776,7 +786,7 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
         assert_eq!(
             state
                 .moderation
-                .remove_admin(scene.as_str(), &crate::Address::parse(admin).unwrap())
+                .remove_admin(granted, &crate::Address::parse(admin).unwrap())
                 .await
                 .unwrap(),
             1

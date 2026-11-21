@@ -70,41 +70,49 @@ async function report(output: Record<string, string>, extra: Record<string, stri
   return readFile(path.join(root, 'report'), 'utf8')
 }
 describe('when a trusted scan cannot run', () => {
-  it('should report a failing check on fork heads without exposing the private key', async () => {
-    const { output, status } = await validate({ HEAD_REPO: 'outside/fork' })
-    expect(status).toBe(0)
-    expect(output.scan).toBe('false')
-    expect(await report(output)).toContain('conclusion=failure')
-    expect(await report(output)).toContain(`head_sha=${head}`)
-  })
-  it('should resolve an empty workflow_run PR list from the repository API', async () => {
-    const { output, status } = await validate({
-      PULL_REQUESTS: '[]',
-      LOOKUP_RESPONSE: JSON.stringify([{ base: { sha: base }, head: { sha: head } }])
-    })
-    expect(status).toBe(0)
-    expect(output).toMatchObject({ scan: 'true', base, head })
-  })
-  it.each([{ LOOKUP_FAIL: 'true' }, { LOOKUP_RESPONSE: '[]' }])(
-    'should report failure when PR association is unavailable: %j',
-    async (extra) => {
-      const { output } = await validate({ PULL_REQUESTS: '[]', ...extra })
+  describe('and the head is a fork', () => {
+    it('should report a failing check without exposing the private key', async () => {
+      const { output, status } = await validate({ HEAD_REPO: 'outside/fork' })
+      expect(status).toBe(0)
       expect(output.scan).toBe('false')
       expect(await report(output)).toContain('conclusion=failure')
-      expect(await report(output)).toContain('Not scanned:')
+      expect(await report(output)).toContain(`head_sha=${head}`)
+    })
+  })
+  describe('and the workflow_run PR list is empty', () => {
+    it('should resolve the PR from the repository API', async () => {
+      const { output, status } = await validate({
+        PULL_REQUESTS: '[]',
+        LOOKUP_RESPONSE: JSON.stringify([{ base: { sha: base }, head: { sha: head } }])
+      })
+      expect(status).toBe(0)
+      expect(output).toMatchObject({ scan: 'true', base, head })
+    })
+  })
+  describe.each([{ LOOKUP_FAIL: 'true' }, { LOOKUP_RESPONSE: '[]' }])(
+    'and PR association is unavailable: %j',
+    (extra) => {
+      it('should report a failing check that names the scan as not run', async () => {
+        const { output } = await validate({ PULL_REQUESTS: '[]', ...extra })
+        expect(output.scan).toBe('false')
+        expect(await report(output)).toContain('conclusion=failure')
+        expect(await report(output)).toContain('Not scanned:')
+      })
     }
   )
-  it('should post a failure when artifact enumeration fails rather than leave an Expected check', async () => {
-    const step = steps.find((step) => step.id === 'artifact_check')!
-    const result = spawnSync(
-      'bash',
-      ['-e', '-o', 'pipefail', '-c', 'gh() { return 7; }\n' + step.run],
-      { cwd: root, encoding: 'utf8', env: defaults() }
-    )
-    expect(result.status).not.toBe(0)
-    expect(await report({}, { ARTIFACT_OUTCOME: 'failure' })).toContain(
-      'required Review artifact was missing'
-    )
+  describe('and artifact enumeration fails', () => {
+    it('should post a failure rather than leave an Expected check', async () => {
+      const step = steps.find((step) => step.id === 'artifact_check')!
+      const result = spawnSync(
+        'bash',
+        ['-e', '-o', 'pipefail', '-c', 'gh() { return 7; }\n' + step.run],
+        { cwd: root, encoding: 'utf8', env: defaults() }
+      )
+      expect(result.status).not.toBe(0)
+      expect(await report({}, { ARTIFACT_OUTCOME: 'failure' })).toContain(
+        'required Review artifact was missing'
+      )
+    })
   })
   // gh prints one artifact id per line for the matching artifacts; the fake stands in for that output. Actions
   // runs the step as bash -e, so pipefail comes from the step itself.
@@ -117,14 +125,23 @@ describe('when a trusted scan cannot run', () => {
       env: defaults()
     })
   }
-  it('should reject an absent or duplicate Review artifact', async () => {
-    for (const ids of [[], ['1', '2']]) expect(countArtifacts(ids).status).not.toBe(0)
+  describe('and the run lists an absent or duplicate Review artifact', () => {
+    it.each([
+      ['an absent', []],
+      ['a duplicate', ['1', '2']]
+    ])('should reject %s Review artifact', (_label, ids) => {
+      expect(countArtifacts(ids).status).not.toBe(0)
+    })
   })
-  it('should accept exactly one Review artifact', async () => {
-    expect(countArtifacts(['7']).status).toBe(0)
+  describe('and the run lists exactly one Review artifact', () => {
+    it('should accept it', () => {
+      expect(countArtifacts(['7']).status).toBe(0)
+    })
   })
-  it('should fail when the artifact listing itself fails', async () => {
-    expect(countArtifacts(['7'], 1).status).not.toBe(0)
+  describe('and the artifact listing itself fails', () => {
+    it('should fail the step', () => {
+      expect(countArtifacts(['7'], 1).status).not.toBe(0)
+    })
   })
   // The step's own select filter, run by the real jq over one artifacts page that gh would page through.
   const selectArtifacts = async (artifacts: unknown[]) => {
@@ -148,26 +165,35 @@ describe('when a trusted scan cannot run', () => {
     workflow_run: { id: 123, head_sha: head },
     ...change
   })
-  it('should select only the unexpired Review artifact of the run and head', async () => {
-    const { status, stderr, ids } = await selectArtifacts([
-      artifact(7),
-      artifact(8, { expired: true }),
-      artifact(9, { workflow_run: { id: 123, head_sha: base } }),
-      artifact(10, { name: `ui-review-${base}` }),
-      artifact(11, { workflow_run: { id: 124, head_sha: head } })
-    ])
-    expect(ids).toEqual(['7'])
-    expect(status, stderr).toBe(0)
+  describe('and the page mixes the Review artifact of the run and head with others', () => {
+    let artifacts: ReturnType<typeof artifact>[]
+    beforeEach(() => {
+      artifacts = [
+        artifact(7),
+        artifact(8, { expired: true }),
+        artifact(9, { workflow_run: { id: 123, head_sha: base } }),
+        artifact(10, { name: `ui-review-${base}` }),
+        artifact(11, { workflow_run: { id: 124, head_sha: head } })
+      ]
+    })
+    it('should select only the unexpired Review artifact of the run and head', async () => {
+      const { status, stderr, ids } = await selectArtifacts(artifacts)
+      expect(ids).toEqual(['7'])
+      expect(status, stderr).toBe(0)
+    })
   })
-  it('should reject a page whose only artifacts fail the filter', async () => {
-    const { status, stderr, ids } = await selectArtifacts([
-      artifact(8, { expired: true }),
-      artifact(10, { name: 'ui-review-other' })
-    ])
-    expect(ids).toEqual([])
-    expect(status).not.toBe(0)
-    // The count check is the only failure: a missing jq, a filter error or a failed gh would print more.
-    expect(stderr.trim()).toBe('The run must provide exactly one Review artifact for its head')
+  describe('and every artifact of the page fails the filter', () => {
+    let artifacts: ReturnType<typeof artifact>[]
+    beforeEach(() => {
+      artifacts = [artifact(8, { expired: true }), artifact(10, { name: 'ui-review-other' })]
+    })
+    it('should reject the page with the count check only', async () => {
+      const { status, stderr, ids } = await selectArtifacts(artifacts)
+      expect(ids).toEqual([])
+      expect(status).not.toBe(0)
+      // The count check is the only failure: a missing jq, a filter error or a failed gh would print more.
+      expect(stderr.trim()).toBe('The run must provide exactly one Review artifact for its head')
+    })
   })
 })
 const gitIn = (directory: string, ...args: string[]) =>
@@ -225,26 +251,28 @@ describe('when selecting the LFS inputs of the scan', () => {
     commit()
   })
 
-  it('should list the whole range, any path, and the library/ui tree when UI changed, then prefetch it', async () => {
-    const before = git('rev-parse', 'HEAD')
-    await mkdir(path.join(trusted(), 'library/ui'), { recursive: true })
-    await writeFile(path.join(trusted(), 'library/ui/transient'), 'synthetic input')
-    commit()
-    await rm(path.join(trusted(), 'library/ui/transient'))
-    commit()
-    const after = git('rev-parse', 'HEAD')
+  describe('and the range changed library/ui', () => {
+    it('should list the whole range, any path and the library/ui tree, then prefetch it', async () => {
+      const before = git('rev-parse', 'HEAD')
+      await mkdir(path.join(trusted(), 'library/ui'), { recursive: true })
+      await writeFile(path.join(trusted(), 'library/ui/transient'), 'synthetic input')
+      commit()
+      await rm(path.join(trusted(), 'library/ui/transient'))
+      commit()
+      const after = git('rev-parse', 'HEAD')
 
-    const { result, node } = await prepareInputs(root, { BASE: before, HEAD_SHA: after })
-    expect(result.status, result.stderr).toBe(0)
-    expect(await readFile(path.join(root, 'out'), 'utf8')).toContain('artifact_required=true')
-    const [list, prefetch] = node.trim().split('\n')
-    expect(list).toBe(
-      `${root}/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --tree ${after}:library/ui --lfs-objects`
-    )
-    expect(prefetch).toBe(
-      `trusted/library/ui/figma/lfs-prefetch.mjs --root trusted --endpoint https://github.com/example/repo.git/info/lfs --objects ${root}/lfs-objects.jsonl`
-    )
-    expect(await readFile(path.join(root, 'fetches'), 'utf8')).not.toContain('lfs')
+      const { result, node } = await prepareInputs(root, { BASE: before, HEAD_SHA: after })
+      expect(result.status, result.stderr).toBe(0)
+      expect(await readFile(path.join(root, 'out'), 'utf8')).toContain('artifact_required=true')
+      const [list, prefetch] = node.trim().split('\n')
+      expect(list).toBe(
+        `${root}/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --tree ${after}:library/ui --lfs-objects`
+      )
+      expect(prefetch).toBe(
+        `trusted/library/ui/figma/lfs-prefetch.mjs --root trusted --endpoint https://github.com/example/repo.git/info/lfs --objects ${root}/lfs-objects.jsonl`
+      )
+      expect(await readFile(path.join(root, 'fetches'), 'utf8')).not.toContain('lfs')
+    })
   })
 
   it('should still list and prefetch the range of a push that changes nothing under library/ui', async () => {
@@ -302,15 +330,21 @@ describe('when selecting the LFS inputs of the scan', () => {
     )
   })
 
-  it('should still write a bundle when every scanned commit is already on the default branch', async () => {
-    const before = git('rev-parse', 'HEAD')
-    await writeFile(path.join(trusted(), 'pushed.txt'), 'pushed')
-    const head = commit()
-    const { result } = await prepareInputs(root, { BASE: before, HEAD_SHA: head })
-    expect(result.status, result.stderr).toBe(0)
-    expect(git('bundle', 'list-heads', path.join(root, 'key-scan-input/commits.bundle'))).toContain(
-      `${head} refs/key-scan/head`
-    )
+  describe('and every scanned commit is already on the default branch', () => {
+    let before: string
+    let head: string
+    beforeEach(async () => {
+      before = git('rev-parse', 'HEAD')
+      await writeFile(path.join(trusted(), 'pushed.txt'), 'pushed')
+      head = commit()
+    })
+    it('should still write a bundle', async () => {
+      const { result } = await prepareInputs(root, { BASE: before, HEAD_SHA: head })
+      expect(result.status, result.stderr).toBe(0)
+      expect(
+        git('bundle', 'list-heads', path.join(root, 'key-scan-input/commits.bundle'))
+      ).toContain(`${head} refs/key-scan/head`)
+    })
   })
 
   it('should bundle a push with no earlier commit, and no base ref', async () => {
@@ -411,7 +445,9 @@ describe('when the privileged scan reads the url allowlist', () => {
   it('should take the allowlist from the default branch, so a head-only entry does not suppress the url', async () => {
     await handOver({ BASE: mainBase, HEAD_SHA: headSha })
     // The scanned commit is not in the key-scan checkout: only the bundle brings it.
-    expect(() => git('cat-file', '-e', headSha)).toThrow()
+    expect(() => git('cat-file', '-e', headSha)).toThrow(
+      `Command failed: git cat-file -e ${headSha}`
+    )
     const result = run({ BASE: mainBase, HEAD_SHA: headSha })
     expect(result.status).not.toBe(0)
     expect(result.stdout).toContain(`figma-key-guard at ${mainBase}`)
@@ -421,31 +457,42 @@ describe('when the privileged scan reads the url allowlist', () => {
     expect(result.stdout).not.toContain('SyntheticKeyExample0')
   })
 
-  it('should accept the url once the allowlist entry has landed on the default branch', async () => {
-    await writeFile(allowlistFile(), entry)
-    const landed = commit()
-    const result = await scan({ BASE: mainBase, HEAD_SHA: headSha })
-    expect(result.status, result.stdout + result.stderr).toBe(0)
-    expect(result.stdout).toContain(`figma-key-guard at ${landed}`)
-    expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${landed}`)
-    expect(result.stdout).toContain('result: PASS')
+  describe('and the allowlist entry has landed on the default branch', () => {
+    let landed: string
+    beforeEach(async () => {
+      await writeFile(allowlistFile(), entry)
+      landed = commit()
+    })
+    it('should accept the url', async () => {
+      const result = await scan({ BASE: mainBase, HEAD_SHA: headSha })
+      expect(result.status, result.stdout + result.stderr).toBe(0)
+      expect(result.stdout).toContain(`figma-key-guard at ${landed}`)
+      expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${landed}`)
+      expect(result.stdout).toContain('result: PASS')
+    })
   })
 
-  it('should fail when the scan inputs are missing, before running anything', async () => {
-    const result = run({ BASE: mainBase, HEAD_SHA: headSha })
-    expect(result.status).not.toBe(0)
-    expect(result.stdout).not.toContain('check key: ran')
+  describe('and the scan inputs are missing', () => {
+    it('should fail before running anything', () => {
+      const result = run({ BASE: mainBase, HEAD_SHA: headSha })
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).not.toContain('check key: ran')
+    })
   })
 
-  it.each([
+  describe.each([
     ['HEAD_SHA', '--output=x'],
     ['BASE', 'main'],
     ['HEAD_SHA', '']
-  ])('should fail before reading anything when %s is %j', async (name, value) => {
-    await handOver({ BASE: mainBase, HEAD_SHA: headSha })
-    const result = run({ BASE: mainBase, HEAD_SHA: headSha, [name]: value })
-    expect(result.status).not.toBe(0)
-    expect(existsSync(copy())).toBe(false)
+  ])('and %s is %j', (name, value) => {
+    beforeEach(async () => {
+      await handOver({ BASE: mainBase, HEAD_SHA: headSha })
+    })
+    it('should fail before reading anything', () => {
+      const result = run({ BASE: mainBase, HEAD_SHA: headSha, [name]: value })
+      expect(result.status).not.toBe(0)
+      expect(existsSync(copy())).toBe(false)
+    })
   })
 
   // Stands in for a key guard an earlier step replaced: it would leak the key and claim the check ran.
@@ -470,23 +517,28 @@ describe('when the privileged scan reads the url allowlist', () => {
     expect(await readFile(copy())).toEqual(committed)
   })
 
-  it('should run the pinned guard when a tampered one is committed onto the checkout HEAD', async () => {
-    await writeFile(allowlistFile(), entry)
-    const pinned = commit()
-    const committed = await readFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'))
-    // A tampered guard, and an allowlist that would hide every url, committed onto HEAD.
-    await writeFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'), tampered)
-    await writeFile(allowlistFile(), '[]')
-    const moved = commit()
-    expect(git('cat-file', 'blob', 'HEAD:library/ui/figma/key-guard.mjs')).toContain('leak')
-    const result = await scan({ BASE: mainBase, HEAD_SHA: headSha, TRUSTED_SHA: pinned })
-    expect(result.status, result.stdout + result.stderr).toBe(0)
-    expect(existsSync(path.join(root, 'leak'))).toBe(false)
-    expect(await readFile(copy())).toEqual(committed)
-    expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${pinned}`)
-    // The summary names the commit the guard was read from, not the checkout HEAD that moved.
-    expect(result.stdout).toContain(`figma-key-guard at ${pinned}\n`)
-    expect(result.stdout).not.toContain(moved)
+  describe('and a tampered guard is committed onto the checkout HEAD', () => {
+    let pinned: string, committed: Buffer, moved: string
+    beforeEach(async () => {
+      await writeFile(allowlistFile(), entry)
+      pinned = commit()
+      committed = await readFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'))
+      // A tampered guard, and an allowlist that would hide every url, committed onto HEAD.
+      await writeFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'), tampered)
+      await writeFile(allowlistFile(), '[]')
+      moved = commit()
+    })
+    it('should run the pinned guard', async () => {
+      expect(git('cat-file', 'blob', 'HEAD:library/ui/figma/key-guard.mjs')).toContain('leak')
+      const result = await scan({ BASE: mainBase, HEAD_SHA: headSha, TRUSTED_SHA: pinned })
+      expect(result.status, result.stdout + result.stderr).toBe(0)
+      expect(existsSync(path.join(root, 'leak'))).toBe(false)
+      expect(await readFile(copy())).toEqual(committed)
+      expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${pinned}`)
+      // The summary names the commit the guard was read from, not the checkout HEAD that moved.
+      expect(result.stdout).toContain(`figma-key-guard at ${pinned}\n`)
+      expect(result.stdout).not.toContain(moved)
+    })
   })
 
   // GIT_NO_REPLACE_OBJECTS is left out of this run, so only the copy's own --no-replace-objects keeps the
@@ -562,14 +614,18 @@ describe('when the privileged scan reads the url allowlist', () => {
 
   // A directory at the copy path holds a package whose main is a tampered guard, which node would run if the
   // step went on to run the copy after the write failed.
-  it('should fail before running anything when the committed key guard cannot be written out', async () => {
-    await mkdir(copy())
-    await writeFile(path.join(copy(), 'package.json'), JSON.stringify({ main: 'main.mjs' }))
-    await writeFile(path.join(copy(), 'main.mjs'), tampered)
-    const result = await scan({ BASE: mainBase, HEAD_SHA: headSha })
-    expect(result.status).not.toBe(0)
-    expect(result.stdout).not.toContain('check key: ran')
-    expect(existsSync(path.join(root, 'leak'))).toBe(false)
+  describe('and the committed key guard cannot be written out', () => {
+    beforeEach(async () => {
+      await mkdir(copy())
+      await writeFile(path.join(copy(), 'package.json'), JSON.stringify({ main: 'main.mjs' }))
+      await writeFile(path.join(copy(), 'main.mjs'), tampered)
+    })
+    it('should fail before running anything', async () => {
+      const result = await scan({ BASE: mainBase, HEAD_SHA: headSha })
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).not.toContain('check key: ran')
+      expect(existsSync(path.join(root, 'leak'))).toBe(false)
+    })
   })
 })
 describe('when the key-scan job reports its result', () => {
@@ -589,31 +645,43 @@ describe('when the key-scan job reports its result', () => {
     expect(scanSteps.at(-1)!.run!.trim()).toBe(REPORT_TEMPLATE.run)
   })
 
-  it('should pass only a scan that succeeded, with the scanner stdout as the summary', async () => {
-    await mkdir(path.join(root, 'key-scan-input'))
-    await writeFile(path.join(root, 'key-scan.txt'), 'check key: ran\nresult: PASS\n')
-    const request = await post({ OUTCOME: 'success' })
-    expect(request).toContain('conclusion=success')
-    expect(request).toContain('output[summary]=check key: ran\nresult: PASS')
-    expect(request).toContain(`head_sha=${head}`)
+  describe('and the key-scan-input artifact is present', () => {
+    beforeEach(async () => {
+      await mkdir(path.join(root, 'key-scan-input'))
+    })
+
+    describe('and the scan succeeded', () => {
+      beforeEach(async () => {
+        await writeFile(path.join(root, 'key-scan.txt'), 'check key: ran\nresult: PASS\n')
+      })
+      it('should pass the check with the scanner stdout as the summary', async () => {
+        const request = await post({ OUTCOME: 'success' })
+        expect(request).toContain('conclusion=success')
+        expect(request).toContain('output[summary]=check key: ran\nresult: PASS')
+        expect(request).toContain(`head_sha=${head}`)
+      })
+    })
+
+    describe.each(['failure', 'skipped', 'cancelled', ''])(
+      'and the scan outcome is %j',
+      (outcome) => {
+        it('should fail the check', async () => {
+          const request = await post({ OUTCOME: outcome })
+          expect(request).toContain('conclusion=failure')
+          expect(request).toContain('output[summary]=The scan did not run.')
+        })
+      }
+    )
   })
 
-  it.each(['failure', 'skipped', 'cancelled', ''])(
-    'should fail the check when the scan outcome is %j',
-    async (outcome) => {
-      await mkdir(path.join(root, 'key-scan-input'))
-      const request = await post({ OUTCOME: outcome })
+  describe('and a rerun finds the key-scan-input artifact expired', () => {
+    it('should name the missing key-scan-input artifact', async () => {
+      const request = await post({ OUTCOME: 'skipped' })
       expect(request).toContain('conclusion=failure')
-      expect(request).toContain('output[summary]=The scan did not run.')
-    }
-  )
-
-  it('should name the missing key-scan-input artifact when a rerun finds it expired', async () => {
-    const request = await post({ OUTCOME: 'skipped' })
-    expect(request).toContain('conclusion=failure')
-    expect(request).toContain(
-      'output[summary]=The key-scan-input artifact is missing or expired: re-run all jobs.'
-    )
+      expect(request).toContain(
+        'output[summary]=The key-scan-input artifact is missing or expired: re-run all jobs.'
+      )
+    })
   })
 })
 
@@ -659,36 +727,50 @@ describe('when the root checkout template scans a downloaded artifact', () => {
     expect(result.stdout).toContain('result: PASS')
   })
 
-  it('should fail an artifact that carries the key without printing it', async () => {
-    await writeFile(path.join(artifact(), 'leak.js'), 'const k = "SyntheticKeyExample0"\n')
-    const result = run()
-    expect(result.status).not.toBe(0)
-    expect(result.stdout).toContain('FAIL key')
-    expect(result.stdout + result.stderr).not.toContain('SyntheticKeyExample0')
+  describe('and the artifact carries the key', () => {
+    beforeEach(async () => {
+      await writeFile(path.join(artifact(), 'leak.js'), 'const k = "SyntheticKeyExample0"\n')
+    })
+    it('should fail the artifact without printing the key', () => {
+      const result = run()
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).toContain('FAIL key')
+      expect(result.stdout + result.stderr).not.toContain('SyntheticKeyExample0')
+    })
   })
 
-  it('should run the committed guard when the worktree copy was replaced', async () => {
-    await writeFile(
-      path.join(root, 'library/ui/figma/key-guard.mjs'),
-      "import { writeFileSync } from 'node:fs'\n" +
-        "writeFileSync(`${process.env.RUNNER_TEMP}/leak`, process.env.FIGMA_FILE_KEY ?? '')\n" +
-        "console.log('check key: ran')\n"
-    )
-    const result = run()
-    expect(result.status, result.stdout + result.stderr).toBe(0)
-    expect(existsSync(path.join(root, 'leak'))).toBe(false)
-    expect(await readFile(path.join(root, path.basename(GUARD_COPY)))).toEqual(committed)
+  describe('and the worktree copy of the guard was replaced', () => {
+    beforeEach(async () => {
+      await writeFile(
+        path.join(root, 'library/ui/figma/key-guard.mjs'),
+        "import { writeFileSync } from 'node:fs'\n" +
+          "writeFileSync(`${process.env.RUNNER_TEMP}/leak`, process.env.FIGMA_FILE_KEY ?? '')\n" +
+          "console.log('check key: ran')\n"
+      )
+    })
+    it('should run the committed guard', async () => {
+      const result = run()
+      expect(result.status, result.stdout + result.stderr).toBe(0)
+      expect(existsSync(path.join(root, 'leak'))).toBe(false)
+      expect(await readFile(path.join(root, path.basename(GUARD_COPY)))).toEqual(committed)
+    })
   })
 
-  it('should fail when the artifact was not downloaded', async () => {
-    await rm(artifact(), { recursive: true, force: true })
-    const result = run()
-    expect(result.status).not.toBe(0)
+  describe('and the artifact was not downloaded', () => {
+    beforeEach(async () => {
+      await rm(artifact(), { recursive: true, force: true })
+    })
+    it('should fail the scan', () => {
+      const result = run()
+      expect(result.status).not.toBe(0)
+    })
   })
 
-  it('should fail without the key rather than report a skipped check as a pass', () => {
-    const result = run({ FIGMA_FILE_KEY: '' })
-    expect(result.status).not.toBe(0)
-    expect(result.stdout).not.toContain('check key: ran')
+  describe('and the key is missing', () => {
+    it('should fail rather than report a skipped check as a pass', () => {
+      const result = run({ FIGMA_FILE_KEY: '' })
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).not.toContain('check key: ran')
+    })
   })
 })

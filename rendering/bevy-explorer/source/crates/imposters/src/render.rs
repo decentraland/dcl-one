@@ -29,7 +29,7 @@ use scene_runner::{
         ScenePointers, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
-    scene_lod::SceneLod,
+    scene_lod::{ImposterTiling, SceneLod, Tiling},
 };
 
 use crate::{
@@ -52,6 +52,7 @@ impl Plugin for DclImposterRenderPlugin {
             ImposterBakeMaterialPlugin::<FloorImposter>::default(),
         ))
         .init_resource::<BakingIngredients>()
+        .insert_resource(ImposterTiling::Pending)
         .init_resource::<ImposterFocus>()
         .init_resource::<ImposterManagerData>()
         .init_resource::<DebugImpostersEnabled>()
@@ -213,8 +214,16 @@ pub fn spawn_imposters(
     current_imposter_scene: Res<CurrentImposterScene>,
     current_scene_loading: Res<CurrentSceneLoading>,
     mut manager: ImposterSpecManager,
+    mut tiling: ResMut<ImposterTiling>,
 ) {
+    if config.scene_imposter_distances.is_empty() {
+        tiling.set_if_neq(ImposterTiling::Off);
+    }
     if current_realm.is_changed() || config.scene_imposter_distances.is_empty() {
+        if !config.scene_imposter_distances.is_empty() {
+            // no far LOD fits until the layout around the new realm's focus is published
+            tiling.set_if_neq(ImposterTiling::Pending);
+        }
         for (entity, _) in &current_imposters {
             if let Ok(mut commands) = commands.get_entity(entity) {
                 commands.despawn();
@@ -226,6 +235,30 @@ pub fn spawn_imposters(
 
         debug!("purge");
         return;
+    }
+
+    let origin = focus.origin * Vec2::new(1.0, -1.0);
+
+    // snap to the focused parcel's centre so tile selection is a deterministic function of the
+    // parcel cell (matching the recompute gate below). using the raw focus position would let the
+    // tile set drift up to a full parcel diagonal stale as the focus moves within one parcel, and
+    // would make the result depend on which edge the parcel was entered from. (the bake-request
+    // origin further down is intentionally left on the raw focus position.)
+    let origin_parcel = (origin / PARCEL_SIZE).floor().as_ivec2();
+    let origin = (origin_parcel.as_vec2() + 0.5) * PARCEL_SIZE;
+
+    // the layout the tiles are chosen by, and the far LODs keep to, so no tile larger than they
+    // allow is split around them. Once tiles are laid out it changes with them (below), so far
+    // LODs never draw over tiles laid out for another focus; before that there are no tiles to
+    // overlap, and it is published at once, so far LODs need not wait for the scene to load
+    let layout = Tiling {
+        origin_parcel,
+        min_distance: focus.min_distance,
+        distance_scale: focus.distance_scale,
+        distances: config.scene_imposter_distances.clone(),
+    };
+    if *tiling == ImposterTiling::Pending {
+        *tiling = ImposterTiling::Known(layout.clone());
     }
 
     // skip if no realm
@@ -243,16 +276,6 @@ pub fn spawn_imposters(
 
     // add baking requirements
     required.extend(ingredients.0.iter().map(|(p, l)| ((*p, *l), true)));
-
-    let origin = focus.origin * Vec2::new(1.0, -1.0);
-
-    // snap to the focused parcel's centre so tile selection is a deterministic function of the
-    // parcel cell (matching the recompute gate below). using the raw focus position would let the
-    // tile set drift up to a full parcel diagonal stale as the focus moves within one parcel, and
-    // would make the result depend on which edge the parcel was entered from. (the bake-request
-    // origin further down is intentionally left on the raw focus position.)
-    let origin_parcel = (origin / PARCEL_SIZE).floor().as_ivec2();
-    let origin = (origin_parcel.as_vec2() + 0.5) * PARCEL_SIZE;
 
     // record live parcels
     let current_imposter_scene = match &current_imposter_scene.0 {
@@ -274,7 +297,7 @@ pub fn spawn_imposters(
         })
         .flatten()
         .copied()
-        // a shown near LOD covers its parcels too: imposters draw beyond the stand-ins
+        // a shown stand-in, near or far, covers its parcels too: imposters draw beyond them
         .chain(
             lods.iter()
                 .filter(|lod| lod.shown())
@@ -297,6 +320,7 @@ pub fn spawn_imposters(
         return;
     }
     let live_parcels = &run_state.5;
+    tiling.set_if_neq(ImposterTiling::Known(layout.clone()));
 
     let live_min = live_parcels.iter().fold(IVec2::MAX, |x, y| x.min(*y));
     let live_max = live_parcels.iter().fold(IVec2::MIN, |x, y| x.max(*y));
@@ -327,16 +351,10 @@ pub fn spawn_imposters(
     // take the largest permitted tile to fill the area
     while level > 0 {
         let tile_size = 1 << level;
-        let tile_size_world = (tile_size * 16) as f32;
 
         for tile in std::mem::take(&mut required_tiles).into_iter() {
             let tile_origin_parcel = tile * tile_size;
-            let tile_origin_world = tile_origin_parcel.as_vec2() * 16.0;
-
-            let closest_point =
-                origin.clamp(tile_origin_world, tile_origin_world + tile_size_world);
-            let closest_distance =
-                (closest_point - origin).length() * focus.distance_scale + focus.min_distance;
+            let closest_distance = layout.tile_distance(tile_origin_parcel, level);
 
             // check it's not too far
             if closest_distance > max_distance {
@@ -345,7 +363,7 @@ pub fn spawn_imposters(
 
             let mut render_tile = true;
             // check it's not too close
-            render_tile &= closest_distance >= config.scene_imposter_distances[level - 1];
+            render_tile &= layout.level_allowed(level, closest_distance);
             // ensure no live scenes intersect the tile
             render_tile &= {
                 live_max.cmplt(tile_origin_parcel).any()

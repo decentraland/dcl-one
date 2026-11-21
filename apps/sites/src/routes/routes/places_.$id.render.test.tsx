@@ -57,7 +57,7 @@ function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/pla
     [{ id: "place", path: "/places/:id", Component: PlaceDetailRoute as never }],
     { initialEntries: [`/places/${PLACE_ID}`], hydrationData: { loaderData: { place: loaderData } } },
   );
-  const client = new QueryClient();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   renderToString(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   return seen.props!;
 }

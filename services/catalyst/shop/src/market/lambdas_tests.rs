@@ -516,8 +516,8 @@ async fn seed_indexes(pool: &PgPool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(pool)
@@ -1868,8 +1868,8 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(&db.pool)

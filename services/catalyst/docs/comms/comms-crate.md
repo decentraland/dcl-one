@@ -31,7 +31,7 @@ separate from the current runtime described here.
 | `gatekeeper::admission` | `serve` | scene, server-scene, world (`world_mint`) and island tokens; the Pulse room authority (`relay_authority`) |
 | `gatekeeper::message_router` | `serve` | the message router's join token, `POST /internal/message-router/token/v1` |
 | `gatekeeper::moderation`, `removal`, `removed_places` | `serve` | bans, warnings, scene admins, durable ban kicks, disabled-place cleanup (reading Explore's removal feed by shared SQL, `DATABASE.md` "Place removal feed"), room metadata repair |
-| `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata |
+| `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata. Unlike the pinned comms-gatekeeper, a stream key is revoked once the wallet that generated it would no longer be given it (scene admin removed, platform ban, world permission or ownership lost): publisher tokens check it, and the key job checks every active key. The same checks, and `GET /scene-stream-access`, revoke a key once the scene of its room is redeployed or gone, where the pinned comms-gatekeeper answers that key and publishes into the old room until the next stream link. The `streaming` flag follows LiveKit's ingress state where the pinned comms-gatekeeper applies `ingress_started` and `ingress_ended` in arrival order: the streaming job raises and lowers it, an `ingress_ended` is ignored while the ingress is live, and a stream link asks before it replaces an idle credential |
 | `cast_presenter` | `serve`, one `cast-bot` process per session | Cast presentations at `/cast-presenter-service/presentations`: PDF slides rendered in `serve` and published into the scene room by a `cast-bot` process (`services/catalyst/cast-bot`, the only LiveKit participant code outside the Explorer), commands from the room's presenters over the data channel, sessions in memory |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
 | `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
@@ -78,6 +78,15 @@ current deployment; storage resolution and scene discovery read that binding.
 World aggregate discovery, upstream catalogue IDs, Genesis storage scopes and
 comms room-name contracts remain unchanged. The periodic catalogue job refreshes
 metadata; it does not own identity lifecycle.
+
+Scene admin grants (`social.scene_admins`) use the same place: the world scene's
+UUID, or the base parcel of a Genesis scene (`ActiveDeployment::place_key`). A
+redeploy of the same place keeps the admins, their stream key access and their
+presenter control. A scene on a different place starts without them.
+
+A stream key is checked again at once when PostgreSQL announces a deployment
+or a change of a world's scenes, owner or grants (`streaming::cast::listen`;
+`DATABASE.md`, "Stream key notifications"). The key job stays for lost messages.
 
 `comms = 8` in `docs/module-layers.toml` (above explore, below worlds, social and shop), enforced by
 the repository structure checks. Comms links no Explore code: it reads Explore's tables by shared SQL and the root adapts its participants to Explore. Higher crates implement comms' traits, keeping V8 and worlds out of comms builds.
@@ -382,22 +391,38 @@ Both Social socket protocols read `WS_AUTH_TIMEOUT_IN_MS` and
 `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` separately using the source environment
 provider's numeric-prefix parser. The authentication timer follows Node's
 millisecond timer conversion: values outside 1..=2,147,483,647 schedule one
-millisecond, and valid fractions are truncated. Signature age checks retain the
-configured numeric value and the original signed timestamp text; timestamp
-conversion accepts the source's finite JavaScript Number forms. Idle timeout
-uses the pinned native binding's unsigned-short conversion, accepting zero or
-8..=960 seconds after conversion. The source-executed numeric fixtures exercise
-these conversions and native option admission; they do not measure native idle
-timer scheduling or kernel buffering.
+millisecond, and valid fractions are truncated. Idle timeout uses the pinned
+native binding's unsigned-short conversion, accepting zero or 8..=960 seconds
+after conversion. The source-executed numeric fixtures exercise these
+conversions and native option admission; they do not measure native idle timer
+scheduling or kernel buffering.
+
+Both handshakes verify through `dcl_auth::request::verify_request`, the
+node's one signed-request verifier ([ADR](../../../../docs/adr/2026-11-18-one-request-verifier.md)):
+current payload only, the scene signer refused (400), EIP-1654 links through
+the node's validator (503 when it cannot be asked). The signature window is
+`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` milliseconds, else `AUTH_WINDOW_SECS`
+(300 s by default, as the source service). The window bounds both sides of
+now, as the source's crypto-middleware does: a timestamp up to the whole window
+ahead passes (300 s by default), not only up to the 60 s cap of the
+[signed-fetch window ADR](../../../../docs/adr/2026-11-13-signed-fetch-window.md),
+which records this exception (`future_bound_follows_window`). A zero, negative
+or NaN value accepts only the current millisecond and an infinite one bounds
+neither side. A timestamp equal to the current time passes under any of them,
+where the source refuses it under a negative window. The timestamp is digits only, where the source reads it as a
+JavaScript Number: the `timestamps` cases of `ws-numbers-source-cases.json`
+are replayed against these rules, and the other forms the source accepts
+(`0x…`, `…e0`, padded) are refused.
 
 Social signatures bind the source protocol paths: `/` for RPC, and `/v1/stream`
 for both JSON handshakes. Connecting through `/social-rpc` or
-`/social-rpc/v1/stream` keeps those signed paths; `x-original-path` does not
-expand them. Actual source verifier captures and real socket replays cover
-81 combinations. The Bevy Social client normalizes only its signed URI to `/`
-while keeping its configured connection URL. Clients signing a mounted alias
-must sign the source path; deployed web artifacts need the corresponding client
-build at cutover. Other shared handshake callers keep their chosen alias policy.
+`/social-rpc/v1/stream` keeps those signed paths; `x-original-path`, in the
+upgrade request or the frame, does not expand them. A signature over the
+mounted alias itself (`/social-rpc`, `/social-rpc/v1/stream`) is also accepted,
+checked only after the source path answered 401; the source refuses it.
+Actual source verifier captures and real socket replays cover 81
+combinations. The Bevy Social client, the Unity explorer and
+`social-rpc-client-js` sign `/`.
 
 When the shared bus is enabled, Social registers its event subscription before
 checking the existing NATS subscription readiness fence. Until the first ready
@@ -497,7 +522,9 @@ cache or SQL expiry do not prove absence. The complete view retains every curren
 and unfinished record. Gatekeeper settles exact SQL attempts and their credits
 before retiring the unchanged local slot; desired generation, selected identity
 and outstanding lease guards preserve concurrent successors. Retirement neither
-writes a foreign row nor releases a settled owner.
+writes a foreign row nor releases a settled owner. Either retirement keeps the slot's
+exact owned fact inside the selected bound; the wallet's next selection then replaces
+its own fresh row without waiting for the lease.
 
 A registered older epoch can instead retire after a complete newer-generation
 discovery pass, a final current-binding check and the original operation-grant

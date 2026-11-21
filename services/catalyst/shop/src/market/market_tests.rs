@@ -1552,7 +1552,15 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert!(!state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
     let (status, body) = get(app(), "/v3/catalog/unified?groupBy=item&first=3").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY));
+    // The browse read started the directory's read in the background; it may land after the
+    // answer, which waits at most 500 ms for it.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while !state.readers.holds(Ttl::M15, CREATOR_DIRECTORY_KEY) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the browse read fills the creator directory");
 
     // The feeds carry their creators' profiles per response, never memoized with the page: a
     // profile denylisted after the pages were memoized leaves the very next answer, and every
@@ -1575,6 +1583,10 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .await
         .unwrap();
     state.readers.clear();
+    // Read the directory first, through the dropdown's own path, which has no 500 ms bound: the
+    // feeds below then find it fresh, start no refresh of their own, and never depend on how
+    // fast a cold read is.
+    super::search::creator_directory(&state).await.unwrap();
     let feeds = [
         "/v3/catalog/unified?groupBy=item&first=12",
         "/v3/catalog/trending?first=10&days=3650",
@@ -1626,6 +1638,32 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .execute(&pool)
         .await
         .unwrap();
+    // A feed without the creator directory (here, its refresh held by another) answers without
+    // profiles under a brief cache, never the hour these feeds had, so a CDN does not keep an
+    // answer whose cards each ask /lambdas/profiles.
+    // A claim still live from the feeds above could not release this hold either: its release
+    // acts only on its own claim.
+    state.readers.clear();
+    let hold = state
+        .readers
+        .begin_refresh(CREATOR_DIRECTORY_KEY, Duration::ZERO)
+        .expect("a reset frees the directory's refresh");
+    for uri in [
+        "/v3/catalog/trending?first=10&days=3650",
+        "/v3/catalog/creators?days=7",
+    ] {
+        let (body, cache) = get_cached(app(), uri).await;
+        assert!(
+            body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none() && r.get("profile").is_none()),
+            "{uri}: {body}"
+        );
+        assert_eq!(cache, "public,max-age=60,s-maxage=60", "{uri}");
+    }
+    state.readers.end_refresh(CREATOR_DIRECTORY_KEY, hold, true);
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
         .bind(WALLET_A)
@@ -1992,6 +2030,85 @@ async fn seed_item_row(pool: &PgPool, contract: &str, item_id: &str, creator: &s
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// One contract and one item id on both networks: the read that names both
+/// pages the two rows itself and keeps the exact total on every page, as the
+/// paged read and its count do over the whole contract.
+#[tokio::test]
+async fn an_item_on_two_networks_keeps_its_total_on_every_page() {
+    use super::items::{ItemFilters, list_items};
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let contract = contract_of(&tag(), 3);
+    for (network, chain_id, item_id, created_at) in [
+        ("matic", 137, "7", 2),
+        ("ethereum", 1, "7", 1),
+        ("matic", 137, "8", 3),
+    ] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+                 total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ($1, $2, $3::numeric, $4, 'wearable_v2', $5, $6, 'common', 0, 10, 10, 0, '', 'Item', 'hat', $7, 0, 0, now())",
+        )
+        .bind(network)
+        .bind(&contract)
+        .bind(item_id)
+        .bind(chain_id)
+        .bind(format!("urn:decentraland:{network}:collections-v2:{contract}:{item_id}"))
+        .bind(CREATOR)
+        .bind(created_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let read = |item_id: Option<&str>, first: i64, skip: i64| {
+        let f = ItemFilters {
+            contract_addresses: vec![contract.clone()],
+            item_id: item_id.map(String::from),
+            first: Some(first),
+            skip: Some(skip),
+            ..ItemFilters::default()
+        };
+        let state = state.clone();
+        async move {
+            let (items, total) = list_items(&state, &f).await.unwrap();
+            let chains: Vec<i64> = items
+                .iter()
+                .map(|i| {
+                    serde_json::to_value(i).unwrap()["chainId"]
+                        .as_i64()
+                        .unwrap()
+                })
+                .collect();
+            (chains, total)
+        }
+    };
+    for (first, skip, chains) in [
+        (1, 0, vec![137]),
+        (1, 1, vec![1]),
+        (1, 2, vec![]),
+        (5, 0, vec![137, 1]),
+        (0, 0, vec![]),
+    ] {
+        assert_eq!(
+            read(Some("7"), first, skip).await,
+            (chains, 2),
+            "first={first} skip={skip}"
+        );
+    }
+    assert_eq!(
+        read(None, 1, 0).await,
+        (vec![137], 3),
+        "the whole contract: a full page, then its count"
+    );
+    sqlx::query("DELETE FROM shop.items WHERE contract_address = $1")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 /// The `public_item_order` ids the shared `unified_trades` view serves now.
@@ -2631,6 +2748,104 @@ async fn a_stored_malformed_token_id_does_not_break_the_bid_or_listing_reads() {
     for id in ids {
         delete_trade(&pool, &id).await;
     }
+}
+
+/// A read that names a contract reads only that contract's open trades; its
+/// rows are those of the read over every open trade, restricted to it.
+#[tokio::test]
+async fn a_read_naming_a_contract_keeps_the_rows_of_the_whole_read() {
+    use super::shop::{
+        build_shop_listings_sql, build_unified_items_sql, build_unified_listings_sql,
+        parse_shop_filters, parse_unified_filters,
+    };
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let (c1, c2) = (contract_of(&t, 1), contract_of(&t, 2));
+    for (c, item) in [(&c1, "0"), (&c1, "1"), (&c2, "0")] {
+        seed_item_row(&pool, c, item, CREATOR).await;
+    }
+    sqlx::query("UPDATE shop.items SET search_is_collection_approved = true WHERE contract_address = ANY($1)")
+        .bind(vec![c1.clone(), c2.clone()])
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for (c, kind, sent_type, value, received_type, amount) in [
+        (&c1, "public_item_order", 4, "0", 2, "250000000000000000"),
+        (&c1, "public_item_order", 4, "1", 1, "5000000000000000000"),
+        (&c1, "public_nft_order", 3, "7", 2, "400000000000000000"),
+        (&c1, "public_nft_order", 3, "8", 1, "6000000000000000000"),
+        (&c2, "public_item_order", 4, "0", 2, "300000000000000000"),
+    ] {
+        let asset = |asset_type, contract: &str, value: &str| Asset {
+            asset_type,
+            contract: contract.to_string(),
+            value: value.to_string(),
+        };
+        let sent = asset(sent_type, c, value);
+        let received = asset(
+            received_type,
+            "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0",
+            amount,
+        );
+        ids.push(insert_trade(&pool, kind, CREATOR, sent, received).await.0);
+    }
+
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+    let build = |kind: &str, pairs: &[(String, String)]| match kind {
+        "shop" => build_shop_listings_sql(&parse_shop_filters(pairs), None),
+        "items" => build_unified_items_sql(&parse_unified_filters(pairs), rate, None),
+        _ => build_unified_listings_sql(&parse_unified_filters(pairs), rate, None),
+    };
+    let rows = async |b: super::catalog::Builder| -> Vec<Value> {
+        let sql = format!("SELECT to_jsonb(q) - 'total' FROM ({}) q", b.sql);
+        sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql), b.args)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+    };
+    for (kind, params) in [
+        ("listings", &[("includeLegacySecondary", "true")][..]),
+        ("listings", &[("itemId", "0"), ("listingType", "primary")]),
+        ("listings", &[("itemId", "1"), ("source", "legacy")]),
+        ("items", &[("includeLegacySecondary", "true")]),
+        ("shop", &[]),
+    ] {
+        let whole: Vec<(String, String)> = params
+            .iter()
+            .chain(&[("first", "1000")])
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut named = whole.clone();
+        named.push((
+            "contractAddress".to_string(),
+            c1.to_uppercase().replace("0X", "0x"),
+        ));
+        let (named, whole) = (build(kind, &named), build(kind, &whole));
+        assert!(
+            named
+                .sql
+                .contains("sent.contract_address IN (SELECT unnest(")
+                && !whole.sql.contains("unnest("),
+            "{}",
+            named.sql
+        );
+        let of_c1: Vec<Value> = rows(whole)
+            .await
+            .into_iter()
+            .filter(|r| r["contract_address"] == c1.as_str())
+            .collect();
+        assert!(!of_c1.is_empty(), "{kind} {params:?}");
+        assert_eq!(rows(named).await, of_c1, "{kind} {params:?}");
+    }
+
+    for id in ids {
+        delete_trade(&pool, &id).await;
+    }
+    cleanup_mirror(&pool, &[c1, c2]).await;
 }
 
 #[tokio::test]

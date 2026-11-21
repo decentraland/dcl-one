@@ -71,6 +71,14 @@ function groupMaxCreditedValue(purchases: { maxCreditedValue: string; credits: {
   return total.toString();
 }
 
+/** The MANA gap a credits + MANA purchase confirmed, which settles alone; none for a group paid by its credits. */
+function groupMaxUncreditedValue(purchases: { maxUncreditedValue?: string }[]): bigint | undefined {
+  const named = purchases.filter((p) => p.maxUncreditedValue !== undefined);
+  if (named.length === 0) return undefined;
+  if (purchases.length !== 1) throw new Error("A purchase paid with Credits and MANA settles alone");
+  return BigInt(named[0]!.maxUncreditedValue!);
+}
+
 function dedupeCredits<T extends { id: string }>(credits: T[]): T[] {
   const byId = new Map<string, T>();
   for (const c of credits) if (!byId.has(c.id)) byId.set(c.id, c);
@@ -99,21 +107,22 @@ export function creditsManagerFor(chainId: ChainId, credits: SpendableCredit[]):
 }
 
 /** The useCredits call of ONE group and the credit ids it spends, shared by both rails. */
-export function buildGroupUseCreditsArgs(
-  group: PurchaseGroup,
-  buyer: string,
-  env?: EnvelopeOptions,
-): { args: UseCreditsArgs; salts: string[]; chainId: ChainId; manager: ContractInfo; data: Hex } {
+/** A group's useCredits as built: its arguments, its credits' salts, its chain and manager, and its encoded call. */
+export type BuiltUseCredits = { args: UseCreditsArgs; salts: string[]; chainId: ChainId; manager: ContractInfo; data: Hex };
+
+export function buildGroupUseCreditsArgs(group: PurchaseGroup, buyer: string, env?: EnvelopeOptions): BuiltUseCredits {
   const credits = dedupeCredits(group.purchases.flatMap((p) => p.credits));
   const maxCreditedValue = groupMaxCreditedValue(group.purchases);
+  const maxUncreditedValue = groupMaxUncreditedValue(group.purchases);
+  const envelope: EnvelopeOptions | undefined = maxUncreditedValue === undefined ? env : { ...env, maxUncreditedValue };
   const manager = creditsManagerFor(group.chainId, credits);
   let args: UseCreditsArgs;
   if (group.kind === "store") {
     const store = requireContracts(group.chainId).collectionStore;
     if (!store) throw new Error(`No CollectionStore on chain ${group.chainId}`);
-    args = buildStoreUseCreditsArgs(store.address, group.purchases.map((p) => p.item), buyer, credits, maxCreditedValue, env);
+    args = buildStoreUseCreditsArgs(store.address, group.purchases.map((p) => p.item), buyer, credits, maxCreditedValue, envelope);
   } else {
-    args = buildUseCreditsArgs(group.marketplace, group.purchases.map((p) => p.trade), buyer, credits, maxCreditedValue, groupCoupons(group.purchases), env);
+    args = buildUseCreditsArgs(group.marketplace, group.purchases.map((p) => p.trade), buyer, credits, maxCreditedValue, groupCoupons(group.purchases), envelope);
   }
   return { args, salts: credits.map((c) => c.id), chainId: group.chainId, manager, data: encodeUseCredits(args) };
 }
@@ -140,13 +149,25 @@ export async function sendUseCredits(
 /** One purchase (a trade or a mint) in a single useCredits. */
 export async function buyOneWithCredits(
   ctx: RailContext,
-  opts: { purchase: AnyPurchase; onBroadcast?: (info: { txHash: Hex }) => void; onReverted?: (info: { txHash: string | null }) => void },
+  opts: {
+    purchase: AnyPurchase;
+    /** The call already built for `purchase` (one the caller kept as what it sends): sent as is, never built again. */
+    built?: BuiltUseCredits;
+    /**
+     * Right before the transaction is handed to the wallet, with the exact call data it is handed: from here it may be
+     * broadcast. A throw here stops it before the wallet is asked.
+     */
+    onHandoff?: (data: Hex) => void;
+    onBroadcast?: (info: { txHash: Hex }) => void;
+    onReverted?: (info: { txHash: string | null }) => void;
+  },
 ): Promise<Hex> {
   if (opts.purchase.credits.length === 0) throw new Error("No credits to spend");
-  const built = buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
+  const built = opts.built ?? buildGroupUseCreditsArgs(groupPurchases([opts.purchase])[0]!, ctx.buyer);
   try {
     return await sendUseCredits(ctx, {
       ...built,
+      onHandoff: () => opts.onHandoff?.(built.data),
       onBroadcast: (txHash) => {
         opts.onBroadcast?.({ txHash });
         void reportSubmittedTx({ txHash, salts: built.salts, client: ctx.client });

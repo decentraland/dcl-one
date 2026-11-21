@@ -47,7 +47,7 @@ pub struct ContentConfig {
     /// check and the L1 deploy access checks (LAND, names, v1 items) of local
     /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
     /// is refused at startup. Unset or empty:
-    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
+    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=dcl-one
     /// by ETH_NETWORK, except under NODE_POSTURE island and journey. May come
     /// from ETH_RPC_URL_FILE; an empty file fails startup.
     #[arg(long, env = "ETH_RPC_URL", hide_env_values = true)]
@@ -462,6 +462,7 @@ pub struct ValidatorConfig {
     pub third_party_registry_l2_subgraph_url: Option<String>,
 
     /// Skip the chain-derived access checks of local deploys (LAND, names, items, collections, third party); the pointer-ownership rule still runs.
+    /// Also lets `WORLDS_WRITES_ENABLED=true` start without `MARKETPLACE_SUBGRAPH_URL`, with personal worlds only.
     #[arg(long, env = "IGNORE_BLOCKCHAIN_ACCESS_CHECKS", default_value_t = false, action = clap::ArgAction::Set)]
     pub ignore_blockchain_access_checks: bool,
 

@@ -38,6 +38,11 @@ describe("when signed in to the hangout wizard", () => {
     beforeEach(async () => {
       await user.upload(await screen.findByLabelText("Upload cover image"), new File(["image"], "poster.png", { type: "image/png" }));
     });
+    it("should show a spinner named for the upload while it runs", () => {
+      expect(screen.getByRole("progressbar", { name: "Uploading image…" }).closest("[role=status]")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
     it("should abort the upload when leaving the editor", async () => {
       await user.click(screen.getByRole("link", { name: "Back" }));
       await waitFor(() => expect(router.state.location.pathname).toBe("/events"));

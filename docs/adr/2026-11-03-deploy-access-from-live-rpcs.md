@@ -22,8 +22,8 @@ remembers the blocks it read.
 
 - Every node has both RPCs, as the reference does with `L1_HTTP_PROVIDER_URL` and
   `L2_HTTP_PROVIDER_URL`: left unset or empty, they are
-  `https://rpc.decentraland.org/{mainnet,polygon}?project=catalyst-content` on mainnet and
-  `.../{sepolia,amoy}?project=catalyst-content` on any other network. The island and journey
+  `https://rpc.decentraland.org/{mainnet,polygon}?project=dcl-one` on mainnet and
+  `.../{sepolia,amoy}?project=dcl-one` on any other network. The island and journey
   postures dial no outside host, so they get no default.
 
 - LAND is granted per parcel at either block. Names, and the items of each chain, must all pass

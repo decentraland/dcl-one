@@ -28,14 +28,16 @@ pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
 /// The L1 and L2 RPCs a node reads unless the operator names others
 /// (`L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` in the reference): mainnet
 /// with polygon on mainnet, sepolia with amoy on any other `ETH_NETWORK`.
+/// `project=dcl-one` tells these calls apart from other catalysts' in
+/// rpc.decentraland.org's request logs. It names no node: an operator that
+/// wants its own tag sets both URLs.
 pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
     let (l1, l2) = if eth_network.trim() == "mainnet" {
         ("mainnet", "polygon")
     } else {
         ("sepolia", "amoy")
     };
-    let url =
-        |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=catalyst-content");
+    let url = |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=dcl-one");
     (url(l1), url(l2))
 }
 
