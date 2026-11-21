@@ -95,6 +95,25 @@ jobs:
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$HEAD_SHA^"; fi
           node library/ui/figma/port-verification.mjs --base "$base" --head "$HEAD_SHA"
 
+  # The Nix package Sites serves at /ui-gallery/ builds only the files its fileset names, and a pull request that
+  # changes no packaging builds no image: a gallery change that imports a file outside the fileset fails here,
+  # not in the next Sites image.
+  ui-gallery-nix:
+    needs: key-guard
+    if: needs.key-guard.outputs.ui_changed == 'true'
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          lfs: false
+          persist-credentials: false
+      # The shared fonts are the package's only LFS input.
+      - run: git lfs pull --include "library/ui/foundations/typography/fonts/**"
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - run: nix build 'git+file:.?lfs=1#ui-gallery' --no-link -L
+
   library:
     needs: key-guard
     if: needs.key-guard.outputs.ui_changed == 'true'
@@ -152,6 +171,14 @@ jobs:
           wait "$root" || status=1
           wait "$nested" || status=1
           exit "$status"
+      # The hosted gallery Sites serves at /ui-gallery/ (infra/packages/ui-gallery.nix), built as that package builds
+      # it. Both builds must match the recorded digest, and this one rides in the scanned artifact, so Sites ships the
+      # bytes the key scan reads.
+      - name: Add the hosted gallery Sites serves to the scanned artifact
+        run: |
+          pnpm exec vite build --config gallery/vite.config.ts --mode hosted
+          node gallery/scripts/hosted-digest.mjs gallery/dist --check gallery/hosted-build.sha256
+          cp -R gallery/dist figma/review/review-dist/ui-gallery
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist

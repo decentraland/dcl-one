@@ -27,6 +27,8 @@ To review a pull request without building it, download the `ui-review-<sha>` art
 
 The Sites image serves that hosted build at `/ui-gallery/` (`infra/packages/ui-gallery.nix`, [ADR](../../../docs/adr/2026-11-20-ui-gallery-on-sites.md)), so a deployment shows the gallery of the main commit it was deployed from. Its pages carry `noindex`.
 
+`gallery/hosted-build.sha256` records the digest of that build. The Shared UI library run checks its own hosted build against it and puts that build in the key-scanned Review artifact as `ui-gallery/`; the Nix package checks its build against the same record, so Sites ships the bytes the scan read. A change to anything the gallery compiles updates the record in the same change: `pnpm exec vite build --config gallery/vite.config.ts --mode hosted && node gallery/scripts/hosted-digest.mjs gallery/dist --write gallery/hosted-build.sha256`.
+
 The build writes `figma/review/review-dist/gallery/`, beside the generated Review, and uses relative URLs, so the combined output works at the root or under any prefix. Build the generated Review with `--base ./` (as CI does for the uploaded artifact) to serve the same output anywhere, or with the absolute prefix it is served from.
 
 | URL                                       | Opens                                                      |

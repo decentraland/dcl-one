@@ -19,7 +19,9 @@ let
     (builtins.hashString "sha256" (fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-ui-gallery"; })).drvPath);
   pnpmDeps = fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-ui-gallery-${pnpmDepsKey}"; });
   # What the hosted gallery compiles: the package's runtime sources, the HUD it draws and the Explorer core the HUD
-  # imports. The Figma tooling, the tests and the Sites media stay out, so they never change this build's identity.
+  # imports. library/ui's figma/, test/, templates/ and apps/sites stay out, so changes there keep this build's
+  # identity. The directories it takes whole (components, foundations, apps/hud, explorer-core) hold their own tests,
+  # so a change to one of those tests still changes it.
   src = lib.fileset.toSource {
     inherit root;
     fileset = lib.fileset.unions ((map (p: ui + p) [
@@ -27,7 +29,7 @@ let
       /index.ts /css-modules.d.ts /content.helpers.ts /link.helpers.ts /text-styles.ts
       /components /foundations /apps/hud
       /gallery/index.html /gallery/frame.html /gallery/hud.html /gallery/vite.config.ts
-      /gallery/tsconfig.json /gallery/src
+      /gallery/tsconfig.json /gallery/src /gallery/scripts/hosted-digest.mjs /gallery/hosted-build.sha256
     ]) ++ [ (root + /library/explorer-core) ]);
   };
 in stdenv.mkDerivation {
@@ -54,6 +56,8 @@ in stdenv.mkDerivation {
   '';
   installPhase = ''
     runHook preInstall
+    # The Shared UI library run checks its build against the same record and the key scan reads that build.
+    node gallery/scripts/hosted-digest.mjs gallery/dist --check gallery/hosted-build.sha256
     cp -r gallery/dist "$out"
     for page in index frame hud; do
       grep -qF 'name="robots" content="noindex"' "$out/$page.html" || { echo "$page.html is indexable" >&2; exit 1; }

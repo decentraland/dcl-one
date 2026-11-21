@@ -88,8 +88,9 @@ python3 tooling/image-smoke.py
   assembled beside it as their own store paths, so neither changes its identity or its
   image layer. Its cache entry also holds the app of `image-sites-polygon-credits`
   (`sites-app-polygon-credits`), so an exact hit leaves neither Sites build to compile.
-  The UI gallery is a separate entry: a Sites change does not rebuild it, and a change
-  to the gallery's inputs does not recompile Sites.
+  The UI gallery is a separate entry: a change to `apps/sites` or to the gallery alone misses
+  only its own entry, while a change to the `library/ui` sources both compile (components,
+  foundations, `apps/hud`, `library/explorer-core`, their tests included) misses both.
   A compiled closure restored under its exact identity skips that
   package's dependency restore, import and toolchain build: nothing is left to compile.
   Container revision labels are still rebuilt for each commit. `cast-bot` has no
