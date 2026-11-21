@@ -5576,6 +5576,123 @@ mod supervisor {
         together.drop().await;
     }
 
+    /// The touch each member's first walk under its generation makes runs
+    /// beside its companions', under the member deadline: with one member's
+    /// cursor row locked while its touch is due, that member leaves the walk
+    /// at the deadline, and its companion walks its window and commits while
+    /// the lock is still held.
+    #[tokio::test]
+    async fn a_locked_member_touch_holds_back_no_companion() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 10_000, 1_000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let settings = IndexSettings {
+            window_blocks: 100,
+            requests_per_pass: 100,
+            ..walk_settings()
+        };
+        let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+        let mana: Arc<dyn ChainIndex> =
+            Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                net: ChainNet::Matic,
+            });
+        let trades: Arc<dyn ChainIndex> = Arc::new(TradeEventsIndex {
+            net: ChainNet::Matic,
+            chain_id: 137,
+        });
+        for ix in [&mana, &trades] {
+            assert!(publish(&st, &url, ix.as_ref()).await.published);
+        }
+        let at = chain_group::Checkpoint::of(
+            &cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        *chain.head.lock() = 200;
+        // Fresh holdings, claimed before the lock: each member's first walk
+        // under its new generation owes its touch.
+        let members: Vec<chain_group::Member> = [trades.clone(), mana.clone()]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, index)| chain_group::Member {
+                slot,
+                index,
+                holdings: Arc::new(chain_walk::Holdings::default()),
+                lease: None,
+                gate: None,
+            })
+            .collect();
+        for m in &members {
+            m.holdings
+                .owner(&db.pool, None, m.index.as_ref(), &settings)
+                .await
+                .unwrap();
+        }
+        let mut lock = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM shop.chain_cursor WHERE indexer = 'trade_events' AND network = 'matic' FOR UPDATE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let counted = AtomicUsize::new(0);
+        let started = std::time::Instant::now();
+        let ends = tokio::time::timeout(
+            Duration::from_secs(5),
+            chain_group::walk_together(
+                &db.pool,
+                &st.http,
+                &url,
+                &settings,
+                members,
+                &at,
+                Duration::from_millis(800),
+                &counted,
+            ),
+        )
+        .await
+        .expect("the walk ends while the lock is held");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        let mut trades_end = None;
+        for (slot, end) in ends {
+            match (slot, end) {
+                (0, end) => trades_end = Some(end),
+                (1, chain_group::MemberEnd::Walked { out, .. }) => {
+                    assert_eq!(out.indexed_to, 198, "{out:?}")
+                }
+                (slot, end) => panic!("member {slot}: {}", describe(&end)),
+            }
+        }
+        assert!(
+            matches!(
+                trades_end,
+                Some(chain_group::MemberEnd::Failed { tainted: true, .. })
+            ),
+            "the locked member left at the deadline"
+        );
+        // The companion committed while the lock is still held.
+        assert_eq!(last_block(&db.pool, chain_walk::INDEXER_MANA).await, 198);
+        assert_eq!(last_block(&db.pool, INDEXER_TRADE_EVENTS).await, 98);
+        lock.rollback().await.unwrap();
+        db.drop().await;
+    }
+
+    fn describe(end: &chain_group::MemberEnd) -> String {
+        match end {
+            chain_group::MemberEnd::Failed { error, tainted } => {
+                format!("failed ({tainted}): {error:#}")
+            }
+            chain_group::MemberEnd::Walked { .. } => "walked".into(),
+            _ => "another end".into(),
+        }
+    }
+
     /// The nft and sales projections of `url` for a supervisor, ungated.
     fn nft_and_sales(url: &str) -> Vec<Projection> {
         vec![
@@ -7858,4 +7975,81 @@ mod supervisor {
         );
         db.drop().await;
     }
+}
+
+/// The first pass's touch of a started walk is a fenced write. A job that
+/// lost the projection at the same height and hash leaves an aged cursor as
+/// it is (its pass fails fenced, and it stays untouched, to try again), and
+/// the job that took the projection still touches it.
+#[tokio::test]
+async fn a_started_walk_touch_is_fenced_by_its_owner() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(100, vec![], 10_000, 1_000);
+    chain.finalized_lag.store(2, Ordering::SeqCst);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(100, 10_000), false);
+    let mana = super::mana_transfers::ManaTransfersIndex {
+        net: ChainNet::Matic,
+    };
+    assert!(publish(&st, &url, &mana).await.published);
+    sqlx::query(
+        "UPDATE shop.chain_cursor SET updated_at = timezone('UTC', now()) - interval '5 hours' \
+         WHERE indexer = 'mana_transfers'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let updated_at = async || {
+        chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap()
+            .updated_at
+    };
+    let aged = updated_at().await;
+    let settings = &st.settings.market.indexes;
+    let stale = chain_walk::test_owner(&db.pool, &mana, settings).await;
+    let current = chain_walk::test_owner(&db.pool, &mana, settings).await;
+    let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+    let err = chain_walk::run_pass(&db.pool, &source, &mana, settings, &stale, None, &|_| {})
+        .await
+        .unwrap_err();
+    assert!(
+        err.chain()
+            .any(|c| c.downcast_ref::<chain_walk::Fenced>().is_some()),
+        "{err:#}"
+    );
+    assert_eq!(
+        updated_at().await,
+        aged,
+        "the stale job's touch changed nothing"
+    );
+    assert!(!stale.started.done(), "a fenced touch is not marked done");
+    // The current job, at a checkpoint the cursor no longer stands on.
+    let c = chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        chain_walk::touch_started(
+            &db.pool,
+            &current,
+            (c.last_block - 1, c.last_block_hash.as_deref())
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        updated_at().await,
+        aged,
+        "a touch at a moved checkpoint changed nothing"
+    );
+    chain_walk::run_pass(&db.pool, &source, &mana, settings, &current, None, &|_| {})
+        .await
+        .unwrap();
+    assert!(updated_at().await > aged, "the current job touched it");
+    assert!(current.started.done());
+    db.drop().await;
 }

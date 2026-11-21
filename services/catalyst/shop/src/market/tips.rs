@@ -24,14 +24,15 @@
 //! [`FIRST_PASS_GRACE`] with the local setting on), one without its whole
 //! history, or one not advanced for [`INDEX_ABANDONED_SECS`], it is a 503 with
 //! the body code [`TIP_INDEX_UNAVAILABLE`]: its claim could only expire, so
-//! clients stop. With a whole-history walk lagging or paused
-//! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
+//! clients stop. With a whole-history walk lagging or paused, a cursor the
+//! resolver cannot use yet (unbound, bound to another chain or in quarantine:
+//! [`chain_walk::is_walked`] false), or the local walk's first pass still to
 //! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
 //! 500. The age check reads `updated_at`, which a walk sets just outside the
-//! live window once its first head read in a process answers, unless it is
-//! held at its stop block ([`chain_walk::touch_started`]): an index back after
-//! hours down reads as behind, neither abandoned nor live, until its first
-//! window really lands.
+//! live window once its first head read answers after it took the projection,
+//! unless it is held at its stop block ([`chain_walk::touch_started`], a
+//! fenced write): an index back after hours down reads as behind, neither
+//! abandoned nor live, until its first window really lands.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -1723,6 +1724,63 @@ mod tests {
         db.drop().await;
     }
 
+    /// A walk near the head serves a forward only while its cursor is one the
+    /// resolver can use: bound to Polygon and out of quarantine. Unbound,
+    /// bound to another chain or in quarantine, a fresh forward is refused
+    /// (retryably) and nothing is stored; bound and out of quarantine, the
+    /// same walk takes it.
+    #[tokio::test]
+    async fn a_forward_needs_a_cursor_the_resolver_can_use() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_unusable").await else {
+            return;
+        };
+        let app = forward_router(std::sync::Arc::new(crate::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        )));
+        let w = crate::outfits::testkit::scratch_wallet();
+        put_cursor(&db.pool, 10, now_secs() - 5 * 60, true, "0 seconds", false).await;
+        let pool = db.pool.clone();
+        let set = |sql: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(sql).execute(&pool).await.unwrap();
+            }
+        };
+        for (sql, why) in [
+            (
+                "UPDATE shop.chain_cursor SET chain_id = NULL WHERE indexer = 'mana_transfers'",
+                "unbound",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET chain_id = 80002 WHERE indexer = 'mana_transfers'",
+                "bound to another chain",
+            ),
+            (
+                "UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = timezone('UTC', now()), \
+                 quarantine_reason = 'test' WHERE indexer = 'mana_transfers'",
+                "in quarantine",
+            ),
+        ] {
+            set(sql).await;
+            assert_eq!(
+                refused(forward_tip(&app, &w).await).await.0.as_deref(),
+                Some("60"),
+                "{why}"
+            );
+            assert_eq!(claim_count(&db.pool).await, 0, "{why}: nothing stored");
+        }
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'mana_transfers'").await;
+        assert_eq!(
+            forward_tip(&app, &w).await.status(),
+            StatusCode::ACCEPTED,
+            "bound and out of quarantine"
+        );
+        assert_eq!(claim_count(&db.pool).await, 1);
+        db.drop().await;
+    }
+
     #[test]
     fn a_missing_cursor_waits_for_the_first_pass_only_briefly() {
         let minute = std::time::Duration::from_secs(60);
@@ -1757,7 +1815,22 @@ mod tests {
             crate::market::Settings::for_tests(),
         ));
         let minute = std::time::Duration::from_secs(60);
-        let touch = || chain_walk::touch_started(&db.pool, INDEXER_MANA, NET);
+        // The walk that starts claims the projection, then touches its cursor
+        // where it stands.
+        let touch = || async {
+            let ix = super::super::mana_transfers::ManaTransfersIndex { net: NET };
+            let owner = chain_walk::test_owner(&db.pool, &ix, &state.settings.market.indexes).await;
+            let c = chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
+                .await
+                .unwrap()
+                .unwrap();
+            chain_walk::touch_started(
+                &db.pool,
+                &owner,
+                (c.last_block, c.last_block_hash.as_deref()),
+            )
+            .await
+        };
         let updated_at = || async {
             chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
                 .await
