@@ -1901,8 +1901,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // An approval of this account still able to run (its answer lost) holds the sale even where the allowance looks covered.
     const ready = await exactAllowanceReady(auth, quote.buyer, gap, svc.reader()).catch(() => false)
     // The approval's lock, held from AUTHORIZE's click through the sale's hand-off (authorizeGap hands it over), so no other
-    // split of this buyer's can come between the approval and this sale; taken here when no approval is asked. No chain
-    // read happens under it: a split that shows up meanwhile, its expiry unproven, holds this one (blockedNow below).
+    // split of this buyer's can come between the approval and this sale; taken here when no approval is asked. The chain's
+    // time (finalizedTime, what proves an expiry) is never read under it: a split that shows up meanwhile, its expiry
+    // unproven, holds this one (blockedNow below). The allowance is read again under it.
     let release: (() => void) | null = null
     if (!ready) {
       release = await authorizeGap(op, quote, part, wallet, current, auth, gap, blockedNow, grantLock)
@@ -2039,6 +2040,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         // The approval's lock, for the approval and then the sale: an earlier AUTHORIZE of this dialog may have let it go
         // just now, so it is asked for again while taken; held by another window, nothing is asked.
         const held = await relock(() => lockIfFree(svc.locks(), grantLock), (got) => got === null)
+        // The purchase may have ended while the lock was awaited (a CANCEL, another step, another session): then it goes at
+        // once and nothing is asked, read or sent.
+        if (answered || !slot.holds(op) || !current()) {
+          held?.()
+          answer(null)
+          return
+        }
         if (!held) {
           if (answered) return
           state = 'failed'
