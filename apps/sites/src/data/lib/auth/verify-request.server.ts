@@ -245,7 +245,8 @@ export async function verifyAuthChainRequest(
   const method = rawMethod === "HEAD" ? "GET" : rawMethod;
   const path = new URL(request.url).pathname;
   const expected = buildRequestPayload(method, path, timestampRaw, metadataStr);
-  if (finalPayload.toLowerCase() !== expected) {
+  // The 6.x payload, or the legacy one with everything folded.
+  if (finalPayload !== expected && finalPayload !== expected.toLowerCase()) {
     return {
       ok: false,
       status: 401,
