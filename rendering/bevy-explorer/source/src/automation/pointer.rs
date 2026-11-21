@@ -634,7 +634,7 @@ fn click_request(
 // --- the driver ---
 
 /// The scene ids of a hit container: (entity, container, the scene it belongs to).
-fn hit_ids(
+pub(crate) fn hit_ids(
     container: Entity,
     ids: &Query<(Option<&SceneEntity>, Option<&ContainerEntity>)>,
 ) -> Option<(SceneEntityId, SceneEntityId, Entity)> {

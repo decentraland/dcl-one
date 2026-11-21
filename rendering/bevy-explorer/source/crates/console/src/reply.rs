@@ -15,7 +15,7 @@ pub struct Screen {
 }
 
 impl Screen {
-    fn of(window: &Window) -> Self {
+    pub fn of(window: &Window) -> Self {
         Self {
             width: window.width(),
             height: window.height(),

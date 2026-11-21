@@ -20,7 +20,7 @@ also drives the Unity Explorer through its MCP server. It names arguments and re
 
 The console's automation commands follow these rules. `crates/console/src/line.rs` and
 `crates/console/src/reply.rs` hold the shared pieces. A rule for a kind of command the console
-does not have yet (durations, waits, refusals, entity ids) is added here with its first command.
+does not have yet (durations, waits, refusals) is added here with its first command.
 
 1. **Quoting.** A line is split into words on whitespace (Unicode's White_Space); a double-quoted
    run is part of a word with its quotes removed, and inside it `\"` and `\\` escape. A backslash
@@ -38,6 +38,9 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
    screenshot's pixels are `scale` times as many. The pixel commands (`/click_at`,
    `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
    form.
+3. **Names and ids.** Arguments and reply fields use the shared script's names. SDK entity ids are
+   the only id space: replies report them as `crdtEntityId` (`/visible_entities`, `/get_reticle`,
+   `/scene_entities --labels`), and keep `entity` where a reply already uses it.
 
 ## Consequences
 

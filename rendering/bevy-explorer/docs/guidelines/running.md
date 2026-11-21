@@ -329,6 +329,27 @@ State, in every build:
   `height` in logical pixels, `scale`). The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/scene_entities [component] [--labels] [--name <text>] [--limit N]`: the live entities of the
+  scene, one per line. With `--labels`, or `--name` (alias `--filter`), JSON: `scene`, `total`,
+  `matched`, `returned`, `truncated`, and `entities` by id, the first `--limit` of those matched
+  (default 200, at most 2000), each `crdtEntityId` and `label`, what it shows from the
+  scene's own state: `gltf <src>`, `mesh <Box|Sphere|Cylinder|Plane|Gltf>`, `text "<first 24
+  characters>…"`, `hidden` (a `VisibilityComponent` set to false), `parent <id>` (a parent other
+  than the root), joined by `, `; `scene root`, `player`, `camera` for the reserved ids; `null`
+  when nothing describes it. `--name` keeps the labels holding the text, any case (`mesh box`,
+  `hidden`, `gltf models/`).
+- `/visible_entities [--limit N] [--min-coverage F]`: JSON of the scene's entities that draw a
+  primitive mesh or a glTF (signs and boards, bare `TextShape`s, are not listed) whose meshes'
+  world bounds meet the primary camera's frustum, sorted by `coverage`, largest first (default
+  25, at most 200; `--min-coverage` 0 to 1 drops smaller ones): `crdtEntityId`, `label`,
+  `screenRect` (logical pixels from the top left, the box's corners and its crossings of the
+  near plane projected, clamped to the view, as the camera reel frames a person; `null` when
+  nothing of it lands there), `center`
+  (normalized), `coverage` (share of the view), `distance` (player to the box's centre),
+  `distanceToCamera`, `renderers` (meshes merged; a child entity's meshes count for the child).
+  With `scene`, `screen`, `cameraPosition` (Decentraland coordinates), `candidates` (entities
+  that draw), `inFrustum`, `returned`, `truncated` and `occlusion`: it is not evaluated, so an
+  entity behind a wall is still listed; a screenshot shows what is visible.
 - `/photo_mode [on|off] [button|shortcut|console]`: the camera reel's in-world camera as JSON:
   `active`, the primary camera's `position`, `storage` (`[current, max]` photos kept, meaningful
   once `storageLoaded`), `phase` (`idle`, `capturing`, `encoding` or `uploading`), this session's
@@ -416,6 +437,14 @@ The HUD and input:
   shorter than its frames plus 3, whatever `--timeout-frames` says.
   A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
   [Interaction](interaction.md) has every option and reply field.
+- `/get_reticle` (`src/automation/reticle.rs`): what the pointer ray reaches now, read from the
+  pointer pipeline without pressing or hovering: `available`, `cursorLocked` (the window holds the
+  cursor), `rayFromScreenCenter`, `aimedByCommand` (a pointer command's aim steers the ray),
+  `pointerLocked` (the scene's lock), `cursor` (`x`, `y` in logical pixels, `normalized`,
+  `onScreen`), `screen`, `ray` (`origin`, `direction`), `kind` (`scene_entity`, `ui`, `avatar`,
+  `world` or `nothing`), `crdtEntityId`, `scene`, `hitPoint`, `distanceToPlayer`,
+  `distanceToCamera`, `hasPointerEvents`, `withinRange` (an entry the cursor reaches),
+  `hoverQualified` (a hover-enter entry within range), `hoverText` and the cursor `entries`.
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
   cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or

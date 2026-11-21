@@ -9,6 +9,7 @@ edition = "2021"
 workspace = true
 
 [dependencies]
+camera_reel = { workspace = true }
 common = { workspace = true }
 dcl_types = { workspace = true }
 dcl_component = { workspace = true }

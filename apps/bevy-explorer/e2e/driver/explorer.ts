@@ -59,6 +59,80 @@ export interface PointerReport {
   diagnosis: string | null
 }
 
+/** What `/get_reticle` reports: what the pointer ray reaches now. */
+export interface ReticleReport {
+  available: boolean
+  cursorLocked: boolean
+  rayFromScreenCenter: boolean
+  /** a pointer command's aim steers the ray */
+  aimedByCommand: boolean
+  pointerLocked: boolean
+  cursor: { x: number; y: number; normalized: { x: number; y: number }; onScreen: boolean } | null
+  screen: { width: number; height: number; scale: number }
+  ray: { origin: { x: number; y: number; z: number }; direction: { x: number; y: number; z: number } } | null
+  kind: 'scene_entity' | 'ui' | 'avatar' | 'world' | 'nothing'
+  crdtEntityId: number | null
+  scene: string | null
+  hitPoint: { x: number; y: number; z: number } | null
+  distanceToPlayer: number | null
+  distanceToCamera: number | null
+  hasPointerEvents: boolean
+  withinRange: boolean
+  hoverQualified: boolean
+  hoverText: string | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+}
+
+/** One entity of `/scene_entities --labels`. */
+export interface LabelledEntity {
+  crdtEntityId: number
+  /** `gltf <src>`, `mesh Box`, `text "..."`, `hidden`, `parent <id>`, joined by `, `; null when nothing describes it */
+  label: string | null
+}
+
+/** `/scene_entities --labels`: `matched` counts every entity the filters keep, `entities` holds
+ *  the first `returned` of them by id. */
+export interface LabelledEntities {
+  scene: string
+  total: number
+  matched: number
+  returned: number
+  truncated: boolean
+  entities: LabelledEntity[]
+}
+
+/** One entity `/visible_entities` lists. */
+export interface VisibleEntity {
+  crdtEntityId: number
+  label: string | null
+  /** logical pixels, clamped to the view; null when nothing of it lands there */
+  screenRect: { x: number; y: number; width: number; height: number } | null
+  center: { x: number; y: number } | null
+  coverage: number
+  distance: number | null
+  distanceToCamera: number
+  renderers: number
+}
+
+/** `/visible_entities`: frustum and bounds only, occlusion is not evaluated. */
+export interface VisibleEntities {
+  scene: string
+  screen: { width: number; height: number; scale: number }
+  cameraPosition: { x: number; y: number; z: number }
+  candidates: number
+  inFrustum: number
+  returned: number
+  truncated: boolean
+  occlusion: string
+  entities: VisibleEntity[]
+}
+
+/** A word of a console line, double-quoted when it holds whitespace or a quote (the conventions
+ *  ADR's quoting rule). */
+export function quoteWord(word: string): string {
+  return word === '' || /[\s"]/.test(word) ? `"${word.replace(/[\\"]/g, '\\$&')}"` : word
+}
+
 /** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
 export interface RaycastStats {
   budgetMs: number
@@ -978,6 +1052,18 @@ export class Explorer {
     return reply === '(no entities)' ? [] : reply.split('\n')
   }
 
+  /** The target scene's entities with what each shows, the first `limit` by id (200 unless given);
+   *  `name` keeps the labels holding it, any case. */
+  async sceneEntityLabels(options: { component?: string; name?: string; limit?: number } = {}): Promise<LabelledEntities> {
+    const flags = `${options.component ? ` ${options.component}` : ''}${options.name === undefined ? ' --labels' : ` --name ${quoteWord(options.name)}`}${options.limit === undefined ? '' : ` --limit ${options.limit}`}`
+    return this.json<LabelledEntities>(`/scene_entities${flags}`)
+  }
+
+  /** The scene's mesh and glTF entities in the camera's view, largest coverage first. */
+  visibleEntities(options: { limit?: number; minCoverage?: number } = {}): Promise<VisibleEntities> {
+    return this.json<VisibleEntities>(`/visible_entities${options.limit === undefined ? '' : ` --limit ${options.limit}`}${options.minCoverage === undefined ? '' : ` --min-coverage ${options.minCoverage}`}`)
+  }
+
   /** Point the scene commands (`/scene_entities`, `/inspect_component`, `/scene_logs`) at a scene
    *  by hash or title; without one they follow the player's parcel again. */
   async setScene(hashOrTitle?: string): Promise<void> {
@@ -1060,6 +1146,11 @@ export class Explorer {
     if (options.event) line += ` --event ${options.event}`
     if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
     return this.json<PointerReport>(line)
+  }
+
+  /** What the pointer ray reaches now; presses and hovers nothing. */
+  getReticle(): Promise<ReticleReport> {
+    return this.json<ReticleReport>('/get_reticle')
   }
 
   raycastStats(): Promise<RaycastStats> {

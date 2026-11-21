@@ -346,6 +346,14 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
   lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+- What is in frame: `/visible_entities [--limit N] [--min-coverage F]` lists the scene's mesh and
+  glTF entities whose bounds meet the camera's view, largest first, with `screenRect`, a
+  normalized `center`, `coverage`, distances and `screen` (frustum and bounds only: occlusion is
+  not evaluated). `/scene_entities --labels` and `--name <text>` reply JSON with what each entity
+  shows: `gltf <src>`, `mesh Box`, `text "<excerpt>"`, `hidden`, `parent <id>`, the first 200 by
+  id unless `--limit` says otherwise. `/get_reticle` says what the pointer ray reaches now
+  (`kind`, `crdtEntityId`, `hitPoint`, `withinRange`, `hoverText`) and through which cursor
+  (`cursorLocked`, `rayFromScreenCenter`, `cursor` with `screen`).
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

@@ -114,8 +114,9 @@ pub fn anchor_point(
     }
 }
 
-/// The centre of the box around every local-space `Aabb`, each placed in the world by its transform
-fn world_bounds_centre(boxes: impl IntoIterator<Item = (Aabb, Affine3A)>) -> Option<Vec3> {
+/// The world box (min, max) around every local-space `Aabb`, each placed in the world by its
+/// transform; a box whose placement is not finite is left out. `None` when none is left.
+pub fn world_bounds(boxes: impl IntoIterator<Item = (Aabb, Affine3A)>) -> Option<(Vec3, Vec3)> {
     let mut bounds: Option<(Vec3A, Vec3A)> = None;
     for (aabb, placement) in boxes {
         let centre = placement.transform_point3a(aabb.center);
@@ -132,7 +133,12 @@ fn world_bounds_centre(boxes: impl IntoIterator<Item = (Aabb, Affine3A)>) -> Opt
             None => (min, max),
         });
     }
-    bounds.map(|(min, max)| Vec3::from((min + max) * 0.5))
+    bounds.map(|(min, max)| (Vec3::from(min), Vec3::from(max)))
+}
+
+/// The centre of [`world_bounds`]
+fn world_bounds_centre(boxes: impl IntoIterator<Item = (Aabb, Affine3A)>) -> Option<Vec3> {
+    world_bounds(boxes).map(|(min, max)| (min + max) * 0.5)
 }
 
 /// Whether the pointer target may be taken from the world: the cursor is over the 3D view (a UI

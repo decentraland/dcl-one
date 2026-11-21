@@ -216,7 +216,10 @@ fn scene_logs_cmd(
 
 // --- /scene_entities ---
 
-/// List live entities in the active scene, optionally filtered by component name
+/// List live entities in the active scene, optionally filtered by component name. With `--labels`
+/// or `--name` the reply is JSON: `scene`, `total`, `matched`, `returned`, `truncated`, and
+/// `entities` (`crdtEntityId`, `label`: `gltf <src>`, `mesh <Box|Sphere|...>`, `text "<excerpt>"`,
+/// `hidden`, `parent <id>`, or null), by id, the first `--limit` of them.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_entities")]
 struct SceneEntitiesCommand {
@@ -225,7 +228,19 @@ struct SceneEntitiesCommand {
     panel: bool,
     /// Filter to entities that have this component (PascalCase)
     component: Option<String>,
+    /// Reply JSON with what each entity shows
+    #[arg(long)]
+    labels: bool,
+    /// Keep the entities whose label holds this text, any case (implies --labels)
+    #[arg(long, alias = "filter")]
+    name: Option<String>,
+    /// Most labelled entities to list, lowest id first (1 to 2000, default 200)
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=2000))]
+    limit: Option<u32>,
 }
+
+/// How many entities `/scene_entities --labels` lists unless `--limit` says otherwise
+const DEFAULT_LABEL_LIMIT: usize = 200;
 
 fn scene_entities_cmd(
     mut input: ConsoleCommand<SceneEntitiesCommand>,
@@ -253,6 +268,12 @@ fn scene_entities_cmd(
         } else {
             resolver.resolve_entity()
         };
+        let scene = target
+            .as_ref()
+            .ok()
+            .and_then(|root| resolver.scenes.get(*root).ok())
+            .map(|(_, ctx)| ctx.hash.clone())
+            .unwrap_or_default();
         match resolver.request_snapshot_from(target, &mut pending, move |crdt| {
             let entities: Vec<SceneEntityId> = crdt
                 .lww
@@ -280,7 +301,16 @@ fn scene_entities_cmd(
                 .into_iter()
                 .collect();
 
-            let result = if entities.is_empty() {
+            let result = if cmd.labels || cmd.name.is_some() {
+                Ok(labelled_entities(
+                    crdt,
+                    entities,
+                    cmd.name.as_deref(),
+                    cmd.limit
+                        .map_or(DEFAULT_LABEL_LIMIT, |limit| limit as usize),
+                    &scene,
+                ))
+            } else if entities.is_empty() {
                 Ok("(no entities)".to_string())
             } else {
                 let mut lines: Vec<String> = entities.iter().map(entity_alias).collect();
@@ -600,6 +630,51 @@ fn print_tree(
 }
 
 // --- helpers ---
+
+/// The `--labels` reply: the entities with their labels, by id, those matching `name` only, the
+/// first `limit` of them; `matched` counts them all.
+fn labelled_entities(
+    crdt: &CrdtStore,
+    mut entities: Vec<SceneEntityId>,
+    name: Option<&str>,
+    limit: usize,
+    scene: &str,
+) -> String {
+    entities.sort_by_key(|e| e.as_proto_u32().unwrap_or(e.id as u32));
+    let total = entities.len();
+    let needle = name.map(str::to_lowercase);
+    let matching: Vec<_> = entities
+        .into_iter()
+        .map(|entity| (entity, crate::labels::label(crdt, entity)))
+        .filter(|(_, label)| {
+            needle.as_ref().is_none_or(|needle| {
+                label
+                    .as_ref()
+                    .is_some_and(|label| label.to_lowercase().contains(needle))
+            })
+        })
+        .collect();
+    let matched = matching.len();
+    let listed: Vec<_> = matching
+        .into_iter()
+        .take(limit)
+        .map(|(entity, label)| {
+            serde_json::json!({
+                "crdtEntityId": entity.as_proto_u32().unwrap_or(entity.id as u32),
+                "label": label,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "scene": scene,
+        "total": total,
+        "matched": matched,
+        "returned": listed.len(),
+        "truncated": matched > listed.len(),
+        "entities": listed,
+    })
+    .to_string()
+}
 
 fn entity_alias(eid: &SceneEntityId) -> String {
     let id = eid.as_proto_u32().unwrap_or(eid.id as u32);
