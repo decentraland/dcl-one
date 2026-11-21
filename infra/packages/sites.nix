@@ -1,4 +1,4 @@
-{ lib, stdenv, runCommand, linkFarm, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs_26, nodejs-slim_26, makeWrapper, playWeb, shopSettlement ? null }:
+{ lib, stdenv, runCommand, linkFarm, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs_26, nodejs-slim_26, nodejs-slim_24, makeWrapper, playWeb, shopSettlement ? null }:
 let
   nodejs = nodejs_26;
   pnpm' = pnpm.override { nodejs-slim = nodejs-slim_26; };
@@ -12,7 +12,7 @@ let
   ) [ nodejs nodejs-slim_26 ]);
   root = ../..;
   # Built here rather than passed in, so wiring it changes no Explorer input (infra/packages/default.nix).
-  uiGallery = import ./ui-gallery.nix { inherit lib stdenv fetchPnpmDeps pnpmConfigHook pnpm nodejs-slim_26; };
+  uiGallery = import ./ui-gallery.nix { inherit lib stdenv fetchPnpmDeps pnpmConfigHook pnpm nodejs-slim_24; };
   sites = root + /apps/sites;
   ui = root + /apps/ui3;
   version = (builtins.fromJSON (builtins.readFile (sites + /package.json))).version;

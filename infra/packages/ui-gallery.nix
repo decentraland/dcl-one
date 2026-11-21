@@ -1,6 +1,8 @@
-{ lib, stdenv, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs-slim_26 }:
+{ lib, stdenv, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs-slim_24 }:
 let
-  pnpm' = pnpm.override { nodejs-slim = nodejs-slim_26; };
+  # Node 24, the major the Shared UI library run builds the scanned gallery with (setup-node in ui-library.yml): the
+  # publish receipt compares both builds byte for byte, so the two move together.
+  pnpm' = pnpm.override { nodejs-slim = nodejs-slim_24; };
   root = ../..;
   ui = root + /library/ui;
   version = (builtins.fromJSON (builtins.readFile (ui + /package.json))).version;
@@ -36,7 +38,7 @@ in stdenv.mkDerivation {
   pname = "foundation-ui-gallery";
   inherit version src pnpmDeps;
   sourceRoot = "${src.name}/library/ui";
-  nativeBuildInputs = [ nodejs-slim_26 pnpmConfigHook pnpm' ];
+  nativeBuildInputs = [ nodejs-slim_24 pnpmConfigHook pnpm' ];
   # Static files only: the Sites image serves them under /ui-gallery/.
   allowedReferences = [ ];
   buildPhase = ''
