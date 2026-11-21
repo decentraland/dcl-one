@@ -446,6 +446,7 @@ pub async fn walk_together(
                 &owner,
                 started,
                 Some(at_header),
+                false,
             )
             .await?;
             Ok(Ok((owner, opened)))
@@ -455,6 +456,11 @@ pub async fn walk_together(
             Err(e) => Err(failed(&member, e.end("its opening"))),
             Ok(Err(end)) => Err(end),
             Ok(Ok((_, Opening::Ended(out)))) => Err(MemberEnd::Ended(out)),
+            // Its publication withdrawn; it recovers in a pass alone.
+            Ok(Ok((_, Opening::Diverged(_)))) => Err(MemberEnd::Regroup {
+                checkpoint: None,
+                solo: true,
+            }),
             Ok(Ok((owner, Opening::Walk(cur, out)))) => {
                 // The opening read the cursor again: it walks from `at` only
                 // if it still stands there.
@@ -632,7 +638,11 @@ pub async fn walk_together(
             .map(|w| w.filter.as_ref().expect("set above"))
             .collect();
         let groups = union(&filters);
-        // The shared read: before, the logs, their times, after.
+        // The shared read, bracketed as a walk alone brackets it: the header
+        // at `to` before and after the logs, their times, the header at the
+        // window's actual end and the one at the checkpoint every member
+        // extends (they walk from the same one each window).
+        let extends = walking[0].expected.clone();
         let read = async {
             let before = match finalized.as_ref().filter(|f| f.number == to) {
                 Some(f) => f.clone(),
@@ -647,26 +657,52 @@ pub async fn walk_together(
                 .await
                 .context("block times")?
                 .value;
+            let reached = if window.reached == to {
+                None
+            } else {
+                Some(source.header(window.reached).await?.value)
+            };
+            let predecessor = source.header(extends.0 as u64).await?.value;
             let after = source.header(to).await?.value;
             anyhow::ensure!(before == after, "chain changed while fetching window");
-            let header = if window.reached == to {
-                after
-            } else {
-                source.header(window.reached).await?.value
-            };
-            Ok::<_, anyhow::Error>((window, times, header))
+            let header = reached.unwrap_or(after);
+            Ok::<_, anyhow::Error>((window, times, header, predecessor))
         }
         .await;
-        let (window, times, header): (_, HashMap<i64, i64>, BlockHeader) = match read {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(error = %format!("{e:#}"), "marketplace chain index: a shared read failed; its members go on alone");
-                for w in walking {
-                    ends.push((w.member.slot, MemberEnd::Fallback { budget: w.budget }));
+        let (window, times, header, predecessor): (_, HashMap<i64, i64>, BlockHeader, BlockHeader) =
+            match read {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "marketplace chain index: a shared read failed; its members go on alone");
+                    for w in walking {
+                        ends.push((w.member.slot, MemberEnd::Fallback { budget: w.budget }));
+                    }
+                    return ends;
                 }
-                return ends;
+            };
+        if predecessor.hash != extends.1 {
+            // A stable bracket that finds the checkpoint on another branch:
+            // evidence about every member's cursor. Nothing is committed;
+            // each withdraws its publication and recovers in a pass alone.
+            tracing::warn!(block = extends.0, stored = %extends.1, chain = %predecessor.hash, "marketplace chain index: the checkpoint a shared walk extends is on another branch; its members recover alone");
+            let withdrawn = futures::future::join_all(walking.into_iter().map(|w| async move {
+                let at = (w.expected.0, Some(w.expected.1.as_str()));
+                let done = timed(deadline, chain_walk::withdraw(pool, &w.owner, at)).await;
+                (w, done)
+            }))
+            .await;
+            for (w, done) in withdrawn {
+                let end = match done {
+                    Ok(()) => MemberEnd::Regroup {
+                        checkpoint: None,
+                        solo: true,
+                    },
+                    Err(e) => failed(&w.member, e.end("withdrawing its publication")),
+                };
+                ends.push((w.member.slot, end));
             }
-        };
+            return ends;
+        }
         // Each member's share, committed in the fixed order.
         walking.sort_by_key(|w| w.member.slot);
         let mut committed = Vec::new();

@@ -560,8 +560,10 @@ fn unmatched() -> String {
 /// least `min_age_secs` old, oldest first; returns how many. Anyone's claim
 /// must also be `min_age_secs` older than the MANA index's newest block, so
 /// a stalled or catching-up index evicts no accepted tip it has not reached;
-/// that block counts only while the index is bound to its mainnet chain and
-/// out of quarantine, so a history set apart evicts nobody's claim.
+/// that block counts only while the index is bound to its mainnet chain, out
+/// of quarantine and not diverged, so a history set apart, or one whose
+/// recovery from a reorg is still searching (the branch it recovers may hold
+/// the claim's transfer), evicts nobody's claim.
 async fn evict(
     conn: &mut PgConnection,
     sender: Option<&str>,
@@ -576,7 +578,7 @@ async fn evict(
                AND ($1::text IS NOT NULL OR c.created_at <= ( \
                    SELECT to_timestamp(k.last_block_time) AT TIME ZONE 'UTC' - make_interval(secs => $2) \
                    FROM shop.chain_cursor k WHERE k.indexer = '{}' AND k.network = '{}' \
-                     AND k.chain_id = {} AND k.quarantined_at IS NULL)) \
+                     AND k.chain_id = {} AND k.quarantined_at IS NULL AND k.diverged_at IS NULL)) \
              ORDER BY c.created_at LIMIT $3 FOR UPDATE SKIP LOCKED) e \
          WHERE d.transaction_hash = e.transaction_hash AND d.sender = e.sender",
         unmatched(),
@@ -1447,6 +1449,68 @@ mod tests {
         db.drop().await;
     }
 
+    /// While the MANA index's recovery from a reorg searches (its
+    /// publication withdrawn, its cursor marked diverged), the global cap
+    /// evicts nobody's claim: the branch it recovers may hold the claim's
+    /// transfer. Once it recovers with that transfer, the claim resolves.
+    #[tokio::test]
+    async fn a_diverged_index_evicts_nobodys_claim_at_the_global_cap() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_cap_diverged").await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let settings = TipSettings::parse(DEFAULT_MIN_AMOUNT_WEI, DEFAULT_MAX_AGE_SECS, 3).unwrap();
+        publish(pool, 100).await;
+        for n in 1..=3u8 {
+            assert_eq!(
+                claim(pool, &settings, &hash(n), &other(n)).await.unwrap(),
+                Outcome::Pending
+            );
+            age_claim(pool, n, 10).await;
+        }
+        // The index found its cursor block on another branch: withdrawn and
+        // marked diverged while its search waits on an older header.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, \
+                 diverged_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
+            Outcome::Busy { .. }
+        ));
+        assert_eq!(stored(pool).await, vec![hash(1), hash(2), hash(3)]);
+        // The recovery reads a branch that holds hash(1)'s transfer, clears
+        // the mark and publishes again.
+        transfer(
+            pool,
+            150,
+            0,
+            &hash(1),
+            &other(1),
+            RECEIVER,
+            "1000000000000000000",
+            now_secs(),
+        )
+        .await;
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = 200, last_block_time = $1, folded_block = 200, \
+                 folded_at = timezone('UTC', now()), diverged_at = NULL WHERE indexer = 'mana_transfers'",
+        )
+        .bind(now_secs())
+        .execute(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            claim(pool, &settings, &hash(1), &other(1)).await.unwrap(),
+            Outcome::Notified
+        );
+        db.drop().await;
+    }
+
     /// The cap is full of a flood's claims when a real tip is forwarded; its
     /// transfer is indexed only afterwards, and it is still notified while
     /// the flood goes on.
@@ -1725,10 +1789,10 @@ mod tests {
     }
 
     /// A walk near the head serves a forward only while its cursor is one the
-    /// resolver can use: bound to Polygon and out of quarantine. Unbound,
-    /// bound to another chain or in quarantine, a fresh forward is refused
-    /// (retryably) and nothing is stored; bound and out of quarantine, the
-    /// same walk takes it.
+    /// resolver can use: bound to Polygon, out of quarantine and not diverged.
+    /// Unbound, bound to another chain, in quarantine or diverged (its
+    /// recovery searching), a fresh forward is refused (retryably) and nothing
+    /// is stored; otherwise the same walk takes it.
     #[tokio::test]
     async fn a_forward_needs_a_cursor_the_resolver_can_use() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips_unusable").await else {
@@ -1762,6 +1826,11 @@ mod tests {
                  quarantine_reason = 'test' WHERE indexer = 'mana_transfers'",
                 "in quarantine",
             ),
+            (
+                "UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, \
+                 diverged_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'",
+                "diverged, its recovery still searching",
+            ),
         ] {
             set(sql).await;
             assert_eq!(
@@ -1771,7 +1840,7 @@ mod tests {
             );
             assert_eq!(claim_count(&db.pool).await, 0, "{why}: nothing stored");
         }
-        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'mana_transfers'").await;
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, diverged_at = NULL WHERE indexer = 'mana_transfers'").await;
         assert_eq!(
             forward_tip(&app, &w).await.status(),
             StatusCode::ACCEPTED,

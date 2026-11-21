@@ -25,13 +25,14 @@ catalyst shop notice-rewind --database-url "$DATABASE_URL" --producer <name> \
   its zone and a time at or before 1970-01-01T00:00:00Z are refused (block 0 or the epoch
   would announce every indexed log again). Each index the producer reads needs a
   `shop.chain_cursor` row for `--since`, with a history proven on the chain the producer
-  reads it on: bound to that chain (`chain_id`) and not quarantined. The trade_events
+  reads it on: bound to that chain (`chain_id`), not quarantined, and not diverged (a reorg
+  recovery still searching for the fork). The trade_events
   index counts on the chain the node's trade walk reads (`MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM`
   and `_MATIC`, which the command reads too, or the matching flags), except for
   `transfer_received`, which reads Polygon mainnet only; every other index counts on its
-  network's mainnet. An unbound, quarantined or other-chain history is refused, since its
-  blocks would place the cursor and its seed: revalidate the index (`DATABASE.md`) or give a
-  block. `--from-block` needs no index and only reports the ones that exist.
+  network's mainnet. An unbound, quarantined, diverged or other-chain history is refused,
+  since its blocks would place the cursor and its seed: wait for the recovery, revalidate the
+  index (`DATABASE.md`) or give a block. `--from-block` needs no index and only reports the ones that exist.
   T resolves through the logs of the indexes the producer reads
   (`shop.nft_event`, `shop.trade_event`, `shop.sale_event`, `shop.rental_event`): the cursor
   goes after the last block mined before T on any of them. The command refuses while one of
@@ -50,7 +51,7 @@ It runs in one transaction holding the producer's row, so a running pass finishe
 first and the next page starts from the new cursor. It prints one JSON object: the
 `producer`, its `network`, the resolved `target_*`, the row `before` (absent when no pass
 had seeded it) and `after`, `changed`, `dry_run` and `indexes` (each index's `start_block`,
-`full_history`, `last_block`, `last_block_time`, `chain_id` and `quarantined`; on a dry run also `logs_after`, the
+`full_history`, `last_block`, `last_block_time`, `chain_id`, `quarantined` and `diverged`; on a dry run also `logs_after`, the
 count of its logs after the resulting cursor (`after`) up to `last_block`, an upper bound on what the
 next passes read since each producer reads only some kinds of log; `rental_ended`, which
 reads rental periods by end time, has none). An index that is not `full_history`
