@@ -8,7 +8,8 @@
 //   4. every runtime foundations page renders;
 //   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
 //      in its canvas, which is a HUD window (the height its aspect ratio and minimum give it, at the --ui-scale
-//      hudScale.ts computes for that window), and a component opens the section that renders it;
+//      hudScale.ts computes for that window), the HudScale section shows that scale and follows a width change, and
+//      a component opens the section that renders it;
 //   6. the generated route opens the generated Review's page for a component inside the gallery;
 // with every request answered 2xx from under the prefix, and no uncaught page error or console error along the way.
 // With --hosted, <dist> is the hosted pull request preview (`vite build --mode hosted`): the gallery alone at its root,
@@ -286,6 +287,47 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
         if (!example.drawn) throw new Error(`HUD ${example.id} draws nothing`)
       }
     }
+    // The HudScale section's live line shows the scale the HUD is drawn at, with hudScale.ts's bounds, and follows the
+    // window when the width preset changes in place (the canvas resizes; it does not reload).
+    const liveScale = (width) =>
+      waitFor(
+        session,
+        `(() => {
+          const doc = ${CANVAS}
+          const frame = document.querySelector('iframe')
+          const line = doc?.querySelector('output[aria-label="Live HUD scale"]')
+          if (!line || frame.clientWidth !== ${width}) return null
+          const view = doc.defaultView
+          return { inner: [view.innerWidth, view.innerHeight], text: line.textContent }
+        })()`,
+        `the HudScale live scale at ${width}px`
+      )
+    const shownScale = async (width) => {
+      const started = Date.now()
+      for (;;) {
+        const live = await liveScale(width)
+        const expected = Number(expectedHudScale(hudScale, ...live.inner)).toFixed(3)
+        if (live.text.endsWith(`×${expected}`)) return live
+        if (Date.now() - started > TIMEOUT)
+          throw new Error(
+            `the HudScale section shows "${live.text}" in a ${live.inner.join('x')} window; hudScale.ts gives ×${expected}`
+          )
+        await delay(100)
+      }
+    }
+    await hudPage('HudScale', 375)
+    await shownScale(375)
+    const widest = await session.evaluate(
+      `(() => {
+        const select = [...document.querySelectorAll('select')].find((node) => node.closest('label')?.textContent.includes('Width'))
+        const option = [...select.options].filter((item) => /\\d+px$/.test(item.label)).at(-1)
+        select.value = option.value
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+        return Number(option.label.match(/(\\d+)px$/)[1])
+      })()`
+    )
+    await shownScale(widest)
+
     const alias = await hudPage('MenuRow', 1280)
     if (alias.hud !== 'MenuPanel' || alias.examples.length !== 1)
       throw new Error(

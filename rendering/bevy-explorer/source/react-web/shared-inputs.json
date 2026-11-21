@@ -6422,7 +6422,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
-      "sha256": "c5046f798d8b17d245f08db5351885b2b8d830a5ec26dae52452cf31d01264ee"
+      "sha256": "6928c8a54b243bf71cb39aa2d16d663d228f103af4ad6c8f3f39f54627a3c5a6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
@@ -6454,7 +6454,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "9392d4f92a63690dff384f8c8f798ada70c7e7f1eb7f50f9f20e4ab57c6d4b02"
+      "sha256": "daaa7afd7ec21b432d2ea3913440beed451a2039364e94e5071a5a0c785ff941"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -9096,7 +9096,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "26a1460c5f6fd0080e6c2548b7167bddef278ece1ee9552fc3acdec0a2f404b0"
+      "sha256": "9dd8e4bd0874257710125b7dcaafb802db7fcd0bf9c715e4faad10a2e85c9309"
     },
     {
       "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
@@ -16056,6 +16056,21 @@
     {
       "from": "library/ui/apps/hud/design/Select.tsx",
       "to": "library/ui/apps/hud/design/Select.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "test:runtime"
     },
     {

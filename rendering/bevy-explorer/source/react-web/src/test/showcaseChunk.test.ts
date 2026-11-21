@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { designSideEffects, showcaseOnly } from '../../vite.config'
+import { DESIGN_ROOTS, designSideEffects, showcaseInEagerGraph, showcaseOnly } from '../../vite.config'
 
 // The build's chunking of the design modules: what only the dev-only Showcase uses stays out of the eager chunks.
-const DESIGN = '/repo/library/ui/apps/hud/design'
+// The shared HUD's design folder, as the bundler names its modules.
+const DESIGN = DESIGN_ROOTS.find((root) => root.endsWith('/apps/hud/design/'))!.slice(0, -1)
 const ENTRY = `${DESIGN}/index.ts`
 const SHOWCASE = `${DESIGN}/Showcase.tsx`
-const SHOP = '/repo/library/ui/apps/hud/features/shop/ShopPage.tsx'
+const SHOP = `${DESIGN.slice(0, -'design'.length)}features/shop/ShopPage.tsx`
 
 type Module = { importers: string[]; exports: string[]; code: string | null }
 
@@ -77,5 +78,87 @@ describe('when the build tree-shakes the design modules', () => {
     expect(designSideEffects(`${DESIGN}/rarityArt.ts`)).toBe(false)
     for (const id of [SHOWCASE, `${DESIGN}/ShowcaseIndex.ts`, `${DESIGN}/DiscoverCard.module.css`, SHOP])
       expect(designSideEffects(id)).toBeUndefined()
+  })
+
+  it('should find the three owned design folders: the app, the shared HUD and the Explorer page core', () => {
+    expect(DESIGN_ROOTS.map((root) => root.split('/').slice(-3).join('/'))).toEqual([
+      'src/design/',
+      'hud/design/',
+      'explorer-core/design/'
+    ])
+  })
+
+  it('should leave a design folder in a dependency, or one only named like an owned folder, to the default', () => {
+    const root = DESIGN_ROOTS[0]!
+    for (const id of [
+      `${root.slice(0, -'src/design/'.length)}node_modules/some-pkg/src/design/Widget.tsx`,
+      '/elsewhere/apps/hud/design/Button.tsx',
+      '/elsewhere/explorer-core/design/index.ts'
+    ]) {
+      expect(designSideEffects(id)).toBeUndefined()
+      expect(showcaseOnly(graph())(id)).toBe(false)
+    }
+  })
+})
+
+type Chunk = { type: 'chunk'; fileName: string; name: string; isEntry: boolean; facadeModuleId: string | null; imports: string[]; moduleIds: string[] }
+const chunk = (fileName: string, changes: Partial<Chunk> = {}): Chunk => ({
+  type: 'chunk',
+  fileName,
+  name: fileName.replace(/^assets\/|-.*$/g, ''),
+  isEntry: false,
+  facadeModuleId: null,
+  imports: [],
+  moduleIds: [],
+  ...changes
+})
+
+// app.html's entry imports the design chunk; the Showcase sits behind a lazy import.
+function bundle(changes: { entryImports?: string[]; html?: string; entry?: Partial<Chunk> } = {}) {
+  const files = [
+    chunk('assets/app-1.js', {
+      isEntry: true,
+      facadeModuleId: '/repo/react-web/app.html',
+      imports: changes.entryImports ?? ['assets/design-1.js'],
+      ...changes.entry
+    }),
+    chunk('assets/design-1.js', { moduleIds: [ENTRY, `${DESIGN}/Button.tsx`] }),
+    chunk('assets/Showcase-1.js', { moduleIds: [SHOWCASE, `${DESIGN}/DiscoverCard.tsx`] }),
+    { type: 'asset' as const, fileName: 'app.html', source: changes.html ?? '<script src="./assets/app-1.js"></script>' }
+  ]
+  return Object.fromEntries(files.map((file) => [file.fileName, file]))
+}
+
+describe('when the build checks what app.html loads eagerly', () => {
+  it('should pass a bundle whose Showcase is reached only by a lazy import', () => {
+    expect(showcaseInEagerGraph(bundle(), 'app.html')).toEqual([])
+  })
+
+  it('should fail a bundle whose entry reaches the Showcase chunk by static imports', () => {
+    const imports = bundle({ entryImports: ['assets/design-1.js', 'assets/Showcase-1.js'] })
+    expect(showcaseInEagerGraph(imports, 'app.html')).toEqual([
+      'app.html statically imports assets/Showcase-1.js, which holds the Showcase'
+    ])
+  })
+
+  it('should fail a bundle whose eager chunk holds the Showcase module under another name', () => {
+    const merged = bundle()
+    merged['assets/design-1.js'] = chunk('assets/design-1.js', { moduleIds: [ENTRY, SHOWCASE] })
+    expect(showcaseInEagerGraph(merged, 'app.html')).toEqual([
+      'app.html statically imports assets/design-1.js, which holds the Showcase'
+    ])
+  })
+
+  it('should fail a page that preloads the Showcase chunk', () => {
+    const html = '<script src="./assets/app-1.js"></script><link rel="modulepreload" href="./assets/Showcase-1.js">'
+    expect(showcaseInEagerGraph(bundle({ html }), 'app.html')).toEqual([
+      'app.html references assets/Showcase-1.js, which holds the Showcase'
+    ])
+  })
+
+  it('should fail a bundle with no entry for the page instead of checking nothing', () => {
+    expect(showcaseInEagerGraph(bundle({ entry: { isEntry: false } }), 'app.html')).toEqual([
+      'the bundle has no entry chunk for app.html, so its imports cannot be checked'
+    ])
   })
 })

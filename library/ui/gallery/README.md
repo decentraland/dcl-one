@@ -12,6 +12,12 @@ Its pages render in their own document, `hud.html`, which loads what a HUD host'
 
 ## Run it
 
+A clean checkout needs, before the commands below:
+
+- Node 24 or later (`engines` in `library/ui/package.json`) and pnpm through Corepack (`corepack enable`), then `pnpm install --frozen-lockfile` in `library/ui`.
+- The library's Git LFS files: `git lfs pull --include "library/ui/**"`. The foundation fonts are LFS objects, and a checkout without them has pointer files in their place.
+- Chrome or Chromium for `check-build.mjs`, which drives it. It looks in the usual install paths; set `BROWSER_PATH` (or `CHROME_PATH`) to the executable otherwise.
+
 From `library/ui`:
 
 ```sh
