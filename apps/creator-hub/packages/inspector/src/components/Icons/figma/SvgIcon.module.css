@@ -1,0 +1,37 @@
+:where(.SvgIcon) {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
+:where(.SvgIcon--fontSizeSmall) {
+  font-size: 16px;
+}
+
+:where(.SvgIcon--fontSizeMedium) {
+  font-size: 24px;
+}
+
+:where(.SvgIcon--fontSizeLarge) {
+  font-size: 35px;
+}
+
+:where(.SvgIcon--fontSizeInherit) {
+  font-size: inherit;
+}
+
+:where(.SvgIcon--tonePrimary) {
+  color: var(--primary-main);
+}
+
+:where(.SvgIcon--toneSecondary) {
+  color: var(--white);
+}
+
+:where(.SvgIcon--toneError) {
+  color: var(--error-main);
+}
+
+:where(.SvgIcon--toneDisabled) {
+  color: var(--palette-whiteTransparent-soft);
+}
