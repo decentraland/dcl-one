@@ -123,6 +123,8 @@ const UNKEPT = "This browser couldn't save this purchase's transaction. Once you
 // finds the allowance covered could spend another's.
 const SPLIT_ITEM_HELD = "A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.";
 const SPLITS_UNREADABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.";
+const NO_WALLET_ACCOUNT = "Connect your wallet to pay with Credits and MANA.";
+const OTHER_WALLET_ACCOUNT = "Your wallet is on another account than the one you're signed in with.";
 
 /** The exact grant's lock an approval took and hands to its sale: how to let it go, its name, and the terms it was for. */
 type HeldGrant = { release: () => void; released: () => boolean; name: string; terms: Terms };
@@ -261,12 +263,21 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   useEffect(() => {
     walletNow.current = wallet;
   });
+  // The wallet's active account, as it last said (a split is signed by it): read from the wallet itself when a purchase
+  // starts before the page has heard; none (a wallet gone) once it says so.
+  const activeAccount = useRef<string | null>(wallet.walletAccount);
+  useEffect(() => {
+    activeAccount.current = wallet.walletAccount || null;
+  }, [wallet.walletAccount]);
   /**
    * Whether the purchase agreed on as `agreed` is still this dialog's: open, with those very terms, for the account it was
-   * agreed by, with the wallet still on it (a session or wallet account changed meanwhile ends it).
+   * agreed by, and the wallet's active account that very one (a split is a web3 wallet's): a session or wallet account
+   * changed meanwhile, or a wallet gone (no active account), ends it.
    */
-  const stillAgreed = (agreed: Terms) => () =>
-    mounted.current && terms.current === agreed && !walletNow.current.accountMismatch && walletNow.current.account?.toLowerCase() === agreed.buyer.toLowerCase();
+  const stillAgreed = (agreed: Terms) => () => {
+    const buyer = agreed.buyer.toLowerCase();
+    return mounted.current && terms.current === agreed && walletNow.current.account?.toLowerCase() === buyer && activeAccount.current?.toLowerCase() === buyer;
+  };
   // The hold's key: the item, whatever listing this dialog buys it through (another surface may use another).
   const lineId = splitHoldLine(line.asset);
   const [sent, setSent] = useState(() => readSplitHold(wallet.account, lineId));
@@ -332,7 +343,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const [unsent, setUnsent] = useState<{ attempt: string; message: string } | null>(null);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
-  const blocked = !provider || !wallet.account ? "Connect your wallet to pay with Credits and MANA." : wallet.accountMismatch ? "Your wallet is on another account than the one you're signed in with." : null;
+  const blocked = !provider || !wallet.account ? NO_WALLET_ACCOUNT : wallet.accountMismatch ? OTHER_WALLET_ACCOUNT : null;
 
   function context(): RailContext | null {
     if (!provider || !wallet.account) return null;
@@ -394,6 +405,16 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     // still spend the allowance, or purchases this browser can't read. This item's own hold is shown above, as confirming.
     // Each is read again where it counts: under the approval's lock, and once the sale holds it.
     setPhase({ kind: "working" });
+    // The wallet's active account signs the approval and the sale: it must be this buyer's. Asked of the wallet when the
+    // page hasn't heard it yet; none, or another, and nothing is asked.
+    if (activeAccount.current === null) {
+      const accounts = (await ctx.provider.request({ method: "eth_accounts" }).catch(() => [])) as string[] | undefined;
+      activeAccount.current ??= accounts?.[0]?.toLowerCase() || null;
+    }
+    if (activeAccount.current?.toLowerCase() !== ctx.buyer.toLowerCase()) {
+      setPhase({ kind: "error", message: activeAccount.current ? OTHER_WALLET_ACCOUNT : NO_WALLET_ACCOUNT });
+      return;
+    }
     await proveCreditsOver(ctx.buyer);
     const blockedNow = splitBlock(ctx.buyer, false);
     if (blockedNow) {

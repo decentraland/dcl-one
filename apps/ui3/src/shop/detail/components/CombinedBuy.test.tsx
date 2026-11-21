@@ -1519,6 +1519,44 @@ describe("a split whose outcome is not known", () => {
     await waitFor(() => expect(locks.held.has(name)).toBe(false), { timeout: 5000 });
   });
 
+  it.each([
+    ["the wallet moves to another account", "wallet"],
+    ["the session and its wallet both move to another account", "session"],
+  ] as const)("when %s while the listing is read again after the approval, the dialog ends the attempt where it can be closed: no credit, no sale, the lock let go", async (_, what) => {
+    const { demo, shell, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 3) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(reads).toBe(3), { timeout: 5000 });
+    const other = BOOK.reseller.toLowerCase();
+    act(() => {
+      demo.wallet.emit("accountsChanged", [other]);
+      if (what === "session") {
+        demo.host = { ...demo.host, identity: demoIdentity(other) };
+        shown.rerender(shell());
+      }
+    });
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(await screen.findByText("We couldn't complete the purchase. Nothing was charged.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
   it("a listing read again after the approval that never answers gives way, the dialog still open: no credit, no sale, the lock let go", async () => {
     const { demo, unmount, again } = setup();
     unmount();
@@ -1536,9 +1574,24 @@ describe("a split whose outcome is not known", () => {
     expect([...locks.held]).toEqual([]);
   });
 
+  it("a wallet with no active account when the purchase starts is told to connect: nothing is asked, signed or sent", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    // The wallet answers no account (disconnected), while the session is still signed in.
+    demo.wallet.account = "";
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+  });
+
   it.each([
     ["the wallet moves to another account", "wallet"],
     ["the session and its wallet both move to another account", "session"],
+    ["the wallet disconnects, the session staying", "disconnect"],
   ] as const)("when %s while the approval reads the listing, nothing is asked of the wallet: no prompt, no POST, no credit, the lock let go", async (_, what) => {
     const { demo, shell, unmount, again } = setup();
     unmount();
@@ -1560,8 +1613,9 @@ describe("a split whose outcome is not known", () => {
     await waitFor(() => expect(reads).toBe(2));
     const other = BOOK.reseller.toLowerCase();
     act(() => {
-      // The wallet moves; with "session", the signed-in account follows it, so the two agree again, on another buyer.
-      demo.wallet.emit("accountsChanged", [other]);
+      // The wallet moves (or, with "disconnect", has no account any more); with "session", the signed-in account follows it,
+      // so the two agree again, on another buyer.
+      demo.wallet.emit("accountsChanged", what === "disconnect" ? [] : [other]);
       if (what === "session") {
         demo.host = { ...demo.host, identity: demoIdentity(other) };
         shown.rerender(shell());
