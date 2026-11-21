@@ -431,6 +431,9 @@ where
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum IpfsKey {
     BaseUrl,
+    /// Names nothing to fetch: it gives one file a second asset path, for a load of it with
+    /// other loader settings (see `IpfsResource::load_content_file_variant`).
+    Variant,
     /// What part of a file the load takes, when not all of it: [`COLLIDERS_PART`]. The file
     /// resolves, downloads and caches as without it; only the asset path differs, so the part
     /// loads with its own settings beside the whole file's asset.
@@ -463,6 +466,7 @@ impl AsRef<Path> for IpfsKey {
     fn as_ref(&self) -> &Path {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
+            IpfsKey::Variant => Path::new("&variant"),
             IpfsKey::Part => Path::new("&part"),
         }
     }
@@ -474,6 +478,7 @@ impl TryFrom<&str> for IpfsKey {
     fn try_from(key: &str) -> Result<Self, Self::Error> {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
+            "&variant" => Ok(Self::Variant),
             "&part" => Ok(Self::Part),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }

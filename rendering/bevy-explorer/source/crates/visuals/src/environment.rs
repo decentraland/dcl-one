@@ -519,11 +519,7 @@ mod tests {
             app.update();
         }
         let world = app.world_mut();
-        assert!(
-            world
-                .resource::<SkyEnvmapSettings>()
-                .authored_lower_hemisphere
-        );
+        assert!(world.resource::<SkyEnvmapSettings>().ground.is_none());
         // the scene's density is in the preset's units
         let scene_falloff = fog_falloff_density(0.01);
         assert!(matches!(
@@ -543,8 +539,6 @@ mod tests {
             .unwrap();
         assert_eq!(atmosphere.scene_zenith, Vec4::new(2.0, 0.0, 0.0, 1.0));
         assert_eq!(atmosphere.scene_sun_visible, 0.0);
-        let ambient = world.resource::<AmbientLight>();
-        assert!(ambient.color.to_linear().alpha * ambient.brightness < -1.5);
         // the Off setting is no fog, whatever the scene asks for
         world.resource_mut::<AppConfig>().graphics.fog = FogSetting::Off;
         app.update();
@@ -559,11 +553,7 @@ mod tests {
         app.update();
         let world = app.world_mut();
         assert_eq!(world.resource::<SkyAmbient>().bands, preset);
-        assert!(
-            !world
-                .resource::<SkyEnvmapSettings>()
-                .authored_lower_hemisphere
-        );
+        assert!(world.resource::<SkyEnvmapSettings>().ground.is_some());
         let atmosphere = world
             .resource::<AtmosphereModel>()
             .to_ref::<NishitaCloud>()
@@ -571,8 +561,6 @@ mod tests {
         assert_eq!(atmosphere.scene_zenith, Vec4::ZERO);
         assert_eq!(atmosphere.scene_sun_visible, 1.0);
         assert_eq!(atmosphere.scene_cloud_opacity, 1.0);
-        let ambient = world.resource::<AmbientLight>();
-        assert!(ambient.color.to_linear().alpha * ambient.brightness >= -1.0);
     }
 
     /// Compiles the procedural compute shader and the panorama skybox on a GPU.
@@ -761,7 +749,7 @@ mod tests {
         app.world_mut().resource_mut::<SceneEnvironment>().texture = Some(sky);
         app.world_mut()
             .resource_mut::<crate::sky_envmap::SkyEnvmapSettings>()
-            .authored_lower_hemisphere = true;
+            .ground = None;
         app.world_mut()
             .resource_mut::<AtmosphereModel>()
             .to_mut::<NishitaCloud>()
@@ -863,7 +851,7 @@ mod tests {
             }
             app.world_mut()
                 .resource_mut::<crate::sky_envmap::SkyEnvmapSettings>()
-                .authored_lower_hemisphere = band == "nadir";
+                .ground = (band != "nadir").then_some(Vec3::ZERO);
             for quality in [
                 common::structs::SkyReflectionSetting::High,
                 common::structs::SkyReflectionSetting::Low,

@@ -165,6 +165,10 @@ pub struct SceneBound {
     pub data: SceneBoundData,
     #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
+    /// Read only with `SCENE_ALPHA_TEXTURE` set.
+    #[texture(102)]
+    #[sampler(103)]
+    pub alpha_texture: Option<Handle<Image>>,
     /// Meshes that have 1 or 3 negative scale axis require special handling
     /// of the face culling
     pub inverted_scale: bool,
@@ -178,6 +182,7 @@ impl SceneBound {
                 ..bounds.data
             },
             cells: bounds.cells.clone(),
+            alpha_texture: None,
             inverted_scale: false,
         }
     }
@@ -195,12 +200,38 @@ impl SceneBound {
         self.data.flags |= SCENE_DITHER_CAPSULE;
         self
     }
+
+    pub fn with_plain_emissive(mut self) -> Self {
+        self.data.flags |= SCENE_PLAIN_EMISSIVE;
+        self
+    }
+
+    pub fn with_alpha_texture(mut self, alpha_texture: Handle<Image>) -> Self {
+        self.data.flags |= SCENE_ALPHA_TEXTURE;
+        self.alpha_texture = Some(alpha_texture);
+        self
+    }
+
+    /// the material's own rules (emissive, alpha texture) stay
+    pub fn rebind(&mut self, bounds: &SceneBounds, distance: f32) {
+        let rules = self.data.flags & (SCENE_PLAIN_EMISSIVE | SCENE_ALPHA_TEXTURE);
+        self.data = SceneBoundData {
+            distance,
+            flags: bounds.data.flags | rules,
+            ..bounds.data
+        };
+        self.cells = bounds.cells.clone();
+    }
 }
 
 pub const SCENE_BOUNDED: u32 = 1;
 pub const SCENE_FULL_RECT: u32 = 2;
 /// an avatar: the camera-to-player dither fades it as a whole, by its capsule
 pub const SCENE_DITHER_CAPSULE: u32 = 4;
+/// an SDK material's emissive rules (bound_material.wgsl)
+pub const SCENE_PLAIN_EMISSIVE: u32 = 8;
+/// the alpha texture is bound
+pub const SCENE_ALPHA_TEXTURE: u32 = 16;
 /// scenes with a larger bounding box fall back to the bounding box itself
 const MAX_SCENE_CELLS: u64 = 1 << 20;
 /// empty cell table for unbounded and full-rect scenes, which never read it
@@ -767,6 +798,42 @@ mod test {
     }
 
     #[test]
+    fn a_rebound_material_keeps_its_rules() {
+        use bevy::{asset::Handle, math::UVec2};
+
+        use crate::{
+            SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_ALPHA_TEXTURE, SCENE_BOUNDED,
+            SCENE_FULL_RECT, SCENE_PLAIN_EMISSIVE,
+        };
+
+        let region = BoundRegion::new(IVec2::new(3, -2), IVec2::new(3, -2), 1);
+        let bounds = SceneBounds::rect(&region);
+
+        let mut sdk = SceneBound::new_unbounded()
+            .with_plain_emissive()
+            .with_alpha_texture(Handle::default())
+            .with_capsule_dither()
+            .with_base_opacity(0.5);
+        sdk.rebind(&bounds, 1.5);
+        assert_eq!(
+            sdk.data.flags,
+            SCENE_BOUNDED | SCENE_FULL_RECT | SCENE_PLAIN_EMISSIVE | SCENE_ALPHA_TEXTURE
+        );
+        let (min, _) = region.cells();
+        assert_eq!(sdk.data.origin, min);
+        assert_eq!(sdk.data.size, UVec2::ONE);
+        assert_eq!(sdk.data.rect_height, region.height);
+        assert_eq!(sdk.data.distance, 1.5);
+        assert_eq!(sdk.data.base_opacity, 0.0);
+        assert!(sdk.alpha_texture.is_some());
+        assert_eq!(sdk.cells, EMPTY_SCENE_CELLS);
+
+        let mut gltf = SceneBound::new_unbounded();
+        gltf.rebind(&bounds, 1.5);
+        assert_eq!(gltf.data, SceneBound::new(&bounds, 1.5).data);
+    }
+
+    #[test]
     fn test_bounds() {
         for x in [-10, 0, 10] {
             for y in [-10, 0, 10] {
@@ -793,6 +860,183 @@ mod test {
                 assert_eq!(region.parcel_max(), IVec2::new(x, y));
             }
         }
+    }
+
+    /// The imposter bake (`bound_material_baker.wgsl`) follows the forward shader on an SDK
+    /// material: the alpha texture's brightness scales the alpha, and a plain emissive colour is
+    /// not tinted by the base colour. Bakes four quads in one tile and reads the tile back. Needs
+    /// a GPU, so `#[ignore]`d and skipped by CI:
+    ///
+    /// ```text
+    /// cargo test -p scene_material bake_follows_the_sdk_rules -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn bake_follows_the_sdk_rules() {
+        use std::{
+            sync::{Arc, Mutex},
+            time::{Duration, Instant},
+        };
+
+        use bevy::{
+            asset::RenderAssetUsages,
+            prelude::*,
+            render::{
+                render_resource::{Extent3d, TextureDimension, TextureFormat},
+                storage::ShaderStorageBuffer,
+            },
+        };
+        use boimp::{
+            bake::ImposterBakeMaterialPlugin, ImposterBakeBundle, ImposterBakeCamera,
+            ImposterBakePlugin,
+        };
+        use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app};
+
+        use crate::{BoundRegion, SceneBound, SceneBounds, SceneMaterial, EMPTY_SCENE_CELLS};
+
+        const TILE: u32 = 64;
+
+        let mut app = headless_app();
+        app.add_plugins((
+            ImposterBakePlugin,
+            MaterialPlugin::<SceneMaterial>::default(),
+            ImposterBakeMaterialPlugin::<SceneMaterial>::default(),
+        ));
+        app.finish();
+        app.cleanup();
+
+        let world = app.world_mut();
+        // the unbounded scene's cell table, as SceneBoundPlugin inserts it
+        world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
+            EMPTY_SCENE_CELLS.id(),
+            ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
+        );
+
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let mut texel = |rgba: [u8; 4]| {
+            images.add(Image::new_fill(
+                Extent3d::default(),
+                TextureDimension::D2,
+                &rgba,
+                TextureFormat::Rgba8UnormSrgb,
+                RenderAssetUsages::RENDER_WORLD,
+            ))
+        };
+        let (black, white) = (texel([0, 0, 0, 255]), texel([255, 255, 255, 255]));
+
+        // the quads reach 0.9 m outside this region, within the distance
+        let rebound = |mut extension: SceneBound| {
+            let region = BoundRegion::new(IVec2::ZERO, IVec2::ZERO, 1);
+            extension.rebind(&SceneBounds::rect(&region), 1.0);
+            extension
+        };
+
+        // as `MaterialDefinition` builds them: an SDK unlit material with an alpha texture blends
+        let unlit = |alpha_texture: Handle<Image>| SceneMaterial {
+            base: StandardMaterial {
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                ..Default::default()
+            },
+            extension: rebound(SceneBound::new_unbounded().with_alpha_texture(alpha_texture)),
+        };
+        let emissive = |extension: SceneBound| SceneMaterial {
+            base: StandardMaterial {
+                base_color: Color::linear_rgb(1.0, 0.0, 0.0),
+                emissive: LinearRgba::rgb(0.4, 0.4, 0.4),
+                ..Default::default()
+            },
+            extension: rebound(extension),
+        };
+        let mut materials = world.resource_mut::<Assets<SceneMaterial>>();
+        let quads = [
+            (Vec2::new(-0.5, 0.5), materials.add(unlit(black))),
+            (Vec2::new(0.5, 0.5), materials.add(unlit(white))),
+            (
+                Vec2::new(-0.5, -0.5),
+                materials.add(emissive(SceneBound::new_unbounded().with_plain_emissive())),
+            ),
+            (
+                Vec2::new(0.5, -0.5),
+                materials.add(emissive(SceneBound::new_unbounded())),
+            ),
+        ];
+        let quads_at = quads.each_ref().map(|(position, _)| *position);
+        let quad = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(Rectangle::new(0.8, 0.8));
+        for (position, material) in quads {
+            world.spawn((
+                Mesh3d(quad.clone()),
+                MeshMaterial3d(material),
+                Transform::from_translation(position.extend(0.0)),
+            ));
+        }
+
+        // one view, facing the quads: the tile spans x and y from -1 to 1
+        let baked = Arc::new(Mutex::new(None));
+        let mut camera = ImposterBakeCamera {
+            radius: 1.0,
+            grid_size: 1,
+            tile_size: TILE,
+            multisample: 1,
+            manual_camera_transforms: Some(vec![GlobalTransform::from(
+                Transform::from_xyz(0.0, 0.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
+            )]),
+            ..Default::default()
+        };
+        camera.set_callback({
+            let baked = baked.clone();
+            move |image| *baked.lock().unwrap() = Some(image)
+        });
+        world.spawn(ImposterBakeBundle {
+            camera,
+            ..Default::default()
+        });
+
+        compile_pipelines(&mut app);
+        assert!(
+            fragment_pipelines(&app, "embedded://shaders/bound_material_baker.wgsl") >= 1,
+            "no bound_material_baker.wgsl pipeline compiled"
+        );
+
+        let started = Instant::now();
+        let image = loop {
+            app.update();
+            if let Some(image) = baked.lock().unwrap().take() {
+                break image;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(120),
+                "the bake never finished"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+
+        // the first word of a texel, as boimp's shared.wgsl packs it: 5 bits each of red, green,
+        // blue and alpha from bit 0, and the flags (1 unlit, 2 emissive) from bit 28
+        let data = image.data.as_ref().unwrap();
+        let texel = |position: Vec2| {
+            let pixel = ((position * Vec2::new(1.0, -1.0) + 1.0) * 0.5 * TILE as f32).as_uvec2();
+            let offset = ((pixel.y * TILE + pixel.x) * 8) as usize;
+            let word = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+            let channel = |shift: u32| (word >> shift) & 31;
+            (
+                [channel(0), channel(5), channel(10)],
+                channel(15),
+                word >> 28,
+            )
+        };
+        let [cut, kept, plain, tinted] = quads_at.map(texel);
+
+        assert_eq!(cut.1, 0, "a black alpha texture leaves nothing: {cut:?}");
+        assert_eq!(kept, ([31; 3], 31, 1), "a white alpha texture keeps it all");
+        assert_eq!(plain, ([31; 3], 31, 2), "an SDK emissive colour is its own");
+        assert_eq!(
+            tinted,
+            ([31, 0, 0], 31, 2),
+            "a glTF emissive factor takes the base colour"
+        );
     }
 
     // cpu ports of scene_bounds.wgsl (new) and the previous per-rect loop (old)

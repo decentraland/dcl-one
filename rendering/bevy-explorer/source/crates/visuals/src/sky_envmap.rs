@@ -4,9 +4,9 @@
 //! but the Trilight ambient (`sky_preset::ambient_trilight`, or a scene's own sky colours),
 //! written on the CPU as the three colours change.
 //!
-//! Only the upper hemisphere of the reflection map is generated, unless a scene authors a nadir,
-//! which enables the full sphere so that its lower sky is reflected too. The pbr shaders' lookups
-//! (`sky_envmap_lookup.wgsl`) otherwise mirror downward directions up, and level the reflections
+//! Below the horizon the sky is black, so there the reflection map holds the ground colour
+//! instead (`SkyEnvmapSettings::ground`), unless a scene authors a nadir, whose lower sky is
+//! reflected as it is. The pbr shaders' lookups (`sky_envmap_lookup.wgsl`) level the reflections
 //! towards the `AmbientLight`, which they use in place of the flat ambient.
 //!
 //! At the low sky reflections setting the reflection map is one texel per face instead: the sky,
@@ -59,17 +59,10 @@ const SPECULAR_SAMPLES: u32 = 32;
 // the low setting: one texel per face, straight from the (unfiltered) sky
 const TRILIGHT_SAMPLES: u32 = 256;
 const WORKGROUP_SIZE: u32 = 8;
-// the filter passes generate every face but -y (see sky_envmap.wgsl)
-const GENERATED_FACES: u32 = 5;
 /// texels per face of the ambient map: enough for the gradient to read smoothly across a face
 const AMBIENT_SIZE: u32 = 8;
 
 pub struct SkyEnvmapPlugin;
-
-#[derive(Resource)]
-struct SkyEnvmapImports {
-    _ground: Handle<Shader>,
-}
 
 /// The maps: the ambient (diffuse) map, and the reflection maps in the skybox's own units, the
 /// filtered one and the one-texel one of the low setting.
@@ -106,8 +99,9 @@ pub struct SkyEnvmapSettings {
     pub compression: f32,
     /// which reflection map to generate, from the config
     pub quality: SkyReflectionSetting,
-    /// A scene supplies its own lower sky instead of the default reflected ground.
-    pub authored_lower_hemisphere: bool,
+    /// What the reflection map holds below the horizon, linear, in the sky's units; `None`
+    /// where a scene supplies its own lower sky.
+    pub ground: Option<Vec3>,
 }
 
 impl Default for SkyEnvmapSettings {
@@ -119,7 +113,7 @@ impl Default for SkyEnvmapSettings {
             floor: 0.0,
             compression: 0.0,
             quality: SkyReflectionSetting::High,
-            authored_lower_hemisphere: false,
+            ground: Some(Vec3::ZERO),
         }
     }
 }
@@ -135,7 +129,6 @@ pub struct SkyAmbient {
 
 impl Plugin for SkyEnvmapPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_envmap_imports);
         load_internal_asset!(
             app,
             SKY_ENVMAP_SHADER_HANDLE,
@@ -189,14 +182,6 @@ impl Plugin for SkyEnvmapPlugin {
         render_graph.add_node_edge(BevyAtmosphereLabel, SkyEnvmapLabel);
         render_graph.add_node_edge(SkyEnvmapLabel, CameraDriverLabel);
     }
-}
-
-fn load_envmap_imports(mut commands: Commands, server: Res<AssetServer>) {
-    // Internal shaders bypass dependency discovery. Startup runs after all embedded assets
-    // have been registered, including when their plugin follows this one.
-    commands.insert_resource(SkyEnvmapImports {
-        _ground: server.load("embedded://shaders/sky_envmap_ground.wgsl"),
-    });
 }
 
 fn cube_image(label: &'static str, size: u32, mips: u32) -> Image {
@@ -474,10 +459,8 @@ mod decl {
         pub roughness: f32,
         pub sample_count: u32,
         pub source_lod: f32,
-        pub authored_lower: u32,
-        pub _padding_0: u32,
-        pub _padding_1: u32,
-        pub _padding_2: u32,
+        pub ground: bevy::math::Vec3,
+        pub fill_ground: u32,
     }
 }
 use decl::Constants;
@@ -609,10 +592,8 @@ fn push_constants(
                 roughness: mip as f32 / (SPECULAR_MIPS - 1) as f32,
                 sample_count: SPECULAR_SAMPLES,
                 source_lod: 0.0,
-                authored_lower: u32::from(settings.authored_lower_hemisphere),
-                _padding_0: 0,
-                _padding_1: 0,
-                _padding_2: 0,
+                ground: settings.ground.unwrap_or_default(),
+                fill_ground: u32::from(settings.ground.is_some()),
             })
         })
         .collect();
@@ -621,10 +602,8 @@ fn push_constants(
         roughness: 0.0,
         sample_count: TRILIGHT_SAMPLES,
         source_lod: 0.0,
-        authored_lower: u32::from(settings.authored_lower_hemisphere),
-        _padding_0: 0,
-        _padding_1: 0,
-        _padding_2: 0,
+        ground: settings.ground.unwrap_or_default(),
+        fill_ground: u32::from(settings.ground.is_some()),
     });
     (specular, trilight)
 }
@@ -696,8 +675,8 @@ fn prepare_sky_envmap(
     uniforms.write_buffer(&device, &queue);
     let uniform_binding = uniforms.binding().unwrap();
 
-    // mip 0 comes from the sky cube itself (with the lower half mirrored), the rest from the
-    // mip above
+    // mip 0 comes from the sky cube itself (with the ground below the horizon), the rest from
+    // the mip above
     let downsample = (1..SPECULAR_MIPS)
         .map(|mip| {
             device.create_bind_group(
@@ -728,7 +707,7 @@ fn prepare_sky_envmap(
         )
     };
     // the first downsample reads the sky as a cube, so it shares the filter layout; of the
-    // constants it reads only whether the lower sky is authored, the same in every pass
+    // constants it reads only the ground, the same in every pass
     let downsample_sky = filter_bind_group(
         &source.texture_view,
         &array_view(&intermediate, 0),
@@ -780,11 +759,6 @@ impl render_graph::Node for SkyEnvmapNode {
         let pipeline_cache = world.resource::<PipelineCache>();
         let settings = world.resource::<SkyEnvmapSettings>();
         let quality = settings.quality;
-        let faces = if settings.authored_lower_hemisphere {
-            6
-        } else {
-            GENERATED_FACES
-        };
         let (Some(downsample_sky), Some(downsample), Some(specular), Some(trilight)) = (
             pipeline_cache.get_compute_pipeline(pipelines.downsample_sky),
             pipeline_cache.get_compute_pipeline(pipelines.downsample),
@@ -807,7 +781,7 @@ impl render_graph::Node for SkyEnvmapNode {
             pass.set_pipeline(trilight);
             let (bind_group, offset) = &resources.trilight;
             pass.set_bind_group(0, bind_group, &[*offset]);
-            pass.dispatch_workgroups(1, 1, faces);
+            pass.dispatch_workgroups(1, 1, 6);
             return Ok(());
         }
 
@@ -827,7 +801,7 @@ impl render_graph::Node for SkyEnvmapNode {
         for (mip, (bind_group, offset)) in resources.specular.iter().enumerate() {
             let size = groups(SPECULAR_SIZE >> mip);
             pass.set_bind_group(0, bind_group, &[*offset]);
-            pass.dispatch_workgroups(size, size, faces);
+            pass.dispatch_workgroups(size, size, 6);
         }
 
         Ok(())
@@ -957,17 +931,6 @@ mod tests {
         );
         app.finish();
         app.cleanup();
-        // the import the pbr shaders load in the app
-        let ground: Handle<Shader> = app
-            .world()
-            .resource::<AssetServer>()
-            .load("embedded://shaders/sky_envmap_ground.wgsl");
-        for _ in 0..600 {
-            if app.world().resource::<AssetServer>().is_loaded(&ground) {
-                break;
-            }
-            app.update();
-        }
         app.sub_app_mut(RenderApp)
             .init_resource::<SkyEnvmapPipelines>();
         compile_pipelines(&mut app);
