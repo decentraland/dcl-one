@@ -147,6 +147,11 @@ function heldGrant(release: () => void, name: string, terms: Terms): HeldGrant {
 
 /** How long the listing may take to be read again after an approval, under the lock it kept; past it, nothing goes. */
 const LISTING_READ_MS = 10_000;
+/**
+ * How long the wallet has to say its active account when a purchase starts, the dialog meanwhile on "Working…" (nothing to
+ * close it with): one that never answers (a session dropped, a wallet waiting to be unlocked) counts as no account.
+ */
+const ACCOUNT_READ_MS = 10_000;
 
 /** `promise`, or a rejection once `ms` passed: a read that stalls doesn't keep a lock with it. */
 function within<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -423,9 +428,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     // The wallet's active account signs the approval and the sale: it must be this buyer's. Asked of the wallet when the
     // page hasn't heard it yet; none, or another, and nothing is asked. An answer asked before the wallet said its accounts
     // changed (a disconnect among them) counts for nothing: what the wallet said since stands.
+    // Within ACCOUNT_READ_MS: past it, no account, said where the dialog can be closed; the answer, whenever it comes, counts
+    // for nothing. A dialog closed while the wallet answered goes no further.
     if (activeAccount.current === null) {
       const asked = accountChanges.current;
-      const accounts = (await ctx.provider.request({ method: "eth_accounts" }).catch(() => [])) as string[] | undefined;
+      const reading = ctx.provider.request({ method: "eth_accounts" });
+      const accounts = (await within(reading, services.accountReadMs ?? ACCOUNT_READ_MS).catch(() => [])) as string[] | undefined;
+      if (!mounted.current) return;
       if (accountChanges.current === asked) activeAccount.current ??= accounts?.[0]?.toLowerCase() || null;
     }
     if (activeAccount.current?.toLowerCase() !== ctx.buyer.toLowerCase()) {

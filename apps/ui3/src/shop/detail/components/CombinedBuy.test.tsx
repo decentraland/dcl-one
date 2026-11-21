@@ -1629,6 +1629,83 @@ describe("a split whose outcome is not known", () => {
     expect(authorizations(demo)).toBe(1);
   });
 
+  it("a wallet that doesn't say its account when the purchase starts gives way: told to connect, where the dialog can be closed; its late answer counts for nothing, and trying again asks it again", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    demo.services.accountReadMs = 50;
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // Each account read is answered as the wallet stood when it was asked (the buyer), and only once the test lets it through.
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    const accountReads = () => demo.wallet.requests.filter((r) => r.method === "eth_accounts").length;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // The click's read answers at last (the buyer), past its time; the page's own never does.
+    await waitFor(() => expect(late).toHaveLength(2));
+    const [, atClick] = late as [() => void, () => void];
+    await act(async () => {
+      atClick();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(screen.getByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // Trying again asks the wallet again, the late answer no one's; it still doesn't answer, and says so again.
+    const asked = accountReads();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(accountReads()).toBe(asked + 1);
+    expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a dialog closed while the wallet says its account goes no further once it answers: no listing read, nothing asked, signed or sent", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      reads += 1;
+      return store(...args);
+    };
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await waitFor(() => expect(late).toHaveLength(2));
+    const before = reads;
+    shown.unmount();
+    // The wallet answers the buyer, the dialog gone.
+    await act(async () => {
+      for (const answer of late) answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(reads).toBe(before);
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
   it("when the wallet disconnects once the click's account read (the buyer) has brought up Approve, before the page's own read answers, nothing is asked of the wallet: no prompt, no POST, no credit, the lock let go", async () => {
     const { demo, unmount, again } = setup();
     unmount();

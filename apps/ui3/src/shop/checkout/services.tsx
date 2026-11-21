@@ -37,6 +37,8 @@ export type ShopServices = {
   finalizedTimeMs?: number;
   /** How long a Credits and MANA purchase may take to read its listing again after its approval; 10 s unless set. */
   listingReadMs?: number;
+  /** How long the wallet may take to say its active account when a Credits and MANA purchase starts; 10 s unless set. */
+  accountReadMs?: number;
 };
 
 const Ctx = createContext<Partial<ShopServices>>({});
@@ -63,6 +65,7 @@ function defaults(partial: Partial<ShopServices>): ShopServices {
     locks: partial.locks !== undefined ? partial.locks : pageLocks(),
     finalizedTimeMs: partial.finalizedTimeMs,
     listingReadMs: partial.listingReadMs,
+    accountReadMs: partial.accountReadMs,
   };
 }
 
