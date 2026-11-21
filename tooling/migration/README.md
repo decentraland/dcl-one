@@ -17,9 +17,9 @@ transactions-server (its relay history has no chain or contract, which
 `economy.transactions` requires), chain-derived tables the node's indexers
 rebuild, and rows the upstream mirrors fill. Each `MAPPING.md` names the
 tables it leaves to the node. `blobs` copies the blobs of the sources it knows
-(`worlds-content-server` and `camera-reel-service`), and `blobs badges` the badge art into the node's
-`BADGES_ASSETS_DIR`; the others need an external copy that fills the same
-records.
+(`worlds-content-server` and `camera-reel-service`), `blobs badges` the badge art into the node's
+`BADGES_ASSETS_DIR`, and `blobs social-service-ea` the imported communities' thumbnails; the others
+need an external copy that fills the same records.
 
 Known limitations after a cutover: MANA-denominated credits stay spendable
 on-chain until they expire but are in no node balance, and credits from Apple
@@ -46,6 +46,13 @@ in-app purchases cannot be clawed back by a later Apple refund
   every texture the imported catalog's `assets` name from upstream's CDN (or
   `--from-dir`, a local copy laid out by path) into the node's badge art
   directory; `--verify` lists the ones it lacks (`sources/badges/MAPPING.md`).
+- **Community thumbnails.** After `run social-service-ea`, `migrate.py blobs social-service-ea
+  --to "$STORAGE_ROOT_FOLDER"` reads each imported community's picture from upstream's CDN
+  (`social/communities/<id>/raw-thumbnail.png` under `https://assets-cdn.decentraland.org/`, or
+  `--from-url`, or `--from-dir` laid out by path) into the store and records it
+  in `social.community_thumbnails`, as the node's own upload does. Communities upstream has no
+  picture for keep none, and a thumbnail the node already holds stays. A re-run retries only the
+  communities still without one (`sources/social-service-ea/MAPPING.md`).
 - **Badge schema.** The badges steps need the badge catalog schema
   (publication columns, `criteria_steps`, the progress document,
   `social.presence_badges`) and stop without it.

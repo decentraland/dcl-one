@@ -200,6 +200,67 @@ function reactProfilingBuild(): Plugin {
   }
 }
 
+// The design modules: this app's own (src), the shared HUD's and the Explorer page core's.
+const DESIGN = /\/(src|apps\/hud|explorer-core)\/design\//
+const DESIGN_ENTRY = /\/(src|apps\/hud|explorer-core)\/design\/index\.ts$/
+// The dev-only Showcase (?showcase=1) and the index of its sections.
+const SHOWCASE = /\/design\/Showcase/
+
+/** The part of the module graph a chunk group's `name` reads. */
+interface ModuleGraph {
+  getModuleInfo(id: string): { importers: string[]; exports: string[]; code: string | null } | null
+}
+
+/** Design modules only the Showcase uses: imported by nothing but a design entry, the Showcase or other such
+ *  modules, with none of their exports named by another module that imports that entry. A module whose use
+ *  cannot be read (an importer without code, an import cycle) counts as used elsewhere. */
+export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
+  const decided = new Map<string, boolean>()
+  // The words in the code of every module that imports a design entry, the Showcase aside; null if one has no code.
+  const words = new Map<string, Set<string> | null>()
+  const namedBeside = (entry: string): Set<string> | null => {
+    if (!words.has(entry)) {
+      let found: Set<string> | null = new Set()
+      for (const importer of graph.getModuleInfo(entry)?.importers ?? []) {
+        if (SHOWCASE.test(importer)) continue
+        const code = graph.getModuleInfo(importer)?.code
+        if (code == null) {
+          found = null
+          break
+        }
+        for (const word of code.match(/[\w$]+/g) ?? []) found.add(word)
+      }
+      words.set(entry, found)
+    }
+    return words.get(entry) ?? null
+  }
+  const only = (id: string): boolean => {
+    const known = decided.get(id)
+    if (known !== undefined) return known
+    decided.set(id, false)
+    const info = graph.getModuleInfo(id)
+    const result =
+      info != null &&
+      info.importers.length > 0 &&
+      info.importers.every((importer) => {
+        if (SHOWCASE.test(importer)) return true
+        if (DESIGN_ENTRY.test(importer)) {
+          const named = namedBeside(importer)
+          return named != null && !info.exports.some((name) => named.has(name))
+        }
+        return DESIGN.test(importer) && only(importer)
+      })
+    decided.set(id, result)
+    return result
+  }
+  return (id) => DESIGN.test(id) && !DESIGN_ENTRY.test(id) && !SHOWCASE.test(id) && only(id)
+}
+const showcaseOnlyByGraph = new WeakMap<ModuleGraph, (id: string) => boolean>()
+
+/** `false` for the design modules (no effect when imported), the Showcase aside; the default for the rest. */
+export const designSideEffects = (id: string): false | undefined =>
+  DESIGN.test(id) && /\.tsx?$/.test(id) && !SHOWCASE.test(id) ? false : undefined
+
 // The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
 function hudBuild(): string {
   const out = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
@@ -252,6 +313,11 @@ export default defineConfig(({ command, mode }) => ({
     // approaches it.
     chunkSizeWarningLimit: 600,
     rollupOptions: {
+      // The design modules declare components, helpers and module state, with no effect when imported (the
+      // Showcase seeds the profile store, so it is left out). Saying so lets a chunk that holds the design
+      // entry skip a module none of whose exports it uses; without it, the React import at the top of each
+      // module counts as an effect, and the entry's chunk would load the Showcase's chunk below to run it.
+      treeshake: { moduleSideEffects: designSideEffects },
       // index.html is the web shell that embeds app.html; native (CEF) loads app.html directly.
       input: {
         app: fileURLToPath(new URL('./app.html', import.meta.url)),
@@ -271,6 +337,19 @@ export default defineConfig(({ command, mode }) => ({
             // signer the shell and the editor share: the shell page needs them, so they go with it rather
             // than with the first HUD chunk that imports them.
             { name: 'shell', test: /\/src\/(host|lib\/(baseDomain|bootMode|entryParams|loopbackHost|publicUrl))\.ts|\/(apps\/hud|explorer-core)\/(engine\/generated\/(serviceTable|webParamTable)|shell\/sign)\.ts/, priority: 1 },
+            // A design module only the dev-only Showcase uses goes with it, out of the prod HUD path. The design
+            // entry (design/index.ts) re-exports every primitive and the groups below take their modules'
+            // imports along, so such a primitive would otherwise ship in an eager chunk. Only those modules:
+            // what they import stays where it is.
+            {
+              name(id, ctx) {
+                let test = showcaseOnlyByGraph.get(ctx)
+                if (test == null) showcaseOnlyByGraph.set(ctx, (test = showcaseOnly(ctx)))
+                return test(id) ? 'Showcase' : null
+              },
+              priority: 1,
+              includeDependenciesRecursively: false
+            },
             {
               name(id) {
                 if (id.includes('node_modules')) return 'vendor'

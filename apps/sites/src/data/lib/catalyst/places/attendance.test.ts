@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const http = vi.hoisted(() => ({ signedGetJSON: vi.fn() }));
 vi.mock("../client", async (actual) => ({
@@ -10,28 +10,51 @@ vi.mock("../client", async (actual) => ({
 import type { AuthIdentity } from "../../auth/types";
 import { attendanceKeys, attendingListQuery } from "./attendance";
 
-const identity = { signer: "0xAB" } as unknown as AuthIdentity;
-
-beforeEach(() => http.signedGetJSON.mockReset());
-
 describe("attendingListQuery", () => {
-  it("should keep only the events the member attends, out of every unfinished event the endpoint answers", async () => {
-    http.signedGetJSON.mockResolvedValue({
-      ok: true,
-      data: [
-        { id: "going", name: "Going", attending: true },
-        { id: "not", name: "Not going", attending: false },
-      ],
-    });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    await expect(client.fetchQuery(attendingListQuery(identity))).resolves.toEqual(["going"]);
-    expect(http.signedGetJSON.mock.calls[0]?.[0]).toBe("/events/api/events/attending");
+  let identity: AuthIdentity;
+  let client: QueryClient;
+
+  beforeEach(() => {
+    identity = { signer: "0xAB" } as unknown as AuthIdentity;
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   });
 
-  it("should reject a row without the attending flag rather than guess it", async () => {
-    http.signedGetJSON.mockResolvedValue({ ok: true, data: [{ id: "x" }] });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    await expect(client.fetchQuery(attendingListQuery(identity))).rejects.toThrow();
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  describe("when the endpoint answers every unfinished event with the attending flag", () => {
+    let result: Promise<string[]>;
+
+    beforeEach(() => {
+      http.signedGetJSON.mockResolvedValueOnce({
+        ok: true,
+        data: [
+          { id: "going", name: "Going", attending: true },
+          { id: "not", name: "Not going", attending: false },
+        ],
+      });
+      result = client.fetchQuery(attendingListQuery(identity));
+    });
+
+    it("should keep only the events the member attends", async () => {
+      await expect(result).resolves.toEqual(["going"]);
+    });
+
+    it("should read the attending endpoint", async () => {
+      await result;
+      expect(http.signedGetJSON.mock.calls[0]?.[0]).toBe("/events/api/events/attending");
+    });
+  });
+
+  describe("when a row has no attending flag", () => {
+    beforeEach(() => {
+      http.signedGetJSON.mockResolvedValueOnce({ ok: true, data: [{ id: "x" }] });
+    });
+
+    it("should reject the row rather than guess it", async () => {
+      await expect(client.fetchQuery(attendingListQuery(identity))).rejects.toThrow(/attending/);
+    });
   });
 
   it("should keep the list under the member's private prefix", () => {

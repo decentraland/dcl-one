@@ -110,7 +110,8 @@ export const defaultSleep = (ms: number, signal?: AbortSignal) =>
 /**
  * Polls for a receipt until one exists or the window closes. Null means none inside the window: the
  * transaction may still mine, which is never the same answer as a revert. Read errors are not answers
- * either; polling continues through them.
+ * either; polling continues through them. Without a set `pollMs`, it polls every 500 ms for the first
+ * 15 s, where a relayed transaction usually lands (Polygon makes a block about every 2 s), then every 2 s.
  */
 export async function waitForReceipt(
   reader: ChainReader,
@@ -119,19 +120,20 @@ export async function waitForReceipt(
   opts: WaitOptions = {},
 ): Promise<TxReceipt | null> {
   const timeoutMs = opts.timeoutMs ?? 120_000;
-  const pollMs = Math.max(opts.pollMs ?? 2_000, 10);
+  const pollMs = (elapsedMs: number) => Math.max(opts.pollMs ?? (elapsedMs < 15_000 ? 500 : 2_000), 10);
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => defaultSleep(ms, opts.signal));
   const started = now();
   for (;;) {
     if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     try {
-      const receipt = await reader.receipt(chainId, txHash);
+      const receipt = await reader.receipt(chainId, txHash, opts.signal);
       if (receipt) return receipt;
     } catch (e) {
       if ((e as { name?: string } | null)?.name === "AbortError") throw e;
     }
-    if (now() - started >= timeoutMs) return null;
-    await sleep(pollMs);
+    const elapsedMs = now() - started;
+    if (elapsedMs >= timeoutMs) return null;
+    await sleep(pollMs(elapsedMs));
   }
 }

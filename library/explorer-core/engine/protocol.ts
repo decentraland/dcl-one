@@ -280,6 +280,7 @@ export type PageToScene =
   | AcceptWelcomeRequest
   | OpenLegalRequest
   | OpenExternalUrlRequest
+  | GetSatelliteTileRequest
   | TeleportRequest
   | ChangeRealmRequest
   | MinimapConfigRequest
@@ -961,6 +962,25 @@ export interface ExternalUrlOpenedMessage {
   ok: boolean
 }
 
+/** One deep-zoom satellite detail tile of the full-screen map. `path` is relative to the tile
+ *  source (`sections/{sx}%2C{sy}/{version}/{level}/{i}%2C{j}.ktx2`); the engine decodes the
+ *  Basis KTX2 file and answers with a SatelliteTileMessage. */
+export interface GetSatelliteTileRequest {
+  kind: 'getSatelliteTile'
+  requestId: number
+  path: string
+}
+
+/** The answer to a GetSatelliteTileRequest: `data` is the tile as base64 JPEG bytes (no `data:`
+ *  prefix) when `ok`; otherwise `error` says why, including a build without tile decoding. */
+export interface SatelliteTileMessage {
+  kind: 'satelliteTile'
+  requestId: number
+  ok: boolean
+  data?: string
+  error?: string
+}
+
 export interface WelcomeAcceptedMessage {
   kind: 'welcomeAccepted'
   ok: boolean
@@ -1269,6 +1289,9 @@ export interface EngineViewportRequest {
    *  what turns it into the physical pixels the scene should actually render — without it a
    *  render target has to assume the worst display and oversample everywhere else. */
   dpr?: number
+  /** Avatar preview region only: the part of `rect` (same units) the avatar is framed in, as it
+   *  would be in a rect of that height centred there. The backdrop still fills `rect`. Absent: all of it. */
+  focus?: { x: number; y: number; width: number; height: number }
   /** A `LOBBY_STAGE_PRESETS` id; lobby region only. */
   stagePreset?: string
   /** Lobby region only: the pages that borrow the stage leave the avatar still. */
@@ -1684,6 +1707,9 @@ export interface CommunityPlace {
   likeRate?: number
   /** The signed-in user owns the place: an owner or moderator may unlink it from the card. */
   isMine?: boolean
+  /** The places service's own row (signed: with the user's votes and favourite), when it was read:
+   *  the card's hover actions, JUMP IN and Place Detail act on it. */
+  detail?: DiscoverPlace
 }
 
 /** Unlink a place from a community (page → scene → signed DELETE to the social-api). */
@@ -2598,6 +2624,7 @@ export type SceneToPage =
   | WelcomeMessage
   | WelcomeAcceptedMessage
   | ExternalUrlOpenedMessage
+  | SatelliteTileMessage
   | PlayerPoseMessage
   | RealmInfoMessage
   | SceneInfoMessage

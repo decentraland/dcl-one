@@ -46,6 +46,7 @@ use max_downloads::MaxDownloadsSetting;
 use max_lods::{MaxFarLodsSetting, MaxNearLodsSetting};
 use oob_setting::OobSetting;
 use player_settings::{JumpSetting, RunSpeedSetting, WalkSpeedSetting};
+use rings::{FarLodRingSetting, LiveSceneRingSetting, NearLodRingSetting};
 use scene_threads::SceneThreadsSetting;
 use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanceSetting};
 use spring_bones_setting::SpringBonesSetting;
@@ -81,6 +82,7 @@ pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
 pub mod render_scale_setting;
+mod rings;
 pub mod scene_threads;
 pub mod sensitivity;
 pub mod shadow_settings;
@@ -220,6 +222,9 @@ impl Plugin for SettingBridgePlugin {
             add_int_setting::<UnloadDistanceSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<MaxNearLodsSetting>(app, &mut settings, &mut schedule, &config);
             add_int_setting::<MaxFarLodsSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<LiveSceneRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<NearLodRingSetting>(app, &mut settings, &mut schedule, &config);
+            add_int_setting::<FarLodRingSetting>(app, &mut settings, &mut schedule, &config);
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);

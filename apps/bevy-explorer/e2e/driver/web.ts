@@ -14,6 +14,9 @@ export interface WebLaunchOptions {
   readyTimeoutMs?: number
   /** How long one command may take. */
   commandTimeoutMs?: number
+  /** Gives the wait for the app up when aborted: the browser is closed and the launch fails with
+   *  `BOOT_ABANDONED`. */
+  signal?: AbortSignal
 }
 
 /** What the suite uses of `local-harness/web-driver/driver.mjs`. */
@@ -78,6 +81,9 @@ export class DocumentGoneError extends ConsoleError {
   }
 }
 
+/** What a boot fails with once its `signal` asked for it to be given up. */
+export const BOOT_ABANDONED = 'the boot was abandoned'
+
 export class WebConsole implements Console {
   readonly kind = 'web' as const
   readonly #driver: WebDriver
@@ -106,13 +112,23 @@ export class WebConsole implements Console {
       if (Array.isArray(said)) throw new BootError(error instanceof Error ? error.message : String(error), said.map(consoleLine), undefined)
       throw error
     }
+    const { signal } = options
+    const abandon = (): void => void Promise.resolve(driver.close()).catch(() => {})
+    signal?.addEventListener('abort', abandon, { once: true })
     try {
+      if (signal?.aborted) throw new Error(BOOT_ABANDONED)
       await driver.ready({ timeout: options.readyTimeoutMs ?? 300_000 })
     } catch (error) {
+      if (signal?.aborted) {
+        await driver.close()
+        throw new Error(BOOT_ABANDONED, { cause: error })
+      }
       const said = driver.consoleMessages().map(consoleLine)
       const shot = await driver.screenshot().catch(() => undefined)
       await driver.close()
       throw new BootError(error instanceof Error ? error.message : String(error), said, shot)
+    } finally {
+      signal?.removeEventListener('abort', abandon)
     }
     return new WebConsole(driver, options.commandTimeoutMs ?? 120_000)
   }

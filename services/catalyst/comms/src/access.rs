@@ -118,23 +118,24 @@ pub enum Access {
     NotAllowed,
 }
 
-/// Which scene a moderation question is about.
+/// Which scene a moderation question is about. `place` is where its explicit
+/// admins are granted (`rooms::ActiveDeployment::place_key`).
 #[derive(Debug, Clone)]
 pub enum SceneRef<'a> {
     World {
         world: &'a WorldName,
-        scene: &'a SceneId,
+        place: &'a str,
     },
     Genesis {
-        scene: &'a SceneId,
+        place: &'a str,
         parcels: &'a ParcelSet,
     },
 }
 
 impl SceneRef<'_> {
-    pub fn scene_id(&self) -> &SceneId {
+    pub fn place(&self) -> &str {
         match self {
-            Self::World { scene, .. } | Self::Genesis { scene, .. } => scene,
+            Self::World { place, .. } | Self::Genesis { place, .. } => place,
         }
     }
 }

@@ -9,9 +9,11 @@
 // marketplace, then `executeOrder` at the order's exact price. A price that moved since the page's
 // quote is shown and must be accepted; a broadcast that has not confirmed is pending, never re-sent.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { Hex } from "viem";
 
+import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
 import { chainLabel, type ChainId } from "@shop/model/chain";
@@ -50,6 +52,7 @@ const STEP_TEXT: Record<OrderPhase, string> = {
 
 export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, wait, portal, reader }: LegacyOrderBuyProps) {
   const wallet = useShopWallet();
+  const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
   const [accepted, setAccepted] = useState(false);
   // An Estate is bought bound to the composition reviewed now: its registry fingerprint, read on open.
@@ -106,6 +109,8 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
         wait,
       });
       setPhase({ kind: "success", txHash: hash });
+      // The order spent MANA: the balances, the token and the buyer's lists are read again.
+      invalidateAfterPurchase(qc, { contractAddress, tokenId });
       onDone?.(hash);
     } catch (e) {
       if (isTxPending(e)) setPhase({ kind: "pending", txHash: (e as { txHash: string }).txHash });

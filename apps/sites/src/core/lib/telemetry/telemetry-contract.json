@@ -2718,28 +2718,6 @@
         }
       }
     },
-    "cl_explore_opened": {
-      "loose": false,
-      "props": {
-        "place_count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "cl_open_jumped_in": {
-      "loose": false,
-      "props": {
-        "place_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "cl_open_screen_shown": {
-      "loose": false,
-      "props": {}
-    },
     "client_error": {
       "loose": false,
       "props": {

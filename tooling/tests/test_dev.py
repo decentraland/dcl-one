@@ -130,6 +130,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual((program, argv), ('ingress', ['ingress']))
         self.assertEqual(env['INGRESS_CONFIG_BODY'], ingress, 'the secret travels in the environment, not argv')
         self.assertIn('PATH', env, 'the ingress starts its per-stream handlers from PATH')
+        self.assertEqual(env['GST_PLUGIN_FEATURE_RANK'], 'avdec_h264:MAX', 'a hardware decoder ends the stream')
 
     def test_behind_a_public_origin_streamers_get_the_origins_host(self):
         for origin, host in (('https://dev.example:8443', 'dev.example'), ('https://[2001:db8::1]', '[2001:db8::1]')):
@@ -403,6 +404,17 @@ class DevTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             dev.runtime_env({**self.config, 'scene_proxy_hosts': 'rooms.example.test'})
 
+    def test_a_stale_cast_bot_path_warns_and_stops_no_command(self):
+        bot = self.state / 'cast-bot'
+        with patch('sys.stderr', new_callable=io.StringIO) as warning:
+            env = dev.runtime_env({**self.config, 'cast_bot_bin': str(bot), 'personal_worlds': 2})
+        self.assertNotIn('CAST_BOT_BIN', env)
+        self.assertEqual(env['WORLDS_PERSONAL_WORLDS_MAX'], '2')
+        self.assertIn(f'cast_bot_bin {bot} is not executable', warning.getvalue())
+        bot.write_text('#!/bin/sh\n')
+        bot.chmod(0o755)
+        self.assertEqual(dev.runtime_env({**self.config, 'cast_bot_bin': str(bot)})['CAST_BOT_BIN'], str(bot))
+
     def test_profile_images_render_here_once_the_avatar_renderer_is_built(self):
         with patch.dict(os.environ, {}, clear=False), patch.object(dev, 'AVATAR_RENDER_BIN', self.state / 'missing'):
             os.environ.pop('FOUNDATION_DEV_AVATAR_RENDER_BIN', None)
@@ -591,6 +603,26 @@ class DevTest(unittest.TestCase):
             sock.bind(('127.0.0.1', base + 2))
             self.assertFalse(dev.ports_free(base), 'Pulse needs UDP on the Sites port')
 
+    def test_a_public_origin_serves_enet_where_native_clients_dial(self):
+        # A native client dials ENet on UDP 7777 of pulse-server.<base domain>, never a port of the block.
+        base, files = self.config['port'], (Path('c'), Path('k'))
+        config = {**self.config, 'public_origin': 'https://dev.example.test'}
+        env = dev.pulse_env(config, *files)
+        self.assertEqual((env['PULSE_BIND'], env['PULSE_METRICS_BIND']), ('0.0.0.0:7777', f'127.0.0.1:{base + 7}'))
+        second = {**config, 'pulse_enet_port': 7778}
+        self.assertEqual(dev.pulse_env(second, *files)['PULSE_BIND'], '0.0.0.0:7778', 'a second stack on the machine')
+        self.assertEqual(dev.pulse_env({**self.config, 'pulse_enet_port': 7778}, *files)['PULSE_BIND'],
+                         f'127.0.0.1:{base + 7}', 'a loopback stack stays in its block')
+        # Startup checks both of Pulse's public UDP ports.
+        with patch.object(dev, 'settings', return_value=second), patch.object(dev, 'supervisor_running', return_value=False), \
+                patch.object(dev, 'ingress_ports_free', return_value=True), patch.object(dev, 'save_json'), \
+                patch.object(dev, 'ports_free', return_value=True) as free:
+            dev.prepare_supervisor()
+        free.assert_called_once_with(base, (dev.WEB_PULSE_PORT, 7778))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
+            busy.bind(('0.0.0.0', 0))
+            self.assertFalse(dev.ports_free(base, (busy.getsockname()[1],)), 'a taken public port stops startup')
+
     @unittest.skipUnless(shutil.which('openssl'), 'openssl is supplied by nix develop')
     def test_pulse_keeps_its_key_and_renews_a_short_lived_certificate(self):
         certificate, key = dev.pulse_certificate()
@@ -628,6 +660,7 @@ class DevTest(unittest.TestCase):
         self.assertEqual(dev.runtime_env({**self.config, 'public_origin': 'http://10.0.0.5:5443'})['DEV_ALLOWED_HOSTS'],
                          '10.0.0.5')
         self.assertEqual(env['HTTP_TRUSTED_PROXY_CIDRS'], '127.0.0.1/32,::1/128', 'the front is the loopback peer')
+        self.assertEqual(env['CAST_PRESENTER_PUBLIC_URL'], 'https://cast-presenter-service.dev.example.test:5443')
         self.assertEqual((env['HTTP_SERVER_HOST'], env['HOST']), ('127.0.0.1', '127.0.0.1'), 'the front is the only listener')
         # The web Explorer dials Pulse at the page's host and port over UDP, which the front cannot carry.
         self.assertEqual(dev.pulse_ports(config)[0], 5443)
@@ -638,6 +671,7 @@ class DevTest(unittest.TestCase):
         portless = {**self.config, 'public_origin': 'http://dev.example.test'}
         self.assertEqual(dev.pulse_ports(portless)[0], dev.WEB_PULSE_PORT, "the engine's default when the page has no port")
         self.assertEqual(dev.runtime_env(portless)['COMMS_FIXED_ADAPTER'], 'archipelago:ws://dev.example.test/ws')
+        self.assertNotIn('CAST_PRESENTER_PUBLIC_URL', dev.runtime_env(portless), 'the API refuses a plain http URL')
         loopback = dev.runtime_env(self.config)
         self.assertEqual(loopback['PUBLIC_URL'], f"http://127.0.0.1:{self.config['port'] + 2}")
         self.assertNotIn('LIVEKIT_WS_URL', loopback)

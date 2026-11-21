@@ -625,6 +625,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     the image turns black when the source gives up or a non-looping source ends, and keeps the
     last frame while a reopen is pending, so a short drop shows no black flash; the failed source
     is detached meanwhile. A non-looping source that ends reports `VsNone`, as in unity-explorer.
+    A source the scene clears (an empty `src`, such as the Admin Toolkit's Deactivate) shows black
+    at once on native and web, whatever played before.
 
   Native (FFmpeg) has no reopen: its first error ends playback. A non-looping source that ends
   there reports `VsPaused` and keeps its last frame, where the web reports `VsNone` and clears it.

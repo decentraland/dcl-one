@@ -18,13 +18,15 @@ let
     root = sites;
     fileset = lib.fileset.unions (map (p: sites + p) [ /package.json /pnpm-lock.yaml /pnpm-workspace.yaml ]);
   };
-  pnpmDeps = fetchPnpmDeps {
-    pname = "foundation-sites";
+  pnpmDepsArgs = {
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
     hash = "sha256-RLpBnTbtZwL9R6fc+bnOlVOwZC4InF9ATdj+NPLyV74=";
   };
+  pnpmDepsKey = builtins.substring 0 12
+    (builtins.hashString "sha256" (fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-sites"; })).drvPath);
+  pnpmDeps = fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-sites-${pnpmDepsKey}"; });
   runtimeDeps = stdenv.mkDerivation {
     pname = "foundation-sites-runtime-deps";
     inherit version pnpmDeps;

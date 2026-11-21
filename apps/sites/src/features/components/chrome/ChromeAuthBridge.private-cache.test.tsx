@@ -28,6 +28,7 @@ const A = "0x00000000000000000000000000000000000000aa";
 const B = "0x00000000000000000000000000000000000000bb";
 
 let client: QueryClient;
+let rerender: () => void;
 function mount() {
   const view = render(
     <QueryClientProvider client={client}>
@@ -51,34 +52,56 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   client.clear();
+  vi.resetAllMocks();
 });
 
 describe("the Sites chrome's private cache", () => {
-  it("keeps the signed-in account's entries through hydration", () => {
-    mount();
+  describe("when the signed-in account hydrates", () => {
+    beforeEach(() => {
+      mount();
+    });
 
-    expect(client.getQueryData(["private", A, "account", "subscription"])).toBe("A's subscription");
+    it("should keep the signed-in account's entries", () => {
+      expect(client.getQueryData(["private", A, "account", "subscription"])).toBe("A's subscription");
+    });
   });
 
-  it("removes the previous account's entries when another account signs in", () => {
-    const rerender = mount();
-    client.setQueryData(["private", B, "account", "subscription"], "B's subscription");
+  describe("when another account signs in", () => {
+    beforeEach(() => {
+      rerender = mount();
+      client.setQueryData(["private", B, "account", "subscription"], "B's subscription");
 
-    auth.state = { isConnected: true, address: B };
-    act(() => rerender());
+      auth.state = { isConnected: true, address: B };
+      act(() => rerender());
+    });
 
-    expect(client.getQueriesData({ queryKey: ["private", A] })).toEqual([]);
-    expect(client.getQueryData(["private", B, "account", "subscription"])).toBe("B's subscription");
-    expect(client.getQueryData(["events", "list"])).toBe("public events");
+    it("should remove the previous account's entries", () => {
+      expect(client.getQueriesData({ queryKey: ["private", A] })).toEqual([]);
+    });
+
+    it("should keep the new account's entries", () => {
+      expect(client.getQueryData(["private", B, "account", "subscription"])).toBe("B's subscription");
+    });
+
+    it("should keep public data", () => {
+      expect(client.getQueryData(["events", "list"])).toBe("public events");
+    });
   });
 
-  it("removes every private entry on sign-out and keeps public data", () => {
-    const rerender = mount();
+  describe("when the account signs out", () => {
+    beforeEach(() => {
+      rerender = mount();
 
-    auth.state = { isConnected: false, address: null };
-    act(() => rerender());
+      auth.state = { isConnected: false, address: null };
+      act(() => rerender());
+    });
 
-    expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
-    expect(client.getQueryData(["events", "list"])).toBe("public events");
+    it("should remove every private entry", () => {
+      expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
+    });
+
+    it("should keep public data", () => {
+      expect(client.getQueryData(["events", "list"])).toBe("public events");
+    });
   });
 });

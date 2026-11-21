@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { CommunityModal, openCommunityModal } from '../../features/communities/CommunityModal'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { NO_ANNOUNCEMENTS, postAge } from '../../features/communities/Announcements'
+import { EMOJI_GROUPS } from '../../features/chat/emojiData'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
 import type { Community, CommunityPost } from '@explorer-core/engine/protocol'
 import type { CommunityPosts } from '../../features/session/useEngineSession'
@@ -249,6 +250,35 @@ describe('announcements tab', () => {
     const list = await screen.findByRole('listbox')
     await userEvent.click(within(list).getAllByRole('button')[0])
     expect((field as HTMLTextAreaElement).value).not.toContain(':smil')
+  })
+
+  it('closes the emoji panel on a press in the field, on POST, and keeps it open on a pick', async () => {
+    // jsdom has no IntersectionObserver: without one every emoji (~3,600 buttons) would mount
+    class IdleObserver {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', IdleObserver)
+    try {
+      const card = renderCard('owner', posts([]))
+      // captured before the panel opens: a role query with it open names every emoji button
+      const field = screen.getByRole('textbox', { name: 'New announcement' })
+      const emoji = screen.getByRole('button', { name: 'Emoji' })
+      const post = screen.getByRole('button', { name: 'Post announcement' })
+      await userEvent.click(emoji)
+      const panel = screen.getByRole('dialog', { name: 'Emoji picker' })
+      await userEvent.click(within(panel).getByTitle(EMOJI_GROUPS[0].emojis[0].expression))
+      expect(panel).toBeInTheDocument()
+      await userEvent.click(field)
+      expect(panel).not.toBeInTheDocument()
+      await userEvent.click(emoji)
+      expect(screen.getByPlaceholderText('Search emoji')).toBeInTheDocument()
+      await userEvent.click(post)
+      expect(card.onPost).toHaveBeenCalled()
+      expect(screen.queryByPlaceholderText('Search emoji')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it("shows the author's marks: verified or #tag, and official", () => {

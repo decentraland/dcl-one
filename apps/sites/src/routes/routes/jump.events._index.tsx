@@ -16,10 +16,14 @@ import { detectPlatform } from "@/features/download/options";
 import { jumpInFor, mobileLaunch } from "@/features/jump/mobileLaunch";
 import { cardProps, eventActionState } from "@/features/jump/view";
 
+import { EVENTS_SECTION, destinationMeta, eventCard, jumpCanonicalPath, sectionCard } from "../lib/destination-meta";
+import { absoluteUrl, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/jump.events._index";
 
-export function meta() {
-  return [{ title: "Jump into Decentraland" }];
+/** The card of the event the link opens; an unknown one redirects to the invalid page before this renders. */
+export function meta({ loaderData, location, matches }: Route.MetaArgs) {
+  const url = absoluteUrl(publicBase(matches), jumpCanonicalPath(location.pathname, new URLSearchParams(location.search), "event"));
+  return destinationMeta(loaderData ? eventCard(loaderData.shareEvent) : sectionCard(EVENTS_SECTION), { url });
 }
 
 const INVALID = "/jump/events/invalid";
@@ -50,6 +54,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const shareUrl = eventShareUrl(/^https?:\/\//.test(configured) ? configured : new URL(request.url).origin, event.id, card);
   return {
     eventId: event.id,
+    shareEvent: { name: event.name, scene_name: event.scene_name ?? null, description: event.description, image: event.image },
     card: cardProps(card, creator),
     state: eventActionState(card),
     shareUrl,

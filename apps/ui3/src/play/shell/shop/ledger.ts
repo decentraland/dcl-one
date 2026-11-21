@@ -30,6 +30,8 @@ export interface PurchaseDisplay {
   thumbnail?: string
   category?: string
   credits: number
+  /** The item's identity (its cart line), shared by its units. */
+  key?: string
 }
 
 export interface OperationRecord {
@@ -106,7 +108,8 @@ function isDisplay(v: unknown): boolean {
     typeof v.rarity === 'string' &&
     typeof v.credits === 'number' &&
     (v.thumbnail === undefined || typeof v.thumbnail === 'string') &&
-    (v.category === undefined || typeof v.category === 'string')
+    (v.category === undefined || typeof v.category === 'string') &&
+    (v.key === undefined || typeof v.key === 'string')
   )
 }
 

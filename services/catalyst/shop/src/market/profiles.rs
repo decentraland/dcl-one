@@ -206,8 +206,21 @@ fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens
                 })
                 .collect(),
         };
+        let validated = validated.into_iter().map(normalize_slot).collect();
         avatar_obj.insert("emotes".to_string(), Value::Array(validated));
     }
+}
+
+/// An emote's or outfit's non-negative integral `slot` in float form (`1.0`,
+/// `1e0`, `1e10`), served as the integer the reference's JSON round trip emits.
+pub(super) fn normalize_slot(mut entry: Value) -> Value {
+    if let Some(slot) = entry.get_mut("slot")
+        && !slot.is_u64()
+        && let Some(n) = catalyst_shared::json_number::as_integral_u64(slot)
+    {
+        *slot = Value::from(n);
+    }
+    entry
 }
 
 /// Every non-base wearable the profile's avatars wear, for the third-party check.
@@ -1270,6 +1283,28 @@ mod tests {
                 {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance:3"},
             ]),
             "the `mainnet` spelling and a base-scene emote are not owned"
+        );
+    }
+
+    #[test]
+    fn integral_float_emote_slots_are_served_as_integers() {
+        let mut avatars: Vec<Value> = vec![
+            serde_json::from_str(
+                r#"{"avatar": {"emotes": [
+                    {"slot": 1.0, "urn": "wave"},
+                    {"slot": 2e0, "urn": "clap"},
+                    {"slot": -0.0, "urn": "kiss"},
+                    {"slot": 3.5, "urn": "money"},
+                    {"slot": 4, "urn": "shrug"},
+                    {"slot": 1e10, "urn": "dance"}
+                ]}}"#,
+            )
+            .unwrap(),
+        ];
+        filter_avatars_by_ownership(&mut avatars, None);
+        assert_eq!(
+            serde_json::to_string(&avatars[0]["avatar"]["emotes"]).unwrap(),
+            r#"[{"slot":1,"urn":"wave"},{"slot":2,"urn":"clap"},{"slot":0,"urn":"kiss"},{"slot":3.5,"urn":"money"},{"slot":4,"urn":"shrug"},{"slot":10000000000,"urn":"dance"}]"#
         );
     }
 

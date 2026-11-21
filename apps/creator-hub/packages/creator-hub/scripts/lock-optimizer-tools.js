@@ -154,19 +154,33 @@ export function releaseAgeProblems(lock, packages, minimumReleaseAge, now = Date
   return problems;
 }
 
+const SHELL_SPECIAL = /[\s"^&|<>()%!]/;
+
+function quoteForShell(arg) {
+  return SHELL_SPECIAL.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
+}
+
+/** How to start npm here: the Windows `.cmd` shim needs a shell, and a shell needs quoting. */
+export function npmRun(args) {
+  if (process.platform !== 'win32') return { command: 'npm', args, options: {} };
+  return { command: 'npm.cmd', args: args.map(quoteForShell), options: { shell: true } };
+}
+
 /** Writes a new lock, or throws and leaves the committed one as it is. */
 export async function writeCheckedLock(
   lockText,
   {
+    manifest,
     manifestFile = MANIFEST_FILE,
     lockFile = LOCK_FILE,
+    expectedInstallScripts = EXPECTED_INSTALL_SCRIPTS,
     minimumReleaseAge,
     fetchImpl = fetch,
     now = Date.now(),
   },
 ) {
   const lock = JSON.parse(lockText);
-  const problems = checkLock(readJson(manifestFile), lock);
+  const problems = checkLock(manifest ?? readJson(manifestFile), lock, expectedInstallScripts);
   if (problems.length === 0) {
     const names = lockEntries(lock).map(entry => entry.name);
     const packages = await fetchRegistryPackages(names, fetchImpl);
@@ -194,11 +208,14 @@ function makeLock() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'optimizer-tools-'));
   try {
     fs.copyFileSync(MANIFEST_FILE, path.join(tmp, 'package.json'));
-    execFileSync(
-      'npm',
-      ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'],
-      { cwd: tmp, stdio: 'inherit' },
-    );
+    const npm = npmRun([
+      'install',
+      '--package-lock-only',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+    ]);
+    execFileSync(npm.command, npm.args, { cwd: tmp, stdio: 'inherit', ...npm.options });
     return fs.readFileSync(path.join(tmp, 'package-lock.json'), 'utf8');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

@@ -113,12 +113,22 @@ upstream. Private and unlisted communities, which the mirror never sees, are imp
 - Imported communities have no `social.community_signed_actions` entries, so they appear
   in the federation feeds only from their next signed action.
 
+## Community thumbnails
+
+Upstream keeps a community's picture on its CDN bucket, not in this database, at
+`social/communities/<id>/raw-thumbnail.png`; the import moves the rows, and the takeover
+deletes the mirror row that pointed at upstream's copy. `migrate.py blobs social-service-ea`
+copies them after `run`: for each community this source holds that the node has as `local` with
+no `social.community_thumbnails` row, it reads that object (by default from
+`https://assets-cdn.decentraland.org/`), checks it is a PNG, JPEG, GIF or WebP image, stores it
+under the content hash the node's upload uses (`hash.rs::hash_bytes`) and inserts the row right
+after, in batches, so the storage GC does not see the blob unreferenced. A community upstream has
+no picture for (a 403 or 404) gets no row, as upstream serves it none; a row the node holds wins.
+
 ## Not migrated
 
 - `private_voice_chats`: live call state that expires within minutes. The LiveKit rooms do
   not move.
-- Community thumbnails: S3 objects, not rows in this database. `social.community_thumbnails`
-  is filled when the blobs are moved, which is out of scope here.
 - Nothing in `chat.*` or `social.friend_messages`: this database holds no chat.
 
 ## Shared targets

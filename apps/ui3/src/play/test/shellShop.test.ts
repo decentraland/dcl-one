@@ -193,6 +193,7 @@ function setup(
     newId: () => `0f0e0d0c-0000-4000-8000-${String(++opIds).padStart(12, '0')}`,
     creditsUrl: () => 'https://decentraland.example/shop/credits',
     creatorName: opts.creatorName ?? (async () => 'Aurora'),
+    creatorFace: async () => null,
     claim: opts.claim ?? (async () => () => {}),
     creditRecord,
     ...(opts.names?.mode === 'build' ? {} : { namesMode: typeof opts.names?.mode === 'function' ? opts.names.mode : () => (opts.names?.mode ?? null) as ShopNamesMode | null }),
