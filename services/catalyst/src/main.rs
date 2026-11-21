@@ -39,6 +39,11 @@ enum Command {
         #[command(subcommand)]
         command: BuilderCommand,
     },
+    /// Content server operator commands.
+    Content {
+        #[command(subcommand)]
+        command: ContentCommand,
+    },
     /// Blob store operator commands.
     Storage {
         #[command(subcommand)]
@@ -248,6 +253,48 @@ enum BuilderCommand {
         )]
         storage_root_folder: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ContentCommand {
+    /// List every entity id and content hash of the old content server's
+    /// denylist file (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on that
+    /// server, `denylist.txt` by default) in `content.denylist`, as console
+    /// rows added by `--added-by` (`content::denylist::import_file`). One id
+    /// a line; blank lines and lines starting with `#` are skipped, and so
+    /// are lines that are no entity id or hash (pointers), counted with
+    /// their line numbers. A listed id is left alone, so a re-run adds
+    /// nothing. A malformed line imports nothing and names itself. Prints
+    /// the counts as JSON; a running `serve` hides the new ids within about
+    /// 65 seconds (its 60 s denylist reload, then up to 5 s of cached history
+    /// answers). Not behind OPS_WRITES_ENABLED: an import is operator data.
+    ImportDenylist {
+        #[arg(
+            long,
+            env = "DATABASE_URL",
+            hide_env_values = true,
+            required_unless_present = "print_ids"
+        )]
+        database_url: Option<String>,
+        /// The file; `-` reads standard input.
+        #[arg(long)]
+        file: String,
+        /// The operator wallet recorded as each new row's `added_by` (the
+        /// console records the signed-in wallet); the audit actor is
+        /// `cli:<wallet>`.
+        #[arg(long, value_parser = wallet, required_unless_present = "print_ids")]
+        added_by: Option<String>,
+        /// Print the ids the import would list, one a line, and write
+        /// nothing.
+        #[arg(long)]
+        print_ids: bool,
+    },
+}
+
+/// `--added-by`: a wallet address, lowercased.
+fn wallet(value: &str) -> Result<String, String> {
+    catalyst::auth::normalize_eth_address(value)
+        .ok_or_else(|| "must be a wallet address (0x and 40 hex digits)".to_string())
 }
 
 #[derive(Subcommand)]
@@ -633,6 +680,46 @@ async fn run(
             };
             let out =
                 explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Content {
+            command:
+                ContentCommand::ImportDenylist {
+                    database_url,
+                    file,
+                    added_by,
+                    print_ids,
+                },
+        } => {
+            let bytes = if file == "-" {
+                content::denylist::read_file(std::io::stdin().lock())?
+            } else {
+                let opened =
+                    std::fs::File::open(&file).with_context(|| format!("reading {file}"))?;
+                content::denylist::read_file(opened).with_context(|| format!("reading {file}"))?
+            };
+            if print_ids {
+                for id in content::denylist::checked_file(&bytes)?.ids {
+                    println!("{id}");
+                }
+                return Ok(());
+            }
+            let (Some(database_url), Some(added_by)) = (database_url, added_by) else {
+                anyhow::bail!("--database-url and --added-by are required");
+            };
+            tracing_subscriber::fmt().with_target(false).init();
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let out = content::denylist::import_file(&pool, &bytes, &added_by).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
         }

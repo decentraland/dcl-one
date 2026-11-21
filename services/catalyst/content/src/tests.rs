@@ -1029,8 +1029,27 @@ async fn seed_deployment_with_pointers(
     pointers: &[&str],
     ts_ms: i64,
 ) -> SeededEntity {
-    let id = format!("test-{tag}-{n}");
-    let hash = format!("test-{tag}-hash-{n}");
+    seed_deployment_as(
+        pool,
+        format!("test-{tag}-{n}"),
+        format!("test-{tag}-hash-{n}"),
+        entity_type,
+        pointers,
+        ts_ms,
+    )
+    .await
+}
+
+/// One deployment of entity `id` with one content file `hash`, active on
+/// every pointer of `pointers`.
+async fn seed_deployment_as(
+    pool: &sqlx::PgPool,
+    id: String,
+    hash: String,
+    entity_type: &str,
+    pointers: &[&str],
+    ts_ms: i64,
+) -> SeededEntity {
     let pointers: Vec<String> = pointers.iter().map(|p| p.to_string()).collect();
     let deployment_id: i32 = sqlx::query_scalar(
         "INSERT INTO content.deployments
@@ -1445,6 +1464,89 @@ async fn a_remote_listed_entity_is_hidden_from_the_reads() {
     assert_eq!(answer["deployments"], json!([]));
 
     unseed(&pool, tag).await;
+}
+
+/// An entity id imported from the old content server's denylist file is
+/// hidden from the active-entity, `/pointer-changes` and `/deployments`
+/// reads once the projection loads the table (boot, or the reload job).
+#[tokio::test]
+async fn an_imported_entity_id_is_hidden_from_the_reads() {
+    require_test_db!(Some(node) = TestNode::with_db("filedeny").await);
+    let pool = node.state.pool.clone();
+    let id = format!("bafkreifiledeny{}", "a".repeat(44));
+    let clean = || async {
+        crate::denylist::remove(&pool, &id).await.unwrap();
+        for sql in [
+            "DELETE FROM content.active_pointers WHERE entity_id = $1",
+            "DELETE FROM content.content_files WHERE deployment IN \
+             (SELECT id FROM content.deployments WHERE entity_id = $1)",
+            "DELETE FROM content.deployments WHERE entity_id = $1",
+        ] {
+            sqlx::query(sql).bind(&id).execute(&pool).await.unwrap();
+        }
+    };
+    clean().await;
+    let ts = 1_650_000_123_000i64;
+    let scene = seed_deployment_as(
+        &pool,
+        id.clone(),
+        "test-filedeny-hash-1".into(),
+        "scene",
+        &["-7334,7334"],
+        ts,
+    )
+    .await;
+    let reads = || async {
+        let (_, by_id) = post_json(
+            node.router(),
+            "/content/entities/active",
+            json!({"ids": [id]}),
+        )
+        .await;
+        let (_, by_pointer) = post_json(
+            node.router(),
+            "/content/entities/active",
+            json!({"pointers": [scene.pointer]}),
+        )
+        .await;
+        let (_, changes) = get_json(
+            node.router(),
+            &format!("/content/pointer-changes?entityType=scene&from={ts}&to={ts}"),
+        )
+        .await;
+        let (_, deployments) = get_json(
+            node.router(),
+            &format!("/content/deployments?entityId={id}"),
+        )
+        .await;
+        [
+            by_id.as_array().unwrap().len(),
+            by_pointer.as_array().unwrap().len(),
+            changes["deltas"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|d| d["entityId"] == id.as_str())
+                .count(),
+            deployments["deployments"].as_array().unwrap().len(),
+        ]
+    };
+    assert_eq!(reads().await, [1, 1, 1, 1]);
+
+    let out = crate::denylist::import_file(
+        &pool,
+        format!("{id}\n").as_bytes(),
+        "0x00000000000000000000000000000000000000aa",
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.imported, 1);
+    node.state.load_denylist().await.unwrap();
+    // The history reads' answers are cached for DEPLOYMENTS_CACHE_TTL.
+    node.state.deployments_cache.clear();
+    assert_eq!(reads().await, [0, 0, 0, 0]);
+
+    clean().await;
 }
 
 #[tokio::test]
