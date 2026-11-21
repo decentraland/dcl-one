@@ -8856,7 +8856,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Checkbox.tsx",
-      "sha256": "42ca5785863afff3c3febe9c00341dd60b8d04285c3af7e7110208a8375c7972"
+      "sha256": "1ebfa460cc1d570fad1ccf414931be3b1de033dd77ec87829d4e8e99d56c7d0a"
     },
     {
       "path": "library/ui/apps/hud/design/Chip.module.css",
@@ -10340,11 +10340,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.module.css",
-      "sha256": "4c973143c2e1d3cba32181cbe52bd12daf636806176949278f9f554b46ddf19f"
+      "sha256": "059a458d495e8c832c94d8833913d692075cf14de11c98b350a232408f1be5e6"
     },
     {
       "path": "library/ui/apps/hud/features/startup/NewAccountName.tsx",
-      "sha256": "404d049a77d32a0a4914b50dea937e2402000522e89ca049029fa2cab76e3094"
+      "sha256": "a18df8c45bda8ba4ae81c762a99e1e42145b0b26212d2043448ada8379efdd96"
     },
     {
       "path": "library/ui/apps/hud/features/startup/StartupBack.module.css",
@@ -10864,7 +10864,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/newAccount.test.tsx",
-      "sha256": "88a374493a6eeed1f50a4ad4b119f741a0227433ddd9de62a84cb413a16a9ca2"
+      "sha256": "cce37d087f9d8fad18074562a06ae5245bacee4d6273e591d5b00aee82604937"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
