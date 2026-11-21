@@ -242,6 +242,19 @@ private address), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`, and optiona
 Build it with `cargo build -p catalyst-message-router --features livekit`; without the
 feature the crate's library and tests build without libwebrtc.
 
+The APIs image carries it at `/bin/catalyst-message-router` (`nix build .#message-router`,
+`infra/packages/message-router.nix`). `serve` never starts it. A deployment runs one container
+of the APIs digest with that entrypoint and no command, one replica (the Explorer addresses
+replica 0 only), restarted on every exit, after `schema` has run:
+
+- router: `DATABASE_URL`, `MESSAGE_ROUTER_TOKEN_URL` (serve's private address; a host name
+  other than `localhost` needs https), `MESSAGE_ROUTER_KEY` or `MESSAGE_ROUTER_KEY_FILE`,
+  `MESSAGE_ROUTER_REPLICA=0`, `MESSAGE_ROUTER_LIVEKIT_URL` for the SFU's private address, and
+  `MESSAGE_ROUTER_METRICS_BIND=0.0.0.0:5007` when a probe outside the container reads
+  `/health/ready`;
+- `serve`: the same `MESSAGE_ROUTER_KEY`, and `MESSAGE_ROUTER_IDENTITY_PREFIX`
+  `message-router-prd` on decentraland.org or `message-router-dev` elsewhere.
+
 ## Statistics ownership and runtime
 
 Pulse owns a separate legacy statistics population. Authenticated decoded positions enter a

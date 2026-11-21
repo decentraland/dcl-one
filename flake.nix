@@ -27,9 +27,14 @@
           revision = self.rev or self.dirtyRev or "unversioned";
         })) // {
           # The tool environments: the macOS CI legs take ffmpeg from here. `cast-bot` too, for a
-          # local node's CAST_BOT_BIN.
-          aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; } // {
-            cast-bot = import ./infra/packages/cast-bot.nix (rustPackages "aarch64-darwin");
+          # local node's CAST_BOT_BIN, and the message router for a local node's community chat.
+          aarch64-darwin = let
+            darwin = rustPackages "aarch64-darwin";
+            catalyst = import ./infra/packages/catalyst.nix darwin;
+            cast-bot = import ./infra/packages/cast-bot.nix darwin;
+          in import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; } // {
+            inherit cast-bot;
+            message-router = import ./infra/packages/message-router.nix (darwin // { inherit catalyst cast-bot; });
           };
         };
 

@@ -12,8 +12,8 @@ import subprocess
 PACKAGES = {
     'catalyst': ('catalyst-deps', 'catalyst-vendor'),
     'sites': ('sites-deps', 'sites-runtime-deps', 'sites-toolchain'),
-    # The node and the cast-bot the APIs image carries beside it (CAST_BOT_BIN).
-    'apis': ('catalyst', 'cast-bot'),
+    # The node, the cast-bot it starts (CAST_BOT_BIN) and the message router, all in the APIs image.
+    'apis': ('catalyst', 'cast-bot', 'message-router'),
     'sites-app': ('sites-app', 'sites-app-polygon-credits'),
     # The hosted component gallery Sites serves under /ui-gallery/, in its own entry: a change to
     # apps/sites or the gallery alone misses only its own entry. A change to library/ui's components,
