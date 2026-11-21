@@ -5,6 +5,7 @@
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
@@ -15,9 +16,11 @@ import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval, splitSaleTransaction, type FakeHandlers } from "../../checkout/fakes";
 import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
 import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
+import { webLock } from "../../checkout/lib/web-lock";
 import { evmAddress } from "@shop/model/address";
+import { tokenAsset } from "@shop/model/asset";
 import { CHAIN } from "@shop/model/chain";
-import { createDemo, DemoShell } from "../../checkout/demo";
+import { createDemo, demoIdentity, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
 import { presentPayment, type MixedPayment } from "@shop/payment/present";
 import { BOOK, creatorOrder, storeMint } from "@shop/payment/fixtures";
@@ -54,7 +57,7 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
  * The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default), spendable `expiresIn`
  * s; `handlers` answer the node's other routes.
  */
-function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number, handlers: FakeHandlers = {}) {
+function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number, handlers: FakeHandlers = {}, routes?: Record<string, ReactNode>) {
   const demo = createDemo({
     session: "web3",
     ...(confirm ? { confirm } : {}),
@@ -79,13 +82,13 @@ function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, 
   const mixed = view.options.find((o) => o.method === "mana")!.mixed as MixedPayment;
   const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
   const shell = () => (
-    <DemoShell demo={demo} path="/shop/item/x/7">
+    <DemoShell demo={demo} path="/shop/item/x/7" routes={routes}>
       <QueryProbe />
       <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
     </DemoShell>
   );
   const shown = render(shell());
-  return { demo, mixed, line, unmount: shown.unmount, again: () => render(shell()) };
+  return { demo, mixed, line, shell, unmount: shown.unmount, again: () => render(shell()) };
 }
 
 
@@ -251,7 +254,8 @@ describe("buying with Credits and MANA", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 8000 })).toBeTruthy();
-    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).not.toBeNull();
+    // With the item's name, so a purchase of another item it holds back can say which item to check.
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.itemName).toBe("Rainbow Hat");
     unmount();
     again();
     expect(await screen.findByText(/still confirming/)).toBeTruthy();
@@ -422,6 +426,8 @@ describe("a split whose outcome is not known", () => {
     });
     // Its envelope, the identity of those very bytes, was kept before they went to the relay.
     expect(seen.record?.sale?.envelope).toBe(splitEnvelope(seen.posted!));
+    // And the item's name, so a purchase of another item it holds back can say which item to check.
+    expect(seen.record?.itemName).toBe("Rainbow Hat");
     answer();
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
   });
@@ -568,7 +574,9 @@ describe("a split whose outcome is not known", () => {
     holdFromAnotherTab(line);
     await act(async () => fireEvent.click(approve));
     expect(await screen.findByText("A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.", {}, { timeout: 5000 })).toBeTruthy();
-    // Not even the approve went out: it would have set the allowance from under the other purchase.
+    // Not even the approve went out (it would have set the allowance from under the other purchase); found under the lock,
+    // before the wallet was asked.
+    expect(signatures(demo)).toBe(0);
     expect(demo.relay.posts).toHaveLength(0);
     expect(authorizations(demo)).toBe(0);
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.creditId).toBe(OTHER);
@@ -634,6 +642,8 @@ describe("a split whose outcome is not known", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
     expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // Its record, from before names were kept, says no item: nothing to link to.
+    expect(screen.queryByTestId("combined-held-item")).toBeNull();
     // A run of it still preparing (no credit yet, a fresh hold) holds this one the same.
     anotherItemHeld(line, { creditId: null, creditExpiresAt: null });
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
@@ -701,7 +711,7 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(1);
   });
 
-  it("a finalized time read that hangs after the approve gives way before the sale takes a lock: the other split holds, no credit, the grant's lock free", async () => {
+  it("a finalized time read that hangs at the approve click gives way before the approval takes its lock: the other split holds, nothing signed or sent", async () => {
     const { demo, line, unmount, again } = setup();
     unmount();
     demo.services.finalizedTimeMs = 50;
@@ -713,23 +723,21 @@ describe("a split whose outcome is not known", () => {
       heldDuringRead = [...locks.held];
       return new Promise<number>(() => {});
     };
-    // Once the approve is relayed, another item's split shows up, its credit past its expiry on this browser's clock only.
-    const relayed = demo.services.fetchImpl!;
-    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
-      const answer = await relayed(...args);
-      if (relayedApproval(JSON.parse(String(args[1]?.body)))) anotherItemHeld(line, { creditExpiresAt: nowSeconds() - 60 });
-      return answer;
-    }) as typeof fetch;
     again();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
-    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    // While the approval is shown, another item's split shows up, its credit past its expiry on this browser's clock only.
+    anotherItemHeld(line, { creditExpiresAt: nowSeconds() - 60 });
+    await act(async () => fireEvent.click(approve));
     expect(await screen.findByText(IN_FLIGHT, {}, { timeout: 5000 })).toBeTruthy();
     expect(signal?.aborted).toBe(true);
     // No lock waited on the chain, and none is left held: another window can take the grant's lock and try.
     expect(heldDuringRead).toEqual([]);
     expect([...locks.held]).toEqual([]);
+    // Held back under the lock before the wallet was asked.
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
     expect(authorizations(demo)).toBe(0);
-    expect(demo.relay.posts).toHaveLength(1);
   });
 
   it("other items' credits are proven all at once: two hanging finalized time reads cost one deadline, not one each", async () => {
@@ -756,6 +764,62 @@ describe("a split whose outcome is not known", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
     expect(most).toBe(2);
+    expect(authorizations(demo)).toBe(0);
+  });
+
+  it("another item's split whose record names it is named, with a link to that item's page, where it can be checked again", async () => {
+    const { demo, line } = setup(undefined, undefined, MANA, undefined, {}, { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> });
+    anotherItemHeld(line, { itemName: "Neon Visor" });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.")).toBeTruthy();
+    const itemId = line.asset.token.kind === "item" ? line.asset.token.itemId : "";
+    expect(screen.getByTestId("combined-held-item")).toHaveTextContent("Open Neon Visor");
+    expect(screen.getByTestId("combined-held-item")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
+    // A resale's hold links to the token's page.
+    expect(screen.queryByText("THE OTHER ITEM'S PAGE")).toBeNull();
+    localStorage.removeItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${anotherItem(line)}`);
+    const token = splitHoldLine(tokenAsset(CHAIN.POLYGON, evmAddress(`0x${"cd".repeat(20)}`), "42"));
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${token}`,
+      JSON.stringify({ at: Date.now(), attempt: "resale", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"2f".repeat(32)}`, creditExpiresAt: nowSeconds() + 300, itemName: "Rare Cape" }),
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Your purchase of Rare Cape with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.")).toBeTruthy();
+    expect(screen.getByTestId("combined-held-item")).toHaveAttribute("href", `/shop/token/0x${"cd".repeat(20)}/42`);
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("the link to the item holding this one back opens its page within the Shop, without reloading it", async () => {
+    const { line } = setup(undefined, undefined, MANA, undefined, {}, { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> });
+    anotherItemHeld(line, { itemName: "Neon Visor" });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-held-item")));
+    expect(await screen.findByText("THE OTHER ITEM'S PAGE")).toBeTruthy();
+  });
+
+  it("of two other items holding this one back, the one whose record names its item is named, whichever comes first", async () => {
+    const { line } = setup();
+    // An older record with no name first, then one that names its item.
+    anotherItemHeld(line);
+    const named = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ef".repeat(20)}`) });
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${named}`,
+      JSON.stringify({ at: Date.now(), attempt: "named", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"3f".repeat(32)}`, creditExpiresAt: nowSeconds() + 300, itemName: "Neon Visor" }),
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/Your purchase of Neon Visor with Credits and MANA is still confirming/)).toBeTruthy();
+    expect(screen.getByTestId("combined-held-item").getAttribute("href")).toContain(`0x${"ef".repeat(20)}`);
+  });
+
+  it("a record of another purchase whose item name isn't text is one this browser can't read: nothing asked", async () => {
+    const { demo, line } = setup();
+    anotherItemHeld(line, { itemName: 42 });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.")).toBeTruthy();
+    expect(screen.queryByTestId("combined-held-item")).toBeNull();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
     expect(authorizations(demo)).toBe(0);
   });
 
@@ -1301,26 +1365,424 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
   });
 
-  it("right after its own approval, the sale waits a moment for the grant's lock the approval let go, rather than calling it another window's", async () => {
+  it("the approval takes the grant's lock once, at the click, and lets it go only once its sale is sent: no other window's purchase starts between them", async () => {
     const { demo, unmount, again } = setup();
     unmount();
     const base = demo.services.locks as LockManager;
-    const auth = getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address);
-    const name = exactGrantLock(auth, BOOK.buyer);
-    // The approval takes the lock first; the browser frees it a little late, so the sale's next two asks find it taken.
-    let asked = 0;
+    const name = exactGrantLock(getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address), BOOK.buyer);
+    // Each time the grant's lock is taken and let go, with how many requests the relay had been sent by then.
+    const held: string[] = [];
     demo.services.locks = {
       query: base.query.bind(base),
-      request: ((n: string, options: LockOptions, callback: LockGrantedCallback<unknown>) => {
-        if (n === name && (++asked === 2 || asked === 3)) return Promise.resolve(callback(null));
-        return base.request(n, options, callback);
-      }) as LockManager["request"],
+      request: ((n: string, options: LockOptions, callback: LockGrantedCallback<unknown>) =>
+        base.request(n, options, async (lock) => {
+          if (n !== name || !lock) return callback(lock);
+          held.push(`taken after ${demo.relay.posts.length}`);
+          try {
+            return await callback(lock);
+          } finally {
+            held.push(`let go after ${demo.relay.posts.length}`);
+          }
+        })) as LockManager["request"],
     } as LockManager;
     again();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
-    expect(asked).toBe(4);
+    // Taken before the approve went out, kept while it confirmed and through the sale, let go once both were sent.
+    expect(held).toEqual(["taken after 0", "let go after 2"]);
+    expect(demo.relay.posts).toHaveLength(2);
+  });
+
+  it.each([
+    ["sold out", { priceWei: (2_300n * 10n ** 15n).toString(), available: 0 }],
+    ["repriced", { priceWei: (2_500n * 10n ** 15n).toString(), available: 10 }],
+  ])("a listing %s while the wallet signs the approval is read again after it, under its lock: no credit, no sale, the lock let go", async (_, after) => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // The approval is signed; meanwhile the store's listing changes.
+    const request = demo.wallet.request.bind(demo.wallet);
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      const answer = await request(args);
+      if (args.method === "eth_signTypedData_v4") demo.services.resolvers!.store = async () => after;
+      return answer;
+    }) as typeof demo.wallet.request;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText("We couldn't complete the purchase. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
+    // The approval alone went out; nothing was reserved or sent for a sale the listing no longer allows.
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a dialog closed while the approval reads the listing asks nothing of the wallet: no prompt, no POST, no credit, the lock let go", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // The store's listing is read when the purchase starts, then again at the approve click: that second read waits.
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 2) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    act(() => {
+      fireEvent.click(screen.getByTestId("authorize-step-action"));
+    });
+    await waitFor(() => expect(reads).toBe(2));
+    shown.unmount();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a dialog closed while its listing is read again after the approval lets the lock go at once: another window takes it, and the late answer sends nothing", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const name = exactGrantLock(getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address), BOOK.buyer);
+    // The store's listing: read when the purchase starts, at the approve click, and once the approval is in; that one waits.
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 3) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(reads).toBe(3), { timeout: 5000 });
+    expect(locks.held.has(name)).toBe(true);
+    shown.unmount();
+    // Another window asks for the same lock before that read answers (once the browser has let it go), and gets it.
+    await act(async () => {});
+    const other = await webLock(locks, name);
+    expect(other).not.toBeNull();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    // Only the approval went out, nothing was reserved, and the other window still holds its lock.
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect(locks.held.has(name)).toBe(true);
+    other!();
+    await act(async () => {});
+    expect(locks.held.has(name)).toBe(false);
+  });
+
+  it("a dialog closed once its sale is under way keeps the lock until that sale is done: no other window takes it meanwhile", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const name = exactGrantLock(getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address), BOOK.buyer);
+    // The sale's own POST to the relay waits.
+    const relayed = demo.services.fetchImpl!;
+    let saleSent = false;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      if (!relayedApproval(JSON.parse(String(args[1]?.body)))) {
+        saleSent = true;
+        await waiting;
+      }
+      return relayed(...args);
+    }) as typeof fetch;
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(saleSent).toBe(true), { timeout: 5000 });
+    shown.unmount();
+    await act(async () => {});
+    // The sale is out: its lock stays with it, so no other window can start beside it.
+    expect(await webLock(locks, name)).toBeNull();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    await waitFor(() => expect(locks.held.has(name)).toBe(false), { timeout: 5000 });
+  });
+
+  it.each([
+    ["the wallet moves to another account", "wallet"],
+    ["the session and its wallet both move to another account", "session"],
+  ] as const)("when %s while the listing is read again after the approval, the dialog ends the attempt where it can be closed: no credit, no sale, the lock let go", async (_, what) => {
+    const { demo, shell, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 3) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(reads).toBe(3), { timeout: 5000 });
+    const other = BOOK.reseller.toLowerCase();
+    act(() => {
+      demo.wallet.emit("accountsChanged", [other]);
+      if (what === "session") {
+        demo.host = { ...demo.host, identity: demoIdentity(other) };
+        shown.rerender(shell());
+      }
+    });
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(await screen.findByText("We couldn't complete the purchase. Nothing was charged.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a listing read again after the approval that never answers gives way, the dialog still open: no credit, no sale, the lock let go", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    demo.services.listingReadMs = 50;
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => (++reads === 3 ? new Promise<never>(() => {}) : store(...args));
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText("We couldn't complete the purchase. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a wallet with no active account when the purchase starts is told to connect: nothing is asked, signed or sent", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    // The wallet answers no account (disconnected), while the session is still signed in.
+    demo.wallet.account = "";
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+  });
+
+  it.each([
+    ["disconnects while both are out, the session staying", true],
+    ["says nothing while both are out", false],
+  ] as const)("when the wallet %s, its account read on opening and at the click (both seeing the buyer, answered late) decide accordingly", async (_, disconnects) => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // Each account read is answered as the wallet stood when it was asked, and only once the test lets it through.
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    // The page's own read on opening, and the purchase's at the click: both asked while the wallet was on the buyer.
+    await waitFor(() => expect(late).toHaveLength(2));
+    if (disconnects) act(() => demo.wallet.emit("accountsChanged", []));
+    await act(async () => {
+      for (const answer of late) answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    if (disconnects) {
+      // The disconnect wins over both answers, asked before it: no Approve, nothing signed, sent or authorized.
+      expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+      expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+      expect(signatures(demo)).toBe(0);
+      expect(demo.relay.posts).toHaveLength(0);
+      expect(authorizations(demo)).toBe(0);
+      expect([...locks.held]).toEqual([]);
+      return;
+    }
+    // Nothing said in between: the late answer is the buyer's, and the purchase goes on as a click at once does.
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(demo.relay.posts).toHaveLength(2), { timeout: 5000 });
+    expect(authorizations(demo)).toBe(1);
+  });
+
+  it("a wallet that doesn't say its account when the purchase starts gives way: told to connect, where the dialog can be closed; its late answer counts for nothing, and trying again asks it again", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    demo.services.accountReadMs = 50;
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // Each account read is answered as the wallet stood when it was asked (the buyer), and only once the test lets it through.
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    const accountReads = () => demo.wallet.requests.filter((r) => r.method === "eth_accounts").length;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // The click's read answers at last (the buyer), past its time; the page's own never does.
+    await waitFor(() => expect(late).toHaveLength(2));
+    const [, atClick] = late as [() => void, () => void];
+    await act(async () => {
+      atClick();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(screen.getByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // Trying again asks the wallet again, the late answer no one's; it still doesn't answer, and says so again.
+    const asked = accountReads();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(accountReads()).toBe(asked + 1);
+    expect(await screen.findByText("Connect your wallet to pay with Credits and MANA.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a dialog closed while the wallet says its account goes no further once it answers: no listing read, nothing asked, signed or sent", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      reads += 1;
+      return store(...args);
+    };
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await waitFor(() => expect(late).toHaveLength(2));
+    const before = reads;
+    shown.unmount();
+    // The wallet answers the buyer, the dialog gone.
+    await act(async () => {
+      for (const answer of late) answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(reads).toBe(before);
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("when the wallet disconnects once the click's account read (the buyer) has brought up Approve, before the page's own read answers, nothing is asked of the wallet: no prompt, no POST, no credit, the lock let go", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // Each account read is answered as the wallet stood when it was asked, and only once the test lets it through.
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await waitFor(() => expect(late).toHaveLength(2));
+    const [onOpening, atClick] = late as [() => void, () => void];
+    // Only the click's read answers (the buyer): Approve comes up, the page's own copy of the account still unheard.
+    await act(async () => atClick());
+    const approve = await screen.findByTestId("authorize-step-action");
+    // Then the wallet disconnects, the session staying: an event that leaves the page's copy where it was (none).
+    act(() => demo.wallet.emit("accountsChanged", []));
+    await act(async () => {
+      onOpening();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    await act(async () => {
+      fireEvent.click(approve);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it.each([
+    ["the wallet moves to another account", "wallet"],
+    ["the session and its wallet both move to another account", "session"],
+    ["the wallet disconnects, the session staying", "disconnect"],
+  ] as const)("when %s while the approval reads the listing, nothing is asked of the wallet: no prompt, no POST, no credit, the lock let go", async (_, what) => {
+    const { demo, shell, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // The store's listing is read when the purchase starts, then again at the approve click: that second read waits.
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 2) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    act(() => {
+      fireEvent.click(screen.getByTestId("authorize-step-action"));
+    });
+    await waitFor(() => expect(reads).toBe(2));
+    const other = BOOK.reseller.toLowerCase();
+    act(() => {
+      // The wallet moves (or, with "disconnect", has no account any more); with "session", the signed-in account follows it,
+      // so the two agree again, on another buyer.
+      demo.wallet.emit("accountsChanged", what === "disconnect" ? [] : [other]);
+      if (what === "session") {
+        demo.host = { ...demo.host, identity: demoIdentity(other) };
+        shown.rerender(shell());
+      }
+    });
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
   });
 
   it("without Web Locks no approval is asked for: nothing is signed, authorized or sent", async () => {

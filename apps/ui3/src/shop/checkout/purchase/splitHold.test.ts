@@ -64,6 +64,7 @@ const hold = (over: Partial<SplitHold> = {}): SplitHold => ({
   sale: SALE,
   expiredSeenAt: null,
   expiryProvenAt: null,
+  itemName: null,
   ...over,
 });
 
@@ -103,7 +104,7 @@ describe("an account's splits that may still spend its allowance", () => {
   });
 
   it("rejects a field of the wrong type strictly, where the tolerant read takes it as absent, and reads every older format", () => {
-    for (const bad of [{ creditId: 12345 }, { chainId: "137" }, { creditExpiresAt: "1700000000" }, { attempt: 7 }, { sale: { buyer: "x" } }, { expiredSeenAt: "soon" }, { expiryProvenAt: "soon" }]) {
+    for (const bad of [{ creditId: 12345 }, { chainId: "137" }, { creditExpiresAt: "1700000000" }, { attempt: 7 }, { sale: { buyer: "x" } }, { expiredSeenAt: "soon" }, { expiryProvenAt: "soon" }, { itemName: 42 }]) {
       localStorage.setItem(splitHoldKey(ACCOUNT, OTHER), JSON.stringify({ ...hold(), ...bad }));
       expect(() => readAccountSplitHolds(ACCOUNT)).toThrow();
       expect(readSplitHoldRecord(ACCOUNT, OTHER)).not.toBeNull();
@@ -112,6 +113,18 @@ describe("an account's splits that may still spend its allowance", () => {
     localStorage.setItem(splitHoldKey(ACCOUNT, OTHER), JSON.stringify(Date.now()));
     localStorage.setItem(splitHoldKey(ACCOUNT, LINE), JSON.stringify({ at: Date.now(), attempt: null, txHash: null }));
     expect(readAccountSplitHolds(ACCOUNT).map((h) => h.line).sort()).toEqual([LINE, OTHER].sort());
+  });
+
+  it("keeps the item's name with its hold, and reads a record from before names were kept with none", () => {
+    expect(writeSplitHold(ACCOUNT, LINE, hold({ itemName: "Rainbow Hat" }))).toBe(true);
+    expect(readAccountSplitHolds(ACCOUNT)).toEqual([{ line: LINE, hold: expect.objectContaining({ itemName: "Rainbow Hat" }) }]);
+    localStorage.setItem(splitHoldKey(ACCOUNT, LINE), JSON.stringify({ at: Date.now(), attempt: "a", txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt: 1 }));
+    expect(readAccountSplitHolds(ACCOUNT)[0]?.hold.itemName).toBeNull();
+    // A blank name is none, and one with spaces around it is read without them.
+    expect(writeSplitHold(ACCOUNT, LINE, hold({ itemName: "   " }))).toBe(true);
+    expect(readAccountSplitHolds(ACCOUNT)[0]?.hold.itemName).toBeNull();
+    expect(writeSplitHold(ACCOUNT, LINE, hold({ itemName: "  Rainbow Hat " }))).toBe(true);
+    expect(readAccountSplitHolds(ACCOUNT)[0]?.hold.itemName).toBe("Rainbow Hat");
   });
 
   it("throws without storage, and skips a key gone between listing and reading", () => {

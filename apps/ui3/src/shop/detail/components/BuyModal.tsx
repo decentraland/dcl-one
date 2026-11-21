@@ -436,6 +436,7 @@ function BuyDialog({ line, returnPath, resume: given = null, onResumeUsed, onClo
         {phase === "error" ? (
           <ErrorBody
             message={run.kind === "error" ? run.message : outage ? TEXT.outage : gone ? TEXT.gone : result?.status === "failed" ? result.failure.message : null}
+            link={run.kind === "error" && run.held ? { href: run.held.href, label: `Open ${run.held.name}` } : undefined}
             onClose={close}
             onRetry={() => {
               // The split's failure goes back to the method step; the checkout's own retries in its place.
