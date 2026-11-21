@@ -971,6 +971,11 @@ pub fn router(state: SharedState) -> Router {
                 .delete(erase(handlers::env_delete)),
         )
         .layer(axum::extract::DefaultBodyLimit::max(body_limit))
+        .with_state(state)
+        // The old service's status checks; its component map names the server `server`.
+        .merge(crate::shared::health::status_checks_router_with(
+            crate::shared::health::SERVER_PASS,
+        ))
         // A NUL in a key or player address is the handler's 400, after the
         // credential, as upstream answers it; `validate_key` and
         // `parse_player` keep it from every statement.
@@ -978,7 +983,6 @@ pub fn router(state: SharedState) -> Router {
             nul_guard::nul_query_guard_middleware,
         ))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
-        .with_state(state)
 }
 
 #[cfg(test)]

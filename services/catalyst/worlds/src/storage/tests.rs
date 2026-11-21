@@ -5817,3 +5817,43 @@ async fn exports_report_rollback_failure_before_writing_a_valid_gzip_trailer() {
     );
     dedicated.close().await;
 }
+
+/// The old service's status checks answer under the prefix, with writes off
+/// and no database.
+#[tokio::test]
+async fn health_probes_answer_under_the_prefix() {
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    let app = Router::new().nest(
+        "/world-storage",
+        crate::writes::guard(router(state(&pool, None)), false),
+    );
+    for (probe, ty, body) in [
+        ("live", "text/plain; charset=utf-8", "alive"),
+        (
+            "ready",
+            "application/health+json; charset=utf-8",
+            crate::shared::health::SERVER_PASS,
+        ),
+        (
+            "startup",
+            "application/health+json; charset=utf-8",
+            crate::shared::health::SERVER_PASS,
+        ),
+    ] {
+        let req = Request::get(format!("/world-storage/health/{probe}"))
+            .header("origin", "https://example.org")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{probe}");
+        assert_eq!(resp.headers()["content-type"], ty, "{probe}");
+        assert!(
+            resp.headers().contains_key("access-control-allow-origin"),
+            "{probe}"
+        );
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), body.as_bytes(), "{probe}");
+    }
+}
