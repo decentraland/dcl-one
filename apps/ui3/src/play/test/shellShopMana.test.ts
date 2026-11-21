@@ -1006,8 +1006,12 @@ describe('the in-world purchase with MANA', () => {
       on()
       const w = world()
       splitShop(w)
-      // Its credit expired at 500 s and the chain (600 s) proves it: that unblocks another item, never this one.
+      // Its credit expired at 500 s and the chain (600 s) would prove it: that unblocks another item, never this one, so the
+      // chain isn't even asked about it.
       w.onChain.chainTime = 600
+      const finalizedTime = w.evidence.finalizedTime
+      let asked = 0
+      w.evidence.finalizedTime = (chainId: number) => (asked++, finalizedTime(chainId))
       const held = { ...webHold, creditExpiresAt: 500 }
       expect(writeSplitHold(BUYER, HOLD_LINE, held)).toBe(true)
       const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
@@ -1017,6 +1021,7 @@ describe('the in-world purchase with MANA', () => {
       expect(authorizeShown(p)).toBe(false)
       expect(w.relay.posts).toHaveLength(0)
       expect(readSplitHoldRecord(BUYER, HOLD_LINE)).toMatchObject({ attempt: 'web-attempt', creditExpiresAt: 500 })
+      expect(asked).toBe(0)
     })
 
     it('sends no approval when this item gets held while the wallet signs, even by a hold whose credit is proven expired', async () => {

@@ -1046,10 +1046,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const creditsOver = new Set<string>()
 
   /**
-   * Proves, by the chain's finalized time (splitCreditOverOnChain), which of `buyer`'s held splits can't spend anything
-   * any more, for splitBlock to read without waiting. Only those the local clock says are past their expiry are asked.
+   * Proves, by the chain's finalized time (splitCreditOverOnChain), which of `buyer`'s held splits of items other than
+   * `line` can't spend anything any more, for splitBlock to read without waiting (a proof never lets this item's own hold
+   * go, so it isn't asked). Only those the local clock says are past their expiry are asked.
    */
-  const proveCreditsOver = async (buyer: string): Promise<void> => {
+  const proveCreditsOver = async (buyer: string, line: string): Promise<void> => {
     let holds: { line: string; hold: SplitHold }[]
     try {
       holds = readAccountSplitHolds(buyer)
@@ -1062,8 +1063,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       if (!times.has(chainId)) times.set(chainId, finalizedTime(chainId))
       return times.get(chainId)!
     }
-    for (const { hold } of holds) {
-      if (hold.creditId !== null && !creditsOver.has(hold.creditId) && (await splitCreditOverOnChain(hold, timeOf, svc.now()))) creditsOver.add(hold.creditId)
+    for (const held of holds) {
+      const { hold } = held
+      if (held.line === line || hold.creditId === null || creditsOver.has(hold.creditId)) continue
+      if (await splitCreditOverOnChain(hold, timeOf, svc.now())) creditsOver.add(hold.creditId)
     }
   }
 
@@ -1892,7 +1895,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Before anything is asked (no approval left behind for a purchase that can't go ahead), read without taking anything:
     // this item held, another item's split that may still spend the allowance, an approval running in another window.
     // Each is checked again where it counts: under the approval's lock (its `live` check), and again once the sale holds it.
-    await proveCreditsOver(quote.buyer)
+    await proveCreditsOver(quote.buyer, holdLine)
     const blocked = blockedNow() ?? ((await lockTaken(locks, grantLock)) ? SPLIT_APPROVING_ELSEWHERE : null)
     if (blocked) return { why: blocked }
     // An approval of this account still able to run (its answer lost) holds the sale even where the allowance looks covered.
