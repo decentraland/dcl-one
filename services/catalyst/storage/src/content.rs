@@ -185,6 +185,39 @@ impl Storage {
         Ok(stat_for_read(&self.known_shards, &path).await?.is_some())
     }
 
+    /// Sets a present blob's modified time to now, so the collector's age floor counts from this
+    /// call: a writer that names a blob it did not store in a row it commits later touches it
+    /// first. `Ok(false)` when the blob is absent, under the same miss-vs-fault rules as
+    /// [`exist`](Self::exist). Both timestamps are set to now (`utimensat` with no times), which
+    /// needs write permission on the blob or its ownership; a blob that grants neither (another
+    /// uid's `0644` file) answers [`std::io::ErrorKind::PermissionDenied`].
+    pub async fn touch(&self, hash: &str) -> Result<bool, StorageError> {
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = resolve_file_path(&self.root, hash)?;
+        if stat_for_read(&self.known_shards, &path).await?.is_none() {
+            return Ok(false);
+        }
+        let path =
+            std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
+        let touched = tokio::task::spawn_blocking(move || {
+            // SAFETY: `path` is a valid NUL-terminated string; a null `times` means "now".
+            let rc = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), std::ptr::null(), 0) };
+            if rc == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        })
+        .await
+        .map_err(std::io::Error::other)?;
+        match touched {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Batch existence probe for `/available-content`: a provably-invalid id is a per-id miss that
     /// never poisons the batch; only real storage faults abort it.
     pub async fn exist_multiple<S: AsRef<str>>(
