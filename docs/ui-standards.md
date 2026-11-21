@@ -280,6 +280,7 @@ library/ui/
       Button.module.css
       Button.test.tsx
       Button.figma.ts   Figma mapping, read by the tooling only
+    AppChrome/          web chrome contexts and host adapters, imported by path
   apps/
     <app>/              app-specific UI: components and styles used by one app
   index.ts              public foundation and component exports
@@ -294,6 +295,7 @@ library/ui/
 - **App-specific UI:** keep components used by a single app in
   `apps/<app>/`, built from the shared foundations and components; only that
   app imports them. See [App-specific UI](#app-specific-ui).
+- **Web chrome contracts:** `components/AppChrome/` contains the shared contexts, router link adapter and structural layout slots. These contracts are imported by path and have no Figma component mapping.
 - **Figma tooling:** keep the MCP server and CLI in `figma/` and outside browser
   exports. Component mappings connect Figma nodes to shared components.
 

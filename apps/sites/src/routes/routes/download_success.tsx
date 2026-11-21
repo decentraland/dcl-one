@@ -17,7 +17,7 @@ import {
   SitesLocaleContext,
   saveSitesLocale,
   sitesLanguage,
-} from "@ui/web/frames/sites-locale";
+} from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { publicBase } from "../lib/social-meta";
 import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download_success";

@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { AuthIdentity } from "../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import { createCartStore, type CartStorage, type CartStore } from "../cart/store";
 import type { OfferFetcher } from "../cart/revalidate";
 import type { CartListingRef, PurchaseOffer, PurchaseState } from "@shop/model/purchase";

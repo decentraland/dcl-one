@@ -2,8 +2,8 @@ import { useLocation, useNavigate, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
 
 import { PlaceDetail } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
-import { isPlaceholderThumbnail, type PlaceViewer } from "@ui/data/catalyst/places";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import { isPlaceholderThumbnail, type PlaceViewer } from "@web-core/place-view";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import UpstreamUnavailable from "@/features/components/UpstreamUnavailable";
 import { openSignIn } from "@/features/components/auth/signin-store";
@@ -102,7 +102,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
 
   if (!place && unavailable) {
     return (
-      <SitesChrome active="explore" overlayNav>
+      <SitesLayout active="explore" overlayNav>
         <main className="place-detail-route">
           <UpstreamUnavailable
             title="Places are temporarily unavailable"
@@ -111,13 +111,13 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
             backLabel="Back to Places"
           />
         </main>
-      </SitesChrome>
+      </SitesLayout>
     );
   }
 
   const launchError = travel?.launchError;
   return (
-    <SitesChrome active="explore" overlayNav>
+    <SitesLayout active="explore" overlayNav>
       <main className="place-detail-route">
         <PlaceDetail
           key={place?.id}
@@ -161,6 +161,6 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
           }}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

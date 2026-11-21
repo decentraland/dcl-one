@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -10,7 +11,11 @@ describe("when the /cast route renders", () => {
       initialEntries: ["/cast"],
       hydrationData: { loaderData: { cast: { sid: "test", from: "unknown", reason: "missing", assignment: { variant: "instrumented" } } } },
     });
-    html = renderToString(<RouterProvider router={router} />);
+    html = renderToString(
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
   });
   it("should display the Cast not-found heading", () => {
     expect(html).toContain("404 - Page Not Found");

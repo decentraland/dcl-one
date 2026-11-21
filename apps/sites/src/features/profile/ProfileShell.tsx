@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "../components/chrome/SitesLayout";
 
 import { Button, type TabsLinkProps } from "@dcl/one-ui";
 
@@ -72,7 +72,7 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
 
   // No top-bar entry is highlighted on a profile ("play" maps to none), as on the profile site.
   return (
-    <SitesChrome active="play">
+    <SitesLayout active="play">
       <ProfileFrame
         tabs={tabs}
         active={active}
@@ -93,6 +93,6 @@ export function ProfileShell({ profile, own, tabs, active, onTab, aside, childre
       >
         {children}
       </ProfileFrame>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

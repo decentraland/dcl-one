@@ -1,11 +1,11 @@
 import { useContext, useEffect, useRef } from "react";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { homeCopy } from "@/features/home/locale";
 import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
@@ -98,7 +98,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         .replace("{total}", String(total)),
   };
   return (
-    <SitesChrome
+    <SitesLayout
       active="play"
       overlayNav
       headerSurface="overlay"
@@ -158,6 +158,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           store={store}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

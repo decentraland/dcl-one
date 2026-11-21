@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName } from "@web-core/profile/avatarColor";
 
 import { profileFaceUrl, profileSnapshotUrl } from "./profile-face-url";
 import { isProfileOfAddress, profileDisplayName } from "./profile-label";

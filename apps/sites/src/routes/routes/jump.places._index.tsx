@@ -1,7 +1,7 @@
 import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
 import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
 import { redirect } from "react-router";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { genericPlaceCard, readJumpTarget, toPlaceCard } from "@/data/lib/catalyst/jump/jump";
 import { loadCreator, loadJumpPlace, loadParcelCreator, loadWorldEntity } from "@/data/lib/catalyst/jump/jump.server";
@@ -69,10 +69,10 @@ export function headers() {
 export default function JumpPlaces({ loaderData }: Route.ComponentProps) {
   const { card, launch } = loaderData;
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesLayout active="play" overlayNav>
       <JumpPage>
         <JumpCard {...card} {...jumpInFor(card.jumpInHref, launch)} />
       </JumpPage>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

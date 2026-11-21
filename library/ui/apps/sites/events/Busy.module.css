@@ -1,0 +1,16 @@
+/* A wait on the Events pages' dark surface: the spinner with its words beside it, or stacked in the middle of the content area. */
+.busy {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  margin: 0;
+  color: var(--dcl-text-secondary-on-brand);
+}
+
+.busy[data-layout='page'] {
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--dcl-space-48) var(--dcl-space-16);
+  text-align: center;
+}
