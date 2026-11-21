@@ -541,9 +541,19 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
     // retry after a partial send tells nobody twice.
     let events = match context.as_ref() {
         Some(context) => {
+            // The key's room names its scene, whose world admins may hold it.
+            let room: Option<String> =
+                sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
+                    .bind(row.access_id)
+                    .fetch_optional(&state.pool)
+                    .await?
+                    .flatten();
+            let scope = super::notifications::Scope::Key {
+                room: room.as_deref(),
+            };
             let recipients = tokio::time::timeout(
                 Duration::from_secs(5),
-                super::notifications::recipients(state, context, event.recipient.clone(), None),
+                super::notifications::recipients(state, context, event.recipient.clone(), scope),
             )
             .await
             .map_err(|_| ApiError::internal("stream notification recipients timed out"))??;

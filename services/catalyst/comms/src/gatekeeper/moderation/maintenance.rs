@@ -1,7 +1,7 @@
 //! Periodic removal cleanup and room metadata reconciliation.
 use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlace, RemovedPlaces};
 use crate::gatekeeper::streaming::notifications::{
-    notification, owner, place_info as info, recipients, to_each,
+    Scope, notification, owner, place_info as info, recipients, to_each,
 };
 use crate::gatekeeper::{CommsState, SharedState, admission::scene, errors::ApiError, streaming};
 use crate::interfaces::StreamingNotificationKind;
@@ -35,9 +35,16 @@ async fn cleanup(
         feed.save_owner(event.event_id, recipient.as_str()).await?;
     }
     let recipients = match recipient {
-        Ok(owner) => recipients(state, &context, owner.clone(), Some(event.removed_at))
-            .await
-            .map(|all| (owner, all)),
+        Ok(owner) => recipients(
+            state,
+            &context,
+            owner.clone(),
+            Scope::Removal {
+                revoked_at: event.removed_at,
+            },
+        )
+        .await
+        .map(|all| (owner, all)),
         Err(error) => Err(error),
     };
     if event.cleaned_at.is_none() {
@@ -1376,6 +1383,72 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(bans, [format!("{world}:1,1"), format!("{world}x:0,0")]);
+    }
+
+    #[tokio::test]
+    async fn a_retried_world_removal_notice_reaches_the_owner_granted_scene_admin() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, _) = setup(pool.clone()).await;
+        let owner = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let parcel_grantee = Address::parse("0xcccccccccccccccccccccccccccccccccccccccc").unwrap();
+        state.policy = Arc::new(
+            crate::gatekeeper::streaming::notifications::test_support::WorldPolicy {
+                owner: owner.clone(),
+                wide: Default::default(),
+                protected: [owner.clone(), parcel_grantee.clone()].into(),
+            },
+        );
+        let world = format!("removed-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'bafy', '{\"0,0\"}')")
+            .bind(&world).bind(identity).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place_world_local (id, base_position, raw, world_name, world) VALUES ($1, '0,0', '{}', $1, true)")
+            .bind(&world).execute(&pool).await.unwrap();
+        let (admin, skipped) = (
+            Address::parse("0xdddddddddddddddddddddddddddddddddddddddd").unwrap(),
+            Address::parse("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee").unwrap(),
+        );
+        let grant = identity.to_string();
+        state
+            .moderation
+            .add_admin(&grant, &admin, &owner)
+            .await
+            .unwrap();
+        state
+            .moderation
+            .add_admin(&grant, &skipped, &parcel_grantee)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.place_world_local WHERE id = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let event: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE place_id = $1").bind(&world).fetch_one(&pool).await.unwrap();
+        let (feed, state) = (RemovedPlaces::new(pool.clone()), Arc::new(state));
+        directory.fail.store(true, Ordering::SeqCst);
+        assert!(cleanup(&state, &feed, &event).await.is_err());
+        let active: bool = sqlx::query_scalar(
+            "SELECT active FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2",
+        )
+        .bind(&grant)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!active, "the first pass revoked the grant");
+        let saved: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE event_id = $1").bind(event.event_id).fetch_one(&pool).await.unwrap();
+        directory.fail.store(false, Ordering::SeqCst);
+        cleanup(&state, &feed, &saved).await.unwrap();
+        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let told: std::collections::BTreeSet<&str> =
+            notifications.iter().map(|n| n.recipient.as_str()).collect();
+        assert_eq!(
+            told,
+            [owner.as_str(), parcel_grantee.as_str(), admin.as_str()].into()
+        );
     }
 
     #[tokio::test]

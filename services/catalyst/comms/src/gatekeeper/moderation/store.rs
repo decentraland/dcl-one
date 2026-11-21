@@ -148,15 +148,16 @@ impl Moderation {
             .collect())
     }
 
-    /// The admins of `place_id` who are active, or whose grant a place removal
-    /// at `revoked_at` ended (that cleanup stamps its `removed_at`).
+    /// The admins of `place_id` with their granters: those active, and those
+    /// whose grant a place removal at `revoked_at` ended (that cleanup stamps
+    /// its `removed_at`).
     pub async fn notice_admins(
         &self,
         place_id: &str,
         revoked_at: Option<NaiveDateTime>,
-    ) -> Result<Vec<String>, ApiError> {
-        Ok(sqlx::query_scalar(
-            "SELECT admin_address FROM social.scene_admins \
+    ) -> Result<Vec<(String, String)>, ApiError> {
+        Ok(sqlx::query_as(
+            "SELECT admin_address, added_by FROM social.scene_admins \
              WHERE place_id = $1 AND (active OR removed_at = $2)",
         )
         .bind(place_id)
