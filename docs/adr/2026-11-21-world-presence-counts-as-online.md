@@ -29,8 +29,8 @@ sources, each with its own freshness:
 A wallet is online while any fresh source holds it, so a wallet in both an island
 and a World is online once and goes offline only when it is in neither. The
 topology generation, and with it every connectivity notice, moves only when that
-union changes. Only identities that are wallets count; `authoritative-server` and
-other non-wallet identities never do. Genesis scene rooms do not feed it: Genesis
+union changes. Only identities that are wallets count; `authoritative-server`, Cast
+streamers, watchers and presentation bots (prefixed identities) never do. Genesis scene rooms do not feed it: Genesis
 presence stays with Pulse.
 
 State comes from complete reads, never from events. Every `serve` already reads
@@ -55,6 +55,9 @@ this tree.
 - World transitions reach every replica within about 5 to 7 s of LiveKit's
   webhook, and within the 30 s read when the hint is lost. LiveKit reports an
   unclean disconnect only after its own departure timeout.
+- A player moving from Genesis into a World leaves the islands snapshot before a
+  World read sees them, so friends may get an offline then an online notice about
+  5 to 7 s apart (up to 30 s when the hint is lost).
 - Each replica runs an extra complete read per World room event burst, coalesced
   to at most one per about 5 s. Under steady churn every replica reads LiveKit at
   that cadence instead of every 30 s.

@@ -315,7 +315,7 @@ upstream PostgreSQL.
 
 | behaviour | upstream cases | local test | status |
 | --- | --- | --- | --- |
-| The online peers are the deduplicated union of every source; none from empty sources | 3 | comms `topology.rs` `complete_replacement_invalid_retention_and_quiet_expiry` | covered; differs: one source (the Pulse island frames), not archipelago and worlds stats, and every address is lowercased with anything that is not a wallet dropped. Upstream `src/logic/peers-stats/peers-stats.ts:12-14`; local `comms/src/topology.rs:56-62` |
+| The online peers are the deduplicated union of every source; none from empty sources | 3 | comms `topology.rs` `complete_replacement_invalid_retention_and_quiet_expiry`, `wallet_in_an_island_and_a_world_is_online_once_until_it_is_in_neither` | covered; differs: two sources (the Pulse island frames and this replica's World room occupancy from LiveKit reads), not archipelago and worlds stats, and every address is lowercased with anything that is not a wallet dropped. Upstream `src/logic/peers-stats/peers-stats.ts:12-14`; local `comms/src/topology.rs` `WalletTopology::is_online` |
 | A failing source is skipped; all failing gives none | 4 | comms `topology.rs` `complete_replacement_invalid_retention_and_quiet_expiry` | covered; differs: a frame that does not decode keeps the previous set until its receipt expires, and an expired receipt empties it. Upstream `src/logic/peers-stats/peers-stats.ts:12-14`; local `comms/src/topology.rs:55`, `:89-97` |
 | Every source is asked | 1 | — | n/a |
 
