@@ -539,6 +539,11 @@ mod rpc {
         answer
     }
 
+    /// An HTTP 500 carrying a revert envelope.
+    fn server_error_with_revert(body: &Value, _: usize) -> Value {
+        json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": 3, "message": "execution reverted" }, "httpStatus": 500 })
+    }
+
     fn oversized_call(body: &Value, _: usize) -> Value {
         json!({ "jsonrpc": "2.0", "id": body["id"], "result": format!("0x{}", "00".repeat(33)) })
     }
@@ -644,9 +649,11 @@ mod rpc {
 
     #[tokio::test]
     async fn a_server_error_is_unavailable_whatever_its_body() {
-        let (result, calls) = verdict(server_error_with_magic, contract_parts()).await;
-        assert_eq!(result.unwrap_err(), RequestAuthError::Unavailable);
-        assert_eq!(calls, 1);
+        for answer in [server_error_with_magic, server_error_with_revert] {
+            let (result, calls) = verdict(answer, contract_parts()).await;
+            assert_eq!(result.unwrap_err(), RequestAuthError::Unavailable);
+            assert_eq!(calls, 1);
+        }
     }
 
     /// A contract refusing every hash on a node whose head is behind the request time.
