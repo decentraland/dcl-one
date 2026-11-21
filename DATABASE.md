@@ -1001,6 +1001,20 @@ credentials and compliance metric outcomes. Delayed DNS, combined network phases
 and deployed providers remain unverified; the probes do not establish exhaustive
 provider equivalence.
 
+## Community place ids
+
+`social.community_places.place_id` holds a places catalogue id or a world name,
+lowercased on every write (REST add, community create and edit, federated add)
+because explore keys both lowercased. Removal and the edit's held-place diff match
+`lower(place_id)`, so a row written before this rule still answers. The release
+script `schemas/releases/community-place-ids-lowercase.sql` collapses case
+variants of one id in a community to one row (the lowercase spelling, else the
+earliest added) and lowercases the survivor. It is rerunnable and needs no
+maintenance window; run it after the updated binaries replace every old replica,
+and again after a TS import run that predates this rule. Rollback needs the
+matching backup. A Genesis place belongs to its LAND owner, never to the owner the scene
+metadata names ([decision](docs/adr/2026-11-21-community-genesis-place-owner.md)).
+
 ## Shared social registry profile facts
 
 RPC and community profile readers share `social.registry_profile_cache` through
