@@ -12,6 +12,27 @@ pub struct CommunityVoiceChatBody {
     pub profile_data: Option<Value>,
 }
 
+/// The `action` values upstream's schema accepts (case-sensitive). Every one
+/// but `create` joins as a listener.
+const COMMUNITY_VOICE_ACTIONS: [&str; 6] = [
+    "create",
+    "join",
+    "request-to-speak",
+    "promote-speaker",
+    "demote-speaker",
+    "kick-player",
+];
+
+pub(in crate::gatekeeper) fn community_voice_action(
+    action: Option<&str>,
+) -> Result<&str, ApiError> {
+    let action = action.ok_or_else(|| ApiError::bad_request("The property action is required"))?;
+    if !COMMUNITY_VOICE_ACTIONS.contains(&action) {
+        return Err(ApiError::bad_request("The property action is invalid"));
+    }
+    Ok(action)
+}
+
 /// The role name assumed when the body omits `user_role`; still a claim.
 const CLAIMED_ROLE_WHEN_OMITTED: &str = "none";
 
@@ -84,6 +105,7 @@ pub async fn community_voice_credentials_for(
         .map_err(|_| ApiError::bad_request("The property community_id is invalid"))?;
     let claimed_wallet = Address::parse(&body.user_address)
         .map_err(|_| ApiError::bad_request("The property user_address is invalid"))?;
+    let is_create = community_voice_action(body.action.as_deref())? == "create";
     let claimed_role = body
         .user_role
         .as_deref()
@@ -96,8 +118,7 @@ pub async fn community_voice_credentials_for(
         .await
         .into_result()?;
     let speaker_rights = claimed_role_grants_speaker_rights(&claimed_role);
-    let action = body.action.as_deref().unwrap_or("join").to_lowercase();
-    let is_speaker = action == "create" && speaker_rights;
+    let is_speaker = is_create && speaker_rights;
     let room_name = crate::rooms::community_voice_chat_room_name(&community_id);
     let metadata = community_join_metadata(&claimed_role, is_speaker, body.profile_data.as_ref());
     let mut grants = join_grants(&room_name);
@@ -157,8 +178,16 @@ pub async fn community_voice_chat_status(
     Path(community_id): Path<String>,
 ) -> Result<Json<CommunityVoiceChatStatusResponse>, ApiError> {
     let community_id = parse_community_id(&community_id)?;
-    let (active, participant_count, moderator_count) =
-        community_status(&state, community_id).await?;
+    // Upstream answers inactive when the store fails.
+    let (active, participant_count, moderator_count) = match community_status(&state, community_id)
+        .await
+    {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::warn!(%community_id, error = %error, "community voice status unreadable; answering inactive");
+            (false, 0, 0)
+        }
+    };
     let (participant_count, moderator_count) = if active {
         (participant_count, moderator_count)
     } else {
@@ -188,7 +217,7 @@ pub(super) fn validate_bulk_community_ids(ids: &[String]) -> Result<(), ApiError
 }
 
 /// POST /community-voice-chat/status (service token): one statement for the
-/// whole set; an id that is not a uuid answers inactive.
+/// whole set; an id that is not a uuid, or a failed read, answers inactive.
 pub async fn community_voice_chat_bulk_status(
     State(state): State<SharedState>,
     Json(body): Json<BulkCommunityStatusBody>,
@@ -200,7 +229,14 @@ pub async fn community_voice_chat_bulk_status(
         .map(|id| CommunityId::parse(id).ok())
         .collect();
     let ids: Vec<CommunityId> = parsed.iter().flatten().copied().collect();
-    let by_id = state.voice_db.bulk_community_status(&ids).await?;
+    let by_id = state
+        .voice_db
+        .bulk_community_status(&ids)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "bulk community voice status unreadable; answering inactive");
+            Default::default()
+        });
     let data: Vec<Value> = body
         .community_ids
         .iter()
@@ -219,11 +255,18 @@ pub async fn community_voice_chat_bulk_status(
     Ok(Json(serde_json::json!({ "data": data })))
 }
 
-/// GET /community-voice-chat/active (service token).
+/// GET /community-voice-chat/active (service token); a failed read lists none.
 pub async fn community_voice_chat_active(
     State(state): State<SharedState>,
 ) -> Result<Json<Value>, ApiError> {
-    let active = state.voice_db.all_active_community_voice_chats().await?;
+    let active = state
+        .voice_db
+        .all_active_community_voice_chats()
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "active community voice chats unreadable; answering none");
+            Vec::new()
+        });
     let data: Vec<Value> = active
         .into_iter()
         .map(|c| serde_json::json!({ "communityId": c.community_id.to_string(), "participantCount": c.participant_count, "moderatorCount": c.moderator_count }))
@@ -466,7 +509,8 @@ pub async fn community_mute_speaker(
     ))
 }
 
-/// GET /users/{address}/community-voice-chat-status (service token).
+/// GET /users/{address}/community-voice-chat-status (service token); a failed
+/// read answers not in a chat.
 pub async fn check_user_community_status(
     State(state): State<SharedState>,
     Path(user_address): Path<String>,
@@ -476,7 +520,11 @@ pub async fn check_user_community_status(
     let is_in = state
         .voice_db
         .is_user_in_any_community_voice_chat(&address)
-        .await?;
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "community voice membership unreadable; answering false");
+            false
+        });
     Ok(Json(
         serde_json::json!({ "userAddress": address.as_str(), "isInCommunityVoiceChat": is_in }),
     ))

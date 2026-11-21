@@ -146,8 +146,9 @@ impl CleanupCommand {
         }
     }
 
+    /// Key expiry waits for the broadcast to end, as upstream's key job does.
     fn permits_running(self) -> bool {
-        self != Self::IdleReplacement
+        !matches!(self, Self::IdleReplacement | Self::KeyExpiry)
     }
 }
 
@@ -296,7 +297,7 @@ pub(super) async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
 async fn expire_streams(state: &CommsState) -> Result<(), ApiError> {
     expire(state, Expiry::Duration).await
 }
-async fn expire_keys(state: &CommsState) -> Result<(), ApiError> {
+pub(super) async fn expire_keys(state: &CommsState) -> Result<(), ApiError> {
     expire(state, Expiry::Key).await
 }
 
@@ -304,7 +305,7 @@ async fn expire(state: &CommsState, expiry: Expiry) -> Result<(), ApiError> {
     let query = if matches!(expiry, Expiry::Duration) {
         "SELECT id FROM social.scene_stream_access WHERE active AND streaming AND streaming_start_time<=timezone('UTC',now())-interval '4 hours' AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY streaming_start_time,id LIMIT $1"
     } else {
-        "SELECT id FROM social.scene_stream_access WHERE active AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
+        "SELECT id FROM social.scene_stream_access WHERE active AND NOT streaming AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
     };
     let ids: Vec<Uuid> = sqlx::query_scalar(query)
         .bind(BATCH)
@@ -649,7 +650,10 @@ mod tests {
                 notification_kind(label).unwrap(),
                 command.notification().unwrap()
             );
-            assert!(command.permits_running());
+            assert_eq!(
+                command.permits_running(),
+                command != CleanupCommand::KeyExpiry
+            );
         }
         assert!(CleanupCommand::IdleReplacement.notification().is_none());
         assert!(!CleanupCommand::IdleReplacement.permits_running());
@@ -903,7 +907,7 @@ mod tests {
             .await
             .unwrap();
 
-        // The accepted four-day credential deadline also revokes a running stream.
+        // The four-day credential deadline waits for a running stream to end.
         let running = Uuid::new_v4();
         sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())+interval '4 days')")
             .bind(running).bind(format!("deadline-test-{running}")).execute(&pool).await.unwrap();
@@ -914,6 +918,17 @@ mod tests {
         );
         sqlx::query("UPDATE social.scene_stream_access SET expiration_time=timezone('UTC',now())-interval '1 second' WHERE id=$1")
             .bind(running).execute(&pool).await.unwrap();
+        assert!(
+            !enqueue_prepared(&pool, running, CleanupCommand::KeyExpiry, 0, None, None)
+                .await
+                .unwrap(),
+            "a live broadcast keeps its expired key"
+        );
+        sqlx::query("UPDATE social.scene_stream_access SET streaming=false WHERE id=$1")
+            .bind(running)
+            .execute(&pool)
+            .await
+            .unwrap();
         // Unresolved historic owner does not prevent durable revocation intent.
         assert!(
             enqueue_prepared(&pool, running, CleanupCommand::KeyExpiry, 0, None, None)
