@@ -81,6 +81,13 @@ async fn an_offer_skips_without_waiting_or_copying() {
         worker.rx.try_recv().is_err(),
         "past the bounds, with the slot free, nothing is copied"
     );
+    let mut fat = parts(vec![rpc_log(110, 0)]);
+    fat.logs[0].block_hash = Some("0".repeat(crate::portal::compare::MAX_OFFER_BYTES));
+    shadow.offer(&view(&fat, 137));
+    assert!(
+        worker.rx.try_recv().is_err(),
+        "an oversized optional field is not copied either"
+    );
     shadow.offer(&view(&small, 137));
     let started = Instant::now();
     shadow.offer(&view(&small, 137));

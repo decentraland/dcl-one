@@ -446,3 +446,37 @@ async fn metadata_bounds_the_dataset_only() {
     assert_eq!(r.advertised_start().await.unwrap(), Some(0));
     assert_eq!(r.advertised_start().await.unwrap(), None);
 }
+
+/// What a portal says back never reaches an error: an upstream echoing the
+/// credential in a rejection or in a malformed answer prints nothing of it.
+#[tokio::test]
+async fn portal_text_never_reaches_an_error() {
+    let (origin, _) = fake(vec![
+        status(
+            400,
+            "",
+            "{\"error\":\"bad query from sk-example-echo: lists at most 10000 values\"}",
+        ),
+        status(200, "", "{\"number\":\"sk-example-echo\",\"hash\":\"x\"}"),
+        ok_ndjson(&[json!({"header": header_line(5), "logs": "sk-example-echo"})]),
+    ])
+    .await;
+    let r = PortalReader::new(
+        &origin,
+        "polygon-mainnet",
+        Secret::new("sk-example-echo"),
+        100.0,
+    )
+    .unwrap();
+    let rejected = r.page(1, 9, &[], false).await.unwrap_err();
+    assert!(
+        rejected.is_size_rejection(),
+        "still classified as a size limit"
+    );
+    let malformed = r.latest().await.unwrap_err();
+    let lines = r.page(1, 9, &[], false).await.unwrap_err();
+    for e in [rejected, malformed, lines] {
+        let text = format!("{e} {e:?}");
+        assert!(!text.contains("sk-example-echo"), "{text}");
+    }
+}

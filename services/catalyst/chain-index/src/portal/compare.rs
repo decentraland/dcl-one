@@ -59,31 +59,84 @@ pub const MAX_OFFER_LOGS: usize = 50_000;
 pub const MAX_OFFER_ADDRESSES: usize = 50_000;
 pub const MAX_OFFER_BYTES: usize = 16 * 1024 * 1024;
 
+/// A running byte count that refuses past its bound.
+struct Tally {
+    used: usize,
+    addresses: usize,
+}
+
+impl Tally {
+    fn add(&mut self, n: usize) -> Option<()> {
+        self.used = self.used.checked_add(n)?;
+        (self.used <= MAX_OFFER_BYTES).then_some(())
+    }
+
+    fn string(&mut self, s: &str) -> Option<()> {
+        self.add(std::mem::size_of::<String>() + s.len())
+    }
+
+    fn opt(&mut self, s: &Option<String>) -> Option<()> {
+        self.add(std::mem::size_of::<Option<String>>() + s.as_ref().map_or(0, String::len))
+    }
+
+    /// A JSON value's owned bytes, walked without serializing it.
+    fn value(&mut self, v: &serde_json::Value) -> Option<()> {
+        self.add(std::mem::size_of::<serde_json::Value>())?;
+        match v {
+            serde_json::Value::String(s) => self.add(s.len()),
+            serde_json::Value::Array(a) => a.iter().try_for_each(|x| self.value(x)),
+            serde_json::Value::Object(o) => o.iter().try_for_each(|(k, x)| {
+                self.string(k)?;
+                self.value(x)
+            }),
+            _ => Some(()),
+        }
+    }
+}
+
 impl AcceptedView<'_> {
-    /// An upper bound of the bytes [`AcceptedView::to_owned`] copies, from
-    /// lengths alone; `None` past the hand-off bounds.
+    /// An upper bound of what [`AcceptedView::to_owned`] would own: every
+    /// string's bytes and header, every container's elements, the map's
+    /// entries counted twice for its table. `None` as soon as it passes a
+    /// hand-off bound; nothing is copied or serialized to find out.
     pub fn bounded_size(&self) -> Option<usize> {
-        let addresses: usize = self.groups.iter().map(|g| g.addresses.len()).sum();
-        if self.logs.len() > MAX_OFFER_LOGS || addresses > MAX_OFFER_ADDRESSES {
+        if self.logs.len() > MAX_OFFER_LOGS {
             return None;
         }
-        let logs: usize = self
-            .logs
-            .iter()
-            .map(|l| {
-                l.address.len()
-                    + l.data.len()
-                    + l.topics.iter().map(String::len).sum::<usize>()
-                    + 200
-            })
-            .sum();
-        let groups: usize = self
-            .groups
-            .iter()
-            .map(|g| g.addresses.len() * 48 + g.topics.to_string().len())
-            .sum();
-        let total = logs + groups + self.times.len() * 16;
-        (total <= MAX_OFFER_BYTES).then_some(total)
+        let mut t = Tally {
+            used: std::mem::size_of::<AcceptedRead>(),
+            addresses: 0,
+        };
+        t.string(self.reached_hash)?;
+        for g in self.groups {
+            t.addresses = t.addresses.checked_add(g.addresses.len())?;
+            if t.addresses > MAX_OFFER_ADDRESSES {
+                return None;
+            }
+            t.add(std::mem::size_of::<LogGroup>())?;
+            for a in &g.addresses {
+                t.string(a)?;
+            }
+            t.value(&g.topics)?;
+        }
+        for l in self.logs {
+            t.add(std::mem::size_of::<RpcLog>())?;
+            for s in [&l.address, &l.data, &l.block_number, &l.log_index] {
+                t.string(s)?;
+            }
+            for s in [&l.block_timestamp, &l.block_hash, &l.transaction_hash] {
+                t.opt(s)?;
+            }
+            for topic in &l.topics {
+                t.string(topic)?;
+            }
+        }
+        t.add(
+            self.times
+                .len()
+                .checked_mul(2 * std::mem::size_of::<(i64, i64)>())?,
+        )?;
+        Some(t.used)
     }
 
     pub fn to_owned(&self) -> AcceptedRead {
@@ -304,11 +357,17 @@ pub async fn fetch(
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Verdict {
     Equal,
+    /// Nothing differed, but a field one side lacked was not compared.
+    Incomplete,
     Different,
-    BranchMismatch { height: u64 },
+    BranchMismatch {
+        height: u64,
+    },
     Conflict,
     Unanchored,
-    Skipped { reason: String },
+    Skipped {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -329,6 +388,9 @@ pub struct Outcome {
     pub block_hash: usize,
     /// Fields one side lacked, by name: never counted as equal.
     pub unavailable: BTreeMap<&'static str, usize>,
+    /// Some field of the compared prefix was not compared (`unavailable`),
+    /// whatever the verdict: a different read can be incomplete too.
+    pub incomplete: bool,
     /// Portal logs the exact filter drops only for their topic count, which
     /// the portal query cannot express (a trailing or lone `null`): expected.
     pub arity_filtered: usize,
@@ -356,6 +418,7 @@ impl Outcome {
             timestamp: 0,
             block_hash: 0,
             unavailable: BTreeMap::new(),
+            incomplete: false,
             arity_filtered: 0,
             drift_filtered: 0,
             stopped: None,
@@ -390,13 +453,17 @@ fn kept(filters: &[Filter], log: &PortalLog) -> Kept {
     if filters.iter().any(|f| f.matches(&log.address, &log.topics)) {
         return Kept::Match;
     }
+    // Expected only when the positions the log lacks are all wildcards
+    // (a trailing or lone `null`, which the portal query cannot express):
+    // a missing constrained position is drift.
     let constrained_ok = filters.iter().any(|f| {
         f.addresses.contains(&log.address)
+            && log.topics.len() < f.positions.len()
             && f.positions
                 .iter()
                 .zip(&log.topics)
                 .all(|(p, t)| p.as_ref().is_none_or(|a| a.contains(t)))
-            && log.topics.len() < f.positions.len()
+            && f.positions[log.topics.len()..].iter().all(Option::is_none)
     });
     if constrained_ok {
         Kept::ArityOnly
@@ -542,28 +609,26 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
             Some(_) => out.timestamp += 1,
             None => unavailable("timestamp", &mut out),
         }
-        let rpc_hash = read
-            .logs
-            .iter()
-            .find(|l| log_position(l).0 as u64 == block)
-            .and_then(|l| l.block_hash.as_deref());
-        match rpc_hash {
-            Some(h) if lower(h) == *hash => {}
+        match rpc_hashes.get(&block) {
+            Some(h) if h == hash => {}
             Some(_) => out.block_hash += 1,
             None => unavailable("block_hash", &mut out),
         }
     }
+    out.incomplete = !out.unavailable.is_empty();
     out.verdict = if out.missing
         + out.extra
         + out.mismatch
         + out.timestamp
         + out.block_hash
         + out.drift_filtered
-        == 0
+        > 0
     {
-        Verdict::Equal
-    } else {
         Verdict::Different
+    } else if out.incomplete {
+        Verdict::Incomplete
+    } else {
+        Verdict::Equal
     };
     out
 }

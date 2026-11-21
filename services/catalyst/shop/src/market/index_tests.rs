@@ -149,6 +149,8 @@ struct FakeChain {
     get_logs: AtomicUsize,
     /// Answer eth_getLogs without `blockTimestamp` (the Polygon backends that do).
     strip_timestamps: std::sync::atomic::AtomicBool,
+    /// Logs without their `blockHash`, as an endpoint that omits it.
+    strip_block_hash: std::sync::atomic::AtomicBool,
     batches: AtomicUsize,
     drop_in_batch: Mutex<Vec<u64>>,
     /// Every request in arrival order, as [`call_tag`] names it.
@@ -232,6 +234,7 @@ impl FakeChain {
             requests: AtomicUsize::new(0),
             get_logs: AtomicUsize::new(0),
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
+            strip_block_hash: std::sync::atomic::AtomicBool::new(false),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
@@ -534,6 +537,14 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     })
                 })
                 .cloned()
+                // Each log names its block's hash, as an endpoint's do.
+                .map(|mut l| {
+                    if !chain.strip_block_hash.load(Ordering::SeqCst) {
+                        let block = hex_u64(&l["blockNumber"]);
+                        l["blockHash"] = json!(chain.hash_of(block));
+                    }
+                    l
+                })
                 .collect();
             if chain.strip_timestamps.load(Ordering::SeqCst) {
                 let stripped: Vec<Value> = hits
@@ -9937,6 +9948,11 @@ mod compare_sources_tests {
         page_blocks: Option<u64>,
         /// Logs it does not serve, by (block, log index).
         drop: Vec<(u64, u64)>,
+        /// Its heads answer 503.
+        heads_down: bool,
+        /// After this many pages, the RPC's headers start failing.
+        rpc_fails_after_pages: Option<usize>,
+        pages: usize,
     }
 
     struct Portal {
@@ -9966,7 +9982,14 @@ mod compare_sources_tests {
             )
                 .into_response();
         }
-        let quirks = p.quirks.lock();
+        let mut quirks = p.quirks.lock();
+        quirks.pages += 1;
+        if quirks
+            .rpc_fails_after_pages
+            .is_some_and(|n| quirks.pages >= n)
+        {
+            p.chain.fail_headers.store(true, Ordering::SeqCst);
+        }
         let mut to = q["toBlock"].as_u64().unwrap().min(fin);
         if let Some(n) = quirks.page_blocks {
             to = to.min(from + n - 1);
@@ -10015,6 +10038,9 @@ mod compare_sources_tests {
     }
 
     async fn heads(State(p): State<Arc<Portal>>, uri: axum::http::Uri) -> axum::response::Response {
+        if p.quirks.lock().heads_down {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
         let n = if uri.path().ends_with("/finalized-head") {
             finalized(&p.chain)
         } else {
@@ -10028,11 +10054,14 @@ mod compare_sources_tests {
             chain,
             quirks: Mutex::new(quirks),
         });
-        let app = Router::new()
-            .route("/datasets/polygon-mainnet/finalized-stream", post(stream))
-            .route("/datasets/polygon-mainnet/head", get(heads))
-            .route("/datasets/polygon-mainnet/finalized-head", get(heads))
-            .with_state(portal);
+        let mut app = Router::new();
+        for ds in ["polygon-mainnet", "ethereum-mainnet"] {
+            app = app
+                .route(&format!("/datasets/{ds}/finalized-stream"), post(stream))
+                .route(&format!("/datasets/{ds}/head"), get(heads))
+                .route(&format!("/datasets/{ds}/finalized-head"), get(heads));
+        }
+        let app = app.with_state(portal);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -10063,6 +10092,17 @@ mod compare_sources_tests {
         from: u64,
         to: u64,
     ) -> compare_sources::Report {
+        compare_on(db, rpc, portal, "polygon-mainnet", from, to).await
+    }
+
+    async fn compare_on(
+        db: &ScratchDb,
+        rpc: &str,
+        portal: &str,
+        dataset: &str,
+        from: u64,
+        to: u64,
+    ) -> compare_sources::Report {
         compare_sources::run(
             &db.pool,
             &crate::http::Outbound::for_tests(),
@@ -10073,7 +10113,7 @@ mod compare_sources_tests {
                 to,
                 window: 100,
                 rpc_url: rpc.to_string(),
-                reader: PortalReader::new(portal, "polygon-mainnet", None, 1_000.0).unwrap(),
+                reader: PortalReader::new(portal, dataset, None, 1_000.0).unwrap(),
                 history: AddressHistory::Unknown,
             },
         )
@@ -10186,6 +10226,110 @@ mod compare_sources_tests {
         assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2));
         assert!(r.compared.is_empty());
         assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (995, 1_200));
+        db.drop().await;
+    }
+
+    /// The projection, the dataset and the RPC must name one chain: a
+    /// matic run against an Ethereum dataset over an RPC serving Ethereum is
+    /// refused before any window, though dataset and RPC agree.
+    #[tokio::test]
+    async fn a_run_on_the_wrong_network_is_refused() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        chain.chain_id.store(1, Ordering::SeqCst);
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        let r = compare_on(&db, &rpc, &portal, "ethereum-mainnet", 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 3), "{r:#?}");
+        assert!(r.refused.is_some() && r.compared.is_empty());
+        assert_eq!(r.sends.portal.pages, 0, "no window was read");
+        // The dataset right but the RPC on another chain: refused too.
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 3));
+        db.drop().await;
+    }
+
+    /// An outage at admission or a read failing mid-run still reports: the
+    /// windows already compared, the sends, the rest uncovered; exit 2.
+    #[tokio::test]
+    async fn a_read_failure_is_reported_not_raised() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let rpc = serve(chain.clone()).await;
+        let down = serve_portal(
+            chain.clone(),
+            Quirks {
+                heads_down: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &down, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2), "{r:#?}");
+        assert!(
+            r.uncovered[0].reason.starts_with("portal_unavailable"),
+            "{r:#?}"
+        );
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (101, 400));
+        assert!(r.sends.portal.admission > 0);
+        let failing = serve_portal(
+            chain.clone(),
+            Quirks {
+                rpc_fails_after_pages: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &failing, 101, 400).await;
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2), "{r:#?}");
+        assert_eq!(
+            r.compared,
+            [(101, 200)],
+            "the window before the failure is kept"
+        );
+        let last = r.uncovered.last().unwrap();
+        assert_eq!((last.from, last.to), (201, 400));
+        assert!(last.reason.starts_with("read_failed"), "{last:?}");
+        db.drop().await;
+    }
+
+    /// A compared field one side lacked leaves the run incomplete, never
+    /// equal; a difference besides makes it different and incomplete.
+    #[tokio::test]
+    async fn an_unavailable_field_leaves_the_run_incomplete() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        chain.strip_block_hash.store(true, Ordering::SeqCst);
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(chain.clone(), Quirks::default()).await;
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2), "{r:#?}");
+        assert!(
+            r.totals
+                .unavailable
+                .get("block_hash")
+                .is_some_and(|n| *n > 0)
+        );
+        let dropping = serve_portal(
+            chain,
+            Quirks {
+                drop: vec![(250, 3)],
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &dropping, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("different", 1));
+        assert!(r.different && r.incomplete);
         db.drop().await;
     }
 }

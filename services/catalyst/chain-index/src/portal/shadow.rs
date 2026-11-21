@@ -9,10 +9,12 @@
 //! sample, counted; the walk never waits, reads nothing more from the RPC and
 //! commits the same rows. Only the hand-off itself costs local CPU.
 //!
-//! The [`ShadowWorker`] samples one read at a time: the portal's admission
-//! (its dataset's chain and advertised first block, cached for ten minutes),
-//! then [`compare::fetch`] with up to two drain rounds, then
+//! The [`ShadowWorker`] samples one read at a time: the dataset's chain
+//! (fixed by its name) and its advertised first block (metadata, cached for
+//! ten minutes), then [`compare::fetch`] with up to two drain rounds, then
 //! [`compare::compare`], all within one deadline (limiter waits included).
+//! Every comparable sample is anchored on its own common hash; the cached
+//! metadata never stands in for it.
 //! Every outcome is counted ([`WINDOWS`], [`SKIPPED`], [`LOGS`], [`BLOCKS`],
 //! [`SENDS`]); differences are logged with up to five positions, never data.
 //! NFT backfill lanes are not compared; each lane window counts as skipped.
@@ -28,15 +30,18 @@ use super::{AddressHistory, Coverage, PortalReader, SendCounts};
 use crate::logs::{LogGroup, LogSource, Read, Window};
 use crate::rpc::{BlockHeader, RpcError, RpcLog};
 
-/// Everything one sample may take: admission, pages, splits, drains,
+/// Everything one sample may take: metadata, pages, splits, drains,
 /// anchor reads and the limiter's waits.
 pub const SAMPLE_DEADLINE: Duration = Duration::from_secs(20);
 /// Drain rounds after the first, for batches that ended early.
 pub const EXTRA_ROUNDS: usize = 2;
-const ADMISSION_TTL: Duration = Duration::from_secs(600);
+/// How long the advertised first block (metadata) is cached; samples are
+/// anchored each on its own.
+const METADATA_TTL: Duration = Duration::from_secs(600);
 
 /// `{net, result}`: one per offered window, by verdict (`equal`,
-/// `different`, `branch_mismatch`, `conflict`, `unanchored`, `skipped`).
+/// `incomplete`, `different`, `branch_mismatch`, `conflict`, `unanchored`,
+/// `skipped`).
 pub const WINDOWS: &str = "chain_logs_shadow_windows_total";
 /// `{net, reason}`: why a window was not compared.
 pub const SKIPPED: &str = "chain_logs_shadow_skipped_total";
@@ -45,6 +50,8 @@ pub const SKIPPED: &str = "chain_logs_shadow_skipped_total";
 pub const LOGS: &str = "chain_logs_shadow_logs_total";
 /// `{net, kind}`: blocks `compared` and `skipped`.
 pub const BLOCKS: &str = "chain_logs_shadow_blocks_total";
+/// `{net, field}`: fields of compared logs one side lacked, so not compared.
+pub const UNAVAILABLE: &str = "chain_logs_shadow_unavailable_total";
 /// `{net, kind}`: portal requests sent (`admission`, `pages`, `retries`, `headers`).
 pub const SENDS: &str = "chain_logs_portal_sends_total";
 
@@ -89,7 +96,7 @@ pub struct ShadowWorker {
     reader: PortalReader,
     net: &'static str,
     history: AddressHistory,
-    admission: Option<(Instant, Option<u64>)>,
+    metadata: Option<(Instant, Option<u64>)>,
 }
 
 /// A shadow of `net` over `reader`: the walk's handle and the worker to run.
@@ -109,7 +116,7 @@ pub fn channel(
         reader,
         net,
         history,
-        admission: None,
+        metadata: None,
     };
     (shadow, worker)
 }
@@ -117,6 +124,7 @@ pub fn channel(
 fn verdict_label(v: &Verdict) -> &'static str {
     match v {
         Verdict::Equal => "equal",
+        Verdict::Incomplete => "incomplete",
         Verdict::Different => "different",
         Verdict::BranchMismatch { .. } => "branch_mismatch",
         Verdict::Conflict => "conflict",
@@ -128,7 +136,7 @@ fn verdict_label(v: &Verdict) -> &'static str {
 fn skip_reason(reason: &str) -> &'static str {
     match reason {
         "deadline" => "deadline",
-        "admission" => "admission",
+        "metadata" => "metadata",
         "below_dataset_start" => "below_dataset_start",
         "unsupported_filter" => "unsupported_filter",
         "above_portal_finalized" => "above_portal_finalized",
@@ -149,7 +157,7 @@ fn skip_reason(reason: &str) -> &'static str {
 impl ShadowWorker {
     fn coverage(&self) -> Coverage {
         Coverage {
-            advertised_start: self.admission.and_then(|(_, s)| s),
+            advertised_start: self.metadata.and_then(|(_, s)| s),
             address_history: self.history,
         }
     }
@@ -181,13 +189,13 @@ impl ShadowWorker {
     }
 
     async fn advertised_start(&mut self) -> Result<Option<u64>, super::PortalError> {
-        if let Some((at, start)) = self.admission
-            && at.elapsed() < ADMISSION_TTL
+        if let Some((at, start)) = self.metadata
+            && at.elapsed() < METADATA_TTL
         {
             return Ok(start);
         }
         let start = self.reader.advertised_start().await?;
-        self.admission = Some((Instant::now(), start));
+        self.metadata = Some((Instant::now(), start));
         Ok(start)
     }
 
@@ -197,7 +205,7 @@ impl ShadowWorker {
         };
         let start = match self.advertised_start().await {
             Ok(start) => start,
-            Err(_) => return Outcome::skipped_before_fetch(read, self.coverage(), "admission"),
+            Err(_) => return Outcome::skipped_before_fetch(read, self.coverage(), "metadata"),
         };
         if start.is_some_and(|s| s > read.from) {
             return Outcome::skipped_before_fetch(read, self.coverage(), "below_dataset_start");
@@ -233,6 +241,9 @@ impl ShadowWorker {
             if n > 0 {
                 metrics::counter!(LOGS, "net" => net, "kind" => kind).increment(n as u64);
             }
+        }
+        for (field, n) in &out.unavailable {
+            metrics::counter!(UNAVAILABLE, "net" => net, "field" => *field).increment(*n as u64);
         }
         metrics::counter!(BLOCKS, "net" => net, "kind" => "compared")
             .increment(out.compared_blocks);

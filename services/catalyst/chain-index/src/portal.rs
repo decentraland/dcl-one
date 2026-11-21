@@ -307,8 +307,10 @@ pub enum PortalError {
     Malformed(String),
     #[error("the portal's answer exceeds the {0} bound")]
     TooLarge(&'static str),
-    #[error("the portal rejected the query ({status}): {message}")]
-    Rejected { status: u16, message: String },
+    /// A 400 or 413. The portal's own text is never kept: an upstream may
+    /// echo what it was sent. `size` says whether it named a size limit.
+    #[error("the portal rejected the query ({status}{})", if *.size { ", a size limit" } else { "" })]
+    Rejected { status: u16, size: bool },
     #[error("the portal refused the credential ({status})")]
     Refused { status: u16 },
     #[error("the portal has no such dataset or route ({status})")]
@@ -326,17 +328,7 @@ pub enum PortalError {
 impl PortalError {
     /// A rejection a smaller request may avoid (a limit named in a 400, or a 413).
     pub fn is_size_rejection(&self) -> bool {
-        match self {
-            PortalError::Rejected { status: 413, .. } => true,
-            PortalError::Rejected {
-                status: 400,
-                message,
-            } => {
-                let m = message.to_ascii_lowercase();
-                m.contains("at most") || m.contains("larger than") || m.contains("too large")
-            }
-            _ => false,
-        }
+        matches!(self, PortalError::Rejected { size: true, .. })
     }
 }
 
@@ -659,9 +651,10 @@ impl PortalReader {
             409 => Err(PortalError::ParentMismatch),
             401 | 403 => Err(PortalError::Refused { status }),
             404 => Err(PortalError::NotFound { status }),
-            400 | 413 => Err(PortalError::Rejected {
+            413 => Err(PortalError::Rejected { status, size: true }),
+            400 => Err(PortalError::Rejected {
                 status,
-                message: error_message(resp).await,
+                size: names_a_size_limit(resp).await,
             }),
             429 | 503 | 529 => {
                 let retry_after = resp
@@ -783,28 +776,41 @@ impl PortalReader {
     }
 }
 
-async fn error_message(resp: reqwest::Response) -> String {
+/// Whether a 400's message names a size limit. The text is read here and
+/// dropped: it never reaches an error, a log line or a report.
+async fn names_a_size_limit(resp: reqwest::Response) -> bool {
     let bytes = crate::http::read_body_capped(resp, 16 * 1024)
         .await
         .unwrap_or_default();
     let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     let m = match &v["error"] {
-        Value::String(s) => s.clone(),
+        Value::String(s) => s.to_ascii_lowercase(),
         Value::Object(o) => o
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            .to_string(),
+            .to_ascii_lowercase(),
         _ => String::new(),
     };
-    m.chars().take(200).collect()
+    m.contains("at most") || m.contains("larger than") || m.contains("too large")
+}
+
+/// A JSON error by its kind and place, never by the text it read: serde
+/// quotes the offending value, which a portal controls.
+fn json_error(e: &serde_json::Error) -> PortalError {
+    PortalError::Malformed(format!(
+        "{:?} JSON error at line {} column {}",
+        e.classify(),
+        e.line(),
+        e.column()
+    ))
 }
 
 async fn json_body(resp: reqwest::Response) -> Result<Value, PortalError> {
     let bytes = crate::http::read_body_capped(resp, 1024 * 1024)
         .await
         .map_err(|_| PortalError::Truncated)?;
-    serde_json::from_slice(&bytes).map_err(|e| PortalError::Malformed(e.to_string()))
+    serde_json::from_slice(&bytes).map_err(|e| json_error(&e))
 }
 
 /// The body's lines, each within [`MAX_LINE_BYTES`] and all within
@@ -914,8 +920,7 @@ pub fn decode_page(lines: &[Vec<u8>], from: u64, to: u64) -> Result<Page, Portal
     let mut conflicts: BTreeSet<(u64, u32)> = BTreeSet::new();
     let mut count = 0usize;
     for line in lines {
-        let v: Value =
-            serde_json::from_slice(line).map_err(|e| PortalError::Malformed(e.to_string()))?;
+        let v: Value = serde_json::from_slice(line).map_err(|e| json_error(&e))?;
         let header = header_of(&v["header"])?;
         if header.number < from || header.number > to {
             return Err(PortalError::Malformed(format!(
@@ -950,7 +955,7 @@ pub fn decode_page(lines: &[Vec<u8>], from: u64, to: u64) -> Result<Page, Portal
                     }
                 }
             }
-            other => return Err(PortalError::Malformed(format!("logs {other}"))),
+            _ => return Err(PortalError::Malformed("logs is not a list".into())),
         }
         headers.push(header);
     }

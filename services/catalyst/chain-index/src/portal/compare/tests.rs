@@ -292,10 +292,88 @@ fn missing_fields_are_reported_not_counted_equal() {
         vec![portal_log(120, 0, A, &[T0])],
     );
     let out = compare(&r, &f, UNKNOWN);
-    assert_eq!(out.verdict, Verdict::Equal);
+    assert_eq!(
+        out.verdict,
+        Verdict::Incomplete,
+        "never equal with fields not compared"
+    );
+    assert!(out.incomplete);
     assert_eq!(out.unavailable.get("block_hash"), Some(&1));
     assert_eq!(out.unavailable.get("timestamp"), Some(&1));
     assert_eq!(out.unavailable.get("transaction_hash"), Some(&1));
+    // A known difference besides: different and incomplete both.
+    let mut r2 = r.clone();
+    r2.logs[0].data = "0x01".into();
+    let out = compare(&r2, &f, UNKNOWN);
+    assert_eq!(out.verdict, Verdict::Different);
+    assert!(out.incomplete);
+}
+
+/// A block's hash comes from whichever of its RPC logs carries one.
+#[test]
+fn a_block_hash_is_taken_from_any_log_of_the_block() {
+    let r = read(
+        101,
+        150,
+        h(150),
+        vec![
+            rpc_log(120, 0, A, &[T0], None),
+            rpc_log(120, 1, A, &[T0], Some(h(120))),
+        ],
+        json!([T0]),
+    );
+    let f = fetched(
+        101,
+        150,
+        Some(150),
+        &[(120, h(120)), (150, h(150))],
+        vec![portal_log(120, 0, A, &[T0]), portal_log(120, 1, A, &[T0])],
+    );
+    let out = compare(&r, &f, UNKNOWN);
+    assert_eq!(out.verdict, Verdict::Equal, "{out:?}");
+    assert!(!out.unavailable.contains_key("block_hash"));
+}
+
+/// One log a block over a wide window: compared in one pass per side,
+/// never a scan of every log for every block.
+#[test]
+fn a_dense_sample_compares_in_one_pass() {
+    let n = 50_000u64;
+    let logs: Vec<RpcLog> = (0..n)
+        .map(|i| rpc_log(1_000 + i, 0, A, &[T0], Some(h(1_000 + i))))
+        .collect();
+    let r = read(1_000, 1_000 + n - 1, h(1_000 + n - 1), logs, json!([T0]));
+    let headers: Vec<(u64, String)> = (0..n).map(|i| (1_000 + i, h(1_000 + i))).collect();
+    let portal: Vec<PortalLog> = (0..n).map(|i| portal_log(1_000 + i, 0, A, &[T0])).collect();
+    let f = fetched(1_000, 1_000 + n - 1, Some(1_000 + n - 1), &headers, portal);
+    let started = std::time::Instant::now();
+    let out = compare(&r, &f, UNKNOWN);
+    assert_eq!(out.verdict, Verdict::Equal);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// A missing constrained position is drift; a missing wildcard is expected.
+#[test]
+fn only_a_missing_wildcard_position_is_expected() {
+    let r = read(101, 150, h(150), vec![], json!([T0, T1]));
+    let f = fetched(
+        101,
+        150,
+        Some(150),
+        &[(140, h(140)), (150, h(150))],
+        vec![portal_log(140, 0, A, &[T0])],
+    );
+    let out = compare(&r, &f, UNKNOWN);
+    assert_eq!((out.arity_filtered, out.drift_filtered), (0, 1));
+    assert_eq!(out.verdict, Verdict::Different);
+    let r = read(101, 150, h(150), vec![], json!([T0, null]));
+    let out = compare(&r, &f, UNKNOWN);
+    assert_eq!((out.arity_filtered, out.drift_filtered), (1, 0));
+    assert_eq!(out.verdict, Verdict::Equal);
 }
 
 #[test]
@@ -335,6 +413,34 @@ fn an_offer_is_sized_before_it_is_copied() {
     assert!(
         AcceptedView {
             groups: &wide,
+            ..view
+        }
+        .bounded_size()
+        .is_none()
+    );
+    // Every owned string counts, the optional ones and the filter's topics too.
+    let mut fat = r.logs.clone();
+    fat[0].transaction_hash = Some("0".repeat(MAX_OFFER_BYTES));
+    assert!(AcceptedView { logs: &fat, ..view }.bounded_size().is_none());
+    let mut fat = r.logs.clone();
+    fat[0].block_hash = Some("0".repeat(MAX_OFFER_BYTES));
+    assert!(AcceptedView { logs: &fat, ..view }.bounded_size().is_none());
+    let huge_topics = vec![LogGroup {
+        addresses: vec![A.to_string()],
+        topics: json!(["0".repeat(MAX_OFFER_BYTES)]),
+    }];
+    assert!(
+        AcceptedView {
+            groups: &huge_topics,
+            ..view
+        }
+        .bounded_size()
+        .is_none()
+    );
+    let long_hash = "0".repeat(MAX_OFFER_BYTES);
+    assert!(
+        AcceptedView {
+            reached_hash: &long_hash,
             ..view
         }
         .bounded_size()

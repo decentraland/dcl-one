@@ -160,8 +160,11 @@ enum ShopCommand {
     /// window. Read-only: a read-only database connection for the index's
     /// filters, no lease, no write, no schema bootstrap. The RPC is
     /// `ETH_RPC_URL` or `RPC_ENDPOINT_POLYGON` (or their `_FILE`), the portal
-    /// key `CHAIN_LOGS_PORTAL_API_KEY` (or its `_FILE`). Prints one JSON
-    /// report; exits 1 when anything differed, else 2 when part of the range
+    /// key `CHAIN_LOGS_PORTAL_API_KEY` (or its `_FILE`). The network, the
+    /// dataset and the RPC must name one chain, or the run is refused. A
+    /// read that fails ends the run with what was compared and the rest
+    /// uncovered. Prints one JSON report; exits 3 when refused, else 1 when
+    /// anything differed, else 2 when part of the range or a compared field
     /// was not compared, else 0.
     CompareSources {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]

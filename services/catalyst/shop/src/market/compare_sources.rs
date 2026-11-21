@@ -17,11 +17,18 @@
 //!   both sides read; the next window starts after it;
 //! - a window that cannot be compared stops the run, its suffix uncovered.
 //!
-//! The outcome is `equal` only when every requested block was compared and
-//! nothing differed. Differences and missing coverage are both reported
-//! when both occur; the exit code is 1 when anything differed, else 2 when
-//! anything is uncovered, else 0. The portal's own upstream RPC calls (chain-
-//! lake reads headers it does not hold from an RPC) are not visible here.
+//! The projection, the dataset and the RPC must name one chain before any
+//! window is read; otherwise the run is refused. A read that fails (an
+//! outage at admission, a bracket that moves mid-run) ends the run with the
+//! windows compared so far and the rest uncovered with its reason.
+//!
+//! The outcome is `equal` only when every requested block was compared,
+//! every compared field was available on both sides, and nothing differed.
+//! Differences and missing coverage are both reported when both occur; the
+//! exit code is 3 when refused, else 1 when anything differed, else 2 when
+//! anything is uncovered or incomplete, else 0. The portal's own upstream
+//! RPC calls (chain-lake reads headers it does not hold from an RPC) are not
+//! visible here.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -82,6 +89,8 @@ pub struct Totals {
     pub arity_filtered: usize,
     pub branch_mismatches: usize,
     pub conflicts: usize,
+    /// Fields of compared logs one side lacked, by name.
+    pub unavailable: std::collections::BTreeMap<&'static str, usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -103,17 +112,23 @@ pub struct Report {
     pub uncovered: Vec<Uncovered>,
     pub windows: Vec<WindowReport>,
     pub totals: Totals,
-    /// `equal`, `different` or `incomplete` (different wins when both hold).
+    /// `refused`, `different`, `incomplete` or `equal`, in that precedence.
     pub outcome: &'static str,
+    /// Why nothing was compared: the projection, the dataset and the RPC
+    /// do not name one chain.
+    pub refused: Option<String>,
     pub different: bool,
     pub incomplete: bool,
     pub sends: Sends,
 }
 
 impl Report {
-    /// 1 when anything differed, else 2 when anything is uncovered, else 0.
+    /// 3 when refused, else 1 when anything differed, else 2 when anything
+    /// is uncovered or a compared field was unavailable, else 0.
     pub fn exit_code(&self) -> i32 {
-        if self.different {
+        if self.refused.is_some() {
+            3
+        } else if self.different {
             1
         } else if self.incomplete {
             2
@@ -214,21 +229,22 @@ async fn rpc_read(
 }
 
 /// Compares `req` over `pool`'s index state. See the module documentation.
+/// A read that fails is reported, never raised: the windows compared before
+/// it are kept and the rest of the range is uncovered with the reason.
 pub async fn run(
     pool: &PgPool,
     http: &crate::http::Outbound,
     req: Request,
 ) -> anyhow::Result<Report> {
+    anyhow::ensure!(
+        req.from <= req.to,
+        "--from {} is after --to {}",
+        req.from,
+        req.to
+    );
     let ix = index_for(&req.indexer, req.net)?;
     let sent = AtomicUsize::new(0);
     let source = RpcSource::new(Rpc::at(http, &req.rpc_url).counting(&sent));
-    let chain = source.chain_id().await.context("eth_chainId")?.value;
-    anyhow::ensure!(
-        chain == req.reader.chain(),
-        "the RPC serves chain {chain}, the portal dataset {} chain {}",
-        req.reader.dataset(),
-        req.reader.chain()
-    );
     let mut out = Report {
         network: req.net.db_name(),
         indexer: req.indexer.clone(),
@@ -243,6 +259,7 @@ pub async fn run(
         windows: Vec::new(),
         totals: Totals::default(),
         outcome: "incomplete",
+        refused: None,
         different: false,
         incomplete: false,
         sends: Sends {
@@ -251,23 +268,83 @@ pub async fn run(
             note: "the portal's own upstream RPC calls are not counted",
         },
     };
-    anyhow::ensure!(
-        req.from <= req.to,
-        "--from {} is after --to {}",
-        req.from,
-        req.to
-    );
-    let advertised = req.reader.advertised_start().await?;
+    measure(pool, &source, ix.as_ref(), &req, &mut out).await;
+    out.uncovered.sort_by_key(|u| u.from);
+    out.incomplete = out.incomplete || !out.uncovered.is_empty() || out.compared.is_empty();
+    out.outcome = if out.refused.is_some() {
+        "refused"
+    } else if out.different {
+        "different"
+    } else if out.incomplete {
+        "incomplete"
+    } else {
+        "equal"
+    };
+    out.sends.rpc_requests = sent.load(Ordering::SeqCst);
+    out.sends.portal = req.reader.sends();
+    Ok(out)
+}
+
+/// Everything from the requested range on, into `out`.
+async fn measure(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    req: &Request,
+    out: &mut Report,
+) {
+    let all = |reason: String| Uncovered {
+        from: req.from,
+        to: req.to,
+        reason,
+    };
+    // The projection, the dataset and the RPC must name one chain before
+    // any window is read.
+    let projection = chain_walk::mainnet_chain(req.net) as u64;
+    if req.reader.chain() != projection {
+        out.refused = Some(format!(
+            "the dataset {} serves chain {}, the {} {} projection reads chain {projection}",
+            req.reader.dataset(),
+            req.reader.chain(),
+            req.net.db_name(),
+            req.indexer
+        ));
+        out.uncovered.push(all("refused".into()));
+        return;
+    }
+    let rpc_chain = match source.chain_id().await {
+        Ok(c) => c.value,
+        Err(e) => return out.uncovered.push(all(format!("rpc_unavailable: {e}"))),
+    };
+    if rpc_chain != projection {
+        out.refused = Some(format!(
+            "the RPC serves chain {rpc_chain}, the {} {} projection reads chain {projection}",
+            req.net.db_name(),
+            req.indexer
+        ));
+        out.uncovered.push(all("refused".into()));
+        return;
+    }
+    let advertised = match req.reader.advertised_start().await {
+        Ok(a) => a,
+        Err(e) => return out.uncovered.push(all(format!("portal_unavailable: {e}"))),
+    };
     out.coverage.advertised_start = advertised;
     let rpc_safe = match req.net {
-        ChainNet::Matic => source.finalized().await?.value.number,
+        ChainNet::Matic => source.finalized().await.map(|f| f.value.number),
         ChainNet::Ethereum => source
             .head()
-            .await?
-            .value
-            .saturating_sub(req.net.confirmations()),
+            .await
+            .map(|h| h.value.saturating_sub(req.net.confirmations())),
     };
-    let portal_final = req.reader.finalized().await?.number;
+    let rpc_safe = match rpc_safe {
+        Ok(n) => n,
+        Err(e) => return out.uncovered.push(all(format!("rpc_unavailable: {e}"))),
+    };
+    let portal_final = match req.reader.finalized().await {
+        Ok(h) => h.number,
+        Err(e) => return out.uncovered.push(all(format!("portal_unavailable: {e}"))),
+    };
     let lo = req.from.max(advertised.unwrap_or(0));
     let hi = req.to.min(rpc_safe).min(portal_final);
     if lo > req.from {
@@ -289,25 +366,22 @@ pub async fn run(
         });
     }
     if lo <= hi {
-        compare_range(pool, &source, ix.as_ref(), &req, chain, lo, hi, &mut out).await?;
+        let mut next = lo;
+        if let Err(e) =
+            compare_range(pool, source, ix, req, projection, lo, hi, &mut next, out).await
+        {
+            out.uncovered.push(Uncovered {
+                from: next,
+                to: hi,
+                reason: format!("read_failed: {e:#}"),
+            });
+        }
     }
-    out.uncovered.sort_by_key(|u| u.from);
-    out.incomplete = !out.uncovered.is_empty() || out.compared.is_empty();
-    out.outcome = if out.different {
-        "different"
-    } else if out.incomplete {
-        "incomplete"
-    } else {
-        "equal"
-    };
-    out.sends.rpc_requests = sent.load(Ordering::SeqCst);
-    out.sends.portal = req.reader.sends();
-    Ok(out)
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the run's sources, request and report"
+    reason = "the run's sources, request, range and report"
 )]
 async fn compare_range(
     pool: &PgPool,
@@ -317,29 +391,31 @@ async fn compare_range(
     chain: u64,
     lo: u64,
     hi: u64,
+    next: &mut u64,
     out: &mut Report,
 ) -> anyhow::Result<()> {
     let start = source.header(lo.saturating_sub(1)).await?.value;
     let anchor = (start.number, start.timestamp);
     let mut parent = (lo > 0).then_some(start.hash);
     let mut chunk = 1_000usize;
-    let mut next = lo;
-    while next <= hi {
-        let to = (next + req.window.max(1) - 1).min(hi);
-        let groups = ix.groups(pool, next, to, anchor).await?;
+    while *next <= hi {
+        let from = *next;
+        let to = (from + req.window.max(1) - 1).min(hi);
+        let groups = ix.groups(pool, from, to, anchor).await?;
         let fingerprint = fingerprint(&groups);
         let Ok(filters) = compare::filters(&groups) else {
             out.uncovered.push(Uncovered {
-                from: next,
+                from,
                 to: hi,
                 reason: "unsupported_filter".into(),
             });
+            *next = hi + 1;
             return Ok(());
         };
         let mut read = rpc_read(
             source,
             chain,
-            next,
+            from,
             to,
             &groups,
             parent.as_deref(),
@@ -349,7 +425,7 @@ async fn compare_range(
         let rpc_reached = read.reached;
         let mut outcome: Option<Outcome> = None;
         for _ in 0..AGREE {
-            let fetched = compare::fetch(&req.reader, next, read.reached, &filters, ROUNDS).await;
+            let fetched = compare::fetch(&req.reader, from, read.reached, &filters, ROUNDS).await;
             let Some(upper) = fetched.common_upper else {
                 let reason = fetched
                     .stopped
@@ -358,10 +434,11 @@ async fn compare_range(
                     .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_else(|| "no_cover".into());
                 out.uncovered.push(Uncovered {
-                    from: next,
+                    from,
                     to: hi,
                     reason,
                 });
+                *next = hi + 1;
                 return Ok(());
             };
             if upper >= read.reached {
@@ -372,7 +449,7 @@ async fn compare_range(
             read = rpc_read(
                 source,
                 chain,
-                next,
+                from,
                 upper,
                 &groups,
                 parent.as_deref(),
@@ -386,10 +463,11 @@ async fn compare_range(
         }
         let Some(outcome) = outcome else {
             out.uncovered.push(Uncovered {
-                from: next,
+                from,
                 to: hi,
                 reason: "no_common_end".into(),
             });
+            *next = hi + 1;
             return Ok(());
         };
         let t = &mut out.totals;
@@ -400,10 +478,17 @@ async fn compare_range(
         t.block_hash += outcome.block_hash;
         t.drift_filtered += outcome.drift_filtered;
         t.arity_filtered += outcome.arity_filtered;
+        for (field, n) in &outcome.unavailable {
+            *t.unavailable.entry(field).or_default() += n;
+        }
+        if outcome.incomplete {
+            out.incomplete = true;
+        }
         let end = read.reached;
+        let mut stop = false;
         match &outcome.verdict {
-            Verdict::Equal | Verdict::Different => {
-                out.compared.push((next, end));
+            Verdict::Equal | Verdict::Incomplete | Verdict::Different => {
+                out.compared.push((from, end));
                 if outcome.verdict == Verdict::Different {
                     out.different = true;
                 }
@@ -416,36 +501,33 @@ async fn compare_range(
                 }
                 out.different = true;
                 out.uncovered.push(Uncovered {
-                    from: next,
+                    from,
                     to: end,
                     reason: "not_comparable".into(),
                 });
             }
             Verdict::Unanchored | Verdict::Skipped { .. } => {
                 out.uncovered.push(Uncovered {
-                    from: next,
+                    from,
                     to: hi,
                     reason: "unanchored".into(),
                 });
-                out.windows.push(WindowReport {
-                    from: next,
-                    to,
-                    filter_fingerprint: fingerprint,
-                    rpc_reached,
-                    outcome,
-                });
-                return Ok(());
+                stop = true;
             }
         }
         out.windows.push(WindowReport {
-            from: next,
+            from,
             to,
             filter_fingerprint: fingerprint,
             rpc_reached,
             outcome,
         });
+        if stop {
+            *next = hi + 1;
+            return Ok(());
+        }
         parent = Some(read.reached_hash.clone());
-        next = end + 1;
+        *next = end + 1;
     }
     Ok(())
 }
