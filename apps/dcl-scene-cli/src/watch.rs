@@ -673,7 +673,7 @@ impl BuiltinWatchSession {
 }
 
 fn read_script_utils(generated_dir: &Path) -> String {
-    std::fs::read_to_string(generated_dir.join("script-utils.js")).unwrap_or_default()
+    std::fs::read_to_string(generated_dir.join(entrypoint::SCRIPT_UTILS_FILE)).unwrap_or_default()
 }
 
 fn watch_regen_error(e: anyhow::Error, what: &str) -> anyhow::Error {

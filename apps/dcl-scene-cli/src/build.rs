@@ -478,7 +478,7 @@ pub fn sdk_chunk_options(
     ));
     aliases.push((
         "~sdk/script-utils".to_string(),
-        generated.dir.join("script-utils.js"),
+        generated.dir.join(entrypoint::SCRIPT_UTILS_FILE),
     ));
     Ok(EsbuildOptions {
         production: opts.production,
