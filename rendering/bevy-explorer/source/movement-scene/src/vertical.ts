@@ -414,6 +414,7 @@ export function airLaunchTime(): number { return vstate.airLaunchT; }
 // because the top is then the ground.
 export function stunEndTime(): number { return vstate.stunEndT; }
 export function stunned(): boolean { return vstate.t0 < vstate.stunEndT - EPS; }
+export function jumpCount(): number { return vstate.jumpCount; }
 export function landingStuns(): boolean { return landingStunTime > 0 && vstate.topY - groundY > LANDING_STUN_DROP; }
 // Height the engine last placed the avatar at, while it has not touched the ground since (a landing stun's top ignores
 // heights up to it).

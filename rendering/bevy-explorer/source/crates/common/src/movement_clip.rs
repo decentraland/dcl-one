@@ -113,7 +113,7 @@ mod tests {
             ("Jump_Rise_Loop.glb", ClipMotion::Jump),
             ("Jump_Mid.glb", ClipMotion::Jump),
             ("Jump_Fall_Loop.glb", ClipMotion::None),
-            ("Jump_End.glb", ClipMotion::None),
+            ("Idle_Jump_End.glb", ClipMotion::None),
             ("Jog_Jump_Start.glb", ClipMotion::Jump),
             ("Jog_Jump_Rise_Loop.glb", ClipMotion::Jump),
             ("Jog_Jump_Mid.glb", ClipMotion::Jump),
