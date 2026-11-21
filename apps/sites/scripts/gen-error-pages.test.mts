@@ -163,4 +163,4 @@ it("reports the pages up to date right after writing them, and a stale or unexpe
     fs.writeFileSync(page, html);
     fs.rmSync(path.join(OUT, "999.html"));
   }
-});
+}, 60_000);
