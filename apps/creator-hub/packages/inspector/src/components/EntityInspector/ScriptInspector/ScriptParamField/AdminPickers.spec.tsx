@@ -33,6 +33,14 @@ vi.mock('../../../Container', () => ({
     </div>
   ),
 }));
+vi.mock('../../../ui/Accordion', () => ({
+  Accordion: ({ label, children }: { label?: string; children?: React.ReactNode }) => (
+    <div data-testid="accordion">
+      <div>{label}</div>
+      {children}
+    </div>
+  ),
+}));
 // The real picker reads the engine; the stub shows which components it was narrowed to.
 vi.mock('../../../ui/EntityField/EntityField', () => ({
   default: ({
