@@ -1,4 +1,5 @@
 use super::*;
+use bevy::ecs::system::SystemParam;
 use bevy_console::ConsoleCommand;
 use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
@@ -56,6 +57,62 @@ fn media_retry_delay(mut cmd: ConsoleCommand<MediaRetryDelay>) {
     );
 }
 
+/// One scene media player as `/media_state` and `/audio_state` read it.
+pub(crate) struct MediaRead<'a, T: AVPlayer> {
+    pub(crate) entity: &'a SceneEntity,
+    pub(crate) player: &'a T,
+    /// its scene is one the player stands in
+    pub(crate) in_scene: bool,
+    /// chosen to play
+    pub(crate) scheduled: bool,
+    pub(crate) transform: Option<&'a GlobalTransform>,
+    /// the backend's ends of the player, once it has them
+    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    pub(crate) sinks: Option<&'a AVSinks<T>>,
+}
+
+/// The loaded media players of one kind (`VideoPlayer` or `AudioStream`), each with its backend
+/// sinks: the one walk `/media_state` and `/audio_state` share.
+#[derive(SystemParam)]
+pub(crate) struct MediaPlayers<'w, 's, T: AVPlayer> {
+    players: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static T,
+            &'static SceneEntity,
+            Has<InScene>,
+            Has<ShouldBePlaying<T>>,
+            Option<&'static GlobalTransform>,
+        ),
+    >,
+    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+    sinks: Query<'w, 's, &'static AVSinks<T>>,
+}
+
+impl<T: AVPlayer> MediaPlayers<'_, '_, T> {
+    pub(crate) fn count(&self) -> usize {
+        self.players.iter().len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = MediaRead<'_, T>> + '_ {
+        self.players
+            .iter()
+            .map(
+                |(_ent, player, entity, in_scene, scheduled, transform)| MediaRead {
+                    entity,
+                    player,
+                    in_scene,
+                    scheduled,
+                    transform,
+                    #[cfg(any(feature = "ffmpeg", feature = "html"))]
+                    sinks: self.sinks.get(_ent).ok(),
+                },
+            )
+    }
+}
+
 /// Inspect scene media players and their requested and scheduled playback states.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_state")]
@@ -63,26 +120,12 @@ struct MediaState;
 
 fn media_state(
     mut cmd: ConsoleCommand<MediaState>,
-    video: Query<(
-        Entity,
-        &VideoPlayer,
-        &SceneEntity,
-        Has<InScene>,
-        Has<ShouldBePlaying<VideoPlayer>>,
-    )>,
-    audio: Query<(
-        Entity,
-        &AudioStream,
-        &SceneEntity,
-        Has<InScene>,
-        Has<ShouldBePlaying<AudioStream>>,
-    )>,
+    video: MediaPlayers<VideoPlayer>,
+    audio: MediaPlayers<AudioStream>,
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
     #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let mut rows = Vec::new();
@@ -101,26 +144,38 @@ fn media_state(
         json!({"type":kind, "entity":entity.id.to_string(), "scene":scenes.get(entity.root).ok().map(|ctx| &ctx.title),
                "inScene":here, "requested":config.playing(), "scheduled":scheduled, "volume":config.volume(), "loop":config.r#loop(), "rate":config.playback_rate()})
     };
-    for (_ent, player, entity, here, scheduled) in &video {
-        if Some(entity.root) == parcel {
+    for read in video.iter() {
+        if Some(read.entity.root) == parcel {
             parcel_video += 1;
-            parcel_external += usize::from(is_external(player.url()));
+            parcel_external += usize::from(is_external(read.player.url()));
         }
-        let mut item = row("video", entity, here, scheduled, &player.config());
-        item["source"] = json!(source_label(player.url()));
+        let mut item = row(
+            "video",
+            read.entity,
+            read.in_scene,
+            read.scheduled,
+            &read.player.config(),
+        );
+        item["source"] = json!(source_label(read.player.url()));
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
-        add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
+        add_sink(&mut item, read.sinks, &images);
         rows.push(item);
     }
-    for (_ent, player, entity, here, scheduled) in &audio {
-        if Some(entity.root) == parcel {
+    for read in audio.iter() {
+        if Some(read.entity.root) == parcel {
             parcel_audio += 1;
-            parcel_external += usize::from(is_external(player.url()));
+            parcel_external += usize::from(is_external(read.player.url()));
         }
-        let mut item = row("audio", entity, here, scheduled, &player.config());
-        item["source"] = json!(source_label(player.url()));
+        let mut item = row(
+            "audio",
+            read.entity,
+            read.in_scene,
+            read.scheduled,
+            &read.player.config(),
+        );
+        item["source"] = json!(source_label(read.player.url()));
         #[cfg(any(feature = "ffmpeg", feature = "html"))]
-        add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
+        add_sink(&mut item, read.sinks, &images);
         rows.push(item);
     }
     let backend = if cfg!(feature = "html") {
@@ -130,13 +185,13 @@ fn media_state(
     } else {
         "No playback backend"
     };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.count(), "audio":audio.count(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
         "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 
 // Stream paths and queries can contain credentials. A remote origin or a local content key
 // identifies the source without exposing playback credentials in the panel or console logs.
-fn source_label(source: &str) -> String {
+pub(crate) fn source_label(source: &str) -> String {
     let source = source.trim();
     if source.starts_with("//") {
         return String::from("remote media");

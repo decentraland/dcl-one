@@ -456,6 +456,14 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
   })
 
+  test('audioState passes its filter', async () => {
+    const fake = new FakeConsole({ audio_state: '{"summary":{"total":3,"playing":1},"returned":1,"entries":[]}' })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.audioState()).summary.total, 3)
+    await explorer.audioState({ onlyPlaying: true })
+    assert.deepEqual(fake.lines, ['/audio_state', '/audio_state --only-playing'])
+  })
+
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
     const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })

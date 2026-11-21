@@ -46,6 +46,7 @@ impl Plugin for AVPlayerPlugin {
         #[cfg(all(not(test), feature = "ffmpeg"))]
         app.add_plugins(AudioSinkPlugin);
         app.add_plugins(crate::debug_panel::MediaDebugPanelPlugin);
+        app.add_plugins(crate::audio_state::AudioStatePlugin);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
         app.init_resource::<MonotonicTimestamp<PbAudioEvent>>();

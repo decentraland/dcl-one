@@ -19,6 +19,7 @@ pub mod audio_source;
 pub mod audio_source_native;
 #[cfg(feature = "html")]
 pub mod audio_source_wasm;
+mod audio_state;
 mod debug_panel;
 
 // video
