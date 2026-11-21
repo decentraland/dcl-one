@@ -13,6 +13,7 @@ pub mod authorize;
 pub mod captcha;
 pub mod cart;
 pub mod history;
+pub mod iap;
 pub mod orders;
 pub mod packs;
 pub mod prices;

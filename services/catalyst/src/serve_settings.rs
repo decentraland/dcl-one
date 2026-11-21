@@ -96,8 +96,18 @@ pub(super) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         trial_buyers: non_empty(&config.shop.credits_trial_buyers),
         shop_base_url: config.shop.shop_base_url.clone(),
         notifications_cdn_url: config.social.notifications_cdn_url.clone(),
+        iap: shop::credits::iap::RawSettings {
+            bundle_id: non_empty(&config.shop.apple_bundle_id),
+            app_apple_id: config.shop.apple_app_apple_id,
+            environment: non_empty(&config.shop.apple_environment),
+            root_certs_dir: non_empty(&config.shop.apple_root_certs_dir),
+            catalog: non_empty(&config.shop.iap_product_catalog_usd),
+            wallet_total_limit_cents: config.shop.iap_wallet_total_limit_cents,
+            wallet_daily_limit_cents: config.shop.iap_wallet_daily_limit_cents,
+            daily_limit_cents: config.shop.iap_daily_limit_cents,
+        },
     })
-    .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
+    .context("CREDITS_* / STRIPE_* / CHECKOUT_* / APPLE_* / IAP_* configuration")
 }
 
 pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeeper::Settings> {

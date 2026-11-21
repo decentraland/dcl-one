@@ -502,6 +502,38 @@ pub struct ShopConfig {
     #[arg(long, env = "CREDITS_TRIAL_RELAY_ALL_WALLETS", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_trial_relay_all_wallets: bool,
 
+    /// The App Store app's bundle id; unset, the App Store purchase routes answer 503.
+    #[arg(long, env = "APPLE_BUNDLE_ID")]
+    pub apple_bundle_id: Option<String>,
+
+    /// The app's Apple id, required when APPLE_ENVIRONMENT is production.
+    #[arg(long, env = "APPLE_APP_APPLE_ID")]
+    pub apple_app_apple_id: Option<i64>,
+
+    /// production or sandbox, required with APPLE_BUNDLE_ID: the App Store environment signed data must name.
+    #[arg(long, env = "APPLE_ENVIRONMENT")]
+    pub apple_environment: Option<String>,
+
+    /// A directory of Apple's DER root certificates (`.cer`/`.der`) the App Store chains must end in.
+    #[arg(long, env = "APPLE_ROOT_CERTS_DIR")]
+    pub apple_root_certs_dir: Option<String>,
+
+    /// The App Store products sold for Credits, `{"<productId>": <credits>}`.
+    #[arg(long, env = "IAP_PRODUCT_CATALOG_USD")]
+    pub iap_product_catalog_usd: Option<String>,
+
+    /// Cents of App Store purchases one wallet may make in total (0: uncapped).
+    #[arg(long, env = "IAP_WALLET_TOTAL_LIMIT_CENTS", default_value_t = 0)]
+    pub iap_wallet_total_limit_cents: i64,
+
+    /// Cents of App Store purchases one wallet may make in 24 hours (0: uncapped).
+    #[arg(long, env = "IAP_WALLET_DAILY_LIMIT_CENTS", default_value_t = 0)]
+    pub iap_wallet_daily_limit_cents: i64,
+
+    /// Cents of App Store purchases this node credits in 24 hours (0: none); required with APPLE_BUNDLE_ID.
+    #[arg(long, env = "IAP_DAILY_LIMIT_CENTS")]
+    pub iap_daily_limit_cents: Option<i64>,
+
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]
     pub credits_checkout_success_url: String,

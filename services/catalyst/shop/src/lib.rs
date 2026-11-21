@@ -155,7 +155,7 @@ fn pending(source: &'static str) -> MethodRouter {
 /// The canonical paths the Shop UI codes against whose handlers are still
 /// to be written, one source label per feature: the credits-server user histories, pack order
 /// resume/cancel, batch authorization and submission reporting, the NAME
-/// credit route, IAP and the card
+/// credit route and the card
 /// on-ramps. Mounted after the served routes, so a path a handler owns is
 /// never shadowed.
 pub fn pending_router() -> Router {
@@ -172,9 +172,6 @@ pub fn pending_router() -> Router {
             "/v1/credit-authorizations/publication",
             pending("shop-credit-authorizations"),
         )
-        .route("/v1/iap/quote", pending("shop-credits-iap"))
-        .route("/v1/iap/register", pending("shop-credits-iap"))
-        .route("/v1/iap/verify", pending("shop-credits-iap"))
         .route("/v1/transak/widget-url", pending("shop-onramp"))
         .route("/v1/transak/orders/{id}", pending("shop-onramp"))
         .route("/v1/wert/sign", pending("shop-onramp"))
@@ -193,7 +190,7 @@ mod router_tests {
         let res = app
             .oneshot(
                 Request::builder()
-                    .uri("/shop-api/v1/iap/quote")
+                    .uri("/shop-api/v1/wert/sign")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -207,7 +204,7 @@ mod router_tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(body["source"], "shop-credits-iap");
+        assert_eq!(body["source"], "shop-onramp");
         assert_eq!(body["error"], "Service Unavailable");
         assert!(
             body.get("configure").is_none(),

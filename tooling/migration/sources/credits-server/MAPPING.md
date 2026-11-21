@@ -14,6 +14,8 @@ stopped.
 | `wallet_flag` | `flagged_wallets` (live `multi-account`) | `credits.wallet_flags` |
 | `purchase` | `stripe_orders` + their `user_credits` | `credits.purchases` |
 | `ledger` | USD `user_credits`, SETTLED `usd_purchase_intents` | `credits.ledger`, `credits.wallets` balances |
+| `iap_transaction` | `iap_credits` (transaction ids), `user_credits` (USD wallet, cents, time) | `credits.iap_transactions` |
+| `iap_account_token` | `iap_account_tokens` | `credits.iap_account_tokens` |
 
 ## Known limitations
 
@@ -23,10 +25,21 @@ stopped.
   not part of any node balance and the node has no bucket for them: holders
   keep spending them on-chain until they expire, and the node's balance
   shows only USD credits.
-- **In-app (Apple) credits cannot be clawed back.** USD credits granted by an
-  Apple purchase import as ordinary grants; the node has no App Store
-  integration, so an Apple refund issued after cutover does not reverse
-  them.
+- **Only USD-rail in-app (Apple) credits can be clawed back.** USD credits
+  granted by an Apple purchase import as ordinary grants, and the
+  `iap_transaction` step records each upstream USD-rail transaction as an
+  `imported` row with its wallet, cents and upstream time (so the
+  per-wallet caps and the node's daily ceiling count it, and an Apple
+  refund issued after cutover charges its Credits back from the wallet as
+  for a purchase credited on the node). MANA ones are not imported: any
+  other transaction becomes a `refunded` row without a wallet, which a
+  refund does not reverse. Either way the node's App Store routes never
+  credit an upstream purchase a second time.
+- **Order of the App Store cutover.** Stop upstream's App Store routes (the
+  notification URL and `/credits/iap/*`) before `iap_transaction` reads,
+  and set `APPLE_BUNDLE_ID` on the node only after the import: a purchase
+  upstream credits after the read is not recorded, so the node would credit
+  it again.
 
 ## Money
 
@@ -118,7 +131,8 @@ when every upstream flag really has expired or been lifted, rerun with
 - `stripe_events`, `stripe_payment_refunds`, `stripe_payment_disputes`:
   upstream endpoint's de-duplication and reconciliation state; their outcome
   is in `purchases` and the refund ledger rows.
-- `iap_credits`, `iap_account_tokens` (no IAP on the node), `seasons`,
+- `iap_credits` beyond their transaction ids, wallets, cents and times
+  (their Credits are `user_credits` rows), `seasons`,
   `goals`, `season_goals`, `user_progress`, `sale_proceeds`,
   `proceeds_cursor`, `proceeds_abandoned_fills`, `studios`,
   `studio_operators`, `studio_budget_entries`, `shop_daily_summaries`,
@@ -126,6 +140,6 @@ when every upstream flag really has expired or been lifted, rerun with
 - Left to the node: `packs`, `idempotency`, `captcha_challenges`, `carts`,
   `cart_items`, `checkouts`, `fulfillment_outbox`, `authorizations`,
   `authorization_lines`, `usage_settlements`, `revocations`, `usages`,
-  `usage_index_cursor`.
+  `usage_index_cursor`, `iap_notifications`, `iap_refund_decisions`.
 
 No watermarks; every run re-scans and is idempotent.

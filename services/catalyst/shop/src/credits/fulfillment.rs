@@ -79,7 +79,8 @@ pub const CAPTCHA_PURGE_BATCH: i64 = 5_000;
 /// CreditUsed index's folded chain time when one is configured, `$5` its
 /// chain: `usage::expiry_bound_sql`), purge one batch of old captcha
 /// challenges (`expires_at < $3`, the `captcha_challenges_expires_idx`
-/// statement), list the checkouts awaiting compensation and the outbox lines
+/// statement) and one of App Store notification records past the accepted
+/// age plus a day (`signed_at < $6`, `iap_notifications_signed_idx`), list the checkouts awaiting compensation and the outbox lines
 /// awaiting a broker attempt (a frozen checkout's lines only while their buy
 /// is unsettled), all in one statement; the clock is a bind.
 pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
@@ -91,6 +92,10 @@ pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
      ), purged AS ( \
          DELETE FROM credits.captcha_challenges WHERE ctid = ANY (ARRAY( \
              SELECT ctid FROM credits.captcha_challenges WHERE expires_at < $3 ORDER BY expires_at LIMIT $4)) \
+         RETURNING 1 \
+     ), iap_purged AS ( \
+         DELETE FROM credits.iap_notifications WHERE ctid = ANY (ARRAY( \
+             SELECT ctid FROM credits.iap_notifications WHERE signed_at < $6 ORDER BY signed_at LIMIT $4)) \
          RETURNING 1 \
      ), reversing AS ( \
          SELECT id, address FROM credits.checkouts WHERE status = 'reversing' ORDER BY id LIMIT 50 \
@@ -107,6 +112,7 @@ pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
      ) \
      SELECT 'expired' AS kind, count(*)::bigint AS id, NULL::text AS address FROM expired \
      UNION ALL SELECT 'captcha_purged', count(*)::bigint, NULL FROM purged \
+     UNION ALL SELECT 'iap_purged', count(*)::bigint, NULL FROM iap_purged \
      UNION ALL SELECT 'reversing', id, address FROM reversing \
      UNION ALL SELECT 'pending', id, NULL FROM pending";
 
@@ -164,16 +170,19 @@ impl OutboxWorker {
             .bind(now - CAPTCHA_PURGE_AFTER)
             .bind(CAPTCHA_PURGE_BATCH)
             .bind(self.credits.usage_chain)
+            .bind(now - chrono::Duration::seconds(super::apple::NOTIFICATION_RECORD_SECS))
             .fetch_all(&self.credits.pool)
             .await?;
         let mut expired = 0i64;
         let mut captcha_purged = 0i64;
+        let mut iap_purged = 0i64;
         let mut reversing: Vec<(i64, String)> = Vec::new();
         let mut candidates: Vec<i64> = Vec::new();
         for r in rows {
             match r.get::<String, _>("kind").as_str() {
                 "expired" => expired = r.get("id"),
                 "captcha_purged" => captcha_purged = r.get("id"),
+                "iap_purged" => iap_purged = r.get("id"),
                 "reversing" => reversing.push((r.get("id"), r.get("address"))),
                 _ => candidates.push(r.get("id")),
             }
@@ -183,6 +192,9 @@ impl OutboxWorker {
         }
         if captcha_purged > 0 {
             tracing::info!(captcha_purged, "purged expired captcha challenges");
+        }
+        if iap_purged > 0 {
+            tracing::info!(iap_purged, "purged old app store notification records");
         }
         reversing.sort_by_key(|(id, _)| *id);
         candidates.sort_unstable();

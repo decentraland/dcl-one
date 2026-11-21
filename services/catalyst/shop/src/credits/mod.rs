@@ -9,13 +9,15 @@
 //! `/wallet/{wallet}/balance`, `/packs`, `/credits/packs`,
 //! `/packs/{sku}/intent`, `/packs/{sku}/mock-purchase`, `/topup/mock-card`,
 //! `/topup/mana[/quote]`, `/credits/checkout`, `/credits/orders/{id}`,
-//! `/credits/authorize[/cancel]`, `/stripe/webhook`, `/cart`,
+//! `/credits/authorize[/cancel]`, `/stripe/webhook`, `/apple/webhook`,
+//! `/credits/iap/{quote,register,verify}`, `/cart`,
 //! `/cart/items[/{collection}/{item}]`, `/checkout[/{id}]`, `/prices/quote`,
 //! `/seasons`, seasonal photo goals and `/captcha`, and
 //! the operator routes `/admin/credits/{grant,revoke}`,
 //! `/admin/users/{a}/block`, `/admin/packs[/{sku}]`, `/admin/purchases`,
 //! `/admin/checkouts[/{id}/{refund,force-fulfill}]`, `/admin/ledger`,
-//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile` behind
+//! `/admin/grants/{ref}/{reclaim,release}`, `/admin/reconcile`,
+//! `/credits/iap[/refund|/held]` (App Store, `iap.rs`) behind
 //! `CATALYRST_CREDITS_ADMIN_TOKEN` (`admin.rs`).
 //!
 //! Where each route reads and writes:
@@ -73,6 +75,7 @@
 
 pub mod admin;
 pub mod admin_store;
+pub mod apple;
 pub mod authorize;
 pub mod batch;
 pub mod captcha;
@@ -86,6 +89,7 @@ pub mod fulfillment;
 pub mod goals;
 pub mod handlers;
 pub mod history;
+pub mod iap;
 pub mod money;
 pub mod orders;
 pub mod packs;
@@ -101,6 +105,8 @@ pub mod wallet;
 pub mod wallet_flags;
 pub mod writes;
 
+#[cfg(test)]
+mod iap_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -226,6 +232,8 @@ pub struct RawSettings {
     pub shop_base_url: String,
     /// `NOTIFICATIONS_CDN_URL`: base of the credits notification icon (the old `CDN_URL`).
     pub notifications_cdn_url: String,
+    /// The App Store purchases (`iap.rs`): `APPLE_*` and `IAP_*`.
+    pub iap: iap::RawSettings,
 }
 
 impl Default for RawSettings {
@@ -276,6 +284,7 @@ impl Default for RawSettings {
             trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
             notifications_cdn_url: crate::shared::notifications::DEFAULT_CDN_URL.to_string(),
+            iap: iap::RawSettings::default(),
         }
     }
 }
@@ -321,6 +330,8 @@ pub struct Settings {
     pub trial: Option<trial::TrialBuyers>,
     pub shop_base_url: String,
     pub notifications_cdn_url: String,
+    /// `None` without `APPLE_BUNDLE_ID`: the App Store routes answer 503.
+    pub iap: Option<Arc<iap::Iap>>,
 }
 
 fn non_empty(v: Option<String>) -> Option<String> {
@@ -497,6 +508,9 @@ impl Settings {
             if non_empty(raw.stripe_webhook_secret.clone()).is_some() {
                 anyhow::bail!("CREDITS_TRIAL_MODE takes no card rail: unset STRIPE_WEBHOOK_SECRET");
             }
+            if non_empty(raw.iap.bundle_id.clone()).is_some() {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no App Store rail: unset APPLE_BUNDLE_ID");
+            }
             // Closed and complete: a trial that would answer every authorization with 503 does
             // not start either.
             if !(raw.credits_onchain_authorize_enabled
@@ -590,6 +604,7 @@ impl Settings {
                 .to_string(),
             notifications_cdn_url: non_empty(Some(raw.notifications_cdn_url))
                 .unwrap_or_else(|| crate::shared::notifications::DEFAULT_CDN_URL.to_string()),
+            iap: iap::Iap::parse(raw.iap)?,
         })
     }
 
@@ -1018,6 +1033,14 @@ pub fn router(state: SharedState) -> Router {
         .route("/topup/mana/quote", get(handlers::topup::mana_topup_quote))
         .route("/stripe/webhook", post(handlers::stripe::webhook))
         .route("/webhook", post(handlers::stripe::webhook))
+        .route("/apple/webhook", post(handlers::iap::webhook))
+        .route("/credits/iap/quote", post(handlers::iap::quote))
+        .route("/credits/iap/register", post(handlers::iap::register))
+        .route("/credits/iap/verify", post(handlers::iap::verify))
+        .route("/credits/iap", post(handlers::iap::admin_credit))
+        .route("/credits/iap/refund", post(handlers::iap::admin_refund))
+        .route("/credits/iap/reversal", post(handlers::iap::admin_reversal))
+        .route("/credits/iap/held", get(handlers::iap::admin_held))
         .route("/cart", get(handlers::cart::get_cart))
         .route("/cart/items", post(handlers::cart::add_item))
         .route(
@@ -1147,6 +1170,14 @@ pub fn shop_router(state: SharedState) -> Router {
             post(handlers::packs::mock_purchase),
         )
         .route("/dev/topup/mock-card", post(handlers::packs::mock_topup))
+        .route("/v1/apple/webhook", post(handlers::iap::webhook))
+        .route("/v1/iap/quote", post(handlers::iap::quote))
+        .route("/v1/iap/register", post(handlers::iap::register))
+        .route("/v1/iap/verify", post(handlers::iap::verify))
+        .route("/admin/iap/credits", post(handlers::iap::admin_credit))
+        .route("/admin/iap/refunds", post(handlers::iap::admin_refund))
+        .route("/admin/iap/reversals", post(handlers::iap::admin_reversal))
+        .route("/admin/iap/held", get(handlers::iap::admin_held))
         .merge(handlers::admin::shop_router())
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn(
@@ -1285,6 +1316,10 @@ mod schema_tests {
             "usages",
             "usage_index_cursor",
             "captcha_challenges",
+            "iap_transactions",
+            "iap_account_tokens",
+            "iap_notifications",
+            "iap_refund_decisions",
         ] {
             assert!(
                 crate::db::SCHEMA_SQL.contains(&format!("CREATE TABLE credits.{table} (")),

@@ -500,6 +500,13 @@ impl Credits {
         .bind(blocked)
         .execute(&mut *tx)
         .await?;
+        // The operator now owns the block: a reversed App Store refund no longer lifts it.
+        sqlx::query(
+            "UPDATE credits.iap_transactions SET raised_block = false WHERE address = $1 AND raised_block",
+        )
+        .bind(address)
+        .execute(&mut *tx)
+        .await?;
         if !blocked {
             sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
                 .bind(address)

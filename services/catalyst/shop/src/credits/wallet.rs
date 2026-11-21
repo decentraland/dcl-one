@@ -503,6 +503,8 @@ impl Credits {
                 removed: "0".to_string(),
                 shortfall: amount.to_string(),
                 has_shortfall: true,
+                uncovered: true,
+                uncovered_amount: amount.to_string(),
             });
         };
         let available_before: String = before.get("available");
@@ -528,7 +530,8 @@ impl Credits {
                        (($3::numeric - available) - ($4::numeric - earned_available))::text AS paid_removed, \
                        GREATEST($2::numeric - ($3::numeric - available), 0)::text AS shortfall, \
                        ($2::numeric > $3::numeric - available) AS has_shortfall, \
-                       ($2::numeric > $3::numeric - (SELECT credits FROM held)) AS uncovered",
+                       ($2::numeric > $3::numeric - (SELECT credits FROM held)) AS uncovered, \
+                       GREATEST($2::numeric - GREATEST($3::numeric - (SELECT credits FROM held), 0), 0)::text AS uncovered_amount",
         )
         .bind(address)
         .bind(amount)
@@ -541,6 +544,13 @@ impl Credits {
         let blocked: bool = row.get("uncovered");
         if blocked {
             tracing::error!(address = %address, tx_ref = %tx_ref, "fiat reversal exceeds the unpledged balance: wallet blocked from spending credits");
+            // This reversal relies on the block too: an earlier App Store refund no longer lifts it alone.
+            sqlx::query(
+                "UPDATE credits.iap_transactions SET raised_block = false WHERE address = $1 AND raised_block",
+            )
+            .bind(address)
+            .execute(&mut **tx)
+            .await?;
         }
         let available: String = row.get("available");
         let removed: String = row.get("removed");
@@ -548,6 +558,7 @@ impl Credits {
         let paid_removed: String = row.get("paid_removed");
         let shortfall: String = row.get("shortfall");
         let has_shortfall: bool = row.get("has_shortfall");
+        let uncovered_amount: String = row.get("uncovered_amount");
 
         let mut detail = detail.clone();
         if let serde_json::Value::Object(map) = &mut detail {
@@ -576,6 +587,8 @@ impl Credits {
             removed,
             shortfall,
             has_shortfall,
+            uncovered: blocked,
+            uncovered_amount,
         })
     }
 }
@@ -590,4 +603,8 @@ pub struct RevokeOutcome {
     /// Whether `shortfall` is strictly positive, decided by PostgreSQL in
     /// NUMERIC (the text form may render as "0.00").
     pub has_shortfall: bool,
+    /// The reversal exceeds the balance net of live pledges: the wallet was blocked.
+    pub uncovered: bool,
+    /// How much of the reversal the balance net of live pledges could not cover.
+    pub uncovered_amount: String,
 }
