@@ -3,27 +3,27 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const A: &str = "0x00000000000000000000000000000000000000a1";
-const B: &str = "0x00000000000000000000000000000000000000b2";
-const T0: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
-const T1: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
+pub(crate) const A: &str = "0x00000000000000000000000000000000000000a1";
+pub(crate) const B: &str = "0x00000000000000000000000000000000000000b2";
+pub(crate) const T0: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+pub(crate) const T1: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
 
-fn group(addresses: &[&str], topics: Value) -> LogGroup {
+pub(crate) fn group(addresses: &[&str], topics: Value) -> LogGroup {
     LogGroup {
         addresses: addresses.iter().map(|a| a.to_string()).collect(),
         topics,
     }
 }
 
-fn h(n: u64) -> String {
+pub(crate) fn h(n: u64) -> String {
     format!("0x{n:064x}")
 }
 
-fn header_line(n: u64) -> Value {
+pub(crate) fn header_line(n: u64) -> Value {
     json!({"number": n, "hash": h(n), "parentHash": h(n.saturating_sub(1)), "timestamp": 1_700_000_000 + n})
 }
 
-fn log_line(index: u64, address: &str, topics: &[&str]) -> Value {
+pub(crate) fn log_line(index: u64, address: &str, topics: &[&str]) -> Value {
     json!({"logIndex": index, "transactionIndex": 0, "address": address, "topics": topics,
            "data": "0x", "transactionHash": h(9_000 + index)})
 }
@@ -224,14 +224,14 @@ fn readers_of_one_origin_and_credential_share_their_limiter() {
 
 /// One request a fake portal received.
 #[derive(Clone, Debug)]
-struct Seen {
-    head: String,
-    body: String,
+pub(crate) struct Seen {
+    pub(crate) head: String,
+    pub(crate) body: String,
 }
 
 /// A loopback server answering each request with the next canned raw
 /// response, recording what it received.
-async fn fake(responses: Vec<String>) -> (String, Arc<Mutex<Vec<Seen>>>) {
+pub(crate) async fn fake(responses: Vec<String>) -> (String, Arc<Mutex<Vec<Seen>>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let seen: Arc<Mutex<Vec<Seen>>> = Arc::default();
@@ -279,7 +279,7 @@ async fn fake(responses: Vec<String>) -> (String, Arc<Mutex<Vec<Seen>>>) {
     (format!("http://127.0.0.1:{}", addr.port()), seen)
 }
 
-fn ok_ndjson(blocks: &[Value]) -> String {
+pub(crate) fn ok_ndjson(blocks: &[Value]) -> String {
     let body: String = blocks.iter().map(|b| format!("{b}\n")).collect();
     format!(
         "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -287,7 +287,7 @@ fn ok_ndjson(blocks: &[Value]) -> String {
     )
 }
 
-fn status(code: u16, extra: &str, body: &str) -> String {
+pub(crate) fn status(code: u16, extra: &str, body: &str) -> String {
     format!(
         "HTTP/1.1 {code} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n{extra}\r\n{body}",
         body.len()
@@ -321,8 +321,8 @@ async fn the_reader_speaks_the_protocol_and_counts_every_send() {
     );
     assert_eq!(r.finalized().await.unwrap().number, 40);
     assert_eq!(
-        r.coverage().await.unwrap(),
-        Coverage::Unknown,
+        r.advertised_start().await.unwrap(),
+        None,
         "chain-lake publishes no metadata"
     );
     let f = Filter::from_group(&group(&[A], json!([T0]))).unwrap();
@@ -371,7 +371,7 @@ async fn the_reader_speaks_the_protocol_and_counts_every_send() {
     assert!(seen.iter().all(|s| {
         s.head
             .to_ascii_lowercase()
-            .contains("authorization: bearer sk-example-proto")
+            .contains("x-api-key: sk-example-proto")
     }));
     let q: Value = serde_json::from_str(&seen[3].body).unwrap();
     assert_eq!(
@@ -431,7 +431,7 @@ async fn a_cut_body_never_counts_and_a_redirect_is_never_followed() {
 }
 
 #[tokio::test]
-async fn coverage_is_claimed_only_from_published_metadata() {
+async fn metadata_bounds_the_dataset_only() {
     let (origin, _) = fake(vec![
         status(
             200,
@@ -443,6 +443,6 @@ async fn coverage_is_claimed_only_from_published_metadata() {
     ])
     .await;
     let r = PortalReader::new(&origin, "ethereum-mainnet", None, 100.0).unwrap();
-    assert_eq!(r.coverage().await.unwrap(), Coverage::FullFrom(0));
-    assert_eq!(r.coverage().await.unwrap(), Coverage::Unknown);
+    assert_eq!(r.advertised_start().await.unwrap(), Some(0));
+    assert_eq!(r.advertised_start().await.unwrap(), None);
 }

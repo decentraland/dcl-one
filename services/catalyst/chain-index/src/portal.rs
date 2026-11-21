@@ -6,8 +6,8 @@
 //! It is not a [`crate::logs::LogSource`]: a chain walk cannot read from it.
 //! What it returns is compared with what the RPC walk accepted. A portal's
 //! answer proves which blocks it covered, not that it holds every log of
-//! those blocks for the addresses asked: [`Coverage`] says which claim, if
-//! any, the portal made.
+//! those blocks for the addresses asked: [`Coverage`] keeps the dataset's
+//! advertised first block apart from any claim on address history.
 //!
 //! Protocol, as both portals serve it:
 //! - `GET /datasets/<ds>/head` and `/finalized-head` answer `{number, hash}`;
@@ -22,9 +22,10 @@
 //! Every HTTP request is counted as it is sent, by kind ([`Sends`]), and
 //! waits for a token of the process-wide limiter of its origin and
 //! credential ([`OriginLimiter`]), which also holds a shared cooldown after
-//! a 429, 529 or 503. The credential is sent only as `Authorization:
-//! Bearer` to the configured origin, by a client that follows no redirect;
-//! it never enters a URL, a log line or an error.
+//! a 429, 529 or 503. The credential is sent only as `x-api-key` (the
+//! scheme the SQD portal's OpenAPI documents) to the configured origin, by a
+//! client that follows no redirect; it never enters a URL, a log line or an
+//! error.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -89,16 +90,29 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-/// What a portal claims to hold of a dataset.
+/// What is known of a portal's coverage, kept apart from what a comparison
+/// measured: the dataset's advertised first block bounds the dataset, never
+/// an address's history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind", content = "from")]
-pub enum Coverage {
-    /// Every log of every block from this one (the SQD portal's published
-    /// `start_block`).
-    FullFrom(u64),
-    /// No claim: an answer shows which blocks were covered, not which logs
-    /// the portal holds (chain-lake before it publishes its contracts).
+pub struct Coverage {
+    /// The first block the portal says the dataset holds (`/metadata`
+    /// `start_block`), when it publishes one.
+    pub advertised_start: Option<u64>,
+    pub address_history: AddressHistory,
+}
+
+/// Whether the logs of the addresses asked are known to be all there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AddressHistory {
+    /// No claim: a page shows which blocks were covered, not which logs the
+    /// portal holds. A custom portal can answer canonical headers and no
+    /// logs for addresses it never indexed.
     Unknown,
+    /// The operator asserts the provider holds every log of the dataset
+    /// (`CHAIN_LOGS_PORTAL_ASSERT_FULL_HISTORY`): an assertion, not a
+    /// measurement.
+    AssertedByOperator,
 }
 
 /// The kinds of request counted apart.
@@ -272,6 +286,8 @@ pub struct Page {
     /// kept out of `logs`, never deduplicated into one.
     pub conflicts: Vec<(u64, u32)>,
     pub upper: Header,
+    /// The decoded lines' bytes, for a caller's aggregate bound.
+    pub bytes: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -630,7 +646,7 @@ impl PortalReader {
         self.limiter.acquire().await;
         self.sends.count(kind);
         let req = match &self.key {
-            Some(k) => req.bearer_auth(&k.0),
+            Some(k) => req.header("x-api-key", &k.0),
             None => req,
         };
         let resp = req
@@ -691,20 +707,17 @@ impl PortalReader {
         self.head_at("finalized-head").await
     }
 
-    /// The portal's claim: every log from the published `start_block`, or
-    /// none where it publishes no metadata.
-    pub async fn coverage(&self) -> Result<Coverage, PortalError> {
+    /// The dataset's advertised first block (`/metadata` `start_block`);
+    /// `None` where the portal publishes no metadata or no such field.
+    pub async fn advertised_start(&self) -> Result<Option<u64>, PortalError> {
         let resp = match self
             .send(SendKind::Admission, self.client.get(self.url("metadata")))
             .await
         {
-            Err(PortalError::NotFound { .. }) => return Ok(Coverage::Unknown),
+            Err(PortalError::NotFound { .. }) => return Ok(None),
             other => other?,
         };
-        let v = json_body(resp).await?;
-        Ok(v["start_block"]
-            .as_u64()
-            .map_or(Coverage::Unknown, Coverage::FullFrom))
+        Ok(json_body(resp).await?["start_block"].as_u64())
     }
 
     /// The header of finalized block `n`.
@@ -950,8 +963,11 @@ pub fn decode_page(lines: &[Vec<u8>], from: u64, to: u64) -> Result<Page, Portal
         logs: by_position.into_values().collect(),
         conflicts: conflicts.into_iter().collect(),
         upper,
+        bytes: lines.iter().map(Vec::len).sum(),
     })
 }
+
+pub mod compare;
 
 #[cfg(test)]
 mod tests;
