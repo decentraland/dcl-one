@@ -88,6 +88,19 @@ afterAll(async () => {
   await opened?.close();
 }, 30_000);
 
+/** Hovers the first grid card, then one of its actions, and reads that action's background. */
+async function hoverAction(selector: string) {
+  const { x, y } = await evaluate<{ x: number; y: number }>(
+    `(() => { const card = document.querySelector(".wo-up__grid .wo-sm"); const r = card.getBoundingClientRect(); return { x: r.x + r.width * 0.8, y: r.y + 10 }; })()`,
+  );
+  await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+  const target = await evaluate<{ x: number; y: number }>(
+    `(() => { const r = document.querySelector(".wo-up__grid .wo-sm ${selector}").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+  );
+  await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
+  return evaluate<string>(`getComputedStyle(document.querySelector(".wo-up__grid .wo-sm ${selector}")).backgroundColor`);
+}
+
 // Figma Events > card-hover, state=hover, live=false (16295:37451): CTAs 16295:37459.
 // At 1920px the grid card is 430px, the Figma card's width, so the full row shows.
 describe.each([1920])("when an Upcoming card is hovered at %ipx", (width) => {
@@ -126,21 +139,12 @@ describe.each([1920])("when an Upcoming card is hovered at %ipx", (width) => {
     expect(share.left - remind.right).toBe(12);
   });
 
-  it("should darken Remind me and Share to the public controls' white 20% on their own hover", async () => {
+  it.each([
+    ["Remind me", ".wo-sm__actions a"],
+    ["Share", ".wo-sm__actions button[aria-label='Copy link']"],
+  ])("should darken %s to the public controls' white 20% on its own hover", async (_, selector) => {
     await load(width);
-    const hover = async (selector: string) => {
-      const { x, y } = await evaluate<{ x: number; y: number }>(
-        `(() => { const card = document.querySelector(".wo-up__grid .wo-sm"); const r = card.getBoundingClientRect(); return { x: r.x + r.width * 0.8, y: r.y + 10 }; })()`,
-      );
-      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-      const target = await evaluate<{ x: number; y: number }>(
-        `(() => { const r = document.querySelector(".wo-up__grid .wo-sm ${selector}").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
-      );
-      await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y });
-      return evaluate<string>(`getComputedStyle(document.querySelector(".wo-up__grid .wo-sm ${selector}")).backgroundColor`);
-    };
-    expect(await hover(".wo-sm__actions a")).toBe("rgba(255, 255, 255, 0.2)");
-    expect(await hover(".wo-sm__actions button[aria-label='Copy link']")).toBe("rgba(255, 255, 255, 0.2)");
+    expect(await hoverAction(selector)).toBe("rgba(255, 255, 255, 0.2)");
   });
 });
 

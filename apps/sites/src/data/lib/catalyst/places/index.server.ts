@@ -5,7 +5,7 @@ import { CatalystError } from "../client";
 import type { GetOptions } from "../client";
 import type { Place, Category } from "../schema";
 import type { FetchPlacesParams } from "../types";
-import type { CopyStamp } from "@ui/data/copyAsOf";
+import type { CopyStamp } from "@web-core/freshness/copyAsOf";
 
 const dbConfigured = catalystDatabaseConfigured;
 

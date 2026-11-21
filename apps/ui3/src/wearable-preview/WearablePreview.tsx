@@ -22,6 +22,7 @@ export default function WearablePreview({
   urns,
   body,
   outfit,
+  outfitPending = false,
   model,
   emote,
   emotes,
@@ -54,8 +55,8 @@ export default function WearablePreview({
 
   const cameraRef = useRef({ zoom, yaw, pitch, fov, targetY });
   cameraRef.current = { zoom, yaw, pitch, fov, targetY };
-  const outfitRef = useRef<AvatarOutfitOptions>({ profile, urns, body, outfit });
-  outfitRef.current = { profile, urns, body, outfit };
+  const outfitRef = useRef<AvatarOutfitOptions>({ profile, urns, body, outfit, outfitPending });
+  outfitRef.current = { profile, urns, body, outfit, outfitPending };
   const emoteRef = useRef(emote);
   emoteRef.current = emote;
   const onStatusRef = useRef(onStatus);
@@ -65,7 +66,7 @@ export default function WearablePreview({
     model, base, controls, pan, platform, spin, spinSpeed, background, emotes ?? null, requireWearables,
   ]);
   const outfitKey = JSON.stringify([
-    profile, Array.isArray(urns) ? urns : urns ?? null, body, outfit ?? null,
+    profile, Array.isArray(urns) ? urns : urns ?? null, body, outfit ?? null, outfitPending,
   ]);
 
   useEffect(() => {

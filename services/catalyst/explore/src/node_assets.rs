@@ -34,13 +34,25 @@ pub(crate) fn event_image_url(
     )
 }
 
-/// Expand the bundled default for consumers that render a stored event.
-pub fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
+/// The bundled default on the events asset mount; anything else as stored.
+fn absolute_default_image(image: &str, events_asset_base: &str) -> String {
     if image == DEFAULT_EVENT_IMAGE {
         format!("{}{image}", events_asset_base.trim_end_matches('/'))
     } else {
         image.to_owned()
     }
+}
+
+/// A notice's image as the read projection serves it, without its
+/// `asset_rewrite_base` mapping of upstream asset URLs to this node; empty
+/// when the read side drops it.
+pub fn notice_image_url(
+    image: &str,
+    configured_public_base: Option<&str>,
+    events_asset_base: &str,
+) -> String {
+    crate::events::project_event_image(image, None, configured_public_base, events_asset_base)
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -364,6 +376,34 @@ mod tests {
         ] {
             assert_eq!(event_poster_input(url, &settings, "poster"), None, "{url}");
         }
+    }
+
+    #[test]
+    fn notice_posters_match_the_read_projection_under_a_prefixed_public_url() {
+        let public_url = "https://node.example.org/prefix/";
+        let rewrite = crate::Settings::asset_rewrite_base_for(Some(public_url));
+        let public = crate::Settings::configured_public_base_for(Some(public_url));
+        let assets = crate::Settings::events_asset_base_for(public_url);
+        for image in ["/poster/a.webp", "/poster-vertical/a.webp"] {
+            assert_eq!(
+                super::notice_image_url(image, public.as_deref(), &assets),
+                super::event_image_url(image, rewrite.as_deref(), public.as_deref(), &assets),
+                "{image}"
+            );
+        }
+        assert_eq!(
+            super::notice_image_url(super::DEFAULT_EVENT_IMAGE, public.as_deref(), &assets),
+            "https://node.example.org/prefix/events/assets/event-default.webp"
+        );
+        // Sanitized as on read: padding is trimmed, and what read drops is left out.
+        assert_eq!(
+            super::notice_image_url(" /poster/a.webp ", public.as_deref(), &assets),
+            super::notice_image_url("/poster/a.webp", public.as_deref(), &assets)
+        );
+        assert_eq!(
+            super::notice_image_url("/other/a.webp", public.as_deref(), &assets),
+            ""
+        );
     }
 
     #[test]

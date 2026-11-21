@@ -2646,6 +2646,327 @@ async fn a_world_name_gallery_reads_the_places_catalogue() {
     s.done().await;
 }
 
+// Match the catalogue writer: the local row names the world, while a scene's
+// photo place ID is its durable identity bound to the current deployment.
+async fn local_world_gallery_place(pool: &sqlx::PgPool, world: &str, listed: bool) -> String {
+    let identity = Uuid::new_v4();
+    sqlx::query("INSERT INTO worlds.worlds (name, show_in_places) VALUES ($1, $2)")
+        .bind(world)
+        .bind(listed)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ($1, 'gallery-scene', '[]', $2, '0xaa', ARRAY['0,0'], 1)")
+        .bind(world)
+        .bind(json!({ "metadata": { "scene": { "base": "0,0", "parcels": ["0,0"] } } }))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'gallery-scene', ARRAY['0,0'])")
+        .bind(world)
+        .bind(identity)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO explore.place_world_local (id, base_position, world, world_name, raw) VALUES ($1, '0,0', true, $2, $3)")
+        .bind(world)
+        .bind(world.to_uppercase())
+        .bind(json!({ "world": true, "world_name": world.to_uppercase(), "show_in_places": listed }))
+        .execute(pool)
+        .await
+        .unwrap();
+    identity.to_string()
+}
+
+async fn delete_local_world_gallery(pool: &sqlx::PgPool, world: &str) {
+    sqlx::query("DELETE FROM explore.place_moderation WHERE place_id = $1 OR place_id IN (SELECT identity::text FROM explore.world_scene_place WHERE world_name = $1)")
+        .bind(world)
+        .execute(pool)
+        .await
+        .unwrap();
+    for sql in [
+        "DELETE FROM explore.place_world_local WHERE id = $1",
+        "DELETE FROM explore.place WHERE lower(world_name) = $1",
+        "DELETE FROM explore.world_scene_place WHERE world_name = $1",
+        "DELETE FROM worlds.worlds WHERE name = $1",
+    ] {
+        sqlx::query(sql).bind(world).execute(pool).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn world_galleries_include_public_photos_from_hidden_mirrored_and_local_scenes() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let pool = s.db().pool().clone();
+    for source in [
+        "mirrored-hidden",
+        "local-hidden",
+        "local-listed",
+        "canonical-mirrored",
+    ] {
+        let t = tag();
+        let world = format!("hidden-{t}.dcl.eth");
+        let place;
+        let raw = json!({
+            "world": true,
+            "world_name": world.to_uppercase(),
+            "show_in_places": false
+        });
+        if source == "mirrored-hidden" {
+            place = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', false, $2)")
+                .bind(&place)
+                .bind(&raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+        } else {
+            place = local_world_gallery_place(&pool, &world, source == "local-listed").await;
+        }
+
+        let mut public_ids = Vec::new();
+        for (label, is_public, review_status) in [
+            ("public", true, "ok"),
+            ("private", false, "ok"),
+            ("rejected", true, "rejected"),
+            ("deleted", true, "ok"),
+        ] {
+            let photo = image(
+                &owner,
+                &format!("{label}-{t}"),
+                &format!("{label}-thumb-{t}"),
+                is_public,
+                &place,
+            );
+            s.db().insert_image(&photo).await.unwrap();
+            if label == "public" {
+                public_ids.push(photo.id.to_string());
+            }
+            sqlx::query("UPDATE camera_reel.images SET review_status = $1 WHERE id = $2")
+                .bind(review_status)
+                .bind(photo.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            if label == "deleted" {
+                s.db().delete_image(photo.id).await.unwrap();
+            }
+        }
+
+        if source != "mirrored-hidden" {
+            let second = Uuid::new_v4();
+            sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ($1, 'second-scene', '[]', '{}', '0xaa', ARRAY['1,0'], 1)")
+                .bind(&world).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'second-scene', ARRAY['1,0'])")
+                .bind(&world).bind(second).execute(&pool).await.unwrap();
+            let photo = image(&owner, &tag(), &tag(), true, &second.to_string());
+            s.db().insert_image(&photo).await.unwrap();
+            public_ids.push(photo.id.to_string());
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, &world))
+                .await
+                .unwrap();
+            // A disabled sibling must not hide the world's enabled scenes.
+            let disabled = Uuid::new_v4();
+            sqlx::query("INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES ($1, 'disabled-scene', '[]', '{}', '0xaa', ARRAY['2,0'], 1)")
+                .bind(&world).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'disabled-scene', ARRAY['2,0'])")
+                .bind(&world).bind(disabled).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '2,0', true, $2)")
+                .bind(disabled.to_string()).bind(&raw).execute(&pool).await.unwrap();
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, &disabled.to_string()))
+                .await
+                .unwrap();
+
+            if source == "canonical-mirrored" {
+                for sql in [
+                    "UPDATE worlds.worlds SET mirror_source = 'https://worlds.example' WHERE name = $1",
+                    "UPDATE worlds.world_scenes SET mirror_source = 'https://worlds.example' WHERE world_name = $1",
+                    "INSERT INTO explore.place (id, base_position, raw) SELECT id, base_position, raw FROM explore.place_world_local WHERE id = $1",
+                    "DELETE FROM explore.place_world_local WHERE id = $1",
+                ] {
+                    sqlx::query(sql).bind(&world).execute(&pool).await.unwrap();
+                }
+                // Catalogue and photo metadata retain the original spelling.
+                for catalogue_id in [place.to_uppercase(), format!("urn:uuid:{place}")] {
+                    sqlx::query(
+                        "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)",
+                    )
+                    .bind(&catalogue_id)
+                    .bind(&raw)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                    let photo = image(&owner, &tag(), &tag(), true, &catalogue_id);
+                    s.db().insert_image(&photo).await.unwrap();
+                    public_ids.push(photo.id.to_string());
+                }
+            }
+        }
+        public_ids.sort();
+
+        let requested_world = format!("{}.eth", world.strip_suffix(".eth").unwrap().to_uppercase());
+        let batch = json!({ "placesIds": [requested_world] })
+            .to_string()
+            .into_bytes();
+        for (method, path, body) in [
+            (
+                "GET",
+                format!("{PREFIX}/api/places/{requested_world}/images"),
+                None,
+            ),
+            (
+                "POST",
+                format!("{PREFIX}/api/places/images"),
+                Some((batch, "application/json")),
+            ),
+        ] {
+            let (status, _, resp) = send(s.app(), method, &path, vec![], body).await;
+            assert_eq!(status, StatusCode::OK);
+            let page = json_of(&resp);
+            assert_eq!(
+                page["maxImages"],
+                public_ids.len(),
+                "{method} gallery from {source}"
+            );
+            let mut actual_ids: Vec<&str> = page["images"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|photo| photo["id"].as_str().unwrap())
+                .collect();
+            actual_ids.sort();
+            assert_eq!(actual_ids, public_ids);
+        }
+
+        if source == "mirrored-hidden" {
+            sqlx::query("DELETE FROM explore.place WHERE id = $1")
+                .bind(&place)
+                .execute(&pool)
+                .await
+                .unwrap();
+        } else {
+            delete_local_world_gallery(&pool, &world).await;
+        }
+    }
+    s.done().await;
+}
+
+#[tokio::test]
+async fn local_world_galleries_exclude_unavailable_scenes() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let pool = s.db().pool().clone();
+    let other_world = format!("other-{}.dcl.eth", tag());
+    let other_place = local_world_gallery_place(&pool, &other_world, false).await;
+    s.db()
+        .insert_image(&image(&owner, &tag(), &tag(), true, &other_place))
+        .await
+        .unwrap();
+
+    for (case, mutation) in [
+        (
+            "retired",
+            "UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE world_name = $1",
+        ),
+        (
+            "missing-deployment",
+            "DELETE FROM worlds.world_scenes WHERE world_name = $1",
+        ),
+        (
+            "disabled-scene",
+            "INSERT INTO explore.place_moderation (place_id, disabled, set_by) SELECT identity::text, true, 'test' FROM explore.world_scene_place WHERE world_name = $1",
+        ),
+        (
+            "disabled-world",
+            "INSERT INTO explore.place_moderation (place_id, disabled, set_by) VALUES ($1, true, 'test')",
+        ),
+        (
+            "disabled-catalogue",
+            "UPDATE explore.place_world_local SET disabled = true WHERE id = $1",
+        ),
+        (
+            "blocked-world",
+            "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1",
+        ),
+        (
+            "disabled-alias",
+            "UPDATE explore.place SET disabled = true WHERE world_name = $1 AND id LIKE 'urn:uuid:%'",
+        ),
+    ] {
+        let world = format!("{case}-{}.dcl.eth", tag());
+        let place = local_world_gallery_place(&pool, &world, false).await;
+        for id in [&place, &world] {
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, id))
+                .await
+                .unwrap();
+        }
+        // Every spelling must obey the identity's lifecycle and moderation.
+        for catalogue_id in [
+            place.clone(),
+            place.to_uppercase(),
+            format!("urn:uuid:{place}"),
+        ] {
+            sqlx::query(
+                "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)",
+            )
+            .bind(&catalogue_id)
+            .bind(json!({ "world": true, "world_name": world, "show_in_places": false }))
+            .execute(&pool)
+            .await
+            .unwrap();
+            s.db()
+                .insert_image(&image(&owner, &tag(), &tag(), true, &catalogue_id))
+                .await
+                .unwrap();
+        }
+        sqlx::query(mutation)
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let requested_world = format!("{}.eth", world.strip_suffix(".eth").unwrap().to_uppercase());
+        let batch = json!({ "placesIds": [requested_world] })
+            .to_string()
+            .into_bytes();
+        for (method, path, body) in [
+            (
+                "GET",
+                format!("{PREFIX}/api/places/{requested_world}/images"),
+                None,
+            ),
+            (
+                "POST",
+                format!("{PREFIX}/api/places/images"),
+                Some((batch, "application/json")),
+            ),
+        ] {
+            let (status, _, resp) = send(s.app(), method, &path, vec![], body).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(
+                json_of(&resp),
+                json!({ "images": [], "maxImages": 0 }),
+                "{method} {case}"
+            );
+        }
+        sqlx::query("DELETE FROM explore.place WHERE world_name = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        delete_local_world_gallery(&pool, &world).await;
+    }
+    delete_local_world_gallery(&pool, &other_world).await;
+    s.done().await;
+}
+
 fn worn(owner: &str, hash: &str, is_public: bool, people: &[&[String]]) -> NewImage {
     let mut new = image(owner, hash, &format!("{hash}-thumb"), is_public, "");
     new.metadata.visible_people = people

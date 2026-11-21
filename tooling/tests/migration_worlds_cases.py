@@ -35,6 +35,20 @@ class WorldsMigrationCases:
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permissions;').strip(), '1')
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permission_parcels;').strip(), '0')
 
+    def test_world_permission_load_passes_with_the_stream_key_triggers(self):
+        """A grant narrowed to parcels and a grant removed each announce the world once per transaction."""
+        db = self.permission_fixture()
+        load = self.migration_sql('worlds-content-server', 'world_permission', 'load')
+        notice = 'Asynchronous notification "world_authority" with payload "world:scope.eth" received'
+        self.sql(db, """INSERT INTO public.world_permission_parcels VALUES (1, '1,2'), (1, '1,3');
+            INSERT INTO public.world_permissions VALUES
+                (2, 'scope.eth', 'streaming', '0x' || repeat('b',40), '2026-01-01', '2026-01-01');""")
+        run = 'LISTEN world_authority;\nBEGIN;\n' + self.permission_stage() + load + '\nCOMMIT;\nSELECT 1;\n'
+        self.assertEqual(self.sql(db, run).count(notice), 1)
+        self.sql(db, 'DELETE FROM public.world_permissions WHERE id = 2;')
+        self.assertEqual(self.sql(db, run).count(notice), 1)
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM worlds.world_permissions;').strip(), '1')
+
     def test_world_permissions_reject_invalid_scope_without_widening_existing_grant(self):
         from tooling.tests import migration_harness as harness
         db = self.permission_fixture()

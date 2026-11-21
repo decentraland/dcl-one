@@ -54,11 +54,13 @@ struct Recipient {
 /// The sites the notices point at and the Slack switch.
 #[derive(Clone, Debug)]
 pub struct Links {
-    /// The events site (`/whats-on/{id}`): the link of the notices the old
+    /// The Sites origin of the Events pages: the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
-    /// Backend asset origin and mount for relative default posters.
+    /// Backend events asset mount (`<origin>/events`) for the bundled default image.
     pub asset_base: String,
+    /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
+    pub public_base: Option<String>,
     /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
     /// for the reminder, start and approval notices.
     pub jump_in_site_url: String,
@@ -249,7 +251,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
                 &intent.event,
             )
         }
-        _ => format!("{base}/whats-on/{}", urlencoding::encode(&intent.event_id)),
+        // A rejected event is not public, so its owner lands in its editor; a
+        // deleted one has no page left, so My Events.
+        "event_rejected" => format!(
+            "{base}/events/edit-event/{}",
+            urlencoding::encode(&intent.event_id)
+        ),
+        "event_deleted" => format!("{base}/events?tab=my"),
+        _ => format!("{base}/events?id={}", urlencoding::encode(&intent.event_id)),
     };
     let (title, description) = match intent.kind.as_str() {
         // `Notifications/index.ts:56-57`
@@ -278,7 +287,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::node_assets::notice_image_url(text(&intent.event,"image"),links.public_base.as_deref(),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if matches!(
         intent.kind.as_str(),
         "events_starts_soon" | "events_started" | "event_created"
@@ -315,7 +324,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         intent.kind.as_str(),
         "event_approved" | "event_rejected" | "event_deleted"
     ) {
-        metadata["myHangouts"] = json!(format!("{base}/whats-on?tab=my"));
+        metadata["myHangouts"] = json!(format!("{base}/events?tab=my"));
     }
     if intent.kind == "event_rejected" {
         metadata["reason"] = json!(text(&intent.event, "rejection_reason"));
@@ -626,6 +635,7 @@ mod tests {
         Links {
             base: link.into(),
             asset_base: assets.into(),
+            public_base: None,
             jump_in_site_url: "https://decentraland.org/jump".into(),
             community_cdn: CDN.into(),
             slack_notices: false,
@@ -1804,6 +1814,58 @@ mod tests {
             payload["image"],
             "https://assets.example.org/events/assets/event-default.webp"
         );
+        for (stored, absolute) in [
+            (
+                "/poster/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster/a.webp",
+            ),
+            (
+                "/poster-vertical/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster-vertical/a.webp",
+            ),
+            (
+                "https://img.example.org/p.png",
+                "https://img.example.org/p.png",
+            ),
+        ] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Poster","image":stored})),
+                &recipient(false, false),
+                &Links {
+                    public_base: Some("https://assets.example.org".into()),
+                    ..origins(
+                        "https://web.example.org",
+                        "https://assets.example.org/events",
+                    )
+                },
+            );
+            assert_eq!(payload["image"], absolute, "{stored}");
+        }
+        // An image the read side drops is sent empty.
+        for dropped in ["javascript:x", "/other/a.webp"] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Dropped","image":dropped})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events",
+                ),
+            );
+            assert_eq!(payload["image"], "", "{dropped}");
+        }
+        // Without `PUBLIC_URL` a poster stays relative, as `GET` serves it.
+        let payload = metadata(
+            &intent(
+                "event_approved",
+                json!({"name":"Poster","image":"/poster/a.webp"}),
+            ),
+            &recipient(false, false),
+            &origins(
+                "https://web.example.org",
+                "https://assets.example.org/events",
+            ),
+        );
+        assert_eq!(payload["image"], "/events-assets-099ac00/poster/a.webp");
         assert_eq!(
             payload["link"], "https://decentraland.org/jump/events?id=legacy-event&position=0%2C0",
             "an approval links the jump-in site (`Notifications/index.ts:205`)"
@@ -1818,8 +1880,20 @@ mod tests {
                     "https://assets.example.org/events/"
                 ),
             )["link"],
-            "https://web.example.org/whats-on/legacy-event",
-            "notices upstream sent without a link keep this node's event page"
+            "https://web.example.org/events/edit-event/legacy-event",
+            "a rejected event is not public, so its notice opens the owner's editor"
+        );
+        assert_eq!(
+            metadata(
+                &intent("event_deleted", json!({"name":"Legacy"})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events/"
+                ),
+            )["link"],
+            "https://web.example.org/events?tab=my",
+            "a deleted event has no page, so its notice opens My Events"
         );
     }
 
@@ -1838,7 +1912,7 @@ mod tests {
                 &links,
             );
             assert_eq!(
-                payload["myHangouts"], "https://web.example.org/whats-on?tab=my",
+                payload["myHangouts"], "https://web.example.org/events?tab=my",
                 "{kind}"
             );
             assert_eq!(payload["title"], "Party", "{kind}");

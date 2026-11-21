@@ -751,7 +751,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 </div>
                 <ScrollThumb target={homeScroller} length={THUMB_LENGTH} className={styles.thumb} />
                 </div>
-                {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
+                {shown != null && <SelectedItemPanel key={shown.id} item={shown} showMana={capabilities?.mana === true} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
               </div>
             ) : (
             <>
@@ -831,7 +831,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
               <ScrollThumb target={scroller} length={THUMB_LENGTH} className={styles.thumb} />
               </div>
-              {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
+              {shown != null && <SelectedItemPanel key={shown.id} item={shown} showMana={capabilities?.mana === true} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
             </div>
             </>
             )}

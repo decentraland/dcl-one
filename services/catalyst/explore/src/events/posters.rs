@@ -22,8 +22,8 @@ use crate::shared::errors::ApiError;
 use crate::{Settings, SharedState};
 
 pub const MAX_POSTER_BYTES: usize = 500 * 1024;
+pub use crate::node_assets::DEFAULT_EVENT_IMAGE;
 use crate::node_assets::{self, PosterInput};
-pub use crate::node_assets::{DEFAULT_EVENT_IMAGE, absolute_default_image};
 const POSTER_FILE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const POSTER_VERTICAL_FILE_TYPES: [&str; 3] = ["image/jpeg", "image/png", "image/webp"];
 

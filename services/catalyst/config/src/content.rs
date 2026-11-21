@@ -47,7 +47,7 @@ pub struct ContentConfig {
     /// check and the L1 deploy access checks (LAND, names, v1 items) of local
     /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
     /// is refused at startup. Unset or empty:
-    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
+    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=dcl-one
     /// by ETH_NETWORK, except under NODE_POSTURE island and journey. May come
     /// from ETH_RPC_URL_FILE; an empty file fails startup.
     #[arg(long, env = "ETH_RPC_URL", hide_env_values = true)]

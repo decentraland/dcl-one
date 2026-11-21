@@ -385,14 +385,18 @@ describe('when verified identities match an independent emitted component plan',
     it('should accept the additional verified generator binding', () => {
       expect(publicComponentProblems(context)).toEqual([])
     })
-    it('should reject it when its verified bytes differ from the single module pin', () => {
-      context.inspection.inputs.set('library/ui/figma/src/generators/components.ts', {
-        sha256: hash,
-        indexBlobSha: blob
+    describe('and its verified bytes differ from the single module pin', () => {
+      beforeEach(() => {
+        context.inspection.inputs.set('library/ui/figma/src/generators/components.ts', {
+          sha256: hash,
+          indexBlobSha: blob
+        })
       })
-      expect(publicComponentProblems(context)).toContain(
-        'missing or mismatched component transform identities'
-      )
+      it('should reject the generator binding', () => {
+        expect(publicComponentProblems(context)).toContain(
+          'missing or mismatched component transform identities'
+        )
+      })
     })
   })
 })

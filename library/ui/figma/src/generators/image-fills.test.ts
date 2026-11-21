@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { componentSpecs, projectRoot, snapshotSource, testConfig } from '../../test/snapshot.js'
 import { configSchema, loadConfig } from '../config.js'
 import { externalizeSvgs, generateComponents } from './components.js'
@@ -17,11 +17,22 @@ const placeholderCss = (css: string) => {
 }
 
 describe('the imageFills config', () => {
-  const minimal = { outDir: 'out', pages: {} }
+  let minimal: { outDir: string; pages: Record<string, never> }
 
-  it('should default to assets when omitted or undefined', () => {
-    expect(configSchema.parse(minimal).imageFills).toBe('assets')
-    expect(configSchema.parse({ ...minimal, imageFills: undefined }).imageFills).toBe('assets')
+  beforeEach(() => {
+    minimal = { outDir: 'out', pages: {} }
+  })
+
+  describe('when imageFills is omitted', () => {
+    it('should default to assets', () => {
+      expect(configSchema.parse(minimal).imageFills).toBe('assets')
+    })
+  })
+
+  describe('when imageFills is undefined', () => {
+    it('should default to assets', () => {
+      expect(configSchema.parse({ ...minimal, imageFills: undefined }).imageFills).toBe('assets')
+    })
   })
 
   it('should accept placeholder', () => {
@@ -31,7 +42,9 @@ describe('the imageFills config', () => {
   })
 
   it.each([['none'], [''], [null], ['Placeholder'], [true]])('should reject %j', (value) => {
-    expect(() => configSchema.parse({ ...minimal, imageFills: value })).toThrow()
+    expect(() => configSchema.parse({ ...minimal, imageFills: value })).toThrow(
+      /Invalid option: expected one of .*assets.*placeholder/
+    )
   })
 
   // This tree publishes no Figma image exports, so its config selects the placeholder.
@@ -42,7 +55,7 @@ describe('the imageFills config', () => {
 
 describe('replaceRasterFills', () => {
   describe('when a background embeds a raster', () => {
-    it.each([
+    describe.each([
       ['a large SVG with a raster image', svgUrl(raster(6000))],
       ['a small SVG with a raster image', svgUrl(raster(10))],
       ['an xlink raster image', svgUrl(raster(10).replace(' href=', ' xlink:href='))],
@@ -84,13 +97,22 @@ describe('replaceRasterFills', () => {
         'an SVG whose <use> draws an AVIF',
         svgUrl(raster(10).replace('<image', '<use').replace('image/png', 'image/avif'))
       ]
-    ])('should replace %s with the placeholder and publish no asset', (_, url) => {
-      const { css, assets } = placeholderCss(
-        `.a {\n  background: ${url} center / contain no-repeat;\n}\n`
-      )
+    ])('and the raster is %s', (_, url) => {
+      let result: ReturnType<typeof placeholderCss>
 
-      expect(css).toBe(`.a {\n  background: ${IMAGE_PLACEHOLDER} center / contain no-repeat;\n}\n`)
-      expect(assets.size).toBe(0)
+      beforeEach(() => {
+        result = placeholderCss(`.a {\n  background: ${url} center / contain no-repeat;\n}\n`)
+      })
+
+      it('should replace it with the placeholder', () => {
+        expect(result.css).toBe(
+          `.a {\n  background: ${IMAGE_PLACEHOLDER} center / contain no-repeat;\n}\n`
+        )
+      })
+
+      it('should publish no asset', () => {
+        expect(result.assets.size).toBe(0)
+      })
     })
 
     it('should replace a background-image and count every replacement', () => {
@@ -120,6 +142,18 @@ describe('replaceRasterFills', () => {
         `.a {\n  color: red;\n  &::after {\n    background: ${IMAGE_PLACEHOLDER};\n  }\n}\n`
       )
     })
+
+    it.each([['image-set'], ['-webkit-image-set'], ['IMAGE-SET']])(
+      'should replace raster image source strings in %s',
+      (name) => {
+        const css = `.a { background-image: ${name}("data:image/png;base64,AA" 1x, 'data:image/svg+xml,${encodeURIComponent(raster(10))}' 2x, "data:image/svg+xml,${encodeURIComponent(vector(100))}" 3x); }\n`
+
+        expect(replaceRasterFills(css)).toEqual({
+          css: `.a { background-image: ${name}(${IMAGE_PLACEHOLDER} 1x, ${IMAGE_PLACEHOLDER} 2x, "data:image/svg+xml,${encodeURIComponent(vector(100))}" 3x); }\n`,
+          replaced: 2
+        })
+      }
+    )
   })
 
   describe('when nothing embeds a raster', () => {
@@ -165,16 +199,36 @@ describe('replaceRasterFills', () => {
       expect(replaceRasterFills(css)).toEqual({ css, replaced: 0 })
     })
 
-    it('should still publish a large vector SVG as an asset', () => {
-      const { css, assets } = placeholderCss(`.a { background: ${svgUrl(vector(6000))}; }\n`)
+    describe('and the background is a large vector SVG', () => {
+      let result: ReturnType<typeof placeholderCss>
 
-      expect(assets.size).toBe(1)
-      expect(css).toMatch(/^\.a \{ background: url\("\.\.\/assets\/[0-9a-f]{16}\.svg"\); \}\n$/)
+      beforeEach(() => {
+        result = placeholderCss(`.a { background: ${svgUrl(vector(6000))}; }\n`)
+      })
+
+      it('should still publish it as an asset', () => {
+        expect(result.assets.size).toBe(1)
+      })
+
+      it('should reference the published asset', () => {
+        expect(result.css).toMatch(
+          /^\.a \{ background: url\("\.\.\/assets\/[0-9a-f]{16}\.svg"\); \}\n$/
+        )
+      })
     })
 
     it('should leave a vector mask, including a conic mask, unchanged', () => {
       const css = `.a { mask-image: ${svgUrl(vector(100))}; mask: ${svgUrl(vector(6000))} 0 0 / 100% 100% no-repeat; }\n`
 
+      expect(replaceRasterFills(css)).toEqual({ css, replaced: 0 })
+    })
+
+    it.each([
+      ['raster text', '.a::before { content: "data:image/png;base64,AA"; }\n'],
+      ['escaped raster text', '.a::before { content: "data:image\\2f png;base64,AA"; }\n'],
+      ['an escaped comment', '.a { color: red; /* image-set("data:image\\2f png" 1x) */ }\n'],
+      ['a font format string', '@font-face { src: url(a.woff2) format("woff2"); }\n']
+    ])('should leave ordinary strings with %s unchanged', (_, css) => {
       expect(replaceRasterFills(css)).toEqual({ css, replaced: 0 })
     })
   })
@@ -252,18 +306,6 @@ describe('replaceRasterFills', () => {
       expect(() => replaceRasterFills(css)).toThrow('Refusing to classify an escaped CSS token')
     })
 
-    it.each([['image-set'], ['-webkit-image-set'], ['IMAGE-SET']])(
-      'should replace raster image source strings in %s',
-      (name) => {
-        const css = `.a { background-image: ${name}("data:image/png;base64,AA" 1x, 'data:image/svg+xml,${encodeURIComponent(raster(10))}' 2x, "data:image/svg+xml,${encodeURIComponent(vector(100))}" 3x); }\n`
-
-        expect(replaceRasterFills(css)).toEqual({
-          css: `.a { background-image: ${name}(${IMAGE_PLACEHOLDER} 1x, ${IMAGE_PLACEHOLDER} 2x, "data:image/svg+xml,${encodeURIComponent(vector(100))}" 3x); }\n`,
-          replaced: 2
-        })
-      }
-    )
-
     it.each([
       ['image-set', '.a { background-image: image-set("data:image\\2f png;base64,AA" 1x); }'],
       [
@@ -278,15 +320,6 @@ describe('replaceRasterFills', () => {
       expect(() =>
         replaceRasterFills('.a { mask-image: image-set("data:image/png;base64,AA" 1x); }')
       ).toThrow('Placeholder image fills only replace backgrounds, refusing a raster in mask-image')
-    })
-
-    it.each([
-      ['raster text', '.a::before { content: "data:image/png;base64,AA"; }\n'],
-      ['escaped raster text', '.a::before { content: "data:image\\2f png;base64,AA"; }\n'],
-      ['an escaped comment', '.a { color: red; /* image-set("data:image\\2f png" 1x) */ }\n'],
-      ['a font format string', '@font-face { src: url(a.woff2) format("woff2"); }\n']
-    ])('should leave ordinary strings with %s unchanged', (_, css) => {
-      expect(replaceRasterFills(css)).toEqual({ css, replaced: 0 })
     })
 
     it('should refuse a raster inside a nested SVG', () => {
@@ -309,68 +342,147 @@ describe('replaceRasterFills', () => {
     })
 
     it.each([
-      ['malformed encoding', '.a { background: url("data:image/svg+xml,%E0%A4%A"); }'],
-      ['an escaped URL', '.a { background: url("data:image\\2f png;base64,AA"); }'],
-      ['an unterminated URL', '.a { background: url("data:image/png;base64,AA'],
-      ['an unterminated string', '.a { content: "abc'],
-      ['an unterminated comment', '.a { color: red; /* url(data:image/png;base64,AA)']
-    ])('should refuse %s', (_, css) => {
-      expect(() => replaceRasterFills(css)).toThrow()
+      [
+        'malformed encoding',
+        '.a { background: url("data:image/svg+xml,%E0%A4%A"); }',
+        'URI malformed'
+      ],
+      [
+        'an escaped URL',
+        '.a { background: url("data:image\\2f png;base64,AA"); }',
+        'Refusing to classify an escaped url()'
+      ],
+      [
+        'an unterminated URL',
+        '.a { background: url("data:image/png;base64,AA',
+        'Unterminated string in generated CSS'
+      ],
+      ['an unterminated string', '.a { content: "abc', 'Unterminated string in generated CSS'],
+      [
+        'an unterminated comment',
+        '.a { color: red; /* url(data:image/png;base64,AA)',
+        'Unterminated comment in generated CSS'
+      ]
+    ])('should refuse %s', (_, css, message) => {
+      expect(() => replaceRasterFills(css)).toThrow(message)
     })
   })
 })
 
 describe('generateComponents with imageFills', () => {
-  it('should emit identical files when the mode is omitted or assets', async () => {
-    const specs = await componentSpecs()
-    const omitted = generateComponents(specs, context)
-    const assets = generateComponents(specs, { ...context, imageFills: 'assets' })
+  let specs: Awaited<ReturnType<typeof componentSpecs>>
 
-    expect(assets.files).toEqual(omitted.files)
-    expect(omitted.imageFills).toEqual({ mode: 'assets', replaced: [] })
+  beforeEach(async () => {
+    specs = await componentSpecs()
   })
 
-  it('should replace raster fills, write no raster asset and report the replacements', async () => {
-    const specs = await componentSpecs()
-    const output = generateComponents(specs, { ...context, imageFills: 'placeholder' })
-    const assets = output.files.filter((file) => file.path.startsWith('components/assets/'))
-    const css = output.files.filter((file) => file.path.endsWith('.module.css'))
+  describe('when the mode is omitted or assets', () => {
+    let omitted: ReturnType<typeof generateComponents>
+    let assets: ReturnType<typeof generateComponents>
 
-    expect(output.imageFills.mode).toBe('placeholder')
-    expect(output.imageFills.replaced.length).toBeGreaterThan(0)
-    expect(output.imageFills.replaced.every((entry) => entry.count > 0)).toBe(true)
-    expect(assets.filter((file) => /data:image\/(?!svg)/.test(file.content))).toEqual([])
-    expect(css.filter((file) => /data:image\/(?!svg)/.test(file.content))).toEqual([])
-    expect(css.some((file) => file.content.includes(IMAGE_PLACEHOLDER))).toBe(true)
+    beforeEach(() => {
+      omitted = generateComponents(specs, context)
+      assets = generateComponents(specs, { ...context, imageFills: 'assets' })
+    })
+
+    it('should emit identical files for both', () => {
+      expect(assets.files).toEqual(omitted.files)
+    })
+
+    it('should report the assets mode with no replacement', () => {
+      expect(omitted.imageFills).toEqual({ mode: 'assets', replaced: [] })
+    })
+  })
+
+  describe('when the mode is placeholder', () => {
+    let output: ReturnType<typeof generateComponents>
+    let assets: ReturnType<typeof generateComponents>['files']
+    let css: ReturnType<typeof generateComponents>['files']
+
+    beforeEach(() => {
+      output = generateComponents(specs, { ...context, imageFills: 'placeholder' })
+      assets = output.files.filter((file) => file.path.startsWith('components/assets/'))
+      css = output.files.filter((file) => file.path.endsWith('.module.css'))
+    })
+
+    it('should report the placeholder mode', () => {
+      expect(output.imageFills.mode).toBe('placeholder')
+    })
+
+    it('should report the replacements', () => {
+      expect(output.imageFills.replaced.length).toBeGreaterThan(0)
+    })
+
+    it('should count at least one replacement per reported entry', () => {
+      expect(output.imageFills.replaced.every((entry) => entry.count > 0)).toBe(true)
+    })
+
+    it('should write no raster asset', () => {
+      expect(assets.filter((file) => /data:image\/(?!svg)/.test(file.content))).toEqual([])
+    })
+
+    it('should leave no raster in the CSS Modules', () => {
+      expect(css.filter((file) => /data:image\/(?!svg)/.test(file.content))).toEqual([])
+    })
+
+    it('should replace raster fills with the placeholder', () => {
+      expect(css.some((file) => file.content.includes(IMAGE_PLACEHOLDER))).toBe(true)
+    })
   })
 })
 
 describe('generateAll with imageFills', () => {
-  it('should emit byte-identical files for an omitted and an explicit assets mode', async () => {
-    const config = { ...(await testConfig()), selection: undefined }
-    const omitted: Partial<typeof config> = { ...config }
-    delete omitted.imageFills
-    const explicit = await generateAll(snapshotSource(), context, {
-      ...config,
-      imageFills: 'assets'
-    })
-    const implicit = await generateAll(snapshotSource(), context, omitted as typeof config)
+  let config: Awaited<ReturnType<typeof testConfig>>
 
-    expect(implicit.files).toEqual(explicit.files)
-    expect(explicit.summary.imageFills).toEqual({ mode: 'assets', replaced: [] })
+  beforeEach(async () => {
+    config = { ...(await testConfig()), selection: undefined }
   })
 
-  it('should pass the configured placeholder mode to component generation', async () => {
-    const config = { ...(await testConfig()), selection: undefined }
-    const result = await generateAll(snapshotSource(), context, {
-      ...config,
-      imageFills: 'placeholder'
+  describe('when the mode is omitted or explicitly assets', () => {
+    let explicit: Awaited<ReturnType<typeof generateAll>>
+    let implicit: Awaited<ReturnType<typeof generateAll>>
+
+    beforeEach(async () => {
+      const omitted: Partial<typeof config> = { ...config }
+      delete omitted.imageFills
+      explicit = await generateAll(snapshotSource(), context, {
+        ...config,
+        imageFills: 'assets'
+      })
+      implicit = await generateAll(snapshotSource(), context, omitted as typeof config)
     })
 
-    const components = result.files.filter((file) => file.path.startsWith('components/'))
+    it('should emit byte-identical files', () => {
+      expect(implicit.files).toEqual(explicit.files)
+    })
 
-    expect(result.summary.imageFills.mode).toBe('placeholder')
-    expect(result.summary.imageFills.replaced.length).toBeGreaterThan(0)
-    expect(components.filter((file) => /data:image\/(?!svg)/.test(file.content))).toEqual([])
+    it('should report the assets mode with no replacement', () => {
+      expect(explicit.summary.imageFills).toEqual({ mode: 'assets', replaced: [] })
+    })
+  })
+
+  describe('when the configured mode is placeholder', () => {
+    let result: Awaited<ReturnType<typeof generateAll>>
+
+    beforeEach(async () => {
+      result = await generateAll(snapshotSource(), context, {
+        ...config,
+        imageFills: 'placeholder'
+      })
+    })
+
+    it('should pass the placeholder mode to component generation', () => {
+      expect(result.summary.imageFills.mode).toBe('placeholder')
+    })
+
+    it('should report the replacements', () => {
+      expect(result.summary.imageFills.replaced.length).toBeGreaterThan(0)
+    })
+
+    it('should leave no raster in the generated components', () => {
+      const components = result.files.filter((file) => file.path.startsWith('components/'))
+
+      expect(components.filter((file) => /data:image\/(?!svg)/.test(file.content))).toEqual([])
+    })
   })
 })

@@ -1,7 +1,7 @@
 import { fetchCatalog, type FetchCatalogParams } from "./index";
 import type { CatalogItem, MarketEnvelope } from "./schema";
 import { publicFeedMemo } from "../../public-feed.server";
-import type { PublicFreshness } from "@ui/data/screens/section";
+import type { PublicFreshness } from "@web-core/freshness/section";
 import { withDeadline } from "../../request-deadline";
 
 const RAIL_TTL_MS = 60_000;

@@ -4,7 +4,7 @@ import {
   resetValidationFailures,
   setValidationDevMode,
   validationFailures,
-} from "../validate";
+} from "@web-core/validate";
 import { applyBridgePushForTest } from "../overlay/bridge";
 
 beforeEach(() => {

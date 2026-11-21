@@ -1,6 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlogArticlePage, type BlogArticlePageProps } from './BlogArticlePage'
 import { BlogNotFound, BlogUnavailable } from './BlogNotFound'
 import { article, image } from './fixtures.test-utils'
@@ -22,170 +22,315 @@ const renderArticle = (over: Partial<BlogArticlePageProps> = {}) =>
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
+  vi.resetAllMocks()
 })
 
 describe('BlogArticlePage', () => {
-  it('renders the header, byline, lead and body with one h1', () => {
-    renderArticle()
-    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual([
-      'A post'
-    ])
-    expect(screen.getByRole('link', { name: 'Back to blog' })).toHaveAttribute('href', '/blog')
-    expect(screen.getByText('Jul 01, 2026')).toHaveAttribute('datetime', '2026-07-01')
-    expect(screen.getByText(/2 min read/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Jane Doe' })).toHaveAttribute(
-      'href',
-      '/blog/author/jane-doe'
-    )
-    expect(screen.getByText('About the post')).toBeInTheDocument()
-    expect(screen.getByText('Body text')).toBeInTheDocument()
-  })
+  let over: Partial<BlogArticlePageProps>
+  let container: HTMLElement
 
-  it("highlights the post's category tab as current", () => {
-    renderArticle()
-    expect(screen.getByRole('link', { name: 'Platform' })).toHaveAttribute('aria-current', 'true')
-  })
-
-  it('shares on X and LinkedIn in a new tab with real share URLs', () => {
-    renderArticle()
-    const x = screen.getByRole('link', { name: /Share on X/ })
-    expect(x.getAttribute('href')).toContain(encodeURIComponent(URL_))
-    expect(x).toHaveAttribute('target', '_blank')
-    expect(x).toHaveAttribute('rel', 'noopener noreferrer')
-    const linkedin = screen.getByRole('link', { name: /Share on LinkedIn/ })
-    expect(linkedin.getAttribute('href')).toBe(
-      `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(URL_)}`
-    )
-  })
-
-  it('copies the link and announces it', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    vi.stubGlobal('navigator', { clipboard: { writeText } })
-    renderArticle()
-    await userEvent.click(screen.getByRole('button', { name: 'Copy link' }))
-    expect(writeText).toHaveBeenCalledWith(URL_)
-    expect(await screen.findByRole('status')).toHaveTextContent('Link copied')
-  })
-
-  it('reports a refused clipboard write', async () => {
-    vi.stubGlobal('navigator', {
-      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) }
+  describe('when the post is rendered with its defaults', () => {
+    beforeEach(() => {
+      renderArticle()
     })
-    renderArticle()
-    await userEvent.click(screen.getByRole('button', { name: 'Copy link' }))
-    expect(await screen.findByText('Could not copy the link')).toBeInTheDocument()
-  })
 
-  it('reports a missing clipboard and clears the message after a while', async () => {
-    vi.useFakeTimers()
-    vi.stubGlobal('navigator', {})
-    renderArticle()
-    act(() => screen.getByRole('button', { name: 'Copy link' }).click())
-    expect(screen.getByRole('status')).toHaveTextContent('Could not copy the link')
-    act(() => vi.advanceTimersByTime(3000))
-    expect(screen.getByRole('status')).toHaveTextContent('')
-  })
-
-  it('names the related section after the category when every post shares it', () => {
-    renderArticle({
-      related: [
-        {
-          slug: 'b',
-          title: 'B',
-          publishedAt: '2026-06-01',
-          category: categories[0]!,
-          image: null,
-          hue: 1
-        }
-      ]
+    it('should render a single h1 with the post title', () => {
+      expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual([
+        'A post'
+      ])
     })
-    const section = screen.getByRole('region', { name: 'More on Platform' })
-    expect(within(section).getByRole('link', { name: 'B' })).toHaveAttribute(
-      'href',
-      '/blog/platform/b'
-    )
-  })
 
-  it('uses a neutral related heading for mixed categories and none without related posts', () => {
-    const { unmount } = renderArticle({
-      related: [
-        {
-          slug: 'b',
-          title: 'B',
-          publishedAt: '',
-          category: { slug: 'x', title: 'X' },
-          image: null,
-          hue: 1
-        }
-      ]
+    it('should link back to the blog', () => {
+      expect(screen.getByRole('link', { name: 'Back to blog' })).toHaveAttribute('href', '/blog')
     })
-    expect(screen.getByRole('region', { name: 'More from the blog' })).toBeInTheDocument()
-    unmount()
-    renderArticle()
-    expect(screen.queryByRole('region')).not.toBeInTheDocument()
-  })
 
-  it('shows no related section when the related posts could not be read', () => {
-    renderArticle({ related: null })
-    expect(screen.queryByRole('region')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('A post')
-  })
-
-  it('omits the author when the post has none, and names one without a page without a link', () => {
-    const { unmount } = renderArticle({
-      post: article({ author: { slug: '', name: '', image: '' } })
+    it('should render the publication date as a machine-readable time', () => {
+      expect(screen.getByText('Jul 01, 2026')).toHaveAttribute('datetime', '2026-07-01')
     })
-    expect(screen.queryByText('Jane Doe')).not.toBeInTheDocument()
-    unmount()
-    renderArticle({ post: article({ author: { slug: '', name: 'Decentraland', image: '' } }) })
-    expect(screen.getByText('Decentraland')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Decentraland' })).not.toBeInTheDocument()
+
+    it('should render the read time', () => {
+      expect(screen.getByText(/2 min read/)).toBeInTheDocument()
+    })
+
+    it("should link the byline to the author's page", () => {
+      expect(screen.getByRole('link', { name: 'Jane Doe' })).toHaveAttribute(
+        'href',
+        '/blog/author/jane-doe'
+      )
+    })
+
+    it('should render the lead', () => {
+      expect(screen.getByText('About the post')).toBeInTheDocument()
+    })
+
+    it('should render the body', () => {
+      expect(screen.getByText('Body text')).toBeInTheDocument()
+    })
+
+    it("should highlight the post's category tab as current", () => {
+      expect(screen.getByRole('link', { name: 'Platform' })).toHaveAttribute('aria-current', 'true')
+    })
+
+    it('should share on X in a new tab with the real share URL', () => {
+      const x = screen.getByRole('link', { name: /Share on X/ })
+      expect(x.getAttribute('href')).toContain(encodeURIComponent(URL_))
+      expect(x).toHaveAttribute('target', '_blank')
+      expect(x).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+
+    it('should share on LinkedIn with the real share URL', () => {
+      expect(screen.getByRole('link', { name: /Share on LinkedIn/ }).getAttribute('href')).toBe(
+        `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(URL_)}`
+      )
+    })
+
+    it('should show no related section', () => {
+      expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    })
   })
 
-  it("shows the author's picture when the CMS has one", () => {
-    const { container } = renderArticle({
-      post: article({
-        author: { slug: 'j', name: 'Jane Doe', image: 'https://images.example/j.png' }
+  describe('when the link is copied', () => {
+    let writeText: ReturnType<typeof vi.fn>
+
+    describe('and the clipboard accepts the write', () => {
+      beforeEach(async () => {
+        writeText = vi.fn().mockResolvedValueOnce(undefined)
+        vi.stubGlobal('navigator', { clipboard: { writeText } })
+        renderArticle()
+        await userEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+      })
+
+      it('should write the share URL to the clipboard', () => {
+        expect(writeText).toHaveBeenCalledWith(URL_)
+      })
+
+      it('should announce that the link was copied', async () => {
+        expect(await screen.findByRole('status')).toHaveTextContent('Link copied')
       })
     })
-    const avatar = container.querySelector('img[src="https://images.example/j.png"]')
-    expect(avatar).toHaveAttribute('alt', '')
+
+    describe('and the clipboard refuses the write', () => {
+      beforeEach(async () => {
+        writeText = vi.fn().mockRejectedValueOnce(new Error('denied'))
+        vi.stubGlobal('navigator', { clipboard: { writeText } })
+        renderArticle()
+        await userEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+      })
+
+      it('should report that the link could not be copied', async () => {
+        expect(await screen.findByText('Could not copy the link')).toBeInTheDocument()
+      })
+    })
+
+    describe('and there is no clipboard', () => {
+      beforeEach(() => {
+        vi.useFakeTimers()
+        vi.stubGlobal('navigator', {})
+        renderArticle()
+        act(() => screen.getByRole('button', { name: 'Copy link' }).click())
+      })
+
+      it('should report that the link could not be copied', () => {
+        expect(screen.getByRole('status')).toHaveTextContent('Could not copy the link')
+      })
+
+      describe('and the message has been shown for a while', () => {
+        beforeEach(() => {
+          act(() => vi.advanceTimersByTime(3000))
+        })
+
+        it('should clear the message', () => {
+          expect(screen.getByRole('status')).toHaveTextContent('')
+        })
+      })
+    })
   })
 
-  it('renders the post picture with alt and size, eagerly, above the fold', () => {
-    renderArticle({ post: article({ image: image('A plaza at night') }) })
-    const hero = screen.getByRole('img', { name: 'A plaza at night' })
-    expect(hero).toHaveAttribute('src', 'https://images.example/hero.png')
-    expect(hero).toHaveAttribute('width', '1200')
-    expect(hero).toHaveAttribute('height', '600')
-    expect(hero).toHaveAttribute('loading', 'eager')
+  describe('when every related post shares the category', () => {
+    beforeEach(() => {
+      over = {
+        related: [
+          {
+            slug: 'b',
+            title: 'B',
+            publishedAt: '2026-06-01',
+            category: categories[0]!,
+            image: null,
+            hue: 1
+          }
+        ]
+      }
+      renderArticle(over)
+    })
+
+    it('should name the related section after the category and link its posts', () => {
+      const section = screen.getByRole('region', { name: 'More on Platform' })
+      expect(within(section).getByRole('link', { name: 'B' })).toHaveAttribute(
+        'href',
+        '/blog/platform/b'
+      )
+    })
   })
 
-  it('falls back to the hue gradient, hidden from assistive tech, without a picture', () => {
-    const { container } = renderArticle({ post: article({ image: null, hue: 42 }) })
-    expect(container.querySelector('article img')).toBeNull()
-    const cover = container.querySelector('[style*="--blog-hue"]')
-    expect(cover).toHaveAttribute('aria-hidden', 'true')
-    expect((cover as HTMLElement).style.getPropertyValue('--blog-hue')).toBe('42')
+  describe('when the related posts have mixed categories', () => {
+    beforeEach(() => {
+      over = {
+        related: [
+          {
+            slug: 'b',
+            title: 'B',
+            publishedAt: '',
+            category: { slug: 'x', title: 'X' },
+            image: null,
+            hue: 1
+          }
+        ]
+      }
+      renderArticle(over)
+    })
+
+    it('should use a neutral related heading', () => {
+      expect(screen.getByRole('region', { name: 'More from the blog' })).toBeInTheDocument()
+    })
+  })
+
+  describe('when the related posts could not be read', () => {
+    beforeEach(() => {
+      renderArticle({ related: null })
+    })
+
+    it('should show no related section', () => {
+      expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    })
+
+    it('should still render the article', () => {
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('A post')
+    })
+  })
+
+  describe('when the post has no author', () => {
+    beforeEach(() => {
+      renderArticle({ post: article({ author: { slug: '', name: '', image: '' } }) })
+    })
+
+    it('should omit the author', () => {
+      expect(screen.queryByText('Jane Doe')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('when the author has no page', () => {
+    beforeEach(() => {
+      renderArticle({ post: article({ author: { slug: '', name: 'Decentraland', image: '' } }) })
+    })
+
+    it('should name the author', () => {
+      expect(screen.getByText('Decentraland')).toBeInTheDocument()
+    })
+
+    it('should not link the author', () => {
+      expect(screen.queryByRole('link', { name: 'Decentraland' })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('when the CMS has a picture of the author', () => {
+    beforeEach(() => {
+      ;({ container } = renderArticle({
+        post: article({
+          author: { slug: 'j', name: 'Jane Doe', image: 'https://images.example/j.png' }
+        })
+      }))
+    })
+
+    it("should show the author's picture decoratively", () => {
+      const avatar = container.querySelector('img[src="https://images.example/j.png"]')
+      expect(avatar).toHaveAttribute('alt', '')
+    })
+  })
+
+  describe('when the post has a picture', () => {
+    let hero: HTMLElement
+
+    beforeEach(() => {
+      renderArticle({ post: article({ image: image('A plaza at night') }) })
+      hero = screen.getByRole('img', { name: 'A plaza at night' })
+    })
+
+    it('should render the picture with its alt and source', () => {
+      expect(hero).toHaveAttribute('src', 'https://images.example/hero.png')
+    })
+
+    it('should render the picture with its size', () => {
+      expect(hero).toHaveAttribute('width', '1200')
+      expect(hero).toHaveAttribute('height', '600')
+    })
+
+    it('should load the picture eagerly, above the fold', () => {
+      expect(hero).toHaveAttribute('loading', 'eager')
+    })
+  })
+
+  describe('when the post has no picture', () => {
+    beforeEach(() => {
+      ;({ container } = renderArticle({ post: article({ image: null, hue: 42 }) }))
+    })
+
+    it('should render no picture', () => {
+      expect(container.querySelector('article img')).toBeNull()
+    })
+
+    it('should hide the hue gradient fallback from assistive tech', () => {
+      expect(container.querySelector('[style*="--blog-hue"]')).toHaveAttribute(
+        'aria-hidden',
+        'true'
+      )
+    })
+
+    it("should paint the fallback with the post's hue", () => {
+      const cover = container.querySelector('[style*="--blog-hue"]') as HTMLElement
+      expect(cover.style.getPropertyValue('--blog-hue')).toBe('42')
+    })
   })
 })
 
-describe('BlogNotFound and BlogUnavailable', () => {
-  it.each([
+describe('BlogNotFound', () => {
+  describe.each([
     ['post', 'Post not found'],
     ['category', 'Category not found'],
     ['author', 'Author not found']
-  ] as const)('names a missing %s and links back to the blog', (kind, title) => {
-    render(<BlogNotFound kind={kind} />)
-    expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back to the Blog' })).toHaveAttribute('href', '/blog')
-  })
+  ] as const)('when a %s is missing', (kind, title) => {
+    beforeEach(() => {
+      render(<BlogNotFound kind={kind} />)
+    })
 
-  it('says the blog is unavailable, without any detail of why', () => {
-    const { container } = render(<BlogUnavailable />)
-    expect(
-      screen.getByRole('heading', { level: 1, name: 'The blog is temporarily unavailable' })
-    ).toBeInTheDocument()
-    expect(container.textContent).not.toMatch(/https?:|cms/i)
+    it(`should name the missing ${kind}`, () => {
+      expect(screen.getByRole('heading', { level: 1, name: title })).toBeInTheDocument()
+    })
+
+    it('should link back to the blog', () => {
+      expect(screen.getByRole('link', { name: 'Back to the Blog' })).toHaveAttribute(
+        'href',
+        '/blog'
+      )
+    })
+  })
+})
+
+describe('BlogUnavailable', () => {
+  let container: HTMLElement
+
+  describe('when the blog is unavailable', () => {
+    beforeEach(() => {
+      ;({ container } = render(<BlogUnavailable />))
+    })
+
+    it('should say the blog is temporarily unavailable', () => {
+      expect(
+        screen.getByRole('heading', { level: 1, name: 'The blog is temporarily unavailable' })
+      ).toBeInTheDocument()
+    })
+
+    it('should not give any detail of why', () => {
+      expect(container.textContent).not.toMatch(/https?:|cms/i)
+    })
   })
 })

@@ -421,6 +421,11 @@ async fn about_and_status_report_the_sync_state_honestly() {
         body["synchronizationStatus"]["synchronizationState"],
         "Failed"
     );
+    // `/about` is healthy only while `Syncing`: a failed sync is a 503 there.
+    let (status, body) = get_json(node.router(), "/about").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["healthy"], false);
+    assert_eq!(body["content"]["synchronizationStatus"], "Failed");
 }
 
 struct FakeCore(bool, u64);

@@ -26,6 +26,22 @@ fn content(name: &str) -> NametagContent {
 }
 
 #[test]
+fn official_wallets_parse_from_a_csv_payload() {
+    let wallets = parse_wallets(
+        " 0x00000000000000000000000000000000000012AB,not an address\r\n\
+         00000000000000000000000000000000000034cd ,, 0x12\n",
+    );
+    assert_eq!(wallets.len(), 2);
+    assert!(wallets.contains(&ADDRESS.as_h160().unwrap()));
+    assert!(wallets.contains(
+        &"0x00000000000000000000000000000000000034cd"
+            .as_h160()
+            .unwrap()
+    ));
+    assert!(parse_wallets("").is_empty());
+}
+
+#[test]
 fn an_unclaimed_name_carries_the_end_of_its_address() {
     let official = OfficialWallets::default();
     let claimed = NametagContent::from_profile(&profile("Ada", true), &official);

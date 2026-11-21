@@ -40,9 +40,10 @@ describe("when the actual hangout route renders the details step", () => {
   describe("and the visitor is signed out", () => {
     beforeEach(() => { auth.identity = null; auth.address = null; auth.isConnected = false; });
 
-    it("should show the real sign-in action instead of editable hangout fields", () => {
+    it("should render only the loading page while sign-in opens, with no form and no sign-in button", () => {
       html = renderRoute();
-      expect(html).toContain("Sign In to continue");
+      expect(html).toMatch(/<p[^>]*role="status"[^>]*><span role="progressbar" aria-label="Loading your hangout…"/);
+      expect(html).not.toContain("Sign In to continue");
       expect(html).not.toContain("Hangout Name");
     });
   });

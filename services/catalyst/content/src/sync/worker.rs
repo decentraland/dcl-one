@@ -567,25 +567,57 @@ struct FailedDeploymentDeps {
     bootstrapped: Option<watch::Receiver<bool>>,
 }
 
-/// How long the retry loop waits for the sync leader's bootstrap before it starts anyway.
-const RETRY_FAILED_START: Duration = Duration::from_secs(60);
-/// The same for the prune loop.
+/// How long the prune loop waits for the sync leader's bootstrap before it starts anyway. The
+/// retry loop has no such limit: a retry fetches and deploys, and must not race the bootstrap's
+/// own deployments.
 const PRUNE_START: Duration = Duration::from_secs(300);
 
-/// Returns at bootstrap completion or after `delay`, whichever comes first, so a peer that never
-/// answers holds the node in `Bootstrapping` without holding the loop; at once with no bootstrap
-/// to wait for, and on cancellation, which the loop then sees.
+/// How often a loop still held by [`wait_to_start`] says so. Longer than [`PRUNE_START`], so only
+/// a wait without a limit (the retry loop's) reports.
+const STILL_WAITING_EVERY: Duration = Duration::from_secs(600);
+
+/// Returns at bootstrap completion (the node `Syncing`, see
+/// [`run_sync_job`]), or after `delay` when one is given, whichever comes first; at once with no
+/// bootstrap to wait for, and on cancellation, which the loop then sees. While it waits, every
+/// [`STILL_WAITING_EVERY`] it warns and sets the job's progress line: a node that never reaches
+/// `Syncing` never starts the loop, and this is what shows it. `job` names the loop in the log.
 async fn wait_to_start(
     ctx: &JobContext,
+    job: &str,
     bootstrapped: Option<watch::Receiver<bool>>,
-    delay: Duration,
+    delay: Option<Duration>,
 ) {
     let Some(mut bootstrapped) = bootstrapped else {
         return;
     };
-    tokio::select! {
-        _ = ctx.cancel.cancelled() => {}
-        _ = tokio::time::timeout(delay, bootstrapped.wait_for(|done| *done)) => {}
+    let done = async {
+        let _ = bootstrapped.wait_for(|done| *done).await;
+    };
+    let limit = async {
+        match delay {
+            Some(delay) => tokio::time::sleep(delay).await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::pin!(done, limit);
+    let waiting_since = tokio::time::Instant::now();
+    let mut reminder =
+        tokio::time::interval_at(waiting_since + STILL_WAITING_EVERY, STILL_WAITING_EVERY);
+    loop {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => return,
+            _ = &mut done => return,
+            _ = &mut limit => return,
+            _ = reminder.tick() => {
+                let waited_min = waiting_since.elapsed().as_secs() / 60;
+                tracing::warn!(
+                    job,
+                    waited_min,
+                    "Still waiting for the sync bootstrap to reach Syncing; this loop has not started"
+                );
+                ctx.progress(format!("waiting for the sync bootstrap ({waited_min} min)"));
+            }
+        }
     }
 }
 
@@ -612,7 +644,7 @@ fn spawn_failed_deployment_jobs(
         );
         let bootstrapped = deps.bootstrapped.clone();
         jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
-            wait_to_start(&ctx, bootstrapped, RETRY_FAILED_START).await;
+            wait_to_start(&ctx, "retry-failed", bootstrapped, None).await;
             let trace = ctx.clone();
             retry
                 .run(ctx.cancel.clone(), move |outcome| match outcome {
@@ -627,7 +659,13 @@ fn spawn_failed_deployment_jobs(
     let pool = deps.pool;
     let bootstrapped = deps.bootstrapped;
     jobs.spawn_scoped(ctx, "failed-deployments-prune", move |ctx| async move {
-        wait_to_start(&ctx, bootstrapped, PRUNE_START).await;
+        wait_to_start(
+            &ctx,
+            "failed-deployments-prune",
+            bootstrapped,
+            Some(PRUNE_START),
+        )
+        .await;
         let trace = ctx.clone();
         run_prune_loop(
             pool,
@@ -956,12 +994,12 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_loop_starts_at_bootstrap_or_after_its_delay_whichever_comes_first() {
+    async fn retries_wait_for_the_bootstrap_and_pruning_for_its_delay_at_most() {
         let jobs = Arc::new(Jobs::new());
-        let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Duration| {
+        let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Option<Duration>| {
             let (tx, rx) = tokio::sync::oneshot::channel();
             let cancel = jobs.spawn("gate", move |ctx| async move {
-                wait_to_start(&ctx, bootstrapped, delay).await;
+                wait_to_start(&ctx, "gate", bootstrapped, delay).await;
                 let _ = tx.send(());
                 Ok(())
             });
@@ -969,11 +1007,30 @@ mod tests {
         };
         let start = tokio::time::Instant::now();
 
-        gate(None, PRUNE_START).1.await.unwrap();
+        gate(None, Some(PRUNE_START)).1.await.unwrap();
         assert_eq!(start.elapsed(), Duration::ZERO, "no bootstrap to wait for");
 
+        // The retry loop's gate: no delay, only the bootstrap releases it.
         let (bootstrapped, rx) = watch::channel(false);
-        let (_, started) = gate(Some(rx), PRUNE_START);
+        let (_, mut started) = gate(Some(rx), None);
+        tokio::time::sleep(PRUNE_START * 10).await;
+        assert!(
+            started.try_recv().is_err(),
+            "a retry loop never starts while the bootstrap is held"
+        );
+        let waiting: Vec<String> = (jobs.report().into_iter())
+            .filter_map(|job| job.progress)
+            .collect();
+        assert!(
+            matches!(&waiting[..], [line] if line.starts_with("waiting for the sync bootstrap (")),
+            "the held loop reports its wait: {waiting:?}"
+        );
+        bootstrapped.send(true).unwrap();
+        started.await.unwrap();
+        let start = tokio::time::Instant::now();
+
+        let (bootstrapped, rx) = watch::channel(false);
+        let (_, started) = gate(Some(rx), Some(PRUNE_START));
         tokio::time::sleep(Duration::from_secs(1)).await;
         bootstrapped.send(true).unwrap();
         started.await.unwrap();
@@ -984,16 +1041,16 @@ mod tests {
         );
 
         let (_held, rx) = watch::channel(false);
-        let (_, started) = gate(Some(rx), RETRY_FAILED_START);
+        let (_, started) = gate(Some(rx), Some(PRUNE_START));
         started.await.unwrap();
         let after_delay = start.elapsed() - at_bootstrap;
         assert!(
-            after_delay >= RETRY_FAILED_START && after_delay < PRUNE_START,
-            "a held bootstrap released the loop after {after_delay:?}"
+            after_delay >= PRUNE_START && after_delay < PRUNE_START * 2,
+            "a held bootstrap released the prune loop after {after_delay:?}"
         );
 
         let (_held, rx) = watch::channel(false);
-        let (cancel, started) = gate(Some(rx), PRUNE_START);
+        let (cancel, started) = gate(Some(rx), None);
         cancel.cancel();
         started.await.unwrap();
         assert!(

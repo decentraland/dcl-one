@@ -42,7 +42,7 @@ fn start_signed_login(
         });
         // A realm chooses its login endpoint. Do not let third-party realms correlate wallets
         // through the installation's persistent identifier.
-        if crate::adapter::allows_device_identifier(&event.address) {
+        if common::base_domain::device_identifier_domain(&event.address).is_some() {
             metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
         }
         if let Some(secret) = &secret.0 {

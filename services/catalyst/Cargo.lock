@@ -1784,6 +1784,7 @@ name = "catalyst-chain-index"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "catalyst-shared",
  "dcl-http",
@@ -1955,6 +1956,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.23.1",
  "bytes",

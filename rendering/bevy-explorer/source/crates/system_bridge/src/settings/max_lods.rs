@@ -32,7 +32,7 @@ impl AppSetting for MaxNearLodsSetting {
     }
 
     fn description(&self) -> String {
-        "Max Near LODs\n\nHow many loading scenes nearby may draw their own models, the nearest in view first; the rest show their far LOD. When all are taken, a scene behind you gives its place to one in view. Lower it to save memory; 0 draws none. Every loading scene within 3 parcels still blocks you with its own colliders.".to_string()
+        "Max Near LODs\n\nHow many loading scenes nearby may draw their own models, within the Near LOD Ring, the nearest in view first; the rest show their far LOD. When all are taken, a scene behind you gives its place to one in view. Lower it to save memory; 0 draws none. Every loading scene within the Near LOD Ring still blocks you with its own colliders.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {
@@ -77,7 +77,7 @@ impl AppSetting for MaxFarLodsSetting {
     }
 
     fn description(&self) -> String {
-        "Max Far LODs\n\nHow many distant scenes may show a simplified mesh before they load, counting those in view and those behind you: from 5 parcels away (or nearer, for a scene whose detailed model has no place) out to where the distant tiles grow to 4 parcels a side (about 12 to 18 parcels at the default distances), and never past 20. The nearest scenes come first; the rest show their distant tiles. When all are taken, a scene behind you gives its place to one in view. Lower it to save memory; 0 turns far LODs off.".to_string()
+        "Max Far LODs\n\nHow many distant scenes may show a simplified mesh before they load, counting those in view and those behind you: past the Near LOD Ring (or nearer, for a scene whose detailed model has no place), out to where the distant tiles grow to 4 parcels a side (about 13 to 18 parcels at the default distances) and never past the Far LOD Ring. The nearest in view come first; the rest show their distant tiles. When all are taken, a scene behind you gives its place to one in view. Lower it to save memory; 0 turns far LODs off.".to_string()
     }
 
     fn save(&self, config: &mut AppConfig) {

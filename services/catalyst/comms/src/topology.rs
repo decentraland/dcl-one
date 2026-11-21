@@ -84,6 +84,20 @@ impl Topology {
         Ok(())
     }
 
+    /// Tests: `wallets` online for the test's length, with no receipt to expire on a
+    /// slow run. A later frame older than this hold is ignored, as any stale frame is.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hold_for_tests<'a>(&self, wallets: impl IntoIterator<Item = &'a str>) {
+        let mut current = self.current.lock().unwrap();
+        let generation = current.generation + 1;
+        *current = WalletTopology {
+            wallets: Arc::new(wallets.into_iter().filter_map(wallet_token).collect()),
+            received_at: Some(Instant::now() + Duration::from_secs(24 * 60 * 60)),
+            generation,
+        };
+        self.changed.send_replace(generation);
+    }
+
     pub fn snapshot(&self) -> WalletTopology {
         let mut current = self.current.lock().unwrap();
         if current
