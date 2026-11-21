@@ -1000,6 +1000,7 @@ impl ChainIndex for NftIndex {
         budget: usize,
         chunk: &mut usize,
         owner: &chain_walk::Owner,
+        cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<usize> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
@@ -1025,6 +1026,16 @@ impl ChainIndex for NftIndex {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
+                // Bracketed by the cursor block's header: rows below the
+                // cursor join its prefix only when read on its branch.
+                let before = match cursor {
+                    Some((block, _)) => {
+                        let h = source.header(block).await?;
+                        used += h.requests;
+                        Some(h.value)
+                    }
+                    None => None,
+                };
                 let w = source
                     .window(next as u64, to as u64, &group, chunk)
                     .await
@@ -1035,6 +1046,24 @@ impl ChainIndex for NftIndex {
                 let times = source.block_times(&w.logs).await?;
                 used += times.requests;
                 let times = times.value;
+                if let (Some(before), Some((block, stored))) = (before, cursor) {
+                    let after = source.header(block).await?;
+                    used += after.requests;
+                    anyhow::ensure!(
+                        before == after.value,
+                        "chain changed while backfilling {}",
+                        contract.contract_address
+                    );
+                    if after.value.hash != stored {
+                        return Err(chain_walk::Diverged {
+                            block,
+                            stored: stored.to_string(),
+                            chain: after.value.hash,
+                            requests: used,
+                        }
+                        .into());
+                    }
+                }
                 let mut rows = Vec::new();
                 for log in &w.logs {
                     if let Ok(Some(row)) = decode_log(

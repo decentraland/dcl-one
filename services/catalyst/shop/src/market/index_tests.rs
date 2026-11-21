@@ -125,6 +125,45 @@ struct FakeChain {
     /// of these (only a shared read mixes two projections' topics).
     watch_topics: Mutex<Vec<String>>,
     watched: AtomicUsize,
+    /// A fork from this block on: every block at or past it has another hash
+    /// (salted), as every descendant of a reorged block does.
+    fork_from: Mutex<Option<(u64, u8)>>,
+    /// A fork applied right after a given header read is answered.
+    fork_after: Mutex<Option<ForkAfter>>,
+    /// Header reads below this block wait for this gate (counted in
+    /// `probes_waiting`), or fail while `fail_probes` is set: a recovery's
+    /// probes, apart from the tip's reads.
+    probe_gate: Mutex<Option<(u64, Arc<tokio::sync::Semaphore>)>>,
+    probes_waiting: AtomicUsize,
+    fail_probes_below: Mutex<Option<u64>>,
+    /// Header reads below this block take this long.
+    probe_delay: Mutex<Option<(u64, std::time::Duration)>>,
+    /// What a fork that only lasts one log read restores once that read
+    /// was answered: the logs and the fork before it.
+    revert_after_logs: Mutex<Option<Restore>>,
+    /// Once the header at the first block was read this many times, header
+    /// reads below the third wait for the gate (as `probe_gate`).
+    gate_after: Mutex<Option<GateAfter>>,
+}
+
+/// The logs and the fork a fork lasting one log read restores.
+type Restore = (Vec<Value>, Option<(u64, u8)>);
+
+/// The header block, the reads of it left, the block below which reads
+/// then wait, and their gate.
+type GateAfter = (u64, usize, u64, Arc<tokio::sync::Semaphore>);
+
+/// A fork the fake chain applies once the `reads`-th read of the header at
+/// `header` was answered: blocks from `from` on take hashes salted `salt`,
+/// and the logs from `from` on are replaced by `logs`.
+struct ForkAfter {
+    header: u64,
+    reads: usize,
+    from: u64,
+    salt: u8,
+    logs: Vec<Value>,
+    /// The fork lasts one log read: the chain flips back once it answered.
+    one_read: bool,
 }
 
 impl FakeChain {
@@ -156,15 +195,38 @@ impl FakeChain {
             refuse_from: Mutex::new(None),
             watch_topics: Mutex::new(Vec::new()),
             watched: AtomicUsize::new(0),
+            fork_from: Mutex::new(None),
+            fork_after: Mutex::new(None),
+            probe_gate: Mutex::new(None),
+            probes_waiting: AtomicUsize::new(0),
+            fail_probes_below: Mutex::new(None),
+            probe_delay: Mutex::new(None),
+            revert_after_logs: Mutex::new(None),
+            gate_after: Mutex::new(None),
         })
     }
 
     fn hash_of(&self, block: u64) -> String {
-        self.forks
-            .lock()
-            .get(&block)
-            .cloned()
-            .unwrap_or_else(|| format!("0x{:064x}", block))
+        if let Some(hash) = self.forks.lock().get(&block) {
+            return hash.clone();
+        }
+        match *self.fork_from.lock() {
+            Some((from, salt)) if block >= from => format!("0x{salt:02x}{block:062x}"),
+            _ => format!("0x{:064x}", block),
+        }
+    }
+
+    /// The chain reorganizes from `from` on: every block from there has
+    /// another hash, and the logs from there are `logs`.
+    fn fork(&self, from: u64, salt: u8, logs: Vec<crate::chain_index::rpc::RpcLog>) {
+        self.fork_with(from, salt, logs.iter().map(log_json).collect());
+    }
+
+    fn fork_with(&self, from: u64, salt: u8, logs: Vec<Value>) {
+        *self.fork_from.lock() = Some((from, salt));
+        let mut held = self.logs.lock();
+        held.retain(|l| hex_u64(&l["blockNumber"]) < from);
+        held.extend(logs);
     }
 }
 
@@ -224,6 +286,32 @@ async fn rpc(
         one => call_tag(one),
     };
     chain.calls.lock().push(tag);
+    if let Value::Object(_) = &body
+        && body["method"] == "eth_getBlockByNumber"
+        && body["params"][0] != "finalized"
+    {
+        let n = hex_u64(&body["params"][0]);
+        let delay = *chain.probe_delay.lock();
+        if let Some((below, wait)) = delay
+            && n < below
+        {
+            tokio::time::sleep(wait).await;
+        }
+        let gate = chain.probe_gate.lock().clone();
+        if let Some((below, gate)) = gate
+            && n < below
+        {
+            chain.probes_waiting.fetch_add(1, Ordering::SeqCst);
+            gate.acquire().await.unwrap().forget();
+        }
+        if chain
+            .fail_probes_below
+            .lock()
+            .is_some_and(|below| n < below)
+        {
+            return axum::Json(json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32000, "message": "header unavailable" } })).into_response();
+        }
+    }
     match body {
         Value::Array(calls) => {
             chain.batches.fetch_add(1, Ordering::SeqCst);
@@ -241,7 +329,16 @@ async fn rpc(
                 .collect();
             axum::Json(Value::Array(answers)).into_response()
         }
-        one => axum::Json(answer(&chain, &one)).into_response(),
+        one => {
+            let answered = answer(&chain, &one);
+            if one["method"] == "eth_getLogs"
+                && let Some((logs, fork)) = chain.revert_after_logs.lock().take()
+            {
+                *chain.logs.lock() = logs;
+                *chain.fork_from.lock() = fork;
+            }
+            axum::Json(answered).into_response()
+        }
     }
 }
 
@@ -274,9 +371,37 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                 }
                 hex_u64(&body["params"][0])
             };
-            reply(
+            let answered = reply(
                 json!({ "number": format!("0x{n:x}"), "hash": chain.hash_of(n), "timestamp": format!("0x{:x}", time_of(n)) }),
-            )
+            );
+            let mut gating = chain.gate_after.lock();
+            if let Some(g) = gating.as_mut()
+                && body["params"][0] != "finalized"
+                && g.0 == n
+            {
+                g.1 -= 1;
+                if g.1 == 0 {
+                    let (_, _, below, gate) = gating.take().unwrap();
+                    *chain.probe_gate.lock() = Some((below, gate));
+                }
+            }
+            drop(gating);
+            let mut trigger = chain.fork_after.lock();
+            if let Some(t) = trigger.as_mut()
+                && body["params"][0] != "finalized"
+                && t.header == n
+            {
+                t.reads -= 1;
+                if t.reads == 0 {
+                    let t = trigger.take().unwrap();
+                    if t.one_read {
+                        let saved = (chain.logs.lock().clone(), *chain.fork_from.lock());
+                        *chain.revert_after_logs.lock() = Some(saved);
+                    }
+                    chain.fork_with(t.from, t.salt, t.logs);
+                }
+            }
+            answered
         }
         Some("eth_getLogs") => {
             chain.get_logs.fetch_add(1, Ordering::SeqCst);
@@ -1392,17 +1517,14 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
         .await
         .unwrap()
         .unwrap();
-    // The chain reorganizes: the block the cursor stands on has another
-    // hash, the transfer to BOB is gone and one to CARL replaces it.
-    chain
-        .forks
-        .lock()
-        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
-    {
-        let mut logs = chain.logs.lock();
-        logs.retain(|l| l["blockNumber"] != json!(format!("0x{:x}", s + 1_900)));
-        logs.push(log_json(&transfer(c1, ALICE, CARL, t1, s + 1_880, 0)));
-    }
+    // The chain reorganizes from s+1,880: the transfer to BOB is gone and
+    // one to CARL replaces it. One window walked the whole history, so the
+    // only recovery point is the cursor's own: the rewind goes to the start.
+    chain.fork(
+        s + 1_880,
+        0xee,
+        vec![transfer(c1, ALICE, CARL, t1, s + 1_880, 0)],
+    );
     let rewound = pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await;
     assert_eq!(
         rewound.reorg_rewound_to,
@@ -1415,7 +1537,6 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
             .is_none(),
         "a rewind unpublishes"
     );
-    chain.forks.lock().clear();
     assert!(
         publish_nft(&st, &url, &NftIndex::new(ChainNet::Matic))
             .await
@@ -1438,8 +1559,10 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
 /// The requests the walk sends, in order, for one fixed history: budgeted
 /// passes, the endpoint's address limit halving the chunk, headers for logs
 /// without a timestamp, a pass with nothing new, a late collection's
-/// backfill lane and a reorg rewind. Pinned so that a change to how the walk
-/// reads the chain shows as a diff of requests, not only of outcomes.
+/// backfill lane (bracketed by the cursor block) and a reorg recovered at the
+/// newest recovery point still on the chain. Pinned so that a change to how
+/// the walk reads the chain shows as a diff of requests, not only of
+/// outcomes.
 #[tokio::test]
 async fn the_walk_sends_the_pinned_requests_in_order() {
     let Some(db) = ScratchDb::create().await else {
@@ -1526,17 +1649,11 @@ async fn the_walk_sends_the_pinned_requests_in_order() {
     .await;
     *chain.head.lock() = head + 100;
     until_published(&mut outcomes).await;
-    // The block the cursor stands on changes hash.
-    let cursor = chain_walk::cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
-        .await
-        .unwrap()
-        .unwrap();
-    chain
-        .forks
-        .lock()
-        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
+    // The chain reorganizes from s+25,000 on: the recovery compares the
+    // recovery points below the cursor newest first (s+29,936 is past the
+    // fork) and rewinds to s+19,999, the newest still on the chain.
+    chain.fork(s + 25_000, 0xee, vec![]);
     outcomes.push(tag(&pass(&st, &url, &NftIndex::new(ChainNet::Matic)).await));
-    chain.forks.lock().clear();
     until_published(&mut outcomes).await;
     let calls: Vec<String> = chain
         .calls
@@ -1574,17 +1691,18 @@ fn from_start(tag: &str, s: u64) -> String {
 
 const PINNED_OUTCOMES: &[&str] = &[
     "requests 9 logs 2 rows 2 to +9999 paused true published false rewound None",
-    "requests 8 logs 0 rows 0 to +19999 paused true published false rewound None",
-    "requests 11 logs 1 rows 1 to +29936 paused false published true rewound None",
+    "requests 9 logs 0 rows 0 to +19999 paused true published false rewound None",
+    "requests 12 logs 1 rows 1 to +29936 paused false published true rewound None",
     "requests 5 logs 0 rows 0 to +29936 paused false published true rewound None",
-    "requests 10 logs 0 rows 0 to +30036 paused false published false rewound None",
+    "requests 11 logs 0 rows 0 to +30036 paused false published false rewound None",
+    "requests 9 logs 0 rows 0 to +30036 paused false published false rewound None",
     "requests 8 logs 0 rows 0 to +30036 paused false published false rewound None",
-    "requests 6 logs 0 rows 0 to +30036 paused false published true rewound None",
-    "requests 1 logs 0 rows 0 to +30036 paused false published false rewound Some(-1)",
-    "requests 9 logs 3 rows 3 to +9999 paused true published false rewound None",
-    "requests 8 logs 0 rows 0 to +19999 paused true published false rewound None",
-    "requests 9 logs 1 rows 1 to +29999 paused true published false rewound None",
-    "requests 10 logs 0 rows 0 to +30036 paused false published true rewound None",
+    "requests 8 logs 0 rows 0 to +30036 paused false published true rewound None",
+    "requests 3 logs 0 rows 0 to +30036 paused false published false rewound Some(19999)",
+    "requests 10 logs 1 rows 1 to +29999 paused true published false rewound None",
+    "requests 7 logs 0 rows 0 to +29999 paused true published false rewound None",
+    "requests 6 logs 0 rows 0 to +29999 paused true published false rewound None",
+    "requests 11 logs 0 rows 0 to +30036 paused false published true rewound None",
 ];
 
 const PINNED_CALLS: &[&str] = &[
@@ -1604,6 +1722,7 @@ const PINNED_CALLS: &[&str] = &[
     "logs s+10000..s+19999 x3",
     "logs s+10000..s+19999 x2",
     "logs s+10000..s+19999 x1",
+    "header s+9999",
     "header s+19999",
     "header s+19999",
     "head",
@@ -1613,6 +1732,7 @@ const PINNED_CALLS: &[&str] = &[
     "logs s+20000..s+29936 x2",
     "logs s+20000..s+29936 x1",
     "batch [header s+20100]",
+    "header s+19999",
     "header s+29936",
     "head",
     "finalized",
@@ -1628,40 +1748,37 @@ const PINNED_CALLS: &[&str] = &[
     "logs s+29937..s+30036 x4",
     "logs s+29937..s+30036 x2",
     "logs s+29937..s+30036 x2",
+    "header s+29936",
     "header s+30036",
     "head",
     "finalized",
     "header s+30036",
     "head",
     "finalized",
+    "header s+30036",
     "logs s+0..s+9999 x1",
     "batch [header s+1500]",
+    "header s+30036",
+    "head",
+    "finalized",
+    "header s+30036",
+    "head",
+    "finalized",
+    "header s+30036",
     "logs s+10000..s+19999 x1",
+    "header s+30036",
     "head",
     "finalized",
     "header s+30036",
     "head",
     "finalized",
+    "header s+30036",
     "logs s+20000..s+29936 x1",
-    "head",
-    "finalized",
     "header s+30036",
     "head",
     "finalized",
-    "header 15201999",
-    "header s+9999",
-    "logs s+0..s+9999 x4",
-    "logs s+0..s+9999 x2",
-    "logs s+0..s+9999 x2",
-    "batch [header s+200, header s+300, header s+1500]",
-    "header s+9999",
-    "header s+9999",
-    "head",
-    "finalized",
-    "header s+19999",
-    "logs s+10000..s+19999 x4",
-    "logs s+10000..s+19999 x2",
-    "logs s+10000..s+19999 x2",
+    "header s+30036",
+    "header s+29936",
     "header s+19999",
     "header s+19999",
     "head",
@@ -1671,6 +1788,20 @@ const PINNED_CALLS: &[&str] = &[
     "logs s+20000..s+29999 x2",
     "logs s+20000..s+29999 x2",
     "batch [header s+20100]",
+    "header s+19999",
+    "header s+29999",
+    "header s+29999",
+    "head",
+    "finalized",
+    "header s+29999",
+    "logs s+0..s+9999 x1",
+    "batch [header s+1500]",
+    "header s+29999",
+    "header s+29999",
+    "head",
+    "finalized",
+    "header s+29999",
+    "logs s+10000..s+19999 x1",
     "header s+29999",
     "header s+29999",
     "head",
@@ -1679,6 +1810,7 @@ const PINNED_CALLS: &[&str] = &[
     "logs s+30000..s+30036 x4",
     "logs s+30000..s+30036 x2",
     "logs s+30000..s+30036 x2",
+    "header s+29999",
     "header s+30036",
     "head",
     "finalized",
@@ -3169,34 +3301,38 @@ async fn a_sales_reorg_rewinds_and_the_refold_follows_the_new_chain() {
         .await
         .unwrap()
         .unwrap();
-    // The chain reorganizes: the acceptance is gone and CARL cancels instead.
-    chain
-        .forks
-        .lock()
-        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
-    {
-        let mut logs = chain.logs.lock();
-        logs.retain(|l| l["blockNumber"] != json!(format!("0x{:x}", b + 900)));
-        logs.push(log_json(&sales_index::tests::bid_cancelled_log(
+    // The newest recovery point below the fork, which the rewind keeps.
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT max(block_number) FROM shop.chain_checkpoint WHERE indexer = 'sales' AND network = 'matic' AND block_number < $1",
+    )
+    .bind((b + 880) as i64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert!(
+        kept > cursor.start_block - 1,
+        "a recovery point below the fork"
+    );
+    // The chain reorganizes from b+880: the acceptance is gone and CARL
+    // cancels instead.
+    chain.fork(
+        b + 880,
+        0xee,
+        vec![sales_index::tests::bid_cancelled_log(
             c1,
             t1,
             CARL,
             0x22,
             b + 880,
             0,
-        )));
-    }
-    let rewound = pass(&st, &url, &SalesIndex).await;
-    assert_eq!(
-        rewound.reorg_rewound_to,
-        Some(cursor.start_block - 1),
-        "{rewound:?}"
+        )],
     );
+    let rewound = pass(&st, &url, &SalesIndex).await;
+    assert_eq!(rewound.reorg_rewound_to, Some(kept), "{rewound:?}");
     assert!(
         !sales_index::ready(&db.pool, chrono::Utc::now()).await,
         "a rewind unpublishes"
     );
-    chain.forks.lock().clear();
     assert!(publish(&st, &url, &SalesIndex).await.published);
     assert_eq!(
         bids_of(&db.pool).await,
@@ -5553,6 +5689,8 @@ mod supervisor {
             logs.clone(),
             logs.clone(),
             logs,
+            // The checkpoint both extend, read in the window's bracket.
+            format!("header {}", s + 498),
             format!("header {}", s + 1_498),
             // Each close reads the heads again after its fold.
             "head".into(),
@@ -5562,8 +5700,8 @@ mod supervisor {
         ]
         .into();
         assert_eq!(together_calls, expected, "{together_calls:#?}");
-        assert_eq!(sent, 8, "the shared walk's own requests");
-        assert_eq!(alone_calls.len(), 17, "{alone_calls:#?}");
+        assert_eq!(sent, 9, "the shared walk's own requests");
+        assert_eq!(alone_calls.len(), 19, "{alone_calls:#?}");
         for table in PROJECTION_TABLES {
             assert_eq!(
                 table_rows(&together.pool, table).await,
@@ -7855,6 +7993,1071 @@ mod supervisor {
                 .shutdown(Duration::from_secs(5))
                 .await
                 .is_empty()
+        );
+        db.drop().await;
+    }
+
+    /// Two projections, MANA and trade events, walked together from 0 in
+    /// windows of 100 and published at 998, their closes held on a shared
+    /// gate while armed; half a second between turns, so the three settle
+    /// together once their closes are let out.
+    struct Paired {
+        chain: Arc<FakeChain>,
+        jobs: Jobs,
+        stats: Arc<chain_jobs::SharedStats>,
+        fold_gate: Arc<tokio::sync::Semaphore>,
+        fold_armed: Arc<std::sync::atomic::AtomicBool>,
+        folding: Arc<AtomicUsize>,
+    }
+
+    async fn paired(
+        db: &ScratchDb,
+        logs: Vec<crate::chain_index::rpc::RpcLog>,
+        deadline: Duration,
+    ) -> Paired {
+        let chain = FakeChain::new(1_000, logs, 10_000, 1_000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let settings = IndexSettings {
+            window_blocks: 100,
+            requests_per_pass: 100,
+            ..walk_settings()
+        };
+        let st = state_over(db.pool.clone(), &url, settings, false);
+        let (fold_gate, fold_armed, folding) = (
+            Arc::new(tokio::sync::Semaphore::new(0)),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let hooked = |inner: Arc<dyn ChainIndex>| -> MakeIndex {
+            let (fold_gate, fold_armed, folding) =
+                (fold_gate.clone(), fold_armed.clone(), folding.clone());
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(inner.clone()),
+                    armed_fold_gate: Some(fold_gate.clone()),
+                    armed: fold_armed.clone(),
+                    entered: folding.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let paced = |job: &str, make: MakeIndex| Projection {
+            cfg: PeriodicCfg::every(Duration::from_millis(500))
+                .with_error_backoff(Duration::from_millis(400)),
+            ..projection(job, ChainNet::Matic, &url, make)
+        };
+        let mut sup = supervisor(
+            &st,
+            ChainNet::Matic,
+            vec![
+                paced(
+                    "trade-events-index",
+                    hooked(Arc::new(TradeEventsIndex {
+                        net: ChainNet::Matic,
+                        chain_id: 137,
+                    })),
+                ),
+                paced(
+                    "mana-transfers-index",
+                    hooked(Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                        net: ChainNet::Matic,
+                    })),
+                ),
+            ],
+        );
+        sup.member_deadline = deadline;
+        let stats = sup.stats.clone();
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, sup);
+        for indexer in [INDEXER_TRADE_EVENTS, chain_walk::INDEXER_MANA] {
+            eventually("each published at 998", || async {
+                last_block(&db.pool, indexer).await == 998
+                    && published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        Paired {
+            chain,
+            jobs,
+            stats,
+            fold_gate,
+            fold_armed,
+            folding,
+        }
+    }
+
+    impl Paired {
+        /// Holds both in their closes at once (no walk in flight), runs
+        /// `meanwhile`, then lets them out together.
+        async fn between_turns(&self, meanwhile: impl FnOnce(&FakeChain)) {
+            self.folding.store(0, Ordering::SeqCst);
+            self.fold_armed.store(true, Ordering::SeqCst);
+            eventually("both held in their closes", || async {
+                self.folding.load(Ordering::SeqCst) >= 2
+            })
+            .await;
+            meanwhile(&self.chain);
+            self.fold_armed.store(false, Ordering::SeqCst);
+            self.fold_gate.add_permits(2);
+        }
+    }
+
+    async fn rewinds(pool: &PgPool, indexer: &str) -> i32 {
+        sqlx::query_scalar(
+            "SELECT reorg_rewinds FROM shop.chain_cursor WHERE indexer = $1 AND network = 'matic'",
+        )
+        .bind(indexer)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    fn mana_at(block: u64, amount: u64) -> crate::chain_index::rpc::RpcLog {
+        let mana = super::super::mana_transfers::contract(ChainNet::Matic);
+        crate::chain_index::rpc::RpcLog {
+            address: mana,
+            topics: vec![
+                super::super::mana_transfers::TRANSFER.into(),
+                format!("0x{:0>64}", &ALICE[2..]),
+                format!("0x{:0>64}", &BOB[2..]),
+            ],
+            data: format!("0x{amount:064x}"),
+            block_number: format!("0x{block:x}"),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(block))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", block * 1_000 + amount)),
+        }
+    }
+
+    /// A shared window whose bracket stands on the new branch while the
+    /// checkpoint both members extend is not on it: evidence about both
+    /// cursors, not a failed read. Nothing is committed; the shared walk
+    /// itself withdraws each one's publication and leaves each to recover
+    /// in a pass alone (no fallback): while those passes wait on their first
+    /// read, readers of both already fall back and nothing moved. Then both
+    /// rewind below the fork, and MANA ends with the new branch's transfer.
+    #[tokio::test]
+    async fn a_shared_window_extending_a_checkpoint_on_another_branch_recovers_each_alone() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let p = paired(&db, vec![mana_at(960, 1)], Duration::from_secs(60)).await;
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        p.between_turns(|chain| {
+            *chain.head.lock() = 1_100;
+            // The fork comes once the shared walk's own check at 998 answered.
+            *chain.fork_after.lock() = Some(ForkAfter {
+                header: 998,
+                reads: 1,
+                from: 950,
+                salt: 0xee,
+                logs: vec![log_json(&mana_at(970, 2))],
+                one_read: false,
+            });
+            // After the walk's second read at 998 (the window's predecessor),
+            // every read at or below 998 waits: the passes alone that follow
+            // wait on their own check, before anything of theirs withdraws.
+            *chain.gate_after.lock() = Some((998, 2, 999, gate.clone()));
+        })
+        .await;
+        eventually("both passes alone wait on their first read", || async {
+            p.chain.probes_waiting.load(Ordering::SeqCst) >= 2
+        })
+        .await;
+        for indexer in [INDEXER_TRADE_EVENTS, chain_walk::INDEXER_MANA] {
+            assert!(
+                !published(&db.pool, indexer, ChainNet::Matic).await,
+                "{indexer} withdrawn"
+            );
+            assert_eq!(
+                last_block(&db.pool, indexer).await,
+                998,
+                "{indexer} not moved"
+            );
+        }
+        assert_eq!(p.stats.fallbacks.load(Ordering::SeqCst), 0, "no fallback");
+        gate.add_permits(100);
+        for indexer in [INDEXER_TRADE_EVENTS, chain_walk::INDEXER_MANA] {
+            eventually("each rewound once and published again", || async {
+                rewinds(&db.pool, indexer).await == 1
+                    && last_block(&db.pool, indexer).await == 1_098
+                    && published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        let blocks: Vec<i64> =
+            sqlx::query_scalar("SELECT block_number FROM shop.mana_transfer ORDER BY 1")
+                .fetch_all(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            blocks,
+            vec![970],
+            "the new branch's transfer, not the old one's"
+        );
+        assert!(p.jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A shared walk whose checkpoint is on another branch leaves the search
+    /// to each member's pass alone, which runs under no member deadline: its
+    /// slow older-header reads, each well within its own time but all of
+    /// them past the 300 ms a member's step may take, still end in one
+    /// search. Each recovery point is read once per projection, apart from
+    /// the reads at the tip.
+    #[tokio::test]
+    async fn a_slow_search_after_a_shared_opening_runs_once_alone() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let p = paired(&db, vec![], Duration::from_millis(300)).await;
+        let mark = p.chain.calls.lock().len();
+        p.between_turns(|chain| {
+            chain.fork(550, 0xee, vec![]);
+            *chain.probe_delay.lock() = Some((998, Duration::from_millis(150)));
+        })
+        .await;
+        // Read the moment both rewound: each one's next walk (which reads
+        // those heights again as window ends) waits half a second after it.
+        let mut calls = Vec::new();
+        for _ in 0..2_000 {
+            let done = rewinds(&db.pool, INDEXER_TRADE_EVENTS).await == 1
+                && rewinds(&db.pool, chain_walk::INDEXER_MANA).await == 1;
+            if done {
+                calls = p.chain.calls.lock()[mark..].to_vec();
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(!calls.is_empty(), "both rewound");
+        for indexer in [INDEXER_TRADE_EVENTS, chain_walk::INDEXER_MANA] {
+            let c = cursor(&db.pool, indexer, ChainNet::Matic).await.unwrap();
+            assert!(c.last_block >= 499, "{indexer} at {}", c.last_block);
+        }
+        for block in [899, 799, 699, 599, 499] {
+            let reads = calls
+                .iter()
+                .filter(|c| **c == format!("header {block}"))
+                .count();
+            assert_eq!(reads, 2, "header {block}: once per projection");
+        }
+        assert!(!calls.contains(&"header 399".to_string()));
+        assert!(p.jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+}
+
+/// The bounded recovery from a reorg past the confirmation depth: the
+/// recovery points each advance records, their search newest first, the
+/// publication withdrawn before any older header is read, and the bracket
+/// that makes a committed point one to recover at.
+mod recovery {
+    use super::super::chain_walk::{INDEXER_MANA, cursor};
+    use super::super::mana_transfers::{self, ManaTransfersIndex};
+    use super::*;
+    use crate::chain_index::rpc::RpcLog;
+    use std::time::Duration;
+
+    const MANA: ManaTransfersIndex = ManaTransfersIndex {
+        net: ChainNet::Matic,
+    };
+
+    /// A MANA transfer at `block`; `amount` tells two apart at one block.
+    fn mana_log(block: u64, from: &str, to: &str, amount: u64) -> RpcLog {
+        RpcLog {
+            address: mana_transfers::contract(ChainNet::Matic),
+            topics: vec![
+                mana_transfers::TRANSFER.into(),
+                format!("0x{:0>64}", &from[2..]),
+                format!("0x{:0>64}", &to[2..]),
+            ],
+            data: format!("0x{amount:064x}"),
+            block_number: format!("0x{block:x}"),
+            log_index: "0x0".into(),
+            block_timestamp: Some(format!("0x{:x}", time_of(block))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", block * 1_000 + amount)),
+        }
+    }
+
+    async fn rows(pool: &PgPool, table: &str) -> Vec<String> {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT (to_jsonb(t) - 'updated_at' - 'created_at' - 'id' - 'indexed_at' - 'mirrored_at' - 'added_at')::text \
+             FROM {table} t ORDER BY 1"
+        )))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn points(pool: &PgPool, indexer: &str) -> Vec<i64> {
+        sqlx::query_scalar(
+            "SELECT block_number FROM shop.chain_checkpoint WHERE indexer = $1 AND network = 'matic' ORDER BY 1",
+        )
+        .bind(indexer)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn at(pool: &PgPool, indexer: &str) -> (i64, Option<String>) {
+        let c = cursor(pool, indexer, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        (c.last_block, c.last_block_hash)
+    }
+
+    async fn ready(pool: &PgPool, indexer: &str) -> bool {
+        chain_walk::ready_cursor(pool, indexer, ChainNet::Matic, chrono::Utc::now())
+            .await
+            .is_some()
+    }
+
+    /// A chain of `head` blocks, finalized two behind, carrying `logs`.
+    async fn chain_of(head: u64, logs: Vec<RpcLog>, max_span: u64) -> (Arc<FakeChain>, String) {
+        let chain = FakeChain::new(head, logs, max_span, 1_000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        (chain, url)
+    }
+
+    /// What one walk of `logs` alone leaves in the MANA table: the
+    /// projection a recovery must end at.
+    async fn clean_mana(head: u64, logs: Vec<RpcLog>) -> Vec<String> {
+        let db = ScratchDb::create().await.unwrap();
+        let (_, url) = chain_of(head, logs, 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        let r = rows(&db.pool, "shop.mana_transfer").await;
+        db.drop().await;
+        r
+    }
+
+    fn calls_since(chain: &FakeChain, mark: usize) -> Vec<String> {
+        chain.calls.lock()[mark..].to_vec()
+    }
+
+    fn headers(blocks: impl IntoIterator<Item = u64>) -> Vec<String> {
+        blocks.into_iter().map(|b| format!("header {b}")).collect()
+    }
+
+    /// Every window end of a walk from 0 to 998 in windows of 100.
+    fn hundreds() -> Vec<i64> {
+        (0..9).map(|k| 99 + 100 * k).chain([998]).collect()
+    }
+
+    /// A reorg past the confirmation depth rewinds to the newest recovery
+    /// point still on the chain, found by comparing the points below the
+    /// cursor newest first: the rows below it stay, its hash and time are
+    /// the cursor's, the points past it go, and the projection ends as one
+    /// walk of the new branch leaves it.
+    #[tokio::test]
+    async fn a_reorg_rewinds_to_the_newest_recovery_point_still_on_the_chain() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let kept = vec![mana_log(120, ALICE, BOB, 1), mana_log(480, BOB, CARL, 2)];
+        let old = [
+            kept.clone(),
+            vec![mana_log(560, ALICE, BOB, 3), mana_log(900, CARL, ALICE, 4)],
+        ]
+        .concat();
+        let new = vec![mana_log(570, BOB, ALICE, 5), mana_log(910, ALICE, CARL, 6)];
+        let (chain, url) = chain_of(1_000, old, 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
+        let below = rows(&db.pool, "shop.mana_transfer").await[..2].to_vec();
+        chain.fork(550, 0xee, new.clone());
+        let mark = chain.calls.lock().len();
+        let rewound = pass(&st, &url, &MANA).await;
+        assert_eq!(rewound.reorg_rewound_to, Some(499), "{rewound:?}");
+        // The tip's check, then the points below it, newest first, until
+        // one is on the chain.
+        assert_eq!(
+            calls_since(&chain, mark),
+            headers([998, 899, 799, 699, 599, 499])
+        );
+        assert_eq!(
+            at(&db.pool, INDEXER_MANA).await,
+            (499, Some(chain.hash_of(499)))
+        );
+        let c = cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.last_block_time, Some(time_of(499)));
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds()[..5]);
+        assert!(!ready(&db.pool, INDEXER_MANA).await, "a rewind unpublishes");
+        assert_eq!(rows(&db.pool, "shop.mana_transfer").await, below);
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert_eq!(
+            rows(&db.pool, "shop.mana_transfer").await,
+            clean_mana(1_000, [kept, new].concat()).await
+        );
+        db.drop().await;
+    }
+
+    /// A fork below every recovery point: each is compared once, none is
+    /// on the chain, and the rewind goes to the start, dropping them all.
+    #[tokio::test]
+    async fn a_fork_below_every_recovery_point_rewinds_to_the_start() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(30, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        let new = vec![mana_log(60, BOB, ALICE, 2)];
+        chain.fork(50, 0xee, new.clone());
+        let mark = chain.calls.lock().len();
+        let rewound = pass(&st, &url, &MANA).await;
+        assert_eq!(rewound.reorg_rewound_to, Some(-1), "{rewound:?}");
+        assert_eq!(
+            calls_since(&chain, mark),
+            headers([998, 899, 799, 699, 599, 499, 399, 299, 199, 99])
+        );
+        assert!(points(&db.pool, INDEXER_MANA).await.is_empty());
+        assert_eq!(at(&db.pool, INDEXER_MANA).await, (-1, None));
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert_eq!(
+            rows(&db.pool, "shop.mana_transfer").await,
+            clean_mana(1_000, [vec![mana_log(30, ALICE, BOB, 1)], new].concat()).await
+        );
+        db.drop().await;
+    }
+
+    /// A cursor with no recovery points (as an upgraded database's is until
+    /// its next advance) rewinds to the start after the tip's check alone.
+    #[tokio::test]
+    async fn a_cursor_with_no_recovery_points_rewinds_to_the_start() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        sqlx::query("DELETE FROM shop.chain_checkpoint")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        chain.fork(550, 0xee, vec![]);
+        let mark = chain.calls.lock().len();
+        let rewound = pass(&st, &url, &MANA).await;
+        assert_eq!(rewound.reorg_rewound_to, Some(-1), "{rewound:?}");
+        assert_eq!(calls_since(&chain, mark), headers([998]));
+        db.drop().await;
+    }
+
+    /// Each projection keeps its newest 64 points, and an operator's rebuild
+    /// drops them all with the history.
+    #[tokio::test]
+    async fn the_newest_recovery_points_are_kept_and_a_rebuild_drops_them() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (_, url) = chain_of(1_000, vec![], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(1_000, 10), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        let kept: Vec<i64> = (0..63).map(|k| 369 + 10 * k).chain([998]).collect();
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, kept);
+        sqlx::query("UPDATE shop.chain_cursor SET rebuild_requested_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(pass(&st, &url, &MANA).await.rebuilt);
+        assert!(points(&db.pool, INDEXER_MANA).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A writer that lost the projection records no recovery point,
+    /// withdraws nothing, rewinds nothing, and a rebuild it runs drops none.
+    #[tokio::test]
+    async fn a_writer_that_lost_the_projection_cannot_record_withdraw_or_recover() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        let settings = &st.settings.market.indexes;
+        let stale = chain_walk::test_owner(&db.pool, &MANA, settings).await;
+        let _current = chain_walk::test_owner(&db.pool, &MANA, settings).await;
+        let cur = cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        let checkpoint = (cur.last_block, cur.last_block_hash.as_deref());
+        *chain.head.lock() = 1_100;
+        let header = crate::chain_index::rpc::BlockHeader {
+            number: 1_050,
+            hash: chain.hash_of(1_050),
+            timestamp: time_of(1_050),
+        };
+        assert!(
+            chain_walk::commit_window(
+                &db.pool,
+                &MANA,
+                &stale,
+                checkpoint,
+                &header,
+                &[],
+                &HashMap::new()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
+        assert!(
+            chain_walk::withdraw(&db.pool, &stale, checkpoint)
+                .await
+                .is_err()
+        );
+        assert!(ready(&db.pool, INDEXER_MANA).await, "still published");
+        chain.fork(550, 0xee, vec![]);
+        let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+        let mut out = PassOutcome::default();
+        assert!(
+            chain_walk::recover(&db.pool, &source, &MANA, &stale, &cur, &mut out)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            at(&db.pool, INDEXER_MANA).await,
+            (998, Some(format!("0x{:064x}", 998)))
+        );
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
+        assert_eq!(rows(&db.pool, "shop.mana_transfer").await.len(), 1);
+        sqlx::query("UPDATE shop.chain_cursor SET rebuild_requested_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(
+            chain_walk::run_pass(&db.pool, &source, &MANA, settings, &stale, None, &|_| {})
+                .await
+                .is_err()
+        );
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
+        db.drop().await;
+    }
+
+    /// Projections whose windows ended at different blocks recover at
+    /// different points, each at its own newest one below the fork.
+    #[tokio::test]
+    async fn each_projection_recovers_at_its_own_newest_point() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![], 10_000).await;
+        let by_hundreds = state_over(
+            db.pool.clone(),
+            &url,
+            IndexSettings {
+                start_block_matic: Some(0),
+                ..index_settings(100, 100)
+            },
+            false,
+        );
+        let by_150 = state_over(
+            db.pool.clone(),
+            &url,
+            IndexSettings {
+                start_block_matic: Some(0),
+                ..index_settings(100, 150)
+            },
+            false,
+        );
+        let trades = TradeEventsIndex {
+            net: ChainNet::Matic,
+            chain_id: 137,
+        };
+        assert!(publish(&by_hundreds, &url, &MANA).await.published);
+        assert!(publish(&by_150, &url, &trades).await.published);
+        chain.fork(520, 0xee, vec![]);
+        assert_eq!(
+            pass(&by_hundreds, &url, &MANA).await.reorg_rewound_to,
+            Some(499)
+        );
+        assert_eq!(
+            pass(&by_150, &url, &trades).await.reorg_rewound_to,
+            Some(449)
+        );
+        db.drop().await;
+    }
+
+    /// A fork right after a window's bracket closed, at a window that ended
+    /// short of its target (the endpoint narrowed it): the end's hash was
+    /// read inside the bracket, so the old branch's logs are committed with
+    /// the old branch's hash, the next pass sees the divergence, and the
+    /// recovery reads the new branch's different transfer.
+    #[tokio::test]
+    async fn a_fork_after_a_short_window_is_recovered_with_the_new_branch() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let old = vec![mana_log(700, ALICE, BOB, 1), mana_log(1_030, ALICE, BOB, 2)];
+        let new = vec![mana_log(1_030, BOB, CARL, 3)];
+        let (chain, url) = chain_of(1_000, old, 60).await;
+        // One window a pass, so the pass ends with the window that forks.
+        let st = state_over(db.pool.clone(), &url, index_settings(1, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        // The next window is [999, 1098], narrowed to [999, 1058]; the fork
+        // comes once its second read at 1098 (the bracket's close) answered.
+        *chain.head.lock() = 1_100;
+        *chain.fork_after.lock() = Some(ForkAfter {
+            header: 1_098,
+            reads: 2,
+            from: 1_020,
+            salt: 0xee,
+            logs: new.iter().map(log_json).collect(),
+            one_read: false,
+        });
+        let walked = pass(&st, &url, &MANA).await;
+        assert_eq!(walked.indexed_to, 1_058, "{walked:?}");
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert_eq!(
+            rows(&db.pool, "shop.mana_transfer").await,
+            clean_mana(1_100, [vec![mana_log(700, ALICE, BOB, 1)], new].concat()).await
+        );
+        db.drop().await;
+    }
+
+    /// A fork between two windows of one pass: the second window's bracket
+    /// is stable on the new branch, but the checkpoint it extends is not on
+    /// it. Nothing is committed, the publication is withdrawn and the pass
+    /// recovers; the projection ends with the new branch's transfer.
+    #[tokio::test]
+    async fn a_fork_between_two_windows_of_a_pass_is_recovered() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let old = vec![mana_log(700, ALICE, BOB, 1), mana_log(1_030, ALICE, BOB, 2)];
+        let new = vec![mana_log(1_030, BOB, CARL, 3)];
+        let (chain, url) = chain_of(1_000, old, 60).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        *chain.head.lock() = 1_100;
+        *chain.fork_after.lock() = Some(ForkAfter {
+            header: 1_098,
+            reads: 2,
+            from: 1_020,
+            salt: 0xee,
+            logs: new.iter().map(log_json).collect(),
+            one_read: false,
+        });
+        let recovered = pass(&st, &url, &MANA).await;
+        assert_eq!(recovered.reorg_rewound_to, Some(998), "{recovered:?}");
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert_eq!(
+            rows(&db.pool, "shop.mana_transfer").await,
+            clean_mana(1_100, [vec![mana_log(700, ALICE, BOB, 1)], new].concat()).await
+        );
+        db.drop().await;
+    }
+
+    /// The first window after a published pass finds the checkpoint it
+    /// extends on another branch: its publication is withdrawn before the
+    /// search reads any older header, so while that read waits, readers fall
+    /// back and nothing durable moved.
+    #[tokio::test]
+    async fn a_first_window_that_diverges_withdraws_before_its_search() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert!(ready(&db.pool, INDEXER_MANA).await);
+        // The fork lands right after the pass's own check at 998 answered.
+        *chain.head.lock() = 1_100;
+        *chain.fork_after.lock() = Some(ForkAfter {
+            header: 998,
+            reads: 1,
+            from: 950,
+            salt: 0xee,
+            logs: vec![],
+            one_read: false,
+        });
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *chain.probe_gate.lock() = Some((998, gate.clone()));
+        let (st2, url2) = (st.clone(), url.clone());
+        let walk = tokio::spawn(async move { pass(&st2, &url2, &MANA).await });
+        for _ in 0..200 {
+            if chain.probes_waiting.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(chain.probes_waiting.load(Ordering::SeqCst), 1);
+        assert!(!ready(&db.pool, INDEXER_MANA).await, "withdrawn first");
+        assert_eq!(
+            at(&db.pool, INDEXER_MANA).await,
+            (998, Some(format!("0x{:064x}", 998)))
+        );
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
+        assert_eq!(rows(&db.pool, "shop.mana_transfer").await.len(), 1);
+        gate.add_permits(10);
+        assert_eq!(walk.await.unwrap().reorg_rewound_to, Some(899));
+        db.drop().await;
+    }
+
+    /// A pass that finds its cursor block on another branch withdraws the
+    /// publication before it reads any older header: while that read waits,
+    /// readers fall back and nothing durable moved.
+    #[tokio::test]
+    async fn a_divergence_at_the_cursor_withdraws_before_its_search() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        chain.fork(550, 0xee, vec![]);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *chain.probe_gate.lock() = Some((998, gate.clone()));
+        let (st2, url2) = (st.clone(), url.clone());
+        let walk = tokio::spawn(async move { pass(&st2, &url2, &MANA).await });
+        for _ in 0..200 {
+            if chain.probes_waiting.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(chain.probes_waiting.load(Ordering::SeqCst), 1);
+        assert!(!ready(&db.pool, INDEXER_MANA).await, "withdrawn first");
+        assert_eq!(
+            at(&db.pool, INDEXER_MANA).await,
+            (998, Some(format!("0x{:064x}", 998)))
+        );
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
+        assert_eq!(rows(&db.pool, "shop.mana_transfer").await.len(), 1);
+        gate.add_permits(10);
+        assert_eq!(walk.await.unwrap().reorg_rewound_to, Some(499));
+        db.drop().await;
+    }
+
+    const C1: &str = "0x00000000000000000000000000000000000000c1";
+
+    /// One token of a collection minted to ALICE at s+100 and sold to BOB at
+    /// s+2,300, walked in windows of 500 to s+2,936 and published (points
+    /// every 500 blocks), with a producer of notifications reading the nft
+    /// index standing at the cursor.
+    async fn nft_history(db: &ScratchDb) -> (Arc<FakeChain>, String, SharedState, u64) {
+        let s = nft_index::start_block(ChainNet::Matic);
+        seed_collection(
+            &db.pool,
+            "matic",
+            C1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let t1 = v2_token(0, 1);
+        let chain = FakeChain::new(
+            s + 3_000,
+            vec![
+                transfer(C1, ZERO, ALICE, t1, s + 100, 0),
+                transfer(C1, ALICE, BOB, t1, s + 2_300, 0),
+            ],
+            1_000_000,
+            100,
+        );
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 500), false);
+        assert!(
+            publish_nft(&st, &url, &NftIndex::new(ChainNet::Matic))
+                .await
+                .published
+        );
+        sqlx::query(
+            "INSERT INTO shop.notification_cursor (producer, block_number, log_index, seed_block, seed_log_index) \
+             VALUES ('royalties_earned', $1, 0, 0, 0)",
+        )
+        .bind((s + 2_936) as i64)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        (chain, url, st, s)
+    }
+
+    async fn producer(pool: &PgPool) -> (i64, i32) {
+        sqlx::query_as(
+            "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = 'royalties_earned'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// A search whose older header read fails rewinds nothing: the height,
+    /// the rows, the recovery points and the notification cursors stay, and
+    /// readers already fell back. The next pass searches again, rewinds to
+    /// the newest point on the chain and moves the producers reading the
+    /// index back to just after it; the refold follows the new branch.
+    #[tokio::test]
+    async fn a_failed_search_rewinds_nothing_and_the_next_replays_from_its_point() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (chain, url, st, s) = nft_history(&db).await;
+        let nft = NftIndex::new(ChainNet::Matic);
+        let t1 = v2_token(0, 1);
+        let points_before = points(&db.pool, INDEXER_NFT).await;
+        assert_eq!(
+            points_before,
+            [499, 999, 1_499, 1_999, 2_499, 2_936].map(|b| (s + b) as i64)
+        );
+        let before = (
+            at(&db.pool, INDEXER_NFT).await,
+            rows(&db.pool, "shop.nft_event").await,
+            producer(&db.pool).await,
+        );
+        chain.fork(
+            s + 2_200,
+            0xee,
+            vec![transfer(C1, ALICE, CARL, t1, s + 2_250, 0)],
+        );
+        *chain.fail_probes_below.lock() = Some(s + 2_936);
+        assert!(try_pass(&st, &url, &nft).await.is_err());
+        assert!(
+            !ready(&db.pool, INDEXER_NFT).await,
+            "withdrawn before the search"
+        );
+        assert_eq!(points(&db.pool, INDEXER_NFT).await, points_before);
+        assert_eq!(
+            (
+                at(&db.pool, INDEXER_NFT).await,
+                rows(&db.pool, "shop.nft_event").await,
+                producer(&db.pool).await,
+            ),
+            before
+        );
+        *chain.fail_probes_below.lock() = None;
+        let rewound = pass(&st, &url, &nft).await;
+        assert_eq!(
+            rewound.reorg_rewound_to,
+            Some((s + 1_999) as i64),
+            "{rewound:?}"
+        );
+        assert_eq!(producer(&db.pool).await, ((s + 1_999) as i64, i32::MAX));
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        assert_eq!(
+            owner_of(&db.pool, "matic", C1, t1).await,
+            Some(Some(CARL.to_string()))
+        );
+        db.drop().await;
+    }
+
+    /// A backfill lane read while the chain briefly stands on another
+    /// branch (it flips back right after the read): the lane's bracket on
+    /// the cursor block changes, so it writes nothing, and the next pass
+    /// backfills the branch the cursor is on. The late collection's token
+    /// ends as one walk of that branch leaves it.
+    #[tokio::test]
+    async fn a_lane_read_on_a_passing_branch_writes_nothing() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let late = "0x00000000000000000000000000000000000000c3";
+        let t7 = v2_token(0, 7);
+        seed_collection(
+            &db.pool,
+            "matic",
+            C1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(
+            s + 3_000,
+            vec![
+                transfer(C1, ZERO, ALICE, v2_token(0, 1), s + 100, 0),
+                transfer(late, ZERO, ALICE, t7, s + 1_500, 0),
+            ],
+            1_000_000,
+            100,
+        );
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 500), false);
+        let nft = NftIndex::new(ChainNet::Matic);
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        // The mirror learns the late collection; the next pass takes it in,
+        // owing a backfill below the cursor.
+        seed_collection(
+            &db.pool,
+            "matic",
+            late,
+            s + 1_000,
+            "urn:decentraland:matic:collections-v2:0xc3",
+            "Late",
+        )
+        .await;
+        *chain.head.lock() = s + 3_100;
+        let taken = pass(&st, &url, &nft).await;
+        let cursor_block = taken.indexed_to as u64;
+        // The lane's pass: right after its own check at the cursor answered,
+        // the chain stands on a branch where the late token went to CARL, for
+        // exactly one log read.
+        *chain.fork_after.lock() = Some(ForkAfter {
+            header: cursor_block,
+            reads: 1,
+            from: s + 1_200,
+            salt: 0xee,
+            logs: vec![log_json(&transfer(late, ZERO, CARL, t7, s + 1_500, 0))],
+            one_read: true,
+        });
+        let err = try_pass(&st, &url, &nft).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("chain changed while backfilling"),
+            "{err:#}"
+        );
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        assert_eq!(
+            owner_of(&db.pool, "matic", late, t7).await,
+            Some(Some(ALICE.to_string()))
+        );
+        db.drop().await;
+    }
+
+    /// A fresh bootstrap holds the recovery points' table with its keys; a
+    /// database from before it (its cursor populated) gains it from the
+    /// schema's object pass with the cursor untouched, and a second run
+    /// changes nothing.
+    #[tokio::test]
+    async fn the_recovery_points_table_arrives_by_bootstrap_and_by_upgrade() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let keys: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT contype::text, confrelid::regclass::text FROM pg_constraint \
+             WHERE conrelid = 'shop.chain_checkpoint'::regclass AND contype IN ('p', 'f') ORDER BY 1",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            keys,
+            vec![
+                ("f".to_string(), Some("shop.chain_cursor".to_string())),
+                ("p".to_string(), Some("-".to_string())),
+            ]
+        );
+        let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
+        assert!(publish(&st, &url, &MANA).await.published);
+        let cursor_before = rows(&db.pool, "shop.chain_cursor").await;
+        sqlx::query("DROP TABLE shop.chain_checkpoint")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let done = crate::db::schema_migrate::migrate(
+            &db.pool,
+            crate::db::SCHEMA_SQL,
+            crate::db::MIGRATIONS_SQL,
+        )
+        .await
+        .unwrap();
+        assert!(done.steps.is_empty(), "{done:?}");
+        assert_eq!(done.created.len(), 1, "{done:?}");
+        assert!(
+            format!("{:?}", done.created[0]).contains("chain_checkpoint"),
+            "{done:?}"
+        );
+        assert_eq!(rows(&db.pool, "shop.chain_cursor").await, cursor_before);
+        assert!(
+            crate::db::schema_migrate::migrate(
+                &db.pool,
+                crate::db::SCHEMA_SQL,
+                crate::db::MIGRATIONS_SQL
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        // The next advance records its point in the table it gained.
+        *chain.head.lock() = 1_100;
+        assert!(publish(&st, &url, &MANA).await.published);
+        assert_eq!(points(&db.pool, INDEXER_MANA).await, vec![1_098]);
+        db.drop().await;
+    }
+
+    /// A backfill lane whose bracket stands still on a branch the cursor's
+    /// hash is not on: a divergence, found before the lane writes a row. The
+    /// lane's own pass withdraws the publication and recovers below the
+    /// fork, even though the lane spent the pass's budget.
+    #[tokio::test]
+    async fn a_lane_that_finds_the_cursor_on_another_branch_recovers() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let late = "0x00000000000000000000000000000000000000c3";
+        let t7 = v2_token(0, 7);
+        seed_collection(
+            &db.pool,
+            "matic",
+            C1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(
+            s + 3_000,
+            vec![
+                transfer(C1, ZERO, ALICE, v2_token(0, 1), s + 100, 0),
+                transfer(late, ZERO, ALICE, t7, s + 1_500, 0),
+            ],
+            1_000_000,
+            100,
+        );
+        let url = serve(chain.clone()).await;
+        // Three requests a pass: a lane window (its bracket, its read and its
+        // times) spends a whole pass.
+        let st = state_over(db.pool.clone(), &url, index_settings(3, 500), false);
+        let nft = NftIndex::new(ChainNet::Matic);
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        seed_collection(
+            &db.pool,
+            "matic",
+            late,
+            s + 1_000,
+            "urn:decentraland:matic:collections-v2:0xc3",
+            "Late",
+        )
+        .await;
+        *chain.head.lock() = s + 3_100;
+        let taken = pass(&st, &url, &nft).await;
+        let cursor_block = taken.indexed_to as u64;
+        *chain.fork_after.lock() = Some(ForkAfter {
+            header: cursor_block,
+            reads: 1,
+            from: s + 1_200,
+            salt: 0xee,
+            logs: vec![log_json(&transfer(late, ZERO, CARL, t7, s + 1_500, 0))],
+            one_read: false,
+        });
+        let lane = pass(&st, &url, &nft).await;
+        assert_eq!(lane.reorg_rewound_to, Some((s + 999) as i64), "{lane:?}");
+        let carl: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM shop.nft_event WHERE contract_address = $1 AND to_address = $2",
+        )
+        .bind(late)
+        .bind(CARL.to_ascii_lowercase())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(carl, 0, "nothing written from the lane's read");
+        assert!(publish_nft(&st, &url, &nft).await.published);
+        assert_eq!(
+            owner_of(&db.pool, "matic", late, t7).await,
+            Some(Some(CARL.to_string()))
         );
         db.drop().await;
     }

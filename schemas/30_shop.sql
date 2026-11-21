@@ -398,6 +398,23 @@ CREATE TABLE shop.chain_cursor (
     CONSTRAINT chain_cursor_quarantine_reason CHECK ((quarantined_at IS NULL) = (quarantine_reason IS NULL))
 );
 
+-- The points a projection's cursor committed (a window's end, read in the
+-- same bracket as its logs and proven to extend the point before it), the
+-- newest 64 per projection, written with each advance. A reorg past the
+-- confirmation depth rewinds to the newest one still on the chain instead of
+-- the start block; that rewind drops the ones past it, a full rewind or a
+-- rebuild all of them. Read only once a reorg is seen.
+CREATE TABLE shop.chain_checkpoint (
+    indexer text NOT NULL,
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    block_hash text NOT NULL,
+    block_time bigint NOT NULL,
+    PRIMARY KEY (indexer, network, block_number),
+    FOREIGN KEY (indexer, network) REFERENCES shop.chain_cursor (indexer, network) ON DELETE CASCADE,
+    CONSTRAINT chain_checkpoint_hash_shape CHECK (block_hash ~ '^0x[0-9a-f]{64}$')
+);
+
 -- The collections the nft walk has taken in, and from which block. A
 -- collection the mirror reports after the walk passed its creation gets a
 -- backfill range [backfill_from_block, walked_from_block - 1], walked by its

@@ -2085,6 +2085,8 @@ revokes, whose `address` a catalog write does not have.
 `trade_events`, `rentals`, `mana_transfers`, `sales`, `committee`) on one
 network (`ethereum`, `matic`). A window commit writes it once, and so do a
 fold record, a publish and a rewind; the table stays at a dozen rows.
+`shop.chain_checkpoint` holds each projection's recovery points (see
+"Reorgs").
 
 **Ownership.** Each network has a supervisor job, `chain-walk-ethereum` and
 `chain-walk-matic`, in the process that runs the indexes. It walks each
@@ -2123,7 +2125,7 @@ the quarantine. On a mismatch it rolls back, so a job that lost the
 projection commits nothing. This covers:
 - the window's rows with the cursor advance (which also requires the
   checkpoint it read, height and hash);
-- a reorg rewind;
+- a reorg rewind, and the withdrawal of a diverged checkpoint's publication;
 - the nft backfill lane;
 - each fold, including each trade-events digest batch;
 - the fold record, the publish and its withdrawal.
@@ -2169,6 +2171,50 @@ heights, so they run only when both read Polygon mainnet. The tips' global
 cap evicts by the MANA index's newest block only while that cursor is bound
 and out of quarantine.
 
+**Reorgs.** Each window is read inside a bracket: the header at its end
+(`to`) before and after its logs, and between them the header at the block
+the window actually reached (an endpoint may narrow it) and the header at
+the checkpoint it extends. The walk assumes an endpoint that answers from
+one branch between two equal answers for the header at `to`. Under that
+assumption, the reached block's hash names the branch the logs came from,
+and the predecessor proves the window extends what was committed; a hash
+cannot attest logs from an endpoint that mixes branches. The nft backfill
+lanes read below the cursor, each read bracketed by the cursor block's
+header, which must stay its stored hash. A window that extends a hashed
+checkpoint costs one header read more for its predecessor, and a lane
+window two.
+
+Each advance records the block it reached, with its hash and time, in
+`shop.chain_checkpoint`, keeping the newest 64 per projection: one insert
+and one delete per committed window, a few hundred rows in all, read only
+once a reorg is seen.
+
+A pass checks the cursor block's hash first. When it differs, or when a
+window's predecessor or a lane's bracket stands still on another branch
+than the stored hash, the publication is withdrawn at once, in a fenced
+transaction of its own on that exact checkpoint; the rows, the recovery
+points and the notification cursors stay. The pass then reads the headers
+of the recovery points below the cursor, newest first and outside any
+transaction, and rewinds to the newest one still on the chain, keeping its
+hash and time. With none recorded, or every one compared and none on the
+chain, it rewinds to `start_block - 1`. A header read that fails rewinds
+nothing, and the next pass searches again. The search's reads count in the
+pass, but its budget does not cut them. A shared walk never searches: a
+member that diverged withdraws and recovers in a pass alone, which runs
+under no member deadline, and walks with others again once its checkpoint
+matches theirs.
+
+The rewind is one transaction: the notification producers' replay plan,
+the projection's own cleanup past the point, the producers' moves, the
+cursor's compare-and-set from the checkpoint it read, the pruning of the
+recovery points past the point, then the owner check. The next fold is a
+rebuild, as after any rewind.
+
+A database that gains the table starts with no recovery points, so a reorg
+seen before its next advance rewinds to the start. The history it holds is
+trusted as found: the bracket certifies what is walked from then on, not
+rows already written.
+
 **Operator procedures.** Run each as one statement. Both raise the
 generation, which fences the current owner's writes in flight; its next
 pass claims the projection again and acts.
@@ -2188,7 +2234,7 @@ pass claims the projection again and acts.
      cleanup;
   2. runs the projection's own cleanup down to `start_block - 1`;
   3. restarts the cursor there, bound to the chain it proved and out of
-     quarantine.
+     quarantine, and drops the projection's recovery points.
 
   It then walks and folds again; the other network and the other
   projections are untouched. Trade events also drop their derived verdict
@@ -2214,7 +2260,10 @@ supervisors takes leases named after the index alone (`nft-index`), which do
 not exclude the new ones. Stop the process that runs the indexes
 (`catalyst index`) before starting a newer one, and before rolling back. A
 deployment that runs the index process as one replica replaced with the
-`Recreate` strategy already does this.
+`Recreate` strategy already does this. A binary from before
+`shop.chain_checkpoint` neither records nor drops recovery points, so after
+running one, clear them before a newer binary starts again:
+`DELETE FROM shop.chain_checkpoint;`.
 
 ## Curation committee
 
