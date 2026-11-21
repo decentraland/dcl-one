@@ -121,6 +121,10 @@ struct FakeChain {
     /// Refuse every `eth_getLogs` from this block on that asks for this
     /// address.
     refuse_from: Mutex<Option<(u64, String)>>,
+    /// Count in `watched` every `eth_getLogs` whose first topics include all
+    /// of these (only a shared read mixes two projections' topics).
+    watch_topics: Mutex<Vec<String>>,
+    watched: AtomicUsize,
 }
 
 impl FakeChain {
@@ -150,6 +154,8 @@ impl FakeChain {
             refuse_topics: Mutex::new(Vec::new()),
             refused: AtomicUsize::new(0),
             refuse_from: Mutex::new(None),
+            watch_topics: Mutex::new(Vec::new()),
+            watched: AtomicUsize::new(0),
         })
     }
 
@@ -317,6 +323,14 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
             {
                 chain.refused.fetch_add(1, Ordering::SeqCst);
                 return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "internal error: this address is refused by the test" } });
+            }
+            let watch = chain.watch_topics.lock().clone();
+            if !watch.is_empty()
+                && topics
+                    .as_ref()
+                    .is_some_and(|t| watch.iter().all(|w| t.contains(&w.to_ascii_lowercase())))
+            {
+                chain.watched.fetch_add(1, Ordering::SeqCst);
             }
             let refused = chain.refuse_topics.lock().clone();
             if !refused.is_empty()
@@ -6948,24 +6962,35 @@ mod supervisor {
     }
 
     /// A member a shared walk pauses at its budget reads its walks-alone
-    /// hint in a task of its own: held there, its companion still walks to
-    /// the target, closes and publishes; once the hint answers yes, it goes
-    /// on alone to the target.
+    /// hint in a task of its own. A and C, which share an address, pause at
+    /// 70 after a walk shared with B (a read that mixes A's and C's topics
+    /// shows it was shared); their hints are held while B walks on, closes
+    /// and publishes. Then A's hint answers yes and C's no. Both are due at
+    /// 70, and C would invite A; yet no shared walk starts until both pause
+    /// again at 90, since A walks alone (a `false` read from A's hint gathers
+    /// the two into a walk, which A then leaves at its opening).
     #[tokio::test]
     async fn a_held_hint_after_a_budget_pause_holds_back_no_companion() {
         let Some(db) = ScratchDb::create().await else {
             return;
         };
-        let (a1, a2, b1) = (
+        let (a1, b1, c1, shared) = (
             "0x00000000000000000000000000000000000000a1",
-            "0x00000000000000000000000000000000000000a2",
             "0x00000000000000000000000000000000000000b1",
+            "0x00000000000000000000000000000000000000c1",
+            "0x00000000000000000000000000000000000000ab",
+        );
+        let (topic_a, topic_b, topic_c) = (
+            super::super::mana_transfers::TRANSFER,
+            "0x00000000000000000000000000000000000000000000000000000000000000b1",
+            "0x00000000000000000000000000000000000000000000000000000000000000c1",
         );
         let chain = FakeChain::new(52, vec![], 1_000, 1_000);
         chain.finalized_lag.store(2, Ordering::SeqCst);
+        *chain.watch_topics.lock() = vec![topic_a.to_string(), topic_c.to_string()];
         let url = serve(chain.clone()).await;
-        // A owes two requests a window, B one; three a pass: from 50 to 98
-        // in windows of 20, B walks all three, A pauses after the first.
+        // A and C owe two requests a window, B one; three a pass: from 50 to
+        // 98 in windows of 20, B walks all three, A and C pause after the first.
         let settings = IndexSettings {
             address_chunk: 1,
             window_blocks: 20,
@@ -6973,83 +6998,104 @@ mod supervisor {
             ..walk_settings()
         };
         let st = state_over(db.pool.clone(), &url, settings, false);
-        let hooks = Hooked {
-            alone_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
-            ..Hooked::default()
-        };
-        let a: MakeIndex = {
-            let (gate, armed, from, held, answer) = (
-                hooks.alone_gate.clone(),
-                hooks.alone_armed.clone(),
-                hooks.alone_from.clone(),
-                hooks.alone_held.clone(),
-                hooks.alone_answer.clone(),
-            );
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (armed, from, held) = (
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::new(std::sync::atomic::AtomicI64::new(i64::MAX)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let (a_answer, c_answer) = (
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let hooked = |inner: Arc<dyn ChainIndex>,
+                      groups: Vec<chain_walk::LogGroup>,
+                      answer: Option<Arc<std::sync::atomic::AtomicBool>>|
+         -> MakeIndex {
+            let (gate, armed, from, held) =
+                (gate.clone(), armed.clone(), from.clone(), held.clone());
             Arc::new(move || {
-                Arc::new(Hooked {
-                    inner: Some(Arc::new(super::super::mana_transfers::ManaTransfersIndex {
-                        net: ChainNet::Matic,
-                    })),
-                    groups_override: Some(vec![chain_walk::LogGroup {
-                        addresses: vec![a1.into(), a2.into()],
-                        topics: json!([[super::super::mana_transfers::TRANSFER]]),
-                    }]),
-                    alone_gate: gate.clone(),
-                    alone_armed: armed.clone(),
-                    alone_from: from.clone(),
-                    alone_held: held.clone(),
-                    alone_answer: answer.clone(),
+                let mut h = Hooked {
+                    inner: Some(inner.clone()),
+                    groups_override: Some(groups.clone()),
                     ..Hooked::default()
-                }) as Arc<dyn ChainIndex>
+                };
+                if let Some(answer) = &answer {
+                    h.alone_gate = Some(gate.clone());
+                    h.alone_armed = armed.clone();
+                    h.alone_from = from.clone();
+                    h.alone_held = held.clone();
+                    h.alone_answer = answer.clone();
+                }
+                Arc::new(h) as Arc<dyn ChainIndex>
             })
         };
-        let b: MakeIndex = Arc::new(move || {
-            Arc::new(Hooked {
-                inner: Some(Arc::new(TradeEventsIndex {
-                    net: ChainNet::Matic,
-                    chain_id: 137,
-                })),
-                groups_override: Some(vec![chain_walk::LogGroup {
-                    addresses: vec![b1.into()],
-                    topics: json!([[
-                        "0x00000000000000000000000000000000000000000000000000000000000000b1"
-                    ]]),
-                }]),
-                ..Hooked::default()
-            }) as Arc<dyn ChainIndex>
-        });
-        let jobs = Jobs::new().with_first_pass_now(true);
-        chain_jobs::spawn(
-            &jobs,
-            supervisor(
-                &st,
-                ChainNet::Matic,
-                vec![
-                    projection("mana-transfers-index", ChainNet::Matic, &url, a),
-                    projection("trade-events-index", ChainNet::Matic, &url, b),
-                ],
-            ),
+        let group = |addresses: &[&str], topic: &str| {
+            vec![chain_walk::LogGroup {
+                addresses: addresses.iter().map(|a| a.to_string()).collect(),
+                topics: json!([[topic]]),
+            }]
+        };
+        let a = hooked(
+            Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                net: ChainNet::Matic,
+            }),
+            group(&[a1, shared], topic_a),
+            Some(a_answer.clone()),
         );
-        for indexer in [chain_walk::INDEXER_MANA, INDEXER_TRADE_EVENTS] {
+        let b = hooked(
+            Arc::new(TradeEventsIndex {
+                net: ChainNet::Matic,
+                chain_id: 137,
+            }),
+            group(&[b1], topic_b),
+            None,
+        );
+        let c = hooked(
+            Arc::new(super::super::committee_index::CommitteeIndex),
+            group(&[c1, shared], topic_c),
+            Some(c_answer.clone()),
+        );
+        let sup = supervisor(
+            &st,
+            ChainNet::Matic,
+            vec![
+                projection("trade-events-index", ChainNet::Matic, &url, b),
+                projection("committee-index", ChainNet::Matic, &url, c),
+                projection("mana-transfers-index", ChainNet::Matic, &url, a),
+            ],
+        );
+        let stats = sup.stats.clone();
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, sup);
+        let (mana, committee) = (chain_walk::INDEXER_MANA, chain_walk::INDEXER_COMMITTEE);
+        for indexer in [mana, INDEXER_TRADE_EVENTS, committee] {
             eventually("each walked to 50", || async {
                 last_block(&db.pool, indexer).await == 50
                     && published(&db.pool, indexer, ChainNet::Matic).await
             })
             .await;
         }
-        // A's read at the shared walk's opening (its cursor at 50) answers;
-        // the one after its pause at 70 waits.
-        hooks.alone_from.store(70, Ordering::SeqCst);
-        hooks.alone_armed.store(true, Ordering::SeqCst);
+        // The reads at the shared walk's opening (cursors at 50) answer; the
+        // ones after the pause at 70 wait.
+        from.store(70, Ordering::SeqCst);
+        armed.store(true, Ordering::SeqCst);
+        let mixed = chain.watched.load(Ordering::SeqCst);
         *chain.head.lock() = 100;
-        eventually("A's hint after its pause is held", || async {
-            hooks.alone_held.load(Ordering::SeqCst) >= 1
+        eventually("A's and C's hints after their pause are held", || async {
+            held.load(Ordering::SeqCst) >= 2
         })
         .await;
-        assert_eq!(
-            last_block(&db.pool, chain_walk::INDEXER_MANA).await,
-            70,
-            "A paused after one window"
+        for indexer in [mana, committee] {
+            assert_eq!(
+                last_block(&db.pool, indexer).await,
+                70,
+                "{indexer} paused after one window"
+            );
+        }
+        assert!(
+            chain.watched.load(Ordering::SeqCst) > mixed,
+            "the walk from 50 was shared"
         );
         eventually(
             "B walks to the target, closes and publishes meanwhile",
@@ -7059,14 +7105,45 @@ mod supervisor {
             },
         )
         .await;
-        // The hint answers yes: A goes on alone, a window a pass.
-        hooks.alone_answer.store(true, Ordering::SeqCst);
-        hooks.alone_armed.store(false, Ordering::SeqCst);
-        hooks.alone_gate.as_ref().unwrap().add_permits(100);
-        eventually("A goes on alone to the target", || async {
-            last_block(&db.pool, chain_walk::INDEXER_MANA).await == 98
-        })
+        // A's hint answers yes, C's no. The reads after the next pause, at
+        // 90, wait: until then, no shared walk starts.
+        from.store(90, Ordering::SeqCst);
+        a_answer.store(true, Ordering::SeqCst);
+        let (walks, mixed) = (
+            stats.walks.load(Ordering::SeqCst),
+            chain.watched.load(Ordering::SeqCst),
+        );
+        gate.add_permits(2);
+        eventually(
+            "A's and C's hints after their pause at 90 are held",
+            || async { held.load(Ordering::SeqCst) >= 4 },
+        )
         .await;
+        for indexer in [mana, committee] {
+            assert_eq!(
+                last_block(&db.pool, indexer).await,
+                90,
+                "{indexer} paused after one more window"
+            );
+        }
+        assert_eq!(
+            stats.walks.load(Ordering::SeqCst),
+            walks,
+            "A walked alone and C had no companion: no shared walk started"
+        );
+        assert_eq!(
+            chain.watched.load(Ordering::SeqCst),
+            mixed,
+            "no read mixed A's and C's topics again"
+        );
+        armed.store(false, Ordering::SeqCst);
+        gate.add_permits(100);
+        for indexer in [mana, committee] {
+            eventually("A and C go on to the target", || async {
+                last_block(&db.pool, indexer).await == 98
+            })
+            .await;
+        }
         assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
         db.drop().await;
     }
