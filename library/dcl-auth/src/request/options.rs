@@ -6,9 +6,10 @@ use super::parts::RequestParts;
 use crate::auth_chain::MAX_AUTH_CHAIN_LINKS;
 use crate::eip1654::Eip1654Validator;
 use crate::scoped_login::{DEFAULT_MAX_SCOPED_LOGIN_LIFETIME_MS, is_operation_format, is_service};
-use crate::signed_fetch::SIGNED_FETCH_WINDOW_SECS;
+use crate::signed_fetch::{MAX_FUTURE_SKEW_SECS, SIGNED_FETCH_WINDOW_SECS};
 
-/// How far a signed timestamp may be from now, either way.
+/// How far a signed timestamp may be from now, either way (the future side
+/// capped at [`MAX_FUTURE_SKEW_SECS`] unless it follows the window).
 pub const DEFAULT_EXPIRATION: Duration = Duration::from_secs(SIGNED_FETCH_WINDOW_SECS as u64);
 pub const DEFAULT_MAX_CHAIN_LENGTH: usize = MAX_AUTH_CHAIN_LINKS;
 
@@ -50,6 +51,8 @@ impl Resolve {
 #[derive(Clone)]
 pub struct VerifyOptions {
     pub(crate) expiration_ms: i64,
+    /// How far ahead a timestamp may be; `None` for no bound.
+    pub(crate) future_ms: Option<i64>,
     pub(crate) max_chain_length: usize,
     pub(crate) canonical_metadata_keys: Option<Vec<String>>,
     pub(crate) metadata_validator: Option<MetadataPredicate>,
@@ -71,6 +74,7 @@ impl Default for VerifyOptions {
     fn default() -> Self {
         Self {
             expiration_ms: DEFAULT_EXPIRATION.as_millis() as i64,
+            future_ms: Some(DEFAULT_EXPIRATION.as_millis() as i64),
             max_chain_length: DEFAULT_MAX_CHAIN_LENGTH,
             canonical_metadata_keys: None,
             metadata_validator: None,
@@ -87,6 +91,7 @@ impl Default for VerifyOptions {
 #[derive(Clone, Default)]
 pub struct VerifyOptionsBuilder {
     expiration: Option<Duration>,
+    future_bound_follows_window: bool,
     max_chain_length: Option<usize>,
     canonical_metadata_keys: Option<Vec<String>>,
     metadata_validator: Option<MetadataPredicate>,
@@ -99,9 +104,18 @@ pub struct VerifyOptionsBuilder {
 }
 
 impl VerifyOptionsBuilder {
-    /// The timestamp window, applied to the past and to the future.
+    /// The timestamp window: how old a timestamp may be, and how far ahead up
+    /// to [`MAX_FUTURE_SKEW_SECS`].
     pub fn expiration(mut self, window: Duration) -> Self {
         self.expiration = Some(window);
+        self
+    }
+
+    /// The future side runs to the whole window, as `@dcl/crypto-middleware`'s
+    /// does, instead of stopping at [`MAX_FUTURE_SKEW_SECS`]. A window too wide
+    /// for `i64` milliseconds (an infinite one) then leaves it unbounded.
+    pub fn future_bound_follows_window(mut self, follows: bool) -> Self {
+        self.future_bound_follows_window = follows;
         self
     }
 
@@ -208,8 +222,15 @@ impl VerifyOptionsBuilder {
             return err("maxChainLength must be an integer from 2 to 10");
         }
         let millis = |d: Duration| i64::try_from(d.as_millis()).unwrap_or(i64::MAX);
+        let expiration_ms = millis(self.expiration.unwrap_or(DEFAULT_EXPIRATION));
+        let future_ms = if self.future_bound_follows_window {
+            (expiration_ms < i64::MAX).then_some(expiration_ms)
+        } else {
+            Some(expiration_ms.min(MAX_FUTURE_SKEW_SECS * 1000))
+        };
         Ok(VerifyOptions {
-            expiration_ms: millis(self.expiration.unwrap_or(DEFAULT_EXPIRATION)),
+            expiration_ms,
+            future_ms,
             max_chain_length,
             canonical_metadata_keys: self.canonical_metadata_keys,
             metadata_validator: self.metadata_validator,

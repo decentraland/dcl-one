@@ -31,7 +31,9 @@ available.
   the expiration window (`SIGNED_FETCH_WINDOW_SECS`, 60 s, by default; it
   bounds the past, and the future up to the 60 s `MAX_FUTURE_SKEW_SECS` cap of
   the [signed-fetch window ADR](2026-11-13-signed-fetch-window.md)),
-  the maximum chain length (10), `canonical_metadata_keys`, a
+  `future_bound_follows_window` (off by default; on, the future side runs to
+  the whole window as the reference's does, and an infinite window bounds
+  neither side), the maximum chain length (10), `canonical_metadata_keys`, a
   `metadata_validator` (`require_signer`, `reject_if_signer`,
   `require_canonical_field`, `canonical_field`), the service, the scoped-login
   lifetime cap (24 h), the route's operation and resource, `optional`, and the
@@ -87,8 +89,10 @@ available.
 - The timestamp is digits only; any other form is 400. The reference reads it
   with `Number()` until decentraland/core-libs#83 lands, after which it is
   digits only too.
-- The future side of the timestamp window stops at 60 s whatever the window;
-  with the default 60 s window this is the reference's bound.
+- By default the future side of the timestamp window stops at 60 s whatever
+  the window; with the default 60 s window this is the reference's bound.
+  `future_bound_follows_window` restores the reference's bound for a surface
+  that keeps a wider window.
 - A date-time expiration without an offset reads as UTC; the servers run in
   UTC, where the reference reads it the same way.
 - A contract wallet's acceptance at the latest block is reused for 60 s, and

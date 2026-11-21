@@ -6,7 +6,7 @@
 //! 1. the chain headers `x-identity-auth-chain-0..max` (an empty value ends
 //!    the chain; one at index `max` is refused);
 //! 2. the timestamp, digits only, at most the expiration window old and at
-//!    most that window, capped at 60 s, ahead;
+//!    most that window, capped at 60 s unless the options lift the cap, ahead;
 //! 3. the metadata object (absent: `{}` and an empty payload segment);
 //! 4. the service's `metadata_validator`;
 //! 5. the signature over `method:path:timestamp:metadata` (method and path
@@ -52,7 +52,6 @@ use crate::rpc_validator::{RPC_BUDGET, RpcBudget};
 use crate::scoped_login::{
     ScopeRefusal, ScopedLoginScope, authorize_scope, is_resource, parse_scoped_ephemeral_payload,
 };
-use crate::signed_fetch::MAX_FUTURE_SKEW_SECS;
 use crate::verify::{WalkRules, Walked, walk_chain};
 use error::{ScopedErrorCode as Code, forbidden, malformed, safe, unauthorized};
 
@@ -139,8 +138,13 @@ fn extract_chain(parts: &RequestParts, max: usize) -> Result<Vec<RawLink>, Reque
 }
 
 /// An absent or empty timestamp reads as 0, which is expired. The window bounds the
-/// past; the future is bounded by the window up to [`MAX_FUTURE_SKEW_SECS`].
-fn check_timestamp(raw: Option<&str>, window_ms: i64, now_ms: i64) -> Result<(), RequestAuthError> {
+/// past, `future_ms` (`None`: nothing) the future.
+fn check_timestamp(
+    raw: Option<&str>,
+    window_ms: i64,
+    future_ms: Option<i64>,
+    now_ms: i64,
+) -> Result<(), RequestAuthError> {
     let raw = raw.filter(|raw| !raw.is_empty()).unwrap_or("0");
     if !raw.bytes().all(|b| b.is_ascii_digit()) {
         return Err(malformed(format!("Invalid chain timestamp: {}", safe(raw))));
@@ -157,8 +161,7 @@ fn check_timestamp(raw: Option<&str>, window_ms: i64, now_ms: i64) -> Result<(),
             timestamp.saturating_add(window)
         )));
     }
-    let ahead = i128::from(window_ms.min(MAX_FUTURE_SKEW_SECS * 1000));
-    if timestamp > now + ahead {
+    if future_ms.is_some_and(|ahead| timestamp > now + i128::from(ahead)) {
         return Err(unauthorized(format!(
             "Signature timestamp is too far in the future: signature timestamp: {timestamp}, local timestamp: {now}"
         )));
@@ -302,7 +305,12 @@ async fn verify_identity(
     now_ms: i64,
 ) -> Result<VerifiedRequest, RequestAuthError> {
     let raw_chain = extract_chain(parts, options.max_chain_length)?;
-    check_timestamp(parts.timestamp.as_deref(), options.expiration_ms, now_ms)?;
+    check_timestamp(
+        parts.timestamp.as_deref(),
+        options.expiration_ms,
+        options.future_ms,
+        now_ms,
+    )?;
     let metadata = metadata::parse_metadata(parts.metadata.as_deref())?;
     if let Some(validator) = &options.metadata_validator
         && !validator(&metadata)

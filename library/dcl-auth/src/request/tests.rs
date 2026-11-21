@@ -363,15 +363,85 @@ async fn stage_order_is_chain_timestamp_metadata_validator_signature() {
     assert!(err(next).await.to_string().starts_with("Invalid signature"));
 }
 
-/// The window bounds the past; the future side stops at 60 s whatever the window.
+/// The window bounds the past; by default the future side stops at 60 s whatever the window.
 #[test]
 fn a_wide_window_keeps_the_future_cap() {
-    let five_minutes = 300_000;
-    assert!(check_timestamp(Some(&(NOW - 300_000).to_string()), five_minutes, NOW).is_ok());
-    assert!(check_timestamp(Some(&(NOW + 60_000).to_string()), five_minutes, NOW).is_ok());
-    let err = check_timestamp(Some(&(NOW + 60_001).to_string()), five_minutes, NOW).unwrap_err();
-    assert_eq!(err.status(), 401);
-    assert!(check_timestamp(Some(&(NOW + 30_001).to_string()), 30_000, NOW).is_err());
+    let five_minutes = VerifyOptions::builder()
+        .expiration(Duration::from_secs(300))
+        .build()
+        .unwrap();
+    let check = |offset: i64, options: &VerifyOptions| {
+        let raw = (NOW + offset).to_string();
+        check_timestamp(Some(&raw), options.expiration_ms, options.future_ms, NOW)
+    };
+    assert!(check(-300_000, &five_minutes).is_ok());
+    assert!(check(60_000, &five_minutes).is_ok());
+    assert_eq!(check(60_001, &five_minutes).unwrap_err().status(), 401);
+    let thirty_seconds = VerifyOptions::builder()
+        .expiration(Duration::from_secs(30))
+        .build()
+        .unwrap();
+    assert!(check(30_000, &thirty_seconds).is_ok());
+    assert!(check(30_001, &thirty_seconds).is_err());
+    assert!(check(60_000, &VerifyOptions::default()).is_ok());
+    assert!(check(60_001, &VerifyOptions::default()).is_err());
+}
+
+/// With the option, the future side runs to the window, and an infinite window
+/// bounds neither side.
+#[test]
+fn the_future_bound_can_follow_the_window() {
+    let following = |window: Duration| {
+        VerifyOptions::builder()
+            .expiration(window)
+            .future_bound_follows_window(true)
+            .build()
+            .unwrap()
+    };
+    let check = |raw: &str, options: &VerifyOptions| {
+        check_timestamp(Some(raw), options.expiration_ms, options.future_ms, NOW)
+    };
+    let at = |offset: i64| (NOW + offset).to_string();
+    let five_minutes = following(Duration::from_secs(300));
+    assert!(check(&at(300_000), &five_minutes).is_ok());
+    assert_eq!(
+        check(&at(300_001), &five_minutes).unwrap_err().status(),
+        401
+    );
+    assert!(check(&at(-300_001), &five_minutes).is_err());
+    let thirty_seconds = following(Duration::from_secs(30));
+    assert!(check(&at(30_000), &thirty_seconds).is_ok());
+    assert!(check(&at(30_001), &thirty_seconds).is_err());
+    let infinite = following(Duration::MAX);
+    assert_eq!(infinite.future_ms, None);
+    assert!(check("0", &infinite).is_ok());
+    assert!(check(&u128::MAX.to_string(), &infinite).is_ok());
+    assert!(check(&"9".repeat(60), &infinite).is_ok());
+}
+
+/// The option reaches the verifier: a request signed five minutes ahead.
+#[tokio::test]
+async fn a_request_ahead_by_the_window_verifies_when_the_bound_follows_it() {
+    let parts = signed_parts("/ws", None);
+    let window = VerifyOptions::builder().expiration(Duration::from_secs(300));
+    let capped = window.clone().build().unwrap();
+    let following = window.future_bound_follows_window(true).build().unwrap();
+    let five_minutes_early = NOW - 300_000;
+    let err = verify_request_at(&parts, &capped, five_minutes_early)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("too far in the future"), "{err}");
+    assert!(
+        verify_request_at(&parts, &following, five_minutes_early)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        verify_request_at(&parts, &following, five_minutes_early - 1)
+            .await
+            .is_err()
+    );
 }
 
 #[test]
