@@ -1394,7 +1394,9 @@ impl Policy {
         if self.is_blocked(actor).await? {
             return Ok(Some(Ban::Blocked));
         }
-        self.bans.ban(actor, scene, device_id, now).await
+        // A world scene's stable keys are read by `can_access`; this is its entity-id alias.
+        let scene = scene.map(crate::comms::access::SceneBanKey::scene);
+        self.bans.ban(actor, scene.as_ref(), device_id, now).await
     }
 
     /// An explicit scene admin, else the owner of the world (world scene) or

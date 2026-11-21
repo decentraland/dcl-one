@@ -111,6 +111,11 @@ impl SceneIdentity for Catalogue {
                         .await?,
                 )
             }
+            // A Genesis scene this fixture does not hold: its bans keep the entity id.
+            RoomRequest::Adapter {
+                realm: RealmId::Shared(_),
+                scene,
+            } => return Err(ResolveError::UnresolvedRoom(scene.to_string())),
             _ => panic!("this fixture resolves world rooms only"),
         };
         let room = match &dep {

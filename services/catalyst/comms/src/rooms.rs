@@ -362,17 +362,53 @@ impl ReplacedScene {
 }
 
 impl ResolvedRoom {
-    /// The key this scene's bans live under; `None` for the world lobby.
+    /// The key this scene's bans live under; `None` for the world lobby. A
+    /// scene with no deployment here (a local preview) has its entity id.
     pub fn ban_key(&self) -> Option<crate::access::SceneBanKey> {
         match (&self.realm, &self.deployment) {
             (RealmId::World(world), Some(deployment)) => {
                 Some(crate::access::SceneBanKey::world(world, deployment.base))
+            }
+            (_, Some(deployment)) => {
+                Some(crate::access::SceneBanKey::place(deployment.place_key()))
             }
             _ => self
                 .scene_id
                 .as_ref()
                 .map(crate::access::SceneBanKey::scene),
         }
+    }
+
+    /// [`Self::ban_key`], reading the deployment that a Genesis room name
+    /// does not carry, so the key is the scene's place. A scene this node
+    /// does not hold keeps its entity id; a store fault is an error.
+    pub async fn resolve_ban_key(
+        &self,
+        scenes: &dyn crate::interfaces::SceneIdentity,
+    ) -> Result<Option<crate::access::SceneBanKey>, ResolveError> {
+        if self.deployment.is_none()
+            && !self.realm.is_world()
+            && let Some(scene) = &self.scene_id
+        {
+            let request = RoomRequest::Adapter {
+                realm: &self.realm,
+                scene,
+            };
+            match scenes.resolve(request).await {
+                Ok(ResolvedRoom {
+                    realm,
+                    deployment: Some(deployment),
+                    ..
+                }) if realm == self.realm && deployment.scene_id == *scene => {
+                    return Ok(Some(crate::access::SceneBanKey::place(
+                        deployment.place_key(),
+                    )));
+                }
+                Err(error @ ResolveError::Db(_)) => return Err(error),
+                Ok(_) | Err(_) => {}
+            }
+        }
+        Ok(self.ban_key())
     }
 }
 
@@ -780,6 +816,68 @@ pub(crate) fn room_scope(room: &str) -> Option<RoomScope<'_>> {
 pub fn is_world_room(room: &str, world: &WorldName) -> bool {
     room == worlds_service_world_room(world)
         || decode_world_scene_room(room).is_some_and(|(owner, _)| owner == *world)
+}
+
+#[cfg(test)]
+mod ban_key_tests {
+    use super::*;
+    use crate::interfaces::test_support::StubScenes;
+
+    fn genesis(scene: &str, realm: &str) -> ResolvedRoom {
+        let realm = RealmId::Shared(realm.into());
+        let base = Parcel::parse("4,5").unwrap();
+        let scene = SceneId::parse(scene).unwrap();
+        ResolvedRoom {
+            room: gatekeeper_scene_room(realm.as_str(), scene.as_str()),
+            scene_id: Some(scene.clone()),
+            deployment: Some(ActiveDeployment {
+                title: None,
+                scene_id: scene,
+                parcels: [base].into_iter().collect(),
+                base,
+                namespace: SceneNamespace::new(&realm, base, None),
+                local: true,
+            }),
+            realm,
+        }
+    }
+
+    /// A Genesis room name carries no deployment: its bans are on the place
+    /// of the deployment the resolver holds for that realm and scene, else on
+    /// the entity id; a store fault is not a key.
+    #[tokio::test]
+    async fn a_genesis_room_name_reads_its_bans_on_the_place() {
+        let Some(ParsedRoom::Local(named)) = parse_room("scene:main:bafyA") else {
+            panic!("Genesis")
+        };
+        let key = |room: Result<ResolvedRoom, ResolveError>| {
+            let named = named.clone();
+            async move {
+                let scenes = StubScenes {
+                    room,
+                    ..Default::default()
+                };
+                named
+                    .resolve_ban_key(&scenes)
+                    .await
+                    .map(|key| key.map(|key| key.as_str().to_owned()))
+            }
+        };
+        assert_eq!(
+            key(Ok(genesis("bafyA", "main"))).await.unwrap().as_deref(),
+            Some("4,5")
+        );
+        for other in [genesis("bafyB", "main"), genesis("bafyA", "other")] {
+            assert_eq!(key(Ok(other)).await.unwrap().as_deref(), Some("bafyA"));
+        }
+        let unknown = ResolveError::UnresolvedRoom("bafyA".into());
+        assert_eq!(key(Err(unknown)).await.unwrap().as_deref(), Some("bafyA"));
+        assert!(
+            key(Err(ResolveError::Db(sqlx::Error::PoolClosed)))
+                .await
+                .is_err()
+        );
+    }
 }
 
 #[cfg(test)]

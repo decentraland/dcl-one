@@ -1268,7 +1268,7 @@ async fn allow_local_preview_accepts_a_preview_scene_without_a_deployment() {
             .unwrap();
         let checked = scene::require_genesis_deployment(&state, &resolved).await;
         match checked {
-            Ok(()) => assert!(accepted, "{realm} {scene_id} was accepted"),
+            Ok(_) => assert!(accepted, "{realm} {scene_id} was accepted"),
             Err(error) => {
                 assert!(!accepted, "{realm} {scene_id}: {}", error.message);
                 assert_eq!(error.code, 404);

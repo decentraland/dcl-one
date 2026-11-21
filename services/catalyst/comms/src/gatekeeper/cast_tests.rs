@@ -1327,7 +1327,8 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     assert_eq!(body["roomId"], world_room.room);
     assert_eq!(body["placeName"], world.display());
 
-    // Banned from the scene the stream runs in.
+    // Banned from the scene the stream runs in; this resolver holds no
+    // deployment for it, so the ban is on its entity id.
     h.state
         .moderation
         .scene_ban(&scene.id, &viewer, &wallet(), &[], "Scene")
@@ -3060,6 +3061,75 @@ async fn a_redeploy_keeps_the_scene_admins_of_the_place() {
             .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{} {body}", moved.room);
     }
+}
+
+/// A Genesis scene's bans are on its place, as its admins are: a redeploy
+/// on the same base parcel keeps both, the new scene's join refuses the
+/// banned wallet, and the removal of the place ends the ban and the grant.
+#[tokio::test]
+async fn a_genesis_redeploy_keeps_the_bans_and_admins_until_the_place_is_removed() {
+    // A database of its own: the pass takes every pending removal.
+    let Some(pool) = own_db().await else { return };
+    let (scene, old, metadata) = seeded_scene(&pool).await;
+    let (admin, banned) = (random_key(), random_key());
+    let before = authority_harness(&pool, &old, actor_policy(&pool, &[])).await;
+    scene_admin(&before, KEY, "POST", &metadata, &admin).await;
+    let body = json!({"banned_address": address_of(&banned)});
+    let (status, body) = before
+        .signed(KEY, "POST", "/scene-bans", &metadata, Some(body))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let (new, metadata) = redeployed(&old, &metadata);
+    let h = authority_harness(&pool, &new, actor_policy(&pool, &[])).await;
+    let (status, body) = h
+        .signed(&admin, "GET", "/scene-bans/addresses", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains(&address_of(&banned)), "{body}");
+    let mut join = metadata.clone();
+    join["signer"] = json!("dcl:explorer");
+    join["realmName"] = json!("main");
+    let (status, body) = h
+        .signed(&banned, "POST", "/get-scene-adapter", &join, None)
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // A Cast of the new scene refuses the banned watcher, on the place.
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&new.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let watch = json!({"location": scene.parcel, "identity": "viewer"});
+    let (status, body) = h
+        .signed(
+            &banned,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    sqlx::query("DELETE FROM explore.place WHERE id = $1")
+        .bind(&scene.place_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let cleaned = crate::gatekeeper::moderation::maintenance::run_once(&h.state).await;
+    assert!(cleaned.is_ok(), "{cleaned:?}");
+    let (bans, admins): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM social.scene_bans WHERE place_id = $1), \
+                (SELECT count(*) FROM social.scene_admins WHERE place_id = $1 AND active)",
+    )
+    .bind(&scene.parcel)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((bans, admins), (0, 0));
 }
 
 /// A key is for one scene room, and a redeploy gives the scene a new room:
