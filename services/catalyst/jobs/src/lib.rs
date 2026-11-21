@@ -164,7 +164,9 @@ impl JobContext {
         }
     }
 
-    fn set_state(&self, state: Option<JobState>) {
+    /// Sets the state the job report shows (`None`: running), for a job
+    /// that schedules its own leased work.
+    pub fn set_state(&self, state: Option<JobState>) {
         self.trace.lock().state = state;
     }
 }
@@ -250,7 +252,15 @@ impl Jobs {
         self.first_pass_now
     }
 
-    fn periodic_cfg(&self, cfg: PeriodicCfg) -> PeriodicCfg {
+    /// Whether this process runs fleet-wide jobs ([`Jobs::with_fleet_jobs`]):
+    /// a job that takes leases itself stands down when it does not.
+    pub fn fleet_jobs(&self) -> bool {
+        self.fleet_jobs
+    }
+
+    /// `cfg` as this registry runs a periodic job: with
+    /// [`Jobs::with_first_pass_now`], the first pass right away.
+    pub fn periodic_cfg(&self, cfg: PeriodicCfg) -> PeriodicCfg {
         if self.first_pass_now {
             PeriodicCfg {
                 run_on_start: true,
@@ -627,11 +637,7 @@ async fn run_periodic(
     cfg: PeriodicCfg,
     task: Arc<tokio::sync::Mutex<JobBody>>,
 ) -> anyhow::Result<()> {
-    let first_delay = if cfg.run_on_start {
-        first_fire_jitter(&log_name, cfg.jitter)
-    } else {
-        cfg.interval + first_fire_jitter(&log_name, cfg.jitter)
-    };
+    let first_delay = cfg.first_delay(&log_name);
     tracing::info!(
         job = %log_name,
         first_pass_in_ms = first_delay.as_millis() as u64,
@@ -710,7 +716,7 @@ async fn wait_for_lease(leases: &Arc<Leases>, name: &str, ctx: &JobContext) -> O
                 ctx.progress("standby: the lease connection is unavailable");
             }
         }
-        let wait = leases.settings.poll + first_fire_jitter(name, leases.settings.poll / 4);
+        let wait = leases.settings.standby_wait(name);
         if !sleep_or_cancel(&ctx.cancel, wait).await {
             return None;
         }
@@ -727,6 +733,15 @@ pub struct LeaseSettings {
     /// How often the lease connection is checked. A check that fails or takes
     /// longer than this loses every lease this process holds.
     pub keepalive: Duration,
+}
+
+impl LeaseSettings {
+    /// How long a job standing by waits before it asks for the lease `name`
+    /// again: [`LeaseSettings::poll`] plus up to a quarter of it, so standby
+    /// processes started together do not ask in lockstep.
+    pub fn standby_wait(&self, name: &str) -> Duration {
+        self.poll + first_fire_jitter(name, self.poll / 4)
+    }
 }
 
 impl Default for LeaseSettings {
@@ -801,6 +816,12 @@ impl LeaseGuard {
     /// Cancelled when the lease connection was lost while this lease was held.
     pub fn lost(&self) -> &CancellationToken {
         &self.lost
+    }
+
+    /// This acquisition's control, as a leased job body gets it
+    /// ([`JobContext::lease`]), for work that holds the lease itself.
+    pub fn control(&self) -> LeaseControl {
+        LeaseControl::of(self)
     }
 
     /// Runs a bounded control operation on the session that actually holds this lease.
@@ -1193,7 +1214,18 @@ impl PeriodicCfg {
         self
     }
 
-    fn wait_after_failure(&self, consecutive_failures: u32) -> Duration {
+    /// The delay before the first pass of the job `name`.
+    pub fn first_delay(&self, name: &str) -> Duration {
+        let jitter = first_fire_jitter(name, self.jitter);
+        if self.run_on_start {
+            jitter
+        } else {
+            self.interval + jitter
+        }
+    }
+
+    /// The wait after `consecutive_failures` failed passes in a row.
+    pub fn wait_after_failure(&self, consecutive_failures: u32) -> Duration {
         match self.error_backoff_max {
             None => self.interval,
             Some(max) => {

@@ -1280,7 +1280,7 @@ pub async fn status(pool: &PgPool, indexes: &chain_walk::IndexSettings) -> Value
             net.db_name().to_string(),
             json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready_on(&c, indexes.chain_id(net), Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready_on(&c, indexes.chain_id(net), Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
             "chainId": c.chain_id, "quarantine": c.quarantine_reason,
         }))),
         );

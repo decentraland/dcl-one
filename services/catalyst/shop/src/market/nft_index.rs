@@ -781,6 +781,22 @@ impl ChainIndex for NftIndex {
         self.reset();
     }
 
+    fn begin_pass(&self) {
+        self.reset();
+    }
+
+    /// A walk that owes a backfill runs its lanes, alone.
+    async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
+             WHERE network = $1 AND backfill_from_block IS NOT NULL \
+               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
+        )
+        .bind(self.net.db_name())
+        .fetch_one(pool)
+        .await?)
+    }
+
     fn net(&self) -> ChainNet {
         self.net
     }
@@ -946,6 +962,17 @@ impl ChainIndex for NftIndex {
             .bind(to)
             .execute(&mut *conn)
             .await?;
+        // The bids fold inferred sellers from these transfers: it infers
+        // again the seller of every bid created past the rewind.
+        if self.net == ChainNet::Matic {
+            sqlx::query(
+                "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
+            )
+            .bind(self.net.db_name())
+            .bind(to)
+            .execute(&mut *conn)
+            .await?;
+        }
         // The cleared marker makes the next fold a rebuild, which also
         // restores the deleted keys' rows from their remaining history.
         Ok(())
@@ -984,6 +1011,7 @@ impl ChainIndex for NftIndex {
         budget: usize,
         chunk: &mut usize,
         owner: &chain_walk::Owner,
+        cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<usize> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
@@ -996,6 +1024,9 @@ impl ChainIndex for NftIndex {
         .fetch_all(pool)
         .await?;
         let mut used = 0usize;
+        // The cursor block's header that closed the last lane window opens
+        // the next one: one read a window, the bracket unbroken.
+        let mut opened: Option<crate::chain_index::rpc::BlockHeader> = None;
         for contract in owed {
             let Some((mut next, last)) = contract.owed() else {
                 continue;
@@ -1009,6 +1040,17 @@ impl ChainIndex for NftIndex {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
+                // Bracketed by the cursor block's header: rows below the
+                // cursor join its prefix only when read on its branch.
+                let before = match (cursor, opened.take()) {
+                    (Some(_), Some(last)) => Some(last),
+                    (Some((block, _)), None) => {
+                        let h = source.header(block).await?;
+                        used += h.requests;
+                        Some(h.value)
+                    }
+                    (None, _) => None,
+                };
                 let w = source
                     .window(next as u64, to as u64, &group, chunk)
                     .await
@@ -1019,6 +1061,25 @@ impl ChainIndex for NftIndex {
                 let times = source.block_times(&w.logs).await?;
                 used += times.requests;
                 let times = times.value;
+                if let (Some(before), Some((block, stored))) = (before, cursor) {
+                    let after = source.header(block).await?;
+                    used += after.requests;
+                    anyhow::ensure!(
+                        before == after.value,
+                        "chain changed while backfilling {}",
+                        contract.contract_address
+                    );
+                    if after.value.hash != stored {
+                        return Err(chain_walk::Diverged {
+                            block,
+                            stored: stored.to_string(),
+                            chain: after.value.hash,
+                            requests: used,
+                        }
+                        .into());
+                    }
+                    opened = Some(after.value);
+                }
                 let mut rows = Vec::new();
                 for log in &w.logs {
                     if let Ok(Some(row)) = decode_log(
@@ -1076,7 +1137,7 @@ pub async fn status(pool: &PgPool) -> serde_json::Value {
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "backfillsOwed": owed,
+            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)

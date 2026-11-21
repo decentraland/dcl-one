@@ -604,6 +604,7 @@ pub(crate) mod tests {
             ChainNet::Matic,
             (at.last_block, at.last_block_hash.as_deref()),
             -1,
+            None,
         )
         .await
         .unwrap();

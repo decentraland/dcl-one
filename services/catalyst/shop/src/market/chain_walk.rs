@@ -5,8 +5,10 @@
 //! caller together with the cursor hash, a request budget per pass (the backpressure: a catch-up is many
 //! passes, each leaving a durable `last_block`), Polygon milestone finality
 //! and Ethereum confirmation depth, a reorg check of the cursor block's hash at the start of
-//! every pass, and the publish marker (`folded_block`) set only when the
-//! index reaches the head within the publish lag.
+//! every pass (a divergence withdraws the publication, then rewinds to the
+//! newest recovery point still on the chain, [`recover`]), and the publish
+//! marker (`folded_block`) set only when the index reaches the head within
+//! the publish lag.
 //!
 //! `shop.chain_cursor` is one row per (indexer, network). A cursor
 //! created at the indexer's start block records `full_history`; one started
@@ -264,9 +266,12 @@ pub struct Cursor {
     pub quarantined_at: Option<NaiveDateTime>,
     pub quarantine_reason: Option<String>,
     pub rebuild_requested_at: Option<NaiveDateTime>,
+    /// Its block was found on another branch than its stored hash, its
+    /// publication withdrawn, while its recovery searches.
+    pub diverged_at: Option<NaiveDateTime>,
 }
 
-const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at";
+const CURSOR_COLUMNS: &str = "indexer, network, start_block, last_block, last_block_hash, last_block_time, fold_through, folded_block, folded_at, full_history, reorg_rewinds, updated_at, chain_id, owner_generation, quarantined_at, quarantine_reason, rebuild_requested_at, diverged_at";
 
 /// Runs `ANALYZE <table>` in the fold's transaction only when the fold needs
 /// statistics the table does not have yet: a rebuild (`since` -1), a table
@@ -390,6 +395,24 @@ impl PartialEq for Started {
 
 impl Eq for Started {}
 
+/// [`touch_started`] once per generation `owner` holds, for its cursor at
+/// `at`: only once its head reads answered, and not while it is held at its
+/// stop block, so a walk with its RPC down or held there keeps its age. Marked
+/// only after the fenced touch committed; a failed one is tried again on the
+/// next pass.
+pub(crate) async fn touch_once(
+    pool: &PgPool,
+    owner: &Owner,
+    at: (i64, Option<&str>),
+    stop: Option<u64>,
+) -> anyhow::Result<()> {
+    if !held_at_stop(at.0, stop) && !owner.started.done() {
+        touch_started(pool, owner, at).await?;
+        owner.started.mark();
+    }
+    Ok(())
+}
+
 /// One projection as the job that walks it holds it: the cursor row
 /// (`indexer`, `net`), the chain its history is bound to and the generation
 /// [`claim`] granted. Every transaction that writes the projection ends with
@@ -421,6 +444,19 @@ pub struct Fenced {
     pub indexer: &'static str,
     pub network: &'static str,
     pub reason: String,
+}
+
+/// A stable read that found the block a projection's cursor stands on (or
+/// extends) on another branch than its stored hash: evidence that its
+/// history diverged, which withdraws its publication and starts its
+/// recovery. `requests` are the reads spent until then.
+#[derive(Debug, thiserror::Error)]
+#[error("block {block} is {chain} on the chain, but the cursor stored {stored}")]
+pub struct Diverged {
+    pub block: u64,
+    pub stored: String,
+    pub chain: String,
+    pub requests: usize,
 }
 
 impl Owner {
@@ -568,11 +604,18 @@ impl Holdings {
     }
 }
 
+/// The points a projection keeps in `shop.chain_checkpoint`: the newest 64
+/// committed window ends, a reorg's recovery points.
+pub const CHECKPOINTS_KEPT: i64 = 64;
+
 /// Moves `last_block` from the checkpoint (`expected`, `expected_hash`) to
 /// `header` in the caller's transaction (the one that wrote the window's
-/// rows); a cursor someone else moved fails the transaction instead of
-/// skipping or repeating a range. The caller ends the transaction with
-/// [`Owner::check`].
+/// rows), and records `header` as a recovery point (dropping any past
+/// `expected`), keeping the newest [`CHECKPOINTS_KEPT`]; a cursor someone
+/// else moved fails the transaction
+/// instead of skipping or repeating a range. `header` must have been read in
+/// the window's bracket, after a predecessor read that proved `expected`.
+/// The caller ends the transaction with [`Owner::check`].
 pub async fn advance(
     conn: &mut PgConnection,
     indexer: &str,
@@ -593,18 +636,54 @@ pub async fn advance(
     .bind(header.number as i64)
     .bind(&header.hash)
     .bind(header.timestamp)
-    .execute(conn)
+    .execute(&mut *conn)
     .await?;
     if updated.rows_affected() != 1 {
         return Err(sqlx::Error::RowNotFound);
     }
+    // A point past the checkpoint this window extends belongs to no proven
+    // prefix: it goes before the insert (defense in depth; the points an
+    // older binary left are cleared by the operator, DATABASE.md "Deploys").
+    sqlx::query(
+        "DELETE FROM shop.chain_checkpoint WHERE indexer = $1 AND network = $2 AND block_number > $3",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(expected.0)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO shop.chain_checkpoint (indexer, network, block_number, block_hash, block_time) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (indexer, network, block_number) \
+         DO UPDATE SET block_hash = EXCLUDED.block_hash, block_time = EXCLUDED.block_time",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(header.number as i64)
+    .bind(&header.hash)
+    .bind(header.timestamp)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM shop.chain_checkpoint WHERE indexer = $1 AND network = $2 AND block_number < \
+           (SELECT block_number FROM shop.chain_checkpoint WHERE indexer = $1 AND network = $2 \
+            ORDER BY block_number DESC OFFSET $3 LIMIT 1)",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(CHECKPOINTS_KEPT - 1)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
 /// Rewinds the checkpoint (`from`, `from_hash`) to `to` in the caller's
-/// transaction (which also deletes the log past `to`): the publish marker
-/// goes with it, so readers fall back until the refold publishes. A cursor
-/// no longer at that checkpoint fails the transaction. The caller ends the
+/// transaction (which also deletes the log past `to`), standing on `keep`
+/// (the recovery point's hash and time) or on no hash, and drops the
+/// recovery points past `to`: the publish marker goes with it, so readers
+/// fall back until the refold publishes. A cursor no longer at that
+/// checkpoint fails the transaction. It locks the cursor row, so the caller
+/// runs it after the notification cursors' moves; the caller ends the
 /// transaction with [`Owner::check`].
 pub async fn rewind(
     conn: &mut PgConnection,
@@ -612,22 +691,96 @@ pub async fn rewind(
     net: ChainNet,
     from: (i64, Option<&str>),
     to: i64,
+    keep: Option<(&str, i64)>,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
-        "UPDATE shop.chain_cursor SET last_block = LEAST(last_block, $5), last_block_hash = NULL, last_block_time = NULL, \
-             fold_through = NULL, folded_block = NULL, folded_at = NULL, reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
-         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
+        "UPDATE shop.chain_cursor SET last_block = $5, last_block_hash = $6, last_block_time = $7, \
+             fold_through = NULL, folded_block = NULL, folded_at = NULL, diverged_at = NULL, \
+             reorg_rewinds = reorg_rewinds + 1, updated_at = timezone('UTC', now()) \
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4 \
+           AND last_block >= $5",
     )
     .bind(indexer)
     .bind(net.db_name())
     .bind(from.0)
     .bind(from.1)
     .bind(to)
-    .execute(conn)
+    .bind(keep.map(|k| k.0))
+    .bind(keep.map(|k| k.1))
+    .execute(&mut *conn)
     .await?;
     if updated.rows_affected() != 1 {
         return Err(sqlx::Error::RowNotFound);
     }
+    sqlx::query(
+        "DELETE FROM shop.chain_checkpoint WHERE indexer = $1 AND network = $2 AND block_number > $3",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(to)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Clears the divergence mark of the projection standing at `at`, whose
+/// block a pass found on its stored hash again, in a fenced transaction of
+/// its own. A cursor no longer at `at` is fenced.
+async fn undiverge(pool: &PgPool, owner: &Owner, at: (i64, Option<&str>)) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let set = sqlx::query(
+        "UPDATE shop.chain_cursor SET diverged_at = NULL \
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(at.0)
+    .bind(at.1)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if set != 1 {
+        return Err(owner
+            .fenced("the checkpoint a pass proved again moved".into())
+            .into());
+    }
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Withdraws the publication of the projection standing at `at`, in a
+/// transaction of its own, before a divergence seen there is searched, and
+/// marks it diverged (`diverged_at`): its readers fall back at once, and the
+/// ones that use its height without its publication skip it, while its rows,
+/// its recovery points and its notification cursors stay as they are until
+/// the search decides. `updated_at` stays too: a withdrawal is no progress
+/// ([`is_walked`]). A cursor no longer at `at` is fenced.
+pub(crate) async fn withdraw(
+    pool: &PgPool,
+    owner: &Owner,
+    at: (i64, Option<&str>),
+) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    let set = sqlx::query(
+        "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, \
+             diverged_at = COALESCE(diverged_at, timezone('UTC', now())) \
+         WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
+    )
+    .bind(owner.indexer)
+    .bind(owner.net.db_name())
+    .bind(at.0)
+    .bind(at.1)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if set != 1 {
+        return Err(owner
+            .fenced("the checkpoint a divergence was seen at moved".into())
+            .into());
+    }
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -741,8 +894,8 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
 pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
-/// ready, or bound to its network's mainnet chain, out of quarantine, with its
-/// whole history walked, advanced within [`READY_WINDOW`] and its last block
+/// ready, or bound to its network's mainnet chain, out of quarantine, not
+/// diverged, with its whole history walked, advanced within [`READY_WINDOW`] and its last block
 /// under `horizon` old. It does not measure the walk's speed
 /// or publish lag. An `updated_at` ahead of `now` (written by the database
 /// clock) counts as advanced up to [`MAX_CLOCK_SKEW`], and not past it.
@@ -750,11 +903,12 @@ pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> boo
     if is_ready(c, now) {
         return true;
     }
-    // As readiness asks: bound to the chain its readers expect, and out of
-    // quarantine; otherwise no claim it takes can settle.
+    // As readiness asks: bound to the chain its readers expect, out of
+    // quarantine and not diverged (its recovery still searching); otherwise
+    // no claim it takes can settle yet.
     let bound =
         ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(mainnet_chain(net)));
-    if !bound || c.quarantined_at.is_some() {
+    if !bound || c.quarantined_at.is_some() || c.diverged_at.is_some() {
         return false;
     }
     let advanced = now.naive_utc().signed_duration_since(c.updated_at);
@@ -953,7 +1107,14 @@ pub trait ChainIndex: Send + Sync {
     ) -> anyhow::Result<bool>;
     /// Work walked before the main range under the same budget (the nft
     /// backfill lane), read from the pass's source; the requests it spent.
-    /// Every transaction it commits ends with `owner.check`.
+    /// Every transaction it commits ends with `owner.check`. With the
+    /// cursor's block and stored hash (`cursor`), each read is bracketed by
+    /// that block's header, which must stay that hash: a stable bracket on
+    /// another branch fails it with [`Diverged`], writing nothing.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the pass's source, anchor, budget, chunk, owner and cursor"
+    )]
     async fn lanes(
         &self,
         _pool: &PgPool,
@@ -962,6 +1123,7 @@ pub trait ChainIndex: Send + Sync {
         _budget: usize,
         _chunk: &mut usize,
         _owner: &Owner,
+        _cursor: Option<(u64, &str)>,
     ) -> anyhow::Result<usize> {
         Ok(0)
     }
@@ -969,6 +1131,18 @@ pub trait ChainIndex: Send + Sync {
     /// walk's collection set and pending contracts) after a pass failed past
     /// it: the next pass reloads it from the database.
     fn abandon(&self) {}
+    /// The start of a pass that does not run [`ChainIndex::lanes`] (a shared
+    /// walk): what the index keeps in memory is reloaded, as lanes does first.
+    fn begin_pass(&self) {}
+    /// After each window's rows and cursor advance committed, in every walk:
+    /// a test holds a commit's return here. Test builds only.
+    #[cfg(test)]
+    async fn window_committed(&self) {}
+    /// Whether this pass must walk alone, with its lanes (the nft walk owing
+    /// a backfill): a shared walk runs no lanes.
+    async fn walks_alone(&self, _pool: &PgPool) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Whether the pass may walk the cursor, after [`bind`].
@@ -1248,7 +1422,7 @@ async fn rebuild(
     sqlx::query(
         "UPDATE shop.chain_cursor SET last_block = $3, last_block_hash = NULL, last_block_time = NULL, \
              fold_through = NULL, folded_block = NULL, folded_at = NULL, full_history = $4, chain_id = $5, \
-             quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, \
+             quarantined_at = NULL, quarantine_reason = NULL, rebuild_requested_at = NULL, diverged_at = NULL, \
              updated_at = timezone('UTC', now()) \
          WHERE indexer = $1 AND network = $2",
     )
@@ -1259,6 +1433,11 @@ async fn rebuild(
     .bind(owner.chain_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM shop.chain_checkpoint WHERE indexer = $1 AND network = $2")
+        .bind(owner.indexer)
+        .bind(owner.net.db_name())
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     tracing::warn!(
         indexer = owner.indexer,
@@ -1292,9 +1471,40 @@ pub async fn job_pass(
     cancel: Option<&tokio_util::sync::CancellationToken>,
     progress: &(dyn Fn(String) + Send + Sync),
 ) -> anyhow::Result<PassOutcome> {
+    job_pass_with(
+        pool,
+        source,
+        ix,
+        settings,
+        holdings,
+        lease,
+        Budget::fresh(settings),
+        cancel,
+        progress,
+    )
+    .await
+}
+
+/// [`job_pass`] spending at most `budget`: a shared walk's member that fell
+/// back goes on alone with what it had left.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "job_pass's inputs and the budget"
+)]
+pub async fn job_pass_with(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    holdings: &Holdings,
+    lease: Option<&crate::jobs::LeaseControl>,
+    budget: Budget,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
     super::ensure_chain(source, ix.chain_id()).await?;
     let owner = holdings.owner(pool, lease, ix, settings).await?;
-    let outcome = run_pass(pool, source, ix, settings, &owner, cancel, progress).await;
+    let outcome = run_pass_with(pool, source, ix, settings, &owner, budget, cancel, progress).await;
     match outcome {
         Ok(mut o) => {
             o.requests += 1;
@@ -1309,6 +1519,25 @@ pub async fn job_pass(
     }
 }
 
+/// What a logical pass may still spend on log reads, and whether its first
+/// window (which runs even over the budget, so every pass progresses) was
+/// already read. A member of a shared walk carries it into its fallback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Budget {
+    pub remaining: usize,
+    pub first_window_used: bool,
+}
+
+impl Budget {
+    /// A pass's whole budget, `requests_per_pass`.
+    pub fn fresh(settings: &IndexSettings) -> Self {
+        Self {
+            remaining: settings.requests_per_pass.max(1),
+            first_window_used: false,
+        }
+    }
+}
+
 /// One pass of `ix` over `net`, read from `source`, as `owner` (the
 /// projection's generation, which every transaction checks before its
 /// commit):
@@ -1318,7 +1547,7 @@ pub async fn job_pass(
 /// 4. the backfill lanes;
 /// 5. the windows from the cursor to the confirmed head under the request
 ///    budget, each committed with its cursor advance;
-/// 6. once caught up, the fold and the publish.
+/// 6. once caught up, the fold and the publish ([`close`]).
 pub async fn run_pass(
     pool: &PgPool,
     source: &dyn LogSource,
@@ -1328,23 +1557,73 @@ pub async fn run_pass(
     cancel: Option<&tokio_util::sync::CancellationToken>,
     progress: &(dyn Fn(String) + Send + Sync),
 ) -> anyhow::Result<PassOutcome> {
-    let outcome = walk(pool, source, ix, settings, owner, cancel, progress).await;
+    run_pass_with(
+        pool,
+        source,
+        ix,
+        settings,
+        owner,
+        Budget::fresh(settings),
+        cancel,
+        progress,
+    )
+    .await
+}
+
+/// [`run_pass`] spending at most `budget`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "run_pass's inputs and the budget"
+)]
+pub async fn run_pass_with(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    budget: Budget,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
+    let outcome = walk(pool, source, ix, settings, owner, budget, cancel, progress).await;
     if outcome.is_err() {
         ix.abandon();
     }
     outcome
 }
 
-async fn walk(
+/// What a pass's opening steps came to.
+pub(crate) enum Opening {
+    /// The pass ended there: a rebuild, a quarantine or a reorg rewind.
+    Ended(PassOutcome),
+    /// The cursor stands at its checkpoint, proven on the chain.
+    Walk(Box<Cursor>, PassOutcome),
+    /// The cursor block is on another branch than its stored hash: the
+    /// publication is withdrawn, and the recovery is left to a pass alone.
+    Diverged(PassOutcome),
+}
+
+/// The opening of a pass as `owner`: the cursor, an operator's rebuild, the
+/// binding to the owner's chain and the reorg check, whose header
+/// `at_checkpoint` gives when a shared walk already read it. A cursor block
+/// on another branch withdraws the publication first; then the opening
+/// recovers ([`recover`]) when `recover_here`, and ends
+/// [`Opening::Diverged`] otherwise (a shared walk, whose members' steps run
+/// under a deadline, leaves the search to each one's pass alone).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pass's inputs, the shared walk's header and where it recovers"
+)]
+pub(crate) async fn open(
     pool: &PgPool,
     source: &dyn LogSource,
     ix: &dyn ChainIndex,
     settings: &IndexSettings,
     owner: &Owner,
-    cancel: Option<&tokio_util::sync::CancellationToken>,
-    progress: &(dyn Fn(String) + Send + Sync),
-) -> anyhow::Result<PassOutcome> {
-    let started = std::time::Instant::now();
+    started: std::time::Instant,
+    at_checkpoint: Option<&BlockHeader>,
+    recover_here: bool,
+) -> anyhow::Result<Opening> {
     let net = ix.net();
     let name = ix.indexer();
     anyhow::ensure!(
@@ -1382,78 +1661,236 @@ async fn walk(
             Some(why) => out.quarantined = Some(why),
         }
         out.elapsed_ms = started.elapsed().as_millis() as u64;
-        return Ok(out);
+        return Ok(Opening::Ended(out));
     }
     if let Bound::Quarantined(why) = bind(pool, source, owner, &cur, &mut out).await? {
         out.quarantined = Some(why);
         out.elapsed_ms = started.elapsed().as_millis() as u64;
-        return Ok(out);
+        return Ok(Opening::Ended(out));
     }
     if cur.last_block >= cur.start_block {
         let stored = cur.last_block_hash.as_deref().unwrap_or("");
-        let header = source
-            .header(cur.last_block as u64)
-            .await
-            .context("eth_getBlockByNumber at the cursor")?;
-        out.requests += header.requests;
-        let header = header.value;
-        if header.hash != stored {
-            let to = cur.start_block - 1;
-            let mut tx = pool.begin().await?;
-            let replay =
-                super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
-            ix.rewind(&mut tx, to)
-                .await
-                .context("undoing the reorged range")?;
-            // Cursor rows are locked after the deletes, the producers' before
-            // the chain cursor's (as in a rebuild): each waits only for the commit.
-            if let Some(replay) = replay {
-                replay.apply(&mut tx).await?;
+        let header = match at_checkpoint.filter(|h| h.number as i64 == cur.last_block) {
+            Some(h) => h.clone(),
+            None => {
+                let header = source
+                    .header(cur.last_block as u64)
+                    .await
+                    .context("eth_getBlockByNumber at the cursor")?;
+                out.requests += header.requests;
+                header.value
             }
-            rewind(
-                &mut tx,
-                name,
-                net,
+        };
+        if header.hash != stored {
+            tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); its publication is withdrawn");
+            withdraw(
+                pool,
+                owner,
                 (cur.last_block, cur.last_block_hash.as_deref()),
-                to,
             )
-            .await
-            .context("rewinding the cursor from the checkpoint it was read at")?;
-            owner.check(&mut tx).await?;
-            tx.commit().await?;
-            tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
-            out.reorg_rewound_to = Some(to);
+            .await?;
+            if !recover_here {
+                out.elapsed_ms = started.elapsed().as_millis() as u64;
+                return Ok(Opening::Diverged(out));
+            }
+            recover(pool, source, ix, owner, &cur, &mut out).await?;
             out.elapsed_ms = started.elapsed().as_millis() as u64;
-            return Ok(out);
+            return Ok(Opening::Ended(out));
+        }
+        if cur.diverged_at.is_some() {
+            // The chain flipped back before any rewind: the cursor is proven
+            // again, so its readers may use its height again.
+            undiverge(
+                pool,
+                owner,
+                (cur.last_block, cur.last_block_hash.as_deref()),
+            )
+            .await?;
         }
     }
+    Ok(Opening::Walk(Box::new(cur), out))
+}
+
+/// The recovery of a projection whose cursor `cur` diverged (its block, or
+/// the block a window extended, is on another branch than its stored hash),
+/// once its publication was withdrawn. Its recovery points below the cursor
+/// are compared newest first with the chain's headers, outside any
+/// transaction; the newest still on the chain is the one rewound to, keeping
+/// its hash. With none recorded, or every one compared and none on the
+/// chain, the rewind goes to the start block. A header read that fails ends
+/// the recovery with nothing rewound (the next pass searches again); the
+/// reads count in the pass but are not cut by its budget, so a slow search
+/// still ends in one pass. The rewind's transaction runs the notification
+/// cursors' moves before the cursor row's lock, as every writer does.
+pub(crate) async fn recover(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    owner: &Owner,
+    cur: &Cursor,
+    out: &mut PassOutcome,
+) -> anyhow::Result<()> {
+    let (name, net) = (ix.indexer(), ix.net());
+    let candidates: Vec<(i64, String, i64)> = sqlx::query_as(
+        "SELECT block_number, block_hash, block_time FROM shop.chain_checkpoint \
+         WHERE indexer = $1 AND network = $2 AND block_number < $3 AND block_number >= $4 \
+         ORDER BY block_number DESC LIMIT $5",
+    )
+    .bind(name)
+    .bind(net.db_name())
+    .bind(cur.last_block)
+    .bind(cur.start_block)
+    .bind(CHECKPOINTS_KEPT)
+    .fetch_all(pool)
+    .await?;
+    let candidate_count = candidates.len();
+    let mut probed = 0usize;
+    let mut found = None;
+    for (block, hash, time) in candidates {
+        probed += 1;
+        let header = source
+            .header(block as u64)
+            .await
+            .with_context(|| format!("the header at recovery point {block}"))?;
+        out.requests += header.requests;
+        if header.value.hash == hash {
+            found = Some((block, hash, time));
+            break;
+        }
+    }
+    let (to, keep) = match &found {
+        Some((block, hash, time)) => (*block, Some((hash.as_str(), *time))),
+        None => (cur.start_block - 1, None),
+    };
+    let mut tx = pool.begin().await?;
+    // Checked without a lock first, so a stale owner does no cleanup; the
+    // cursor row is locked by the rewind, after the producers' cursors.
+    let held: Option<(i64, i64, Option<String>)> = sqlx::query_as(
+        "SELECT owner_generation, last_block, last_block_hash FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+    )
+    .bind(name)
+    .bind(net.db_name())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if held
+        != Some((
+            owner.generation,
+            cur.last_block,
+            cur.last_block_hash.clone(),
+        ))
+    {
+        return Err(owner
+            .fenced("the checkpoint its recovery read moved".into())
+            .into());
+    }
+    let replay = super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
+    ix.rewind(&mut tx, to)
+        .await
+        .context("undoing the reorged range")?;
+    if let Some(replay) = replay {
+        replay.apply(&mut tx).await?;
+    }
+    rewind(
+        &mut tx,
+        name,
+        net,
+        (cur.last_block, cur.last_block_hash.as_deref()),
+        to,
+        keep,
+    )
+    .await
+    .context("rewinding the cursor from the checkpoint it was read at")?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    tracing::warn!(
+        indexer = name,
+        network = net.db_name(),
+        from = cur.last_block,
+        rewound_to = to,
+        candidates = candidate_count,
+        probed,
+        bounded = found.is_some(),
+        "marketplace index: recovered from a reorg past the confirmation depth"
+    );
+    out.reorg_rewound_to = Some(to);
+    Ok(())
+}
+
+/// The latest head and the safe head of `net` (Polygon's finalized block,
+/// Ethereum's head less its confirmations), with Polygon's finalized header.
+pub(crate) async fn safe_head(
+    source: &dyn LogSource,
+    net: ChainNet,
+    out: &mut PassOutcome,
+) -> anyhow::Result<(u64, u64, Option<BlockHeader>)> {
     let head = source.head().await.context("eth_blockNumber")?;
     out.requests += head.requests;
     let head = head.value;
-    out.head = head;
-    let stop = settings.stop_block(net);
-    let safe_head = match net {
+    let (safe, finalized) = match net {
         ChainNet::Matic => {
             let finalized = source.finalized().await.context("Polygon finalized head")?;
             out.requests += finalized.requests;
-            finalized.value.number
+            (finalized.value.number, Some(finalized.value))
         }
-        ChainNet::Ethereum => head.saturating_sub(net.confirmations()),
+        ChainNet::Ethereum => (head.saturating_sub(net.confirmations()), None),
     };
-    anyhow::ensure!(safe_head <= head, "safe head exceeds latest head");
+    anyhow::ensure!(safe <= head, "safe head exceeds latest head");
+    Ok((head, safe, finalized))
+}
+
+/// Commits one window of `ix`: its rows and the cursor's advance from
+/// `expected` to `header`, in one transaction fenced by `owner`.
+pub(crate) async fn commit_window(
+    pool: &PgPool,
+    ix: &dyn ChainIndex,
+    owner: &Owner,
+    expected: (i64, Option<&str>),
+    header: &BlockHeader,
+    logs: &[RpcLog],
+    times: &HashMap<i64, i64>,
+) -> anyhow::Result<usize> {
+    let mut tx = pool.begin().await?;
+    let written = ix.write(&mut tx, logs, times).await?;
+    advance(&mut tx, ix.indexer(), ix.net(), expected, header)
+        .await
+        .context("advancing the cursor")?;
+    owner.check(&mut tx).await?;
+    tx.commit().await?;
+    Ok(written)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "run_pass's inputs and the budget"
+)]
+async fn walk(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    budget: Budget,
+    cancel: Option<&tokio_util::sync::CancellationToken>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> anyhow::Result<PassOutcome> {
+    let started = std::time::Instant::now();
+    let net = ix.net();
+    let name = ix.indexer();
+    let (cur, mut out) = match open(pool, source, ix, settings, owner, started, None, true).await? {
+        Opening::Ended(out) | Opening::Diverged(out) => return Ok(out),
+        Opening::Walk(cur, out) => (cur, out),
+    };
+    let (head, safe_head, _) = safe_head(source, net, &mut out).await?;
+    out.head = head;
+    let stop = settings.stop_block(net);
     let target = target_block(safe_head, stop);
-    // Only once the head reads answered, and not at the stop block: a walk with
-    // its RPC down or held there keeps its age. Once per generation, marked
-    // only after the fenced touch committed.
-    if !held_at_stop(cur.last_block, stop) && !owner.started.done() {
-        touch_started(
-            pool,
-            owner,
-            (cur.last_block, cur.last_block_hash.as_deref()),
-        )
-        .await?;
-        owner.started.mark();
-    }
+    touch_once(
+        pool,
+        owner,
+        (cur.last_block, cur.last_block_hash.as_deref()),
+        stop,
+    )
+    .await?;
     let anchor = match cur.last_block_time {
         Some(t) => (cur.last_block.max(0) as u64, t),
         None => {
@@ -1465,11 +1902,31 @@ async fn walk(
             (h.value.number, h.value.timestamp)
         }
     };
-    let budget = settings.requests_per_pass.max(1);
+    // What is left, not at least one: a fallback with nothing left reads
+    // nothing (`Budget::fresh` keeps a whole pass at one at least).
+    let total = budget.remaining;
     let mut chunk = settings.address_chunk.max(1);
-    let mut log_requests = ix
-        .lanes(pool, source, anchor, budget, &mut chunk, owner)
-        .await?;
+    // The lanes read below the cursor, each window bracketed against the
+    // cursor block's stored hash; one on another branch is a divergence.
+    let durable = cur
+        .last_block_hash
+        .as_deref()
+        .filter(|_| cur.last_block >= cur.start_block)
+        .map(|h| (cur.last_block as u64, h));
+    let mut log_requests = match ix
+        .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
+        .await
+    {
+        Ok(used) => used,
+        Err(e) if e.downcast_ref::<Diverged>().is_some() => {
+            out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
+            // Lanes bracket only a cursor with a hash (`durable`).
+            let (block, hash) = durable.expect("a lane divergence is about the cursor's hash");
+            let at = (block as i64, hash.to_string());
+            return diverged(pool, source, ix, owner, at, out, started).await;
+        }
+        Err(e) => return Err(e),
+    };
     out.requests += log_requests;
     let mut next = (cur.last_block + 1) as u64;
     let mut expected = (cur.last_block, cur.last_block_hash.clone());
@@ -1481,10 +1938,16 @@ async fn walk(
         let to = (next + settings.window_blocks.max(1) - 1).min(target);
         let groups = ix.groups(pool, next, to, anchor).await?;
         let need = requests_for(&groups, chunk).max(1);
-        if log_requests + need > budget && log_requests > 0 {
+        if log_requests + need > total && (log_requests > 0 || budget.first_window_used) {
             out.paused = true;
             break;
         }
+        // The bracket: the header at `to` before and after the logs, their
+        // times, the header at the window's actual end and the one at the
+        // checkpoint it extends. Under an endpoint that answers from one
+        // branch between two equal reads at `to`, the end's hash names the
+        // branch the logs came from, and the predecessor proves the window
+        // extends the committed prefix.
         let before = source.header(to).await?;
         out.requests += before.requests;
         let window = source
@@ -1499,32 +1962,48 @@ async fn walk(
             .context("block times")?;
         out.requests += times.requests;
         let times = times.value;
+        let reached = if window.reached == to {
+            None
+        } else {
+            let reached = source.header(window.reached).await?;
+            out.requests += reached.requests;
+            Some(reached.value)
+        };
+        let predecessor = match expected.1.as_deref() {
+            Some(_) => {
+                let p = source.header(expected.0 as u64).await?;
+                out.requests += p.requests;
+                Some(p.value)
+            }
+            None => None,
+        };
         let after = source.header(to).await?;
         out.requests += after.requests;
         anyhow::ensure!(
             before.value == after.value,
             "chain changed while fetching window"
         );
-        let header = if window.reached == to {
-            after.value
-        } else {
-            let reached = source.header(window.reached).await?;
-            out.requests += reached.requests;
-            reached.value
-        };
-        let mut tx = pool.begin().await?;
-        let written = ix.write(&mut tx, &window.logs, &times).await?;
-        advance(
-            &mut tx,
-            name,
-            net,
+        if let (Some(p), Some(hash)) = (&predecessor, expected.1.as_deref())
+            && p.hash != hash
+        {
+            // A stable bracket that finds the checkpoint on another branch:
+            // evidence about the cursor, not a read error.
+            let at = (expected.0, hash.to_string());
+            return diverged(pool, source, ix, owner, at, out, started).await;
+        }
+        let header = reached.unwrap_or(after.value);
+        let written = commit_window(
+            pool,
+            ix,
+            owner,
             (expected.0, expected.1.as_deref()),
             &header,
+            &window.logs,
+            &times,
         )
-        .await
-        .context("advancing the cursor")?;
-        owner.check(&mut tx).await?;
-        tx.commit().await?;
+        .await?;
+        #[cfg(test)]
+        ix.window_committed().await;
         out.logs += window.logs.len();
         out.rows_written += written;
         out.indexed_to = window.reached as i64;
@@ -1543,8 +2022,65 @@ async fn walk(
         out.elapsed_ms = started.elapsed().as_millis() as u64;
         return Ok(out);
     }
+    close(
+        pool,
+        source,
+        ix,
+        settings,
+        owner,
+        cur.fold_through,
+        &mut out,
+    )
+    .await?;
+    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    Ok(out)
+}
+
+/// A divergence a pass alone found mid-walk (a window's predecessor, or a
+/// lane's bracket, on another branch than the checkpoint `at`): the
+/// publication withdrawn, then the recovery from the cursor as it stands,
+/// which must still be `at`. The pass ends there, its index's memory dropped.
+async fn diverged(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    owner: &Owner,
+    at: (i64, String),
+    mut out: PassOutcome,
+    started: std::time::Instant,
+) -> anyhow::Result<PassOutcome> {
+    tracing::warn!(indexer = ix.indexer(), network = ix.net().db_name(), block = at.0, stored = %at.1, "marketplace index: a checkpoint the walk extends is on another branch; its publication is withdrawn");
+    withdraw(pool, owner, (at.0, Some(at.1.as_str()))).await?;
+    let cur = cursor(pool, ix.indexer(), ix.net())
+        .await?
+        .context("the chain cursor row is missing")?;
+    if (cur.last_block, cur.last_block_hash.as_deref()) != (at.0, Some(at.1.as_str())) {
+        return Err(owner
+            .fenced("the checkpoint a divergence was seen at moved".into())
+            .into());
+    }
+    ix.abandon();
+    recover(pool, source, ix, owner, &cur, &mut out).await?;
+    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    Ok(out)
+}
+
+/// The close of a pass that reached its target at `out.indexed_to`: the fold
+/// of what was touched since `fold_since`, its record, a fresh read of the
+/// heads, and the publish (or its withdrawal) against them.
+pub(crate) async fn close(
+    pool: &PgPool,
+    source: &dyn LogSource,
+    ix: &dyn ChainIndex,
+    settings: &IndexSettings,
+    owner: &Owner,
+    fold_since: Option<i64>,
+    out: &mut PassOutcome,
+) -> anyhow::Result<()> {
+    let net = ix.net();
+    let stop = settings.stop_block(net);
     let may_publish = ix
-        .fold(pool, cur.fold_through, out.indexed_to, owner)
+        .fold(pool, fold_since, out.indexed_to, owner)
         .await
         .context("folding")?;
     record_fold(pool, owner, out.indexed_to).await?;
@@ -1577,8 +2113,7 @@ async fn walk(
     } else {
         unpublish(pool, owner, out.indexed_to).await?;
     }
-    out.elapsed_ms = started.elapsed().as_millis() as u64;
-    Ok(out)
+    Ok(())
 }
 
 /// The owner of `ix`'s projection for a test that walks or folds it outside
@@ -1667,6 +2202,7 @@ mod tests {
             quarantined_at: None,
             quarantine_reason: None,
             rebuild_requested_at: None,
+            diverged_at: None,
         }
     }
 

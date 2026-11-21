@@ -59,6 +59,8 @@ pub mod base_wearables;
 pub mod bid_notices;
 pub mod bids;
 pub mod catalog;
+pub mod chain_group;
+pub mod chain_jobs;
 pub mod chain_walk;
 pub mod collections;
 pub mod committee_index;
@@ -655,8 +657,10 @@ impl MarketplaceState {
     /// and, with `MARKETPLACE_MIRRORS_ENABLED`, the `collections-mirror` and
     /// `items-mirror` jobs over every configured collections subgraph
     /// (`mirrors`): one pass per network per tick, the cursor persisted per
-    /// page, the pass marker the mirror-served routes require.
-    pub fn spawn_index_jobs(self: &Arc<Self>, jobs: &Jobs) {
+    /// page, the pass marker the mirror-served routes require. Then the chain
+    /// index supervisors, one per network ([`chain_jobs`]); `rentals` is the
+    /// rentals index's switch.
+    pub fn spawn_index_jobs(self: &Arc<Self>, jobs: &Jobs, rentals: Option<bool>) {
         match self.settings.trades_sync_upstream_url.clone() {
             Some(upstream) => {
                 let state = self.clone();
@@ -677,7 +681,7 @@ impl MarketplaceState {
             ),
         }
         mirrors::spawn_jobs(self, jobs);
-        spawn_index_jobs(self, jobs);
+        chain_jobs::spawn_jobs(self, jobs, rentals);
         neighbours::spawn_job(self, jobs);
     }
 
@@ -793,192 +797,6 @@ pub(crate) async fn ensure_chain(
         return Err(chain_walk::WrongChain { served, expected }.into());
     }
     Ok(())
-}
-
-/// What one network's pass of an index job came to.
-#[derive(Debug)]
-enum NetPass {
-    /// The pass ran, at the head or not.
-    Walked(chain_walk::PassOutcome),
-    /// The projection is in quarantine: the pass walked nothing, and an
-    /// operator acts.
-    Quarantined(chain_walk::PassOutcome),
-    /// Nothing to walk yet (no endpoint, or the nft walk waiting for the
-    /// collections mirror).
-    Waiting,
-    /// The endpoint serves another chain ([`chain_walk::WrongChain`]).
-    WrongChain(String),
-    Failed(String),
-}
-
-fn net_pass(
-    net: chain_walk::ChainNet,
-    outcome: anyhow::Result<chain_walk::PassOutcome>,
-) -> NetPass {
-    match outcome {
-        Ok(o) if o.quarantined.is_some() => NetPass::Quarantined(o),
-        Ok(o) => NetPass::Walked(o),
-        Err(e)
-            if e.chain()
-                .any(|c| c.downcast_ref::<chain_walk::WrongChain>().is_some()) =>
-        {
-            NetPass::WrongChain(format!("{}: {e:#}", net.db_name()))
-        }
-        Err(e) => NetPass::Failed(format!("{}: {e:#}", net.db_name())),
-    }
-}
-
-/// The index job's result over its networks. Any failure fails it. An
-/// endpoint of another chain fails it only when no network walked: a network
-/// that walked keeps its cadence, while a job with none to walk backs off. A
-/// projection in quarantine walks nothing, so it keeps no cadence; alone, it
-/// fails nothing, since only an operator moves it.
-fn index_job_result(passes: Vec<NetPass>) -> anyhow::Result<()> {
-    let walked = passes.iter().any(|p| matches!(p, NetPass::Walked(_)));
-    let errors: Vec<String> = passes
-        .into_iter()
-        .filter_map(|p| match p {
-            NetPass::Failed(e) => Some(e),
-            NetPass::WrongChain(e) if !walked => Some(e),
-            _ => None,
-        })
-        .collect();
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(errors.join("; ")))
-    }
-}
-
-/// Attaches `nft-index`, `trade-events-index`, `mana-transfers-index` and
-/// `committee-index` (Polygon only) when their switches are on: one periodic job each, a pass walking both
-/// networks in turn (the budget is per network), the nft walk of a network
-/// waiting for the collections mirror's first complete pass (its address
-/// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
-fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
-    sales_index::spawn_job(state, jobs);
-    let settings = state.settings.market.indexes.clone();
-    for (enabled, name) in [
-        (
-            settings.trade_events_enabled,
-            chain_walk::INDEXER_TRADE_EVENTS,
-        ),
-        (settings.nft_enabled, chain_walk::INDEXER_NFT),
-        (settings.mana_transfers_enabled, chain_walk::INDEXER_MANA),
-        (settings.committee_enabled, chain_walk::INDEXER_COMMITTEE),
-    ] {
-        let job = if name == chain_walk::INDEXER_NFT {
-            "nft-index"
-        } else if name == chain_walk::INDEXER_MANA {
-            "mana-transfers-index"
-        } else if name == chain_walk::INDEXER_COMMITTEE {
-            "committee-index"
-        } else {
-            "trade-events-index"
-        };
-        if !enabled {
-            if name == chain_walk::INDEXER_COMMITTEE {
-                tracing::info!(
-                    job,
-                    "committee index off: builder's committee routes admit only BUILDER_ADMIN_ADDRESSES"
-                );
-            } else {
-                tracing::info!(
-                    job,
-                    "marketplace chain index off: its routes answer the unavailable envelope"
-                );
-            }
-            continue;
-        }
-        let trade_events = name == chain_walk::INDEXER_TRADE_EVENTS;
-        let committee = name == chain_walk::INDEXER_COMMITTEE;
-        let rpc_url = move |state: &MarketplaceState, net: chain_walk::ChainNet| {
-            if trade_events {
-                state.trade_events_rpc_url(net)
-            } else if committee {
-                state.committee_rpc_url(net)
-            } else {
-                state.chain_rpc_url(net)
-            }
-        };
-        let nets: Vec<chain_walk::ChainNet> = chain_walk::ChainNet::ALL
-            .into_iter()
-            .filter(|n| rpc_url(state, *n).is_some())
-            .collect();
-        if nets.is_empty() {
-            if committee {
-                tracing::warn!(
-                    job,
-                    "committee index enabled but no Polygon JSON-RPC endpoint is configured (TRADE_RPC_URLS 137=, or RPC_ENDPOINT_POLYGON on mainnet): it stays off"
-                );
-            } else {
-                tracing::warn!(
-                    job,
-                    "marketplace chain index enabled but no JSON-RPC endpoint is configured (TRADE_RPC_URLS 1= / 137=, or ETH_RPC_URL): it stays off"
-                );
-            }
-            continue;
-        }
-        let state = state.clone();
-        let nft_indexes: Arc<Vec<nft_index::NftIndex>> =
-            Arc::new(nets.iter().map(|n| nft_index::NftIndex::new(*n)).collect());
-        let holdings = Arc::new(chain_walk::Holdings::default());
-        jobs.spawn_periodic_leased(
-            job,
-            PeriodicCfg::every(settings.interval).with_jitter(Duration::from_secs(1)).with_error_backoff(Duration::from_secs(30)),
-            move |ctx| {
-                let (state, nets, nft_indexes, holdings) =
-                    (state.clone(), nets.clone(), nft_indexes.clone(), holdings.clone());
-                async move {
-                    let outcomes = futures::future::join_all(nets.iter().enumerate().map(|(i, net)| {
-                        let (state, nft_indexes, holdings, ctx) = (&state, &nft_indexes, &holdings, &ctx);
-                        async move {
-                            let Some(url) = rpc_url(state, *net) else { return NetPass::Waiting };
-                            let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(&state.http, &url));
-                            let progress = |m: String| ctx.progress(m);
-                            let settings = &state.settings.market.indexes;
-                            let trade_events_index;
-                            let mana_index;
-                            let ix: &dyn chain_walk::ChainIndex = if name == chain_walk::INDEXER_NFT {
-                                if !nft_index::mirror_complete(&state.pool, *net).await {
-                                    ctx.progress(format!("nft {}: waiting for the collections mirror's first complete pass", net.db_name()));
-                                    return NetPass::Waiting;
-                                }
-                                &nft_indexes[i]
-                            } else if name == chain_walk::INDEXER_COMMITTEE {
-                                &committee_index::CommitteeIndex
-                            } else if name == chain_walk::INDEXER_MANA {
-                                mana_index = mana_transfers::ManaTransfersIndex { net: *net };
-                                &mana_index
-                            } else {
-                                let chain_id = settings.chain_id(*net);
-                                trade_events_index = trade_events::TradeEventsIndex { net: *net, chain_id };
-                                &trade_events_index
-                            };
-                            let outcome = chain_walk::job_pass(&state.pool, &source, ix, settings, holdings, ctx.lease(), Some(&ctx.cancel), &progress).await;
-                            let pass = net_pass(*net, outcome);
-                            match &pass {
-                                NetPass::Walked(o) | NetPass::Quarantined(o) => {
-                                    tracing::info!(indexer = name, summary = %o.summary(), "marketplace chain index pass");
-                                    ctx.progress(o.summary());
-                                }
-                                // An endpoint of another chain skips this network;
-                                // the job fails only when no network walked
-                                // (index_job_result).
-                                NetPass::WrongChain(e) => {
-                                    tracing::warn!(indexer = name, error = %e, "marketplace chain index: skipping a network whose endpoint serves another chain");
-                                    ctx.error(format!("{name} {e}"));
-                                }
-                                NetPass::Waiting | NetPass::Failed(_) => {}
-                            }
-                            pass
-                        }
-                    })).await;
-                    index_job_result(outcomes)
-                }
-            },
-        );
-    }
 }
 
 /// The canonical operator paths (`/shop-api/admin/*`) of the moderation

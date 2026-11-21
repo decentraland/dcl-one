@@ -21,7 +21,8 @@
 //! `decentraland-kernel-scene` under any spelling, or whose lowercased bytes
 //! contain it, is refused (upstream never checks it); a read serves a scene's
 //! request as its signer, as upstream does. World names resolve through
-//! local `explore.place_indexed` reads ([`db::Database::world_place_ids`]).
+//! the catalogue and live `explore.world_scene_place` deployment bindings,
+//! independently of listing visibility ([`db::Database::world_place_ids`]).
 //!
 //! Every write route goes behind `CREATE_WRITES_ENABLED` ([`writes`];
 //! default false, 503 with `Retry-After`, built the way `social::writes`

@@ -1,12 +1,12 @@
-# Worlds: intended differences from worlds-content-server
+# Worlds: compatibility differences
 
 The `worlds` crate serves the worlds content server's HTTP surface (under
 `/worlds-content-server`, and at the root where no catalyst route has the
 path; see "Mounts") and its comms admission. The wire
 contract follows
 [`decentraland/worlds-content-server`](https://github.com/decentraland/worlds-content-server).
-This page lists where the catalyst answers differently on purpose. A
-difference not listed here is a gap, not a decision.
+This page records intended differences and their operational limitations.
+A difference not listed here is a gap, not a decision.
 
 ## HTTP
 
@@ -446,12 +446,29 @@ difference not listed here is a gap, not a decision.
 
 - **Delivery.** World notices are written to the catalyst's own inbox and
   email outbox, in the same transaction as the grant edit or quota change,
-  instead of being published to SNS. Re-detecting the same quota block keeps
-  the first notice unchanged; a new block notifies again even on the same
-  day. Every grant or revoke is its own notice, so the latest notice matches
-  the current grant. One edit notifies at most 50 added and 50 removed
-  addresses. The notice description does not name the world (it is in the
-  `world` field).
+  instead of being published to SNS. Quota notices deduplicate by wallet,
+  notice kind and UTC date of block creation. Warning, restriction and
+  restoration are separate kinds; restoration uses the block's creation day,
+  even when access is restored on a later day. Repeats keep the first row's
+  metadata, occurrence time, read state and email delivery state without
+  requeuing email. Every grant or revoke is its own notice, so the latest
+  notice matches the current grant.
+  One edit notifies every added and removed address in
+  batches of at most 50, all in the edit transaction. The description names
+  the world when it matches the world-name pattern, or says "a world"
+  otherwise; the `world` field keeps the world name.
+- **Quota history at cutover.** When the block's exact creation time is
+  available, the writer links existing native notices for all three quota
+  kinds to their daily keys on any quota emission, retaining their row IDs,
+  contents, read state and email delivery records. Already closed native
+  blocks and imported history may lack the information needed for that link.
+  Such unlinked history can coexist with one additional daily notice per
+  wallet and kind at cutover; this change does not consolidate all historical
+  duplicates. Later repeats use the daily key. Retire quota writers that do
+  not set daily keys before relying on daily uniqueness. The
+  [quota identity decision](../../../docs/adr/2026-11-21-world-quota-notice-identity.md)
+  states this boundary. Quota enforcement, grace timing and the notification
+  deadline metadata are unchanged.
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
 - **Settings events.** `PUT /world/{name}/settings` publishes no
@@ -467,7 +484,13 @@ difference not listed here is a gap, not a decision.
 - **Allow-list caps.** `ACCESS_MAX_WALLETS` (1..=10,000, default 1000) and
   `ACCESS_MAX_COMMUNITIES` (1..=1,000, default 50) are refused at startup
   outside their range; upstream takes any number, and `0` there refuses
-  every addition.
+  every addition. Deployment and streaming allow-lists have no application
+  count cap, as upstream. Auth-chain validation limits the complete signed
+  payload to 100,000 bytes (`dcl-auth`'s `MAX_AUTH_LINK_FIELD_LEN`); HTTP
+  header limits also apply to the signed metadata. These byte limits do not
+  define a fixed wallet count. Notification batches contain at most 50
+  addresses, but the total edit transaction grows with the number of changed
+  addresses.
 - **Allow-list documents** are stored normalized: `GET .../permissions`
   returns the access wallets lowercased and deduplicated, in the order they
   were added, and the community ids as lowercase UUIDs, whatever spelling

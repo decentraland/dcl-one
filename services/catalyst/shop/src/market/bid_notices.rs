@@ -26,7 +26,9 @@
 //! emit it and is announced here only: the relay writes no notification.
 //!
 //! Reads stop at the lower published block of the sales and nft indexes
-//! while both are ready. The cursor (`shop.notification_cursor`,
+//! while both are ready, read by each page in the statement that reads its
+//! bids, so a rewind between pages never pairs a bid above the fork with
+//! the truncated transfers. The cursor (`shop.notification_cursor`,
 //! `bid_received`) is seeded on the first pass at the sales index's
 //! published block, so history is never announced; `catalyst shop
 //! notice-rewind` moves it back for a cutover. It advances with each
@@ -89,13 +91,20 @@ struct BidRow {
     backfill_owed: bool,
 }
 
-/// `$1` network, `$2`/`$3` cursor, `$4` last block read, `$5` page size.
-/// A page walks `shop.sale_event`'s primary key from the cursor; each row
-/// adds one backward probe of `nft_event_token_idx` and primary key reads
-/// of `shop.nft_contract` and `shop.collections`.
+/// `$1` network, `$2`/`$3` cursor, `$4` the indexes read (sales, nft),
+/// `$5` page size, `$6` now. The bound, the lower published block of the
+/// two, is read with the rows in one statement, so one snapshot: an nft
+/// rewind that commits after the pass checked both indexes lowers it (or
+/// withdraws the index) before a bid above the fork can be matched against
+/// the truncated transfers. With either index not ready there is no bound
+/// and no row. A page walks `shop.sale_event`'s primary key from the
+/// cursor; each row adds one backward probe of `nft_event_token_idx` and
+/// primary key reads of `shop.nft_contract` and `shop.collections`.
 fn rows_sql() -> String {
     format!(
-        "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address::text AS contract_address, \
+        "WITH bound AS (SELECT min(c.last_block) AS upto FROM shop.chain_cursor c \
+             WHERE c.network = $1 AND c.indexer = ANY($4) AND {ready} HAVING count(*) = 2) \
+         SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address::text AS contract_address, \
                 e.token_id::text AS token_id, lower(e.buyer) AS bidder, e.price::text AS price, \
                 lower((SELECT n.to_address FROM shop.nft_event n \
                     WHERE n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id \
@@ -106,9 +115,10 @@ fn rows_sql() -> String {
                 EXISTS (SELECT 1 FROM shop.nft_contract k \
                     WHERE k.network = e.network AND k.contract_address = e.contract_address AND k.backfill_from_block IS NOT NULL \
                       AND COALESCE(k.backfilled_to_block, k.backfill_from_block - 1) < k.walked_from_block - 1) AS backfill_owed \
-         FROM shop.sale_event e \
-         WHERE e.network = $1 AND e.kind = 'bid_created' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
+         FROM shop.sale_event e CROSS JOIN bound \
+         WHERE e.network = $1 AND e.kind = 'bid_created' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= bound.upto \
          ORDER BY e.block_number, e.log_index LIMIT $5",
+        ready = chain_walk::ready_sql("c", "$6"),
         key = notice_cursor::tx_log_key(
             "sale_event",
             "e",
@@ -182,17 +192,34 @@ pub async fn run_once(
     settings: &Settings,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Pass> {
+    if let Some(why) = start(pool, now).await? {
+        return Ok(Pass::Waiting(why));
+    }
+    pages(pool, settings, now).await
+}
+
+/// Why the pass reads nothing, or `None` once both indexes are ready, and
+/// the first seed at the sales index's published block. Each page reads its
+/// own bound ([`rows_sql`]); these checks only report and seed.
+async fn start(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Option<&'static str>> {
     let Some(sales) = chain_walk::ready_cursor(pool, INDEXER_SALES, NET, now).await else {
-        return Ok(Pass::Waiting("the matic sales index is not published"));
+        return Ok(Some("the matic sales index is not published"));
     };
-    let Some(nft) = chain_walk::ready_cursor(pool, INDEXER_NFT, NET, now).await else {
-        return Ok(Pass::Waiting(
+    if chain_walk::ready_cursor(pool, INDEXER_NFT, NET, now)
+        .await
+        .is_none()
+    {
+        return Ok(Some(
             "the matic nft index is not published (a bid's owner is unknown)",
         ));
-    };
+    }
     let published = sales.folded_block.unwrap_or(sales.last_block);
-    let upto = published.min(nft.folded_block.unwrap_or(nft.last_block));
     notice_cursor::seed(pool, PRODUCER, None, published, i32::MAX).await?;
+    Ok(None)
+}
+
+/// The pages after the cursor, each under its own published bound.
+async fn pages(pool: &PgPool, settings: &Settings, now: DateTime<Utc>) -> anyhow::Result<Pass> {
     let network = NET.db_name();
     let mut emitted = 0;
     loop {
@@ -202,8 +229,9 @@ pub async fn run_once(
             .bind(network)
             .bind(since_block)
             .bind(since_log)
-            .bind(upto)
+            .bind([INDEXER_SALES, INDEXER_NFT])
             .bind(PAGE_SIZE)
+            .bind(now.naive_utc())
             .fetch_all(&mut *txn)
             .await?;
         if rows.is_empty() {
@@ -729,6 +757,79 @@ mod tests {
             "the owner at the bid, not the bidder who owns it now"
         );
         assert_eq!(rows[3].1["seller"], NEW_OWNER);
+        db.drop().await;
+    }
+
+    /// An nft rewind that commits after the pass checked both indexes, on
+    /// another connection, never pairs a bid above the fork with the
+    /// truncated transfers: the page reads the lowered bound (or the
+    /// withdrawn index) with its bids, leaves the cursor in place, and once
+    /// the nft index walks and publishes again only the owner at the bid
+    /// hears of it.
+    #[tokio::test]
+    async fn a_rewind_after_the_checks_never_pairs_a_bid_with_truncated_transfers() {
+        let Some(db) = PrivateDb::create("bidrewind").await else {
+            return;
+        };
+        let pool = &db.pool;
+        seed_assets(pool).await; // minted to OWNER at 10, sold to NEW_OWNER at 90
+        let s = settings(false);
+        notice_cursor::seed(pool, PRODUCER, None, 59, i32::MAX)
+            .await
+            .unwrap();
+        bid(pool, 95, 7, BIDDER, "1000000000000000000").await; // owner: NEW_OWNER
+        publish(pool, INDEXER_SALES, "matic", 200, T0 + 200).await;
+        publish(pool, INDEXER_NFT, "matic", 200, T0 + 200).await;
+        assert_eq!(start(pool, Utc::now()).await.unwrap(), None, "both ready");
+
+        // On another connection, as a divergence runs: the publication is
+        // withdrawn first (the rows still the old chain's), then the
+        // recovery rewinds to the fork at 80 and publishes there.
+        let mut other = pool.acquire().await.unwrap();
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, diverged_at = timezone('UTC', now()) \
+             WHERE indexer = 'nft' AND network = 'matic'",
+        )
+        .execute(&mut *other)
+        .await
+        .unwrap();
+        assert_eq!(pages(pool, &s, Utc::now()).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(cursor(pool).await, (59, i32::MAX), "withdrawn: no bound");
+        let mut rewind = sqlx::Connection::begin(&mut *other).await.unwrap();
+        sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 80")
+            .execute(&mut *rewind)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = 80, last_block_hash = NULL, fold_through = 80, folded_block = 80, \
+             folded_at = timezone('UTC', now()), diverged_at = NULL WHERE indexer = 'nft' AND network = 'matic'",
+        )
+        .execute(&mut *rewind)
+        .await
+        .unwrap();
+        rewind.commit().await.unwrap();
+        drop(other);
+        assert_eq!(pages(pool, &s, Utc::now()).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(
+            cursor(pool).await,
+            (59, i32::MAX),
+            "the bid above the fork waits"
+        );
+        assert!(
+            stored(pool).await.is_empty(),
+            "nobody guessed from either history"
+        );
+
+        // Walked and published again: the owner at the bid, once.
+        transfer(pool, 90, 0, 7, OWNER, NEW_OWNER).await;
+        publish(pool, INDEXER_NFT, "matic", 200, T0 + 200).await;
+        assert_eq!(
+            run_once(pool, &s, Utc::now()).await.unwrap(),
+            Pass::Emitted(1)
+        );
+        let rows = stored(pool).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, NEW_OWNER);
         db.drop().await;
     }
 }
