@@ -13,7 +13,7 @@
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
-use super::chain_walk::{ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
+use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_SALES, INDEXER_TRADE_EVENTS};
 use crate::rentals::index::INDEXER_RENTALS;
 
 pub const TRANSFER_RECEIVED: &str = "transfer_received";
@@ -192,6 +192,10 @@ pub struct IndexCoverage {
     pub full_history: bool,
     pub last_block: i64,
     pub last_block_time: Option<i64>,
+    /// The chain its history was proven on; `None` while unbound.
+    pub chain_id: Option<i64>,
+    /// Its history is quarantined: not proven on the expected chain.
+    pub quarantined: bool,
     /// On a dry run, how many of this index's logs lie after the resulting
     /// cursor (`after`), up to its `last_block`: an upper bound on the logs
     /// the next passes read (each producer reads only some kinds). Absent
@@ -246,6 +250,16 @@ pub enum RewindError {
         /// The producer orders by end time and takes no block.
         by_end_time: bool,
     },
+    #[error(
+        "the {network} {indexer} index's history is not proven on chain {expected} ({why}); \
+         a date resolves only through a proven history: revalidate the index, or give a block"
+    )]
+    Unproven {
+        network: &'static str,
+        indexer: String,
+        expected: i64,
+        why: String,
+    },
     #[error("the {network} {indexer} index has no cursor row; nothing is indexed yet")]
     NoIndex {
         network: &'static str,
@@ -265,6 +279,36 @@ fn event_table(indexer: &str) -> Option<&'static str> {
         INDEXER_RENTALS => "shop.rental_event",
         _ => return None,
     })
+}
+
+/// The chain `indexer` must have been proven on for `producer` to read it
+/// on `net`: the trade-events walk reads the chain the node configures
+/// (`trade_chains`, `(ethereum, matic)`, `MARKETPLACE_INDEX_CHAIN_ID_*`),
+/// except for `transfer_received`, which matches it against the nft index
+/// and so runs on Polygon mainnet only; every other index reads its
+/// network's mainnet.
+fn read_chain(producer: &str, indexer: &str, net: ChainNet, trade_chains: (i64, i64)) -> i64 {
+    match (indexer, net) {
+        (INDEXER_TRADE_EVENTS, _) if producer == TRANSFER_RECEIVED => {
+            chain_walk::mainnet_chain(net)
+        }
+        (INDEXER_TRADE_EVENTS, ChainNet::Ethereum) => trade_chains.0,
+        (INDEXER_TRADE_EVENTS, ChainNet::Matic) => trade_chains.1,
+        _ => chain_walk::mainnet_chain(net),
+    }
+}
+
+/// Why `index` cannot date a rewind for a producer reading it on `expected`.
+fn unproven(index: &IndexCoverage, expected: i64) -> Option<String> {
+    if index.quarantined {
+        Some("quarantined".into())
+    } else {
+        match index.chain_id {
+            Some(c) if c == expected => None,
+            Some(c) => Some(format!("proven on chain {c}")),
+            None => Some("unbound".into()),
+        }
+    }
 }
 
 /// Whether the producer's cursor orders by an end time before the chain position.
@@ -304,6 +348,14 @@ pub fn parse_since(s: &str) -> Result<i64, String> {
     Ok(t)
 }
 
+/// An index's coverage and, for a date, the last block mined before it.
+#[derive(sqlx::FromRow)]
+struct Covered {
+    #[sqlx(flatten)]
+    coverage: IndexCoverage,
+    before: Option<i64>,
+}
+
 /// Moves `producer`'s cursor back to `from`, and its seed with it, so the
 /// next passes announce everything after that point again; the reorg-stable
 /// ids keep a notice already stored from being stored or emailed twice. A
@@ -316,8 +368,12 @@ pub fn parse_since(s: &str) -> Result<i64, String> {
 /// A block below 1 or a time at or before the epoch is refused: it would
 /// announce every indexed log again. A date resolves through the logs of
 /// the indexes the producer reads ([`reads`]): the cursor goes after the
-/// last block mined before it, and every such index must have a cursor row
-/// and already have indexed past it. For `rental_ended` the date is the
+/// last block mined before it, and every such index must have a cursor row,
+/// a history proven on the chain the producer reads it on ([`read_chain`]:
+/// bound to it and not quarantined) and already have indexed past it; the
+/// coverage and the log positions come from one statement, so one snapshot
+/// (`trade_chains` is the node's `(ethereum, matic)` trade-events chain).
+/// For `rental_ended` the date is the
 /// end-time cursor itself, refused likewise until the rentals index has
 /// reached it. A block needs no index; the ones with a cursor row are
 /// reported. Cost: a backward walk of each index's log by its primary key
@@ -328,6 +384,7 @@ pub async fn rewind(
     pool: &PgPool,
     producer: &str,
     from: RewindFrom,
+    trade_chains: (i64, i64),
     actor: &str,
     dry_run: bool,
 ) -> Result<Rewound, RewindError> {
@@ -346,31 +403,67 @@ pub async fn rewind(
         RewindFrom::Time(t) if t <= 0 => return Err(RewindError::TimeOutOfRange(t)),
         _ => {}
     }
+    let ends = ends_by_time(producer);
     let mut txn = pool.begin().await?;
-    let mut indexes = Vec::with_capacity(indexers.len());
-    for &indexer in indexers {
-        let coverage: Option<IndexCoverage> = sqlx::query_as(
-            "SELECT indexer, start_block, full_history, last_block, last_block_time \
-             FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
-        )
-        .bind(indexer)
+    // One statement, so one snapshot: each index's coverage and, for a date,
+    // the last block mined before it among that index's logs.
+    let mut arms = Vec::with_capacity(indexers.len());
+    for (i, &indexer) in indexers.iter().enumerate() {
+        let before = match from {
+            RewindFrom::Time(_) if !ends => {
+                let table = event_table(indexer).ok_or_else(|| {
+                    sqlx::Error::InvalidArgument(format!(
+                        "no log table is known for the {indexer} index"
+                    ))
+                })?;
+                format!(
+                    "(SELECT e.block_number FROM {table} e WHERE e.network = $1 AND e.block_time < $2 \
+                     ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1)"
+                )
+            }
+            _ => "NULL::bigint".to_string(),
+        };
+        arms.push(format!(
+            "SELECT c.indexer, c.start_block, c.full_history, c.last_block, c.last_block_time, \
+             c.chain_id, c.quarantined_at IS NOT NULL AS quarantined, {before} AS before, {i} AS ord \
+             FROM shop.chain_cursor c WHERE c.indexer = ${} AND c.network = $1",
+            i + 3
+        ));
+    }
+    let sql = format!("{} ORDER BY ord", arms.join(" UNION ALL "));
+    let mut query = sqlx::query_as::<_, Covered>(sqlx::AssertSqlSafe(sql))
         .bind(network)
-        .fetch_optional(&mut *txn)
-        .await?;
-        match (coverage, from) {
-            (Some(c), _) => indexes.push(c),
-            // A block needs no index: its coverage is only reported.
-            (None, RewindFrom::Block(_)) => {}
-            (None, RewindFrom::Time(_)) => {
+        .bind(match from {
+            RewindFrom::Time(t) => t,
+            RewindFrom::Block(_) => 0,
+        });
+    for &indexer in indexers {
+        query = query.bind(indexer);
+    }
+    let covered = query.fetch_all(&mut *txn).await?;
+    if let RewindFrom::Time(t) = from {
+        // A date counts only through an index proven on the chain the
+        // producer reads: another history would place the cursor and its
+        // seed (the replay floor) by blocks of the wrong chain.
+        for &indexer in indexers {
+            let Some(c) = covered.iter().find(|c| c.coverage.indexer == indexer) else {
                 return Err(RewindError::NoIndex { network, indexer });
+            };
+            let expected = read_chain(producer, indexer, net, trade_chains);
+            if let Some(why) = unproven(&c.coverage, expected) {
+                return Err(RewindError::Unproven {
+                    network,
+                    indexer: indexer.to_string(),
+                    expected,
+                    why,
+                });
             }
         }
-    }
-    if let RewindFrom::Time(t) = from {
         // Logs (or, for `rental_ended`, period ends) the index has not
         // reached would later be read as already handled.
-        if let Some(index) = indexes
+        if let Some(index) = covered
             .iter()
+            .map(|c| &c.coverage)
             .find(|i| i.last_block_time.is_none_or(|lt| lt < t))
         {
             return Err(RewindError::NotReached {
@@ -378,38 +471,19 @@ pub async fn rewind(
                 indexer: index.indexer.clone(),
                 since: t,
                 last_block_time: index.last_block_time,
-                by_end_time: ends_by_time(producer),
+                by_end_time: ends,
             });
         }
     }
     let target = match from {
         RewindFrom::Block(b) => (None, b - 1, i32::MAX),
-        RewindFrom::Time(t) if ends_by_time(producer) => (Some(t), 0, -1),
-        RewindFrom::Time(t) => {
-            let mut before: Option<i64> = None;
-            for index in &indexes {
-                let table = event_table(&index.indexer).ok_or_else(|| {
-                    sqlx::Error::InvalidArgument(format!(
-                        "no log table is known for the {} index",
-                        index.indexer
-                    ))
-                })?;
-                let last: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-                    "SELECT block_number FROM {table} WHERE network = $1 AND block_time < $2 \
-                     ORDER BY block_number DESC, log_index DESC LIMIT 1"
-                )))
-                .bind(network)
-                .bind(t)
-                .fetch_optional(&mut *txn)
-                .await?;
-                before = before.max(last);
-            }
-            match before {
-                Some(b) => (None, b, i32::MAX),
-                None => (None, 0, -1),
-            }
-        }
+        RewindFrom::Time(t) if ends => (Some(t), 0, -1),
+        RewindFrom::Time(_) => match covered.iter().filter_map(|c| c.before).max() {
+            Some(b) => (None, b, i32::MAX),
+            None => (None, 0, -1),
+        },
     };
+    let indexes: Vec<IndexCoverage> = covered.into_iter().map(|c| c.coverage).collect();
     let wanted = CursorRow::at(target.0, target.1, target.2);
     let inserted: Option<CursorRow> = sqlx::query_as(
         "INSERT INTO shop.notification_cursor (producer, end_time, block_number, log_index, seed_end_time, seed_block, seed_log_index) \
@@ -970,6 +1044,7 @@ mod tests {
                     &pool,
                     SALES_TRADED_MATIC,
                     RewindFrom::Block(100),
+                    (1, 137),
                     "t",
                     false,
                 )
@@ -999,6 +1074,138 @@ mod tests {
             (None, 99, i32::MAX)
         );
         drop(conn);
+        db.drop().await;
+    }
+
+    /// A date counts only through histories proven on the chain the
+    /// producer reads: an unbound, quarantined or other-chain cursor with a
+    /// plausible `last_block_time` and logs before the date is refused, and
+    /// neither the cursor nor its seed moves (nor is a producer seeded). A
+    /// trade_events history counts on the chain the node configures, except
+    /// for `transfer_received` (Polygon mainnet). `--from-block` needs no
+    /// proven index.
+    #[tokio::test]
+    async fn a_date_resolves_only_through_a_history_proven_on_the_read_chain() {
+        let Some(db) =
+            crate::market::transfer_notices::tests::PrivateDb::create("noticeproof").await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        const T0: i64 = 1_700_000_000;
+        for b in [100, 200, 300] {
+            sqlx::query(
+                "INSERT INTO shop.trade_event (network, block_number, log_index, block_time, marketplace_address, kind, caller, hashed_signature, tx_hash) \
+                 VALUES ('matic', $1, 0, $2, '0x540fb08edb56aae562864b390542c97f562825ba', 'signature_cancelled', '0x00000000000000000000000000000000000000a1', '0xsig', '0xtx')",
+            )
+            .bind(b)
+            .bind(T0 + b)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        crate::market::transfer_notices::tests::publish(
+            pool,
+            INDEXER_TRADE_EVENTS,
+            "matic",
+            9_000,
+            T0 + 9_000,
+        )
+        .await;
+        crate::market::transfer_notices::tests::publish(
+            pool,
+            INDEXER_NFT,
+            "matic",
+            9_000,
+            T0 + 9_000,
+        )
+        .await;
+        seed(pool, SALES_TRADED_MATIC, None, 9_000, 7)
+            .await
+            .unwrap();
+        let row = |p: &'static str| async move {
+            sqlx::query_as::<_, CursorRow>(
+                "SELECT end_time, block_number, log_index, seed_end_time, seed_block, seed_log_index \
+                 FROM shop.notification_cursor WHERE producer = $1",
+            )
+            .bind(p)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+        };
+        let set = |sql: &'static str| async move {
+            sqlx::query(sql).execute(pool).await.unwrap();
+        };
+        let date = RewindFrom::Time(T0 + 250);
+        let seeded = Some(CursorRow::at(None, 9_000, 7));
+        let refused = |r: Result<Rewound, RewindError>, why: &str| match r {
+            Err(RewindError::Unproven { why: w, .. }) => assert_eq!(w, why),
+            other => panic!("expected an unproven refusal ({why}), got {other:?}"),
+        };
+
+        // Unbound, quarantined, or proven on another chain: nothing moves.
+        let trade = "UPDATE shop.chain_cursor SET chain_id = NULL WHERE indexer = 'trade_events' AND network = 'matic'";
+        set(trade).await;
+        refused(
+            rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", false).await,
+            "unbound",
+        );
+        set("UPDATE shop.chain_cursor SET chain_id = 137, quarantined_at = timezone('UTC', now()), quarantine_reason = 'test' \
+             WHERE indexer = 'trade_events' AND network = 'matic'")
+        .await;
+        refused(
+            rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", false).await,
+            "quarantined",
+        );
+        set("UPDATE shop.chain_cursor SET chain_id = 80002, quarantined_at = NULL, quarantine_reason = NULL \
+             WHERE indexer = 'trade_events' AND network = 'matic'")
+        .await;
+        refused(
+            rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", false).await,
+            "proven on chain 80002",
+        );
+        assert_eq!(
+            row(SALES_TRADED_MATIC).await,
+            seeded,
+            "cursor and seed unchanged"
+        );
+        // A dry run refuses alike; a producer no pass seeded stays unseeded.
+        refused(
+            rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", true).await,
+            "proven on chain 80002",
+        );
+        refused(
+            rewind(pool, TRANSFER_RECEIVED, date, (1, 80_002), "t", false).await,
+            "proven on chain 80002",
+        );
+        assert_eq!(
+            row(TRANSFER_RECEIVED).await,
+            None,
+            "no seed from another chain"
+        );
+
+        // On a stack whose trade walk reads Amoy, that history dates the
+        // trade producer, and only it.
+        let out = rewind(pool, SALES_TRADED_MATIC, date, (1, 80_002), "t", false)
+            .await
+            .unwrap();
+        assert_eq!(out.after, CursorRow::at(None, 200, i32::MAX));
+        assert_eq!(out.indexes[0].chain_id, Some(80_002));
+
+        // A block needs no proven index: it only reports them.
+        set(trade).await;
+        let out = rewind(
+            pool,
+            TRANSFER_RECEIVED,
+            RewindFrom::Block(150),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.after, CursorRow::at(None, 149, i32::MAX));
+        assert_eq!(out.indexes.len(), 2);
         db.drop().await;
     }
 
@@ -1062,7 +1269,15 @@ mod tests {
         let at = |e: Option<i64>, b: i64, l: i32| CursorRow::at(e, b, l);
 
         assert!(matches!(
-            rewind(pool, "sales:traded:base", RewindFrom::Block(1), "t", false).await,
+            rewind(
+                pool,
+                "sales:traded:base",
+                RewindFrom::Block(1),
+                (1, 137),
+                "t",
+                false
+            )
+            .await,
             Err(RewindError::UnknownProducer(_))
         ));
         assert!(matches!(
@@ -1070,6 +1285,7 @@ mod tests {
                 pool,
                 TRANSFER_RECEIVED,
                 RewindFrom::Time(T0 + 150),
+                (1, 137),
                 "t",
                 false
             )
@@ -1083,6 +1299,7 @@ mod tests {
                 pool,
                 TRANSFER_RECEIVED,
                 RewindFrom::Time(T0 + 9_001),
+                (1, 137),
                 "t",
                 false
             )
@@ -1101,6 +1318,7 @@ mod tests {
             pool,
             TRANSFER_RECEIVED,
             RewindFrom::Time(T0 + 201),
+            (1, 137),
             "t",
             false,
         )
@@ -1120,6 +1338,7 @@ mod tests {
             pool,
             TRANSFER_RECEIVED,
             RewindFrom::Time(T0 + 251),
+            (1, 137),
             "t",
             true,
         )
@@ -1136,6 +1355,7 @@ mod tests {
             pool,
             SALES_TRADED_MATIC,
             RewindFrom::Time(T0 + 260),
+            (1, 137),
             "t",
             false,
         )
@@ -1154,9 +1374,16 @@ mod tests {
         )
         .await
         .unwrap();
-        let out = rewind(pool, TRANSFER_RECEIVED, RewindFrom::Block(50), "t", false)
-            .await
-            .unwrap();
+        let out = rewind(
+            pool,
+            TRANSFER_RECEIVED,
+            RewindFrom::Block(50),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             out.before,
             Some(CursorRow {
@@ -1167,13 +1394,27 @@ mod tests {
         );
         assert_eq!(row(TRANSFER_RECEIVED).await, Some(at(None, 49, i32::MAX)));
         // Forward is a no-op; a dry run writes nothing.
-        let out = rewind(pool, TRANSFER_RECEIVED, RewindFrom::Block(500), "t", false)
-            .await
-            .unwrap();
+        let out = rewind(
+            pool,
+            TRANSFER_RECEIVED,
+            RewindFrom::Block(500),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
         assert!(!out.changed);
-        let out = rewind(pool, TRANSFER_RECEIVED, RewindFrom::Block(1), "t", true)
-            .await
-            .unwrap();
+        let out = rewind(
+            pool,
+            TRANSFER_RECEIVED,
+            RewindFrom::Block(1),
+            (1, 137),
+            "t",
+            true,
+        )
+        .await
+        .unwrap();
         assert!(out.changed && out.dry_run);
         assert_eq!(out.after, at(None, 0, i32::MAX));
         // The logs after block 0 up to each head: nft 100, 200, 300; trade 250.
@@ -1187,7 +1428,7 @@ mod tests {
             RewindFrom::Time(0),
             RewindFrom::Time(-62_135_596_800),
         ] {
-            let err = rewind(pool, TRANSFER_RECEIVED, from, "t", true)
+            let err = rewind(pool, TRANSFER_RECEIVED, from, (1, 137), "t", true)
                 .await
                 .unwrap_err();
             assert!(
@@ -1202,7 +1443,15 @@ mod tests {
         // rental_ended takes a date as its end-time cursor, never a block.
         publish(INDEXER_RENTALS, "ethereum").await;
         assert!(matches!(
-            rewind(pool, RENTAL_ENDED, RewindFrom::Block(10), "t", false).await,
+            rewind(
+                pool,
+                RENTAL_ENDED,
+                RewindFrom::Block(10),
+                (1, 137),
+                "t",
+                false
+            )
+            .await,
             Err(RewindError::NeedsDate(_))
         ));
         seed(pool, RENTAL_ENDED, Some(T0 + 9_000), 9_000, i32::MAX)
@@ -1210,21 +1459,42 @@ mod tests {
             .unwrap();
         // An end time the rentals index has not reached would skip the
         // periods ending before it.
-        let err = rewind(pool, RENTAL_ENDED, RewindFrom::Time(T0 + 9_001), "t", false)
-            .await
-            .unwrap_err();
+        let err = rewind(
+            pool,
+            RENTAL_ENDED,
+            RewindFrom::Time(T0 + 9_001),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err, RewindError::NotReached { .. })
                 && !err.to_string().contains("give a block"),
             "{err}"
         );
-        let out = rewind(pool, RENTAL_ENDED, RewindFrom::Time(T0), "t", true)
-            .await
-            .unwrap();
+        let out = rewind(
+            pool,
+            RENTAL_ENDED,
+            RewindFrom::Time(T0),
+            (1, 137),
+            "t",
+            true,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.indexes[0].logs_after, None, "periods, not logs");
-        rewind(pool, RENTAL_ENDED, RewindFrom::Time(T0), "t", false)
-            .await
-            .unwrap();
+        rewind(
+            pool,
+            RENTAL_ENDED,
+            RewindFrom::Time(T0),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(row(RENTAL_ENDED).await, Some(at(Some(T0), 0, -1)));
 
         // A block needs no index: with no sales cursor row, the block
@@ -1234,15 +1504,23 @@ mod tests {
                 pool,
                 SALES_MINT_MATIC,
                 RewindFrom::Time(T0 + 100),
+                (1, 137),
                 "t",
                 false
             )
             .await,
             Err(RewindError::NoIndex { .. })
         ));
-        let out = rewind(pool, SALES_MINT_MATIC, RewindFrom::Block(120), "t", false)
-            .await
-            .unwrap();
+        let out = rewind(
+            pool,
+            SALES_MINT_MATIC,
+            RewindFrom::Block(120),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
         assert!(out.indexes.is_empty());
         assert_eq!(row(SALES_MINT_MATIC).await, Some(at(None, 119, i32::MAX)));
 
@@ -1305,6 +1583,7 @@ mod tests {
             pool,
             TRANSFER_RECEIVED,
             RewindFrom::Time(1_700_000_101),
+            (1, 137),
             "t",
             false,
         )
@@ -1315,9 +1594,16 @@ mod tests {
             Pass::Emitted(2)
         );
         assert_eq!(counts().await, (2, 2));
-        rewind(pool, TRANSFER_RECEIVED, RewindFrom::Block(100), "t", false)
-            .await
-            .unwrap();
+        rewind(
+            pool,
+            TRANSFER_RECEIVED,
+            RewindFrom::Block(100),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             transfer_notices::run_once(pool, 137).await.unwrap(),
             Pass::Emitted(1)
