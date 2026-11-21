@@ -137,7 +137,7 @@ export function SelectedItemPanel({
       stock={item.available != null && max != null ? `${item.available}/${max}` : undefined}
       creator={{ name: creatorName, picture: creator?.picture, color: userColor(item.creator, creatorName, creator?.hasClaimedName) }}
       description={entity.data?.description}
-      hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={22} /> }))}
+      hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={16} /> }))}
       onClose={onClose}
       onOpenOnWeb={webShopUrl(item) != null ? onOpenOnWeb : undefined}
       onBuy={onBuy}

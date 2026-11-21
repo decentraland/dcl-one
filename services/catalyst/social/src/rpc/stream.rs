@@ -8,7 +8,8 @@
 //! `/v1/stream`, independently of the connection URL or proxy headers; a
 //! signature for the RPC root cannot open this stream:
 //! either as `x-identity-*` headers of the upgrade request, verified before
-//! the upgrade (`401` refused, `503` when the verification could not run), or
+//! the upgrade (the verifier's `400` or `401` refused, `503` when the
+//! verification could not run), or
 //! as the first frame, with `auth_in_progress` for any frame sent while it is
 //! verified, `3003` when refused and `3004` when none arrives in the auth
 //! window. A ready socket gets `{"type":"ready"}`, then answers `subscribe`,
@@ -40,11 +41,13 @@ use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+use crate::Address;
 use crate::rpc::State;
+use crate::rpc::auth::SocketAuthError;
 use crate::rpc::context::Context;
 use crate::rpc::limits::Protocol;
 use crate::rpc::proto::v2::{
@@ -52,7 +55,6 @@ use crate::rpc::proto::v2::{
 };
 use crate::rpc::pubsub::SocialEvent;
 use crate::rpc::ws::{AUTH_TIMEOUT, POOL_FULL, UNAUTHORIZED};
-use crate::shared::rpc::handshake::{HandshakeError, validator_ref, verify_handshake_number_ms};
 use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
@@ -165,36 +167,13 @@ fn stream_paths() -> Vec<String> {
     vec![STREAM_PATH.to_owned(), "/social-rpc/v1/stream".to_owned()]
 }
 
-/// The upgrade request's `x-identity-*` headers as the first frame's JSON
-/// object, so both handshakes verify through the same function.
-fn header_frame(headers: &HeaderMap) -> Option<String> {
-    let mut frame = Map::new();
-    for (name, value) in headers {
-        if name.as_str().starts_with("x-identity-") {
-            frame.insert(
-                name.as_str().to_string(),
-                Value::String(String::from_utf8_lossy(value.as_bytes()).into_owned()),
-            );
-        }
-    }
-    (!frame.is_empty()).then(|| Value::Object(frame).to_string())
-}
-
-async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, HandshakeError> {
-    let verdict = verify_handshake_number_ms(
-        frame,
-        "get",
-        paths,
-        state.settings.auth_signature_expiration_ms(),
-        chrono::Utc::now().timestamp_millis(),
-        validator_ref(&state.eip1654),
-    )
-    .await
-    .map(|address| address.into_string());
+/// The verdict, counted per protocol when refused.
+fn counted(verdict: Result<Address, SocketAuthError>) -> Result<String, SocketAuthError> {
     if let Err(e) = &verdict {
-        let kind = match e {
-            HandshakeError::CatalystUnavailable(_) => "server_error",
-            _ => "client_rejected",
+        let kind = if e.is_unavailable() {
+            "server_error"
+        } else {
+            "client_rejected"
         };
         metrics::counter!(
             "ws_auth_errors_by_protocol",
@@ -203,7 +182,17 @@ async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, 
         )
         .increment(1);
     }
-    verdict
+    verdict.map(Address::into_string)
+}
+
+async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, SocketAuthError> {
+    counted(crate::rpc::auth::verify_frame(state, paths, frame).await)
+}
+
+fn has_identity_headers(headers: &HeaderMap) -> bool {
+    headers
+        .keys()
+        .any(|name| name.as_str().starts_with("x-identity-"))
 }
 
 pub async fn ws_upgrade(
@@ -223,19 +212,21 @@ pub async fn ws_upgrade(
         return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     let paths = stream_paths();
-    let verified = match header_frame(&headers) {
-        None => None,
-        Some(frame) => match verify(&state, &paths, &frame).await {
+    let verified = if has_identity_headers(&headers) {
+        match counted(crate::rpc::auth::verify_headers(&state, &paths, &headers).await) {
             Ok(address) => Some(address),
-            Err(HandshakeError::CatalystUnavailable(e)) => {
-                tracing::warn!(error = %e, "stream upgrade: the chain could not be verified");
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            Err(SocketAuthError::Refused(e)) => {
+                tracing::info!(error = %e, "stream upgrade refused");
+                let status = StatusCode::from_u16(e.status()).unwrap_or(StatusCode::UNAUTHORIZED);
+                return status.into_response();
             }
             Err(e) => {
                 tracing::info!(error = %e, "stream upgrade refused");
                 return StatusCode::UNAUTHORIZED.into_response();
             }
-        },
+        }
+    } else {
+        None
     };
     ws.max_message_size(state.settings.stream.max_payload_bytes)
         .on_upgrade(move |mut socket| async move {

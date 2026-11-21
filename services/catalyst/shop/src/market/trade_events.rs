@@ -861,6 +861,36 @@ pub(super) async fn bid_asset(
     })
 }
 
+/// The stored metadata of a `bid_received` notification, local or on-chain:
+/// the asset's seller is the recipient, `amount` the price as the
+/// description shows it.
+pub(crate) fn bid_received_metadata(
+    meta: &AssetMeta,
+    link: String,
+    price: &str,
+    amount: &str,
+    network: &str,
+) -> Value {
+    let mut m = serde_json::Map::new();
+    m.insert("image".into(), json!(meta.image));
+    m.insert("seller".into(), json!(meta.seller));
+    m.insert("category".into(), json!(meta.category));
+    insert_opt(&mut m, "rarity", &meta.rarity);
+    m.insert("link".into(), json!(link));
+    insert_opt(&mut m, "nftName", &meta.name);
+    m.insert("price".into(), json!(price));
+    m.insert("title".into(), json!("Bid Received"));
+    m.insert(
+        "description".into(),
+        json!(format!(
+            "You received a bid of {amount} MANA for this {}.",
+            meta.name.as_deref().unwrap_or_default()
+        )),
+    );
+    m.insert("network".into(), json!(network));
+    Value::Object(m)
+}
+
 /// marketplace-server's BID_RECEIVED event of a local bid as the old parser
 /// stored it, for the asset's seller (item creator or nft owner); `None`
 /// without a price or when the bidder is the seller.
@@ -876,32 +906,15 @@ pub(super) fn bid_received_notification(
         return None;
     }
     let recipient = crate::shared::identity::Address::parse(&meta.seller).ok()?;
-    let mut m = serde_json::Map::new();
-    m.insert("image".into(), json!(meta.image));
-    m.insert("seller".into(), json!(meta.seller));
-    m.insert("category".into(), json!(meta.category));
-    insert_opt(&mut m, "rarity", &meta.rarity);
-    m.insert(
-        "link".into(),
-        json!(format!("{marketplace_base}/account?section=bids")),
+    let metadata = bid_received_metadata(
+        meta,
+        format!("{marketplace_base}/account?section=bids"),
+        price,
+        &format_ether(price),
+        network,
     );
-    insert_opt(&mut m, "nftName", &meta.name);
-    m.insert("price".into(), json!(price));
-    m.insert("title".into(), json!("Bid Received"));
-    m.insert(
-        "description".into(),
-        json!(format!(
-            "You received a bid of {} MANA for this {}.",
-            format_ether(price),
-            meta.name.as_deref().unwrap_or_default()
-        )),
-    );
-    m.insert("network".into(), json!(network));
-    let mut n = crate::shared::notifications::NewNotification::now(
-        recipient,
-        "bid_received",
-        Value::Object(m),
-    );
+    let mut n =
+        crate::shared::notifications::NewNotification::now(recipient, "bid_received", metadata);
     n.id = uuid::Uuid::new_v5(
         &BID_NOTIFICATION_NS,
         format!("bid-created:{trade_id}").as_bytes(),

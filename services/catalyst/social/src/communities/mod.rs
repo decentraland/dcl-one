@@ -320,7 +320,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Result<Address, CommError> {
-        Ok(auth::require_signer(headers, method, path, self.eip1654.as_deref()).await?)
+        Ok(auth::require_signer(headers, method, path, self.eip1654.as_ref()).await?)
     }
 
     pub async fn optional_signer(
@@ -329,7 +329,7 @@ impl State {
         method: &str,
         path: &SignedPath,
     ) -> Option<Address> {
-        auth::try_extract_signer(headers, method, path, self.eip1654.as_deref()).await
+        auth::try_extract_signer(headers, method, path, self.eip1654.as_ref()).await
     }
 
     pub fn admin_bearer(&self, headers: &HeaderMap) -> bool {
