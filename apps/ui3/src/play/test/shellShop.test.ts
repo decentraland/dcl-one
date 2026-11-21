@@ -1105,6 +1105,27 @@ describe('the node’s record of a Credits purchase’s credits', () => {
     expect(pages).toEqual([0, 200])
   })
 
+  it('reads every credit of the group in one pass, and stops at the first one spent even where a later page fails', async () => {
+    const { client, pages } = shopWith([...filler(250), { id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${OTHER}:0`, status: 'EXPIRED' }])
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], client)).toBe('expired')
+    expect(pages).toEqual([0, 200])
+    // Spent on the first page: read no further, so a failing next page says nothing against it.
+    let reads = 0
+    const failing = createFakeShop({
+      userPurchases: () => {
+        if (reads++ > 0) throw new Error('upstream unavailable')
+        return { purchases: [{ id: `${CREDIT}:0`, status: 'SETTLED', usdCents: 50, createdAt: 1, txHash: null }, ...filler(199).map((r) => ({ ...r, usdCents: 50, createdAt: 1, txHash: null }))], total: 400 }
+      }
+    })
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], failing.client)).toBe('settled')
+    expect(reads).toBe(1)
+  })
+
+  it('takes a credit as spent by any of its lines, and as expired only when every line read of it is', async () => {
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${CREDIT}:1`, status: 'SETTLED' }]).client)).toBe('settled')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${CREDIT}:1`, status: 'PENDING' }]).client)).toBe('open')
+  })
+
   it('is expired only once every credit of the group is listed expired', async () => {
     expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }]).client)).toBe('open')
     expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${OTHER}:0`, status: 'EXPIRED' }]).client)).toBe('expired')

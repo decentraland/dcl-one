@@ -26,7 +26,7 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
-import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, findCreditRecords, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, ExactGrantUnavailableError, getManaSpendingAuthorization, GrantCancelledError, GrantNotInEffectError, GrantNotRecordedError, GrantUncheckedError } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -327,19 +327,22 @@ export function claimLock(locks: LockManager | undefined, id: string, wait = fal
   return webLock(locks, `dcl-inworld-shop:operation:${id}`, wait)
 }
 /**
- * What the node's record says of a group's credits, each found by its salt among its lines (`<salt>:<line>`) and paged as
- * the web Shop reads them (findCreditRecord): `settled` once any was spent, `expired` once every one is listed EXPIRED,
- * else `open` (one not listed yet, or still reserved: the watcher reads again). A read that fails throws.
+ * What the node's record says of a group's credits, read in one paged pass over the history for all of them
+ * (findCreditRecords: each by its salt among its lines, `<salt>:<line>`), which stops at the first line SETTLED:
+ * `settled` once any line of any of them was spent, `expired` once every one is listed and every line read of it is
+ * EXPIRED, else `open` (one not listed yet, or still reserved: the watcher reads again). A read that fails throws.
  */
 export async function creditRecordOutcome(buyer: string, creditIds: string[], client: ShopClient): Promise<'settled' | 'expired' | 'open'> {
   if (creditIds.length === 0) return 'open'
-  let expired = 0
-  for (const id of creditIds) {
-    const record = await findCreditRecord(buyer, id, client)
-    if (record?.status === 'SETTLED') return 'settled'
-    if (record?.status === 'EXPIRED') expired++
-  }
-  return expired === creditIds.length ? 'expired' : 'open'
+  const spent = (lines: PurchaseRecord[]) => lines.some((line) => line.status === 'SETTLED')
+  const found = await findCreditRecords(buyer, creditIds, client, (byCredit) => [...byCredit.values()].some(spent))
+  if ([...found.values()].some(spent)) return 'settled'
+  return creditIds.every((id) => {
+    const lines = found.get(id.toLowerCase()) ?? []
+    return lines.length > 0 && lines.every((line) => line.status === 'EXPIRED')
+  })
+    ? 'expired'
+    : 'open'
 }
 
 /** A credit the server reports expired and unused, with no receipt for the hash, is read again this much later
@@ -1094,11 +1097,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     return decided
   }
 
-  /** The chain's finalized block time, through the page's evidence reader; a reader without it proves nothing. */
-  const finalizedTime = (chainId: number): Promise<number> => {
-    const evidence = svc.manaEvidence()
-    return evidence.finalizedTime ? evidence.finalizedTime(chainId) : Promise.reject(new Error('no chain time'))
-  }
+  /** The chain's finalized block time, through the page's evidence reader. */
+  const finalizedTime = (chainId: number): Promise<number> => svc.manaEvidence().finalizedTime(chainId)
 
   /**
    * Whether a split's credit provably can't be spent any more: its own expiry, kept with the sale before it was sent (or,
@@ -1992,6 +1992,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (state === 'waiting' || answered) return
         state = 'waiting'
         message = undefined
+        // Each AUTHORIZE is its own attempt: what held an earlier one back says nothing of this one.
+        heldBack = null
         draw()
         const rail = svc.rail()
         const send = rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))

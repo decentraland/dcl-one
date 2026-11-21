@@ -303,13 +303,34 @@ function evidenceOf(reader: ChainReader): SplitEvidenceReader {
  * starts where the last one did) throws `HistoryUnfinishedError`, as a failed read does.
  */
 export async function findCreditRecord(account: string, creditId: string, client: ShopClient): Promise<PurchaseRecord | null> {
-  const salt = creditId.toLowerCase();
+  const found = await findCreditRecords(account, [creditId], client);
+  return found.get(creditId.toLowerCase())?.[0] ?? null;
+}
+
+/**
+ * The node's records of several credits, in one paged pass: every line read of each (`<salt>:<position>`), by its salt
+ * (lowercased), in the history's order. It reads on until each credit has a line, `stop` says it has enough, or the history
+ * ends; one that can't be read to its end (`HISTORY_MAX_PAGES`, or a page that starts where the last one did) throws
+ * `HistoryUnfinishedError`, as a failed read does. A credit with no line read has no entry.
+ */
+export async function findCreditRecords(
+  account: string,
+  creditIds: string[],
+  client: ShopClient,
+  stop?: (found: Map<string, PurchaseRecord[]>) => boolean,
+): Promise<Map<string, PurchaseRecord[]>> {
+  const salts = new Set(creditIds.map((id) => id.toLowerCase()));
+  const found = new Map<string, PurchaseRecord[]>();
+  if (salts.size === 0) return found;
   let head: string | null = null;
   for (let skip = 0, page = 0; ; page++) {
     if (page >= HISTORY_MAX_PAGES) throw new HistoryUnfinishedError();
     const { items, total, returned } = await fetchUserPurchases(account, { all: true, first: HISTORY_PAGE, skip }, client);
-    const found = items.find((p) => p.id.split(":")[0]!.toLowerCase() === salt);
-    if (found) return found;
+    for (const item of items) {
+      const salt = item.id.split(":")[0]!.toLowerCase();
+      if (salts.has(salt)) found.set(salt, [...(found.get(salt) ?? []), item]);
+    }
+    if (found.size === salts.size || (stop && stop(found))) return found;
     // The same first line again: the server ignored the offset, and reading on would read the same page forever.
     const first = items[0]?.id ?? null;
     if (first !== null && first === head) throw new HistoryUnfinishedError();
@@ -317,7 +338,7 @@ export async function findCreditRecord(account: string, creditId: string, client
     // By the rows the server sent: the ones the decoder drops (a status it does not know) still take their place, and a
     // server that sends fewer than asked starts its next page right after them.
     skip += returned;
-    if (returned === 0 || skip >= total) return null;
+    if (returned === 0 || skip >= total) return found;
   }
 }
 

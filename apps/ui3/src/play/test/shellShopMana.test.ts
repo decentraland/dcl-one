@@ -623,6 +623,21 @@ describe('the in-world purchase with MANA', () => {
       expect(w.relay.posts).toHaveLength(0)
     })
 
+    it('offers the same split again when the node refused the balance but every read of it still covers its part, sending nothing', async () => {
+      on()
+      const w = world()
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      // The balance read says 50 cents, before and after; the node says it doesn't cover the part.
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      w.shop = createFakeShop({ authorizeCreditBatch: () => ({ status: 402, body: { error: 'insufficient', balanceCents: 20, requiredCents: 50 } }) })
+      await p.open()
+      const first = await p.until('method')
+      first.handlers.onPay?.('split')
+      await vi.waitFor(() => expect(p.shown.filter((s) => s.view.step === 'method')).toHaveLength(2))
+      expect((p.shown.at(-1)!.view as { split: { credits: number } }).split.credits).toBe((first.view as { split: { credits: number } }).split.credits)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
     it('asks no authorization when the allowance already covers the gap', async () => {
       on()
       const w = world()
@@ -938,6 +953,33 @@ describe('the in-world purchase with MANA', () => {
       await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('Another purchase with Credits and MANA') }))
       expect(w.relay.posts).toHaveLength(0)
       expect(Object.keys(localStorage).some((k) => k.startsWith('dcl-shop-exact-grant'))).toBe(false)
+    })
+
+    it('says what stopped each AUTHORIZE: one held back, then one declined, never the first one\'s reason again', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const original = w.wallet.request.bind(w.wallet)
+      let first = true
+      w.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        // The first time the wallet signs, another tab's split of another item hands off.
+        if (args.method === 'eth_signTypedData_v4' && first) {
+          first = false
+          writeSplitHold(BUYER, OTHER_LINE, otherHold)
+        }
+        return original(args)
+      }) as typeof w.wallet.request
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: expect.stringContaining('Another purchase with Credits and MANA') }))
+      // That split is found out; the buyer tries again and declines in the wallet.
+      localStorage.removeItem(splitHoldKey(BUYER, OTHER_LINE))
+      w.wallet.next = 'reject'
+      p.shown.at(-1)!.handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: 'You declined the authorization in your wallet.' }))
+      expect(w.relay.posts).toHaveLength(0)
     })
 
     it('hands off no sale when another item\'s split started after the approval, checked again under the approval\'s lock', async () => {

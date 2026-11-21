@@ -38,6 +38,8 @@ function chain(opts: { now?: bigint; executions?: ManaExecution[] | Error; unlog
   const all = [...new Map([...logged, ...(opts.unlogged ?? [])].map((e) => [`${e.blockNumber}:${e.logIndex}`, e])).values()]
   const evidence: ManaEvidence = {
     finalized: vi.fn(async () => F),
+    // The finalized block's time: the epoch, so no credit's expiry is proven here.
+    finalizedTime: vi.fn(async () => 0),
     nonceAt: vi.fn(async (_c, _v, user, block) => (opts.now ?? 7n) - BigInt(all.filter((e) => e.user === user && e.blockNumber > block).length)),
     executions: vi.fn(async (_c, _v, from, to) => {
       if (opts.executions instanceof Error) throw opts.executions

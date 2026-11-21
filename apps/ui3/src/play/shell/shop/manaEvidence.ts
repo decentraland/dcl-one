@@ -48,8 +48,8 @@ export interface ManaExecution {
 /** The chain reads this needs, each through an explicit block where it matters. */
 export interface ManaEvidence {
   finalized(chainId: number): Promise<bigint>
-  /** The finalized block's time (unix seconds): every later block's is past it. */
-  finalizedTime?(chainId: number): Promise<number>
+  /** The finalized block's time (unix seconds): every later block's is past it. What proves a credit's expiry. */
+  finalizedTime(chainId: number): Promise<number>
   /** The venue's meta-transaction nonce for `user`, as of `block`. */
   nonceAt(chainId: number, venue: { address: string; metaTx: MetaTxStyle }, user: string, block: bigint): Promise<bigint>
   /** Every MetaTransactionExecuted of `venue` in [from, to], complete or a throw. */
