@@ -17,9 +17,12 @@
 //!
 //! What a member spends is counted twice: the requests the shared walk
 //! attempted, once, in the caller's count (the measure; a cut short walk
-//! keeps it too), and each member's logical debit, what the
-//! window would have cost it alone ([`requests_for`] of its own filters at
-//! the window's starting chunk), against its own [`Budget`]. A shared read
+//! keeps it too), and each member's logical debit, what the window would
+//! have cost it alone, estimated ([`requests_for`] of its own filters at the
+//! window's starting chunk), against its own [`Budget`]. The estimate leaves
+//! out what a read spends narrowing a range the endpoint caps or halving a
+//! chunk it refuses, so a shared window may cost more than its members were
+//! debited; the count shows it. A shared read
 //! that fails ends the group: each member goes on alone with what is left of
 //! its budget, from its last committed checkpoint.
 
@@ -554,6 +557,9 @@ pub async fn walk_together(
             let need = requests_for(&w.groups, window_chunk).max(1);
             if need > w.budget.remaining && w.budget.first_window_used {
                 w.out.paused = true;
+                // The walk's requests are the group's, reported once.
+                w.out.requests = 0;
+                w.out.elapsed_ms = started.elapsed().as_millis() as u64;
                 let checkpoint = Some(w.checkpoint(at.full_history));
                 ends.push((
                     w.member.slot,
@@ -637,6 +643,7 @@ pub async fn walk_together(
                     &times,
                 )
                 .await?;
+                #[cfg(test)]
                 ix.window_committed().await;
                 Ok(written)
             })

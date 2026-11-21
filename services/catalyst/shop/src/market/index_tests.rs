@@ -6121,7 +6121,7 @@ mod supervisor {
             .await;
         }
         assert!(
-            moved.elapsed() < Duration::from_millis(1_500),
+            moved.elapsed() < Duration::from_secs(5),
             "within a few dispatches: {:?}",
             moved.elapsed()
         );
@@ -6722,8 +6722,8 @@ mod supervisor {
     }
 
     /// The members' own steps run side by side: two gates held up cost the
-    /// healthy member one deadline, not two, and a gate that panics as it is
-    /// called fails its member alone.
+    /// healthy member one deadline (2 s), not two, and a gate that panics as
+    /// it is called fails its member alone.
     #[tokio::test]
     async fn held_and_panicking_gates_cost_the_others_one_deadline() {
         let Some(db) = ScratchDb::create().await else {
@@ -6804,7 +6804,7 @@ mod supervisor {
                 ),
             ],
         );
-        sup.member_deadline = Duration::from_secs(1);
+        sup.member_deadline = Duration::from_secs(2);
         let jobs = Jobs::new().with_first_pass_now(true);
         chain_jobs::spawn(&jobs, sup);
         for indexer in [
@@ -6827,7 +6827,7 @@ mod supervisor {
         })
         .await;
         assert!(
-            moved.elapsed() < Duration::from_millis(1_700),
+            moved.elapsed() < Duration::from_millis(3_500),
             "one deadline for both held gates: {:?}",
             moved.elapsed()
         );

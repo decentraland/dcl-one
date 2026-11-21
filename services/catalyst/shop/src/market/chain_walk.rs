@@ -859,8 +859,9 @@ pub trait ChainIndex: Send + Sync {
     /// The start of a pass that does not run [`ChainIndex::lanes`] (a shared
     /// walk): what the index keeps in memory is reloaded, as lanes does first.
     fn begin_pass(&self) {}
-    /// After each window's rows and cursor advance committed, in every walk.
-    /// No index keeps anything here; a test holds a commit's return there.
+    /// After each window's rows and cursor advance committed, in every walk:
+    /// a test holds a commit's return here. Test builds only.
+    #[cfg(test)]
     async fn window_committed(&self) {}
     /// Whether this pass must walk alone, with its lanes (the nft walk owing
     /// a backfill): a shared walk runs no lanes.
@@ -1558,6 +1559,7 @@ async fn walk(
             &times,
         )
         .await?;
+        #[cfg(test)]
         ix.window_committed().await;
         out.logs += window.logs.len();
         out.rows_written += written;

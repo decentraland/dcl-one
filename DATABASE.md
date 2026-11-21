@@ -2092,7 +2092,9 @@ projection that process enables under the projection's own lease,
 `<index job>-<network>` (`nft-index-matic`, `trade-events-index-matic`,
 `rentals-index-ethereum`), so
 processes with different projections enabled share a network. Each
-projection keeps its own cadence and backoff. A process that runs no fleet
+projection keeps its own cadence and backoff, though one that reached the
+target may join a due companion's shared walk ahead of its own turn, so
+projections walking together go at the faster cadence. A process that runs no fleet
 jobs (`FLEET_JOBS_ENABLED=false`) takes no lease and walks nothing.
 
 The projections a supervisor holds that read the same endpoint and stand at
