@@ -2220,11 +2220,16 @@ rebuild, as after any rewind.
 
 A sales fold may have inferred a bid's seller from an nft transfer before
 the nft walk saw the fork. So the nft walk's rewind on Polygon (also a
-rebuild) records its point in `shop.bid_seller_recheck`, in its own
-transaction. The next bids fold reads those rows, infers again the seller of
-every bid created past the lowest point (a seller a sale event names stays),
-then deletes the rows it read; a row recorded meanwhile waits for the next
-fold. The table holds one row per nft rewind until a sales fold runs.
+rebuild) records its point in `shop.bid_seller_recheck`, in the rewind's
+transaction, with the deletion of the transfers past it: a fold that reads
+the row also reads the rewound transfers. The next bids fold reads those
+rows, infers again the seller of every bid created past the lowest point (a
+seller a sale event names stays), then deletes the rows it read; a row
+recorded meanwhile waits for the next fold. The table holds one row per nft
+rewind until a sales fold runs. After a rebuild the point is the start, so
+every seller inferred from a transfer is unset and comes back as the nft
+walk passes its bid again; nothing outside the bids fold reads
+`nft_bid.seller`.
 
 A database that gains the table starts with no recovery points. A search
 reads only the points below the cursor, and the first advance's point is
