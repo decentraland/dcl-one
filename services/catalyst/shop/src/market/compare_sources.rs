@@ -457,9 +457,9 @@ pub async fn read_only_pool(database_url: &str) -> anyhow::Result<PgPool> {
     let opts = sqlx::postgres::PgConnectOptions::from_str(database_url)
         .context("DATABASE_URL")?
         .options([("default_transaction_read_only", "on")]);
-    Ok(sqlx::postgres::PgPoolOptions::new()
+    sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
         .connect_with(opts)
         .await
-        .context("connecting to DATABASE_URL")?)
+        .context("connecting to DATABASE_URL")
 }
