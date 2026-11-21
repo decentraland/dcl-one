@@ -344,13 +344,15 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const [unsent, setUnsent] = useState<{ attempt: string; message: string } | null>(null);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   // Each time the wallet has said its accounts changed while this dialog is open: an account read asked before the latest
-  // of them is stale, so a wallet gone (or moved) since is never read back as the buyer's.
+  // of them is stale, so a wallet gone (or moved) since is never read back as the buyer's. What it said is its active
+  // account from then on, at once: none (a wallet gone) too, which the page's own copy may not draw again (none before).
   const accountChanges = useRef(0);
   useEffect(
     () =>
       subscribeWallet(provider, {
-        onAccountsChanged: () => {
+        onAccountsChanged: (next) => {
           accountChanges.current += 1;
+          activeAccount.current = next;
         },
       }),
     [provider],

@@ -1629,6 +1629,42 @@ describe("a split whose outcome is not known", () => {
     expect(authorizations(demo)).toBe(1);
   });
 
+  it("when the wallet disconnects once the click's account read (the buyer) has brought up Approve, before the page's own read answers, nothing is asked of the wallet: no prompt, no POST, no credit, the lock let go", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // Each account read is answered as the wallet stood when it was asked, and only once the test lets it through.
+    const request = demo.wallet.request;
+    const late: (() => void)[] = [];
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method !== "eth_accounts") return request(args);
+      const answer = await request(args);
+      await new Promise<void>((resolve) => late.push(resolve));
+      return answer;
+    }) as typeof request;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await waitFor(() => expect(late).toHaveLength(2));
+    const [onOpening, atClick] = late as [() => void, () => void];
+    // Only the click's read answers (the buyer): Approve comes up, the page's own copy of the account still unheard.
+    await act(async () => atClick());
+    const approve = await screen.findByTestId("authorize-step-action");
+    // Then the wallet disconnects, the session staying: an event that leaves the page's copy where it was (none).
+    act(() => demo.wallet.emit("accountsChanged", []));
+    await act(async () => {
+      onOpening();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    await act(async () => {
+      fireEvent.click(approve);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
   it.each([
     ["the wallet moves to another account", "wallet"],
     ["the session and its wallet both move to another account", "session"],
