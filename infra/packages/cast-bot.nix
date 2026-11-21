@@ -110,6 +110,6 @@ in crane.buildPackage (common // {
     removeReferencesToVendoredSources "$out" "${webrtc}"
     install -Dm644 ${webrtc}/LICENSE.md $out/share/doc/cast-bot/libwebrtc-LICENSE.md
   '';
-  passthru = { inherit cargoArtifacts cargoVendorDir webrtc sdk tests; };
+  passthru = { inherit cargoArtifacts cargoVendorDir webrtc webrtcTag sdk sdkSource tests; };
   meta.mainProgram = "cast-bot";
 })
