@@ -1,11 +1,11 @@
-# Worlds: compatibility differences and unresolved gaps
+# Worlds: compatibility differences
 
 The `worlds` crate serves the worlds content server's HTTP surface (under
 `/worlds-content-server`, and at the root where no catalyst route has the
 path; see "Mounts") and its comms admission. The wire
 contract follows
 [`decentraland/worlds-content-server`](https://github.com/decentraland/worlds-content-server).
-This page records intended differences and explicitly marked unresolved gaps.
+This page records intended differences and their operational limitations.
 A difference not listed here is a gap, not a decision.
 
 ## HTTP
@@ -442,21 +442,29 @@ A difference not listed here is a gap, not a decision.
 
 - **Delivery.** World notices are written to the catalyst's own inbox and
   email outbox, in the same transaction as the grant edit or quota change,
-  instead of being published to SNS. Repeated quota notices with the same ID
-  keep the first row's metadata, occurrence time and read state, and retain
-  its email delivery state without requeuing email. Every grant or revoke
-  is its own notice, so the latest notice matches the current grant.
+  instead of being published to SNS. Quota notices deduplicate by wallet,
+  notice kind and UTC date of block creation. Warning, restriction and
+  restoration are separate kinds; restoration uses the block's creation day,
+  even when access is restored on a later day. Repeats keep the first row's
+  metadata, occurrence time, read state and email delivery state without
+  requeuing email. Every grant or revoke is its own notice, so the latest
+  notice matches the current grant.
   One edit notifies every added and removed address in
   batches of at most 50, all in the edit transaction. The description names
   the world when it matches the world-name pattern, or says "a world"
   otherwise; the `world` field keeps the world name.
-- **Unresolved: same-day quota blocks.** A new block still receives a new
-  notice ID even when the same wallet was blocked earlier that UTC day, so
-  another notice and email can be created. Daily deduplication by wallet,
-  notice kind and UTC date of block creation remains open in
-  [#1575](https://github.com/decentraland/dcl-one/issues/1575), including how
-  existing native and imported notice history participates. This is an
-  unresolved compatibility gap, not an accepted difference.
+- **Quota history at cutover.** When the block's exact creation time is
+  available, the writer links existing native notices for all three quota
+  kinds to their daily keys on any quota emission, retaining their row IDs,
+  contents, read state and email delivery records. Already closed native
+  blocks and imported history may lack the information needed for that link.
+  Such unlinked history can coexist with one additional daily notice per
+  wallet and kind at cutover; this change does not consolidate all historical
+  duplicates. Later repeats use the daily key. Retire quota writers that do
+  not set daily keys before relying on daily uniqueness. The
+  [quota identity decision](../../../docs/adr/2026-11-21-world-quota-notice-identity.md)
+  states this boundary. Quota enforcement, grace timing and the notification
+  deadline metadata are unchanged.
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
 - **Settings events.** `PUT /world/{name}/settings` publishes no

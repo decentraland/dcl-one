@@ -833,17 +833,35 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 one writer of `social.notifications` and its `social.notification_deliveries`
 email row, for every producer: Social's own and Shop's sale, royalty, transfer,
 rental, on-chain bid (`bid_received`, `shop/src/market/bid_notices.rs`), tip,
-favorite-discount, credits and goal notices. Each batch is one statement on the
-producer's executor, so the notice commits with the producer's transaction.
-Ordinary writes upsert by `id` (or by `(address, broadcast_key)` for keyed
-notices), refreshing metadata and occurrence time. Worlds' three quota kinds
+favorite-discount, credits and goal notices. Writes use the producer's executor,
+so the notice commits with the producer's transaction. Ordinary batches use one
+statement and upsert by `id` (or by `(address, broadcast_key)` for keyed notices),
+refreshing metadata and occurrence time. Worlds' three quota kinds
 (`worlds_missing_resources`, `worlds_access_restricted`, `worlds_access_restored`)
-use `insert_notifications_once`: a repeated ID keeps the first row's metadata,
-occurrence time and read state, and its existing email delivery state. Only a
-new notification gets a `pending` delivery row, or `skipped` with the reason when
-the type has no template or the recipient cannot receive it. Social owns both
-tables, reads them and delivers the email; `with_emailable_kinds!` is the one
-list of templated types the writer and Social's templates share.
+carry an explicit producer persistence policy: one first notice per wallet,
+kind and UTC date of block creation, including restoration on a later day.
+Social sorts quota notices by wallet; for each notice, the shared writer takes
+that wallet's transaction-scoped notification lock before aliasing and
+inserting. The locks remain held until transaction completion, in a namespace
+distinct from Worlds' quota locks. The writer links the
+three exact native notice IDs derived from the block's full creation timestamp
+to daily `broadcast_key` values where no daily carrier already exists before
+inserting the current notice. A linked row keeps its ID, metadata, occurrence
+time, read state and email delivery records; a new daily notice uses the
+canonical daily ID. Repeated daily keys leave that first row unchanged.
+Aliasing and insertion use the mutation's
+transaction and existing notification keys; no table or index is added.
+Only a new notification gets a `pending` delivery row, or `skipped` with the
+reason when the type has no template or the recipient cannot receive it.
+Social owns both tables, reads them and delivers the email;
+`with_emailable_kinds!` is the one list of templated types the writer and
+Social's templates share.
+
+The [quota notice identity decision](docs/adr/2026-11-21-world-quota-notice-identity.md)
+retains a cutover boundary: already closed native blocks or imported rows that
+cannot be linked from exact creation facts can overlap with the first daily
+notice. This writer does not reconstruct missing timestamps or consolidate all
+historical duplicates.
 
 ## Social realtime notification workload
 

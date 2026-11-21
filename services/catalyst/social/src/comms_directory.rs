@@ -1,6 +1,7 @@
 //! Social-owned implementation of the gatekeeper directory.
 use crate::comms::interfaces::{
     ModerationNotification, SocialDirectory, StreamingNotification, UserNotification,
+    UserNotificationPersistence,
 };
 use crate::{Address, CommunityId};
 use chrono::NaiveDateTime;
@@ -33,25 +34,33 @@ impl SocialDirectory for Directory {
         transaction: &mut sqlx::PgConnection,
         notifications: &[UserNotification],
     ) -> Result<(), sqlx::Error> {
-        let (quota, other): (Vec<_>, Vec<_>) = notifications
-            .iter()
-            .map(|n| crate::notifications::store::NewNotification {
-                id: n.id,
-                address: n.recipient.clone(),
-                kind: n.kind.to_string(),
-                metadata: n.metadata.clone(),
-                occurred_at: n.occurred_at,
-            })
-            .partition(|n| {
-                matches!(
-                    n.kind.as_str(),
-                    "worlds_missing_resources"
-                        | "worlds_access_restricted"
-                        | "worlds_access_restored"
-                )
-            });
-        crate::shared::notifications::insert_notifications_once(&mut *transaction, &quota).await?;
-        crate::notifications::store::insert_notifications(transaction, &other).await?;
+        let (mut insert_once, refresh): (Vec<_>, Vec<_>) = notifications.iter().partition(|n| {
+            matches!(
+                n.persistence,
+                UserNotificationPersistence::InsertOnce { .. }
+            )
+        });
+        insert_once.sort_by(|a, b| a.recipient.cmp(&b.recipient));
+        let convert = |n: &UserNotification| crate::notifications::store::NewNotification {
+            id: n.id,
+            address: n.recipient.clone(),
+            kind: n.kind.to_string(),
+            metadata: n.metadata.clone(),
+            occurred_at: n.occurred_at,
+        };
+        for notice in insert_once {
+            let UserNotificationPersistence::InsertOnce { aliases } = &notice.persistence else {
+                unreachable!()
+            };
+            crate::shared::notifications::insert_keyed_notification_once(
+                &mut *transaction,
+                &convert(notice),
+                aliases,
+            )
+            .await?;
+        }
+        let refresh: Vec<_> = refresh.into_iter().map(convert).collect();
+        crate::notifications::store::insert_notifications(transaction, &refresh).await?;
         Ok(())
     }
     async fn community_members(&self, community: CommunityId) -> Result<Vec<Address>, sqlx::Error> {
@@ -237,6 +246,7 @@ mod tests {
             kind: "worlds_permission_granted",
             metadata: serde_json::json!({"title": "World Permission Granted"}),
             occurred_at: chrono::Utc::now().naive_utc(),
+            persistence: UserNotificationPersistence::Refresh,
         };
         let count = || async {
             sqlx::query_scalar::<_, i64>(
@@ -293,6 +303,13 @@ mod tests {
             kind,
             metadata: serde_json::json!({"title":"first", "when":1234}),
             occurred_at: first_at,
+            persistence: if kind == "worlds_permission_granted" {
+                UserNotificationPersistence::Refresh
+            } else {
+                UserNotificationPersistence::InsertOnce {
+                    aliases: Vec::new(),
+                }
+            },
         })
         .collect();
         let mut first_batch = notices.clone();

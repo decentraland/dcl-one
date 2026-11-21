@@ -165,6 +165,14 @@ pub struct NewNotification {
     pub occurred_at: NaiveDateTime,
 }
 
+/// An exact previous notice identity that can carry a source's stable key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationAlias {
+    pub legacy_id: Uuid,
+    pub daily_id: Uuid,
+    pub kind: &'static str,
+}
+
 impl NewNotification {
     pub fn now(address: Address, kind: &str, metadata: Json) -> Self {
         Self {
@@ -187,20 +195,7 @@ pub async fn insert_notifications<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    insert_batch(executor, batch, false, OnConflict::Refresh).await
-}
-
-/// Inserts the batch and delivery rows once per id. Repeats preserve the
-/// original payload, time and read state and never create another delivery.
-/// If an id occurs more than once in the batch, its first entry wins.
-pub async fn insert_notifications_once<'e, E>(
-    executor: E,
-    batch: &[NewNotification],
-) -> Result<u64, sqlx::Error>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
-    insert_batch(executor, batch, false, OnConflict::KeepFirst).await
+    insert_batch(executor, batch, false).await
 }
 
 /// Social's event notices only; other producers use [`insert_notifications`].
@@ -214,7 +209,7 @@ pub async fn insert_event_notifications<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    insert_batch(executor, batch, true, OnConflict::Refresh).await
+    insert_batch(executor, batch, true).await
 }
 
 /// One notification deduplicated per `(address, broadcast_key)` (the
@@ -254,16 +249,66 @@ where
     Ok(inserted as u64)
 }
 
-enum OnConflict {
-    Refresh,
-    KeepFirst,
+/// Inserts a notice and delivery once per source identity. Exact previous
+/// identities keep their row, payload and delivery; only their key is attached.
+/// The caller must retain the transaction through the source's own write.
+pub async fn insert_keyed_notification_once(
+    transaction: &mut sqlx::PgConnection,
+    notification: &NewNotification,
+    aliases: &[NotificationAlias],
+) -> Result<u64, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "notifications.user:{}",
+            notification.address.as_str()
+        ))
+        .execute(&mut *transaction)
+        .await?;
+    for alias in aliases {
+        sqlx::query(
+            "UPDATE social.notifications SET broadcast_key=$4
+             WHERE id=$1 AND address=$2 AND type=$3 AND broadcast_key IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM social.notifications
+                   WHERE address=$2 AND (broadcast_key=$4 OR id=$5)
+               )",
+        )
+        .bind(alias.legacy_id)
+        .bind(&notification.address)
+        .bind(alias.kind)
+        .bind(format!("user-notification:{}", alias.daily_id))
+        .bind(alias.daily_id)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    let sql = format!(
+        r#"
+        WITH ups AS (
+            INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT DO NOTHING
+            RETURNING id, address, type, true AS inserted
+        ),
+        {tail}
+        "#,
+        tail = *UPSERT_TAIL
+    );
+    let inserted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(notification.id)
+        .bind(&notification.address)
+        .bind(&notification.kind)
+        .bind(&notification.metadata)
+        .bind(format!("user-notification:{}", notification.id))
+        .bind(notification.occurred_at)
+        .fetch_one(transaction)
+        .await?;
+    Ok(inserted as u64)
 }
 
 async fn insert_batch<'e, E>(
     executor: E,
     batch: &[NewNotification],
     event_preferences: bool,
-    on_conflict: OnConflict,
 ) -> Result<u64, sqlx::Error>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -271,13 +316,11 @@ where
     if batch.is_empty() {
         return Ok(0);
     }
-    // Each statement touches an id once. Refresh takes the last entry;
-    // insert-once takes the first. Id order keeps row locking consistent.
+    // Each statement touches an id once, taking the last entry.
+    // Id order keeps row locking consistent.
     let mut seen = std::collections::HashSet::new();
-    let mut unique: Vec<&NewNotification> = match on_conflict {
-        OnConflict::Refresh => batch.iter().rev().filter(|n| seen.insert(n.id)).collect(),
-        OnConflict::KeepFirst => batch.iter().filter(|n| seen.insert(n.id)).collect(),
-    };
+    let mut unique: Vec<&NewNotification> =
+        batch.iter().rev().filter(|n| seen.insert(n.id)).collect();
     unique.sort_by_key(|n| n.id);
     let batch = unique;
     let ids: Vec<Uuid> = batch.iter().map(|n| n.id).collect();
@@ -285,14 +328,6 @@ where
     let kinds: Vec<&str> = batch.iter().map(|n| n.kind.as_str()).collect();
     let metadata: Vec<Json> = batch.iter().map(|n| n.metadata.clone()).collect();
     let occurred: Vec<NaiveDateTime> = batch.iter().map(|n| n.occurred_at).collect();
-    let conflict = match on_conflict {
-        OnConflict::Refresh => {
-            "ON CONFLICT (id) DO UPDATE
-                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type"
-        }
-        OnConflict::KeepFirst => "ON CONFLICT (id) DO NOTHING",
-    };
     let sql = format!(
         r#"
         WITH ups AS (
@@ -309,7 +344,9 @@ where
                 ) AS visible
             ) v
             ORDER BY n.id
-            {conflict}
+            ON CONFLICT (id) DO UPDATE
+                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
             RETURNING id, address, type, (xmax = 0) AS inserted
         ),
         {tail}
