@@ -175,8 +175,9 @@ export class GrantNotRecordedError extends Error {
 
 /** The purchase the approval was for was cancelled before it went out: nothing was recorded or sent. */
 export class GrantCancelledError extends Error {
-  constructor() {
-    super("The approval was cancelled, so nothing was sent.");
+  /** `message`: why, when the caller knows better than "cancelled" (another purchase holding it, say). */
+  constructor(message = "The approval was cancelled, so nothing was sent.") {
+    super(message);
     this.name = "GrantCancelledError";
   }
 }
