@@ -17,6 +17,10 @@ For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
+To prove or reject a claim about multiplayer behaviour against a running stack
+(a pull request that fixes a connection problem, a decision record, a bug report), use
+[validate-multiplayer-claim](.claude/skills/validate-multiplayer-claim/SKILL.md).
+
 ## Design feasibility
 
 - Before planning or implementing runtime features, resource policies or architecture
@@ -155,3 +159,12 @@ window; a move of a path under `apps/bevy-explorer`, `tooling/bevy-e2e-*.py` or 
 `bevy-explorer-e2e.yml`; a rename of the CI workflow, its jobs or the web artifact.
 `apps/bevy-explorer/e2e/README.md`, "Keeping the suite true", maps each change to what it touches
 and the checks to run.
+
+The comms end-to-end tool in `services/catalyst/comms-e2e` drives the same console and also
+starts `harness-util join` (`rendering/bevy-explorer/source/local-harness/presence/harness-util`)
+as its LiveKit client, so a change to either updates it in the same change: the reply of
+`/world_state`, `/pulse_state`, `/connectivity_state` or `/transport_state` (read by
+`src/explorer.rs` and `src/scenarios/explorer.rs`), a launch option it passes (`src/explorer.rs`),
+or the `join` line protocol, its stdin commands and stdout JSON events (`src/livekit.rs`). Its
+README, "What the explorer answers", lists the replies it reads; `cargo test -p
+catalyst-comms-e2e` covers the parsers, and the explorer scenarios check them against a build.
