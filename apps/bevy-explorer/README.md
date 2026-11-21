@@ -84,6 +84,14 @@ so a QA build pointed at `decentraland.org` is `dev`. Setting the variable build
 the key ships with the next web build on `main` and the next desktop `workflow_dispatch`. It is part
 of the compiled engine's cache key, so that build recompiles the WASM.
 
+Debug tools: a build made with a non-empty `BEVY_DEBUG_TOOLS` carries the console commands that must
+never reach production (`console::DEBUG_TOOLS`), such as `/wear <urn>[,<urn>...]`, which puts any
+wearable on the local player for this client only (`/wear clear` takes them off, `/wear` reports
+them; also in the debug panel). They work without `?preview=true`. CI sets the variable for a pull
+request's web build and for a desktop build of any ref but `main` or a tag; `main`, its published
+web app and release builds never have it. A local build opts in by exporting it. It is part of the
+compiled engine's cache key, so a pull request never reuses `main`'s compiled engine.
+
 ## Actions and outputs
 
 | Root workflow | Work | Outputs |

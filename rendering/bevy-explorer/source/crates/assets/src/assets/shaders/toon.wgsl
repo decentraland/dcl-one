@@ -29,10 +29,9 @@
 #import bevy_pbr::{clustered_forward, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
 #endif
 
-// scale from the material's emissive (glTF factor x4 avatar multiplier x10
-// shader lift, see bound_material.wgsl) to the avatar's lit range: a glTF
-// emissive factor of 0.25 glows at about 2, and 1.0 at four times that.
-const EMISSIVE_SCALE: f32 = 0.2;
+// undoes bound_material.wgsl's x10 lift: an avatar material's emissive is already its emission
+// in output units, where lit white is 1 (avatar::avatar_emission)
+const EMISSIVE_SCALE: f32 = 0.1;
 
 const LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 

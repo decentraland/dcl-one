@@ -2,8 +2,8 @@
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{SampleBias, alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
-    pbr_bindings::{material, emissive_texture, emissive_sampler},
-    pbr_types::{STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT},
+    pbr_bindings::{material, emissive_texture, emissive_sampler, base_color_texture, base_color_sampler},
+    pbr_types::{STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK},
     mesh_functions,
     mesh_view_bindings::{globals, view, lights},
     pbr_types,
@@ -82,8 +82,35 @@ fn fragment(
     let sample_index = 0u;
 #endif
 
+    // avatars: the toon meshes and the face features
+    let avatar = (mesh_tag & (#{TOON_MESH_TAG} | #{FACIAL_FEATURE_MESH_TAG})) != 0u;
+
+#ifdef VERTEX_UVS
+    // avatars sample their base colour at full resolution: a mip chain fades sparse detail such
+    // as glitter. A masked material keeps the filtered alpha its prepass and shadow discard by
+    if avatar && (material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
+#ifdef STANDARD_MATERIAL_BASE_COLOR_UV_B
+#ifdef VERTEX_UVS_B
+        let base_uv = (material.uv_transform * vec3(in.uv_b, 1.0)).xy;
+#else
+        let base_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+#endif
+#else
+        let base_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
+#endif
+        var full_resolution = material.base_color * textureSampleLevel(base_color_texture, base_color_sampler, base_uv, 0.0);
+#ifdef VERTEX_COLORS
+        full_resolution *= in.color;
+#endif
+        if (material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK {
+            full_resolution.a = pbr_input.material.base_color.a;
+        }
+        pbr_input.material.base_color = full_resolution;
+    }
+#endif
+
     // apply emmissive multiplier
-    // dcl uses default 2.0 intensity. we also override bevy_pbr base emissive rules so that 
+    // dcl uses default 2.0 intensity. we also override bevy_pbr base emissive rules so that
     // - if emissive texture is supplied but color is not, we use the texture (bevy by default multiplies emissive color and emissive texture, so color must be white to pass the texture through)
     // - if emissive color (== gltf emissive_intensity == dcl pbr emissive_color * emissive_intensity) is supplied but emissive texture is not, we use emissive color * base color
     // emissive color | emissive texture  | result
@@ -91,31 +118,31 @@ fn fragment(
     // x                no                  x * base color
     // 0                t                   2 * t
     // x != 0           t                   x * t
+    // Avatars take neither substitute: their emission is the emissive colour times the emissive
+    // texture (sampled at full resolution, as the base colour), or the colour alone without one
     var emissive: vec3<f32> = material.emissive.rgb;
 #ifdef VERTEX_UVS
     if ((material.flags & STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u) {
-        if dot(emissive, emissive) == 0.0 {
+        if !avatar && dot(emissive, emissive) == 0.0 {
             emissive = vec3(2.0);
         }
-        var bias: SampleBias;
-        bias.mip_bias = view.mip_bias;
-        emissive = vec3<f32>(emissive * textureSampleBias(
-            emissive_texture, 
-            emissive_sampler,
 #ifdef STANDARD_MATERIAL_EMISSIVE_UV_B
 #ifdef VERTEX_UVS_B
-            (material.uv_transform * vec3(in.uv_b, 1.0)).xy,
+        let emissive_uv = (material.uv_transform * vec3(in.uv_b, 1.0)).xy;
 #else
-            (material.uv_transform * vec3(in.uv, 1.0)).xy,
+        let emissive_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
 #endif
 #else
-            (material.uv_transform * vec3(in.uv, 1.0)).xy,
+        let emissive_uv = (material.uv_transform * vec3(in.uv, 1.0)).xy;
 #endif
-            bias.mip_bias,
-        ).rgb);
+        var bias: SampleBias;
+        bias.mip_bias = view.mip_bias;
+        let filtered = textureSampleBias(emissive_texture, emissive_sampler, emissive_uv, bias.mip_bias).rgb;
+        let full_resolution = textureSampleLevel(emissive_texture, emissive_sampler, emissive_uv, 0.0).rgb;
+        emissive = emissive * select(filtered, full_resolution, avatar);
     } else {
         // emissive is set, no emissive texture, use base color texture as emissive texture (only if present)
-        if ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u) {
+        if !avatar && ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u) {
             emissive = emissive * pbr_input.material.base_color.rgb;
         }
     }

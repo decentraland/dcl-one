@@ -490,7 +490,8 @@ fn app_with_avatar_scenes() -> App {
         .init_asset::<SkinnedMeshInverseBindposes>()
         .init_asset::<AnimationGraph>()
         .init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>()
-        .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
+        .init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>()
+        .init_resource::<EmissiveStrengths>();
     app.finish();
     app.cleanup();
     app
@@ -943,6 +944,87 @@ fn render_definition(avatar_outline: bool, disable_dither: bool) -> AvatarRender
         bounds: SceneBounds::unbounded(),
         disable_dither,
         avatar_outline,
+    }
+}
+
+/// a wearable material derives an avatar material that culls its back faces, double-sided or
+/// not, and whose emissive is the glTF factor without its emissive strength
+#[test]
+fn derived_materials_cull_back_faces_and_drop_the_emissive_strength() {
+    let mut standard_materials = Assets::<StandardMaterial>::default();
+    let mut scene_materials = Assets::<SceneMaterial>::default();
+    let mut mat_cache = AssetCache::<AvatarMatKey, SceneMaterial>::default();
+    let def = render_definition(true, false);
+
+    let derive = |strength: Option<f32>,
+                  standard_materials: &mut Assets<StandardMaterial>,
+                  scene_materials: &mut Assets<SceneMaterial>,
+                  mat_cache: &mut AssetCache<AvatarMatKey, SceneMaterial>| {
+        // as the glTF loader builds it: the factor 0.25 times the strength, double-sided
+        let mat = StandardMaterial {
+            emissive: LinearRgba::rgb(0.25, 0.25, 0.25) * strength.unwrap_or(1.0),
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        };
+        let h_mat = MeshMaterial3d(standard_materials.add(mat.clone()));
+        let loaded = AvatarLoaded {
+            body_instance: SceneSpawner::default().spawn(Handle::default()),
+            wearable_instances: Vec::new(),
+            skin_materials: default(),
+            hair_materials: default(),
+            emissive_strengths: strength
+                .map(|strength| (h_mat.0.id(), strength))
+                .into_iter()
+                .collect(),
+        };
+        let handle = derived_scene_material(
+            &mat,
+            &h_mat,
+            &def,
+            &loaded,
+            0.0,
+            &bounds_bits(&def.bounds),
+            0.0,
+            mat_cache,
+            scene_materials,
+        );
+        scene_materials.get(&handle).unwrap().base.clone()
+    };
+
+    for strength in [None, Some(4.0)] {
+        let base = derive(
+            strength,
+            &mut standard_materials,
+            &mut scene_materials,
+            &mut mat_cache,
+        );
+        assert_eq!(base.cull_mode, Some(Face::Back), "{strength:?}");
+        assert!(!base.double_sided, "{strength:?}");
+        assert_eq!(
+            base.emissive.to_vec3(),
+            Vec3::splat(avatar_emission(0.25)),
+            "{strength:?}"
+        );
+    }
+}
+
+/// the emission curve: faint under a factor of 0.1, 2.5 at 0.2, steep above
+#[test]
+fn avatar_emission_follows_the_gamma_curve() {
+    for (factor, expected) in [
+        (0.0, 0.0),
+        (0.05, 0.127),
+        (0.1, 0.535),
+        (0.2, 2.5),
+        (0.5, 18.75),
+        (1.0, 86.2),
+    ] {
+        let got = avatar_emission(factor);
+        assert!(
+            (got - expected).abs() < 0.01 * expected.max(1.0),
+            "{factor}: {got}"
+        );
     }
 }
 

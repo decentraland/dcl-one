@@ -16,6 +16,7 @@ use bevy::{
             MeshAabb, MeshTag,
         },
         primitives::Aabb,
+        render_resource::Face,
         view::RenderLayers,
     },
     scene::InstanceId,
@@ -52,6 +53,8 @@ pub mod avatar_texture;
 pub mod colliders;
 #[cfg(feature = "explorer")]
 mod debug_avatars;
+#[cfg(feature = "explorer")]
+mod debug_wear;
 #[cfg(feature = "explorer")]
 pub mod dynamic_nametag;
 #[cfg(feature = "explorer")]
@@ -185,11 +188,13 @@ impl Plugin for AvatarRenderPlugin {
         app.add_plugins(spring_bones::SpringBonesPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
+        app.init_resource::<EmissiveStrengths>();
         app.add_systems(
             PostUpdate,
             (
                 clean_asset_cache::<AvatarMatKey, SceneMaterial>,
                 clean_asset_cache::<AvatarMaskKey, MaskMaterial>,
+                forget_emissive_strengths,
             ),
         );
         app.add_systems(
@@ -228,6 +233,9 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(HeadIkPlugin);
         app.add_plugins(ik_debug::IkDebugPlugin);
         app.add_plugins(debug_avatars::DebugAvatarsPlugin);
+        if console::DEBUG_TOOLS {
+            app.add_plugins(debug_wear::DebugWearPlugin);
+        }
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
@@ -1251,9 +1259,55 @@ pub struct AvatarLoaded {
     wearable_instances: Vec<Option<InstanceId>>,
     skin_materials: HashSet<Handle<StandardMaterial>>,
     hair_materials: HashSet<Handle<StandardMaterial>>,
+    /// the emissive strengths of the avatar's materials that have one (EmissiveStrengths)
+    emissive_strengths: HashMap<AssetId<StandardMaterial>, f32>,
 }
 #[derive(Component)]
 pub struct AvatarProcessed;
+
+/// The KHR_materials_emissive_strength of every wearable material that has one other than 1. The
+/// glTF loader multiplies the emissive by it; avatars do not take that extension, so it is divided
+/// back out. Read from each wearable's glTF source, which is then dropped.
+#[derive(Resource, Default)]
+struct EmissiveStrengths(HashMap<AssetId<StandardMaterial>, f32>);
+
+/// Reads a loaded wearable glTF's emissive strengths into `strengths` and drops its source, the
+/// document and binary chunk the loader kept for this. A glTF already read has no source left.
+fn take_emissive_strengths(
+    gltfs: &mut Assets<Gltf>,
+    id: AssetId<Gltf>,
+    strengths: &mut EmissiveStrengths,
+) {
+    if gltfs.get(id).is_none_or(|gltf| gltf.source.is_none()) {
+        return;
+    }
+    let Some(gltf) = gltfs.get_mut(id) else {
+        return;
+    };
+    let Some(source) = gltf.source.take() else {
+        return;
+    };
+    // the loader keeps the materials in the document's order
+    for (material, handle) in source.document.materials().zip(&gltf.materials) {
+        if let Some(strength) = material
+            .emissive_strength()
+            .filter(|s| *s > 0.0 && *s != 1.0)
+        {
+            strengths.0.insert(handle.id(), strength);
+        }
+    }
+}
+
+fn forget_emissive_strengths(
+    mut events: EventReader<AssetEvent<StandardMaterial>>,
+    mut strengths: ResMut<EmissiveStrengths>,
+) {
+    for event in events.read() {
+        if let AssetEvent::Removed { id } = event {
+            strengths.0.remove(id);
+        }
+    }
+}
 
 /// Tells a scene how the avatar on one of its entities is loading, as the AssetLoad loading
 /// state of that entity (a grow-only set the scene reads in order): Loading once the look's
@@ -1266,7 +1320,8 @@ fn spawn_scenes(
         (Without<AvatarLoaded>, Without<AvatarProcessed>),
     >,
     asset_server: Res<AssetServer>,
-    gltfs: Res<Assets<Gltf>>,
+    mut gltfs: ResMut<Assets<Gltf>>,
+    mut emissive_strengths: ResMut<EmissiveStrengths>,
     mut scene_spawner: ResMut<SceneSpawner>,
     // absent without the asset pipeline (tests): nothing reloads
     ipfs: Option<Res<IpfsResource>>,
@@ -1309,6 +1364,22 @@ fn spawn_scenes(
         if any_loading || face_loading {
             continue;
         }
+
+        let models = || {
+            def.body.model.iter().chain(
+                def.wearables
+                    .iter()
+                    .flat_map(|(_, wearable)| wearable.model.as_ref()),
+            )
+        };
+        for model in models() {
+            take_emissive_strengths(&mut gltfs, model.gltf.id(), &mut emissive_strengths);
+        }
+        let avatar_emissive_strengths: HashMap<_, _> = models()
+            .filter_map(|model| gltfs.get(&model.gltf))
+            .flat_map(|gltf| &gltf.materials)
+            .filter_map(|h| Some((h.id(), *emissive_strengths.0.get(&h.id())?)))
+            .collect();
 
         let Some(gltf) = def
             .body
@@ -1432,6 +1503,7 @@ fn spawn_scenes(
                 wearable_instances: instances.collect(),
                 skin_materials,
                 hair_materials,
+                emissive_strengths: avatar_emissive_strengths,
             },
             Visibility::Hidden,
         ));
@@ -1444,7 +1516,21 @@ pub struct AvatarMaterials(pub HashSet<AssetId<SceneMaterial>>);
 #[derive(Component, Debug)]
 pub struct PreviousAvatar(Entity);
 
-const AVATAR_EMISSIVE_MULTIPLIER: f32 = 4.0;
+/// An avatar's emission for one channel of a glTF emissive factor, in the toon lighting's output
+/// units (lit white is 1): five times the factor read as a gamma-encoded colour and decoded to
+/// linear (past 1 by a power of 2.2), times 2.5. A factor of 0.2 emits 2.5 and 1.0 about 86,
+/// while a factor under 0.1 stays faint. toon.wgsl undoes bound_material's x10 lift.
+fn avatar_emission(factor: f32) -> f32 {
+    let gamma = factor.max(0.0) * 5.0;
+    let linear = if gamma <= 0.04045 {
+        gamma / 12.92
+    } else if gamma < 1.0 {
+        ((gamma + 0.055) / 1.055).powf(2.4)
+    } else {
+        gamma.powf(2.2)
+    };
+    linear * 2.5
+}
 /// The camera-to-player dither's base opacity for avatars: an avatar fades as a whole, by the
 /// worst point of its capsule, so all of it shows the floor. Higher than text's for that reason.
 const AVATAR_DITHER_BASE_OPACITY: f32 = 0.5;
@@ -2144,13 +2230,19 @@ fn derived_scene_material(
         mat.base_color
     };
 
+    // the glTF emissive factor alone: the loader's KHR_materials_emissive_strength divided out
+    let strength = loaded_avatar
+        .emissive_strengths
+        .get(&h_mat.0.id())
+        .copied()
+        .unwrap_or(1.0);
     let emissive_color_specified =
         mat.emissive.red != 0.0 || mat.emissive.green != 0.0 || mat.emissive.blue != 0.0;
     let emissive = if emissive_color_specified {
         LinearRgba {
-            red: mat.emissive.red * AVATAR_EMISSIVE_MULTIPLIER,
-            green: mat.emissive.green * AVATAR_EMISSIVE_MULTIPLIER,
-            blue: mat.emissive.blue * AVATAR_EMISSIVE_MULTIPLIER,
+            red: avatar_emission(mat.emissive.red / strength),
+            green: avatar_emission(mat.emissive.green / strength),
+            blue: avatar_emission(mat.emissive.blue / strength),
             alpha: mat.emissive.alpha,
         }
     } else {
@@ -2171,6 +2263,11 @@ fn derived_scene_material(
             base_color,
             emissive,
             depth_bias,
+            // every avatar material culls its back faces, double-sided in the glTF or not: a
+            // blended skirt does not show its inside through its front, and a mesh modelled with
+            // back-to-back faces draws one layer, not two
+            cull_mode: Some(Face::Back),
+            double_sided: false,
             ..mat.clone()
         },
         extension: SceneBound::new(&def.bounds, oob)
