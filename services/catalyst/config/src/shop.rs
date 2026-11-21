@@ -213,6 +213,46 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
     pub marketplace_index_chain_id_matic: i64,
 
+    /// `rpc` (default) or `shadow`: in shadow, each window the RPC walk
+    /// accepts is also read from the portal (`CHAIN_LOGS_PORTAL_URL`) in the
+    /// background and compared; the walk still reads and commits RPC data only.
+    #[arg(long, env = "CHAIN_LOGS_SOURCE", default_value = "rpc", value_parser = ["rpc", "shadow"])]
+    pub chain_logs_source: String,
+
+    /// The origin of a portal speaking the SQD portal protocol (the SQD
+    /// portal, or chain-lake's): https, or http on loopback; no path.
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_URL")]
+    pub chain_logs_portal_url: Option<String>,
+
+    #[arg(
+        long,
+        env = "CHAIN_LOGS_PORTAL_DATASET_ETHEREUM",
+        default_value = "ethereum-mainnet"
+    )]
+    pub chain_logs_portal_dataset_ethereum: String,
+
+    #[arg(
+        long,
+        env = "CHAIN_LOGS_PORTAL_DATASET_MATIC",
+        default_value = "polygon-mainnet"
+    )]
+    pub chain_logs_portal_dataset_matic: String,
+
+    /// Sent as `x-api-key` to the portal origin only (or
+    /// CHAIN_LOGS_PORTAL_API_KEY_FILE).
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_API_KEY", hide_env_values = true)]
+    pub chain_logs_portal_api_key: Option<String>,
+
+    /// Requests per second to the portal origin, shared by every reader of
+    /// it in the process, burst one.
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_MAX_RPS", default_value_t = 1.0)]
+    pub chain_logs_portal_max_rps: f64,
+
+    /// Report the portal as holding every log of its datasets: an operator
+    /// assertion, labelled as such, never a measurement.
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_ASSERT_FULL_HISTORY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub chain_logs_portal_assert_full_history: bool,
+
     /// Between two rebuilds of the co-ownership neighbours (min 600).
     #[arg(
         long,

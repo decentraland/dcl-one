@@ -38,6 +38,50 @@ use super::trade_events::{self, TradeEventsIndex};
 use super::{MarketSettings, MarketplaceState, Settings, SharedState};
 use crate::chain_index::rpc::Rpc;
 
+tokio::task_local! {
+    /// The shadow a test's walks offer their accepted windows to.
+    static TEST_SHADOW: Option<Arc<crate::chain_index::portal::shadow::Shadow>>;
+}
+
+/// The shadow of the running test, if it set one.
+fn test_shadow() -> Option<Arc<crate::chain_index::portal::shadow::Shadow>> {
+    TEST_SHADOW.try_with(Clone::clone).ok().flatten()
+}
+
+/// A Polygon shadow over a portal that accepts connections and never
+/// answers, its worker running until the returned sender is dropped, and
+/// how many connections the portal took.
+async fn stalled_shadow() -> (
+    Arc<crate::chain_index::portal::shadow::Shadow>,
+    tokio::sync::oneshot::Sender<()>,
+    Arc<AtomicUsize>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = accepted.clone();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = listener.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            held.push(sock);
+        }
+    });
+    let reader =
+        crate::chain_index::portal::PortalReader::new(&origin, "polygon-mainnet", None, 100.0)
+            .unwrap();
+    let (shadow, worker) = crate::chain_index::portal::shadow::channel(
+        reader,
+        "matic",
+        crate::chain_index::portal::AddressHistory::Unknown,
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(worker.run(async move {
+        let _ = stopped.await;
+    }));
+    (shadow, stop, accepted)
+}
+
 struct ScratchDb {
     name: String,
     pool: PgPool,
@@ -581,7 +625,11 @@ async fn try_pass(
     url: &str,
     ix: &dyn ChainIndex,
 ) -> anyhow::Result<PassOutcome> {
-    let source = chain_walk::RpcSource::new(Rpc::at(&state.http, url));
+    let shadow = test_shadow();
+    let source = crate::chain_index::portal::shadow::Shadowed::new(
+        chain_walk::RpcSource::new(Rpc::at(&state.http, url)),
+        shadow.as_deref(),
+    );
     let owner = chain_walk::test_owner(&state.pool, ix, &state.settings.market.indexes).await;
     chain_walk::run_pass(
         &state.pool,
@@ -1576,8 +1624,30 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
 /// outcomes.
 #[tokio::test]
 async fn the_walk_sends_the_pinned_requests_in_order() {
+    pinned_requests_in_order().await;
+}
+
+/// The same requests and outcomes with a shadow whose portal never answers:
+/// the walk offers its accepted windows and never waits on them.
+#[tokio::test]
+async fn the_pinned_requests_hold_with_a_stalled_shadow() {
+    let (shadow, stop, accepted) = stalled_shadow().await;
+    if TEST_SHADOW
+        .scope(Some(shadow), pinned_requests_in_order())
+        .await
+    {
+        assert!(
+            accepted.load(Ordering::SeqCst) >= 1,
+            "an accepted window reached the shadow's portal"
+        );
+    }
+    drop(stop);
+}
+
+/// Runs the pinned walk; false when no test database is configured.
+async fn pinned_requests_in_order() -> bool {
     let Some(db) = ScratchDb::create().await else {
-        return;
+        return false;
     };
     let s = nft_index::start_block(ChainNet::Matic);
     let c1 = "0x00000000000000000000000000000000000000c1";
@@ -1675,6 +1745,7 @@ async fn the_walk_sends_the_pinned_requests_in_order() {
     assert_eq!(outcomes, PINNED_OUTCOMES);
     assert_eq!(calls, PINNED_CALLS);
     db.drop().await;
+    true
 }
 
 /// `tag` with every block number at or past `s` written as `s+N`.
@@ -3557,6 +3628,123 @@ async fn mana_sync_migration_preserves_existing_cursors() {
     db.drop().await;
 }
 
+/// A source recording every window the walk accepts.
+struct Recording<'a> {
+    inner: chain_walk::RpcSource<'a>,
+    offers: Mutex<Vec<(u64, u64, String)>>,
+}
+
+#[async_trait::async_trait]
+impl chain_walk::LogSource for Recording<'_> {
+    async fn chain_id(&self) -> Result<chain_walk::Read<u64>, crate::chain_index::rpc::RpcError> {
+        self.inner.chain_id().await
+    }
+    async fn head(&self) -> Result<chain_walk::Read<u64>, crate::chain_index::rpc::RpcError> {
+        self.inner.head().await
+    }
+    async fn finalized(
+        &self,
+    ) -> Result<
+        chain_walk::Read<crate::chain_index::rpc::BlockHeader>,
+        crate::chain_index::rpc::RpcError,
+    > {
+        self.inner.finalized().await
+    }
+    async fn header(
+        &self,
+        number: u64,
+    ) -> Result<
+        chain_walk::Read<crate::chain_index::rpc::BlockHeader>,
+        crate::chain_index::rpc::RpcError,
+    > {
+        self.inner.header(number).await
+    }
+    async fn window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[chain_walk::LogGroup],
+        chunk: &mut usize,
+    ) -> Result<chain_walk::Window, crate::chain_index::rpc::RpcError> {
+        self.inner.window(from, to, groups, chunk).await
+    }
+    async fn block_times(
+        &self,
+        logs: &[crate::chain_index::rpc::RpcLog],
+    ) -> Result<chain_walk::Read<HashMap<i64, i64>>, crate::chain_index::rpc::RpcError> {
+        self.inner.block_times(logs).await
+    }
+    fn accepted(&self, read: &crate::chain_index::portal::compare::AcceptedView<'_>) {
+        self.offers
+            .lock()
+            .push((read.from, read.reached, read.reached_hash.to_string()));
+    }
+}
+
+/// Only a window whose bracket held is offered: a fork while its logs are
+/// read offers nothing, and a clean pass offers each committed window once,
+/// contiguous, the last one ending at the cursor's block and hash.
+#[tokio::test]
+async fn only_a_window_whose_bracket_held_is_offered() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(100, vec![], 1000, 1000);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(10, 30), false);
+    let ix = super::mana_transfers::ManaTransfersIndex {
+        net: ChainNet::Matic,
+    };
+    let source = Recording {
+        inner: chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
+        offers: Mutex::new(Vec::new()),
+    };
+    let owner = chain_walk::test_owner(&db.pool, &ix, &st.settings.market.indexes).await;
+    chain.reorg_on_logs.store(true, Ordering::SeqCst);
+    let pass = chain_walk::run_pass(
+        &db.pool,
+        &source,
+        &ix,
+        &st.settings.market.indexes,
+        &owner,
+        None,
+        &|_| {},
+    )
+    .await;
+    assert!(pass.is_err(), "the bracket caught the fork");
+    assert!(
+        source.offers.lock().is_empty(),
+        "a rejected bracket offers nothing"
+    );
+    let out = chain_walk::run_pass(
+        &db.pool,
+        &source,
+        &ix,
+        &st.settings.market.indexes,
+        &owner,
+        None,
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let offers = source.offers.lock().clone();
+    assert!(offers.len() > 1, "{offers:?}");
+    for pair in offers.windows(2) {
+        assert_eq!(pair[1].0, pair[0].1 + 1, "contiguous: {offers:?}");
+    }
+    let cur = chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    let last = offers.last().unwrap();
+    assert_eq!(
+        (last.1 as i64, Some(last.2.clone())),
+        (cur.last_block, cur.last_block_hash)
+    );
+    assert_eq!(out.indexed_to, cur.last_block);
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn mana_sync_refuses_missing_finality_and_a_fork_during_fetch() {
     let Some(db) = ScratchDb::create().await else {
@@ -5124,6 +5312,7 @@ mod supervisor {
             projections,
             member_deadline: Duration::from_secs(60),
             stats: Arc::default(),
+            shadow: None,
         }
     }
 
@@ -5551,9 +5740,26 @@ mod supervisor {
     /// the pinned order (the finalized header serves as the window's before).
     #[tokio::test]
     async fn two_projections_at_one_checkpoint_read_their_windows_once() {
+        windows_once().await;
+    }
+
+    /// The same requests and rows with a shadow whose portal never answers:
+    /// the walks alone and the shared walk offer their accepted windows and
+    /// never wait on them.
+    #[tokio::test]
+    async fn the_shared_trace_holds_with_a_stalled_shadow() {
+        let (shadow, stop, accepted) = super::stalled_shadow().await;
+        if super::TEST_SHADOW.scope(Some(shadow), windows_once()).await {
+            assert!(accepted.load(Ordering::SeqCst) >= 1);
+        }
+        drop(stop);
+    }
+
+    /// Runs the comparison; false when no test database is configured.
+    async fn windows_once() -> bool {
         let (Some(alone), Some(together)) = (ScratchDb::create().await, ScratchDb::create().await)
         else {
-            return;
+            return false;
         };
         let s = nft_index::start_block(ChainNet::Matic);
         let c1 = "0x00000000000000000000000000000000000000c1";
@@ -5656,6 +5862,7 @@ mod supervisor {
             &at,
             Duration::from_secs(60),
             &counted,
+            super::test_shadow().as_deref(),
         )
         .await;
         let sent = counted.load(Ordering::SeqCst);
@@ -5723,6 +5930,7 @@ mod supervisor {
         assert!(together_calls.len() < alone_calls.len());
         alone.drop().await;
         together.drop().await;
+        true
     }
 
     /// The touch each member's first walk under its generation makes runs
@@ -5799,6 +6007,7 @@ mod supervisor {
                 &at,
                 Duration::from_millis(800),
                 &counted,
+                None,
             ),
         )
         .await
@@ -6517,6 +6726,7 @@ mod supervisor {
                     &at,
                     Duration::from_secs(60),
                     &AtomicUsize::new(0),
+                    None,
                 )
                 .await;
                 for (slot, end) in ends {
@@ -6910,6 +7120,7 @@ mod supervisor {
             &at,
             Duration::from_secs(60),
             &counted,
+            None,
         )
         .await;
         assert_eq!(

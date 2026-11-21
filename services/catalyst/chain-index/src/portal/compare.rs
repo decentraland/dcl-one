@@ -335,6 +335,8 @@ pub struct Outcome {
     /// Portal logs no filter asked for: a sign the portal's filter semantics drift.
     pub drift_filtered: usize,
     pub stopped: Option<Stop>,
+    /// Up to five differing positions, `(block, log index, kind)`.
+    pub examples: Vec<(u64, u32, &'static str)>,
 }
 
 impl Outcome {
@@ -357,6 +359,13 @@ impl Outcome {
             arity_filtered: 0,
             drift_filtered: 0,
             stopped: None,
+            examples: Vec::new(),
+        }
+    }
+
+    fn example(&mut self, at: (u64, u32), kind: &'static str) {
+        if self.examples.len() < 5 {
+            self.examples.push((at.0, at.1, kind));
         }
     }
 
@@ -494,7 +503,10 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
     };
     for (at, r) in &rpc {
         match portal.get(at) {
-            None => out.missing += 1,
+            None => {
+                out.missing += 1;
+                out.example(*at, "missing");
+            }
             Some(p) => {
                 let same = lower(&r.address) == p.address
                     && r.topics
@@ -511,11 +523,15 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
                 };
                 if !(same && tx) {
                     out.mismatch += 1;
+                    out.example(*at, "mismatch");
                 }
             }
         }
     }
-    out.extra = portal.keys().filter(|at| !rpc.contains_key(at)).count();
+    for at in portal.keys().filter(|at| !rpc.contains_key(at)) {
+        out.extra += 1;
+        out.example(*at, "extra");
+    }
     let blocks: BTreeSet<u64> = rpc.keys().map(|(b, _)| *b).collect();
     for block in blocks {
         let Some((hash, time)) = fetched.headers.get(&block) else {

@@ -968,6 +968,7 @@ pub fn decode_page(lines: &[Vec<u8>], from: u64, to: u64) -> Result<Page, Portal
 }
 
 pub mod compare;
+pub mod shadow;
 
 #[cfg(test)]
 mod tests;

@@ -276,7 +276,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 81] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 82] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -448,6 +448,10 @@ impl Config {
                 &mut self.economy.rpc_endpoint_polygon,
             ),
             ("TRADE_RPC_URLS", &mut self.marketplace.trade_rpc_urls),
+            (
+                "CHAIN_LOGS_PORTAL_API_KEY",
+                &mut self.marketplace.chain_logs_portal_api_key,
+            ),
             (
                 "CATALYRST_CREDITS_ADMIN_TOKEN",
                 &mut self.shop.catalyrst_credits_admin_token,
@@ -813,6 +817,7 @@ mod tests {
         "OZ_RELAYER_API_KEY",
         "RPC_ENDPOINT_POLYGON",
         "TRADE_RPC_URLS",
+        "CHAIN_LOGS_PORTAL_API_KEY",
         "CREDITS_CAPTCHA_SECRET",
         "STRIPE_SECRET_KEY",
         "STRIPE_WEBHOOK_SECRET",
@@ -1262,6 +1267,7 @@ mod tests {
             "CATALYRST_ECONOMY_ADMIN_TOKEN",
             "RPC_ENDPOINT_POLYGON",
             "TRADE_RPC_URLS",
+            "CHAIN_LOGS_PORTAL_API_KEY",
             "CATALYRST_CREDITS_ADMIN_TOKEN",
             "CREDITS_CAPTCHA_SECRET",
             "STRIPE_SECRET_KEY",
