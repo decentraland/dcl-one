@@ -44,8 +44,9 @@ pub(crate) async fn content_type(
 /// where upstream's sniff throws (a 500 there). `file-type` detects no text format, JSON
 /// included. A storage fault is an error.
 ///
-/// One deliberate difference from the catalyst (`content-reads.md` CR-7): a type a browser opens
-/// as a document ([`inert`]) is `application/octet-stream`.
+/// One deliberate, permanent difference from the catalyst (`content-reads.md` CR-7,
+/// `docs/adr/2026-11-21-stored-files-served-inert.md`): a type a browser opens as a document
+/// ([`inert`]) is `application/octet-stream`.
 pub(crate) async fn sniff(window: &mut Window<'_>) -> AppResult<&'static str> {
     let size = window.file_size();
     Ok(catalyst::file_type(window, size)
