@@ -632,7 +632,7 @@ pub async fn create_community(
         Some(v) => try_resp!(parse_visibility(v)),
         None => "all".to_string(),
     };
-    let place_ids = fields.place_ids.unwrap_or_default();
+    let place_ids = super::places::canonical_place_ids(&fields.place_ids.unwrap_or_default());
     if !match state.has_owned_name(&signer).await {
         Ok(owns) => owns,
         Err(error) => return error.into_response(),
@@ -841,15 +841,11 @@ pub async fn update_community(
     // owner/moderator tiers as the edit check above.
     let place_ids: Option<Vec<String>> = match fields.place_ids {
         Some(ids) => {
-            let mut unique: Vec<String> = Vec::new();
-            for id in ids {
-                if !unique.contains(&id) {
-                    unique.push(id);
-                }
-            }
+            let unique = super::places::canonical_place_ids(&ids);
+            // lower(): rows written before ids were canonicalized keep their standing
             let held: Vec<String> = try_resp!(map_db(
                 sqlx::query_scalar(
-                    "SELECT place_id FROM social.community_places WHERE community_id = $1"
+                    "SELECT lower(place_id) FROM social.community_places WHERE community_id = $1"
                 )
                 .bind(uuid)
                 .fetch_all(&state.pool)

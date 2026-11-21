@@ -2341,7 +2341,8 @@ mod tests {
                 &member,
                 CommunityPlacesAdd {
                     community_id: hex_id.clone(),
-                    place_ids: vec!["p-1".into(), "p-2".into()],
+                    // stored lowercased, case variants once
+                    place_ids: vec!["P-1".into(), "p-2".into(), "p-1".into()],
                 },
             ),
         )
@@ -2351,12 +2352,12 @@ mod tests {
             &app,
             &owner,
             "DELETE",
-            &format!("{base}/places/p-2"),
+            &format!("{base}/places/P-2"),
             &env(
                 &owner,
                 CommunityPlaceRemove {
                     community_id: hex_id.clone(),
-                    place_id: "p-2".into(),
+                    place_id: "P-2".into(),
                 },
             ),
         )

@@ -55,9 +55,10 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
         .unwrap();
     rolled_back.rollback().await.unwrap();
     assert_eq!(counters(&rig, a).await.1, 0);
+    // a photo's place in another case still matches the stored lowercase id
     for _ in 0..2 {
         let mut tx = rig.pool.begin().await.unwrap();
-        ranking::record_photo(&mut tx, &key, &place, now)
+        ranking::record_photo(&mut tx, &key, &place.to_uppercase(), now)
             .await
             .unwrap();
         tx.commit().await.unwrap();
