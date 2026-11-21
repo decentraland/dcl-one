@@ -1,0 +1,4 @@
+/* The HUD canvas page: the HUD's tokens and the page styles its hosts load (apps/hud/styles/page.css). The hosts'
+   --hud-logo is left out: nothing in the HUD reads it. */
+@import '@hud/styles/tokens.css';
+@import '@hud/styles/page.css';

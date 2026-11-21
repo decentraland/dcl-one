@@ -2,6 +2,7 @@
 //       webapp/src/modules/order/sagas.ts (EXECUTE_ORDER for an order with a tradeId: accept the signed trade)
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import Button from "../../../atoms/Button";
@@ -12,6 +13,7 @@ import { declined, isTxPending, isTxReverted } from "../../market/lib/tx";
 import { fetchTrade, TRADE_ASSET, type Trade } from "../../market/lib/trades";
 import { buyTradeWithMana, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";
+import { invalidateAfterPurchase } from "../../checkout/lib/after-purchase";
 import "./legacyorderbuy.css";
 
 type LandTradeBuyProps = {
@@ -39,6 +41,7 @@ export function tradeManaPrice(trade: Trade): ManaWei | null {
 
 export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, loadTrade = fetchTrade }: LandTradeBuyProps) {
   const wallet = useShopWallet();
+  const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
   const [accepted, setAccepted] = useState(false);
   const [trade, setTrade] = useState<{ value: Trade | null; failed: boolean }>({ value: null, failed: false });
@@ -89,6 +92,8 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, l
         },
       });
       setPhase({ kind: "success", txHash: hash });
+      // The trade spent MANA: the balances, the token and the buyer's lists are read again.
+      invalidateAfterPurchase(qc);
       onDone?.(hash);
     } catch (e) {
       if (isTxPending(e)) setPhase({ kind: "pending", txHash: (e as { txHash: string }).txHash });

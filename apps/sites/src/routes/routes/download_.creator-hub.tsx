@@ -5,7 +5,13 @@ import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import CreatorHubDownloadPage from "@/features/download/CreatorHubDownloadPage";
 import { successPath } from "@/features/download/creator-hub-click";
 
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download_.creator-hub";
+
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/download/creator-hub", publicBase(matches));
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);

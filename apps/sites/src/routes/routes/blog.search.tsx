@@ -3,7 +3,7 @@ import { loadBlogSearch } from "@/data/lib/blog/pages";
 import "@dcl/one-ui/foundations/foundations.css";
 
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
-import { blogHeaders, blogListMeta, blogResponse } from "../lib/blog";
+import { blogHeaders, blogResponse, blogSearchMeta } from "../lib/blog";
 
 import type { Route } from "./+types/blog.search";
 
@@ -15,8 +15,8 @@ export function loader({ request, context }: Route.LoaderArgs) {
   return blogResponse(request, context, loadBlogSearch(request));
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  return blogListMeta(loaderData);
+export function meta({ location }: Route.MetaArgs) {
+  return blogSearchMeta(location.search);
 }
 
 export default function BlogSearchRoute({ loaderData }: Route.ComponentProps) {

@@ -903,17 +903,9 @@ async fn update_event(
         .copied()
         .filter(|k| *k != "rejected")
         .collect();
-    // dcl-one: another reviewer's rejection holds the event for its owner.
-    // While it stands the owner's `rejected` and `approved` stay as stored,
-    // so neither the owner, their `approve_own_event` grant nor their
-    // `edit_any_event` grant can clear it (updateEvent.ts:196-220 let the
-    // grants re-approve over it); an `approve_any_event` grant is a reviewer
-    // and may. A mirrored row never reaches here: its edit answers 409 above.
-    let held = !admin
-        && is_owner
-        && !permissions.approve_any
-        && flag(&before, "rejected")
-        && !text(&before, "rejected_by").is_some_and(|by| by.eq_ignore_ascii_case(&user));
+    // The owner's branch picks `rejected` whoever rejected the event, so an
+    // owner's `rejected: false` sends it back to pending (updateEvent.ts:196-202).
+    // A mirrored row never reaches here: its edit answers 409 above.
     if admin {
         pick(&body, &edit_without_rejected, &mut updated);
         pick(&before, EDIT_OWN_EVENT_ATTRIBUTES, &mut updated);
@@ -921,25 +913,16 @@ async fn update_event(
         pick(&before, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
         pick(&body, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
     } else if is_owner {
-        if held {
-            pick(&body, &edit_without_rejected, &mut updated);
-        } else {
-            pick(&body, EDIT_EVENT_ATTRIBUTES, &mut updated);
-        }
+        pick(&body, EDIT_EVENT_ATTRIBUTES, &mut updated);
         pick(&before, EDIT_OWN_EVENT_ATTRIBUTES, &mut updated);
         pick(&body, EDIT_OWN_EVENT_ATTRIBUTES, &mut updated);
-        if (moderator || permissions.approve_own) && !held {
+        if moderator || permissions.approve_own {
             pick(&before, APPROVE_EVENT_ATTRIBUTES, &mut updated);
             pick(&body, APPROVE_EVENT_ATTRIBUTES, &mut updated);
         }
     }
     if !admin && permissions.edit_any {
-        let editable = if held {
-            edit_without_rejected.as_slice()
-        } else {
-            EDIT_EVENT_ATTRIBUTES
-        };
-        pick(&body, editable, &mut updated);
+        pick(&body, EDIT_EVENT_ATTRIBUTES, &mut updated);
         pick(&before, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
         pick(&body, EDIT_ANY_EVENT_ATTRIBUTES, &mut updated);
     }
@@ -3789,16 +3772,80 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED, "{owner_edit}");
         assert_eq!(
-            owner_edit["data"]["rejected"], true,
-            "another reviewer's rejection holds: the owner's `rejected` is not picked while it stands"
+            owner_edit["data"]["rejected"], false,
+            "the owner's edit sends a moderator-rejected event back to pending (updateEvent.ts:196-202)"
         );
-        assert_eq!(owner_edit["data"]["rejected_by"], rejecting_actor);
+        assert_eq!(owner_edit["data"]["approved"], false);
+        assert_eq!(
+            owner_edit["data"]["rejected_by"], rejecting_actor,
+            "the rejection's actor and reason stay as stored (updateEvent.ts:485-491)"
+        );
         assert_eq!(owner_edit["data"]["rejection_reason"], "Moderator decision");
         assert_eq!(
             owner_edit["data"]["details"], "Owner instructions",
             "the rest of the edit applies"
         );
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("patch-review-admin"),
+            Some(json!({"rejected":true,"reason":"Moderator decision"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let (status, unsent) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &owner,
+            json!({"details":"Second note"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{unsent}");
+        assert_eq!(
+            unsent["data"]["rejected"], true,
+            "an owner edit that does not send `rejected` keeps the stored one"
+        );
+        let stranger = alloy::signers::local::PrivateKeySigner::random();
+        let (status, refused) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &stranger,
+            json!({"name":"Stranger title","rejected":false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "another creator's rejected event reads as missing (getEvent.ts:61-79): {refused}"
+        );
+        let stored: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT raw->>'rejected', raw->>'name' FROM explore.event WHERE id=$1")
+                .bind(&event)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored,
+            (Some("true".into()), Some("Changed public title".into())),
+            "a refused edit leaves the rejected row unchanged"
+        );
         sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"edit_any_event\"]')").bind(&editor_address).execute(&pool).await.unwrap();
+        let (status, moderated) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &editor,
+            json!({"name":"Moderator title"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{moderated}");
+        assert_eq!(
+            moderated["data"]["rejected"], true,
+            "a moderator's edit keeps the rejection"
+        );
         let (status, edited) = call_as(
             &app,
             "PATCH",
@@ -3808,6 +3855,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED, "{edited}");
+        assert_eq!(edited["data"]["rejected"], false);
         assert_eq!(edited["data"]["rejected_by"], rejecting_actor);
         assert_eq!(edited["data"]["rejection_reason"], "Moderator decision");
         sqlx::query("UPDATE explore.event_profile_settings SET permissions='[\"edit_any_event\",\"approve_any_event\"]' WHERE \"user\"=$1").bind(&editor_address).execute(&pool).await.unwrap();
@@ -4251,7 +4299,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn self_approval_cannot_clear_a_moderator_rejection_but_approve_any_can() {
+    async fn an_owner_lifts_any_rejection_and_self_approval_needs_the_rejection_lifted() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
@@ -4325,38 +4373,47 @@ mod tests {
         )
         .await;
         let actor = rejected["data"]["rejected_by"].clone();
-        // Another reviewer's rejection holds the event: the owner's branch
-        // picks neither `approved` nor `rejected` while it stands, whatever
-        // the body sends; `rejection_reason` is never theirs to set.
-        for body in [
-            json!({"approved":true}),
-            json!({"rejected":false}),
-            json!({"approved":true,"rejected":false,"rejection_reason":"Forged reason"}),
+        // A standing rejection wins over an approval alone
+        // (updateEvent.ts:445-450).
+        let (status, still) =
+            call_as(&app, "PATCH", &path, &wallet, json!({"approved":true})).await;
+        assert_eq!(status, StatusCode::CREATED, "{still}");
+        assert_eq!(still["data"]["approved"], false);
+        assert_eq!(still["data"]["rejected"], true);
+        // The owner's `rejected: false` lifts another reviewer's rejection
+        // as it lifts their own: back to pending, with `approve_own_event`
+        // re-approving in the same edit (updateEvent.ts:196-210).
+        // `rejection_reason` is never theirs to set.
+        for (body, approved) in [
+            (json!({"rejected":false}), false),
+            (
+                json!({"approved":true,"rejected":false,"rejection_reason":"Forged reason"}),
+                true,
+            ),
         ] {
-            let (status, held) = call_as(&app, "PATCH", &path, &wallet, body).await;
-            assert_eq!(status, StatusCode::CREATED, "{held}");
-            assert_eq!(held["data"]["approved"], false);
-            assert_eq!(held["data"]["rejected"], true);
-            assert_eq!(held["data"]["rejected_by"], actor);
-            assert_eq!(held["data"]["rejection_reason"], "Moderator hold");
+            call(
+                &app,
+                "PATCH",
+                &path,
+                Some("rejection-reviewer"),
+                Some(json!({"rejected":true,"reason":"Moderator hold"})),
+            )
+            .await;
+            let (status, lifted) = call_as(&app, "PATCH", &path, &wallet, body).await;
+            assert_eq!(status, StatusCode::CREATED, "{lifted}");
+            assert_eq!(lifted["data"]["rejected"], false, "{lifted}");
+            assert_eq!(lifted["data"]["approved"], approved, "{lifted}");
+            assert_eq!(lifted["data"]["rejected_by"], actor);
+            assert_eq!(lifted["data"]["rejection_reason"], "Moderator hold");
         }
-        // An owner who also holds `edit_any_event` edits as the owner they
-        // are: the hold stands for them too (the grant picks `rejected` for
-        // a non-owner as `updateEvent.ts:214-217` does).
-        sqlx::query("UPDATE explore.event_profile_settings SET permissions='[\"approve_own_event\",\"edit_any_event\"]' WHERE \"user\"=$1").bind(&owner).execute(&pool).await.unwrap();
-        for body in [
-            json!({"rejected":false}),
-            json!({"approved":true,"rejected":false}),
-        ] {
-            let (status, held) = call_as(&app, "PATCH", &path, &wallet, body).await;
-            assert_eq!(status, StatusCode::CREATED, "{held}");
-            assert_eq!(
-                held["data"]["rejected"], true,
-                "edit_any_event does not lift another reviewer's hold for the owner: {held}"
-            );
-            assert_eq!(held["data"]["approved"], false);
-            assert_eq!(held["data"]["rejected_by"], actor);
-        }
+        call(
+            &app,
+            "PATCH",
+            &path,
+            Some("rejection-reviewer"),
+            Some(json!({"rejected":true,"reason":"Moderator hold"})),
+        )
+        .await;
         sqlx::query("UPDATE explore.event_profile_settings SET permissions='[\"approve_any_event\"]' WHERE \"user\"=$1").bind(&owner).execute(&pool).await.unwrap();
         let (status, cleared) = call_as(
             &app,

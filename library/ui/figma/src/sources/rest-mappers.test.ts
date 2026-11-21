@@ -1,39 +1,44 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   collectIconComponents,
   mapRestGradient,
   mapRestTextStyle,
   mapRestVariables,
-  type RestNode
+  type RestNode,
+  type RestVariablesMeta
 } from './rest-mappers.js'
 
 describe('mapRestVariables', () => {
-  const meta = {
-    variableCollections: {
-      c1: { name: 'Primitives', modes: [{ modeId: 'm1', name: 'Value' }], variableIds: ['v1'] },
-      c2: { name: 'Semantic', modes: [{ modeId: 'm2', name: 'Dark' }], variableIds: ['v2', 'v3'] }
-    },
-    variables: {
-      v1: {
-        name: 'Neutrals/Shadow',
-        resolvedType: 'COLOR',
-        variableCollectionId: 'c1',
-        valuesByMode: { m1: { r: 0.0863, g: 0.0824, b: 0.0941, a: 1 } }
+  let meta: RestVariablesMeta
+
+  beforeEach(() => {
+    meta = {
+      variableCollections: {
+        c1: { name: 'Primitives', modes: [{ modeId: 'm1', name: 'Value' }], variableIds: ['v1'] },
+        c2: { name: 'Semantic', modes: [{ modeId: 'm2', name: 'Dark' }], variableIds: ['v2', 'v3'] }
       },
-      v2: {
-        name: 'bg/page',
-        resolvedType: 'COLOR',
-        variableCollectionId: 'c2',
-        valuesByMode: { m2: { type: 'VARIABLE_ALIAS', id: 'v1' } }
-      },
-      v3: {
-        name: 'label',
-        resolvedType: 'STRING',
-        variableCollectionId: 'c2',
-        valuesByMode: { m2: 'x' }
+      variables: {
+        v1: {
+          name: 'Neutrals/Shadow',
+          resolvedType: 'COLOR',
+          variableCollectionId: 'c1',
+          valuesByMode: { m1: { r: 0.0863, g: 0.0824, b: 0.0941, a: 1 } }
+        },
+        v2: {
+          name: 'bg/page',
+          resolvedType: 'COLOR',
+          variableCollectionId: 'c2',
+          valuesByMode: { m2: { type: 'VARIABLE_ALIAS', id: 'v1' } }
+        },
+        v3: {
+          name: 'label',
+          resolvedType: 'STRING',
+          variableCollectionId: 'c2',
+          valuesByMode: { m2: 'x' }
+        }
       }
     }
-  }
+  })
 
   describe('when a variable aliases another collection', () => {
     it('should map the alias by name and collection', () => {
@@ -100,10 +105,14 @@ describe('mapRestTextStyle', () => {
 })
 
 describe('mapRestGradient', () => {
-  const stops = [
-    { position: 0, color: { r: 1, g: 0, b: 0 } },
-    { position: 1, color: { r: 0, g: 0, b: 1 } }
-  ]
+  let stops: Parameters<typeof mapRestGradient>[1]['gradientStops']
+
+  beforeEach(() => {
+    stops = [
+      { position: 0, color: { r: 1, g: 0, b: 0 } },
+      { position: 1, color: { r: 0, g: 0, b: 1 } }
+    ]
+  })
 
   describe('when the handles point to the right', () => {
     it('should resolve a 90deg linear gradient', () => {
@@ -128,35 +137,39 @@ describe('mapRestGradient', () => {
 })
 
 describe('collectIconComponents', () => {
-  const section: RestNode = {
-    id: '1',
-    name: 'Nav bar',
-    type: 'FRAME',
-    children: [
-      {
-        id: '2',
-        name: 'Frame',
-        type: 'FRAME',
-        children: [
-          {
-            id: '3',
-            name: 'navbar/credits',
-            type: 'COMPONENT',
-            absoluteBoundingBox: { x: 0, y: 0, width: 36, height: 36 }
-          },
-          {
-            id: '4',
-            name: 'navbar/wallet',
-            type: 'FRAME',
-            children: [
-              { id: '5', name: 'active=false', type: 'COMPONENT' },
-              { id: '6', name: 'active=true', type: 'COMPONENT', visible: false }
-            ]
-          }
-        ]
-      }
-    ]
-  }
+  let section: RestNode
+
+  beforeEach(() => {
+    section = {
+      id: '1',
+      name: 'Nav bar',
+      type: 'FRAME',
+      children: [
+        {
+          id: '2',
+          name: 'Frame',
+          type: 'FRAME',
+          children: [
+            {
+              id: '3',
+              name: 'navbar/credits',
+              type: 'COMPONENT',
+              absoluteBoundingBox: { x: 0, y: 0, width: 36, height: 36 }
+            },
+            {
+              id: '4',
+              name: 'navbar/wallet',
+              type: 'FRAME',
+              children: [
+                { id: '5', name: 'active=false', type: 'COMPONENT' },
+                { id: '6', name: 'active=true', type: 'COMPONENT', visible: false }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  })
 
   describe('when a frame wraps variant components', () => {
     it('should name the icon after the wrapper and keep the variant', () => {

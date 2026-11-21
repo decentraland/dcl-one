@@ -70,29 +70,34 @@ describe('when retirement publication is interrupted', () => {
     expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
     expect(await cleanup.pendingRetirements(root, records)).toEqual([])
   })
-  it('should retire a shared asset only when its last user is explicitly retired', async () => {
-    await runSync(app, options)
-    records.retired.push({
-      ...records.retired[0]!,
-      componentId: '2:2',
-      name: 'Second',
-      ...(await cleanup.retirementArtifacts(root, { pageId: '1:1', componentId: '2:2' }))
+  describe('and the last user of a shared asset is explicitly retired', () => {
+    beforeEach(async () => {
+      await runSync(app, options)
+      records.retired.push({
+        ...records.retired[0]!,
+        componentId: '2:2',
+        name: 'Second',
+        ...(await cleanup.retirementArtifacts(root, { pageId: '1:1', componentId: '2:2' }))
+      })
+      await put(root, `figma/ledger/retirements.json`, records)
+      await runSync(app, options)
     })
-    await put(root, `figma/ledger/retirements.json`, records)
-    await runSync(app, options)
-    await expect(readFile(path.join(root, shared))).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(readFile(path.join(root, shared.replace(GEN, LIB)))).rejects.toMatchObject({
-      code: 'ENOENT'
+
+    it('should retire the shared asset and keep the next sync a no-op', async () => {
+      await expect(readFile(path.join(root, shared))).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(path.join(root, shared.replace(GEN, LIB)))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
+      expect(records.retired.map((record) => record.componentId)).toEqual(['2:1', '2:2'])
+      expect((await runDiff(app, { source: 'snapshot' })).diff).toEqual({
+        added: [],
+        changed: [],
+        removed: []
+      })
+      const before = await fixtureBytes(root)
+      expect((await runSync(app, options)).retired).toEqual([])
+      expect(await fixtureBytes(root)).toEqual(before)
     })
-    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
-    expect(records.retired.map((record) => record.componentId)).toEqual(['2:1', '2:2'])
-    expect((await runDiff(app, { source: 'snapshot' })).diff).toEqual({
-      added: [],
-      changed: [],
-      removed: []
-    })
-    const before = await fixtureBytes(root)
-    expect((await runSync(app, options)).retired).toEqual([])
-    expect(await fixtureBytes(root)).toEqual(before)
   })
 })

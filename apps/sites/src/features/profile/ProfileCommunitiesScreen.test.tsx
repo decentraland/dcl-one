@@ -122,10 +122,11 @@ describe("profile communities, a member's profile", () => {
 
     show();
 
-    const note = await screen.findByText("This member has not joined any communities yet.");
+    const panel = within(screen.getByRole("tabpanel", { name: "Communities" }));
+    const note = await panel.findByText("This member has not joined any communities yet.");
     expect(note.closest("[role=status]")).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Explore communities" })).toBeNull();
-    expect(screen.queryByRole("list")).toBeNull();
+    expect(panel.queryByRole("link", { name: "Explore communities" })).toBeNull();
+    expect(panel.queryByRole("list")).toBeNull();
   });
 
   it("announces loading until the read ends", async () => {

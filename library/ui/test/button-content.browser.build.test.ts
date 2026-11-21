@@ -3,13 +3,6 @@ import { beforeEach, afterEach, describe, it, expect } from 'vitest'
 import { waitForFixture } from './fixture-state.helpers'
 import { productionBrowser } from './production-browser.helpers'
 const b = productionBrowser('test/consumer/button-content.tsx')
-let caseErrorStart = 0
-beforeEach(() => {
-  caseErrorStart = b.session.runtimeErrors.length
-})
-afterEach(() => {
-  expect(b.session.runtimeErrors.slice(caseErrorStart)).toEqual([])
-})
 async function ready() {
   const errorStart = b.session.runtimeErrors.length
   await b.session.navigate(b.origin)
@@ -32,6 +25,13 @@ async function activate(selector: string) {
     await b.session.send('Input.dispatchMouseEvent', { type, ...pt, button: 'left', clickCount: 1 })
 }
 describe('when Button owns content layout in a production bundle', () => {
+  let caseErrorStart = 0
+  beforeEach(() => {
+    caseErrorStart = b.session.runtimeErrors.length
+  })
+  afterEach(() => {
+    expect(b.session.runtimeErrors.slice(caseErrorStart)).toEqual([])
+  })
   it('should preserve intrinsic shrink wrapping and place fill icons at both content edges', async () => {
     await ready()
     const layout = await b.evaluate<
@@ -64,41 +64,47 @@ describe('when Button owns content layout in a production bundle', () => {
     expect([data.left, data.right]).toEqual([20, 20])
     expect(data.text).toContain('covering either icon')
   })
-  it('should preserve existing compact48px geometry and intrinsic centering when fill is requested', async () => {
-    await ready()
-    expect(
-      await b.evaluate(
-        `(()=>{const n=document.querySelector('[data-case="compact"]'),r=n.getBoundingClientRect(),i=n.querySelector('[data-marker]').getBoundingClientRect();return[r.width,r.height,i.left+i.width/2-r.left-r.width/2]})()`
-      )
-    ).toEqual([48, 48, 0])
+  describe('and fill is requested on a compact button', () => {
+    it('should preserve the existing compact 48px geometry and intrinsic centering', async () => {
+      await ready()
+      expect(
+        await b.evaluate(
+          `(()=>{const n=document.querySelector('[data-case="compact"]'),r=n.getBoundingClientRect(),i=n.querySelector('[data-marker]').getBoundingClientRect();return[r.width,r.height,i.left+i.width/2-r.left-r.width/2]})()`
+        )
+      ).toEqual([48, 48, 0])
+    })
   })
-  it('should keep the loading frame/name and accept one caller activation only', async () => {
-    await ready()
-    const before = await b.evaluate<number[]>(
-      `(()=>{const r=document.querySelector('[data-case="loading"]').getBoundingClientRect();return[r.width,r.height]})()`
-    )
-    await activate('[data-case="loading"]')
-    await activate('[data-case="loading"]')
-    expect(await b.evaluate('document.querySelector("output").textContent')).toBe('1')
-    expect(
-      await b.evaluate(
-        `(()=>{const n=document.querySelector('[data-case="loading"]'),r=n.getBoundingClientRect();return[r.width,r.height,n.textContent,getComputedStyle(n.querySelector('[data-content-layout]')).opacity]})()`
+  describe('and a loading button is activated twice', () => {
+    it('should keep the loading frame/name and accept one caller activation only', async () => {
+      await ready()
+      const before = await b.evaluate<number[]>(
+        `(()=>{const r=document.querySelector('[data-case="loading"]').getBoundingClientRect();return[r.width,r.height]})()`
       )
-    ).toEqual([...before, 'Save record', '0'])
+      await activate('[data-case="loading"]')
+      await activate('[data-case="loading"]')
+      expect(await b.evaluate('document.querySelector("output").textContent')).toBe('1')
+      expect(
+        await b.evaluate(
+          `(()=>{const n=document.querySelector('[data-case="loading"]'),r=n.getBoundingClientRect();return[r.width,r.height,n.textContent,getComputedStyle(n.querySelector('[data-content-layout]')).opacity]})()`
+        )
+      ).toEqual([...before, 'Save record', '0'])
+    })
   })
-  it('should preserve native anchor focus and destination under trusted Enter', async () => {
-    await ready()
-    await b.evaluate(`document.querySelector('[data-case="link"]').focus()`)
-    expect(await b.evaluate('document.activeElement.tagName')).toBe('A')
-    for (const type of ['keyDown', 'keyUp'])
-      await b.session.send('Input.dispatchKeyEvent', {
-        type,
-        key: 'Enter',
-        code: 'Enter',
-        windowsVirtualKeyCode: 13,
-        text: type === 'keyDown' ? '\r' : undefined
-      })
-    expect(await b.evaluate('location.hash')).toBe('#target')
-    expect(await b.evaluate(`document.querySelector('[data-case="link"]').tagName`)).toBe('A')
+  describe('and a link button receives a trusted Enter', () => {
+    it('should preserve native anchor focus and destination', async () => {
+      await ready()
+      await b.evaluate(`document.querySelector('[data-case="link"]').focus()`)
+      expect(await b.evaluate('document.activeElement.tagName')).toBe('A')
+      for (const type of ['keyDown', 'keyUp'])
+        await b.session.send('Input.dispatchKeyEvent', {
+          type,
+          key: 'Enter',
+          code: 'Enter',
+          windowsVirtualKeyCode: 13,
+          text: type === 'keyDown' ? '\r' : undefined
+        })
+      expect(await b.evaluate('location.hash')).toBe('#target')
+      expect(await b.evaluate(`document.querySelector('[data-case="link"]').tagName`)).toBe('A')
+    })
   })
 })

@@ -1,0 +1,43 @@
+.canvas {
+  display: grid;
+  gap: var(--dcl-space-32);
+  padding: var(--dcl-space-24) var(--dcl-space-16);
+}
+
+.example {
+  display: grid;
+  gap: var(--dcl-space-8);
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dcl-text-secondary);
+}
+
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--dcl-text-secondary);
+}
+
+.stage {
+  padding: var(--dcl-space-16);
+  border: 1px dashed var(--dcl-border-subtle);
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-text-primary);
+}
+
+.example[data-surface='light'] .stage {
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-black);
+}
+
+.error {
+  margin: 0;
+  padding: var(--dcl-space-12);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-primary-primary-20);
+  color: var(--dcl-text-primary);
+}
