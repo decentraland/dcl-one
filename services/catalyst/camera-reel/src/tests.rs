@@ -2638,6 +2638,102 @@ async fn a_world_name_gallery_reads_the_places_catalogue() {
     s.done().await;
 }
 
+#[tokio::test]
+async fn hidden_world_galleries_include_public_photos_from_mirrored_and_local_places() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let pool = s.db().pool().clone();
+    for table in ["explore.place", "explore.place_world_local"] {
+        let t = tag();
+        let world = format!("hidden-{t}.dcl.eth");
+        let place = Uuid::new_v4().to_string();
+        let raw = json!({
+            "world": true,
+            "world_name": world.to_uppercase(),
+            "show_in_places": false
+        });
+        if table == "explore.place" {
+            sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', false, $2)")
+                .bind(&place)
+                .bind(&raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+        } else {
+            sqlx::query("INSERT INTO explore.place_world_local (id, base_position, disabled, world, world_name, raw) VALUES ($1, '0,0', false, true, $2, $3)")
+                .bind(&place)
+                .bind(world.to_uppercase())
+                .bind(&raw)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let mut public_id = None;
+        for (label, is_public, review_status) in [
+            ("public", true, "ok"),
+            ("private", false, "ok"),
+            ("rejected", true, "rejected"),
+            ("deleted", true, "ok"),
+        ] {
+            let photo = image(
+                &owner,
+                &format!("{label}-{t}"),
+                &format!("{label}-thumb-{t}"),
+                is_public,
+                &place,
+            );
+            s.db().insert_image(&photo).await.unwrap();
+            if label == "public" {
+                public_id = Some(photo.id.to_string());
+            }
+            sqlx::query("UPDATE camera_reel.images SET review_status = $1 WHERE id = $2")
+                .bind(review_status)
+                .bind(photo.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            if label == "deleted" {
+                s.db().delete_image(photo.id).await.unwrap();
+            }
+        }
+
+        let batch = json!({ "placesIds": [world] }).to_string().into_bytes();
+        for (method, path, body) in [
+            ("GET", format!("{PREFIX}/api/places/{world}/images"), None),
+            (
+                "POST",
+                format!("{PREFIX}/api/places/images"),
+                Some((batch, "application/json")),
+            ),
+        ] {
+            let (status, _, resp) = send(s.app(), method, &path, vec![], body).await;
+            assert_eq!(status, StatusCode::OK);
+            let page = json_of(&resp);
+            assert_eq!(page["maxImages"], 1, "{method} gallery from {table}");
+            assert_eq!(page["images"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                page["images"][0]["id"],
+                public_id.as_ref().unwrap().as_str()
+            );
+        }
+
+        let delete_place = if table == "explore.place" {
+            "DELETE FROM explore.place WHERE id = $1"
+        } else {
+            "DELETE FROM explore.place_world_local WHERE id = $1"
+        };
+        sqlx::query(delete_place)
+            .bind(&place)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    s.done().await;
+}
+
 fn worn(owner: &str, hash: &str, is_public: bool, people: &[&[String]]) -> NewImage {
     let mut new = image(owner, hash, &format!("{hash}-thumb"), is_public, "");
     new.metadata.visible_people = people

@@ -13,10 +13,9 @@
 //! as an uncorrelated subquery; only a page past the end (or `limit` 0) falls
 //! back to a bare count.
 //!
-//! World galleries: the old service paged `PLACES_API_URL/api/places?names=`
-//! with a 5-minute memo; here it is a read of `explore.place_indexed` with
-//! the places listing's default predicates (`disabled IS FALSE` and the
-//! `show_in_places` clause of `explore::places::query`), memoised the same.
+//! World galleries resolve enabled scenes through `explore.place_indexed`,
+//! including scenes hidden from listings. The configured cache bounds and
+//! expiry apply to these world-name lookups.
 
 use std::time::Duration;
 
@@ -851,10 +850,9 @@ impl Database {
             .await
     }
 
-    /// The place ids of a world name (`name.dcl.eth`), the places listing's
-    /// `?names=` answer as a local read, memoised with the configured TTL:
-    /// the world's scenes, not its catalogue row (`id = lower(world_name)`),
-    /// which the places API leaves out of that answer too.
+    /// The enabled scene ids of a world name (`name.dcl.eth`), irrespective
+    /// of listing visibility, memoised with the configured TTL. The world's
+    /// catalogue row (`id = lower(world_name)`) is not a scene.
     pub async fn world_place_ids(&self, world_name: &str) -> Result<Vec<String>, sqlx::Error> {
         // Cache identity follows the exact request, independently of the
         // case-insensitive catalogue lookup.
@@ -866,7 +864,6 @@ impl Database {
             "SELECT id FROM explore.place_indexed \
              WHERE disabled IS FALSE AND world IS TRUE AND lower(world_name) = $1 \
                AND id <> lower(world_name) \
-               AND (world IS FALSE OR COALESCE(NULLIF(raw->'show_in_places', 'null'::jsonb) = 'true'::jsonb, true) IS TRUE) \
              ORDER BY id",
         )
         .bind(world_name.to_lowercase())
