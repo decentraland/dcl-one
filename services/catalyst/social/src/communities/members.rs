@@ -202,7 +202,7 @@ async fn members_page(
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     let (members, total) = if only_online {
-        let online = state.presence.connected_peers().await;
+        let online = state.online_wallets();
         queries::list_online_members(&state.pool, id, &online, &pagination)
             .await
             .map_err(super::http::database_error)?

@@ -7,7 +7,9 @@
     // No baseUrl: it is deprecated in TS 6 and paths resolve relative to this
     // file without it.
     "paths": {
-      "dcl-validate-impl": ["./src/validate/checked.ts"],
+      "dcl-validate-impl": ["../../library/web-core/validate/checked.ts"],
+      // The browser logic shared with sites: the validation seam, auth signing, profile and notification views.
+      "@web-core/*": ["../../library/web-core/*"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with sites.
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with sites and the Explorer HUD.
@@ -30,6 +32,11 @@
       "@noble/*": ["./node_modules/@noble/*"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.
       "viem": ["./node_modules/viem"],
+      // ...and so do library/web-core's.
+      "viem/*": ["./node_modules/viem/*"],
+      "zod": ["./node_modules/zod"],
+      "@walletconnect/sign-client": ["./node_modules/@walletconnect/sign-client"],
+      "qrcode-generator": ["./node_modules/qrcode-generator"],
       "vitest": ["./node_modules/vitest"],
       // The shared UI library, imported as source (docs/ui-standards.md, "Integration").
       "@dcl/one-ui": ["../../library/ui/index.ts"],
@@ -64,8 +71,8 @@
   },
   // src/play is the Explorer HUD moved from decentraland/bevy-explorer (react-web); it keeps that
   // project's compiler profile in tsconfig.play.json and `pnpm typecheck` runs both.
-  // library/shop's tests, which ui3 runs (its sources come in through their imports; the core's own
-  // ES-only profile is library/shop/tsconfig.json).
-  "include": ["src", "../../library/shop/**/*.test.ts"],
+  // library/shop's and library/web-core's tests, which ui3 runs (their sources come in through their imports; each
+  // library's own profile is its tsconfig.json).
+  "include": ["src", "../../library/shop/**/*.test.ts", "../../library/web-core/**/*.test.ts"],
   "exclude": ["src/play"]
 }

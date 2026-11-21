@@ -13,10 +13,10 @@ pub struct RoomContext {
 }
 
 impl RoomContext {
-    pub fn from_metadata(metadata: &Value, place_id: &str) -> Self {
+    pub fn from_metadata(metadata: &Value, place_id: &str, node_realm: &str) -> Self {
         Self {
             place_id: place_id.to_string(),
-            realm_name: realm_name_from_metadata(metadata),
+            realm_name: realm_name_from_metadata(metadata, node_realm),
             scene_id: meta_str(metadata, "sceneId"),
             parcel: meta_str(metadata, "parcel"),
         }

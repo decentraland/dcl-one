@@ -1,6 +1,7 @@
 // from: shop@94584a5c:app/src/hooks/useAccountWatcher.ts, app/src/hooks/useWalletChain.ts, app/src/store/wallet.ts
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { useWalletAccount } from "@dcl/one-ui/apps/shop/wallet-account";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { sessionAccount, SIGNED_OUT, type Session } from "@shop/model/settlement";
 import { shopCart, type CartStore } from "../cart/store";
@@ -68,36 +69,7 @@ export function useWalletChain(provider: Eip1193Provider | null): WalletChain {
   return { chainId, pendingChainId, switchTo };
 }
 
-export function useWalletAccount(provider: Eip1193Provider | null): string | null {
-  const [account, setAccount] = useState<string | null>(null);
-  useEffect(() => {
-    if (!provider) {
-      setAccount(null);
-      return;
-    }
-    let live = true;
-    let receivedAccountChange = false;
-    const off = subscribeWallet(provider, {
-      onAccountsChanged: (next) => {
-        receivedAccountChange = true;
-        setAccount(next);
-      },
-    });
-    provider.request({ method: "eth_accounts" }).then(
-      (list) => {
-        if (live && !receivedAccountChange) {
-          setAccount((list as string[] | undefined)?.[0]?.toLowerCase() ?? null);
-        }
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-      off();
-    };
-  }, [provider]);
-  return account;
-}
+export { useWalletAccount };
 
 export type ShopWalletState = WalletChain & {
   host: ShopWalletHost | null;

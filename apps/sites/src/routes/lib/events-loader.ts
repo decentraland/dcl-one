@@ -38,17 +38,8 @@ export async function loadEventsPage(
     ? new URL(configured).origin
     : url.origin;
   const now = Date.now();
-  if (url.searchParams.get(TAB_PARAM) === "my") {
-    return wrap({
-      tab: "my" as const,
-      sid,
-      platform,
-      origin,
-      now,
-      unavailable: false,
-      dehydratedState: null,
-    });
-  }
+  // My Events is a section of the same page: Live Now, Upcoming and the calendar still render around it.
+  const tab = url.searchParams.get(TAB_PARAM) === "my" ? ("my" as const) : null;
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -78,7 +69,7 @@ export async function loadEventsPage(
   });
   client.clear();
   return wrap(
-    { tab: null, sid, platform, origin, now, unavailable, dehydratedState },
+    { tab, sid, platform, origin, now, unavailable, dehydratedState },
     { status: unavailable ? 503 : 200 },
   );
 }

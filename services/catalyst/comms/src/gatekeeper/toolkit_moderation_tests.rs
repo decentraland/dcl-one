@@ -335,6 +335,32 @@ async fn toolkit_baseline_optional_parcel_hostname_and_flat_realm_reach_authoriz
     }
 }
 
+/// A world of this node gives its realm name without `.dcl.eth`. The Unity
+/// client signs it beside the worlds host alone, the web Explorer beside the
+/// realm URL.
+#[tokio::test]
+async fn toolkit_stripped_world_realm_from_unity_and_the_web_reaches_authorization() {
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    let app = super::super::router(Arc::new(state));
+    let unity = "worlds-content-server.example";
+    let web = "node.example/world/mixed.dcl.eth";
+    for (realm, hostname, expected) in [
+        ("mixed", unity, StatusCode::FORBIDDEN),
+        ("mixed", web, StatusCode::FORBIDDEN),
+        // Another world, an owner's realm name and another host stay refused.
+        ("colon", unity, StatusCode::BAD_REQUEST),
+        ("Custom-Realm", unity, StatusCode::BAD_REQUEST),
+        ("mixed", "realm-provider.example", StatusCode::BAD_REQUEST),
+    ] {
+        let mut meta = metadata(realm, "SceneB", "1,1");
+        meta["realm"]["hostname"] = json!(hostname);
+        let body = json!({"banned_address":address_of(OUTSIDER_KEY)});
+        let (status, value) = call(&app, "DELETE", "/scene-bans", &meta, body, KEY).await;
+        assert_eq!(status, expected, "{meta}: {value}");
+    }
+}
+
 #[tokio::test]
 async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_storage() {
     let pool = lazy_pool();
@@ -429,10 +455,10 @@ async fn toolkit_world_scene_colons_reach_write_authorization_and_matching_get_s
     }
 }
 
-struct ActorPolicy {
-    pool: Option<PgPool>,
-    unavailable: bool,
-    protected: BTreeSet<Address>,
+pub(super) struct ActorPolicy {
+    pub(super) pool: Option<PgPool>,
+    pub(super) unavailable: bool,
+    pub(super) protected: BTreeSet<Address>,
 }
 
 #[async_trait::async_trait]
@@ -479,7 +505,7 @@ impl AccessPolicy for ActorPolicy {
         match &self.pool {
             Some(pool) => {
                 super::super::moderation::Moderation::new(pool.clone())
-                    .admin_decision(scene.scene_id().as_str(), actor)
+                    .admin_decision(scene.place(), actor)
                     .await
             }
             None => PermissionDecision::refused("not authorized"),
@@ -714,6 +740,48 @@ async fn toolkit_signature_and_policy_fault_matrix_has_no_media_effect() {
         "/scene-admin",
         &meta,
         json!({"admin":address_of(OUTSIDER_KEY)}),
+        KEY,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{value}");
+}
+
+/// A server reads the admins of the scene it signs, as a scene does: the
+/// resolver's answer is kept, and a `place_id` names that scene (its entity
+/// id, which older servers send, or its place).
+#[tokio::test]
+async fn a_server_signed_admin_list_answers_as_the_resolver_says() {
+    let server = |scene: &str| {
+        let mut meta = metadata("MiXeD.dcl.eth", scene, "1,1");
+        meta["signer"] = json!(crate::gatekeeper::auth::SERVER_SIGNER);
+        meta
+    };
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(ToolkitScenes);
+    let app = super::super::router(Arc::new(state));
+    // 500: the request reached the deliberately closed store.
+    for (scene, path, expected) in [
+        ("SceneB", "/scene-admin", 500),
+        ("SceneB", "/scene-admin?place_id=SceneB", 500),
+        ("SceneB", "/scene-admin?place_id=SceneA", 400),
+        ("Gone", "/scene-admin", 400),
+        ("Gone", "/scene-admin?place_id=Gone", 400),
+    ] {
+        let (status, value) = call(&app, "GET", path, &server(scene), Value::Null, KEY).await;
+        assert_eq!(status.as_u16(), expected, "{scene} {path}: {value}");
+    }
+    let mut state = comms_state(lazy_pool(), Settings::for_tests());
+    state.scenes = Arc::new(crate::interfaces::test_support::StubScenes {
+        room: Err(ResolveError::Db(sqlx::Error::PoolClosed)),
+        ..Default::default()
+    });
+    let app = super::super::router(Arc::new(state));
+    let (status, value) = call(
+        &app,
+        "GET",
+        "/scene-admin",
+        &server("SceneB"),
+        Value::Null,
         KEY,
     )
     .await;

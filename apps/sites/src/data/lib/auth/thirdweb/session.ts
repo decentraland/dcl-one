@@ -1,4 +1,4 @@
-import { check } from "@ui/validate";
+import { check } from "@web-core/validate";
 
 import { ThirdwebSessionSchema } from "../../persisted-schemas";
 

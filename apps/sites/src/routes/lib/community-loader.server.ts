@@ -6,6 +6,7 @@ import { sidLoader } from "@/core/lib/telemetry/session";
 import { CommunityNotFoundError } from "@/data/lib/catalyst/social/community-detail";
 import { communityQuery, eventsQuery, membersQuery } from "@/data/lib/community/queries";
 import { isRouteFatal, type CommunityErrorReason } from "@/features/social/community/errors";
+import { thumbnailUrl } from "@/features/social/community/view";
 
 import { OPTIONAL_READS_BUDGET_MS, withinBudget } from "./profile-loader.server";
 
@@ -16,6 +17,10 @@ export type CommunityLoaderData = {
   now: number;
   title: string;
   description: string;
+  /** The owner's name, which the link-preview card describes a community without a description by. */
+  ownerName: string | null;
+  /** The community's image when the social API names one; the page's fallback may not exist. */
+  image: string | null;
   dehydratedState: DehydratedState;
 };
 
@@ -42,11 +47,15 @@ export async function communityLoader(
   request.signal.addEventListener("abort", cancel, { once: true });
   let title: string;
   let description: string;
+  let ownerName: string | null;
+  let image: string | null;
   try {
     const community = await client.fetchQuery(communityQuery(id));
     title = community.name;
     // The page shows a private community's description to members only, so its meta leaves it out.
     description = community.privacy === "private" ? "" : (community.description ?? "");
+    ownerName = community.ownerName?.trim() || null;
+    image = community.thumbnailUrl ? thumbnailUrl(community) : null;
     if (community.privacy === "public") {
       await withinBudget(
         Promise.all([client.prefetchInfiniteQuery(membersQuery(id)), client.prefetchInfiniteQuery(eventsQuery(id))]),
@@ -74,6 +83,8 @@ export async function communityLoader(
     now: Date.now(),
     title,
     description,
+    ownerName,
+    image,
     dehydratedState,
   } satisfies CommunityLoaderData);
 }

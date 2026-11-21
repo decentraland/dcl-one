@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { requestSessionContext } from "@/core/lib/telemetry/session";
 import { LEGAL_DOCS, type LegalDocument, type LegalKey } from "@/data/legal";
 
+import { DEFAULT_SOCIAL_IMAGE } from "../lib/social-meta";
+import { canonicalHrefs, rootMatches, tagContent } from "../lib/social-meta.test-utils";
 import { loader, meta } from "./$slug";
 import type { Route } from "./+types/$slug";
 
@@ -24,6 +26,9 @@ const args = (
     params: { slug },
     context,
   }) as unknown as Route.LoaderArgs;
+
+const headOf = (loaderData: Wrapped["data"] | undefined, base?: string) =>
+  meta({ loaderData, matches: rootMatches(base) } as unknown as Route.MetaArgs);
 
 const setCookies = (result: Wrapped) =>
   new Headers(result.init?.headers).getSetCookie();
@@ -54,16 +59,52 @@ describe("when resolving canonical legal routes", () => {
       expect(setCookies(result)).toEqual([]);
     });
 
-    it("should give the page its pinned title, description and canonical link", () => {
-      expect(
-        meta({ loaderData: result.data } as unknown as Route.MetaArgs),
-      ).toEqual([
-        { title: doc.pageTitle },
-        {
-          name: "description",
-          content: `Read Decentraland’s ${doc.title}, including the policies and conditions that apply to the community.`,
-        },
-        { tagName: "link", rel: "canonical", href: `/${doc.slug}` },
+    it("should point the card and the canonical link at the document's path", () => {
+      const tags = headOf(result.data, "https://public.test");
+      expect(tagContent(tags, "og:image")).toEqual([DEFAULT_SOCIAL_IMAGE]);
+      expect(tagContent(tags, "twitter:card")).toEqual(["summary_large_image"]);
+      expect(tagContent(tags, "og:type")).toEqual(["website"]);
+      expect(tagContent(tags, "og:url")).toEqual([`https://public.test/${doc.slug}`]);
+      expect(canonicalHrefs(tags)).toEqual([`https://public.test/${doc.slug}`]);
+    });
+
+    describe("and the root loader has no public page base", () => {
+      it("should keep the card and drop the canonical link", () => {
+        const tags = headOf(result.data);
+        expect(tagContent(tags, "og:title")).toHaveLength(1);
+        expect(tagContent(tags, "og:url")).toEqual([]);
+        expect(canonicalHrefs(tags)).toEqual([]);
+      });
+    });
+  });
+
+  describe.each([
+    ["brand", "Brand Guidelines | Decentraland", "Logos, colors and usage rules for the Decentraland brand."],
+    ["security", "Security | Decentraland", "How Decentraland protects your wallet, identity and content."],
+    ["privacy", "Privacy Policy | Decentraland", "How Decentraland handles your personal data."],
+    ["terms", "Terms of Use | Decentraland", "The rules for using Decentraland."],
+    ["ethics", "Code of Ethics | Decentraland", "The values that guide the Decentraland community."],
+    ["content", "Content Policy | Decentraland", "What is and isn’t allowed in Decentraland."],
+    ["rewards-terms", "Rewards Terms | Decentraland", "Terms and conditions for Decentraland rewards programs."],
+    ["referral-terms", "Referral Program Terms | Decentraland", "Terms and conditions for the Decentraland referral program."],
+  ])("and the slug is %s, which decentraland.org gives its own card", (slug, title, description) => {
+    it("should carry that card's title and description", async () => {
+      const result = (await loader(args(slug))) as unknown as Wrapped;
+      const tags = headOf(result.data, "https://public.test");
+      expect(tags[0]).toEqual({ title });
+      expect(tagContent(tags, "og:title")).toEqual([title]);
+      expect(tagContent(tags, "description")).toEqual([description]);
+      expect(tagContent(tags, "og:description")).toEqual([description]);
+    });
+  });
+
+  describe.each(["creator-fund-terms", "credits-terms"])("and the slug is %s, which has no card of its own", (slug) => {
+    it("should carry the document's pinned title and description", async () => {
+      const result = (await loader(args(slug))) as unknown as Wrapped;
+      const tags = headOf(result.data, "https://public.test");
+      expect(tags[0]).toEqual({ title: result.data.legal.pageTitle });
+      expect(tagContent(tags, "description")).toEqual([
+        `Read Decentraland’s ${result.data.legal.title}, including the policies and conditions that apply to the community.`,
       ]);
     });
   });
@@ -80,23 +121,17 @@ describe("when resolving canonical legal routes", () => {
     });
 
     it(`should point the canonical link at ${href}`, () => {
-      expect(
-        meta({ loaderData: result.data } as unknown as Route.MetaArgs),
-      ).toContainEqual({ tagName: "link", rel: "canonical", href });
+      expect(canonicalHrefs(headOf(result.data, "https://public.test"))).toEqual([`https://public.test${href}`]);
     });
   });
 
   describe("and there is no document", () => {
-    it("should describe the legal section", () => {
-      expect(
-        meta({ loaderData: undefined } as unknown as Route.MetaArgs),
-      ).toEqual([
-        { title: "Legal | Decentraland" },
-        {
-          name: "description",
-          content: "Decentraland policies and legal documents.",
-        },
-      ]);
+    it("should describe the legal section without a canonical link", () => {
+      const tags = headOf(undefined, "https://public.test");
+      expect(tags[0]).toEqual({ title: "Legal | Decentraland" });
+      expect(tagContent(tags, "description")).toEqual(["Decentraland policies and legal documents."]);
+      expect(tagContent(tags, "og:image")).toEqual([DEFAULT_SOCIAL_IMAGE]);
+      expect(canonicalHrefs(tags)).toEqual([]);
     });
   });
 

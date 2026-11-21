@@ -4,12 +4,22 @@ import type { ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import DownloadPage from "./DownloadPage";
+import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("@ui/web/frames/chrome-auth", () => ({ useChromeAuth: () => ({ signedIn: false, account: null, name: null, onSignIn: () => {} }) }));
+vi.mock("../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@dcl/one-ui/components/AppChrome/chrome-auth", () => ({ useChromeAuth: () => ({ signedIn: false, account: null, name: null, onSignIn: () => {} }) }));
 
 afterEach(cleanup);
+
+it("links home through the decorative 48px Decentraland logo", () => {
+  render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} />);
+  const home = screen.getAllByRole("link", { name: "Decentraland" }).find((a) => a.getAttribute("href") === "/");
+  const logo = home!.querySelector("img");
+  expect(logo!.getAttribute("alt")).toBe("");
+  expect([logo!.getAttribute("width"), logo!.getAttribute("height")]).toEqual(["48", "48"]);
+  expect(logo!.getAttribute("src")).toBe(sitesLogo);
+});
 
 const WINDOWS = { os: "windows", arch: "amd64", url: "https://installers.test/Decentraland_installer.exe" } as const;
 const MACOS = { os: "macos", arch: "arm64", url: "https://installers.test/Decentraland_installer.dmg" } as const;

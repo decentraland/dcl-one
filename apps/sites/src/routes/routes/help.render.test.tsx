@@ -16,7 +16,7 @@ vi.hoisted(() =>
 );
 const telemetry = vi.hoisted(() => ({ track: vi.fn() }));
 vi.mock("@/core/lib/telemetry/track", () => telemetry);
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 
 describe("/help route", () => {
   beforeEach(() => {
