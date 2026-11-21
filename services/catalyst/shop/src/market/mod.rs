@@ -56,6 +56,7 @@ pub mod accounts;
 pub mod activity;
 pub mod admin;
 pub mod base_wearables;
+pub mod bid_notices;
 pub mod bids;
 pub mod catalog;
 pub mod chain_walk;
@@ -692,6 +693,16 @@ impl MarketplaceState {
             self.settings.market.indexes.nft_enabled,
             self.settings.market.indexes.sales_enabled,
             self.settings.market.mirrors_enabled,
+            jobs,
+        );
+        bid_notices::spawn(
+            bid_notices::Settings {
+                marketplace: self.settings.market.marketplace_base_url.clone(),
+                land_images: self.settings.land_image_base_url.clone(),
+                items_mirror_enabled: self.settings.market.mirrors_enabled,
+            },
+            self.settings.market.indexes.sales_enabled,
+            self.pool.clone(),
             jobs,
         );
         transfer_notices::spawn(self, jobs);

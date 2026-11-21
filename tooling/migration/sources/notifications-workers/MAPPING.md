@@ -121,7 +121,8 @@ So the rule is a cutover order:
    nothing more.
 3. `run notifications-workers --since last` (the final pass, reconciles
    included), then `run notifications-workers --step broadcast --restart`.
-4. Enable the node's producers.
+4. Enable the node's producers. Seed the Shop chain notice producers from
+   events-notifier's cursors first ([runbook](../../../../services/catalyst/docs/shop-notices.md#cutover-from-events-notifier)).
 
 Types that collide if 4 happens before 2 (step 4 does not cover the
 external producers above): the community, moderation

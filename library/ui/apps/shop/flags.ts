@@ -5,11 +5,13 @@
 // there too, but only market/access.tsx reads it: a declared value stands at once (else it waits for the file), and
 // the Marketplace still needs a web3 wallet session. So may My Store's (`dapps-shop-my-store`, upstream's), read only by
 // seller/lib/featureFlags.ts: a declared value stands at once, and the file's address list then does not apply.
+// Credits and MANA paying one item together (`dapps-shop-credits-mana-split`, dcl-one's own) is never declared: only
+// the file says it, read per render (useCreditsManaSplit) and passed to each presentation.
 //
 // The browser host's switches: what the page declares (`window.__SHOP_FLAGS__`) over the file as this page holds it
 // (lib/remoteFlags.ts). How the two combine is lib/rolloutFlags.ts.
 
-import { remoteFlag, useRemoteFlagsAnswer } from "./remote-flags";
+import { REMOTE_FLAG, remoteFlag, useRemoteFlag, useRemoteFlagsAnswer } from "./remote-flags";
 import { declaredOr, remoteFlagOn, resolveShopFlags, type HostShopFlags, type ShopFlags } from "@shop/discovery/lib/rolloutFlags";
 
 export type { HostShopFlags, ShopFlags };
@@ -37,6 +39,15 @@ export function shopFlags(): ShopFlags {
 export function useShopFlags(): ShopFlags {
   const answer = useRemoteFlagsAnswer();
   return resolveShopFlags(hostShopFlags(), (flag) => remoteFlagOn(answer, flag));
+}
+
+/**
+ * Whether this render offers Credits and MANA paying one item together: the file's `dapps-shop-credits-mana-split` as
+ * this page holds it, off while it loads, when it cannot be read and when it is absent. It goes to `presentPayment` as
+ * that render's `split`, never into a module switch, so no render (or server request) turns it on for another.
+ */
+export function useCreditsManaSplit(): boolean {
+  return useRemoteFlag(REMOTE_FLAG.creditsManaSplit);
 }
 
 export function isIapMode(): boolean {

@@ -16181,15 +16181,17 @@ CREATE INDEX rental_event_signature_idx ON shop.rental_event (signature) WHERE k
 CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WHERE kind = 'signer_index_updated';
 
 -- The chain notification producers' progress (shop/src/rentals/notices.rs,
--- shop/src/market/{transfer,sale,royalty}_notices.rs), one row each (names in
+-- shop/src/market/{transfer,sale,royalty,bid}_notices.rs), one row each (names in
 -- shop::market::notice_cursor::PRODUCERS), advanced in the transaction that
 -- inserts the page's notifications: the last chain position handled;
 -- `rental_ended` orders by the rental's end time first. Seeded on the first
--- pass at the published head (kept in seed_*), so history is never announced.
+-- pass at the published head (kept in seed_*), so history is never announced,
+-- unless an operator seeded or moved it back first (`catalyst shop
+-- notice-rewind`, notice_cursor::rewind: cursor and seed only move back).
 -- A reorg rewind or a late nft backfill within 1,000 blocks of the head moves
 -- the rows of the producers that read that index back, never below their
 -- seed (notice_cursor::plan_replay); reorg-stable ids keep the replay
--- idempotent. Workload: ten rows, one update per producer page.
+-- idempotent. Workload: eleven rows, one update per producer page.
 CREATE TABLE shop.notification_cursor (
     producer text PRIMARY KEY,
     end_time bigint,
@@ -16202,7 +16204,7 @@ CREATE TABLE shop.notification_cursor (
     -- Exactly notice_cursor::PRODUCERS (a test compares them).
     CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('transfer_received', 'royalties_earned',
         'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic',
-        'sales:mint:matic', 'sales:bid_accepted:matic', 'royalties:bid_accepted:matic')),
+        'sales:mint:matic', 'sales:bid_accepted:matic', 'royalties:bid_accepted:matic', 'bid_received')),
     CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL)),
     CONSTRAINT notification_cursor_seed_end_time_shape CHECK ((producer = 'rental_ended') = (seed_end_time IS NOT NULL))
 );
