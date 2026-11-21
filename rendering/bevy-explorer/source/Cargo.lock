@@ -3682,6 +3682,7 @@ dependencies = [
  "bevy_console",
  "clap",
  "common",
+ "perf_output",
  "serde",
  "serde_json",
  "tokio",

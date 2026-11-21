@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
-import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
+import { type CommandRecord, Explorer, parseLiveScenes, parsePortables, parseSceneLogs, parseSmartWearables, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -424,14 +424,14 @@ describe('Explorer', () => {
 
   test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {
     const report = JSON.stringify({ hit: null, entries: [], events: [], diagnosis: 'blocked by entity 9' })
-    const fake = new FakeConsole({ hover_entity: report, click_entity: report, raycast_stats: JSON.stringify({ budgetMs: 1.67, ran: 1, deferred: 0, spentMs: 0.1, uncappedRan: 2, uncappedSpentMs: 0.2 }), raycast_budget: 'raycast budget: 0.00 ms (override)', scene_logs: '[1.00] Info: a\n[2.00] Info: b' })
+    const fake = new FakeConsole({ hover_entity: report, click_entity: report, raycast_stats: JSON.stringify({ budgetMs: 1.67, ran: 1, deferred: 0, spentMs: 0.1, uncappedRan: 2, uncappedSpentMs: 0.2 }), raycast_budget: 'raycast budget: 0.00 ms (override)', scene_logs: 'latestSeq=7 dropped=0 source=scene\n5 [1.00] Log: a\n7 [2.00] Log: b' })
     const explorer = new Explorer(fake)
     assert.equal((await explorer.hoverEntity(512, { bounds: true, frames: 10 })).diagnosis, 'blocked by entity 9')
     await explorer.clickEntity('512', { button: 'primary', event: 'down', timeoutFrames: 60 })
     await explorer.clearPointer()
     assert.equal((await explorer.raycastStats()).budgetMs, 1.67)
     assert.equal(await explorer.raycastBudget(0), 0)
-    assert.deepEqual(await explorer.sceneLogs(50), ['[1.00] Info: a', '[2.00] Info: b'])
+    assert.deepEqual(await explorer.sceneLogs(50), ['5 [1.00] Log: a', '7 [2.00] Log: b'])
     assert.deepEqual(fake.lines, [
       '/hover_entity 512 --bounds --frames 10',
       '/click_entity 512 --button primary --event down --timeout-frames 60',
@@ -596,7 +596,7 @@ describe('smart wearables and live scenes', () => {
   test('setScene, sceneLogs and uiTexts read the targeted scene', async () => {
     const fake = new FakeConsole({
       set_scene: "active scene set to 'Smart Wearable Fixture'",
-      scene_logs: '(+3 older entries not retained)\n[1.25] Log: smart wearable fixture started\n[1.50] Warn: careful',
+      scene_logs: 'latestSeq=9 dropped=3 source=scene\n4 [1.25] Log: smart wearable fixture started\n6 [1.50] SceneError: careful',
       scene_entities: '512\n513',
       inspect_component: (line) => (line.includes(' 512 ') ? JSON.stringify({ value: 'Smart wearable running', fontSize: 20 }) : JSON.stringify({ value: 'other' }))
     })
@@ -604,15 +604,31 @@ describe('smart wearables and live scenes', () => {
     await explorer.setScene('e2e123')
     await explorer.setScene()
     assert.deepEqual(fake.sent('set_scene'), ['/set_scene e2e123', '/set_scene'])
-    assert.deepEqual(await explorer.sceneLogs(50), ['(+3 older entries not retained)', '[1.25] Log: smart wearable fixture started', '[1.50] Warn: careful'])
+    assert.deepEqual(await explorer.sceneLogs(50), ['4 [1.25] Log: smart wearable fixture started', '6 [1.50] SceneError: careful'])
     assert.deepEqual(fake.sent('scene_logs'), ['/scene_logs 50'])
     assert.deepEqual(await explorer.uiTexts(), ['Smart wearable running', 'other'])
     assert.deepEqual(fake.sent('scene_entities'), ['/scene_entities UiText'])
     assert.deepEqual(fake.sent('inspect_component'), ['/inspect_component 512 UiText', '/inspect_component 513 UiText'])
   })
 
-  test('sceneLogs is empty on the no-logs text', async () => {
-    assert.deepEqual(await new Explorer(new FakeConsole({ scene_logs: '(no logs)' })).sceneLogs(), [])
+  test('sceneLogs is empty when the header has no lines after it', async () => {
+    assert.deepEqual(await new Explorer(new FakeConsole({ scene_logs: 'latestSeq=0 dropped=0 source=scene' })).sceneLogs(), [])
+  })
+
+  test('sceneLogRead passes the cursor and parses the header', async () => {
+    const fake = new FakeConsole({ scene_logs: 'latestSeq=42 dropped=3 source=scene+client omitted=1\n40 [scene] error boom\n    at line 2\n41 [client:comms] warn w' })
+    const explorer = new Explorer(fake)
+    const page = await explorer.sceneLogRead({ since: 39, severity: 'warn', client: true })
+    assert.deepEqual(page, {
+      latestSeq: 42,
+      dropped: 3,
+      omitted: 1,
+      source: 'scene+client',
+      lines: ['40 [scene] error boom', '    at line 2', '41 [client:comms] warn w']
+    })
+    await explorer.sceneLogRead({ count: 5 })
+    assert.deepEqual(fake.sent('scene_logs'), ['/scene_logs --since 39 --severity warn --client', '/scene_logs 5'])
+    assert.throws(() => parseSceneLogs('(no logs)'), /unexpected \/scene_logs header/)
   })
 })
 

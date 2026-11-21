@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use bevy::{platform::collections::HashSet, prelude::*};
 
@@ -6,6 +6,7 @@ use common::{
     structs::{PortableExperiencesToggle, SpawnPoint},
     util::{dcl_assert, RingBuffer},
 };
+use console::log_ring;
 use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
 use dcl_types::{
     interface::{CrdtStore, CrdtType},
@@ -121,6 +122,8 @@ pub struct RendererSceneContext {
 
     // message buffer
     pub logs: RingBuffer<SceneLogMessage>,
+    /// The `/scene_logs` seq of each line `logs` holds, oldest first; `log` keeps the two in step.
+    log_seqs: VecDeque<u64>,
     log_to_stdout: bool,
 
     // last time a pointer event occurred
@@ -142,6 +145,9 @@ pub struct RendererSceneContext {
     pub(crate) counter_sample_time: Option<web_time::Instant>,
     pub(crate) crdt_bytes_per_second: Option<f64>,
 }
+
+/// Log lines a scene's ring holds.
+const SCENE_LOG_LINES: usize = 1000;
 
 /// Block reason used by /freeze_scene and /tick_scene.
 pub const FROZEN_BLOCK: &str = "frozen";
@@ -268,7 +274,8 @@ impl RendererSceneContext {
             total_runtime: 0.0,
             tick_number: 0,
             last_update_dt: 0.0,
-            logs: RingBuffer::new(1000, 100),
+            logs: RingBuffer::new(SCENE_LOG_LINES, 100),
+            log_seqs: VecDeque::with_capacity(SCENE_LOG_LINES),
             log_to_stdout,
             refreeze_at_tick: None,
             last_action_event: None,
@@ -457,6 +464,17 @@ impl RendererSceneContext {
             }
         }
 
+        if self.log_seqs.len() == SCENE_LOG_LINES {
+            self.log_seqs.pop_front();
+        }
+        self.log_seqs.push_back(log_ring::next_seq());
         self.logs.send(log);
+    }
+
+    /// The log lines the ring holds, oldest first, each with its `/scene_logs` seq, and how many
+    /// older lines the ring evicted.
+    pub fn log_lines(&self) -> (usize, Vec<(u64, SceneLogMessage)>) {
+        let (evicted, lines, _) = self.logs.read();
+        (evicted, self.log_seqs.iter().copied().zip(lines).collect())
     }
 }

@@ -352,6 +352,21 @@ State, in every build:
 - `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
   they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
   scenarios hold them still for their frames.
+- `/scene_logs [count] [--since seq] [--severity trace|debug|info|warn|error] [--client]
+  [--panel]`: the active scene's log lines (the debug panel's parcel with `--panel`), oldest
+  first, from the scene's own ring of its last 1000 lines. Every line, of any scene and of the
+  client, takes its `seq` from one counter. The first line is a header `latestSeq=N dropped=N
+  source=scene` (`scene+client` with `--client`, ` omitted=N` when `count` left older lines out):
+  `latestSeq` is the newest seq given out, to pass as the next read's `--since` (only lines after
+  it; it holds across a `/reload`), and `dropped` counts the lines after the cursor that were
+  evicted before this read (exact without `--since`; with it, the most it can be). `count` keeps
+  the newest lines (20, or all with `--since`). `--severity` is the least severity shown; a
+  scene's `console.log` is `info`, its errors are `error`. `--client` adds the engine's own
+  warnings and errors from a ring of the last 1000 (never its info lines; a credential in one is
+  replaced, and a line is cut at 4096 bytes). Without `--since`, `--severity` or `--client` a line
+  reads `<seq> [<scene time>] <Level>: <text>` (`Log`, `SceneError`, `SystemError`); with any of
+  them `<seq> [scene] <severity> <text>` or `<seq> [client:<target>] <severity> <text>`. A text's
+  further lines are indented four spaces.
 - `/media_state`: the loaded video players and audio streams as JSON, the Media player debug
   section's reading. On the web each row also carries the source's reopen state:
   `retryAttempt` (reopens since its last 5 s of playback), `retryFailures` (failures since the
