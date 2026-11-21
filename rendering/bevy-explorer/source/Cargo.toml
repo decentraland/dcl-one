@@ -568,12 +568,12 @@ draco-oxide-core = { git = "https://github.com/decentraland/dcl-one", rev = "ffb
 # patch series there (rendering/bevy-explorer/docs/guidelines/bevy-fork.md). The workspace and the
 # ecosystem crates name these six crates by crates.io version; the other subcrates follow from
 # the same checkout as Bevy's path dependencies.
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
-bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
+bevy_ecs = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
+bevy_math = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
+bevy_color = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
+bevy_transform = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
+bevy_platform = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
 
 ffmpeg-next = { git = "https://github.com/decentraland/dcl-one", rev = "0a8f3cf998262fc4749fb7c86eea93b48f0b8254" }
 parry3d-f64 = { git = "https://github.com/decentraland/dcl-one", rev = "2943100ea8674045ee96e67e3805578aea31fed4" }
@@ -620,7 +620,7 @@ opener = { git = "https://github.com/decentraland/dcl-one", rev = "9fec930b69093
 # by git. These entries point them at the same commits. With Cargo.lock present Cargo does not
 # read those repositories; a resolve without Cargo.lock reads each branch once.
 [patch."https://github.com/robtfm/bevy"]
-bevy = { git = "https://github.com/decentraland/dcl-one", rev = "4f230b98e8f99a5c87b5571f9fd487f222a4faff" }
+bevy = { git = "https://github.com/decentraland/dcl-one", rev = "620093f49e20b5ead3b1e593bf2e0795e6387b66" }
 
 [patch."https://github.com/robtfm/bevy_ecss"]
 bevy_ecss = { git = "https://github.com/decentraland/dcl-one", rev = "da37b8fbfd7d2561257254f4ae9370ca33a71acb" }

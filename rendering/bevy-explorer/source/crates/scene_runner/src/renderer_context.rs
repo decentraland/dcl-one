@@ -53,6 +53,7 @@ pub enum SceneState {
 // mapping from script entity -> bevy entity
 // note - be careful with size as this struct is moved into/out of js runtimes
 #[derive(Component, Debug)]
+#[require(SceneTickTiming)]
 pub struct RendererSceneContext {
     pub scene_id: SceneId,
     pub hash: Arc<str>,
@@ -141,7 +142,72 @@ pub struct RendererSceneContext {
     pub resource_counters: Option<SceneResourceCounters>,
     pub(crate) counter_sample_time: Option<web_time::Instant>,
     pub(crate) crdt_bytes_per_second: Option<f64>,
+    /// Engine time the tick of the last reply was dispatched (`last_sent` then). A scene
+    /// dispatched again in the frame its reply landed has a later `last_sent`.
+    pub reply_sent: f64,
 }
+
+/// A scene tick's dispatch: when and in which frame it left.
+#[derive(Debug, Clone, Copy)]
+pub struct SentTiming {
+    pub at: web_time::Instant,
+    pub frame: u32,
+}
+
+/// A scene tick's reply: its dispatch, and when and in which frame the engine received it.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplyTiming {
+    pub sent: SentTiming,
+    /// When the engine received the reply. A reply that arrives after its frame's scene loop
+    /// ended is received at the next loop's first poll.
+    pub at: web_time::Instant,
+    pub frame: u32,
+}
+
+impl ReplyTiming {
+    /// Frames from the dispatch to the frame the reply was applied in (0: the same frame).
+    pub fn frames(&self) -> u32 {
+        self.frame.wrapping_sub(self.sent.frame)
+    }
+}
+
+/// When and in which frame a scene's last tick was dispatched and its last reply arrived, for
+/// the movement scene's re-dispatch (`movement_redispatch`). Every scene root has one: a scene
+/// that becomes the movement scene while its tick is in flight is judged on that tick's reply.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct SceneTickTiming {
+    pub sent: Option<SentTiming>,
+    pub reply: Option<ReplyTiming>,
+}
+
+impl SceneTickTiming {
+    /// The last reply landed in `frame` and answered a tick dispatched in an earlier frame. The
+    /// scene was in flight when `frame` queued its scenes, so a dispatch in `frame` is the
+    /// movement scene's re-dispatch.
+    pub fn late_reply_in(&self, frame: u32) -> bool {
+        self.reply
+            .is_some_and(|reply| reply.frame == frame && reply.frames() > 0)
+    }
+
+    /// The `staged` rotation a dispatch in `frame` sends in place of the player's: only the
+    /// re-dispatch answering a late reply that landed in `frame` is sent one.
+    pub(crate) fn staged_rotation(
+        &self,
+        staged: Option<&RedispatchRotation>,
+        frame: u32,
+    ) -> Option<Quat> {
+        staged
+            .filter(|_| self.late_reply_in(frame))
+            .map(|staged| staged.0)
+    }
+}
+
+/// On the movement scene whose late reply landed in this frame: the player's rotation once that
+/// reply is applied, which happens only after the scene loop. The scene's re-dispatch is sent
+/// this rotation instead of the player's. Staged after each loop pass by the crate that applies
+/// the reply; absent when the engine will not apply it, and on every other scene.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct RedispatchRotation(pub Quat);
 
 /// Block reason used by /freeze_scene and /tick_scene.
 pub const FROZEN_BLOCK: &str = "frozen";
@@ -278,6 +344,7 @@ impl RendererSceneContext {
             resource_counters: None,
             counter_sample_time: None,
             crdt_bytes_per_second: None,
+            reply_sent: 0.0,
         };
 
         new_context.live_entities[SceneEntityId::ROOT.id as usize] =

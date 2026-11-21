@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_animation): fade an interrupting transition in over the running blend
+Date: 2026-11-18T22:50:46+00:00
+
+---
+diff --git a/crates/bevy_animation/src/transition.rs b/crates/bevy_animation/src/transition.rs
+index 494855970441dd75f6e79f4b8637e2d3a6bc39b3..96d08908bd9d03345c22bf6d5a72bc17b63cd4a3 100644
+--- a/crates/bevy_animation/src/transition.rs
++++ b/crates/bevy_animation/src/transition.rs
+@@ -14,13 +14,19 @@ use core::time::Duration;
+ 
+ use crate::{graph::AnimationNodeIndex, ActiveAnimation, AnimationPlayer};
+ 
+-/// Manages fade-out of animation blend factors, allowing for smooth transitions
+-/// between animations.
++/// Manages animation blend factors, allowing for smooth transitions between
++/// animations.
+ ///
+ /// To use this component, place it on the same entity as the
+ /// [`AnimationPlayer`] and [`AnimationGraphHandle`](crate::AnimationGraphHandle). It'll take
+ /// responsibility for adjusting the weight on the [`ActiveAnimation`] in order
+-/// to fade out animations smoothly.
++/// to fade animations in and out smoothly.
++///
++/// A transition fades the new animation in over the pose that was playing: its
++/// share of the pose rises linearly from 0 to 1 over the transition, and the
++/// animations under it share the rest in the proportions they had. A transition
++/// that starts while another is running fades in over that blend, which carries
++/// on underneath, so the pose doesn't jump. The weights always sum to 1.
+ ///
+ /// When using an [`AnimationTransitions`] component, you should play all
+ /// animations through the [`AnimationTransitions::play`] method, rather than by
+@@ -31,34 +37,35 @@ use crate::{graph::AnimationNodeIndex, ActiveAnimation, AnimationPlayer};
+ #[derive(Component, Default, Reflect)]
+ #[reflect(Component, Default, Clone)]
+ pub struct AnimationTransitions {
+-    main_animation: Option<AnimationNodeIndex>,
+-    transitions: Vec<AnimationTransition>,
++    /// The animations being blended, oldest first. The last one is the main
++    /// animation.
++    layers: Vec<AnimationTransition>,
+ }
+ 
+ // This is needed since `#[derive(Clone)]` does not generate optimized `clone_from`.
+ impl Clone for AnimationTransitions {
+     fn clone(&self) -> Self {
+         Self {
+-            main_animation: self.main_animation,
+-            transitions: self.transitions.clone(),
++            layers: self.layers.clone(),
+         }
+     }
+ 
+     fn clone_from(&mut self, source: &Self) {
+-        self.main_animation = source.main_animation;
+-        self.transitions.clone_from(&source.transitions);
++        self.layers.clone_from(&source.layers);
+     }
+ }
+ 
+-/// An animation that is being faded out as part of a transition
++/// An animation being blended as part of a transition
+ #[derive(Debug, Clone, Copy, Reflect)]
+ #[reflect(Clone)]
+ pub struct AnimationTransition {
+-    /// The current weight. Starts at 1.0 and goes to 0.0 during the fade-out.
+-    current_weight: f32,
+-    /// How much to decrease `current_weight` per second
+-    weight_decline_per_sec: f32,
+-    /// The animation that is being faded out
++    /// The share of the pose this animation takes from the animations under
++    /// it. Rises to 1.0 over the transition into it; the oldest animation takes
++    /// whatever the others leave.
++    share: f32,
++    /// How much to increase `share` per second
++    share_increase_per_sec: f32,
++    /// The animation
+     animation: AnimationNodeIndex,
+ }
+ 
+@@ -69,9 +76,8 @@ impl AnimationTransitions {
+         AnimationTransitions::default()
+     }
+ 
+-    /// Plays a new animation on the given [`AnimationPlayer`], fading out any
+-    /// existing animations that were already playing over the
+-    /// `transition_duration`.
++    /// Plays a new animation on the given [`AnimationPlayer`], fading it in
++    /// over the animations already playing across the `transition_duration`.
+     ///
+     /// Pass [`Duration::ZERO`] to instantly switch to a new animation, avoiding
+     /// any transition.
+@@ -81,80 +87,109 @@ impl AnimationTransitions {
+         new_animation: AnimationNodeIndex,
+         transition_duration: Duration,
+     ) -> &'p mut ActiveAnimation {
+-        if let Some(old_animation_index) = self.main_animation.replace(new_animation) {
+-            if let Some(old_animation) = player.animation_mut(old_animation_index) {
+-                if !old_animation.is_paused() {
+-                    self.transitions.push(AnimationTransition {
+-                        current_weight: old_animation.weight,
+-                        weight_decline_per_sec: 1.0 / transition_duration.as_secs_f32(),
+-                        animation: old_animation_index,
+-                    });
+-                }
++        if self.get_main_animation() != Some(new_animation) {
++            // A paused main animation is not faded out.
++            if self.layers.last().is_some_and(|main| {
++                player
++                    .animation(main.animation)
++                    .is_none_or(ActiveAnimation::is_paused)
++            }) {
++                self.layers.pop();
+             }
+-        }
+ 
+-        // If already transitioning away from this animation, cancel the transition.
+-        // Otherwise the transition ending would incorrectly stop the new animation.
+-        self.transitions
+-            .retain(|transition| transition.animation != new_animation);
++            let share = match self
++                .layers
++                .iter()
++                .position(|layer| layer.animation == new_animation)
++            {
++                // Already transitioning away from this animation: it fades in
++                // from the weight it has, and the others keep theirs.
++                Some(index) => {
++                    let mut weights: Vec<f32> = weights(&self.layers).collect();
++                    weights.reverse();
++                    let share = weights.remove(index);
++                    self.layers.remove(index);
++                    let mut remaining = 1.0 - share;
++                    for (layer, weight) in self.layers.iter_mut().zip(weights).rev() {
++                        layer.share = if remaining > 0.0 {
++                            (weight / remaining).min(1.0)
++                        } else {
++                            1.0
++                        };
++                        remaining -= weight;
++                    }
++                    share
++                }
++                None if self.layers.is_empty() => 1.0,
++                None => 0.0,
++            };
++            self.layers.push(AnimationTransition {
++                share,
++                share_increase_per_sec: 1.0 / transition_duration.as_secs_f32(),
++                animation: new_animation,
++            });
++        }
+ 
+         player.start(new_animation)
+     }
+ 
+     /// Obtain the currently playing main animation.
+     pub fn get_main_animation(&self) -> Option<AnimationNodeIndex> {
+-        self.main_animation
++        self.layers.last().map(|layer| layer.animation)
+     }
+ }
+ 
++/// Each layer's weight, newest first: its share of what the newer layers leave.
++/// The oldest takes the rest, so the weights sum to 1.
++fn weights(layers: &[AnimationTransition]) -> impl Iterator<Item = f32> + '_ {
++    let mut remaining = 1.0;
++    layers.iter().enumerate().rev().map(move |(index, layer)| {
++        let weight = if index == 0 {
++            remaining
++        } else {
++            layer.share * remaining
++        };
++        remaining -= weight;
++        weight
++    })
++}
++
+ /// A system that alters the weight of currently-playing transitions based on
+-/// the current time and decline amount.
++/// the current time and the transitions' durations.
+ pub fn advance_transitions(
+     mut query: Query<(&mut AnimationTransitions, &mut AnimationPlayer)>,
+     time: Res<Time>,
+ ) {
+-    // We use a "greedy layer" system here. The top layer (most recent
+-    // transition) gets as much as weight as it wants, and the remaining amount
+-    // is divided between all the other layers, eventually culminating in the
+-    // currently-playing animation receiving whatever's left. This results in a
+-    // nicely normalized weight.
+     for (mut animation_transitions, mut player) in query.iter_mut() {
+-        let mut remaining_weight = 1.0;
+-
+-        for transition in &mut animation_transitions.transitions.iter_mut().rev() {
+-            // Decrease weight.
+-            transition.current_weight = (transition.current_weight
+-                - transition.weight_decline_per_sec * time.delta_secs())
+-            .max(0.0);
+-
+-            // Update weight.
+-            let Some(ref mut animation) = player.animation_mut(transition.animation) else {
+-                continue;
+-            };
+-            animation.weight = transition.current_weight * remaining_weight;
+-            remaining_weight -= animation.weight;
++        for layer in &mut animation_transitions.layers {
++            layer.share = (layer.share + layer.share_increase_per_sec * time.delta_secs()).min(1.0);
+         }
+ 
+-        if let Some(main_animation_index) = animation_transitions.main_animation {
+-            if let Some(ref mut animation) = player.animation_mut(main_animation_index) {
+-                animation.weight = remaining_weight;
++        let layers = &animation_transitions.layers;
++        for (layer, weight) in layers.iter().rev().zip(weights(layers)) {
++            if let Some(animation) = player.animation_mut(layer.animation) {
++                animation.weight = weight;
+             }
+         }
+     }
+ }
+ 
+-/// A system that removed transitions that have completed from the
+-/// [`AnimationTransitions`] object.
++/// A system that stops the animations a completed transition has fully
++/// replaced and removes them from the [`AnimationTransitions`] object.
+ pub fn expire_completed_transitions(
+     mut query: Query<(&mut AnimationTransitions, &mut AnimationPlayer)>,
+ ) {
+     for (mut animation_transitions, mut player) in query.iter_mut() {
+-        animation_transitions.transitions.retain(|transition| {
+-            let expire = transition.current_weight <= 0.0;
+-            if expire {
+-                player.stop(transition.animation);
+-            }
+-            !expire
+-        });
++        // Animations under one with its full share have no weight left.
++        let Some(full) = animation_transitions
++            .layers
++            .iter()
++            .rposition(|layer| layer.share >= 1.0)
++        else {
++            continue;
++        };
++        for layer in animation_transitions.layers.drain(..full) {
++            player.stop(layer.animation);
++        }
+     }
+ }

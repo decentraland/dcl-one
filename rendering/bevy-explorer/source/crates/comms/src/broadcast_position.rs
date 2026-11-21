@@ -13,8 +13,7 @@ use wallet::Wallet;
 use crate::{
     anim_announce::{Announcement, ClipAnnouncer},
     broadcast, broadcast_to,
-    global_crdt::GlobalCrdtState,
-    movement_compressed::{Movement, Temporal},
+    movement_animation::{wire_animation, ClipMotion, JumpCount},
     pulse::movement_pacing::{Change, MovementPacer},
     BroadcastTarget,
 };
@@ -56,6 +55,8 @@ struct LastAnim {
     // Monotonic counter stamped onto each outbound SDA so the (unreliable) receiver can
     // order datagrams and drop reordered/duplicate ones. Carries no timing.
     sequence: u32,
+    // Jumps since the ground, followed every frame from the clips.
+    jump_count: JumpCount,
 }
 
 fn broadcast_position(
@@ -78,7 +79,6 @@ fn broadcast_position(
     mut last_index: Local<u32>,
     mut last_anim: Local<LastAnim>,
     time: Res<Time>,
-    contexts: Query<&GlobalCrdtState>,
     wallet: Res<Wallet>,
 ) {
     // An authoritative server has no avatar to announce — hammurabi's reportPosition is
@@ -86,10 +86,6 @@ fn broadcast_position(
     if common::structs::server_mode() {
         return;
     }
-    // client-only system (see above): the single shared context holds the realm bounds
-    let Ok(global_crdt) = contexts.single() else {
-        return;
-    };
     let Ok((player, dynamics, scene_anim, head_sync, point_at, speeds)) = player.single() else {
         return;
     };
@@ -119,6 +115,17 @@ fn broadcast_position(
             .extend(current_sounds.iter().cloned());
         last_anim.last_seen_sounds = current_sounds.to_vec();
     }
+
+    // What the scene's clip (or, without one, the engine's move kind) shows, and the jumps since
+    // the ground, followed every frame so a short jump clip between broadcasts still counts.
+    let grounded = dynamics.ground_height < 0.2;
+    let motion = match scene_anim.and_then(|s| s.active.as_ref()) {
+        Some(anim) => ClipMotion::of_clip(&anim.src, anim.speed),
+        None => ClipMotion::of_move_kind(dynamics.move_kind),
+    };
+    let jump_count = last_anim
+        .jump_count
+        .update(grounded, motion, dynamics.jump_time > 0.0);
 
     let (_, rotation, translation) = player.to_scale_rotation_translation();
     // An anim change (e.g. jump → idle on landing) must go out promptly: when the
@@ -161,25 +168,6 @@ fn broadcast_position(
     }
 
     let dcl_position = DclTranslation::from_bevy_translation(translation);
-
-    let movement = Movement::new(
-        translation,
-        dynamics.velocity,
-        global_crdt.realm_bounds.0,
-        global_crdt.realm_bounds.1,
-    );
-    let grounded = dynamics.ground_height < 0.2;
-    let falling = crate::gait::is_falling(grounded, dynamics.velocity.y);
-    let temporal = Temporal::from_parts(
-        time,
-        falling,
-        rotation.to_euler(bevy::math::EulerRot::YXZ).0,
-        movement.velocity_tier(),
-        dynamics.move_kind,
-        grounded,
-    );
-
-    let movement_compressed = crate::movement_compressed::MovementCompressed { temporal, movement };
 
     // Scene-driven animation carrier. The hash pair is sent on transition (new clip, or
     // an empty `scene_hash` to clear a prior active anim), repeated on the next sends so one
@@ -256,29 +244,17 @@ fn broadcast_position(
         None
     };
 
-    // For cross-client compatibility with the Unity / web clients, infer a jump_count /
-    // glide_state from the active scene-driven animation's src. The movement-scene uses
-    // glb filenames containing "double" (DoubleJump_Base2.glb) or "glide" (glide.glb);
-    // lowercase substring match keeps this resilient to small naming variations. A glide
-    // is only reachable after the air-jump slot has been consumed, so jump_count is also
-    // 2 during a glide — matching what Unity's state machine expects.
-    let anim_src_lower = active_anim.map(|a| a.src.to_lowercase());
-    let is_double_jump = anim_src_lower
-        .as_deref()
-        .is_some_and(|s| s.contains("double"));
-    let is_glide = anim_src_lower
-        .as_deref()
-        .is_some_and(|s| s.contains("glide"));
-    let jump_count = jump_count(
-        is_double_jump || is_glide,
-        dynamics.ground_height < 0.2,
-        dynamics.jump_time,
+    // The animation state other clients read: the movement blend from the horizontal speed at the
+    // player's locomotion speeds (`gait`), falls from the vertical speed, and jumps, the glider and
+    // a hard landing from the clip (see `movement_animation`). The packet below takes its animation
+    // fields from it.
+    let animation = wire_animation(
+        dynamics.velocity,
+        &speeds.copied().unwrap_or_default(),
+        grounded,
+        motion,
+        jump_count,
     );
-    let glide_state = if is_glide {
-        rfc4::movement::GlideState::Gliding as i32
-    } else {
-        rfc4::movement::GlideState::PropClosed as i32
-    };
 
     let movement_uncompressed = dcl_component::proto_components::kernel::comms::rfc4::Movement {
         timestamp: time as f32,
@@ -297,22 +273,11 @@ fn broadcast_position(
         velocity_x: dynamics.velocity.x,
         velocity_y: dynamics.velocity.y,
         velocity_z: -dynamics.velocity.z,
-        movement_blend_value: crate::gait::movement_blend(
-            Vec2::new(dynamics.velocity.x, dynamics.velocity.z).length(),
-            &speeds.copied().unwrap_or_default(),
-        ),
         slide_blend_value: 0.0,
-        is_grounded: movement_compressed.temporal.grounded(),
-        is_jumping: movement_compressed.temporal.jump(),
-        is_long_jump: movement_compressed.temporal.long_jump(),
-        is_long_fall: movement_compressed.temporal.long_falling(),
-        is_falling: movement_compressed.temporal.falling(),
-        is_stunned: movement_compressed.temporal.stunned(),
+        is_long_jump: false,
         is_emoting: dynamics.move_kind == MoveKind::Emote,
         // Interpolation hint other clients read; this sender never teleports through it.
         is_instant: false,
-        jump_count,
-        glide_state,
         head_ik_yaw_enabled: head_sync.yaw_enabled,
         head_ik_pitch_enabled: head_sync.pitch_enabled,
         head_yaw: head_sync.yaw_deg,
@@ -326,18 +291,9 @@ fn broadcast_position(
         // Receive-side only (the Pulse decoder stamps it); never set on the send path, so it stays
         // out of the serialized packet.
         position_precision: None,
+        ..animation
     };
 
-    // let movement_packet = rfc4::MovementCompressed {
-    //     temporal_data: i32::from_le_bytes(movement_compressed.temporal.into_bytes()),
-    //     movement_data: i64::from_le_bytes(movement_compressed.movement.into_bytes()),
-    // };
-
-    // debug!("sending compressed: {movement_packet:?}");
-    // let packet = rfc4::Packet {
-    //     message: Some(rfc4::packet::Message::MovementCompressed(movement_packet)),
-    //     protocol_version: 100,
-    // };
     debug!("sending movement: {movement_uncompressed:?}");
 
     // Movement rides each rfc4 packet to exactly its consumer: `Movement` to Pulse alone (its routing
@@ -394,49 +350,4 @@ fn broadcast_position(
     *last_head_sync = head_sync;
     *last_point_at = point_at;
     pacer.record_send(time);
-}
-
-/// The `jump_count` a movement packet carries: 2 for a double jump or glide, 1 while airborne
-/// after a jump, 0 otherwise. `jump_time` is the local player's take-off time, cleared (`<= 0.0`)
-/// on landing.
-fn jump_count(double_jump_or_glide: bool, grounded: bool, jump_time: f64) -> i32 {
-    if double_jump_or_glide {
-        2
-    } else if !grounded && jump_time > 0.0 {
-        1
-    } else {
-        0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// `jump_time` of a player who has not jumped since landing, or never has.
-    const NO_JUMP: f64 = -1.0;
-
-    #[test]
-    fn a_first_jump_counts_one_while_airborne() {
-        assert_eq!(jump_count(false, false, 12.5), 1);
-    }
-
-    #[test]
-    fn the_count_resets_on_landing() {
-        assert_eq!(jump_count(false, true, 12.5), 0);
-        assert_eq!(jump_count(false, true, NO_JUMP), 0);
-    }
-
-    #[test]
-    fn falling_without_a_jump_counts_zero() {
-        // walking off a ledge, or the default state of a player who never jumped
-        assert_eq!(jump_count(false, false, NO_JUMP), 0);
-        assert_eq!(jump_count(false, false, 0.0), 0);
-    }
-
-    #[test]
-    fn a_double_jump_or_glide_counts_two() {
-        assert_eq!(jump_count(true, false, 12.5), 2);
-        assert_eq!(jump_count(true, false, NO_JUMP), 2);
-    }
 }

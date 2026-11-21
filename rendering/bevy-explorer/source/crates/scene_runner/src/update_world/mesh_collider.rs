@@ -27,7 +27,7 @@ use crate::{
     ContainerEntity, PrimaryUser, RendererSceneContext, SceneSets,
 };
 use common::{
-    dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
+    dynamics::{walkable, PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
     sets::PostUpdateSets,
     structs::ShowOutOfBounds,
 };
@@ -648,32 +648,29 @@ impl SceneColliderData {
         })
     }
 
+    /// The height of the avatar's feet at `origin` above the ground, and the ground's collider:
+    /// how far a ball of the avatar's radius drops from the feet (up to 10 m) before it touches
+    /// any collider. Other players' avatars stand on this ground; the player's own stands on
+    /// [`Self::get_standing_ground`].
     pub fn get_ground(&mut self, origin: Vec3) -> Option<(f32, ColliderId)> {
         self.update_bvh();
 
         let predicate = |h, _: &Collider| !self.disabled.contains(&h);
-        let filter = QueryFilter::default()
-            .groups(InteractionGroups::new(
-                Group::from_bits_truncate(ColliderLayer::ClPhysics as u32 | GROUND_COLLISION_MASK),
-                Group::from_bits_truncate(ColliderLayer::ClPhysics as u32 | GROUND_COLLISION_MASK),
-                InteractionTestMode::And,
-            ))
-            .exclude_sensors()
-            .predicate(&predicate);
-
-        let contact = self.query_pipeline(filter).cast_shape(
-            &(origin + Vec3::Y * PLAYER_COLLIDER_RADIUS)
-                .as_dvec3()
-                .into(),
-            &(-DVec3::Y).into(),
-            &Ball::new(PLAYER_COLLIDER_RADIUS as f64),
-            ShapeCastOptions {
-                max_time_of_impact: 10.0,
-                target_distance: 0.0,
-                stop_at_penetration: true,
-                compute_impact_geometry_on_penetration: true,
-            },
-        );
+        let contact = self
+            .query_pipeline(Self::ground_filter(&predicate))
+            .cast_shape(
+                &(origin + Vec3::Y * PLAYER_COLLIDER_RADIUS)
+                    .as_dvec3()
+                    .into(),
+                &(-DVec3::Y).into(),
+                &Ball::new(PLAYER_COLLIDER_RADIUS as f64),
+                ShapeCastOptions {
+                    max_time_of_impact: GROUND_CAST_DISTANCE,
+                    target_distance: 0.0,
+                    stop_at_penetration: true,
+                    compute_impact_geometry_on_penetration: true,
+                },
+            );
 
         contact.map(|(handle, toi)| {
             (
@@ -681,6 +678,85 @@ impl SceneColliderData {
                 self.get_id(handle).unwrap().clone(),
             )
         })
+    }
+
+    /// The height of the player's feet at `origin` above the ground it stands on, and the
+    /// ground's collider: how far a ball of the avatar's radius drops from the feet (up to 10 m)
+    /// before it rests on a surface the avatar can stand on
+    /// ([`MAX_GROUND_INCLINE`](common::dynamics::MAX_GROUND_INCLINE)). A first contact steeper than
+    /// that (a wall the ball grazes, the corner of an edge, a steep slope) is not ground: the
+    /// height is then the nearer of the ball's drop past the colliders it touched steeply and the
+    /// drop under the avatar's centre, so beside a wall in the air it is the height above the
+    /// floor, and on a steep slope the feet stand clear of the slope under the centre.
+    pub fn get_standing_ground(&mut self, origin: Vec3) -> Option<(f32, ColliderId)> {
+        self.update_bvh();
+
+        let centre = (origin + Vec3::Y * PLAYER_COLLIDER_RADIUS).as_dvec3();
+        let mut steep = Vec::new();
+        let mut first_steep = None;
+        let mut ground = None;
+        for _ in 0..=GROUND_STEEP_EXCLUSIONS {
+            let predicate = |h, _: &Collider| !self.disabled.contains(&h) && !steep.contains(&h);
+            let Some((handle, hit)) = self
+                .query_pipeline(Self::ground_filter(&predicate))
+                .cast_shape(
+                    &centre.into(),
+                    &(-DVec3::Y).into(),
+                    &Ball::new(PLAYER_COLLIDER_RADIUS as f64),
+                    ShapeCastOptions {
+                        max_time_of_impact: GROUND_CAST_DISTANCE,
+                        target_distance: 0.0,
+                        stop_at_penetration: true,
+                        compute_impact_geometry_on_penetration: true,
+                    },
+                )
+            else {
+                break;
+            };
+            if walkable(DVec3::from(hit.normal1)) {
+                ground = Some((hit.time_of_impact, handle));
+                break;
+            }
+            first_steep.get_or_insert(hit.time_of_impact);
+            steep.push(handle);
+        }
+
+        if let Some(toi) = first_steep {
+            // the first contact was steep: also measure straight down from the centre, which a
+            // collider with both a wall and a floor (one mesh) keeps
+            let predicate = |h, _: &Collider| !self.disabled.contains(&h);
+            let ray = Ray {
+                origin: centre.into(),
+                dir: (-DVec3::Y).into(),
+            };
+            let below = self
+                .query_pipeline(Self::ground_filter(&predicate))
+                .cast_ray(
+                    &ray,
+                    GROUND_CAST_DISTANCE + PLAYER_COLLIDER_RADIUS as f64,
+                    true,
+                )
+                .map(|(h, ray_toi)| ((ray_toi - PLAYER_COLLIDER_RADIUS as f64).max(toi), h));
+            ground = match (ground, below) {
+                (Some(a), Some(b)) => Some(if b.0 < a.0 { b } else { a }),
+                (a, b) => a.or(b),
+            };
+        }
+
+        ground.map(|(toi, handle)| (toi as f32, self.get_id(handle).unwrap().clone()))
+    }
+
+    fn ground_filter<'a>(
+        predicate: &'a impl Fn(ColliderHandle, &Collider) -> bool,
+    ) -> QueryFilter<'a> {
+        QueryFilter::default()
+            .groups(InteractionGroups::new(
+                Group::from_bits_truncate(ColliderLayer::ClPhysics as u32 | GROUND_COLLISION_MASK),
+                Group::from_bits_truncate(ColliderLayer::ClPhysics as u32 | GROUND_COLLISION_MASK),
+                InteractionTestMode::And,
+            ))
+            .exclude_sensors()
+            .predicate(predicate)
     }
 
     pub fn get_collider_entity(&self, id: &ColliderId) -> Option<Entity> {
@@ -1227,6 +1303,13 @@ impl SceneColliderData {
 
 pub const GROUND_COLLISION_MASK: u32 = 1 << 31;
 
+/// How far below the feet [`SceneColliderData::get_ground`] and
+/// [`SceneColliderData::get_standing_ground`] look for ground (m).
+const GROUND_CAST_DISTANCE: f64 = 10.0;
+/// Colliders [`SceneColliderData::get_standing_ground`] passes after touching them too steeply
+/// before it settles for the height under the avatar's centre.
+const GROUND_STEEP_EXCLUSIONS: usize = 3;
+
 /// Collision shapes, e.g. from `mesh_to_parry_shape`, for `set_physics_shape`.
 pub use rapier3d_f64::prelude::SharedShape;
 
@@ -1763,5 +1846,134 @@ mod tests {
         assert!(colliders
             .cast_ball_nearest(DVec3::new(0.0, 1.0, 0.0), DVec3::Z, 10.0, 0.1, mask)
             .is_none());
+    }
+
+    use common::dynamics::grounded;
+
+    /// A floor whose top is y = 0.
+    fn floor(colliders: &mut SceneColliderData) {
+        wall(
+            colliders,
+            0,
+            Vec3::new(0.0, -0.5, 0.0),
+            Vec3::new(20.0, 0.5, 20.0),
+        );
+    }
+
+    /// A ramp `degrees` steep rising towards -x, its surface through the origin, and the feet
+    /// of an avatar `lift` above the point where its ball rests on it at x = 0.
+    fn ramp(colliders: &mut SceneColliderData, degrees: f32, lift: f32) -> Vec3 {
+        let rotation = Quat::from_rotation_z(-degrees.to_radians());
+        let normal = rotation * Vec3::Y;
+        colliders.set_wall(
+            &ColliderId::new(SceneEntityId::ROOT, None, 1),
+            -normal * 0.5,
+            Vec3::new(20.0, 0.5, 20.0),
+            rotation,
+        );
+        // the ball's centre a radius off the surface, the feet a radius below it
+        normal * PLAYER_COLLIDER_RADIUS - Vec3::Y * PLAYER_COLLIDER_RADIUS + Vec3::Y * lift
+    }
+
+    fn height(colliders: &mut SceneColliderData, feet: Vec3) -> f32 {
+        colliders
+            .get_standing_ground(feet)
+            .map(|(h, _)| h)
+            .unwrap_or(f32::INFINITY)
+    }
+
+    #[test]
+    fn standing_on_a_floor_is_grounded() {
+        let mut colliders = SceneColliderData::default();
+        floor(&mut colliders);
+        assert!(grounded(height(&mut colliders, Vec3::ZERO)));
+        let h = height(&mut colliders, Vec3::new(0.0, 0.02, 0.0));
+        assert!((h - 0.02).abs() < 1e-4, "{h}");
+        let h = height(&mut colliders, Vec3::new(0.0, 2.0, 0.0));
+        assert!((h - 2.0).abs() < 1e-4, "{h}");
+    }
+
+    #[test]
+    fn a_wall_touched_in_the_air_is_not_ground() {
+        // a wall whose face is at x = 0.3, where the ball of an avatar at x = 0 touches it,
+        // and one that face penetrates by a hair, as collide-and-slide leaves it
+        for (index, face) in [(2, 0.3), (3, 0.3 - 1e-6)] {
+            let mut colliders = SceneColliderData::default();
+            floor(&mut colliders);
+            wall(
+                &mut colliders,
+                index,
+                Vec3::new(face + 0.5, 2.0, 0.0),
+                Vec3::new(0.5, 2.0, 20.0),
+            );
+            let h = height(&mut colliders, Vec3::new(0.0, 1.5, 0.0));
+            assert!((h - 1.5).abs() < 1e-3, "face {face}: {h}");
+            // standing on the floor against the wall is still grounded
+            assert!(grounded(height(&mut colliders, Vec3::ZERO)), "face {face}");
+        }
+    }
+
+    #[test]
+    fn a_walkable_slope_is_ground_and_a_steeper_one_is_not() {
+        for (degrees, standing) in [(40.0, true), (46.0, true), (47.0, false), (50.0, false)] {
+            let mut colliders = SceneColliderData::default();
+            let feet = ramp(&mut colliders, degrees, 0.01);
+            let h = height(&mut colliders, feet);
+            assert_eq!(grounded(h), standing, "{degrees} degrees: {h}");
+            // another player's avatar stands on the first surface its ball touches
+            let first = colliders.get_ground(feet).map_or(f32::INFINITY, |(h, _)| h);
+            assert!(grounded(first), "{degrees} degrees: {first}");
+            if !standing {
+                // the slope under the avatar's centre
+                let r = PLAYER_COLLIDER_RADIUS;
+                let below = r / degrees.to_radians().cos() - r + 0.01;
+                assert!(
+                    (h - below).abs() < 1e-3,
+                    "{degrees} degrees: {h} vs {below}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_walkable_slope_against_a_wall_is_ground() {
+        let mut colliders = SceneColliderData::default();
+        let feet = ramp(&mut colliders, 40.0, 0.0);
+        // a wall the ball touches beside it, along the slope
+        wall(
+            &mut colliders,
+            2,
+            Vec3::new(0.0, 0.0, feet.z - PLAYER_COLLIDER_RADIUS - 0.5),
+            Vec3::new(20.0, 5.0, 0.5),
+        );
+        assert!(grounded(height(&mut colliders, feet)));
+    }
+
+    #[test]
+    fn an_edge_under_the_ball_but_not_the_centre_is_not_ground() {
+        // a 0.3 m step whose edge is at x = 0: the ball rests on the edge from either side, but
+        // from 0.22 m out (the walkable angle) the contact is too steep to stand on
+        for (x, standing) in [(-0.1, true), (0.2, true), (0.25, false)] {
+            let mut colliders = SceneColliderData::default();
+            floor(&mut colliders);
+            wall(
+                &mut colliders,
+                2,
+                Vec3::new(-1.0, 0.15, 0.0),
+                Vec3::new(1.0, 0.15, 20.0),
+            );
+            let r = PLAYER_COLLIDER_RADIUS;
+            // the feet where the ball rests on the edge (x, 0.3)
+            let y = if x <= 0.0 {
+                0.3
+            } else {
+                0.3 + (r * r - x * x).sqrt() - r
+            };
+            let h = height(&mut colliders, Vec3::new(x, y, 0.0));
+            assert_eq!(grounded(h), standing, "x {x}: {h}");
+            if !standing {
+                assert!((h - y).abs() < 1e-3, "x {x}: {h} vs the floor {y}");
+            }
+        }
     }
 }

@@ -74,6 +74,9 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    into a bevy component (`C: TryFrom<D>`) on the matching entity. Registration is
    `add_crdt_lww_component` or `add_crdt_go_component` in `update_world`; the registration adds
    the system. Only transforms and text shapes have hand-written loop systems.
+   After them, once their components are in, `stage_redispatch_rotation` (`user_input`) stages
+   the rotation for the movement scene's re-dispatch as a `RedispatchRotation` component on the
+   scene that moves the player and removes it from every other scene (see below).
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
 scenes or replies outstanding. Priority: the scenes the player is in (the one they stand in,
@@ -90,6 +93,34 @@ a system in this set); see the
 [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
 while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
 one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
+
+The movement controller scene (`priority_scenes["movement_controller"]`) has one exception
+(`movement_redispatch`). Its reply to the tick dispatched at the start of a frame moves the
+player in that frame; a reply that lands after the frame's deadline is applied a frame late,
+and the scene, still in flight when the next frame queues its scenes, would skip that frame's
+dispatch. When `receive_scene_updates` takes such a late reply, it puts the scene at the front
+of the queue with an extra slot, so the loop's next pass dispatches it again with the current
+frame's input. A late reply seen at the loop's first poll is answered while the loop has time
+left: the re-dispatch leaves where the frame's regular dispatch would have, with as much of the
+loop left. One seen later in the loop is answered only if the time left before the deadline
+covers the 90th percentile of the scene's last 32 ticks from dispatch to reply. A reply first
+seen at a loop's first poll counts as arriving when the previous loop ended, so when more than
+a tenth of the ticks miss, that percentile is a whole loop and holds back every re-dispatch
+later in a loop. At most one tick stays in flight, so this happens at most once per frame and
+the loop still ends at its deadline. A re-dispatch's reply that is late
+too is applied in the next frame. The movement scene tells a reply the engine has not applied
+yet from a takeover by the requested velocity it receives. The re-dispatch is sent the player's
+rotation as the frame's movement sets it, staged once, after the loop pass that takes the late
+reply (`stage_redispatch_rotation`, the scene's `RedispatchRotation`): the engine applies the
+reply's orientation only in `PostUpdate` (`apply_rotation`, first in `PlayerUpdate`), and the
+scene turns from the rotation it is sent, so from the player's current rotation every other
+frame would continue a different chain of replies. The staging chooses the frame's movement as
+the pick in `PostLoop` will (`choose_latest_frame`, over the `AvatarMovement` changed since the
+change tick that pick records when it runs): a scene that takes over in the frame gives its
+rotation, and a reply that changes no movement, or comes
+from a scene the player has left, gives none. A choice the engine will not apply (none, or a
+`movePlayerTo` facing holds), or the reply of a movement scene that no longer moves the player
+(a parcel scene's `AvatarMovement` took over), leaves the player's current rotation.
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.

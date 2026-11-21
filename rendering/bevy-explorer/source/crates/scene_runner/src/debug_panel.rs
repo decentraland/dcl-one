@@ -18,7 +18,7 @@ use crate::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
-    vec3_to_parcel, ContainerEntity, ContainingScene,
+    vec3_to_parcel, ContainerEntity, ContainingScene, SceneUpdates,
 };
 
 pub(super) struct SceneDebugPanelPlugin;
@@ -178,8 +178,66 @@ impl Plugin for SceneDebugPanelPlugin {
                 ],
                 actions: &[],
                 inputs: &[],
+            })
+            .add_console_command::<MovementRedispatchState, _>(movement_redispatch_state)
+            .add_debug_section(DebugSection {
+                title: "Movement Re-dispatch",
+                query: "/movement_redispatch_state",
+                fields: &[
+                    ("Movement scene", "scene"),
+                    ("Late replies since startup", "lateReplies"),
+                    ("Re-dispatches since startup", "redispatches"),
+                    (
+                        "Re-dispatches sent the frame's staged rotation",
+                        "stagedRotations",
+                    ),
+                    ("Last staged rotation sent (yaw degrees)", "lastStagedYaw"),
+                    ("Tick time p90 (ms)", "p90"),
+                    ("Ticks in the p90", "samples"),
+                ],
+                actions: &[],
+                inputs: &[],
             });
     }
+}
+
+/// Read the movement scene's re-dispatch: its late replies, the re-dispatches they queued and the
+/// rotation those were sent.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/movement_redispatch_state")]
+struct MovementRedispatchState;
+
+fn movement_redispatch_state(
+    mut input: ConsoleCommand<MovementRedispatchState>,
+    updates: Res<SceneUpdates>,
+    scenes: Query<&RendererSceneContext>,
+) {
+    if input.take().is_none() {
+        return;
+    }
+    let ticks = &updates.movement_ticks;
+    let scene = updates
+        .priority_scenes
+        .get(crate::MOVEMENT_CONTROLLER)
+        .and_then(|&scene| scenes.get(scene).ok())
+        .map(|context| context.title.clone());
+    input.reply_ok(
+        json!({
+            "scene": scene,
+            "lateReplies": ticks.late_replies,
+            "redispatches": ticks.redispatches,
+            "stagedRotations": ticks.staged_rotations,
+            "lastStagedYaw": ticks.last_staged_yaw,
+            "p90": ticks.p90().map(|p90| p90.as_secs_f64() * 1000.0),
+            "samples": ticks.samples(),
+            "unavailable": {
+                "scene": "No scene drives the player's movement.",
+                "lastStagedYaw": "No re-dispatch has been sent a staged rotation.",
+                "p90": "No movement scene tick recorded.",
+            },
+        })
+        .to_string(),
+    );
 }
 
 #[derive(Resource, Default)]
@@ -668,19 +726,137 @@ mod tests {
     }
 
     fn read_scene_state(app: &mut App) -> Value {
+        read_command(app, "/current_scene_state")
+    }
+
+    fn read_command(app: &mut App, command: &str) -> Value {
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let result = result.clone();
             Arc::new(move |reply| *result.lock().unwrap() = Some(reply))
         };
         app.world_mut().send_event(ConsoleCommandEntered {
-            command_name: "/current_scene_state".into(),
+            command_name: command.into(),
             args: Vec::new(),
             responder: Some(responder),
         });
         app.update();
         let reply = result.lock().unwrap().take().unwrap().unwrap();
         serde_json::from_str(&reply).unwrap()
+    }
+
+    #[test]
+    fn the_movement_redispatch_reading_counts_late_replies_redispatches_and_staged_rotations() {
+        use crate::{
+            renderer_context::{ReplyTiming, SceneTickTiming, SentTiming, SCENE_FIRST_UPDATE_TICK},
+            scene_spawn_slice::tests::{scene_updates, SIXTY_FPS},
+        };
+        use dcl_types::SceneId;
+
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .insert_resource(scene_updates(Some(SIXTY_FPS)))
+        .add_console_command::<MovementRedispatchState, _>(movement_redispatch_state);
+        let report = read_command(&mut app, "/movement_redispatch_state");
+        assert!(report["scene"].is_null(), "{report}");
+        assert_eq!(report["lateReplies"], 0);
+        assert!(report["p90"].is_null(), "{report}");
+        assert!(report["unavailable"]["scene"].is_string(), "{report}");
+
+        let scene = app.world_mut().spawn_empty().id();
+        let mut context = RendererSceneContext::new(
+            SceneId::DUMMY,
+            "hash".to_owned(),
+            "storage_root".to_owned(),
+            true,
+            1,
+            "movement".to_owned(),
+            IVec2::ZERO,
+            bevy::platform::collections::HashSet::from_iter([IVec2::ZERO]),
+            vec![],
+            default(),
+            vec![],
+            scene,
+            0.0,
+            false,
+            "sdk_version",
+            false,
+            false,
+        );
+        context.tick_number = SCENE_FIRST_UPDATE_TICK;
+        // a live scene: only it can be dispatched again
+        context.state = crate::renderer_context::SceneState::Live {
+            handle: crate::SceneThreadHandle {
+                sender: tokio::sync::mpsc::unbounded_channel().0,
+                kill_guard: None,
+            },
+            in_flight: false,
+        };
+        let at = web_time::Instant::now();
+        let reply = |sent, frame| SceneTickTiming {
+            reply: Some(ReplyTiming {
+                sent: SentTiming { at, frame: sent },
+                at,
+                frame,
+            }),
+            ..default()
+        };
+        let mut updates = app.world_mut().resource_mut::<SceneUpdates>();
+        updates
+            .priority_scenes
+            .insert(crate::MOVEMENT_CONTROLLER, scene);
+        updates.loop_end_time = at + std::time::Duration::from_secs(1);
+        let previous_loop_end = updates.previous_loop_end;
+        let loop_end = updates.loop_end_time;
+        // an on-time reply, then a late one, which is dispatched again
+        assert!(!updates.movement_ticks.redispatch_due(
+            &context,
+            &reply(6, 6),
+            true,
+            1.0,
+            previous_loop_end,
+            loop_end
+        ));
+        assert!(updates.movement_ticks.redispatch_due(
+            &context,
+            &reply(6, 7),
+            true,
+            1.0,
+            previous_loop_end,
+            loop_end
+        ));
+        updates
+            .movement_ticks
+            .record_staged_rotation(Quat::from_rotation_y(30f32.to_radians()));
+        app.world_mut().entity_mut(scene).insert(context);
+
+        let report = read_command(&mut app, "/movement_redispatch_state");
+        assert_eq!(report["scene"], "movement");
+        assert_eq!(report["lateReplies"], 1);
+        assert_eq!(report["redispatches"], 1);
+        assert_eq!(report["stagedRotations"], 1);
+        assert!((report["lastStagedYaw"].as_f64().unwrap() - 30.0).abs() < 1e-3);
+        assert_eq!(report["samples"], 2);
+
+        // a late reply from a scene that has broken since is not dispatched again
+        let mut context = app
+            .world_mut()
+            .entity_mut(scene)
+            .take::<RendererSceneContext>()
+            .unwrap();
+        context.state = crate::renderer_context::SceneState::Broken;
+        let mut updates = app.world_mut().resource_mut::<SceneUpdates>();
+        assert!(!updates.movement_ticks.redispatch_due(
+            &context,
+            &reply(7, 8),
+            true,
+            2.0,
+            previous_loop_end,
+            loop_end
+        ));
+        assert_eq!(updates.movement_ticks.redispatches, 1);
     }
 
     #[test]

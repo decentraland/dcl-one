@@ -365,6 +365,18 @@ On the web only:
   `maxReopens`; with `ms`, sets it first for every source failing from then on. For tests that
   would otherwise wait the full 62 s schedule.
 
+Movement:
+
+- `/movement_state`: the active locomotion settings and the last completed movement step's
+  `requested`, `actual` and `external` velocities, in SDK axes; and the engine's ground assist:
+  whether the player is on the ground and its height over it, the push against a riser, and the
+  step offsets and ground snaps since startup with the last one's rise or drop (the debug
+  panel's Locomotion section).
+- `/movement_redispatch_state`: the movement scene, its late replies and the re-dispatches they
+  queued since startup, the re-dispatches sent the frame's staged rotation and the last one's yaw,
+  and the 90th percentile of its recent tick times (the debug panel's Movement Re-dispatch
+  section).
+
 The HUD and input:
 
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role

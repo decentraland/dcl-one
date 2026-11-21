@@ -62,7 +62,8 @@ decisions; the rest of both stands.
 Where the layout differs from pnpm's default:
 
 - `library/js-sdk-toolchain`, `library/protocol`, the scenes built with the SDK
-  (`apps/ui3/editor-scene`, the Explorer's bridge scene, the Creator Hub's Bevy agent) and
+  (`apps/ui3/editor-scene`, the Explorer's bridge and movement scenes, the Creator Hub's Bevy
+  agent) and
   `apps/creator-hub` set `nodeLinker: hoisted`. The SDK's published type declarations reach a
   sibling package by relative path, and the Creator Hub's packaging and tests read one flat
   `node_modules`. In these projects an import of an undeclared package is not caught at install.
