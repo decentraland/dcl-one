@@ -25,14 +25,17 @@
 //! The outcome is `equal` only when every requested block was compared,
 //! every compared field was available on both sides, and nothing differed.
 //! Differences and missing coverage are both reported when both occur; the
-//! exit code is 3 when refused, else 1 when anything differed, else 2 when
-//! anything is uncovered or incomplete, else 0. The portal's own upstream
-//! RPC calls (chain-lake reads headers it does not hold from an RPC) are not
-//! visible here.
+//! exit code is 4 when refused, else 1 when anything differed, else 3 when
+//! anything is uncovered or incomplete, else 0 (2 is left to the argument
+//! parser's usage error). Every outcome is a report, an unreachable database
+//! included (before any chain read). A failure is reported by its stage, its
+//! blocks and a stable kind (`rpc_error`, `portal_error`, `database_error`),
+//! never by an upstream's text, which may echo a credential. The portal's own
+//! upstream RPC calls (chain-lake reads headers it does not hold from an
+//! RPC) are not visible here.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::Context;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -46,6 +49,53 @@ use crate::chain_index::rpc::Rpc;
 const ROUNDS: usize = 8;
 /// Times a window may re-read one side to agree on a common end.
 const AGREE: usize = 4;
+
+/// The chain moved under a read: this module's own wording, safe to report.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct Moved(String);
+
+/// A failed read as the report may show it: the stage and its blocks, and a
+/// stable kind. An upstream's text (an RPC error can carry the response it
+/// got, a gateway may echo a credential-bearing URL) never enters a report.
+fn reason(stage: &str, e: &anyhow::Error) -> String {
+    if let Some(moved) = e.downcast_ref::<Moved>() {
+        return format!("{stage}: {moved}");
+    }
+    if let Some(p) = e.downcast_ref::<crate::chain_index::portal::PortalError>() {
+        return format!("{stage}: portal_error: {p}");
+    }
+    let kind = if e
+        .chain()
+        .any(|c| c.is::<crate::chain_index::rpc::RpcError>())
+    {
+        "rpc_error"
+    } else if e.chain().any(|c| c.is::<sqlx::Error>()) {
+        "database_error"
+    } else {
+        "error"
+    };
+    format!("{stage}: {kind}")
+}
+
+/// A failure inside the windows: where it happened, and the error.
+struct Failed {
+    stage: String,
+    error: anyhow::Error,
+}
+
+trait At<T> {
+    fn at(self, stage: impl FnOnce() -> String) -> Result<T, Failed>;
+}
+
+impl<T, E: Into<anyhow::Error>> At<T> for Result<T, E> {
+    fn at(self, stage: impl FnOnce() -> String) -> Result<T, Failed> {
+        self.map_err(|e| Failed {
+            stage: stage(),
+            error: e.into(),
+        })
+    }
+}
 
 /// What to compare.
 pub struct Request {
@@ -123,15 +173,57 @@ pub struct Report {
 }
 
 impl Report {
-    /// 3 when refused, else 1 when anything differed, else 2 when anything
-    /// is uncovered or a compared field was unavailable, else 0.
+    /// A report of nothing compared: the run was refused before any read.
+    pub fn refused(
+        net: &str,
+        indexer: &str,
+        dataset: &str,
+        from: u64,
+        to: u64,
+        why: String,
+    ) -> Self {
+        Self {
+            network: match ChainNet::parse(net) {
+                Some(n) => n.db_name(),
+                None => "unknown",
+            },
+            indexer: indexer.to_string(),
+            dataset: dataset.to_string(),
+            coverage: Coverage {
+                advertised_start: None,
+                address_history: AddressHistory::Unknown,
+            },
+            requested: (from, to),
+            compared: Vec::new(),
+            uncovered: vec![Uncovered {
+                from: from.min(to),
+                to: to.max(from),
+                reason: "refused".into(),
+            }],
+            windows: Vec::new(),
+            totals: Totals::default(),
+            outcome: "refused",
+            refused: Some(why),
+            different: false,
+            incomplete: true,
+            sends: Sends {
+                rpc_requests: 0,
+                portal: SendCounts::default(),
+                note: "the portal's own upstream RPC calls are not counted",
+            },
+        }
+    }
+
+    /// 4 when refused, else 1 when anything differed, else 3 when anything
+    /// is uncovered or a compared field was unavailable, else 0. (2 is the
+    /// argument parser's usage error, which prints no report.)
     pub fn exit_code(&self) -> i32 {
         if self.refused.is_some() {
-            3
+            4
         } else if self.different {
             1
         } else if self.incomplete {
-            2
+            3
         } else {
             0
         }
@@ -190,10 +282,7 @@ async fn rpc_read(
     chunk: &mut usize,
 ) -> anyhow::Result<AcceptedRead> {
     let before = source.header(to).await?.value;
-    let window = source
-        .window(from, to, groups, chunk)
-        .await
-        .with_context(|| format!("eth_getLogs [{from}, {to}]"))?;
+    let window = source.window(from, to, groups, chunk).await?;
     let times = source.block_times(&window.logs).await?.value;
     let reached = if window.reached == to {
         None
@@ -205,16 +294,17 @@ async fn rpc_read(
         _ => None,
     };
     let after = source.header(to).await?.value;
-    anyhow::ensure!(
-        before == after,
-        "the chain changed while reading [{from}, {to}]"
-    );
-    if let (Some(p), Some(parent)) = (&predecessor, parent) {
-        anyhow::ensure!(
-            p.hash == parent,
+    if before != after {
+        return Err(Moved(format!("the chain changed while reading [{from}, {to}]")).into());
+    }
+    if let (Some(p), Some(parent)) = (&predecessor, parent)
+        && p.hash != parent
+    {
+        return Err(Moved(format!(
             "block {} is no longer the previous window's end",
             from - 1
-        );
+        ))
+        .into());
     }
     let header = reached.unwrap_or(after);
     Ok(AcceptedRead {
@@ -231,18 +321,24 @@ async fn rpc_read(
 /// Compares `req` over `pool`'s index state. See the module documentation.
 /// A read that fails is reported, never raised: the windows compared before
 /// it are kept and the rest of the range is uncovered with the reason.
-pub async fn run(
-    pool: &PgPool,
-    http: &crate::http::Outbound,
-    req: Request,
-) -> anyhow::Result<Report> {
-    anyhow::ensure!(
-        req.from <= req.to,
-        "--from {} is after --to {}",
-        req.from,
-        req.to
-    );
-    let ix = index_for(&req.indexer, req.net)?;
+pub async fn run(pool: &PgPool, http: &crate::http::Outbound, req: Request) -> Report {
+    let refuse = |why: String| {
+        Report::refused(
+            req.net.db_name(),
+            &req.indexer,
+            req.reader.dataset(),
+            req.from,
+            req.to,
+            why,
+        )
+    };
+    if req.from > req.to {
+        return refuse(format!("--from {} is after --to {}", req.from, req.to));
+    }
+    let ix = match index_for(&req.indexer, req.net) {
+        Ok(ix) => ix,
+        Err(e) => return refuse(e.to_string()),
+    };
     let sent = AtomicUsize::new(0);
     let source = RpcSource::new(Rpc::at(http, &req.rpc_url).counting(&sent));
     let mut out = Report {
@@ -282,7 +378,7 @@ pub async fn run(
     };
     out.sends.rpc_requests = sent.load(Ordering::SeqCst);
     out.sends.portal = req.reader.sends();
-    Ok(out)
+    out
 }
 
 /// Everything from the requested range on, into `out`.
@@ -298,6 +394,15 @@ async fn measure(
         to: req.to,
         reason,
     };
+    // The index's filters read the database: an unreachable one ends the
+    // run before any chain read.
+    if let Err(e) = sqlx::query("SELECT 1").execute(pool).await {
+        let e = anyhow::Error::new(e);
+        return out.uncovered.push(all(format!(
+            "database_unavailable: {}",
+            reason("probe", &e)
+        )));
+    }
     // The projection, the dataset and the RPC must name one chain before
     // any window is read.
     let projection = chain_walk::mainnet_chain(req.net) as u64;
@@ -314,7 +419,13 @@ async fn measure(
     }
     let rpc_chain = match source.chain_id().await {
         Ok(c) => c.value,
-        Err(e) => return out.uncovered.push(all(format!("rpc_unavailable: {e}"))),
+        Err(e) => {
+            let e = anyhow::Error::new(e);
+            return out.uncovered.push(all(format!(
+                "rpc_unavailable: {}",
+                reason("eth_chainId", &e)
+            )));
+        }
     };
     if rpc_chain != projection {
         out.refused = Some(format!(
@@ -327,7 +438,13 @@ async fn measure(
     }
     let advertised = match req.reader.advertised_start().await {
         Ok(a) => a,
-        Err(e) => return out.uncovered.push(all(format!("portal_unavailable: {e}"))),
+        Err(e) => {
+            let e = anyhow::Error::new(e);
+            return out.uncovered.push(all(format!(
+                "portal_unavailable: {}",
+                reason("metadata", &e)
+            )));
+        }
     };
     out.coverage.advertised_start = advertised;
     let rpc_safe = match req.net {
@@ -339,11 +456,22 @@ async fn measure(
     };
     let rpc_safe = match rpc_safe {
         Ok(n) => n,
-        Err(e) => return out.uncovered.push(all(format!("rpc_unavailable: {e}"))),
+        Err(e) => {
+            let e = anyhow::Error::new(e);
+            return out
+                .uncovered
+                .push(all(format!("rpc_unavailable: {}", reason("safe head", &e))));
+        }
     };
     let portal_final = match req.reader.finalized().await {
         Ok(h) => h.number,
-        Err(e) => return out.uncovered.push(all(format!("portal_unavailable: {e}"))),
+        Err(e) => {
+            let e = anyhow::Error::new(e);
+            return out.uncovered.push(all(format!(
+                "portal_unavailable: {}",
+                reason("finalized head", &e)
+            )));
+        }
     };
     let lo = req.from.max(advertised.unwrap_or(0));
     let hi = req.to.min(rpc_safe).min(portal_final);
@@ -367,13 +495,13 @@ async fn measure(
     }
     if lo <= hi {
         let mut next = lo;
-        if let Err(e) =
+        if let Err(f) =
             compare_range(pool, source, ix, req, projection, lo, hi, &mut next, out).await
         {
             out.uncovered.push(Uncovered {
                 from: next,
                 to: hi,
-                reason: format!("read_failed: {e:#}"),
+                reason: format!("read_failed: {}", reason(&f.stage, &f.error)),
             });
         }
     }
@@ -393,15 +521,22 @@ async fn compare_range(
     hi: u64,
     next: &mut u64,
     out: &mut Report,
-) -> anyhow::Result<()> {
-    let start = source.header(lo.saturating_sub(1)).await?.value;
+) -> Result<(), Failed> {
+    let start = source
+        .header(lo.saturating_sub(1))
+        .await
+        .at(|| format!("rpc header {}", lo.saturating_sub(1)))?
+        .value;
     let anchor = (start.number, start.timestamp);
     let mut parent = (lo > 0).then_some(start.hash);
     let mut chunk = 1_000usize;
     while *next <= hi {
         let from = *next;
         let to = (from + req.window.max(1) - 1).min(hi);
-        let groups = ix.groups(pool, from, to, anchor).await?;
+        let groups = ix
+            .groups(pool, from, to, anchor)
+            .await
+            .at(|| format!("filters [{from}, {to}]"))?;
         let fingerprint = fingerprint(&groups);
         let Ok(filters) = compare::filters(&groups) else {
             out.uncovered.push(Uncovered {
@@ -421,7 +556,8 @@ async fn compare_range(
             parent.as_deref(),
             &mut chunk,
         )
-        .await?;
+        .await
+        .at(|| format!("rpc window [{from}, {to}]"))?;
         let rpc_reached = read.reached;
         let mut outcome: Option<Outcome> = None;
         for _ in 0..AGREE {
@@ -455,7 +591,8 @@ async fn compare_range(
                 parent.as_deref(),
                 &mut chunk,
             )
-            .await?;
+            .await
+            .at(|| format!("rpc reread [{from}, {upper}]"))?;
             if read.reached == upper {
                 outcome = Some(compare::compare(&read, &fetched, out.coverage));
                 break;
@@ -532,16 +669,37 @@ async fn compare_range(
     Ok(())
 }
 
-/// The read-only connection the command uses: every transaction read-only,
-/// one connection, no bootstrap.
-pub async fn read_only_pool(database_url: &str) -> anyhow::Result<PgPool> {
+/// The read-only pool the command uses: every transaction read-only, one
+/// connection, opened lazily (an unreachable database is reported by
+/// [`run`], not raised here), no bootstrap.
+pub fn read_only_pool(database_url: &str) -> Result<PgPool, String> {
     use std::str::FromStr;
     let opts = sqlx::postgres::PgConnectOptions::from_str(database_url)
-        .context("DATABASE_URL")?
+        .map_err(|_| "DATABASE_URL is not a PostgreSQL connection URL".to_string())?
         .options([("default_transaction_read_only", "on")]);
-    sqlx::postgres::PgPoolOptions::new()
+    Ok(sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
-        .connect_with(opts)
-        .await
-        .context("connecting to DATABASE_URL")
+        .acquire_timeout(std::time::Duration::from_secs(10))
+        .connect_lazy_with(opts))
+}
+
+/// The command end to end, as the binary runs it: the lazy read-only pool,
+/// then [`run`]. Every outcome is a report.
+pub async fn command(database_url: &str, http: &crate::http::Outbound, req: Request) -> Report {
+    let pool = match read_only_pool(database_url) {
+        Ok(pool) => pool,
+        Err(why) => {
+            return Report::refused(
+                req.net.db_name(),
+                &req.indexer,
+                req.reader.dataset(),
+                req.from,
+                req.to,
+                why,
+            );
+        }
+    };
+    let report = run(&pool, http, req).await;
+    pool.close().await;
+    report
 }

@@ -163,9 +163,9 @@ enum ShopCommand {
     /// key `CHAIN_LOGS_PORTAL_API_KEY` (or its `_FILE`). The network, the
     /// dataset and the RPC must name one chain, or the run is refused. A
     /// read that fails ends the run with what was compared and the rest
-    /// uncovered. Prints one JSON report; exits 3 when refused, else 1 when
-    /// anything differed, else 2 when part of the range or a compared field
-    /// was not compared, else 0.
+    /// uncovered. Prints one JSON report, whatever happens; exits 4 when
+    /// refused, else 1 when anything differed, else 3 when part of the range
+    /// or a compared field was not compared, else 0 (2 is a usage error).
     CompareSources {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
@@ -794,53 +794,76 @@ async fn run(
                 .with_target(false)
                 .with_writer(std::io::stderr)
                 .init();
-            let net = ChainNet::parse(&net).context("--net")?;
-            let rpc_var = match net {
-                ChainNet::Ethereum => "ETH_RPC_URL",
-                ChainNet::Matic => "RPC_ENDPOINT_POLYGON",
-            };
-            let rpc_url = catalyst::config::Config::secret_from_env(rpc_var)?
-                .with_context(|| format!("set {rpc_var} (or {rpc_var}_FILE)"))?;
-            let key = catalyst::config::Config::secret_from_env("CHAIN_LOGS_PORTAL_API_KEY")?
-                .and_then(catalyst::chain_index::portal::Secret::new);
             let dataset = dataset.unwrap_or_else(|| {
-                match net {
-                    ChainNet::Ethereum => "ethereum-mainnet",
-                    ChainNet::Matic => "polygon-mainnet",
+                match ChainNet::parse(&net) {
+                    Some(ChainNet::Ethereum) => "ethereum-mainnet",
+                    _ => "polygon-mainnet",
                 }
                 .to_string()
             });
-            let reader = catalyst::chain_index::portal::PortalReader::new(
-                &portal_url,
-                &dataset,
-                key,
-                max_rps,
-            )
-            .map_err(anyhow::Error::msg)?;
-            let pool = compare_sources::read_only_pool(&database_url).await?;
-            let http = catalyst::http::Outbound::new(catalyst::http::HttpClientCfg::default())?
-                .allowing_configured_provider_hosts();
-            let report = compare_sources::run(
-                &pool,
-                &http,
-                compare_sources::Request {
-                    net,
-                    indexer,
+            // Every outcome prints a report: a setup that cannot run is
+            // refused, never raised (an error exit would read as a difference).
+            let setup = || -> anyhow::Result<(ChainNet, String, catalyst::chain_index::portal::PortalReader)> {
+                let net = ChainNet::parse(&net).context("--net")?;
+                let rpc_var = match net {
+                    ChainNet::Ethereum => "ETH_RPC_URL",
+                    ChainNet::Matic => "RPC_ENDPOINT_POLYGON",
+                };
+                let rpc_url = catalyst::config::Config::secret_from_env(rpc_var)?
+                    .with_context(|| format!("set {rpc_var} (or {rpc_var}_FILE)"))?;
+                let key = catalyst::config::Config::secret_from_env("CHAIN_LOGS_PORTAL_API_KEY")?
+                    .and_then(catalyst::chain_index::portal::Secret::new);
+                let reader = catalyst::chain_index::portal::PortalReader::new(
+                    &portal_url,
+                    &dataset,
+                    key,
+                    max_rps,
+                )
+                .map_err(anyhow::Error::msg)?;
+                Ok((net, rpc_url, reader))
+            };
+            let report = match setup() {
+                Err(e) => compare_sources::Report::refused(
+                    &net,
+                    &indexer,
+                    &dataset,
                     from,
                     to,
-                    window,
-                    rpc_url,
-                    reader,
-                    history: if assert_full_history {
-                        catalyst::chain_index::portal::AddressHistory::AssertedByOperator
-                    } else {
-                        catalyst::chain_index::portal::AddressHistory::Unknown
-                    },
+                    format!("{e:#}"),
+                ),
+                Ok((net_v, rpc_url, reader)) => match catalyst::http::Outbound::new(
+                    catalyst::http::HttpClientCfg::default(),
+                ) {
+                    Err(e) => compare_sources::Report::refused(
+                        &net,
+                        &indexer,
+                        &dataset,
+                        from,
+                        to,
+                        format!("the outbound client: {}", e.without_url()),
+                    ),
+                    Ok(http) => compare_sources::command(
+                        &database_url,
+                        &http.allowing_configured_provider_hosts(),
+                        compare_sources::Request {
+                            net: net_v,
+                            indexer: indexer.clone(),
+                            from,
+                            to,
+                            window,
+                            rpc_url,
+                            reader,
+                            history: if assert_full_history {
+                                catalyst::chain_index::portal::AddressHistory::AssertedByOperator
+                            } else {
+                                catalyst::chain_index::portal::AddressHistory::Unknown
+                            },
+                        },
+                    )
+                    .await,
                 },
-            )
-            .await?;
+            };
             println!("{}", serde_json::to_string(&report)?);
-            pool.close().await;
             match report.exit_code() {
                 0 => Ok(()),
                 code => std::process::exit(code),

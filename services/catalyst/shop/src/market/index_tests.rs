@@ -151,6 +151,11 @@ struct FakeChain {
     strip_timestamps: std::sync::atomic::AtomicBool,
     /// Logs without their `blockHash`, as an endpoint that omits it.
     strip_block_hash: std::sync::atomic::AtomicBool,
+    /// `eth_chainId` answers an error.
+    fail_chain_id: std::sync::atomic::AtomicBool,
+    /// Text the failing reads echo in their error message (a gateway that
+    /// repeats the request it got).
+    echo: Mutex<String>,
     batches: AtomicUsize,
     drop_in_batch: Mutex<Vec<u64>>,
     /// Every request in arrival order, as [`call_tag`] names it.
@@ -235,6 +240,8 @@ impl FakeChain {
             get_logs: AtomicUsize::new(0),
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
             strip_block_hash: std::sync::atomic::AtomicBool::new(false),
+            fail_chain_id: std::sync::atomic::AtomicBool::new(false),
+            echo: Mutex::new(String::new()),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
@@ -406,6 +413,9 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
     let refuse = |message: String| json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": message } });
     match body["method"].as_str() {
         Some("eth_blockNumber") => reply(json!(format!("0x{:x}", *chain.head.lock()))),
+        Some("eth_chainId") if chain.fail_chain_id.load(Ordering::SeqCst) => {
+            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": format!("upstream refused {}", chain.echo.lock()) } })
+        }
         Some("eth_chainId") => reply(json!(format!(
             "0x{:x}",
             chain.chain_id.load(Ordering::SeqCst)
@@ -425,7 +435,7 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     .saturating_sub(chain.finalized_lag.load(Ordering::SeqCst))
             } else {
                 if chain.fail_headers.load(Ordering::SeqCst) {
-                    return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "header unavailable" } });
+                    return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": format!("header unavailable {}", chain.echo.lock()) } });
                 }
                 hex_u64(&body["params"][0])
             };
@@ -10118,7 +10128,6 @@ mod compare_sources_tests {
             },
         )
         .await
-        .unwrap()
     }
 
     fn chain() -> Arc<FakeChain> {
@@ -10219,11 +10228,11 @@ mod compare_sources_tests {
             serve_portal(chain, Quirks::default()).await,
         );
         let r = compare(&db, &rpc, &portal, 901, 1_200).await;
-        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2));
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3));
         assert_eq!(r.compared, [(901, 990)]);
         assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (991, 1_200));
         let r = compare(&db, &rpc, &portal, 995, 1_200).await;
-        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2));
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3));
         assert!(r.compared.is_empty());
         assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (995, 1_200));
         db.drop().await;
@@ -10244,17 +10253,17 @@ mod compare_sources_tests {
             serve_portal(chain.clone(), Quirks::default()).await,
         );
         let r = compare_on(&db, &rpc, &portal, "ethereum-mainnet", 101, 400).await;
-        assert_eq!((r.outcome, r.exit_code()), ("refused", 3), "{r:#?}");
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4), "{r:#?}");
         assert!(r.refused.is_some() && r.compared.is_empty());
         assert_eq!(r.sends.portal.pages, 0, "no window was read");
         // The dataset right but the RPC on another chain: refused too.
         let r = compare(&db, &rpc, &portal, 101, 400).await;
-        assert_eq!((r.outcome, r.exit_code()), ("refused", 3));
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4));
         db.drop().await;
     }
 
     /// An outage at admission or a read failing mid-run still reports: the
-    /// windows already compared, the sends, the rest uncovered; exit 2.
+    /// windows already compared, the sends, the rest uncovered; exit 3.
     #[tokio::test]
     async fn a_read_failure_is_reported_not_raised() {
         let Some(db) = ScratchDb::create().await else {
@@ -10271,7 +10280,7 @@ mod compare_sources_tests {
         )
         .await;
         let r = compare(&db, &rpc, &down, 101, 400).await;
-        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2), "{r:#?}");
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
         assert!(
             r.uncovered[0].reason.starts_with("portal_unavailable"),
             "{r:#?}"
@@ -10288,7 +10297,7 @@ mod compare_sources_tests {
         .await;
         let r = compare(&db, &rpc, &failing, 101, 400).await;
         chain.fail_headers.store(false, Ordering::SeqCst);
-        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2), "{r:#?}");
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
         assert_eq!(
             r.compared,
             [(101, 200)],
@@ -10312,7 +10321,7 @@ mod compare_sources_tests {
         let rpc = serve(chain.clone()).await;
         let portal = serve_portal(chain.clone(), Quirks::default()).await;
         let r = compare(&db, &rpc, &portal, 101, 400).await;
-        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 2), "{r:#?}");
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
         assert!(
             r.totals
                 .unavailable
@@ -10331,5 +10340,106 @@ mod compare_sources_tests {
         assert_eq!((r.outcome, r.exit_code()), ("different", 1));
         assert!(r.different && r.incomplete);
         db.drop().await;
+    }
+
+    /// An RPC that echoes a credential in its errors never puts it in the
+    /// report, whether it fails at admission or after a compared window; the
+    /// coverage and the sends are still reported.
+    #[tokio::test]
+    async fn an_rpc_error_never_reaches_the_report() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        *chain.echo.lock() = "https://rpc.example/sk-example-rpc".into();
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(chain.clone(), Quirks::default()).await;
+        chain.fail_chain_id.store(true, Ordering::SeqCst);
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        chain.fail_chain_id.store(false, Ordering::SeqCst);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("sk-example-rpc"), "{json}");
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3));
+        assert_eq!(
+            r.uncovered[0].reason,
+            "rpc_unavailable: eth_chainId: rpc_error"
+        );
+        assert!(r.sends.rpc_requests >= 1);
+        let failing = serve_portal(
+            chain.clone(),
+            Quirks {
+                rpc_fails_after_pages: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &failing, 101, 400).await;
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("sk-example-rpc"), "{json}");
+        assert_eq!(r.compared, [(101, 200)]);
+        let last = r.uncovered.last().unwrap();
+        assert_eq!(
+            last.reason, "read_failed: rpc window [201, 300]: rpc_error",
+            "{last:?}"
+        );
+        assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages > 0);
+        db.drop().await;
+    }
+
+    /// The command as the binary runs it, for an index whose filters read
+    /// the database, against a database that cannot be reached: a report of
+    /// the whole range uncovered, exit 3, and not one chain read.
+    #[tokio::test]
+    async fn an_unreachable_database_is_reported_before_any_chain_read() {
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        let reader = PortalReader::new(&portal, "polygon-mainnet", None, 1_000.0).unwrap();
+        let r = compare_sources::command(
+            "postgres://nobody@127.0.0.1:1/unreachable",
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "nft".into(),
+                from: 101,
+                to: 400,
+                window: 100,
+                rpc_url: rpc,
+                reader,
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
+        assert_eq!(
+            r.uncovered[0].reason,
+            "database_unavailable: probe: database_error"
+        );
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (101, 400));
+        assert_eq!(r.sends.rpc_requests, 0);
+        assert_eq!(r.sends.portal, Default::default());
+        assert_eq!(chain.requests.load(Ordering::SeqCst), 0);
+        // A URL that does not parse is refused, never echoed.
+        let reader = PortalReader::new(&portal, "polygon-mainnet", None, 1_000.0).unwrap();
+        let r = compare_sources::command(
+            "not a url with sk-example-db",
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "nft".into(),
+                from: 101,
+                to: 400,
+                window: 100,
+                rpc_url: "http://127.0.0.1:1".into(),
+                reader,
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4));
+        assert!(!serde_json::to_string(&r).unwrap().contains("sk-example-db"));
     }
 }
