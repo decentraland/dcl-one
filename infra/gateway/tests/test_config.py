@@ -604,6 +604,22 @@ class ConfigurationTest(unittest.TestCase):
                     if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
                 ])
 
+    def test_ui_gallery_routes_to_sites_before_any_regex(self):
+        # Static files with no route file: `^~` keeps every gallery path on Sites ahead of the
+        # regex locations, and the exact form lets Sites redirect /ui-gallery to /ui-gallery/.
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        self.assertNotIn("/ui-gallery", gateway.site_prefixes(sites))
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        config = gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+        self.assertIn("location = /ui-gallery {\nproxy_pass http://sites;", config)
+        self.assertIn("location ^~ /ui-gallery/ {\nproxy_pass http://sites;", config)
+
+    def test_a_sites_route_cannot_claim_the_ui_gallery(self):
+        table = {"sites": ["ui-gallery.tsx"], "internal": [], "aliases": [], "node": [], "deploy": []}
+        with self.assertRaisesRegex(ValueError, "Two locations have the name = /ui-gallery"):
+            gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+
     def test_robots_txt_routes_to_sites(self):
         root = Path(__file__).parents[3]
         sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())

@@ -25,6 +25,8 @@ pnpm exec tsc -p gallery/tsconfig.json && node node_modules/typescript-7/bin/tsc
 
 To review a pull request without building it, download the `ui-review-<sha>` artifact of its Shared UI library run, unzip it into a folder such as `ui-review`, run `python3 -m http.server 8080 --directory ui-review` and open http://localhost:8080/gallery/. `--mode hosted` builds the gallery alone into `gallery/dist`, without the Figma reference, for a hosted preview.
 
+The Sites image serves that hosted build at `/ui-gallery/` (`infra/packages/ui-gallery.nix`, [ADR](../../../docs/adr/2026-11-20-ui-gallery-on-sites.md)), so a deployment shows the gallery of the main commit it was deployed from. Its pages carry `noindex`.
+
 The build writes `figma/review/review-dist/gallery/`, beside the generated Review, and uses relative URLs, so the combined output works at the root or under any prefix. Build the generated Review with `--base ./` (as CI does for the uploaded artifact) to serve the same output anywhere, or with the absolute prefix it is served from.
 
 | URL                                       | Opens                                                      |

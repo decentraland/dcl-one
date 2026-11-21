@@ -46,6 +46,8 @@ are external. Explorer images: pipeline.
 
 Sites bundles our Bevy web build under `/play/`; no other engine is used.
 
+Sites also serves the runtime component gallery (`library/ui/gallery`, [README](../../library/ui/gallery/README.md)) under `/ui-gallery/`: `infra/packages/ui-gallery.nix` builds its hosted mode from `library/ui` with the package's pinned pnpm dependencies, and `infra/packages/sites.nix` links it into the client directory, so the server answers it as static files before its routes. The gateway sends `/ui-gallery` and `/ui-gallery/` to Sites. Its pages carry `noindex`. Only a Sites deploy from main publishes a change to it.
+
 - `--production` imports only a fully successful main CI artifact and rejects `--from-build`.
 - Dev and PR images may import once the web job uploads its artifact, or `--from-build` a local `make bevy-web`.
 - A PR that changes no engine input (engine source, protos, HUD, build scripts) takes the newest main build that uploaded its web app and has not failed, validated against the commit that built it (`--trust-inputs` in the PR image build); a PR that does gets its own Bevy run and waits for that exact build. The bindings must match the tree either way.
@@ -80,21 +82,23 @@ python3 tooling/image-smoke.py
   compiles, the build builds the Sites dependencies, so those failures report
   within minutes.
 - Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
-  the compiled API (`catalyst` and `cast-bot`) and Sites app runtime closures, keyed by exact Nix derivation
+  the compiled API (`catalyst` and `cast-bot`), Sites app and UI gallery (`ui-gallery`) runtime closures, keyed by exact Nix derivation
   identities and architecture. The Sites app (`sites-app`) is the compiled server and
   client with their production dependencies; the Explorer build and the docs media are
   assembled beside it as their own store paths, so neither changes its identity or its
   image layer. Its cache entry also holds the app of `image-sites-polygon-credits`
   (`sites-app-polygon-credits`), so an exact hit leaves neither Sites build to compile.
+  The UI gallery is a separate entry: a Sites change does not rebuild it, and a change
+  to the gallery's inputs does not recompile Sites.
   A compiled closure restored under its exact identity skips that
   package's dependency restore, import and toolchain build: nothing is left to compile.
   Container revision labels are still rebuilt for each commit. `cast-bot` has no
   dependency cache: when the APIs entry misses, it compiles whole beside `catalyst`.
 - In Bevy CI the compile job (`apis-sites-compile.yml`) runs beside the web build, and
-  the image build starts after both. The compile job looks for the two compiled closures
+  the image build starts after both. The compile job looks for the three compiled closures
   under their exact keys without a download. When one is missing and this run can save it
   (the first attempt of a main push or of a PR), the job compiles the packages and saves
-  the four cache groups, with the keys, the export checks and the save gate of the image
+  the five cache groups, with the keys, the export checks and the save gate of the image
   build. The image build restores them and has nothing left to compile. Without a saved
   entry it compiles the packages itself, as tag and manual builds do. An entry holds the
   output of one derivation, so its content does not depend on which job saved it; the
@@ -106,7 +110,7 @@ python3 tooling/image-smoke.py
   A stale Catalyst hit reuses vendored sources; changed dependency derivations still
   compile from scratch. The fallback downloads the whole dependency archive.
   Main and tag builds require exact main identities and never select PR namespaces.
-  The APIs and Sites app runtime caches require an exact identity for every event.
+  The APIs, Sites app and UI gallery runtime caches require an exact identity for every event.
 - A Sites cache miss rebuilds the pnpm dependency sets; the Node toolchain
   substitutes from cache.nixos.org on both architectures.
   Fully cold ARM64 main/tag dependency builds have not been timed. They retain the
@@ -122,7 +126,7 @@ python3 tooling/image-smoke.py
   the APIs archive is written while Sites compiles, and it loads into Docker beside
   the Sites archives.
   Cache keys and export (`.`) and image builds (`git+file:.?lfs=1`) must resolve the
-  same Catalyst and Sites app derivations. The Catalyst fileset takes from
+  same Catalyst, Sites app and UI gallery derivations. The Catalyst fileset takes from
   `library/` only what the backend build reads (the `dcl-*` crates, `vendor/rusty_enet`, the
   protocol sources and the OpenAPI documents), none of it LFS-tracked. Before each export,
   the job evaluates both references, using the image build's `--impure` mode for its
