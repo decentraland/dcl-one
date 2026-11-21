@@ -1,12 +1,12 @@
 // Engine logic - ES module
 // Handles WASM/WebGPU initialization and game execution
 
-import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
+import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, engine_set_scene_loop_mode, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
 import { createSandboxHost } from "./sandbox_host.js";
 import { installContentCachePageFunctions, requestPersistentStorage } from "./content_cache.js";
 
 // Re-export for main.js
-export { engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash };
+export { engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, engine_set_scene_loop_mode, gpu_cache_hash };
 
 // Spawns the render worker ahead of start(), so gpu_cache.js warms its device there (src/web.rs
 // engine_render_setup) while the user is still on the login screen; resolves once it has.

@@ -75,6 +75,9 @@ use dcl_component::ComponentNameRegistry;
 
 pub mod asset_preload;
 pub mod automatic_testing;
+pub mod cpu_probe;
+pub mod loop_pacing;
+pub mod tick_stages;
 pub mod visible_content_bytes;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
@@ -430,6 +433,19 @@ impl Plugin for SceneRunnerPlugin {
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );
+        // the web scene loop's frame start and tail, for the deadline mode
+        #[cfg(target_arch = "wasm32")]
+        {
+            app.init_resource::<loop_pacing::WebLoopPacing>();
+            app.add_systems(
+                First,
+                loop_pacing::web_frame_start.before(bevy::time::TimeSystem),
+            );
+            console::DoAddConsoleCommand::add_console_command::<SceneLoopModeCommand, _>(
+                app,
+                scene_loop_mode_command,
+            );
+        }
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
 
@@ -464,6 +480,8 @@ impl Plugin for SceneRunnerPlugin {
             app.add_plugins(scene_lod::SceneLodPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
+        app.add_plugins(cpu_probe::CpuProbePlugin);
+        app.add_plugins(tick_stages::TickStagesPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
         app.add_systems(
@@ -515,17 +533,50 @@ fn run_scene_loop(world: &mut World) {
         Duration::from_nanos((1e9 / fps) as u64)
     };
     let start_loop_time = Instant::now();
-    // Bounded so we neither burn through a backlog after a hitch (a deadline already in
-    // the past still leaves a 1ms floor to make progress) nor run a frame longer than the
-    // target if the deadline is stale — e.g. after an fps change, or an uncapped frame.
-    let earliest_end = start_loop_time + Duration::from_millis(1);
-    let latest_end = start_loop_time + frame_target_duration.max(Duration::from_millis(1));
-    let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
-    loop_schedule.next_frame_end = target_end_time + frame_target_duration;
+    let (target_end_time, next_frame_end) = loop_pacing::legacy_deadline(
+        loop_schedule.next_frame_end,
+        start_loop_time,
+        frame_target_duration,
+    );
+    loop_schedule.next_frame_end = next_frame_end;
+    // web: in the deadline mode, from the frame's start once the frame's tail is measured
+    #[cfg(target_arch = "wasm32")]
+    let (target_end_time, mode, tail_reserve) = {
+        let mode = dcl_wasm::scene_loop_mode::get();
+        let pacing = world.resource::<loop_pacing::WebLoopPacing>();
+        let reserve = pacing.tail.reserve();
+        let target = match (
+            mode.frame_deadline() && fps != 0.0,
+            pacing.frame_start,
+            reserve,
+        ) {
+            (true, Some(frame_start), Some(reserve)) => loop_pacing::frame_deadline(
+                frame_start,
+                start_loop_time,
+                frame_target_duration,
+                reserve,
+            ),
+            _ => target_end_time,
+        };
+        (target, mode.name(), reserve)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (mode, tail_reserve) = ("native", None);
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
     updates.frame_target = (fps != 0.0).then_some(frame_target_duration);
+    // MEASUREMENT ONLY (tick_stages)
+    let movement_scene = updates.priority_scenes.get("movement_controller").copied();
+    world
+        .resource_mut::<tick_stages::TickStages>()
+        .loop_started(
+            start_loop_time,
+            target_end_time,
+            movement_scene,
+            mode,
+            tail_reserve,
+        );
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
@@ -542,7 +593,20 @@ fn run_scene_loop(world: &mut World) {
         scene_schedule_run_count += 1;
     }
     let loop_end_time = Instant::now();
+    #[cfg(target_arch = "wasm32")]
+    {
+        world.resource_mut::<loop_pacing::WebLoopPacing>().loop_end = Some(loop_end_time);
+    }
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
+    // MEASUREMENT ONLY (tick_stages): the loop's condition, read again after it ended
+    let in_flight_at_end = world.resource::<SceneUpdates>().jobs_in_flight.len() as u32;
+    world.resource_mut::<tick_stages::TickStages>().loop_ended(
+        loop_end_time,
+        loop_end_time >= target_end_time,
+        eligible_scene_jobs_left_count,
+        in_flight_at_end,
+        scene_schedule_run_count,
+    );
 
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     loop_schedule.schedule = schedule;
@@ -561,6 +625,33 @@ fn run_scene_loop(world: &mut World) {
         eligible_scene_jobs_left_count,
         refresh_hz,
     });
+}
+
+/// The web scene loop's scheduling mode (`dcl_wasm::scene_loop_mode`): prints it, or sets it to
+/// legacy | relay | deadline | both.
+#[cfg(target_arch = "wasm32")]
+#[derive(clap::Parser, bevy_console::ConsoleCommand)]
+#[command(name = "/scene_loop_mode")]
+struct SceneLoopModeCommand {
+    mode: Option<String>,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn scene_loop_mode_command(mut input: bevy_console::ConsoleCommand<SceneLoopModeCommand>) {
+    use dcl_wasm::scene_loop_mode::{self, SceneLoopMode};
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    match command.mode.as_deref() {
+        None => input.reply_ok(scene_loop_mode::get().name()),
+        Some(name) => match SceneLoopMode::parse(name) {
+            Some(mode) => {
+                scene_loop_mode::set(mode);
+                input.reply_ok(mode.name());
+            }
+            None => input.reply_failed(format!("unknown mode {name}: {}", SceneLoopMode::NAMES)),
+        },
+    }
 }
 
 fn update_scene_priority(
@@ -585,6 +676,18 @@ fn update_scene_priority(
         .single()
         .map(|e| containing_scene.get(e))
         .unwrap_or_default();
+    // web: only these scenes wake their relays on the engine's send; the others keep the relay's
+    // poll. Published before this frame's dispatch.
+    #[cfg(target_arch = "wasm32")]
+    dcl_wasm::scene_loop_mode::set_wake_scenes(
+        wake_scenes(
+            player.single().ok(),
+            &containing_scene,
+            &updates.priority_scenes,
+        )
+        .into_iter()
+        .map(|scene| scene.to_bits()),
+    );
 
     // mark scenes that have been in-flight past the timeout as broken and free their
     // slot, so a wedged scene worker can't hold a scene thread forever
@@ -670,6 +773,23 @@ fn update_scene_priority(
 
     // remove any scenes we didn't see from the in-flight set
     updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
+}
+
+/// The scenes whose relays wake on the engine's send (web): the parcel scene under the player,
+/// also while they are kept out of the world arriving at a teleport's destination, every portable
+/// experience, and the named priority scenes (the movement scene).
+#[cfg(any(target_arch = "wasm32", test))]
+fn wake_scenes(
+    player: Option<Entity>,
+    containing_scene: &ContainingScene,
+    priority_scenes: &HashMap<&'static str, Entity>,
+) -> HashSet<Entity> {
+    let mut scenes = match player {
+        Some(player) => containing_scene.get_oow(player),
+        None => containing_scene.get_portables(false),
+    };
+    scenes.extend(priority_scenes.values());
+    scenes
 }
 
 /// The queue key of a scene due this frame: its distance over the time since it was last
@@ -926,6 +1046,80 @@ impl ContainingScene<'_, '_> {
                 parcel.y -= dir.z.signum() as i32;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod wake_scenes_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    fn wake(world: &mut World, player: Entity, priority: Entity) -> HashSet<Entity> {
+        world
+            .run_system_once(move |containing: ContainingScene| {
+                let priority = HashMap::from_iter([("movement_controller", priority)]);
+                wake_scenes(Some(player), &containing, &priority)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_scene_under_the_player_portables_and_the_movement_scene_wake() {
+        let mut world = World::new();
+        let here = world.spawn_empty().id();
+        let east = world.spawn_empty().id();
+        let portable = world.spawn_empty().id();
+        let movement = world.spawn_empty().id();
+        // parcel (2,2) is x 32..48, z -48..-32; (3,2) is x 48..64
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcel) in [
+            ("here", here, IVec2::new(2, 2)),
+            ("east", east, IVec2::new(3, 2)),
+        ] {
+            live.scenes.insert(hash.to_owned(), scene);
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        live.scenes.insert("portable".to_owned(), portable);
+        let mut portables = PortableScenes::default();
+        portables.insert(
+            "portable".to_owned(),
+            initialize_scene::PortableSource {
+                pid: "portable".to_owned(),
+                parent_scene: None,
+                ens: None,
+                super_user: false,
+                kind: initialize_scene::PortableKind::Startup,
+            },
+        );
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.insert_resource(portables);
+        let player = world
+            .spawn(GlobalTransform::from_translation(Vec3::new(
+                40.0, 0.0, -40.0,
+            )))
+            .id();
+
+        let expected = |scene| HashSet::from_iter([scene, portable, movement]);
+        assert_eq!(wake(&mut world, player, movement), expected(here));
+
+        // onto the next parcel: its scene replaces the one left
+        *world.get_mut::<GlobalTransform>(player).unwrap() =
+            GlobalTransform::from_translation(Vec3::new(56.0, 0.0, -40.0));
+        assert_eq!(wake(&mut world, player, movement), expected(east));
+
+        // a teleport's arrival: out of the world at the destination, whose scene wakes already
+        world.entity_mut(player).insert(OutOfWorld);
+        *world.get_mut::<GlobalTransform>(player).unwrap() =
+            GlobalTransform::from_translation(Vec3::new(40.0, 0.0, -40.0));
+        assert_eq!(wake(&mut world, player, movement), expected(here));
     }
 }
 
@@ -1259,10 +1453,12 @@ fn send_scene_updates(
     ),
     scene_realms: Res<comms::global_crdt::SceneRealms>,
     screen_areas: ScreenAreas,
-    preview_mode: Res<PreviewMode>,
+    (preview_mode, mut stages): (Res<PreviewMode>, ResMut<tick_stages::TickStages>),
     mut buf: Local<Vec<u8>>,
     mut realm_info_cache: Local<RealmInfoCache>,
 ) {
+    let _cpu_span = cpu_probe::Span::new(cpu_probe::Bucket::Send);
+    let cpu_t0 = Instant::now();
     let updates = &mut *updates;
     let buf = &mut *buf;
     let realm_info_cache = &mut *realm_info_cache;
@@ -1515,6 +1711,9 @@ fn send_scene_updates(
     if let Some(mut traffic) = traffic {
         traffic.record_sent(&crdt);
     }
+    // MEASUREMENT ONLY (tick_stages): numbered for the relay before it can take the tick
+    let movement = updates.priority_scenes.get("movement_controller") == Some(&ent);
+    stages.dispatching(movement, engine_info.frame.0);
     if let Err(e) = sender.send(RendererResponse::Ok(crdt, census, dt)) {
         error!(
             "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
@@ -1526,6 +1725,9 @@ fn send_scene_updates(
         context.last_sent = now;
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
+        if movement {
+            cpu_probe::add(cpu_probe::Bucket::SendMovement, cpu_t0);
+        }
     }
 
     updates.eligible_jobs -= 1;
@@ -1543,7 +1745,12 @@ fn receive_scene_updates(
     mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
     mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
     mut traffic: Query<&mut scene_traffic::SceneTraffic>,
+    mut stages: ResMut<tick_stages::TickStages>,
 ) {
+    let _cpu_span = cpu_probe::Span::new(cpu_probe::Bucket::Receive);
+    // MEASUREMENT ONLY (tick_stages, cpu_probe)
+    let movement_scene = updates.priority_scenes.get("movement_controller").copied();
+    let first_poll = stages.poll();
     loop {
         let maybe_completed_job = match updates.receiver().try_recv() {
             Ok((scene_id, response)) => match response {
@@ -1612,6 +1819,10 @@ fn receive_scene_updates(
                 SceneResponse::Ok(census, mut crdt, runtime, messages, rpc_calls) => {
                     // scene ids are the scene root entity
                     let root = scene_id.0;
+                    let _cpu_move = (Some(root) == movement_scene).then(|| {
+                        stages.movement_reply(frame.0, first_poll);
+                        cpu_probe::Span::new(cpu_probe::Bucket::ReceiveMovement)
+                    });
                     debug!(
                         "scene {:?} received updates! [+{}, -{}, {} rpc",
                         root,

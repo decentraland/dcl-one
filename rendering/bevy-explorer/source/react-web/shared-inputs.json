@@ -5922,7 +5922,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
-      "sha256": "b014219d7251931e4a6659010ef816f433c63f88b7af990d8d69d54e01a884d7"
+      "sha256": "a6b6dd6d0c805ac2e4a75885116d6ce89d4c438da5b925eba782284082b91043"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/content_cache.js",
@@ -5930,7 +5930,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "40369ceb89f585c96deef8ad73df920a7dba31acf1f07d9f1773646e7977ecba"
+      "sha256": "bec668fef4b9bb4e5e5fb9895a76c2cab8f13de45cdefdc9d4843be3130a02ab"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -6158,7 +6158,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "4e61c6e08d78b26defbaeba27701b1e5ffe70968a3f0223cac6d717a6bcff3fb"
+      "sha256": "87fc68b55efbbabab2111cbbb2e1b05e7709ddc588ac6df22571340c3c90d61f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",

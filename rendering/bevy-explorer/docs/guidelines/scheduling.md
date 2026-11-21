@@ -58,6 +58,31 @@ budget. It is also the frame pacer on native: the budget is one frame at the con
 target, capped at the monitor refresh rate under vsync, and after the loop the thread spin-sleeps
 to the deadline.
 
+The deadline is bounded below by 1 ms after the loop starts and above by one frame target
+(`crates/scene_runner/src/loop_pacing.rs`). Natively it stays on a grid of frame targets
+(`legacy_deadline`): a long frame leaves the next loop what remains of the grid. On the web the
+browser paces the frame, and the loop ends one frame target after the frame's start, less the
+time the frame still needs after the loop (`frame_deadline`). That reserve is the 90th
+percentile, over the last 32 frames, of the time from the loop's end to the handoff to the
+render worker, plus 1 ms. Until 8 frames are measured, and with an uncapped frame rate, the web
+uses the grid.
+
+On the web each scene runs in a sandbox worker whose relay moves messages between the engine
+and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`, `deploy/web/engine/sandbox_worker.js`).
+The relays of the scene the player stands in (also while they are kept out of the world
+arriving at a teleport's destination), of the portable experiences and of the named priority
+scenes (`SceneUpdates::priority_scenes`, such as the movement controller) wait on a word in engine memory with `Atomics.waitAsync`. The
+engine bumps the word and notifies it when it sends that scene something, so a tick sent
+early in the loop can be answered within the same frame. Every wait is at most 1 ms; the
+timeout still covers global updates, the kill flag and the scene's own replies. Other scenes'
+relays poll their channels between 1 ms sleeps. `update_scene_priority` publishes the set of
+woken scenes each frame, before the frame's dispatch (`wake_scenes`,
+`dcl_wasm::scene_loop_mode::set_wake_scenes`).
+
+The page parameter `?sceneLoop=` selects the web scheduling for diagnostics: `both`, the
+default, applies both of the above; `relay` keeps only the wake; `deadline` keeps only the
+frame-start deadline; `legacy` uses neither.
+
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
 1. **`SendToScene`**: `send_scene_updates` takes the highest-priority eligible scene off the

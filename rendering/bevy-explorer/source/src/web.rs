@@ -107,6 +107,18 @@ pub fn engine_set_perf_stream(path: String, csv: bool) {
     let _ = PERF_STREAM.set((path, csv));
 }
 
+/// The page's `?sceneLoop=legacy|relay|deadline|both`: the web scene loop's scheduling mode
+/// (`dcl_wasm::scene_loop_mode`; `/scene_loop_mode` changes it in session). false for an unknown
+/// name, which leaves it as it was.
+#[wasm_bindgen]
+pub fn engine_set_scene_loop_mode(name: String) -> bool {
+    let mode = dcl_wasm::scene_loop_mode::SceneLoopMode::parse(&name);
+    if let Some(mode) = mode {
+        dcl_wasm::scene_loop_mode::set(mode);
+    }
+    mode.is_some()
+}
+
 /// What the engine queued for the benchmark stream and has not handed to the page: `{ csv, log }`,
 /// the text of each, empty when there is none or the queue is busy (the page's thread cannot
 /// wait). For the page to call when the engine stopped without handing them over (a hang, a lost

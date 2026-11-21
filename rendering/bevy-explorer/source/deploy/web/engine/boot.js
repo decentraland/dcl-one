@@ -55,7 +55,7 @@
 //       pinned), for the host's "Skip to Home"; set alongside __bevyReadyToLaunch
 //     __bevyTermsAccepted() — whether the persisted config has accepted the terms (null =
 //       unknown), so the host can hold a link's world for its welcome page; set alongside too
-import { initEngine, start, prepareRender, applyOptionsToUrlParams, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take } from './engine.js'
+import { initEngine, start, prepareRender, applyOptionsToUrlParams, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, engine_set_scene_loop_mode } from './engine.js'
 import { createPerfStream } from './perf_stream.js'
 
 // ---- boot progress (replaces ui.js's DOM loading steps) -----------------------------------------
@@ -437,6 +437,10 @@ initEngine()
     // An invalid hash throws here and fails the boot, rather than the engine quietly connecting
     // on CA trust.
     if (window.__bevyPulseCertificateHash) engine_set_pulse_certificate_hash(window.__bevyPulseCertificateHash)
+    // the scene loop's scheduling mode, for comparing builds' behaviour in one build
+    // (crates/dcl_wasm/src/scene_loop_mode.rs; /scene_loop_mode changes it in session)
+    const sceneLoop = new URLSearchParams(window.location.search).get('sceneLoop')
+    if (sceneLoop && !engine_set_scene_loop_mode(sceneLoop)) console.warn(`[engine] unknown sceneLoop=${sceneLoop}`)
     // The harness's benchmark stream (react-web EngineHost: ?perfStream, and ?perfCsv for the CSV): the
     // engine hands its log and CSV bytes, its panic's block and its end to these page functions, and
     // perf_stream.js sends them.

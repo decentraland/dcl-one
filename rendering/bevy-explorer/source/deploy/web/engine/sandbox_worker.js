@@ -23,6 +23,18 @@ Object.defineProperty(Error, "prepareStackTrace", {
   configurable: false,
 });
 
+// MEASUREMENT ONLY (local measurement build, not for merge; crates/dcl_wasm/src/inner/tick_marks.rs):
+// stage marks of this scene's tick on the clock the workers share (performance.timeOrigin +
+// performance.now(), ms), captured before scene code. The relay reads them (relay_tick_mark)
+// when it forwards a reply, and only for the movement scene.
+const markPerformance = performance;
+const markNow = Performance.prototype.now;
+const markOrigin = performance.timeOrigin;
+const markClock = () => markOrigin + markNow.call(markPerformance);
+// 0 onUpdate start, 1 the previous onUpdate's end, 2 reply put (op_crdt_send_to_renderer
+// returned), 3 onUpdate count at 0
+const tickMarks = new Float64Array([NaN, NaN, NaN, NaN]);
+
 // self.WebSocket = {}
 
 console.log("[Sandbox Worker] Starting");
@@ -188,6 +200,7 @@ function createJsContext(wasmApi, context) {
   for (const exportName in wasmApi) {
     if (exportName.substring(0, 3) === "op_") {
       const traced = !UNTRACED_OPS.has(exportName);
+      const marksPut = exportName === "op_crdt_send_to_renderer";
       Object.defineProperty(ops, exportName, {
         configurable: false,
         get() {
@@ -197,6 +210,11 @@ function createJsContext(wasmApi, context) {
               lastOp.at = performance.now();
             }
             // wrap ops to inject context arg
+            if (marksPut) {
+              const result = wasmApi[exportName](context, ...args);
+              tickMarks[2] = markClock();
+              return result;
+            }
             return wasmApi[exportName](context, ...args);
           };
         },
@@ -439,6 +457,12 @@ function tearDown() {
 const relayAtomicsStore = Atomics.store;
 const relayAtomicsLoad = Atomics.load;
 const relayAtomicsWait = Atomics.wait;
+// Waiting for the engine's send (relay.rs RelayWake): the view of the wake word is a view of engine
+// memory, so it only ever goes to these captured functions, and `then` is called through a bound
+// `call` rather than looked up on the promise.
+const relayWaitAsync = Atomics.waitAsync;
+const relayThen = Function.prototype.call.bind(Promise.prototype.then);
+const RelayInt32Array = Int32Array;
 const relaySetTimeout = setTimeout;
 const relayPostTask = self.scheduler?.postTask?.bind(self.scheduler);
 const relayLog = {
@@ -504,6 +528,9 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
     relay_b_next_len: callB(scene.relay_b_next_len),
     relay_b_next_ptr: callB(scene.relay_b_next_ptr),
     relay_b_pop: callB(scene.relay_b_pop),
+    // MEASUREMENT ONLY (tick_marks.rs): no call into B, so A is not left
+    relay_now: markClock,
+    relay_tick_mark: (i) => (i >= 0 && i < 4 ? tickMarks[i] : NaN),
   };
 
   let relay;
@@ -559,6 +586,11 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   if (!got) throw new Error("no scene in the relay queue");
   // from the engine's side, not the scene runtime's
   sceneId = BigInt.asUintN(64, enter(() => relay.relay_scene_id()));
+  // the word the engine bumps when it sends this scene something; undefined: sleep as before
+  // an i32 without the glue: as unsigned, for an address past 2 GiB
+  const wakePtr = enter(() => relay.relay_wake_ptr()) >>> 0;
+  const wakeView =
+    relayWaitAsync && wakePtr ? new RelayInt32Array(sharedMemory.buffer, wakePtr, 1) : undefined;
 
   let done = false;
   let finishRequested = false;
@@ -585,14 +617,24 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   // prototype, so reading its members can't reach anything scene code defined.
   const sleep = (ms, f) =>
     relayPostTask ? relayPostTask(f, { __proto__: null, delay: ms }) : relaySetTimeout(f, ms);
+  // idle wait for the engine's send: as long as the sleep it replaces, which also covers what
+  // wakes no one (global updates, the kill flag, the scene's own replies)
+  const RELAY_IDLE_MS = 1;
   const step = () => {
     if (done) return;
     let killed = 0;
     let moved = 0;
+    let wake = 0;
+    let seen = 0;
     try {
       enter(() => {
         killed = relay.relay_killed();
-        if (!killed) moved = relay.relay_pump();
+        if (!killed) {
+          wake = wakeView ? relay.relay_wake_mode() : 0;
+          // before the pump: a send after this changes the word, so the wait below can't miss it
+          if (wake) seen = relayAtomicsLoad(wakeView, 0);
+          moved = relay.relay_pump();
+        }
       });
       if (checkFailure()) killed = 1;
     } catch (e) {
@@ -612,7 +654,15 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
       }
       return;
     }
-    sleep(moved ? 0 : 1, step);
+    if (moved || !wake) {
+      sleep(moved ? 0 : 1, step);
+      return;
+    }
+    // outside A (IN_RUST clear), so the engine may terminate the worker during the wait
+    const waited = relayWaitAsync(wakeView, 0, seen, RELAY_IDLE_MS);
+    if (waited.async) relayThen(waited.value, step);
+    // "not-equal": the engine sent something since the load
+    else sleep(0, step);
   };
   step();
 }
@@ -736,9 +786,13 @@ self.onmessage = async (event) => {
         const dt = ops.op_begin_tick();
         var err = undefined;
         setPhase(`onUpdate ${count}`);
+        tickMarks[3] = count;
+        tickMarks[0] = markClock();
         try {
           await module.onUpdate(dt);
+          tickMarks[1] = markClock();
         } catch (e) {
+          tickMarks[1] = markClock();
           err = e;
           reportedErrors += 1;
           if (reportedErrors <= 10) {
