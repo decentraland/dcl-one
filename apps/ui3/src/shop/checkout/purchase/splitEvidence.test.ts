@@ -148,6 +148,10 @@ describe('which transaction is an in-world split purchase', () => {
     expect(isSplitSale({ ...sale, gapWei: '-1' })).toBe(false)
     expect(isSplitSale({ ...sale, creditId: '' })).toBe(false)
     expect(isSplitSale({ ...sale, envelope: splitEnvelope(relayed()) })).toBe(true)
+    // The issued credit's expiry, kept with the sale: whole unix seconds, or none (a sale kept before it was).
+    expect(isSplitSale({ ...sale, creditExpiresAt: 1_700_000_000 })).toBe(true)
+    expect(isSplitSale({ ...sale, creditExpiresAt: 1.5 })).toBe(false)
+    expect(isSplitSale({ ...sale, creditExpiresAt: '1700000000' })).toBe(false)
     expect(isSplitSale({ ...sale, envelope: '0x1234' })).toBe(false)
     expect(isSplitSale({ ...sale, envelope: null })).toBe(false)
     expect(carriesSale({ to: MANAGER, input: relayed() }, sale)).toBe(true)

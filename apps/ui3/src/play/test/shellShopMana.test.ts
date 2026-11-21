@@ -1090,8 +1090,10 @@ describe('the in-world purchase with MANA', () => {
     it('keeps an own revert\'s expiry clock through a history it couldn\'t read: it ends once that expiry has held long enough', async () => {
       on()
       const w = world()
-      // The credit's own expiry (500 s) is already past by the page's clock (1,000 s).
+      // The credit's own expiry (500 s) is already past by the page's clock (1,000 s), and the chain's finalized time (600 s)
+      // proves it.
       splitShop(w, undefined, 500)
+      w.onChain.chainTime = 600
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'reverted'
       // EXPIRED, then a read that fails, then EXPIRED again: the clock from the first read still counts.
@@ -1111,8 +1113,10 @@ describe('the in-world purchase with MANA', () => {
     it('ends an own-reverted split unbought once its credit reads expired unspent past the index\'s lag', async () => {
       on()
       const w = world()
-      // The credit's own expiry, by the page's clock (it starts at 1,000 s), passes with the first wait.
+      // The credit's own expiry, by the page's clock (it starts at 1,000 s), passes with the first wait, and the chain's
+      // finalized time (2,000 s) proves it.
       splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 2_000
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'reverted'
       const p = page(w, {
@@ -1128,13 +1132,16 @@ describe('the in-world purchase with MANA', () => {
     })
 
     it.each([
-      ['after its own revert', 'reverted'],
-      ['with its own hash gone', 'none']
-    ] as const)('doesn\'t believe EXPIRED before its credit\'s own expiry, %s: held, and the grace doesn\'t start', async (_, confirm) => {
+      ['after its own revert', 'reverted', undefined, 0],
+      ['with its own hash gone', 'none', undefined, 0],
+      // Past its expiry by this device's clock after the first wait, never by the chain's finalized time.
+      ['with only this device\'s clock past its expiry', 'reverted', 1_500, 1_000]
+    ] as const)('doesn\'t believe EXPIRED before its credit\'s own expiry is proven, %s: held, and the grace doesn\'t start', async (_, confirm, expiresAt, chainTime) => {
       on()
       const w = world()
-      // The credit stays spendable for the whole test by the page's clock.
-      splitShop(w)
+      // By default the credit stays spendable for the whole test by the page's clock.
+      splitShop(w, undefined, expiresAt)
+      w.onChain.chainTime = chainTime
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = confirm
       let reads = 0
@@ -1204,6 +1211,7 @@ describe('the in-world purchase with MANA', () => {
       on()
       const w = world()
       splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 2_000
       w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
       w.relay.state.confirm = 'none'
       const p = page(w, {
@@ -1215,6 +1223,73 @@ describe('the in-world purchase with MANA', () => {
       ;(await p.until('method')).handlers.onPay?.('split')
       await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
       expect(p.events.some((e) => e.state === 'succeeded')).toBe(false)
+    })
+
+    it.each([
+      ['gone', 'gone'],
+      ['unreadable', 'throws']
+    ] as const)('ends an expired split by the expiry kept with its sale when its hold is %s, once the chain proves it and the grace has run', async (_, hold) => {
+      on()
+      const w = world()
+      splitShop(w, undefined, 1_500)
+      w.onChain.chainTime = 2_000
+      w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, maxUint256)
+      w.relay.state.confirm = 'none'
+      const key = splitHoldKey(BUYER, HOLD_LINE)
+      const getItem = Storage.prototype.getItem
+      // From the first look at the node's record, the shared hold can't tell anything: removed, or every read of it fails.
+      const lose = () => {
+        if (hold === 'gone') localStorage.removeItem(key)
+        else
+          vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, k: string) {
+            if (k === key) throw new Error('storage read failed')
+            return getItem.call(this, k)
+          })
+      }
+      let lost = false
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: {
+          ...managed,
+          manaEvidence: () => losingA(w) as never,
+          creditRecordOf: async () => {
+            if (!lost) (lost = true), lose()
+            return record('EXPIRED', null)
+          },
+          sleep: boundedSleep(w)
+        }
+      })
+      try {
+        await p.open()
+        ;(await p.until('method')).handlers.onPay?.('split')
+        await vi.waitFor(() => expect(p.events.at(-1)).toMatchObject({ state: 'failed' }), { timeout: 5000 })
+        expect(w.shop.log.some((q) => q.name === 'cancelCreditAuthorizations')).toBe(false)
+      } finally {
+        vi.restoreAllMocks()
+      }
+    })
+
+    it('keeps an older record\'s split pending, its expiry its own record never kept and no hold to say it, however long EXPIRED', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      w.onChain.chainTime = 4_000_000_000
+      // A purchase recorded by a build that didn't keep the credit's expiry with its sale, its hold gone.
+      const ledger = createLedger(() => w.storage)
+      const sale = { buyer: BUYER, chainId: 137, manager: MANAGER, creditId: `0x${'e8'.repeat(32)}`, creditWei: '1', gapWei: '2', target: STORE, selector: '0x12345678' as Hex, callData: '0x' as Hex, hold: { line: HOLD_LINE, attempt: 'older' } }
+      const hash = `0x${'f1'.repeat(32)}`
+      expect(ledger.save({ id: 'abcdef01-0005', buyer: BUYER, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], state: 'pending', createdAt: 1, updatedAt: 2, txHash: hash, split: sale })).toBe(true)
+      let reads = 0
+      const p = page(w, {
+        split: splitOn,
+        creditsCents: 50,
+        services: { ...managed, creditRecordOf: async () => (reads++, record('EXPIRED', null)), sleep: () => (reads > 4 ? new Promise<void>(() => {}) : Promise.resolve(void (w.clock.now += 16 * 60_000))) }
+      })
+      await p.open()
+      await vi.waitFor(() => expect(reads).toBeGreaterThan(4), { timeout: 5000 })
+      expect(p.events.some((e) => e.state === 'failed')).toBe(false)
+      expect(createLedger(() => w.storage).load(BUYER).find((r) => r.id === 'abcdef01-0005')?.state).toBe('pending')
     })
 
     it('stays pending while neither its hash nor the node says anything', async () => {

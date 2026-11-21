@@ -182,10 +182,19 @@ export function splitsInFlight(account: string, now: number, over: (line: string
  * clock (`now`) only says when that is worth asking. An unknown expiry or chain, or a read that fails: not proven.
  */
 export async function splitCreditOverOnChain(hold: SplitHold, finalizedTime: (chainId: number) => Promise<number>, now: number = Date.now()): Promise<boolean> {
-  if (hold.creditId === null || hold.creditExpiresAt === null || hold.chainId === null) return false;
-  if (now < hold.creditExpiresAt * 1000) return false;
+  if (hold.creditId === null) return false;
+  return creditExpiredOnChain(hold.creditExpiresAt, hold.chainId, finalizedTime, now);
+}
+
+/**
+ * Whether a credit expiring at `expiresAt` (unix seconds) on `chainId` provably can't be spent any more: the chain's
+ * finalized block time has reached it (the manager refuses a credit once `block.timestamp >= expiresAt`). The local clock
+ * (`now`) only says when that is worth asking; an unknown expiry or chain, or a read that fails, proves nothing.
+ */
+export async function creditExpiredOnChain(expiresAt: number | null | undefined, chainId: number | null, finalizedTime: (chainId: number) => Promise<number>, now: number = Date.now()): Promise<boolean> {
+  if (expiresAt == null || chainId === null || now < expiresAt * 1000) return false;
   try {
-    return (await finalizedTime(hold.chainId)) >= hold.creditExpiresAt;
+    return (await finalizedTime(chainId)) >= expiresAt;
   } catch {
     return false;
   }

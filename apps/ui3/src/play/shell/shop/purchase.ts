@@ -26,7 +26,7 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
-import { claimSplitHold, clearSettledSplitHold, clearSplitHold, findCreditRecord, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldCreditOver, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
 import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -1039,8 +1039,6 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     } catch {
       return
     }
-    const evidence = svc.manaEvidence()
-    const finalizedTime = (chainId: number): Promise<number> => (evidence.finalizedTime ? evidence.finalizedTime(chainId) : Promise.reject(new Error('no chain time')))
     for (const { hold } of holds) {
       if (hold.creditId !== null && !creditsOver.has(hold.creditId) && (await splitCreditOverOnChain(hold, finalizedTime, svc.now()))) creditsOver.add(hold.creditId)
     }
@@ -1087,14 +1085,25 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     return decided
   }
 
+  /** The chain's finalized block time, through the page's evidence reader; a reader without it proves nothing. */
+  const finalizedTime = (chainId: number): Promise<number> => {
+    const evidence = svc.manaEvidence()
+    return evidence.finalizedTime ? evidence.finalizedTime(chainId) : Promise.reject(new Error('no chain time'))
+  }
+
   /**
-   * Whether a split's credit can still be spent here, by its own expiry as the shared hold of this attempt keeps it. Until
-   * then an EXPIRED from the node isn't believed (as the web Shop holds it): the split stays held, and the grace past the
-   * index's lag doesn't start. With no hold of this attempt to say, nothing is held back on this.
+   * Whether a split's credit provably can't be spent any more: its own expiry, kept with the sale before it was sent (or,
+   * for a sale kept before that was, by its own attempt's hold), reached by the chain's finalized time. Only then is an
+   * EXPIRED from the node believed and the grace past the index's lag started; with no expiry of its own, or no proof, the
+   * split stays held, however long the node says EXPIRED.
    */
-  const creditSpendable = (sale: SplitSale): boolean => {
-    const hold = sale.hold ? readSplitHoldRecord(sale.buyer, sale.hold.line) : null
-    return hold !== null && hold.attempt === sale.hold!.attempt && !splitHoldCreditOver(hold, svc.now())
+  const creditExpiryProven = (sale: SplitSale): Promise<boolean> => {
+    let expiresAt = sale.creditExpiresAt
+    if (expiresAt === undefined && sale.hold) {
+      const hold = readSplitHoldRecord(sale.buyer, sale.hold.line)
+      if (hold && hold.attempt === sale.hold.attempt && hold.creditId === sale.creditId && hold.creditExpiresAt !== null) expiresAt = hold.creditExpiresAt
+    }
+    return creditExpiredOnChain(expiresAt, sale.chainId, finalizedTime, svc.now())
   }
 
   /**
@@ -1109,7 +1118,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // A history it couldn't read says nothing, the expiry's clock included: held, as findOutSplit holds it.
     if (record === undefined) return { kind: 'held' }
     if (record?.status === 'EXPIRED') {
-      if (creditSpendable(sale)) return { kind: 'held' }
+      // The grace runs from the first look where both hold: EXPIRED, and the credit's expiry proven on chain.
+      if (!(await creditExpiryProven(sale))) {
+        op.expiredSince = undefined
+        return { kind: 'held' }
+      }
       op.expiredSince ??= svc.now()
       return svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS ? { kind: 'expired' } : { kind: 'held' }
     }
@@ -1160,7 +1173,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return false
     }
     if (record?.status === 'EXPIRED') {
-      if (creditSpendable(sale)) return false
+      if (!(await creditExpiryProven(sale))) {
+        op.expiredSince = undefined
+        return false
+      }
       op.expiredSince ??= svc.now()
       if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
         settled(op, 'failed', {}, 'This purchase expired before its Credits were spent on chain: nothing was bought.', 'one of its transactions expired before its Credits were spent on chain.')
@@ -2110,7 +2126,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                   ...split.plan,
                   // Kept before anything is signed for it: what its execution must carry to count as this purchase.
                   onCredit: (credit: { id: string; expiresAt: number }) => {
-                    const sale: SplitSale = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), target: split.target, selector: split.selector, callData: split.callData, hold: split.hold }
+                    const sale: SplitSale = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), target: split.target, selector: split.selector, callData: split.callData, hold: split.hold, creditExpiresAt: credit.expiresAt }
                     // The shared hold, with the sale's terms so either surface can find it out, written and read back
                     // before anything is signed: unkept, nothing goes.
                     const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt, sale })
