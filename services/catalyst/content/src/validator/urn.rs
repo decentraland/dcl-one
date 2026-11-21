@@ -2,9 +2,10 @@
 //! the input is read as a WHATWG URL (`url`), a `urn:` path is matched
 //! against the resolver's routes (case-sensitive literals, `[^:]+` groups,
 //! each group percent-decoded) and a legacy `dcl://` address is rewritten to
-//! its URN first. A URN that matches no route, names an unknown network or a
-//! network without the contract the route needs, or holds a malformed
-//! percent escape, does not resolve.
+//! its URN first. A URN that matches no route, or names an unknown network or
+//! a network without the contract the route needs, does not resolve.
+//! `parseUrn` throws where the input is not a URL, or where a path matches a
+//! route but one of its groups holds a malformed percent escape.
 
 use url::Url;
 
@@ -43,9 +44,39 @@ const TPR_NETWORKS: &[&str] = &["matic", "mumbai", "amoy"];
 /// The networks with a LAND contract (`LANDProxy`).
 const LAND_NETWORKS: &[&str] = &["ethereum", "sepolia", "goerli"];
 
-/// The resolved type of `input`, `None` when `parseUrn` resolves nothing.
+/// Where `parseUrn` throws instead of resolving.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Throws;
+
+/// A URN `parseUrn` resolved: its type and its decoded path parts (the URN
+/// without `urn:`, split on `:`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parsed {
+    pub kind: UrnType,
+    parts: Vec<String>,
+}
+
+impl Parsed {
+    /// The decoded `{registry}` of an off-chain URN
+    /// (`decentraland:off-chain:{registry}:{name}`).
+    pub fn off_chain_registry(&self) -> Option<&str> {
+        match (self.kind, self.parts.as_slice()) {
+            (UrnType::OffChain, [_, _, registry, _]) => Some(registry),
+            _ => None,
+        }
+    }
+}
+
+/// `parseUrn(input)`: `Ok(None)` where it resolves nothing, `Err` where it
+/// throws.
+pub fn parse_urn(input: &str) -> Result<Option<Parsed>, Throws> {
+    Ok(resolved(input)?.map(|(parsed, _)| parsed))
+}
+
+/// The resolved type of `input`, `None` when `parseUrn` resolves nothing or
+/// throws.
 pub fn parse(input: &str) -> Option<UrnType> {
-    resolved(input).map(|(kind, _)| kind)
+    parse_urn(input).ok().flatten().map(|parsed| parsed.kind)
 }
 
 /// `input`'s segments as the resolver reads them, each as `(raw, decoded)`:
@@ -53,7 +84,7 @@ pub fn parse(input: &str) -> Option<UrnType> {
 /// newline, query or fragment), a legacy `dcl://` address as its URN; `None`
 /// when it does not resolve.
 pub fn segments(input: &str) -> Option<Vec<(String, String)>> {
-    let (_, urn) = resolved(input)?;
+    let (_, urn) = resolved(input).ok().flatten()?;
     let path = urn.strip_prefix("urn:")?;
     let mut segments = vec![("urn".to_string(), "urn".to_string())];
     for part in path.split(':') {
@@ -68,23 +99,27 @@ pub fn is_v1_contract(raw: &str) -> bool {
     is_hex(raw)
 }
 
-fn resolved(input: &str) -> Option<(UrnType, String)> {
-    let url = Url::parse(input).ok()?;
+fn resolved(input: &str) -> Result<Option<(Parsed, String)>, Throws> {
+    let url = Url::parse(input).map_err(|_| Throws)?;
     match url.scheme() {
-        "urn" => resolve(url.path()).map(|kind| (kind, format!("urn:{}", url.path()))),
+        "urn" => Ok(resolve(url.path())?.map(|parsed| (parsed, format!("urn:{}", url.path())))),
         "dcl" => {
-            let urn = legacy_dcl_urn(&url)?;
-            Some((parse_urn_scheme(&urn)?, urn))
+            let Some(urn) = legacy_dcl_urn(&url) else {
+                return Ok(None);
+            };
+            Ok(parse_urn_scheme(&urn)?.map(|parsed| (parsed, urn)))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
-fn parse_urn_scheme(input: &str) -> Option<UrnType> {
-    let url = Url::parse(input).ok()?;
-    (url.scheme() == "urn")
-        .then(|| resolve(url.path()))
-        .flatten()
+fn parse_urn_scheme(input: &str) -> Result<Option<Parsed>, Throws> {
+    let url = Url::parse(input).map_err(|_| Throws)?;
+    if url.scheme() == "urn" {
+        resolve(url.path())
+    } else {
+        Ok(None)
+    }
 }
 
 /// `dcl://{collection}/{name}`: a base avatar or emote, or a collections-v1
@@ -142,87 +177,88 @@ fn is_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn resolve(path: &str) -> Option<UrnType> {
+fn resolve(path: &str) -> Result<Option<Parsed>, Throws> {
     let parts: Vec<&str> = path.split(':').collect();
     // Every route segment is a literal or a non-empty `[^:]+` group.
     if parts.iter().any(|p| p.is_empty()) {
-        return None;
+        return Ok(None);
     }
-    let decoded = parts
-        .iter()
-        .map(|p| decode(p))
-        .collect::<Option<Vec<_>>>()?;
-    let in_set = |set: &[&str], network: &str| set.contains(&network.to_lowercase().as_str());
-    match parts[..] {
-        ["decentraland", "off-chain", _, _] => Some(UrnType::OffChain),
-        ["decentraland", "entity", _] => Some(UrnType::Entity),
-        ["decentraland", _, "collections-v1", ref rest @ ..] => collection_v1(
-            &decoded[1],
-            in_set(NETWORKS, &decoded[1]),
-            rest,
-            &decoded[3..],
-        ),
-        ["decentraland", _, "collections-v2", ref rest @ ..] if in_set(NETWORKS, &decoded[1]) => {
-            collection_v2(rest)
-        }
-        ["decentraland", _, "LAND", _] if in_set(LAND_NETWORKS, &decoded[1]) => {
-            land_position_resolves(&decoded[3]).then_some(UrnType::Land)
-        }
-        ["decentraland", _, "collections-thirdparty", ref rest @ ..]
-            if in_set(TPR_NETWORKS, &decoded[1]) =>
-        {
+    let Some(decoded) = parts.iter().map(|p| decode(p)).collect::<Option<Vec<_>>>() else {
+        // A literal never holds a `%`, so the malformed escape is in a group
+        // of every route the path matches, and decoding it throws.
+        return if route_pattern(&parts).is_some() {
+            Err(Throws)
+        } else {
+            Ok(None)
+        };
+    };
+    Ok(route(&parts, &decoded).map(|kind| Parsed {
+        kind,
+        parts: decoded,
+    }))
+}
+
+/// The type of the resolver route whose pattern `parts` matches, before its
+/// handler checks the network, contract or position.
+fn route_pattern(parts: &[&str]) -> Option<UrnType> {
+    use UrnType::*;
+    let item_id = |id: &str| is_hex(id) || is_digits(id);
+    match parts {
+        ["decentraland", "off-chain", _, _] => Some(OffChain),
+        ["decentraland", "entity", _] => Some(Entity),
+        ["decentraland", _, "collections-v1", rest @ ..] => match rest {
+            [_] => Some(CollectionV1),
+            [_, _] => Some(CollectionV1Asset),
+            [_, _, token] if is_digits(token) => Some(CollectionV1Item),
+            _ => None,
+        },
+        ["decentraland", _, "collections-v2", contract, rest @ ..] if is_hex(contract) => {
             match rest {
-                [_] => Some(UrnType::ThirdPartyName),
-                [_, _] => Some(UrnType::ThirdPartyCollection),
-                [_, _, _] => Some(UrnType::ThirdParty),
-                [_, _, _, _, contract, token] if is_hex(contract) && is_digits(token) => {
-                    Some(UrnType::ThirdPartyItem)
-                }
+                [] => Some(CollectionV2),
+                [id] if item_id(id) => Some(CollectionV2Asset),
+                [id, token] if item_id(id) && is_digits(token) => Some(CollectionV2Item),
                 _ => None,
             }
         }
-        ["decentraland", _, "erc721", contract, _]
-            if in_set(NETWORKS, &decoded[1]) && is_hex(contract) =>
-        {
-            Some(UrnType::Erc721)
-        }
+        ["decentraland", _, "LAND", _] => Some(Land),
+        ["decentraland", _, "collections-thirdparty", rest @ ..] => match rest {
+            [_] => Some(ThirdPartyName),
+            [_, _] => Some(ThirdPartyCollection),
+            [_, _, _] => Some(ThirdParty),
+            [_, _, _, _, contract, token] if is_hex(contract) && is_digits(token) => {
+                Some(ThirdPartyItem)
+            }
+            _ => None,
+        },
+        ["decentraland", _, "erc721", contract, _] if is_hex(contract) => Some(Erc721),
         _ => None,
     }
 }
 
-/// A collections-v1 route: by contract on any network, else by collection
-/// name on `ethereum` only (spelled exactly so).
-fn collection_v1(
-    network: &str,
-    network_known: bool,
-    rest: &[&str],
-    decoded: &[String],
-) -> Option<UrnType> {
-    let by_contract = network_known && rest.first().is_some_and(|c| is_hex(c));
-    let by_name = network == "ethereum";
-    match rest {
-        [_] if by_contract => Some(UrnType::CollectionV1),
-        [_] if by_name => super::onchain::v1_collection_contract(&decoded[0])
-            .is_some()
-            .then_some(UrnType::CollectionV1),
-        [_, _] if by_contract || by_name => Some(UrnType::CollectionV1Asset),
-        [_, _, token] if is_digits(token) && (by_contract || by_name) => {
-            Some(UrnType::CollectionV1Item)
+/// The type `parseUrn` gives a path whose groups all decode: its route's
+/// type where the route's handler accepts the network, contract or position.
+fn route(parts: &[&str], decoded: &[String]) -> Option<UrnType> {
+    use UrnType::*;
+    let kind = route_pattern(parts)?;
+    let network = decoded[1].to_lowercase();
+    let on = |set: &[&str]| set.contains(&network.as_str());
+    let accepted = match kind {
+        OffChain | Entity => true,
+        CollectionV1 | CollectionV1Asset | CollectionV1Item => {
+            // By contract on any known network, else by collection name on
+            // `ethereum` only (spelled exactly so).
+            let by_contract = on(NETWORKS) && is_hex(parts[3]);
+            let by_name = decoded[1] == "ethereum";
+            by_contract
+                || (by_name
+                    && (kind != CollectionV1
+                        || super::onchain::v1_collection_contract(&decoded[3]).is_some()))
         }
-        _ => None,
-    }
-}
-
-fn collection_v2(rest: &[&str]) -> Option<UrnType> {
-    let item_id = |id: &str| is_hex(id) || is_digits(id);
-    match rest {
-        [contract] if is_hex(contract) => Some(UrnType::CollectionV2),
-        [contract, id] if is_hex(contract) && item_id(id) => Some(UrnType::CollectionV2Asset),
-        [contract, id, token] if is_hex(contract) && item_id(id) && is_digits(token) => {
-            Some(UrnType::CollectionV2Item)
-        }
-        _ => None,
-    }
+        CollectionV2 | CollectionV2Asset | CollectionV2Item | Erc721 => on(NETWORKS),
+        Land => on(LAND_NETWORKS) && land_position_resolves(&decoded[3]),
+        ThirdPartyName | ThirdPartyCollection | ThirdParty | ThirdPartyItem => on(TPR_NETWORKS),
+    };
+    accepted.then_some(kind)
 }
 
 /// `parseInt(s, 10)`: optional whitespace and sign, then the leading digits.
@@ -417,6 +453,54 @@ mod tests {
         );
         assert_eq!(
             segments(&format!("urn:decentraland:matic:collections-v2:{C}:%zz:2")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_malformed_escape_throws_only_inside_a_matched_route() {
+        for urn in [
+            "urn:decentraland:off-chain:base-emotes:%ZZ".to_string(),
+            "urn:decentraland:off-chain:%zz:x".into(),
+            format!("urn:decentraland:%ZZ:collections-v2:{C}"),
+            "urn:decentraland:bogusnet:LAND:%ZZ".into(),
+            "urn:decentraland:matic:collections-v1:%ZZ".into(),
+            "urn:decentraland:matic:collections-thirdparty:%E0%A4".into(),
+            "dcl://base-avatars/%ZZ".into(),
+            "not-a-real-urn".into(),
+        ] {
+            assert_eq!(parse_urn(&urn), Err(Throws), "{urn}");
+            assert_eq!(parse(&urn), None, "{urn}");
+        }
+        for urn in [
+            "urn:decentraland:off-chain:base-emotes:%ZZ:extra".to_string(),
+            "urn:decentraland:matic:collections-v2:%ZZ".into(),
+            format!("urn:decentraland:matic:collections-v2:{C}:%zz:2"),
+            "urn:foo:%ZZ".into(),
+        ] {
+            assert_eq!(parse_urn(&urn), Ok(None), "{urn}");
+        }
+    }
+
+    #[test]
+    fn the_off_chain_registry_is_read_decoded() {
+        let registry = |urn: &str| {
+            parse_urn(urn)
+                .unwrap()
+                .unwrap()
+                .off_chain_registry()
+                .map(str::to_string)
+        };
+        assert_eq!(
+            registry("urn:decentraland:off-chain:base%2Demotes:wave").as_deref(),
+            Some("base-emotes")
+        );
+        assert_eq!(
+            registry("dcl://base-avatars/eyes_00").as_deref(),
+            Some("base-avatars")
+        );
+        assert_eq!(
+            registry(&format!("urn:decentraland:matic:collections-v2:{C}")),
             None
         );
     }
