@@ -413,7 +413,9 @@ difference not listed here is a gap, not a decision.
   the request's `Origin` with `Access-Control-Allow-Credentials: true` and
   `Vary: Origin`, allows `PATCH` as well, exposes `*` when the handler
   names no header, and sets `X-Content-Type-Options: nosniff`. Upstream
-  answers `Access-Control-Allow-Origin: *`.
+  answers `Access-Control-Allow-Origin: *`. `/world-storage` reflects any
+  `Origin` the same way but never sends `Access-Control-Allow-Credentials`:
+  signed fetch carries its auth in headers, not cookies.
 - **`/available-content`** answers a cid on the content denylist as
   `available: false`.
 - **`POST /entities/active`** answers a body that is not JSON with 400
