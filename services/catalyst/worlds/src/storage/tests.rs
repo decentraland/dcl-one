@@ -1645,6 +1645,24 @@ async fn owners_and_covering_deployers_write_values_and_clear_with_the_confirm_h
             Some("Missing required header: X-Confirm-Delete-All")
         )
     );
+    let mut req = signed_request("delete", "/values", &owner_key, &meta, None, None).await;
+    req.headers_mut()
+        .insert("x-confirm-delete-all", HeaderValue::from_static(""));
+    let (status, body) = send(&app, req).await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (
+            StatusCode::BAD_REQUEST,
+            Some("Missing required header: X-Confirm-Delete-All")
+        ),
+        "an empty value is missing"
+    );
+    let (status, _) = send(
+        &app,
+        signed_request("get", "/values/k", &owner_key, &meta, None, None).await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "nothing was cleared");
     let mut req = signed_request("delete", "/values", &deployer_key, &meta, None, None).await;
     req.headers_mut()
         .insert("x-confirm-delete-all", HeaderValue::from_static("1"));
