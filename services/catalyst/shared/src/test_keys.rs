@@ -1,5 +1,5 @@
-//! Fixed test wallets and signed-fetch header builders the comms, worlds and
-//! social tests share.
+//! Fixed test wallets, signed auth chains and signed-fetch header builders the
+//! comms, content, worlds and social tests share.
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
