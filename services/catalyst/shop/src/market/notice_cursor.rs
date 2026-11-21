@@ -196,6 +196,9 @@ pub struct IndexCoverage {
     pub chain_id: Option<i64>,
     /// Its history is quarantined: not proven on the expected chain.
     pub quarantined: bool,
+    /// A reorg left its checkpoint off the chain and the recovery still
+    /// searches for the fork: its rows above the fork are not canonical.
+    pub diverged: bool,
     /// On a dry run, how many of this index's logs lie after the resulting
     /// cursor (`after`), up to its `last_block`: an upper bound on the logs
     /// the next passes read (each producer reads only some kinds). Absent
@@ -302,6 +305,8 @@ fn read_chain(producer: &str, indexer: &str, net: ChainNet, trade_chains: (i64, 
 fn unproven(index: &IndexCoverage, expected: i64) -> Option<String> {
     if index.quarantined {
         Some("quarantined".into())
+    } else if index.diverged {
+        Some("diverged, its reorg recovery still searching".into())
     } else {
         match index.chain_id {
             Some(c) if c == expected => None,
@@ -370,7 +375,7 @@ struct Covered {
 /// the indexes the producer reads ([`reads`]): the cursor goes after the
 /// last block mined before it, and every such index must have a cursor row,
 /// a history proven on the chain the producer reads it on ([`read_chain`]:
-/// bound to it and not quarantined) and already have indexed past it; the
+/// bound to it, not quarantined and not diverged) and already have indexed past it; the
 /// coverage and the log positions come from one statement, so one snapshot
 /// (`trade_chains` is the node's `(ethereum, matic)` trade-events chain).
 /// For `rental_ended` the date is the
@@ -425,7 +430,8 @@ pub async fn rewind(
         };
         arms.push(format!(
             "SELECT c.indexer, c.start_block, c.full_history, c.last_block, c.last_block_time, \
-             c.chain_id, c.quarantined_at IS NOT NULL AS quarantined, {before} AS before, {i} AS ord \
+             c.chain_id, c.quarantined_at IS NOT NULL AS quarantined, \
+             c.diverged_at IS NOT NULL AS diverged, {before} AS before, {i} AS ord \
              FROM shop.chain_cursor c WHERE c.indexer = ${} AND c.network = $1",
             i + 3
         ));
@@ -1078,7 +1084,7 @@ mod tests {
     }
 
     /// A date counts only through histories proven on the chain the
-    /// producer reads: an unbound, quarantined or other-chain cursor with a
+    /// producer reads: an unbound, quarantined, diverged or other-chain cursor with a
     /// plausible `last_block_time` and logs before the date is refused, and
     /// neither the cursor nor its seed moves (nor is a producer seeded). A
     /// trade_events history counts on the chain the node configures, except
@@ -1157,8 +1163,17 @@ mod tests {
             rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", false).await,
             "quarantined",
         );
-        set("UPDATE shop.chain_cursor SET chain_id = 80002, quarantined_at = NULL, quarantine_reason = NULL \
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, diverged_at = timezone('UTC', now()) \
              WHERE indexer = 'trade_events' AND network = 'matic'")
+        .await;
+        refused(
+            rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", false).await,
+            "diverged, its reorg recovery still searching",
+        );
+        set(
+            "UPDATE shop.chain_cursor SET chain_id = 80002, diverged_at = NULL \
+             WHERE indexer = 'trade_events' AND network = 'matic'",
+        )
         .await;
         refused(
             rewind(pool, SALES_TRADED_MATIC, date, (1, 137), "t", false).await,
