@@ -2,12 +2,15 @@ BEGIN;
 -- Scene admin grants move from the scene entity to its place, so a redeploy
 -- of the same place keeps them (schemas/40_social.sql): a world scene's
 -- active identity (explore.world_scene_place), a Genesis scene's effective
--- base parcel (social.scene_base_parcel), both as the room resolver reads
+-- base parcel (social.scene_base_parcel over the declared base that content
+-- stores at entity_metadata -> 'v'), both as the room resolver reads
 -- them. An entity that is active in several places gives each place the
 -- grant. A place keeps one row for a wallet: an active grant before a
 -- revoked one, then the newest change, also against a row the place has.
 -- Every moved entity row is removed. A row whose entity is not deployed, or
--- has no parcel that parses, stays. Stop old replicas before migration: old
+-- has no parcel that parses, stays. The script can run again: it moves only
+-- rows that have an entity key, and never changes the key of a row that is
+-- on a parcel or a world-scene identity. Stop old replicas before migration: old
 -- readers and writers use the entity key. Run after `catalyst schema
 -- migrate`. Rollback needs the matching backup.
 WITH mapping AS (
@@ -17,7 +20,7 @@ WITH mapping AS (
          WHERE i.active
         UNION ALL
         SELECT d.entity_id,
-               social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}')
+               social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}')
           FROM content.deployments d
          WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL
            AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id)
