@@ -509,6 +509,7 @@ export function airLaunchStep(): number { return vstate.airLaunchStep; }
 // ground and it is false.
 export function stunEndStep(): number { return vstate.stunEndStep; }
 export function stunned(): boolean { return vstate.step < vstate.stunEndStep; }
+export function jumpCount(): number { return vstate.jumpCount; }
 export function landingStuns(): boolean { return landingStunSteps() > 0 && vstate.topY - groundY > LANDING_STUN_DROP; }
 // Steps a stunning landing holds the avatar for: none when the scene's hardLandingCooldown rounds to 0 or less.
 function landingStunSteps(): number { return Math.round(landingStunTime / FIXED_STEP); }

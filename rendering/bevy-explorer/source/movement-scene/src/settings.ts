@@ -55,32 +55,4 @@ export const settings = {
   // twice as high.
   jumpHeight: JUMP_HEIGHT,
   sprintJumpHeight: JUMP_HEIGHT_SPRINT,
-  // Blend time (s) INTO the jump start clip on a fresh ground jump. Kept much
-  // shorter than transAir so the jump pose snaps in with the launch
-  // (platformer responsiveness); later jump phases still blend at transAir.
-  transJumpStart: 0.03,
-  // Playback time (s) the jump start clip begins at — raise to skip the clip's
-  // anticipation/crouch wind-up frames so the up-pose shows immediately.
-  jumpStartSkip: 0,
-  // Phased-jump thresholds (metres fallen):
-  // drop past which touchdown plays Hard_Landing instead of the normal *_Jump_End.
-  hardLandingDrop: 3.0,
-  // Soft-landing bob: every landing (even small jumps) plays the Hard_Landing
-  // clip, but small drops start it at softLandStart (s) — skipping the deep
-  // crouch — and play it at softLandSpeed, so it reads as a quick absorb-bob.
-  // Hard_Landing.glb timeline (1.0s total, hips height): 0-0.17 impact drop,
-  // 0.17-0.47 deep static hold, 0.5-0.67 sinks to lowest, 0.67-1.0 recovery
-  // rise. 0.6 starts just before the lowest point, so the bob is a brief dip
-  // straight into the spring-up — skipping the long theatrical hold.
-  softLandStart: 0.6,
-  softLandSpeed: 1.5,
-  // How long (s, real time) the soft-landing bob shows before blending back to
-  // idle/locomotion — only a slice of the clip plays, never its full tail.
-  // 0.27 @ 1.5x speed ≈ clip 0.6 -> 1.0, exactly the dip + recovery.
-  softLandTime: 0.27,
-  // How long (s) the landing clip shows when touching down while moving,
-  // before blending back into walk/jog/run. 0 = skip it entirely.
-  landRunBlend: 0.2,
-  // drop (while still airborne & descending) past which the fall switches to Long_Fall_Loop.
-  longFallDrop: 4.0,
 };

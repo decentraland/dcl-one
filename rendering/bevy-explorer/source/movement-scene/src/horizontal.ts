@@ -15,6 +15,8 @@ import { frameTime, replyDelay, tickAdvance } from './clock';
 import { settings } from './settings';
 
 export var orientation = 0;
+// Gait the keys ask for (the animation's movement blend).
+export var gait: 'idle' | 'walk' | 'jog' | 'run' = 'idle';
 // World-space unit direction of the movement input (zero when there is none).
 export var movementAxis = Vector3.Zero();
 var horizontalVelocity = Vector3.Zero();
@@ -68,6 +70,10 @@ function readInput() {
     : jogSpeed;
   input.grounded = grounded;
   if (!isGliding) input.limit *= slopeSpeedFactor();
+  gait = input.x === 0 && input.z === 0 ? 'idle'
+    : inputSystem.isPressed(InputAction.IA_MODIFIER) ? 'run'
+    : inputSystem.isPressed(InputAction.IA_WALK) ? 'walk'
+    : 'jog';
 }
 
 // Gait speed factor of the slope along the move (SLOPE_SPEED_FACTOR), from the walkable ground the capsule rests on (on
