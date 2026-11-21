@@ -74,7 +74,11 @@ Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
   across a redeploy; upstream keys it on the world's place). A grantee of some parcels, an admin it or another scene admin granted, and an
   admin of a scene that is not the world's current deployment are refused (403); on a Genesis place
   a parcel grantee is admitted. So in a multi-scene world an admin the owner adds on one scene can
-  read, reset and revoke the stream of every scene. Pinned by
+  read, reset and revoke the stream of every scene. The world's place ignores the signed parcel
+  (upstream keys the credential on the scene's place, by world name and position). Every writer keys
+  a world row by its lowercase name; should a stray row of another id appear, the lookup still
+  answers one place: the local row, then the row keyed by the name, then the lowest id. Pinned by
+  `a_world_resolves_the_row_keyed_by_its_name_for_every_scene` (`G/streaming.rs`) and
   `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
   (`C/tests/gatekeeper_policy.rs`).
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
