@@ -26,7 +26,7 @@ import type { Hex } from 'viem'
 import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDeps, type GroupResult, type SplitPlan } from '../../../shop/checkout/purchase/executor'
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
-import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, findCreditRecords, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
+import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, findCreditRecords, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitInFlightMessage, splitsInFlight, splitToName, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
 import { AuthorizationPendingError, ensureAuthorization, exactAllowanceReady, exactGrantLock, ExactGrantUnavailableError, getManaSpendingAuthorization, GrantCancelledError, GrantNotInEffectError, GrantNotRecordedError, GrantUncheckedError } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
@@ -186,10 +186,6 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
 /** A split whose credit the node says another transaction spent: not this item, and not Credits to give back. */
 const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another transaction, so this item wasn't bought here."
 const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
-/** Another of the buyer's purchases with Credits and MANA, of another item, may still spend the MANA it approved. */
-const SPLIT_IN_FLIGHT = 'Another purchase with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.'
-/** The same, naming the item, when that purchase's record says which item it is. */
-const splitInFlightOf = (name: string): string => `Your purchase of ${name} with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.`
 const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.'
 const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
 /** The buyer's other purchases with Credits and MANA can't be read here, so nothing proves none may spend the allowance. */
@@ -1088,10 +1084,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return SPLIT_UNCHECKABLE
     }
     if (live.some((held) => held.line === line)) return SPLIT_ITEM_HELD
-    const other = live.find((held) => held.line !== line)
-    if (!other) return null
-    const name = other.hold.itemName?.trim()
-    return name ? splitInFlightOf(name) : SPLIT_IN_FLIGHT
+    // Another of the buyer's purchases with Credits and MANA, of another item, may still spend the MANA it approved: named
+    // when its record names its item (splitInFlightMessage, shared with the web Shop).
+    const other = splitToName(live.filter((held) => held.line !== line))
+    return other ? splitInFlightMessage(other.hold.itemName) : null
   }
 
   /** Read only: whether another page holds `name` now (what an `ifAvailable` request would find); false where it can't say. */

@@ -120,6 +120,11 @@ describe("an account's splits that may still spend its allowance", () => {
     expect(readAccountSplitHolds(ACCOUNT)).toEqual([{ line: LINE, hold: expect.objectContaining({ itemName: "Rainbow Hat" }) }]);
     localStorage.setItem(splitHoldKey(ACCOUNT, LINE), JSON.stringify({ at: Date.now(), attempt: "a", txHash: null, chainId: CHAIN.POLYGON, creditId: CREDIT, creditExpiresAt: 1 }));
     expect(readAccountSplitHolds(ACCOUNT)[0]?.hold.itemName).toBeNull();
+    // A blank name is none, and one with spaces around it is read without them.
+    expect(writeSplitHold(ACCOUNT, LINE, hold({ itemName: "   " }))).toBe(true);
+    expect(readAccountSplitHolds(ACCOUNT)[0]?.hold.itemName).toBeNull();
+    expect(writeSplitHold(ACCOUNT, LINE, hold({ itemName: "  Rainbow Hat " }))).toBe(true);
+    expect(readAccountSplitHolds(ACCOUNT)[0]?.hold.itemName).toBe("Rainbow Hat");
   });
 
   it("throws without storage, and skips a key gone between listing and reading", () => {

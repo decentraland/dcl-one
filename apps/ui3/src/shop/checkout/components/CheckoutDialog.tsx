@@ -29,6 +29,7 @@ import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
 import { rarityCardPalette } from "@shop/discovery/lib/rarity";
 import type { CartLineDisplay } from "@shop/model/purchase";
+import { Link } from "react-router";
 import { SHOP_BASE } from "../../routes";
 import buyErrorArt from "../assets/buy-error.png?url";
 import packCoin from "../assets/pack-coin.webp?url";
@@ -458,9 +459,9 @@ export function ErrorBody({ message, onClose, onRetry, link }: { message: string
           <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
         </p>
         {link ? (
-          <a className={styles.warningLink} href={link.href} data-testid="buy-error-link">
+          <Link className={styles.errorLink} to={link.href} data-testid="buy-error-link">
             {link.label}
-          </a>
+          </Link>
         ) : null}
       </div>
       <DialogCtas>

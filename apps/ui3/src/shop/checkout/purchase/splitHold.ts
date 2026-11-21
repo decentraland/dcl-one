@@ -140,7 +140,7 @@ function parseSplitHold(raw: string, strict = false): SplitHold | null {
     sale: isSplitSale(hold.sale) ? hold.sale : null,
     expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
     expiryProvenAt: typeof hold.expiryProvenAt === "number" ? hold.expiryProvenAt : null,
-    itemName: typeof hold.itemName === "string" ? hold.itemName : null,
+    itemName: typeof hold.itemName === "string" && hold.itemName.trim() !== "" ? hold.itemName.trim() : null,
   };
 }
 
@@ -201,6 +201,21 @@ export function readAccountSplitHolds(account: string): { line: string; hold: Sp
  */
 export function splitsInFlight(account: string, now: number, over: (line: string, hold: SplitHold) => boolean): { line: string; hold: SplitHold }[] {
   return readAccountSplitHolds(account).filter(({ line, hold }) => (hold.creditId === null ? splitHoldFresh(hold, now) : !over(line, hold)));
+}
+
+/**
+ * What a purchase held back by another item's split (splitsInFlight) tells the buyer, on every surface: that item named
+ * when its record names it (`itemName`), so the buyer knows which item's page to check it on; said generically otherwise.
+ */
+export function splitInFlightMessage(itemName: string | null | undefined): string {
+  return itemName
+    ? `Your purchase of ${itemName} with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.`
+    : "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.";
+}
+
+/** Of the other items' splits holding a purchase back, the one to tell the buyer about: the first that names its item. */
+export function splitToName<T extends { hold: SplitHold }>(others: T[]): T | undefined {
+  return others.find((held) => held.hold.itemName) ?? others[0];
 }
 
 /** `creditExpiredOnChain` for a hold's credit (none reserved: nothing to prove). */

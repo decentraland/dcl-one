@@ -930,14 +930,29 @@ describe('the in-world purchase with MANA', () => {
       const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await p.open()
       ;(await p.until('method')).handlers.onPay?.('split')
-      expect((await p.until('failed')).view).toMatchObject({ message: 'Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.' })
+      expect((await p.until('failed')).view).toMatchObject({ message: "Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here." })
       expect(authorizeShown(p)).toBe(false)
       // A record with no name: the generic notice.
       localStorage.setItem(splitHoldKey(BUYER, OTHER_LINE), JSON.stringify(otherHold))
       const again = page(w, { split: splitOn, creditsCents: 50, services: managed })
       await again.open()
       ;(await again.until('method')).handlers.onPay?.('split')
-      expect((await again.until('failed')).view).toMatchObject({ message: 'Another purchase with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.' })
+      expect((await again.until('failed')).view).toMatchObject({ message: "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here." })
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('names an item whose record names it over one whose record doesn\'t, whichever comes first', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      // An older record with no name first, then one that names its item.
+      expect(writeSplitHold(BUYER, OTHER_LINE, otherHold)).toBe(true)
+      const named = splitHoldLine(itemAsset(CHAIN.POLYGON, CONTRACT as never, '9'))
+      expect(writeSplitHold(BUYER, named, { ...otherHold, attempt: 'named-attempt', creditId: `0x${'d6'.repeat(32)}`, itemName: 'Neon Visor' })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Your purchase of Neon Visor') })
       expect(w.relay.posts).toHaveLength(0)
     })
 

@@ -57,6 +57,8 @@ import {
   splitHoldReleasableAt,
   splitCreditOverOnChain,
   splitsInFlight,
+  splitInFlightMessage,
+  splitToName,
   readAccountSplitHolds,
   readerFinalizedTime,
   writeSplitHold,
@@ -69,6 +71,8 @@ import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
 import type { CartAddInput } from "../../cart/store";
 import { parseAssetKey } from "@shop/model/asset";
+import { Link } from "react-router";
+import { itemRoute, tokenRoute } from "../../discovery/lib/routes";
 import { formatMana } from "@shop/model/money";
 import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
 import type { MixedPayment } from "@shop/payment/present";
@@ -117,10 +121,8 @@ const UNKEPT = "This browser couldn't save this purchase's transaction. Once you
 // One split at a time per account, on every surface (checkout/purchase/splitHold.ts, splitsInFlight): an exact approval
 // sets the manager's allowance to one gap, so another split's approval would take an earlier one's MANA, and a split that
 // finds the allowance covered could spend another's.
-const SPLIT_IN_FLIGHT = "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.";
 const SPLIT_ITEM_HELD = "A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.";
 const SPLITS_UNREADABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.";
-const splitInFlightOf = (name: string) => `Your purchase of ${name} with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.`;
 
 /** What holds a split back: why, and the other item whose purchase does, when its record names it. */
 type SplitBlocked = { message: string; held?: HeldItem };
@@ -129,15 +131,15 @@ type SplitBlocked = { message: string; held?: HeldItem };
 function itemPage(line: string): string | null {
   const asset = parseAssetKey(line);
   if (!asset) return null;
-  return asset.token.kind === "item" ? `/shop/item/${asset.contract}/${asset.token.itemId}` : `/shop/token/${asset.contract}/${asset.token.tokenId}`;
+  return asset.token.kind === "item" ? itemRoute(asset.contract, asset.token.itemId) : tokenRoute(asset.contract, asset.token.tokenId);
 }
 
 /** Another item's split, held: named, with its page, when its record says which item it is; said generically otherwise. */
 function inFlightBlock({ line, hold }: { line: string; hold: SplitHold }): SplitBlocked {
-  const name = hold.itemName?.trim();
-  if (!name) return { message: SPLIT_IN_FLIGHT };
+  const name = hold.itemName;
+  if (!name) return { message: splitInFlightMessage(null) };
   const href = itemPage(line);
-  return { message: splitInFlightOf(name), ...(href ? { held: { name, href } } : {}) };
+  return { message: splitInFlightMessage(name), ...(href ? { held: { name, href } } : {}) };
 }
 
 /** `message` with "Nothing was bought." said before its closing "Try again…", if it has one, or after it. */
@@ -283,7 +285,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       return { message: SPLITS_UNREADABLE };
     }
     if (sameItem && live.some((held) => held.line === lineId)) return { message: SPLIT_ITEM_HELD };
-    const other = live.find((held) => held.line !== lineId);
+    const other = splitToName(live.filter((held) => held.line !== lineId));
     return other ? inFlightBlock(other) : null;
   }
   const [notice, setNotice] = useState<string | null>(null);
@@ -840,9 +842,9 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
             ) : null}
             {phase.kind === "error" && phase.held ? (
               <p className="shop-orderbuy__note">
-                <a href={phase.held.href} data-testid="combined-held-item">
+                <Link to={phase.held.href} className="shop-orderbuy__link" data-testid="combined-held-item">
                   Open {phase.held.name}
-                </a>
+                </Link>
               </p>
             ) : null}
             <div className="shop-orderbuy__actions">

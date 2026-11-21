@@ -5,6 +5,7 @@
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
@@ -55,7 +56,7 @@ function relayedUseCredits(body: unknown): { maxCreditedValue: bigint; maxUncred
  * The node answers a credit for the Credits part (`creditsCents`), worth `value` (1 MANA by default), spendable `expiresIn`
  * s; `handlers` answer the node's other routes.
  */
-function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number, handlers: FakeHandlers = {}) {
+function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, expiresIn?: number, handlers: FakeHandlers = {}, routes?: Record<string, ReactNode>) {
   const demo = createDemo({
     session: "web3",
     ...(confirm ? { confirm } : {}),
@@ -80,7 +81,7 @@ function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, 
   const mixed = view.options.find((o) => o.method === "mana")!.mixed as MixedPayment;
   const line = { asset: offer.asset, listing: { acquisition: "store" as const }, display: { name: "Rainbow Hat" } };
   const shell = () => (
-    <DemoShell demo={demo} path="/shop/item/x/7">
+    <DemoShell demo={demo} path="/shop/item/x/7" routes={routes}>
       <QueryProbe />
       <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
     </DemoShell>
@@ -766,7 +767,7 @@ describe("a split whose outcome is not known", () => {
   });
 
   it("another item's split whose record names it is named, with a link to that item's page, where it can be checked again", async () => {
-    const { demo, line } = setup();
+    const { demo, line } = setup(undefined, undefined, MANA, undefined, {}, { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> });
     anotherItemHeld(line, { itemName: "Neon Visor" });
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText("Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.")).toBeTruthy();
@@ -774,6 +775,7 @@ describe("a split whose outcome is not known", () => {
     expect(screen.getByTestId("combined-held-item")).toHaveTextContent("Open Neon Visor");
     expect(screen.getByTestId("combined-held-item")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
     // A resale's hold links to the token's page.
+    expect(screen.queryByText("THE OTHER ITEM'S PAGE")).toBeNull();
     localStorage.removeItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${anotherItem(line)}`);
     const token = splitHoldLine(tokenAsset(CHAIN.POLYGON, evmAddress(`0x${"cd".repeat(20)}`), "42"));
     localStorage.setItem(
@@ -786,6 +788,28 @@ describe("a split whose outcome is not known", () => {
     expect(screen.queryByTestId("authorize-step-action")).toBeNull();
     expect(authorizations(demo)).toBe(0);
     expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("the link to the item holding this one back opens its page within the Shop, without reloading it", async () => {
+    const { line } = setup(undefined, undefined, MANA, undefined, {}, { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> });
+    anotherItemHeld(line, { itemName: "Neon Visor" });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-held-item")));
+    expect(await screen.findByText("THE OTHER ITEM'S PAGE")).toBeTruthy();
+  });
+
+  it("of two other items holding this one back, the one whose record names its item is named, whichever comes first", async () => {
+    const { line } = setup();
+    // An older record with no name first, then one that names its item.
+    anotherItemHeld(line);
+    const named = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ef".repeat(20)}`) });
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${named}`,
+      JSON.stringify({ at: Date.now(), attempt: "named", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"3f".repeat(32)}`, creditExpiresAt: nowSeconds() + 300, itemName: "Neon Visor" }),
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText(/Your purchase of Neon Visor with Credits and MANA is still confirming/)).toBeTruthy();
+    expect(screen.getByTestId("combined-held-item").getAttribute("href")).toContain(`0x${"ef".repeat(20)}`);
   });
 
   it("a record of another purchase whose item name isn't text is one this browser can't read: nothing asked", async () => {

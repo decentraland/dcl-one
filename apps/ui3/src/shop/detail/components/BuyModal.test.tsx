@@ -1,7 +1,7 @@
 // Buy now's dialog over the cart's own fakes (checkout/demo): the screens upstream's BuyModal shows, and that the
 // purchase goes through the cart's checkout without ever touching the buyer's cart.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setSplitPaymentForTests } from "@shop/payment/present";
 
@@ -41,6 +41,8 @@ type Opts = {
   onResumeUsed?: () => void;
   /** When the server quoted the offer the page showed (epoch ms); the fixture's is long ago. */
   seenAt?: number;
+  /** More pages the dialog may lead to. */
+  routes?: Record<string, ReactNode>;
 };
 
 function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
@@ -56,7 +58,7 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   let closed = 0;
   const resume = opts.resume ? { account: opts.resume.account ?? BOOK.buyer.toLowerCase(), lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
   const dialog = (
-    <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p> }}>
+    <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p>, ...opts.routes }}>
       <BuyModal line={line} returnPath={PATH} resume={resume} onResumeUsed={opts.onResumeUsed} onClose={() => (closed += 1)} />
     </DemoShell>
   );
@@ -502,7 +504,10 @@ describe("Buy now's dialog", () => {
   });
 
   it("a split held back by another item's purchase names that item, with a link to its page, and asks for nothing", async () => {
-    const { demo, line } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    const { demo, line } = renderBuy(
+      { session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } },
+      { tweak: holdMana(2n * 10n ** 18n), routes: { "/shop/item/:contract/:itemId": <p>THE OTHER ITEM'S PAGE</p> } },
+    );
     // Another item's split, from another tab, its credit still spendable.
     const other = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ab".repeat(20)}`) });
     localStorage.setItem(
@@ -519,6 +524,9 @@ describe("Buy now's dialog", () => {
     expect(within(dialog).getByTestId("buy-error-link")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
     expect(screen.queryByTestId("authorize-step-action")).toBeNull();
     expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
+    // It opens that page within the Shop.
+    await act(async () => fireEvent.click(within(dialog).getByTestId("buy-error-link")));
+    expect(await screen.findByText("THE OTHER ITEM'S PAGE")).toBeTruthy();
   });
 
   it("during the split's MANA approval nothing closes the dialog: not Escape, not a close; only the approval's own Cancel", async () => {
