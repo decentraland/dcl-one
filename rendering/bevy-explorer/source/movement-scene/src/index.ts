@@ -113,7 +113,7 @@ const DOUBLE_JUMP_EXIT = 0.778; // fraction of the clip at which the fall loop t
 const GLIDE_AVATAR = {
   forward: ANIM + 'Gliding_AvatarForwardRig.glb', // pitched forward (moving fast)
   idle: ANIM + 'Gliding_AvatarIdleRig.glb',       // upright / lean-back (slow)
-  start: ANIM + 'Gliding_AvatarStartRig.glb',     // deploy: glider opens (Glider_Open)
+  start: ANIM + 'Gliding_AvatarStartRig.glb',     // deploy: glider opens (Glider_Start, played whole)
   end: ANIM + 'Gliding_AvatarEndRig.glb',         // stow: glider closes (Glider_Close)
 };
 
@@ -126,6 +126,7 @@ const CLIP_LENGTH: Record<string, number> = {
   [JUMP_SETS.idle.fall]: 40 / 60, [JUMP_SETS.jog.fall]: 40 / 60, [JUMP_SETS.run.fall]: 40 / 60,
   [JUMP_SETS.idle.end]: 16 / 60, [JUMP_SETS.jog.end]: 24 / 60, [JUMP_SETS.run.end]: 22 / 60,
   [CLIP_LONG_FALL]: 48 / 60,
+  [GLIDE_AVATAR.start]: 68 / 60, [GLIDE_AVATAR.end]: 16 / 60,
 };
 // The locomotion clips at movement blend 0 (idle), 1 (walk), 2 (jog) and 3 (run).
 const MOVE_CLIPS = [CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN];
@@ -160,6 +161,11 @@ const LAND_MOVE_BLEND_OF = 0.358; // of End
 const LAND_MOVE_FROM = 0.0259; // of the locomotion clip
 const LAND_EXIT = 0.4778; // of End: locomotion
 const LAND_EXIT_BLEND_OF = 0.3982; // of End
+const GLIDE_START_BLEND = 0.05; // into the glide's Start, from any state
+const GLIDE_LOOP_BLEND = 0.05; // Start to the glide loop, at the end of Start
+const GLIDE_END_BLEND = 0.1; // Start or the loop to the glide's End, when the glide ends in the air
+const GLIDE_END_FROM = 0.05; // of the glide's End: it begins here
+const GLIDE_FALL_BLEND = 0.1; // the glide's End to Down, at the end of End
 
 // Every GLB clip the scene can drive, collected from the constants above so the
 // list never drifts. Fed to a single AssetLoad entity in main() to pre-load all
@@ -320,12 +326,16 @@ var glideTurnRate = 0;
 // so the engine banks the whole avatar.
 var glideTilt = 0;
 
-// Glide animation phase, from the vertical model's glider prop (glideProp): 'deploy' plays the
-// Start clip (glider opens) while the prop opens, 'glide' is the steady forward/idle loop while
-// it glides, 'stow' plays the End clip (glider closes) while it closes mid-air. A glide that
-// ends by landing skips 'stow' (the landing clip takes over).
+// Glide animation phase, from the vertical model's glider prop (glideProp), on time: 'deploy' plays the
+// Start clip (glider opens) whole from the tick the prop starts opening, 'glide' is the steady
+// forward/idle loop after it while the prop stays open, 'stow' plays the End clip (glider closes)
+// from GLIDE_END_FROM over the rest of its length when the glide ends mid-air, then the fall goes
+// on. A glide that ends by landing skips 'stow' (the landing clip takes over).
 type GlidePhase = 'none' | 'deploy' | 'glide' | 'stow';
 var glidePhase: GlidePhase = 'none';
+// Scene time and tick the current 'deploy' or 'stow' started.
+var glideFrom = 0;
+var glideTick = 0;
 // Set when a glide ends by touching down, so the next landing uses the glider-close
 // landing clip (the stow plays concurrently with the landing). Consumed in stateAnimation.
 var landingFromGlide = false;
@@ -416,22 +426,28 @@ function stateAnimation(
   jumpTrigger: boolean, jumps: number, airborne: boolean, horizontalSpeed: number,
 ): MovementAnimation | null {
   const glideOpen = glideProp === GlideProp.OPENING || glideProp === GlideProp.GLIDING;
+  // the End clip runs its length, then the fall takes over (below)
+  if (glidePhase === 'stow' && time - glideFrom + 1e-6 >= CLIP_LENGTH[GLIDE_AVATAR.end]) glidePhase = 'none';
   if (airborne && (glideOpen || glidePhase === 'stow')) {
     if (animState !== 'Gliding') enterState('Gliding');
     if (glideOpen) {
-      // Deploy: the Start clip (glider opens) while the prop opens, then the steady loop.
-      if (glideProp === GlideProp.OPENING) {
+      // Deploy: the Start clip (glider opens), whole, from the tick the prop starts opening, then the steady loop.
+      if (glideProp === GlideProp.OPENING && glidePhase !== 'deploy') {
         glidePhase = 'deploy';
+        glideFrom = time;
+      }
+      if (glidePhase === 'deploy' && time - glideFrom + 1e-6 < CLIP_LENGTH[GLIDE_AVATAR.start]) {
         return {
           src: GLIDE_AVATAR.start,
           speed: 1,
           loop: false,
           idle: false,
-          transitionSeconds: settings.transAir,
+          transitionSeconds: GLIDE_START_BLEND,
           sounds: [],
         };
       }
-      if (glidePhase !== 'glide') {
+      const loopStarts = glidePhase !== 'glide';
+      if (loopStarts) {
         glidePhase = 'glide';
         prevGlideSrc = undefined; // first steady frame isn't a pose swap
       }
@@ -453,7 +469,7 @@ function stateAnimation(
         speed: 1,
         loop: true,
         idle: false,
-        transitionSeconds: settings.gliderFade,
+        transitionSeconds: loopStarts ? GLIDE_LOOP_BLEND : settings.gliderFade,
         playbackTime:
           poseSwapped && activeAnimationState !== undefined
             ? activeAnimationState.playbackTime + stepTime
@@ -462,21 +478,21 @@ function stateAnimation(
       };
     }
 
-    // Stow: glide ended mid-air -> play the End clip (glider closes) while the prop closes,
-    // then the fall resumes.
+    // Stow: glide ended mid-air -> play the End clip (glider closes) from GLIDE_END_FROM, then the fall resumes.
     return {
       src: GLIDE_AVATAR.end,
       speed: 1,
       loop: false,
       idle: false,
-      transitionSeconds: settings.transAir,
+      transitionSeconds: GLIDE_END_BLEND,
+      playbackTime: glideTick === tick ? GLIDE_END_FROM * CLIP_LENGTH[GLIDE_AVATAR.end] : undefined,
       sounds: [],
     };
   }
 
   if (animState === 'Gliding') {
     // the glide is over: in the air the fall goes on; on the ground a glide (not a stow) lands on the glider-close clip
-    if (airborne) enterState('Down', settings.transAir, 0);
+    if (airborne) enterState('Down', GLIDE_FALL_BLEND, 0);
     else if (landingFromGlide) {
       landingLocked = stunned();
       enterState('GlideLanding', settings.transAir, 0);
@@ -629,7 +645,8 @@ function selectAnimation(): MovementAnimation {
   if (!glideOpen || grounded) {
     // Glide ended, or the avatar is on the ground with the prop still open(ing). Stow (close)
     // only if we ended mid-air (jump released while falling); a glide that ends by landing
-    // lets the landing clip take over. A stow ends when the prop has closed or on touchdown.
+    // lets the landing clip take over. A stow ends at the end of its clip (stateAnimation), on
+    // touchdown, or when the prop has closed.
     if (glidePhase === 'deploy' || glidePhase === 'glide') {
       if (grounded) {
         // Landed while gliding: let the landing clip stow the glider (close embedded).
@@ -637,6 +654,8 @@ function selectAnimation(): MovementAnimation {
         landingFromGlide = wasJumpingOrFalling;
       } else {
         glidePhase = 'stow';
+        glideFrom = time;
+        glideTick = tick;
       }
     } else if (glidePhase === 'stow' && (grounded || glideProp === GlideProp.CLOSED)) {
       glidePhase = 'none';
