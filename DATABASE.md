@@ -2216,6 +2216,14 @@ cursor's compare-and-set from the checkpoint it read, the pruning of the
 recovery points past the point, then the owner check. The next fold is a
 rebuild, as after any rewind.
 
+A sales fold may have inferred a bid's seller from an nft transfer before
+the nft walk saw the fork. So the nft walk's rewind on Polygon (also a
+rebuild) records its point in `shop.bid_seller_recheck`, in its own
+transaction. The next bids fold reads those rows, infers again the seller of
+every bid created past the lowest point (a seller a sale event names stays),
+then deletes the rows it read; a row recorded meanwhile waits for the next
+fold. The table holds one row per nft rewind until a sales fold runs.
+
 A database that gains the table starts with no recovery points, so a reorg
 seen before its next advance rewinds to the start. The history it holds is
 trusted as found: the bracket certifies what is walked from then on, not

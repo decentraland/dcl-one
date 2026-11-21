@@ -16938,6 +16938,20 @@ CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller I
 -- The fold's "open bids a later acceptance invalidated".
 CREATE INDEX nft_bid_open_idx ON shop.nft_bid (network) WHERE status = 'open';
 
+-- The nft walk's rewinds, for the bids fold: a seller inferred from the nft
+-- walk's transfers may name an owner the rewind took away, so the next fold
+-- infers again the seller of every bid created past `from_block` (a seller
+-- a sale event names stays), then deletes the rows it read. One row per nft
+-- rewind on Polygon (a reorg past the confirmation depth, or a rebuild),
+-- written in the rewind's transaction.
+CREATE TABLE shop.bid_seller_recheck (
+    id bigint PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    network text NOT NULL,
+    from_block bigint NOT NULL,
+    recorded_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT bid_seller_recheck_network_known CHECK (network IN ('ethereum', 'matic'))
+);
+
 -- The venues a sale's royalties are computed for, with the cut the pinned
 -- contracts charge (`royaltiesCutPerMillion()`, read once at start and
 -- compared: a difference is a warning, never a rewrite). Four rows on

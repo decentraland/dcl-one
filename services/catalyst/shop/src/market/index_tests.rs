@@ -9219,4 +9219,137 @@ mod recovery {
         assert!(!diverged().await, "the advance clears the mark");
         db.drop().await;
     }
+
+    /// A sales fold that ran before the nft walk saw the fork inferred a
+    /// seller from the old branch's transfer (ALICE). The nft walk's rewind
+    /// leaves a recheck, so the next sales fold, with no new sale event,
+    /// infers again: CARL, the replacement transfer's buyer. A seller a sale
+    /// event names (the acceptance's) stays as it is.
+    #[tokio::test]
+    async fn an_nft_rewind_has_the_sales_fold_infer_its_sellers_again() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
+        let (t1, t2) = (v2_token(0, 1), v2_token(0, 2));
+        seed_collection(
+            &db.pool,
+            "matic",
+            C1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        // DAVE's open bid on t1, and his bid on t2 accepted naming ALICE.
+        let bids = || {
+            vec![
+                sales_index::tests::bid_created_log(
+                    C1,
+                    t1,
+                    DAVE,
+                    0x22,
+                    8,
+                    4_000_000_000,
+                    b + 400,
+                    0,
+                ),
+                sales_index::tests::bid_created_log(
+                    C1,
+                    t2,
+                    DAVE,
+                    0x23,
+                    8,
+                    4_000_000_000,
+                    b + 410,
+                    0,
+                ),
+                sales_index::tests::bid_accepted_log(C1, t2, DAVE, ALICE, 0x23, 8, b + 420, 0),
+            ]
+        };
+        let chain = FakeChain::new(
+            b + 1_000,
+            [
+                vec![
+                    transfer(C1, ZERO, BOB, t1, s + 100, 0),
+                    transfer(C1, ZERO, BOB, t2, s + 100, 1),
+                    transfer(C1, BOB, ALICE, t1, b + 300, 0),
+                ],
+                bids(),
+            ]
+            .concat(),
+            10_000_000,
+            100,
+        );
+        let url = serve(chain.clone()).await;
+        let by_million = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let by_1_5m = state_over(db.pool.clone(), &url, index_settings(100, 1_500_000), false);
+        let nft = NftIndex::new(ChainNet::Matic);
+        assert!(publish_nft(&by_million, &url, &nft).await.published);
+        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        let sellers = async || {
+            bids_of(&db.pool)
+                .await
+                .into_iter()
+                .map(|(token, _, _, seller, _, _)| (token, seller))
+                .collect::<Vec<_>>()
+        };
+        let both = |one: &str, two: &str| {
+            vec![
+                (t1.to_string(), Some(one.to_string())),
+                (t2.to_string(), Some(two.to_string())),
+            ]
+        };
+        assert_eq!(sellers().await, both(ALICE, ALICE));
+        // The chain reorganizes from b+200: BOB sold t1 to CARL, not ALICE;
+        // the bids stand on both branches.
+        chain.fork(
+            b + 200,
+            0xee,
+            [vec![transfer(C1, BOB, CARL, t1, b + 250, 0)], bids()].concat(),
+        );
+        // Sales recovers and folds first, while the nft walk has not looked:
+        // its cursor still stands, unmarked, past the bid.
+        let recovered = pass(&by_1_5m, &url, &SalesIndex).await;
+        assert_eq!(
+            recovered.reorg_rewound_to,
+            Some((s + 5_999_999) as i64),
+            "{recovered:?}"
+        );
+        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert_eq!(
+            sellers().await,
+            both(ALICE, ALICE),
+            "inferred from the old branch"
+        );
+        // The nft walk recovers and walks the new branch.
+        let nft_rewound = pass(&by_million, &url, &nft).await;
+        assert_eq!(nft_rewound.reorg_rewound_to, Some((s + 6_999_999) as i64));
+        let rechecks: Vec<i64> =
+            sqlx::query_scalar("SELECT from_block FROM shop.bid_seller_recheck")
+                .fetch_all(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(rechecks, vec![(s + 6_999_999) as i64]);
+        assert!(publish_nft(&by_million, &url, &nft).await.published);
+        // The next sales fold, with no new sale event.
+        let sale_events: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.sale_event")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert!(publish(&by_1_5m, &url, &SalesIndex).await.published);
+        assert_eq!(sellers().await, both(CARL, ALICE));
+        let after: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.sale_event")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(after, sale_events, "no new sale event");
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.bid_seller_recheck")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0, "the fold deleted the recheck it read");
+        db.drop().await;
+    }
 }

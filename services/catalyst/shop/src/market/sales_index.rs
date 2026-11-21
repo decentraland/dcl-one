@@ -314,7 +314,9 @@ pub async fn insert_events(
 /// missing their seller that the nft walk (`nft`: its last indexed block,
 /// read in the same statement as its transfers, and only while its history
 /// is bound to Polygon, out of quarantine and not diverged) has passed
-/// since. The
+/// since, plus every bid created past `$5`, the lowest point the nft walk
+/// rewound to since the last fold (`shop.bid_seller_recheck`): its inferred
+/// seller may name an owner the rewind took away. The
 /// latest `bid_created` of a key defines the bid; the latest event at or
 /// after it, its status, `invalidated` when another bid on the token was
 /// accepted after it (the contract drops the token's other bids without an
@@ -341,6 +343,9 @@ WITH nft AS (
         SELECT 1 FROM shop.sale_event a
         WHERE a.network = $1 AND a.contract_address = b.contract_address AND a.token_id = b.token_id
           AND a.kind = 'bid_accepted' AND (a.block_number, a.log_index) > (b.created_block, b.created_log_index))
+    UNION
+    SELECT b.contract_address, b.token_id, b.bidder FROM shop.nft_bid b
+    WHERE b.network = $1 AND $5::bigint IS NOT NULL AND b.created_block > $5
     UNION
     SELECT b.contract_address, b.token_id, b.bidder FROM shop.nft_bid b
     WHERE b.network = $1 AND b.seller IS NULL AND b.created_block <= (SELECT indexed FROM nft) AND EXISTS (
@@ -404,6 +409,15 @@ pub async fn fold(
 ) -> anyhow::Result<u64> {
     let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
+    // The nft walk's rewinds since the last fold, read before the fold's own
+    // statement (whose newer snapshot sees each one's rows); only these are
+    // deleted after it, so one recorded meanwhile waits for the next fold.
+    let (rechecks, recheck_from): (Option<Vec<i64>>, Option<i64>) = sqlx::query_as(
+        "SELECT array_agg(id), min(from_block) FROM shop.bid_seller_recheck WHERE network = $1",
+    )
+    .bind(ChainNet::Matic.db_name())
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query("SET LOCAL statement_timeout = '3600s'")
         .execute(&mut *tx)
         .await?;
@@ -413,9 +427,16 @@ pub async fn fold(
         .bind(since)
         .bind(chain_walk::mainnet_chain(ChainNet::Matic))
         .bind(chain_walk::INDEXER_NFT)
+        .bind(recheck_from)
         .execute(&mut *tx)
         .await?
         .rows_affected();
+    if let Some(ids) = rechecks {
+        sqlx::query("DELETE FROM shop.bid_seller_recheck WHERE id = ANY($1)")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+    }
     owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(bids)
