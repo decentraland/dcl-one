@@ -8,6 +8,7 @@ import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 import { MAX_SPEED, MAX_TICK_TIME, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE, VEC3_DOWN, VEC3_ZERO } from './constants';
 import { settings } from './settings';
 import { beginTick } from './clock';
+import { endEmoteOnInput } from './emote';
 
 // Avatar-bus audio clip pools published via MovementAnimation.sounds. Engine
 // plays each listed clip once per frame on the avatar's local audio bus — the
@@ -763,6 +764,7 @@ function writeMovement() {
     animation.transitionSeconds = nextBlend;
     nextBlend = undefined;
   }
+  endEmoteOnInput(animation);
   AvatarMovement.createOrReplace(engine.PlayerEntity, {
     velocity,
     orientation: -orientation,
