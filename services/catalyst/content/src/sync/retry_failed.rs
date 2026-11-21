@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
 use crate::failed_deployments_store::{
-    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments, remove_records,
+    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments,
 };
 use crate::storage::Storage;
 use crate::sync_deployer::LiveSyncDeployer;
@@ -336,12 +336,11 @@ impl RetryFailedDeployments {
                         // A failed discard is re-reported below like any failed attempt, so the
                         // record backs off instead of being checked again next cycle.
                         let outcome = match outcome {
-                            Err(SyncError::Overtaken { .. }) => remove_records(
-                                &self.failed_store.pool,
-                                std::slice::from_ref(&failure.entity_id),
-                            )
-                            .await
-                            .map(|()| Retried::Discarded),
+                            Err(SyncError::Overtaken { .. }) => self
+                                .failed_store
+                                .remove_discarded(&failure.entity_id)
+                                .await
+                                .map(|()| Retried::Discarded),
                             other => other.map(|()| Retried::Buffered),
                         };
                         match outcome {

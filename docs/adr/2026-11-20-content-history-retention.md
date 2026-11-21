@@ -8,8 +8,8 @@
 The content server differs from the legacy catalyst
 ([`decentraland/catalyst@6c56f8a3`](https://github.com/decentraland/catalyst/tree/6c56f8a3eaff631cb7be0dc01ef92a24333bbc93))
 in three retention behaviors: with `CONTENT_HISTORY_PRUNE_ENABLED` on it prunes
-superseded deployments, it does not expire profiles, and it never retries a
-validation refusal and expires failed records.
+superseded deployments, it does not expire profiles, and it expires failed
+records without ever retrying a validation refusal.
 
 ## Decision
 

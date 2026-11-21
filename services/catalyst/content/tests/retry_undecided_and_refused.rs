@@ -3,6 +3,8 @@
 //! walks every due record in its database, so this runs in a binary of its own over a scratch
 //! database of its own.
 
+mod common;
+
 use std::sync::Arc;
 
 use catalyst_content::failed_deployments_store::LiveFailedDeploymentsStore;
@@ -10,27 +12,10 @@ use catalyst_content::sync::retry_failed::{RetryFailedConfig, RetryFailedDeploym
 use catalyst_content::sync::{FailedDeployment, FailureReason};
 use catalyst_content::sync_deployer::{LiveSyncDeployer, SyncValidation};
 use catalyst_content::validator::{Settings, Sources};
-use catalyst_shared::test_keys::signed_chain;
+use catalyst_shared::test_keys::{ENTITY_KEY, signed_chain};
+use common::{peer, temp_dir};
 
-const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const MAX_RETRIES: u32 = 2;
-
-/// Serves `body` as every content file.
-async fn peer(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let app = axum::Router::new().route(
-        "/contents/{hash}",
-        axum::routing::get(move || {
-            let body = body.clone();
-            async move { body }
-        }),
-    );
-    (
-        url,
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
-    )
-}
 
 #[derive(Debug, sqlx::FromRow)]
 struct Record {
@@ -48,10 +33,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
     let Some(pool) = catalyst_db::scratch::pool(4).await else {
         return;
     };
-    let tmp = std::env::temp_dir().join(format!(
-        "catalyst-retry-undecided-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let tmp = temp_dir("retry-undecided");
     let storage = Arc::new(catalyst_storage::Storage::from_config(&tmp).await.unwrap());
     // No L1 RPC: a scene's LAND access cannot be decided.
     let sources = Arc::new(Sources::new(
@@ -114,7 +96,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
 
     for (body, label) in [(&undecided, "undecided"), (&refused, "refused")] {
         let entity_id = dcl_auth::hash_bytes_v1(body);
-        let (url, server) = peer(body.clone()).await;
+        let (url, server) = peer(vec![(entity_id.clone(), body.clone())]).await;
         store
             .report_failure(FailedDeployment {
                 entity_type: if label == "undecided" {
@@ -125,7 +107,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                 .into(),
                 entity_id: entity_id.clone(),
                 reason: FailureReason::DeploymentError,
-                auth_chain: signed_chain(TEST_KEY, &entity_id).await,
+                auth_chain: signed_chain(ENTITY_KEY, &entity_id).await,
                 error_description: "content server unreachable".into(),
                 failure_timestamp: chrono::Utc::now().timestamp_millis(),
                 snapshot_hash: None,
@@ -174,7 +156,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                     entity_type: "scene".into(),
                     entity_id: entity_id.clone(),
                     reason: FailureReason::ValidationUndecided,
-                    auth_chain: signed_chain(TEST_KEY, &entity_id).await,
+                    auth_chain: signed_chain(ENTITY_KEY, &entity_id).await,
                     error_description: "undecided".into(),
                     failure_timestamp: chrono::Utc::now().timestamp_millis(),
                     snapshot_hash: None,

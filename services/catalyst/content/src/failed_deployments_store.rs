@@ -128,7 +128,7 @@ pub struct EvictedRecord {
 }
 
 pub struct LiveFailedDeploymentsStore {
-    pub(crate) pool: PgPool,
+    pool: PgPool,
 }
 
 impl LiveFailedDeploymentsStore {
@@ -344,6 +344,11 @@ impl LiveFailedDeploymentsStore {
         }
         Ok(removed)
     }
+
+    /// Drops the record of `entity_id`, which the retry worker discarded as overtaken.
+    pub async fn remove_discarded(&self, entity_id: &str) -> Result<(), SyncError> {
+        remove_records(&self.pool, &[entity_id.to_string()]).await
+    }
 }
 
 /// Entity ids per give-up DELETE. `ANY($1)` binds the whole chunk as one parameter, so this is
@@ -352,7 +357,7 @@ impl LiveFailedDeploymentsStore {
 const EXHAUSTED_DELETE_BATCH_SIZE: usize = 1000;
 
 /// Removes the records of `entity_ids`: entities published (in their publication transaction)
-/// or discarded by the retry worker.
+/// or discarded by the retry worker ([`LiveFailedDeploymentsStore::remove_discarded`]).
 pub(crate) async fn remove_records<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     entity_ids: &[String],

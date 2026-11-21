@@ -8,31 +8,12 @@ use axum::http::HeaderValue;
 use crate::auth::{AuthChain, AuthLink, AuthLinkType};
 use crate::storage::Storage;
 
-const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const EPHEMERAL_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
-/// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY) over `entity_id` from a fixed test key.
+/// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY) over `entity_id` from the shared test key.
 pub(crate) async fn signed_chain(entity_id: &str) -> AuthChain {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
-
-    let key: PrivateKeySigner = TEST_KEY.parse().unwrap();
-    let signature = key
-        .sign_message(entity_id.as_bytes())
+    catalyst_shared::test_keys::signed_chain(catalyst_shared::test_keys::ENTITY_KEY, entity_id)
         .await
-        .unwrap()
-        .to_string();
-    vec![
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", key.address()),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload: entity_id.to_string(),
-            signature: Some(signature),
-        },
-    ]
 }
 
 /// A contract-wallet chain as a peer serves it: SIGNER (a contract), an

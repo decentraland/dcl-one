@@ -6,42 +6,17 @@
 //! A retry cycle walks every due record in its database, so each test runs over a fresh database
 //! of its own.
 
+mod common;
+
 use std::sync::Arc;
 
 use catalyst_content::failed_deployments_store::LiveFailedDeploymentsStore;
 use catalyst_content::sync::retry_failed::{RetryFailedConfig, RetryFailedDeployments, RetryStats};
 use catalyst_content::sync::{DeploymentContext, FailedDeployment, FailureReason};
 use catalyst_content::sync_deployer::{LiveSyncDeployer, SyncValidation};
-use catalyst_shared::test_keys::signed_chain;
+use catalyst_shared::test_keys::{ENTITY_KEY, signed_chain};
+use common::{peer, temp_dir};
 use sqlx::PgPool;
-
-const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
-/// Serves each body at `/contents/{its id}`.
-async fn peer(files: Vec<(String, Vec<u8>)>) -> (String, tokio::task::JoinHandle<()>) {
-    let files: Arc<std::collections::HashMap<String, Vec<u8>>> =
-        Arc::new(files.into_iter().collect());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let app = axum::Router::new().route(
-        "/contents/{hash}",
-        axum::routing::get(
-            move |axum::extract::Path(hash): axum::extract::Path<String>| {
-                let files = files.clone();
-                async move {
-                    files
-                        .get(&hash)
-                        .cloned()
-                        .ok_or(axum::http::StatusCode::NOT_FOUND)
-                }
-            },
-        ),
-    );
-    (
-        url,
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() }),
-    )
-}
 
 /// An entity body and its id; `salt` tells apart bodies that are otherwise equal.
 fn entity(entity_type: &str, pointers: &[&str], timestamp: i64, salt: u32) -> (Vec<u8>, String) {
@@ -82,10 +57,7 @@ impl Node {
                 SyncValidation::AuthChainOnly,
             )),
             store: Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
-            tmp: std::env::temp_dir().join(format!(
-                "catalyst-retry-overtaken-{}",
-                uuid::Uuid::new_v4().simple()
-            )),
+            tmp: temp_dir("retry-overtaken"),
             pool,
         })
     }
@@ -96,7 +68,7 @@ impl Node {
             .deploy_entity(
                 body,
                 id,
-                &signed_chain(TEST_KEY, id).await,
+                &signed_chain(ENTITY_KEY, id).await,
                 DeploymentContext::Synced,
                 None,
                 None,
@@ -116,7 +88,7 @@ impl Node {
                     entity_type: entity_type.to_string(),
                     entity_id: id.clone(),
                     reason: FailureReason::DeploymentError,
-                    auth_chain: signed_chain(TEST_KEY, id).await,
+                    auth_chain: signed_chain(ENTITY_KEY, id).await,
                     error_description: "content server unreachable".into(),
                     failure_timestamp: now,
                     snapshot_hash: None,

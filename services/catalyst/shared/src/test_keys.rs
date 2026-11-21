@@ -14,6 +14,8 @@ pub const KEY: &str = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d
 pub const AUTHORITATIVE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 pub const OUTSIDER_KEY: &str = "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba";
+/// Hardhat's first public dev account; the content tests sign their entities with it.
+pub const ENTITY_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 pub fn wallet(key: &str) -> PrivateKeySigner {
     key.parse().unwrap()
