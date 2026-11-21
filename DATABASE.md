@@ -833,13 +833,35 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 one writer of `social.notifications` and its `social.notification_deliveries`
 email row, for every producer: Social's own and Shop's sale, royalty, transfer,
 rental, on-chain bid (`bid_received`, `shop/src/market/bid_notices.rs`), tip,
-favorite-discount, credits and goal notices. Each batch is one statement on the
-producer's executor, so the notice commits with the producer's transaction: an
-upsert by `id` (or by `(address, broadcast_key)` for keyed notices) and, for new
-rows only, a `pending` delivery row, or `skipped` with the reason when the type has
-no template or the recipient cannot receive it. Social owns both tables, reads
-them and delivers the email; `with_emailable_kinds!` is the one list of templated
-types the writer and Social's templates share.
+favorite-discount, credits and goal notices. Writes use the producer's executor,
+so the notice commits with the producer's transaction. Ordinary batches use one
+statement and upsert by `id` (or by `(address, broadcast_key)` for keyed notices),
+refreshing metadata and occurrence time. Worlds' three quota kinds
+(`worlds_missing_resources`, `worlds_access_restricted`, `worlds_access_restored`)
+carry an explicit producer persistence policy: one first notice per wallet,
+kind and UTC date of block creation, including restoration on a later day.
+Social sorts quota notices by wallet; for each notice, the shared writer takes
+that wallet's transaction-scoped notification lock before aliasing and
+inserting. The locks remain held until transaction completion, in a namespace
+distinct from Worlds' quota locks. The writer links the
+three exact native notice IDs derived from the block's full creation timestamp
+to daily `broadcast_key` values where no daily carrier already exists before
+inserting the current notice. A linked row keeps its ID, metadata, occurrence
+time, read state and email delivery records; a new daily notice uses the
+canonical daily ID. Repeated daily keys leave that first row unchanged.
+Aliasing and insertion use the mutation's
+transaction and existing notification keys; no table or index is added.
+Only a new notification gets a `pending` delivery row, or `skipped` with the
+reason when the type has no template or the recipient cannot receive it.
+Social owns both tables, reads them and delivers the email;
+`with_emailable_kinds!` is the one list of templated types the writer and
+Social's templates share.
+
+The [quota notice identity decision](docs/adr/2026-11-21-world-quota-notice-identity.md)
+retains a cutover boundary: already closed native blocks or imported rows that
+cannot be linked from exact creation facts can overlap with the first daily
+notice. This writer does not reconstruct missing timestamps or consolidate all
+historical duplicates.
 
 ## Social realtime notification workload
 
@@ -1635,6 +1657,29 @@ CREATE INDEX CONCURRENTLY idx_trade_assets_sent_contract
 The object pass creates only objects the database lacks, so it then skips the
 index. A failed concurrent build leaves an invalid index of that name: drop it
 before retrying.
+
+## Camera reel World gallery lookup
+
+World gallery requests resolve a name to scene IDs before reading public photos.
+On a cache miss, Camera Reel reads enabled scene rows from
+`explore.place_indexed` and active `explore.world_scene_place` identities joined
+to their exact `(world_name, entity_id)` deployment in `worlds.world_scenes`
+and their parent in `worlds.worlds`. A known identity takes precedence over a
+catalogue row bearing its UUID, including a retired identity. Eligible identities
+also resolve to their original catalogue IDs in the requested World, preserving
+uppercase and `urn:uuid:` spellings for photos whose `place_id` retains them.
+An alias cannot bypass the identity's eligibility checks. The World-name
+aggregate is not a scene. Listing visibility does not control photo eligibility.
+Canonical scene resolution excludes blocked Worlds and disabled scenes or
+parents through `explore.place_moderation` and catalogue state.
+
+These are read-only shared SQL edges through the existing pool. The active
+identity index's World-name prefix, deployment key and moderation primary keys
+serve the lookup; no extra projection or index is maintained. The result is a
+sorted, deduplicated ID list held under the configured cache capacity and TTL,
+so changes to scene eligibility may remain cached until expiry. GET and batch
+POST use the same resolver; photo privacy, review and deletion filters apply
+after resolution. Production lookup rates and latency have not been measured.
 
 ## Camera reel photo events workload
 
