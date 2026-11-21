@@ -1643,7 +1643,10 @@ On a cache miss, Camera Reel reads enabled scene rows from
 `explore.place_indexed` and active `explore.world_scene_place` identities joined
 to their exact `(world_name, entity_id)` deployment in `worlds.world_scenes`
 and their parent in `worlds.worlds`. A known identity takes precedence over a
-catalogue row bearing its UUID, including a retired identity. The World-name
+catalogue row bearing its UUID, including a retired identity. Eligible identities
+also resolve to their original catalogue IDs in the requested World, preserving
+uppercase and `urn:uuid:` spellings for photos whose `place_id` retains them.
+An alias cannot bypass the identity's eligibility checks. The World-name
 aggregate is not a scene. Listing visibility does not control photo eligibility.
 Canonical scene resolution excludes blocked Worlds and disabled scenes or
 parents through `explore.place_moderation` and catalogue state.

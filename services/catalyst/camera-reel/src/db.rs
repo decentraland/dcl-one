@@ -852,8 +852,9 @@ impl Database {
 
     /// The enabled scene ids of a world name (`name.dcl.eth`), irrespective
     /// of listing visibility, memoised with the configured TTL. Durable scene
-    /// identities use their live deployment binding and shadow catalogue copies;
-    /// the world's aggregate catalogue row is not a scene.
+    /// identities govern eligibility through their live deployment binding;
+    /// eligible catalogue aliases retain their original spelling. The world's
+    /// aggregate catalogue row is not a scene.
     pub async fn world_place_ids(&self, world_name: &str) -> Result<Vec<String>, sqlx::Error> {
         // Cache identity follows the exact request, independently of the
         // case-insensitive catalogue lookup.
@@ -870,26 +871,33 @@ impl Database {
                 FROM explore.place_indexed c
                 LEFT JOIN explore.place_moderation m ON m.place_id = c.id
                 WHERE c.world IS TRUE AND lower(c.world_name) = $1
+            ), eligible_scenes AS (
+                SELECT p.identity
+                FROM explore.world_scene_place p
+                JOIN worlds.world_scenes s
+                  ON s.world_name = p.world_name AND s.entity_id = p.entity_id
+                JOIN worlds.worlds w ON w.name = p.world_name
+                LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text
+                LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
+                WHERE p.world_name = $1 AND p.active AND w.blocked_since IS NULL
+                  AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM catalogue c
+                      WHERE c.disabled AND (c.id = $1 OR c.identity = p.identity)
+                  )
             )
             SELECT c.id FROM catalogue c
             WHERE NOT c.disabled AND c.id <> $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM explore.world_scene_place p WHERE p.identity = c.identity
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM explore.world_scene_place p WHERE p.identity = c.identity
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM eligible_scenes e WHERE e.identity = c.identity
+                  )
               )
             UNION
-            SELECT p.identity::text AS id
-            FROM explore.world_scene_place p
-            JOIN worlds.world_scenes s
-              ON s.world_name = p.world_name AND s.entity_id = p.entity_id
-            JOIN worlds.worlds w ON w.name = p.world_name
-            LEFT JOIN explore.place_moderation m ON m.place_id = p.identity::text
-            LEFT JOIN explore.place_moderation wm ON wm.place_id = w.name
-            WHERE p.world_name = $1 AND p.active AND w.blocked_since IS NULL
-              AND NOT COALESCE(m.disabled, false) AND NOT COALESCE(wm.disabled, false)
-              AND NOT EXISTS (
-                  SELECT 1 FROM catalogue c
-                  WHERE c.disabled AND (c.id = $1 OR c.identity = p.identity)
-              )
+            SELECT identity::text AS id FROM eligible_scenes
             ORDER BY id"#,
         )
         .bind(world_name.to_lowercase())

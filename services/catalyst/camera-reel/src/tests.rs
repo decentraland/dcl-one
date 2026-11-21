@@ -2783,6 +2783,20 @@ async fn world_galleries_include_public_photos_from_hidden_mirrored_and_local_sc
                 ] {
                     sqlx::query(sql).bind(&world).execute(&pool).await.unwrap();
                 }
+                // Catalogue and photo metadata retain the original spelling.
+                for catalogue_id in [place.to_uppercase(), format!("urn:uuid:{place}")] {
+                    sqlx::query(
+                        "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)",
+                    )
+                    .bind(&catalogue_id)
+                    .bind(&raw)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                    let photo = image(&owner, &tag(), &tag(), true, &catalogue_id);
+                    s.db().insert_image(&photo).await.unwrap();
+                    public_ids.push(photo.id.to_string());
+                }
             }
         }
         public_ids.sort();
@@ -2874,12 +2888,8 @@ async fn local_world_galleries_exclude_unavailable_scenes() {
             "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1",
         ),
         (
-            "retired-shadow",
-            "UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE world_name = $1",
-        ),
-        (
-            "disabled-scene-shadow",
-            "INSERT INTO explore.place_moderation (place_id, disabled, set_by) SELECT identity::text, true, 'test' FROM explore.world_scene_place WHERE world_name = $1",
+            "disabled-alias",
+            "UPDATE explore.place SET disabled = true WHERE world_name = $1 AND id LIKE 'urn:uuid:%'",
         ),
     ] {
         let world = format!("{case}-{}.dcl.eth", tag());
@@ -2890,12 +2900,12 @@ async fn local_world_galleries_exclude_unavailable_scenes() {
                 .await
                 .unwrap();
         }
-        if case.ends_with("-shadow") {
-            let catalogue_id = if case == "disabled-scene-shadow" {
-                format!("urn:uuid:{}", place.to_uppercase())
-            } else {
-                place.clone()
-            };
+        // Every spelling must obey the identity's lifecycle and moderation.
+        for catalogue_id in [
+            place.clone(),
+            place.to_uppercase(),
+            format!("urn:uuid:{place}"),
+        ] {
             sqlx::query(
                 "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, '0,0', $2)",
             )
