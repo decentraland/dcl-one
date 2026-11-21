@@ -894,8 +894,8 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
 pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
 
 /// A liveness heuristic for whether cursor `c` serves its index at `now`:
-/// ready, or bound to its network's mainnet chain, out of quarantine, with its
-/// whole history walked, advanced within [`READY_WINDOW`] and its last block
+/// ready, or bound to its network's mainnet chain, out of quarantine, not
+/// diverged, with its whole history walked, advanced within [`READY_WINDOW`] and its last block
 /// under `horizon` old. It does not measure the walk's speed
 /// or publish lag. An `updated_at` ahead of `now` (written by the database
 /// clock) counts as advanced up to [`MAX_CLOCK_SKEW`], and not past it.
@@ -903,11 +903,12 @@ pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> boo
     if is_ready(c, now) {
         return true;
     }
-    // As readiness asks: bound to the chain its readers expect, and out of
-    // quarantine; otherwise no claim it takes can settle.
+    // As readiness asks: bound to the chain its readers expect, out of
+    // quarantine and not diverged (its recovery still searching); otherwise
+    // no claim it takes can settle yet.
     let bound =
         ChainNet::parse(&c.network).is_some_and(|net| c.chain_id == Some(mainnet_chain(net)));
-    if !bound || c.quarantined_at.is_some() {
+    if !bound || c.quarantined_at.is_some() || c.diverged_at.is_some() {
         return false;
     }
     let advanced = now.naive_utc().signed_duration_since(c.updated_at);

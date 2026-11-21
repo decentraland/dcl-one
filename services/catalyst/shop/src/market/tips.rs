@@ -1789,10 +1789,10 @@ mod tests {
     }
 
     /// A walk near the head serves a forward only while its cursor is one the
-    /// resolver can use: bound to Polygon and out of quarantine. Unbound,
-    /// bound to another chain or in quarantine, a fresh forward is refused
-    /// (retryably) and nothing is stored; bound and out of quarantine, the
-    /// same walk takes it.
+    /// resolver can use: bound to Polygon, out of quarantine and not diverged.
+    /// Unbound, bound to another chain, in quarantine or diverged (its
+    /// recovery searching), a fresh forward is refused (retryably) and nothing
+    /// is stored; otherwise the same walk takes it.
     #[tokio::test]
     async fn a_forward_needs_a_cursor_the_resolver_can_use() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips_unusable").await else {
@@ -1826,6 +1826,11 @@ mod tests {
                  quarantine_reason = 'test' WHERE indexer = 'mana_transfers'",
                 "in quarantine",
             ),
+            (
+                "UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, \
+                 diverged_at = timezone('UTC', now()) WHERE indexer = 'mana_transfers'",
+                "diverged, its recovery still searching",
+            ),
         ] {
             set(sql).await;
             assert_eq!(
@@ -1835,7 +1840,7 @@ mod tests {
             );
             assert_eq!(claim_count(&db.pool).await, 0, "{why}: nothing stored");
         }
-        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL WHERE indexer = 'mana_transfers'").await;
+        set("UPDATE shop.chain_cursor SET quarantined_at = NULL, quarantine_reason = NULL, diverged_at = NULL WHERE indexer = 'mana_transfers'").await;
         assert_eq!(
             forward_tip(&app, &w).await.status(),
             StatusCode::ACCEPTED,
