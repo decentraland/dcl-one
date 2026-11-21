@@ -936,7 +936,27 @@ async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
     .unwrap();
     let now = fixture["now"].as_i64().unwrap();
     let mut refused_forms = 0;
-    for case in fixture["timestamps"].as_array().unwrap() {
+    let mut negative_window_at_now = 0;
+    // Digit forms around the current time, which the capture does not hold: checked against
+    // the rules only.
+    let local = [
+        (now + 1, "0", false),
+        (now + 1, "1.5", true),
+        (now + 2, "1.5", false),
+        (now + 60_000, "Infinity", true),
+        (now + 60_001, "Infinity", false),
+        (now - 1, "1.5", true),
+        (now - 2, "1.5", false),
+    ]
+    .map(|(ts, window, accepted)| {
+        serde_json::json!({ "raw": ts.to_string(), "window": window, "accepted": accepted, "local": true })
+    });
+    for case in fixture["timestamps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(&local)
+    {
         let raw = case["raw"].as_str();
         let payload = build_payload_v6("get", "/", raw.unwrap_or(""), "{}");
         let (_, frame) = frame_with(&ROOT_WALLET, now, &payload, "{}").await;
@@ -960,19 +980,41 @@ async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
 
         // Absent or empty reads as 0; the future side stops at the window, at most 60 s.
         let text = raw.filter(|r| !r.is_empty()).unwrap_or("0");
-        let digits = Some(text).filter(|r| r.bytes().all(|b| b.is_ascii_digit()));
+        let digits = Some(text)
+            .filter(|r| r.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|r| r.parse::<i64>().ok());
         let window_ms = expiration.as_millis();
-        let expected = digits
-            .and_then(|r| r.parse::<i64>().ok())
-            .is_some_and(|ts| {
-                (ts - now) as i128 <= window_ms.min(60_000) as i128
-                    && (expiration == Duration::MAX || (now - ts) as u128 <= window_ms)
-            });
-        if digits.is_none() && case["accepted"].as_bool().unwrap() {
-            refused_forms += 1;
-        }
+        let expected = digits.is_some_and(|ts| {
+            if ts >= now {
+                (ts - now) as u128 <= window_ms.min(60_000)
+            } else {
+                expiration == Duration::MAX || (now - ts) as u128 <= window_ms
+            }
+        });
         assert_eq!(result.is_ok(), expected, "{case} {result:?}");
+
+        let source_accepted = case["accepted"].as_bool().unwrap();
+        if case["local"] == true {
+            assert_eq!(result.is_ok(), source_accepted, "{case} {result:?}");
+            continue;
+        }
+        match digits {
+            None if source_accepted => refused_forms += 1,
+            None => {}
+            // A negative window still passes the current time; the source refuses it.
+            Some(ts) if window < 0.0 && ts == now => {
+                assert!(result.is_ok() && !source_accepted, "{case} {result:?}");
+                negative_window_at_now += 1;
+            }
+            // The source's future side runs to the whole window.
+            Some(ts) if ts - now > 60_000 && window > 60_000.0 => {}
+            Some(_) => assert_eq!(result.is_ok(), source_accepted, "{case} {result:?}"),
+        }
     }
+    assert!(
+        negative_window_at_now > 0,
+        "the capture holds a negative window at the current time"
+    );
     assert!(
         refused_forms > 0,
         "the capture holds forms only the source accepts"
