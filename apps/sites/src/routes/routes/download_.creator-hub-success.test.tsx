@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -8,7 +9,11 @@ function render(loaderData: { sid: string; os: string; retryUrl: string }) {
     [{ id: "success", path: "/download/creator-hub-success", Component: CreatorHubDownloadSuccessRoute as never }],
     { initialEntries: ["/download/creator-hub-success"], hydrationData: { loaderData: { success: loaderData } } },
   );
-  return renderToString(<RouterProvider router={router} />);
+  return renderToString(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
 }
 
 describe("CreatorHubDownloadSuccessRoute", () => {

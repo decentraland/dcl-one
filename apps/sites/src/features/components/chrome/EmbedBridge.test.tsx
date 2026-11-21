@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 
-import { EMBED_BOOT_SCRIPT, embedEscapeHref, isEmbedded } from "@ui/web/frames/embed";
+import { EMBED_BOOT_SCRIPT, embedEscapeHref, isEmbedded } from "@/core/lib/embed";
 import EmbedBridge from "./EmbedBridge";
 
 describe("EmbedBridge", () => {

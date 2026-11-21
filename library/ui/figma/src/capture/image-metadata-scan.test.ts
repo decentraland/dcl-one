@@ -1,9 +1,9 @@
 import { crc32 } from 'node:zlib'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { snapshotDir } from '../../test/snapshot.js'
-import { rawComponentPageSchema } from '../ir/raw-components.js'
+import { rawComponentPageSchema, type RawComponentPage } from '../ir/raw-components.js'
 import { stripImageMetadata } from './strip-image-metadata.js'
 import { fileMetadata, gateProblems } from './image-metadata-scan.js'
 
@@ -31,25 +31,46 @@ const clean = png(chunk('sRGB', Buffer.from([0])))
 const uri = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`
 
 describe('fileMetadata', () => {
-  it('should find metadata in a standalone PNG', () => {
-    expect(fileMetadata('refs/a.png', tagged)).toEqual({ tEXt: 1, eXIf: 1 })
-    expect(fileMetadata('refs/b.png', clean)).toEqual({})
+  describe('when the file is a standalone PNG', () => {
+    describe('and it carries metadata chunks', () => {
+      it('should find the metadata', () => {
+        expect(fileMetadata('refs/a.png', tagged)).toEqual({ tEXt: 1, eXIf: 1 })
+      })
+    })
+
+    describe('and it carries only rendering chunks', () => {
+      it('should find nothing', () => {
+        expect(fileMetadata('refs/b.png', clean)).toEqual({})
+      })
+    })
   })
 
-  it('should find metadata in a PNG embedded in an SVG', () => {
-    const svg = Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg"><image href="${uri(tagged)}"/></svg>`
-    )
+  describe('when the file is an SVG embedding a PNG', () => {
+    let svg: Buffer
 
-    expect(fileMetadata('assets/x.svg', svg)).toEqual({ tEXt: 1, eXIf: 1 })
+    beforeEach(() => {
+      svg = Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg"><image href="${uri(tagged)}"/></svg>`
+      )
+    })
+
+    it('should find metadata in the embedded PNG', () => {
+      expect(fileMetadata('assets/x.svg', svg)).toEqual({ tEXt: 1, eXIf: 1 })
+    })
   })
 
-  it('should find metadata in a CSS data URI', () => {
-    expect(
-      fileMetadata('x.module.css', Buffer.from(`.a { background: url("${uri(tagged)}") }`))
-    ).toEqual({
-      tEXt: 1,
-      eXIf: 1
+  describe('when the file is CSS with a PNG data URI', () => {
+    let css: Buffer
+
+    beforeEach(() => {
+      css = Buffer.from(`.a { background: url("${uri(tagged)}") }`)
+    })
+
+    it('should find metadata in the data URI', () => {
+      expect(fileMetadata('x.module.css', css)).toEqual({
+        tEXt: 1,
+        eXIf: 1
+      })
     })
   })
 
@@ -63,8 +84,13 @@ describe('fileMetadata', () => {
     }
     const write = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2))
     const file = 'library/ui/figma/figma-snapshot/components/Demo Cursors.json'
+    let captured: RawComponentPage
 
-    it.each([
+    beforeEach(async () => {
+      captured = await page()
+    })
+
+    describe.each([
       [
         'node.png',
         (node: Record<string, unknown>) => ({ ...node, png: tagged.toString('base64') })
@@ -87,71 +113,112 @@ describe('fileMetadata', () => {
           svg: `<svg><image href="${uri(tagged)}"/></svg>`
         })
       ]
-    ])('should find it in %s', async (_location, plant) => {
-      const captured = await page()
-      const tree = captured.components[0]!.base.tree as unknown as Record<string, unknown>
-      const real = structuredClone(tree)
-      delete real.children
-      delete real.svg
-      delete real.png
-      delete real.mask
-      captured.components[0]!.base.tree = { ...tree, children: [plant(real)] } as never
+    ])('and the chunk is planted in %s', (_location, plant) => {
+      beforeEach(() => {
+        const tree = captured.components[0]!.base.tree as unknown as Record<string, unknown>
+        const real = structuredClone(tree)
+        delete real.children
+        delete real.svg
+        delete real.png
+        delete real.mask
+        captured.components[0]!.base.tree = { ...tree, children: [plant(real)] } as never
+      })
 
-      expect(fileMetadata(file, write(captured))).toEqual({ tEXt: 1, eXIf: 1 })
+      it('should find it', () => {
+        expect(fileMetadata(file, write(captured))).toEqual({ tEXt: 1, eXIf: 1 })
+      })
     })
 
-    it('should find it in the image-fill map', async () => {
-      const captured = await page()
-      captured.components[0]!.images = { photo: uri(tagged) }
+    describe('and the chunk is planted in the image-fill map', () => {
+      beforeEach(() => {
+        captured.components[0]!.images = { photo: uri(tagged) }
+      })
 
-      expect(fileMetadata(file, write(captured))).toEqual({ tEXt: 1, eXIf: 1 })
+      it('should find it', () => {
+        expect(fileMetadata(file, write(captured))).toEqual({ tEXt: 1, eXIf: 1 })
+      })
     })
 
-    it('should reject a capture page that does not match the ingest schema', () => {
-      expect(() => fileMetadata(file, write({ components: 'nope' }))).toThrow()
+    describe('and the page does not match the ingest schema', () => {
+      it('should reject the capture page', () => {
+        expect(() => fileMetadata(file, write({ components: 'nope' }))).toThrow(
+          /expected array, received string/
+        )
+      })
     })
   })
 
-  it('should find it in a generated SVG asset and a generated CSS Module', () => {
-    const svg = Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg"><image href="${uri(tagged)}"/></svg>`
-    )
-    const css = Buffer.from(`.a { background: url("${uri(tagged)}") center / contain }`)
+  describe('when the file is a generated SVG asset', () => {
+    let svg: Buffer
 
-    expect(
-      fileMetadata('library/ui/figma/review/src/generated/components/assets/x.svg', svg)
-    ).toEqual({ tEXt: 1, eXIf: 1 })
-    expect(
-      fileMetadata('library/ui/figma/review/src/generated/components/x/X.module.css', css)
-    ).toEqual({ tEXt: 1, eXIf: 1 })
+    beforeEach(() => {
+      svg = Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg"><image href="${uri(tagged)}"/></svg>`
+      )
+    })
+
+    it('should find the metadata', () => {
+      expect(
+        fileMetadata('library/ui/figma/review/src/generated/components/assets/x.svg', svg)
+      ).toEqual({ tEXt: 1, eXIf: 1 })
+    })
   })
 
-  it('should walk any other JSON, whatever its whitespace, for png fields, SVG bodies and image fills', () => {
-    const capture = {
-      components: [
-        {
-          base: {
-            tree: {
-              png: tagged.toString('base64'),
-              children: [{ svg: `<svg><image href="${uri(tagged)}"/></svg>` }]
-            }
-          },
-          images: { photo: uri(tagged) }
-        }
-      ]
-    }
+  describe('when the file is a generated CSS Module', () => {
+    let css: Buffer
 
-    for (const text of [JSON.stringify(capture), JSON.stringify(capture, null, 2)])
-      expect(fileMetadata('review/src/review/catalog.json', Buffer.from(text))).toEqual({
+    beforeEach(() => {
+      css = Buffer.from(`.a { background: url("${uri(tagged)}") center / contain }`)
+    })
+
+    it('should find the metadata', () => {
+      expect(
+        fileMetadata('library/ui/figma/review/src/generated/components/x/X.module.css', css)
+      ).toEqual({ tEXt: 1, eXIf: 1 })
+    })
+  })
+
+  describe('when the file is any other JSON holding png fields, SVG bodies and image fills', () => {
+    let capture: unknown
+
+    beforeEach(() => {
+      capture = {
+        components: [
+          {
+            base: {
+              tree: {
+                png: tagged.toString('base64'),
+                children: [{ svg: `<svg><image href="${uri(tagged)}"/></svg>` }]
+              }
+            },
+            images: { photo: uri(tagged) }
+          }
+        ]
+      }
+    })
+
+    it.each([
+      ['compact', undefined],
+      ['indented', 2]
+    ])('should walk the %s JSON and find every raster', (_, indent) => {
+      expect(
+        fileMetadata(
+          'review/src/review/catalog.json',
+          Buffer.from(JSON.stringify(capture, null, indent))
+        )
+      ).toEqual({
         tEXt: 3,
         eXIf: 3
       })
+    })
   })
 
-  it('should ignore a field named png that is not a PNG', () => {
-    expect(fileMetadata('x.json', Buffer.from(JSON.stringify({ png: 'not base64 png' })))).toEqual(
-      {}
-    )
+  describe('when a JSON field named png is not a PNG', () => {
+    it('should ignore it', () => {
+      expect(
+        fileMetadata('x.json', Buffer.from(JSON.stringify({ png: 'not base64 png' })))
+      ).toEqual({})
+    })
   })
 })
 
@@ -162,97 +229,144 @@ describe('gateProblems', () => {
     reason,
     expires
   })
-  const found = new Map([[`${prefix}a.svg`, { iTXt: 1 }]])
+  let found: Map<string, Record<string, number>>
 
-  it('should pass metadata that is exactly allowlisted', () => {
-    expect(gateProblems(found, { files: [entry(`${prefix}a.svg`)] }, prefix)).toEqual([])
+  beforeEach(() => {
+    found = new Map([[`${prefix}a.svg`, { iTXt: 1 }]])
   })
 
-  it('should report metadata that is not allowlisted', () => {
-    expect(gateProblems(found, { files: [] }, prefix)).toEqual([
-      `${prefix}a.svg: {"iTXt":1} (not allowlisted)`
-    ])
+  describe('when the metadata is exactly allowlisted', () => {
+    it('should pass it', () => {
+      expect(gateProblems(found, { files: [entry(`${prefix}a.svg`)] }, prefix)).toEqual([])
+    })
   })
 
-  it('should report an allowlisted file that has become clean, so the exception is removed', () => {
-    expect(
-      gateProblems(found, { files: [entry(`${prefix}a.svg`), entry(`${prefix}b.svg`)] }, prefix)
-    ).toEqual([`${prefix}b.svg: allowlisted but clean or missing; remove the entry`])
+  describe('when the metadata is not allowlisted', () => {
+    it('should report it', () => {
+      expect(gateProblems(found, { files: [] }, prefix)).toEqual([
+        `${prefix}a.svg: {"iTXt":1} (not allowlisted)`
+      ])
+    })
   })
 
-  it('should report an entry outside the public assets, or without a reason or an expiry', () => {
-    const outside = new Map([['library/ui/figma/x.png', { tEXt: 1 }]])
-
-    expect(gateProblems(outside, { files: [entry('library/ui/figma/x.png')] }, prefix)).toEqual([
-      `library/ui/figma/x.png: allowlist entry outside ${prefix}`
-    ])
-    expect(gateProblems(found, { files: [entry(`${prefix}a.svg`, '', '')] }, prefix)).toEqual([
-      `${prefix}a.svg: allowlist entry without a reason or an expiry`
-    ])
+  describe('when an allowlisted file has become clean', () => {
+    it('should report it so the exception is removed', () => {
+      expect(
+        gateProblems(found, { files: [entry(`${prefix}a.svg`), entry(`${prefix}b.svg`)] }, prefix)
+      ).toEqual([`${prefix}b.svg: allowlisted but clean or missing; remove the entry`])
+    })
   })
 
-  it('should report a path allowlisted more than once', () => {
-    expect(
-      gateProblems(found, { files: [entry(`${prefix}a.svg`), entry(`${prefix}a.svg`)] }, prefix)
-    ).toEqual([`${prefix}a.svg: allowlisted more than once`])
+  describe('when an entry is outside the public assets', () => {
+    let outside: Map<string, Record<string, number>>
+
+    beforeEach(() => {
+      outside = new Map([['library/ui/figma/x.png', { tEXt: 1 }]])
+    })
+
+    it('should report the entry', () => {
+      expect(gateProblems(outside, { files: [entry('library/ui/figma/x.png')] }, prefix)).toEqual([
+        `library/ui/figma/x.png: allowlist entry outside ${prefix}`
+      ])
+    })
+  })
+
+  describe('when an entry has no reason or expiry', () => {
+    it('should report the entry', () => {
+      expect(gateProblems(found, { files: [entry(`${prefix}a.svg`, '', '')] }, prefix)).toEqual([
+        `${prefix}a.svg: allowlist entry without a reason or an expiry`
+      ])
+    })
+  })
+
+  describe('when a path is allowlisted more than once', () => {
+    it('should report the duplicate', () => {
+      expect(
+        gateProblems(found, { files: [entry(`${prefix}a.svg`), entry(`${prefix}a.svg`)] }, prefix)
+      ).toEqual([`${prefix}a.svg: allowlisted more than once`])
+    })
   })
 })
 
 describe('escaped JSON', () => {
   // JSON may escape "/" and any character; only a parsed walk sees what a raw pattern misses.
-  it('should find a PNG data URI written as data:image\\/png inside a JSON SVG string', () => {
-    const escaped = `{"node":{"svg":"<svg><image href=\\"${uri(tagged).replace('/', '\\/')}\\"/></svg>"}}`
-    expect(escaped).toContain('data:image\\/png')
+  describe('when a JSON SVG string writes the PNG data URI as data:image\\/png', () => {
+    let escaped: string
 
-    expect(fileMetadata('review/src/review/catalog.json', Buffer.from(escaped))).toEqual({
-      tEXt: 1,
-      eXIf: 1
+    beforeEach(() => {
+      escaped = `{"node":{"svg":"<svg><image href=\\"${uri(tagged).replace('/', '\\/')}\\"/></svg>"}}`
+    })
+
+    it('should hold the escaped data URI', () => {
+      expect(escaped).toContain('data:image\\/png')
+    })
+
+    it('should find the PNG', () => {
+      expect(fileMetadata('review/src/review/catalog.json', Buffer.from(escaped))).toEqual({
+        tEXt: 1,
+        eXIf: 1
+      })
     })
   })
 
-  it('should find a png field whose name is written as \\u0070ng', () => {
-    const escaped = `{"node":{"\\u0070ng":"${tagged.toString('base64')}"}}`
+  describe('when a png field name is written as \\u0070ng', () => {
+    let escaped: string
 
-    expect(fileMetadata('review/src/review/catalog.json', Buffer.from(escaped))).toEqual({
-      tEXt: 1,
-      eXIf: 1
+    beforeEach(() => {
+      escaped = `{"node":{"\\u0070ng":"${tagged.toString('base64')}"}}`
+    })
+
+    it('should find the PNG', () => {
+      expect(fileMetadata('review/src/review/catalog.json', Buffer.from(escaped))).toEqual({
+        tEXt: 1,
+        eXIf: 1
+      })
     })
   })
 
-  it('should find both escapes in a captured component page parsed by the ingest schema', async () => {
-    const clean = stripImageMetadata(
-      rawComponentPageSchema.parse(
-        JSON.parse(
-          await readFile(path.join(snapshotDir, 'components', 'Demo Cursors.json'), 'utf8')
+  describe('when a captured component page parsed by the ingest schema carries both escapes', () => {
+    let text: string
+
+    beforeEach(async () => {
+      const clean = stripImageMetadata(
+        rawComponentPageSchema.parse(
+          JSON.parse(
+            await readFile(path.join(snapshotDir, 'components', 'Demo Cursors.json'), 'utf8')
+          )
         )
       )
-    )
-    const tree = clean.components[0]!.base.tree as unknown as Record<string, unknown>
-    const real = structuredClone(tree)
-    delete real.children
-    delete real.svg
-    delete real.png
-    delete real.mask
-    clean.components[0]!.base.tree = {
-      ...tree,
-      children: [
-        { ...real, svg: `<svg><image href="${uri(tagged)}"/></svg>` },
-        { ...real, png: tagged.toString('base64') }
-      ]
-    } as never
-    const text = JSON.stringify(clean)
-      .replaceAll('data:image/png', 'data:image\\/png')
-      .replaceAll('"png":', '"\\u0070ng":')
-    expect(text).toContain('\\u0070ng')
+      const tree = clean.components[0]!.base.tree as unknown as Record<string, unknown>
+      const real = structuredClone(tree)
+      delete real.children
+      delete real.svg
+      delete real.png
+      delete real.mask
+      clean.components[0]!.base.tree = {
+        ...tree,
+        children: [
+          { ...real, svg: `<svg><image href="${uri(tagged)}"/></svg>` },
+          { ...real, png: tagged.toString('base64') }
+        ]
+      } as never
+      text = JSON.stringify(clean)
+        .replaceAll('data:image/png', 'data:image\\/png')
+        .replaceAll('"png":', '"\\u0070ng":')
+    })
 
-    expect(
-      fileMetadata(
-        'library/ui/figma/figma-snapshot/components/Demo Cursors.json',
-        Buffer.from(text)
-      )
-    ).toEqual({
-      tEXt: 2,
-      eXIf: 2
+    it('should hold the escaped field name', () => {
+      expect(text).toContain('\\u0070ng')
+    })
+
+    it('should find both escapes', () => {
+      expect(
+        fileMetadata(
+          'library/ui/figma/figma-snapshot/components/Demo Cursors.json',
+          Buffer.from(text)
+        )
+      ).toEqual({
+        tEXt: 2,
+        eXIf: 2
+      })
     })
   })
 })

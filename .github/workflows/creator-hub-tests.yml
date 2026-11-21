@@ -32,5 +32,12 @@ jobs:
       # Reuse the shared build instead of regenerating protoc / rebuilding asset-packs.
       - uses: ./.github/actions/creator-hub-download-build
 
+      # The invisible smart items' collider models are Git LFS, which the checkout leaves as
+      # pointer files. Their test reads the models, so fetch those few small files.
+      - name: fetch the collider models
+        run: git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/smart_items/assets/invisible_*/*_collider.glb'
+
       - name: test
         run: make test
+        env:
+          REQUIRE_COLLIDER_MODELS: '1'

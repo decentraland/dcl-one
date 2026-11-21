@@ -4,7 +4,7 @@
 import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 
-import type { AuthIdentity } from "../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { createCartStore } from "../cart/store";
 import { ShopWalletProvider } from "../wallet/context";

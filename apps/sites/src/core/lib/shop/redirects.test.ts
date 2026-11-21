@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { landTokenId } from "@ui/data/catalyst/landListing";
+import { LAND_NETWORKS, landTokenId } from "@shop/land/contracts";
+import { CHAIN } from "@shop/model/chain";
 
 import { assetPage, isTokenRegistry, legacyShopTarget, marketplaceTarget, parseAssetRef, shopIndexTarget } from "./redirects";
 
@@ -9,6 +10,8 @@ const LAND = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
 const ESTATE = "0x959e104e1a4db6317fa58f8295f586e1a978c297";
 const REGISTRAR = "0x2a187453064356c898cae034eaed119e1663acb8";
 const ME = "0x1111111111111111111111111111111111111111";
+
+afterEach(() => vi.unstubAllEnvs());
 
 /** A target as path + query map, so parameter order never decides a test. */
 function at(target: string | null): { path: string; query: Record<string, string> } {
@@ -38,6 +41,15 @@ describe("asset identity", () => {
 });
 
 describe("v2's /marketplace pages", () => {
+  it("should use Sepolia for implicit LAND identifiers when the Shop settles on Amoy", () => {
+    vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+    vi.stubEnv("VITE_SHOP_ETHEREUM_CHAIN_ID", "");
+    const { land } = LAND_NETWORKS[CHAIN.SEPOLIA]!;
+    expect(mk("/marketplace/rent-land?x=-3&y=12&from=map")).toEqual({
+      path: `/shop/token/${land}/${landTokenId(-3, 12)}/rent`,
+      query: { from: "map" },
+    });
+  });
   it("/marketplace is the overview; in the iOS IAP view, the items (marker kept)", () => {
     expect(mk("/marketplace?utm_source=x")).toEqual({ path: "/shop/overview", query: { utm_source: "x" } });
     expect(mk("/marketplace?view=mobile-iap&section=wearables")).toEqual({ path: "/shop/items", query: { view: "mobile-iap", category: "wearable" } });
@@ -113,6 +125,15 @@ describe("the classic Marketplace's paths (decentraland.org/marketplace)", () =>
     expect(mk(`/marketplace/contracts/${C}/items/3/buy/status`).path).toBe(`/shop/item/${C}/3/buy/status`);
     expect(mk(`/marketplace/collections/${upper}`).path).toBe(`/shop/collection/${C}`);
     expect(mk(`/marketplace/accounts/${ME}?section=on_sale&vendor=decentraland`)).toEqual({ path: `/shop/accounts/${ME}`, query: { section: "on_sale" } });
+  });
+
+  it("should resolve parcels and estates on the network the LAND redirects use", () => {
+    vi.stubEnv("VITE_SHOP_ETHEREUM_CHAIN_ID", String(CHAIN.SEPOLIA));
+    const sepolia = LAND_NETWORKS[CHAIN.SEPOLIA]!;
+
+    expect(mk("/marketplace/parcels/1/2/detail").path).toBe(`/shop/token/${sepolia.land.toLowerCase()}/${landTokenId(1, 2)}`);
+    expect(mk("/marketplace/estates/7/detail").path).toBe(`/shop/token/${sepolia.estate.toLowerCase()}/7`);
+    expect(mk("/marketplace/rent-land?x=1&y=2").path).toContain(sepolia.land.toLowerCase());
   });
 
   it("parcels and estates resolve to their registry token", () => {

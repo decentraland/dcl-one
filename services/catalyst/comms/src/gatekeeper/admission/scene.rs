@@ -57,8 +57,8 @@ mod lookup;
 #[cfg(test)]
 use lookup::listing_key_candidate;
 pub use lookup::{
-    PlaceInfo, PlaceLookup, place_from_metadata, realm_name_from_metadata,
-    resolve_listing_place_id, resolve_world_scene_id, try_load_place_info,
+    NO_ADMINS, PlaceInfo, PlaceLookup, realm_name_from_metadata, resolve_listing_place_id,
+    resolve_world_scene_id, try_load_place_info,
 };
 pub(crate) use lookup::{
     meta_str, participant_room, require_genesis_deployment, resolve_adapter_room, signed_realm_url,
@@ -255,61 +255,69 @@ mod tests {
         let flat = RoomContext::from_metadata(
             &json!({ "realmName": "main", "sceneId": "bafkreiabc" }),
             "place-1",
+            "main",
         );
         assert_eq!(plan(&flat), RoomPlan::Scene("scene:main:bafkreiabc".into()));
         let nested = RoomContext::from_metadata(
             &json!({ "realm": { "serverName": "main" }, "sceneId": "bafkreiabc" }),
             "place-1",
+            "main",
         );
         assert_eq!(
             plan(&nested),
             RoomPlan::Scene("scene:main:bafkreiabc".into())
         );
         assert_eq!(
-            plan(&RoomContext::from_metadata(&json!({}), "place-1")),
+            plan(&RoomContext::from_metadata(&json!({}), "place-1", "main")),
             RoomPlan::FromPlace
         );
         let with_parcel = RoomContext::from_metadata(
             &json!({ "realmName": "main", "sceneId": "bafkreiabc", "parcel": "10,20" }),
             "place-1",
+            "main",
         );
         assert_eq!(with_parcel.parcel.as_deref(), Some("10,20"));
     }
 
     #[test]
-    fn listing_key_and_place_from_metadata() {
+    fn listing_key_from_metadata() {
         assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth", "sceneId": "bafkreiabc" }))
-                .as_deref(),
+            listing_key_candidate(
+                &json!({ "realmName": "foo.dcl.eth", "sceneId": "bafkreiabc" }),
+                "main"
+            )
+            .as_deref(),
             Some("bafkreiabc")
         );
         assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth", "sceneId": "foo.dcl.eth" }))
+            listing_key_candidate(
+                &json!({ "realmName": "foo.dcl.eth", "sceneId": "foo.dcl.eth" }),
+                "main"
+            )
+            .as_deref(),
+            Some("foo.dcl.eth")
+        );
+        assert_eq!(
+            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth" }), "main").as_deref(),
+            Some("foo.dcl.eth")
+        );
+        assert_eq!(
+            listing_key_candidate(&json!({ "realm": { "serverName": "bar.eth" } }), "main")
                 .as_deref(),
-            Some("foo.dcl.eth")
-        );
-        assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "foo.dcl.eth" })).as_deref(),
-            Some("foo.dcl.eth")
-        );
-        assert_eq!(
-            listing_key_candidate(&json!({ "realm": { "serverName": "bar.eth" } })).as_deref(),
             Some("bar.eth")
         );
         assert_eq!(
-            listing_key_candidate(&json!({ "realmName": "main", "sceneId": "bafkreixyz" }))
-                .as_deref(),
+            listing_key_candidate(
+                &json!({ "realmName": "main", "sceneId": "bafkreixyz" }),
+                "main"
+            )
+            .as_deref(),
             Some("bafkreixyz")
         );
-        assert_eq!(listing_key_candidate(&json!({})), None);
-        assert_eq!(listing_key_candidate(&json!({ "realmName": "main" })), None);
+        assert_eq!(listing_key_candidate(&json!({}), "main"), None);
         assert_eq!(
-            place_from_metadata(&json!({ "realmName": "foo.dcl.eth", "sceneId": "x" })).as_deref(),
-            Some("foo.dcl.eth")
-        );
-        assert_eq!(
-            place_from_metadata(&json!({ "realmName": "main", "sceneId": "x" })).as_deref(),
-            Some("x")
+            listing_key_candidate(&json!({ "realmName": "main" }), "main"),
+            None
         );
     }
 
@@ -324,31 +332,38 @@ mod tests {
             "parcel": "0,0",
         });
         assert_eq!(
-            realm_name_from_metadata(&stripped).as_deref(),
+            realm_name_from_metadata(&stripped, "main").as_deref(),
             Some("foo.dcl.eth")
         );
         assert_eq!(
-            listing_key_candidate(&stripped).as_deref(),
+            listing_key_candidate(&stripped, "main").as_deref(),
             Some("bafkreiabc")
         );
         assert_eq!(
-            place_from_metadata(&stripped).as_deref(),
-            Some("foo.dcl.eth")
-        );
-        assert_eq!(
-            plan(&RoomContext::from_metadata(&stripped, "place-1")),
+            plan(&RoomContext::from_metadata(&stripped, "place-1", "main")),
             RoomPlan::World {
                 world: "foo.dcl.eth".into(),
                 scene_id: Some("bafkreiabc".into()),
             }
         );
+        let unity = json!({
+            "realm": { "serverName": "foo", "hostname": "worlds-content-server.node.example" },
+        });
+        assert_eq!(
+            realm_name_from_metadata(&unity, "main").as_deref(),
+            Some("foo.dcl.eth"),
+            "the Unity client signs the worlds host alone"
+        );
         let genesis = json!({
             "realm": { "serverName": "main", "hostname": "node.example" },
             "sceneId": "bafkreiabc",
         });
-        assert_eq!(realm_name_from_metadata(&genesis).as_deref(), Some("main"));
         assert_eq!(
-            plan(&RoomContext::from_metadata(&genesis, "place-1")),
+            realm_name_from_metadata(&genesis, "main").as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            plan(&RoomContext::from_metadata(&genesis, "place-1", "main")),
             RoomPlan::Scene("scene:main:bafkreiabc".into())
         );
         let signed_world = json!({
@@ -356,7 +371,7 @@ mod tests {
             "realm": { "serverName": "bar.dcl.eth", "hostname": "node.example/world/foo.dcl.eth" },
         });
         assert_eq!(
-            realm_name_from_metadata(&signed_world).as_deref(),
+            realm_name_from_metadata(&signed_world, "main").as_deref(),
             Some("bar.dcl.eth"),
             "a signed world name is kept as signed"
         );

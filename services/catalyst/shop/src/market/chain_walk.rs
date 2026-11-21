@@ -16,9 +16,11 @@
 //! measurement window) never publishes, and neither does one held short by
 //! `MARKETPLACE_INDEX_STOP_BLOCK_*`. Readers trust an index through
 //! [`is_ready`]: `folded_block = last_block` and `folded_at` at most
-//! [`READY_WINDOW`] old at the caller's clock.
+//! [`READY_WINDOW`] old at the caller's clock. Accepting work that waits on
+//! an index (tip claims) uses the liveness view [`is_walked`] instead: ready,
+//! or a full-history walk advancing near the head.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -134,7 +136,7 @@ pub struct IndexSettings {
     pub sales_enabled: bool,
     /// `MARKETPLACE_COMMITTEE_INDEX_ENABLED`: the Polygon curation committee.
     pub committee_enabled: bool,
-    /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5): pause between passes.
+    /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5; 30 under the mirror posture): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
     /// network's pass may make before it yields with its cursor durable.
@@ -321,6 +323,58 @@ where
     .bind(net.db_name())
     .fetch_optional(executor)
     .await
+}
+
+/// How long ago [`touch_started`] marks a cursor advanced: just outside the
+/// live window, even read from a clock [`MAX_CLOCK_SKEW`] behind the database's.
+const STARTED_AGE: ChronoDuration = READY_WINDOW
+    .checked_add(&MAX_CLOCK_SKEW)
+    .expect("a small sum")
+    .checked_add(&ChronoDuration::seconds(1))
+    .expect("a small sum");
+
+/// Marks the cursor of a walk this process just started as advanced
+/// [`STARTED_AGE`] ago, unless it advanced later: [`is_walked`] reads it as
+/// behind, not abandoned and not live, until its first window really lands.
+/// The block, its time and the history flag are unchanged, and nothing
+/// publishes earlier.
+pub async fn touch_started(pool: &PgPool, indexer: &str, net: ChainNet) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE shop.chain_cursor \
+         SET updated_at = GREATEST(updated_at, timezone('UTC', now()) - make_interval(secs => $3)) \
+         WHERE indexer = $1 AND network = $2",
+    )
+    .bind(indexer)
+    .bind(net.db_name())
+    .bind(STARTED_AGE.num_seconds() as f64)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The walks this process has started, touched once each.
+/// Process-wide and keyed without the database: tests over several databases
+/// must not rely on the touch through `run_pass`.
+static STARTED_WALKS: std::sync::LazyLock<parking_lot::Mutex<BTreeSet<(String, &'static str)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// [`touch_started`] once per walk this process runs: only once its head
+/// reads answered, and not while it is held at its stop block, so a walk with
+/// its RPC down or held there keeps its age. A failed touch is tried again on
+/// the next pass.
+pub(crate) async fn touch_once(
+    pool: &PgPool,
+    indexer: &str,
+    net: ChainNet,
+    last_block: i64,
+    stop: Option<u64>,
+) -> sqlx::Result<()> {
+    let key = (indexer.to_string(), net.db_name());
+    if !held_at_stop(last_block, stop) && !STARTED_WALKS.lock().contains(&key) {
+        touch_started(pool, indexer, net).await?;
+        STARTED_WALKS.lock().insert(key);
+    }
+    Ok(())
 }
 
 /// One projection as the job that walks it holds it: the cursor row
@@ -634,7 +688,7 @@ pub async fn rewind(
 async fn undiverge(pool: &PgPool, owner: &Owner, at: (i64, Option<&str>)) -> anyhow::Result<()> {
     let mut tx = pool.begin().await?;
     let set = sqlx::query(
-        "UPDATE shop.chain_cursor SET diverged_at = NULL, updated_at = timezone('UTC', now()) \
+        "UPDATE shop.chain_cursor SET diverged_at = NULL \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
     )
     .bind(owner.indexer)
@@ -659,7 +713,8 @@ async fn undiverge(pool: &PgPool, owner: &Owner, at: (i64, Option<&str>)) -> any
 /// marks it diverged (`diverged_at`): its readers fall back at once, and the
 /// ones that use its height without its publication skip it, while its rows,
 /// its recovery points and its notification cursors stay as they are until
-/// the search decides. A cursor no longer at `at` is fenced.
+/// the search decides. `updated_at` stays too: a withdrawal is no progress
+/// ([`is_walked`]). A cursor no longer at `at` is fenced.
 pub(crate) async fn withdraw(
     pool: &PgPool,
     owner: &Owner,
@@ -668,7 +723,7 @@ pub(crate) async fn withdraw(
     let mut tx = pool.begin().await?;
     let set = sqlx::query(
         "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL, \
-             diverged_at = COALESCE(diverged_at, timezone('UTC', now())), updated_at = timezone('UTC', now()) \
+             diverged_at = COALESCE(diverged_at, timezone('UTC', now())) \
          WHERE indexer = $1 AND network = $2 AND last_block = $3 AND last_block_hash IS NOT DISTINCT FROM $4",
     )
     .bind(owner.indexer)
@@ -793,6 +848,29 @@ pub fn ready_sql_on(alias: &str, now_p: &str, ethereum_chain: i64, matic_chain: 
     )
 }
 
+/// How far ahead of the caller's clock the database's `updated_at` may be and
+/// still count as advanced.
+pub(crate) const MAX_CLOCK_SKEW: ChronoDuration = ChronoDuration::minutes(10);
+
+/// A liveness heuristic for whether cursor `c` serves its index at `now`:
+/// ready, or with its whole history walked, advanced within [`READY_WINDOW`]
+/// and its last block under `horizon` old. It does not measure the walk's speed
+/// or publish lag. An `updated_at` ahead of `now` (written by the database
+/// clock) counts as advanced up to [`MAX_CLOCK_SKEW`], and not past it.
+pub fn is_walked(c: &Cursor, now: DateTime<Utc>, horizon: ChronoDuration) -> bool {
+    if is_ready(c, now) {
+        return true;
+    }
+    let advanced = now.naive_utc().signed_duration_since(c.updated_at);
+    if advanced < -MAX_CLOCK_SKEW {
+        return false;
+    }
+    let near_head = c
+        .last_block_time
+        .is_some_and(|t| now.timestamp() - t <= horizon.num_seconds());
+    c.full_history && advanced <= READY_WINDOW && near_head
+}
+
 /// `Some(cursor)` when `indexer`, read on chain `chain_id`, may answer for
 /// `net` at `now`; a database error reads as not ready (the envelope, never
 /// a guess).
@@ -910,6 +988,11 @@ impl PassOutcome {
                 .unwrap_or_default(),
         )
     }
+}
+
+/// Whether a cursor at `last_block` is held at its stop block, with nothing left to walk.
+fn held_at_stop(last_block: i64, stop: Option<u64>) -> bool {
+    stop.is_some_and(|s| last_block >= s as i64)
 }
 
 /// Clamp the chain's safe head to an optional operator stop block.
@@ -1749,7 +1832,9 @@ async fn walk(
     };
     let (head, safe_head, _) = safe_head(source, net, &mut out).await?;
     out.head = head;
-    let target = target_block(safe_head, settings.stop_block(net));
+    let stop = settings.stop_block(net);
+    let target = target_block(safe_head, stop);
+    touch_once(pool, name, net, cur.last_block, stop).await?;
     let anchor = match cur.last_block_time {
         Some(t) => (cur.last_block.max(0) as u64, t),
         None => {
@@ -2063,6 +2148,60 @@ mod tests {
             rebuild_requested_at: None,
             diverged_at: None,
         }
+    }
+
+    #[test]
+    fn a_walk_is_held_only_once_it_reaches_its_stop_block() {
+        assert!(!held_at_stop(35, Some(36)));
+        assert!(held_at_stop(36, Some(36)));
+        assert!(!held_at_stop(1_000, None));
+    }
+
+    #[test]
+    fn a_walk_serves_while_it_publishes_or_nears_the_head() {
+        let now = Utc::now();
+        let hour = ChronoDuration::hours(1);
+        let walking = |full: bool, advanced: ChronoDuration, behind: ChronoDuration| Cursor {
+            last_block_time: Some((now - behind).timestamp()),
+            updated_at: (now - advanced).naive_utc(),
+            ..cursor_row(100, None, None, full)
+        };
+        let minutes = ChronoDuration::minutes;
+        assert!(
+            is_walked(&walking(true, minutes(1), minutes(5)), now, hour),
+            "near the head"
+        );
+        assert!(
+            is_walked(&walking(true, minutes(-5), minutes(5)), now, hour),
+            "a database clock ahead"
+        );
+        assert!(
+            !is_walked(&walking(true, minutes(-120), minutes(5)), now, hour),
+            "an updated_at too far in the future is no sign of life"
+        );
+        assert!(
+            !is_walked(&walking(true, minutes(1), minutes(120)), now, hour),
+            "a catch-up too far behind to publish in time"
+        );
+        assert!(
+            !is_walked(&walking(false, minutes(1), minutes(5)), now, hour),
+            "a walk without its whole history never publishes"
+        );
+        assert!(
+            !is_walked(&walking(true, minutes(120), minutes(5)), now, hour),
+            "a walk that stopped"
+        );
+        assert!(
+            is_walked(
+                &Cursor {
+                    updated_at: (now - minutes(120)).naive_utc(),
+                    ..cursor_row(100, Some(100), Some(now - minutes(1)), true)
+                },
+                now,
+                hour
+            ),
+            "caught up and publishing"
+        );
     }
 
     #[test]

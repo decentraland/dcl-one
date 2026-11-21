@@ -13,10 +13,9 @@
 //! write route also accepts, the federation log and its content routes are
 //! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
 //! private community leaves its voice room ([`State::evict_from_private_community_voice`]
-//! through the [`VoiceEviction`] the comms module attaches in `main`). What
-//! did not come along, and why, is listed in `README.md`'s deviations; in
-//! short: the archipelago presence probe, which is configured explicitly and
-//! degrades to "everyone offline".
+//! through the [`VoiceEviction`] the comms module attaches in `main`). The
+//! `onlyOnline` member filter reads the Pulse wallet topology the social RPC's
+//! connectivity stream reads, attached in `serve` ([`State::set_topology`]).
 //!
 //! Mount it twice: at the root (the old `social-api.decentraland.org` host
 //! paths) and nested under `/social-api` (the gateway prefix); the
@@ -31,7 +30,6 @@ pub mod fed;
 pub mod friendship;
 pub mod http;
 pub mod mirror;
-pub mod presence;
 pub mod profiles;
 pub mod queries;
 pub mod ranking;
@@ -75,7 +73,6 @@ use crate::{Address, CommunityId};
 
 use auth::SignedPath;
 use http::CommError;
-use presence::Presence;
 use profiles::ProfilesCache;
 
 /// The old `catalyrst-communities` service's settings. `main.rs` fills it
@@ -103,9 +100,6 @@ pub struct Settings {
     pub cdn_url: String,
     /// Where profile pictures are served (`profiles::FaceUrls`).
     pub faces: profiles::FaceUrls,
-    /// `ARCHIPELAGO_STATS_URL`: the comms presence source of `onlyOnline`;
-    /// unset renders every member offline.
-    pub archipelago_stats_url: Option<String>,
     /// `COMMUNITIES_PLACES_OWNERSHIP_CHECK` (default true: upstream's
     /// `validateOwnership` always asks the places API, `PLACES_API_URL` being
     /// required): places added to a community must be owned by the caller
@@ -153,7 +147,6 @@ impl Settings {
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
-            archipelago_stats_url: None,
             places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),
             referral: referral::Settings::for_tests(),
@@ -170,7 +163,9 @@ pub struct State {
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
     pub referral: referral::Referral,
-    pub presence: Presence,
+    /// The Pulse wallet topology, attached with the social RPC's (`serve`):
+    /// who `onlyOnline` counts as online. Unattached, no one is.
+    pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
     analytics: std::sync::OnceLock<crate::analytics::Analytics>,
@@ -255,9 +250,7 @@ pub type SharedState = Arc<State>;
 const DM_SENDS_PER_MINUTE: u32 = 60;
 
 impl State {
-    /// `http` is the process's outbound client; the presence probe uses its
-    /// raw form because `ARCHIPELAGO_STATS_URL` is operator configuration
-    /// (typically a loopback service), not user input.
+    /// `http` is the process's outbound client.
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
@@ -269,7 +262,6 @@ impl State {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
         let referral =
             referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
-        let presence = Presence::new(http.raw().clone(), settings.archipelago_stats_url.clone());
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
             pool,
@@ -278,7 +270,7 @@ impl State {
             eip1654,
             profiles,
             referral,
-            presence,
+            topology: std::sync::OnceLock::new(),
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
             analytics: std::sync::OnceLock::new(),
             compliance: std::sync::OnceLock::new(),
@@ -393,6 +385,20 @@ impl State {
     /// Attaches the worlds module's re-admission (once).
     pub fn set_world_access_revocation(&self, worlds: Arc<dyn WorldAccessRevocation>) {
         let _ = self.worlds.set(worlds);
+    }
+
+    /// Attaches the Pulse wallet topology (once).
+    pub fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
+        let _ = self.topology.set(topology);
+    }
+
+    /// The wallets online now, lowercased: the topology's current snapshot
+    /// (shared, not copied), none when it is unattached or has expired.
+    pub fn online_wallets(&self) -> Arc<std::collections::BTreeSet<String>> {
+        self.topology
+            .get()
+            .map(|t| t.snapshot().wallets)
+            .unwrap_or_default()
     }
 
     /// Attaches the social RPC's fan-out (once).

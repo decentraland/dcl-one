@@ -8726,6 +8726,11 @@ mod recovery {
         let (chain, url) = chain_of(1_000, vec![mana_log(700, ALICE, BOB, 1)], 10_000).await;
         let st = state_over(db.pool.clone(), &url, index_settings(100, 100), false);
         assert!(publish(&st, &url, &MANA).await.published);
+        let advanced = cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap()
+            .updated_at;
         chain.fork(550, 0xee, vec![]);
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         *chain.probe_gate.lock() = Some((998, gate.clone()));
@@ -8745,6 +8750,11 @@ mod recovery {
         );
         assert_eq!(points(&db.pool, INDEXER_MANA).await, hundreds());
         assert_eq!(rows(&db.pool, "shop.mana_transfer").await.len(), 1);
+        let c = cursor(&db.pool, INDEXER_MANA, ChainNet::Matic)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.updated_at, advanced, "a withdrawal is no progress");
         gate.add_permits(10);
         assert_eq!(walk.await.unwrap().reorg_rewound_to, Some(499));
         db.drop().await;

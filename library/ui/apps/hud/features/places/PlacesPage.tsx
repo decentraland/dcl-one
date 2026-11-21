@@ -7,7 +7,8 @@ import { MainMenuShell } from '../menu/MainMenuShell'
 import { MenuBackdrop } from '../menu/MenuBackdrop'
 import { PlacesBrowser } from './PlacesBrowser'
 import { openPlaceDetail } from './PlaceDetail'
-import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import { travelToPlace } from './PlaceActions'
 import type { ProfileState, TravelOutcome } from '../session/useEngineSession'
 import styles from './PlacesPage.module.css'
 
@@ -39,15 +40,9 @@ export function PlacesPage({
 }): React.JSX.Element | null {
   if (!places.open && compact == null) return null
 
-  const travel = (place: DiscoverPlace): TravelOutcome => {
-    const t = placeTeleport(place)
-    if (!t) return 'refused'
-    return t.kind === 'world' ? onVisitWorld(t.realm) : onTeleport(t.x, t.y)
-  }
-
   // the startup lobby's pick closes every page itself: a toggle would reopen this one
   const jumpIn = (picked: DiscoverPlace): boolean => {
-    const outcome = travel(picked)
+    const outcome = travelToPlace(picked, { teleportToPlace: onTeleport, changeRealm: onVisitWorld })
     if (outcome === 'refused') return false
     if (compact != null) compact.onTravel()
     else if (outcome === 'sent') places.close()
