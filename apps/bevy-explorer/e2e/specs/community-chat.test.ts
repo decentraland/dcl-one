@@ -7,7 +7,7 @@
 // public one from the browse grid (one named as a test's when there is one), and leaves it again
 // once the scenario is done, so the account ends as it started.
 import assert from 'node:assert/strict'
-import { closeToRest, spec, until, type Explorer } from '../driver/index.ts'
+import { closeToRest, spec, TimeoutError, until, type CommunityState, type Explorer } from '../driver/index.ts'
 import { cardSelector, closePage, openWithKey, withoutInitial } from './pages.ts'
 
 const scenario = spec(import.meta.url)
@@ -123,9 +123,17 @@ scenario("a member's community card opens its chat, whose tab and title bar name
   const name = pressed.replace(/^Chat in /, '')
   assert.ok(card.includes(name), `the tab "${name}" should name the opened community "${card}"`)
   assert.ok(await explorer.hud.isVisible(OPTIONS), 'the community title bar should offer the conversation options')
-  const state = await explorer.communityState()
+  // the router is a server participant of the private chat room, joining on its own schedule:
+  // without it nothing sent can reach anyone. A timeout names who is in the room instead.
+  let state: CommunityState
+  try {
+    state = await until(() => explorer.communityState(), (read) => read.routerInRoom, { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the message router to be in the private chat room' })
+  } catch (error) {
+    if (!(error instanceof TimeoutError)) throw error
+    const room = await explorer.run('/dm_room').catch((failed: unknown) => `/dm_room failed: ${String(failed)}`)
+    assert.fail(`${error.message}\n${room}`)
+  }
   assert.ok(state.channelCount > 0, 'the engine should listen to the opened community')
-  assert.ok(state.routerInRoom, 'the message router should be in the private chat room, or nothing sent can reach anyone')
 
   // a message typed in the community's chat is counted as a community message sent
   const text = `community hello ${Date.now()}`
