@@ -578,6 +578,31 @@ describe('the in-world purchase with MANA', () => {
       expect(w.relay.posts).toHaveLength(0)
     })
 
+    it('says when the approval didn\'t take effect, as the approval says it, and AUTHORIZE signs anew', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const relay = w.relay.fetchImpl
+      let first = true
+      // The first approve runs (its nonce is spent) but the allowance stays short: another call took it, or it didn't take.
+      w.relay.fetchImpl = (async (...args: Parameters<typeof relay>) => {
+        const answer = await relay(...args)
+        if (first) {
+          first = false
+          w.chain.allowances.set(`137:${BUYER}:${MANAGER}`, 0n)
+        }
+        return answer
+      }) as typeof relay
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      await vi.waitFor(() => expect(p.shown.at(-1)?.view).toMatchObject({ step: 'authorize', state: 'failed', message: "The approval didn't take effect. Try again." }))
+      p.shown.at(-1)!.handlers.onAuthorize?.()
+      await p.until('success')
+      expect(relayedTo(w)).toEqual([MANA, MANA, MANAGER])
+    })
+
     it('asks no authorization when the allowance already covers the gap', async () => {
       on()
       const w = world()

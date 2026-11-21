@@ -27,7 +27,7 @@ import { releaseAuthorizing, runGroup, splitPriceOf, watchGroup, type CheckoutDe
 import { buildAcceptCalldata, buildAcceptWithCouponCalldata, buildStoreBuyCalldata } from '../../../shop/checkout/purchase/encoding'
 import { purchaseTargetFor } from '../../../shop/checkout/purchase/cart'
 import { claimSplitHold, clearSettledSplitHold, clearSplitHold, creditExpiredOnChain, findCreditRecord, readAccountSplitHolds, readSplitHoldRecord, splitCreditOverOnChain, splitHoldLine, splitsInFlight, writeSplitHold, type SplitHold, type SplitHoldClearing } from '../../../shop/checkout/purchase/splitHold'
-import { ensureAuthorization, exactAllowanceReady, exactGrantLock, getManaSpendingAuthorization } from '../../../shop/checkout/lib/authorizations'
+import { ensureAuthorization, exactAllowanceReady, exactGrantLock, ExactGrantUnavailableError, getManaSpendingAuthorization, GrantCancelledError, GrantNotInEffectError, GrantNotRecordedError, GrantUncheckedError } from '../../../shop/checkout/lib/authorizations'
 import { pageLocks, webLock as lockIfFree } from '../../../shop/checkout/lib/web-lock'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '@shop/checkout/purchase/spend-guard'
@@ -192,6 +192,13 @@ const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA
 const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
 /** The buyer's other purchases with Credits and MANA can't be read here, so nothing proves none may spend the allowance. */
 const SPLIT_UNCHECKABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here."
+
+/**
+ * An exact approval's own outcome, worded for the buyer (shop/checkout/lib/authorizations): shown as it says, never as a
+ * generic failure. Above all an unchecked one, whose approve may well be in place.
+ */
+const saysItself = (e: unknown): e is Error =>
+  e instanceof GrantNotInEffectError || e instanceof GrantUncheckedError || e instanceof GrantCancelledError || e instanceof GrantNotRecordedError || e instanceof ExactGrantUnavailableError
 
 /** What a wallet asks its owner to approve: a signature, a transaction, a network to move to. */
 const WALLET_PROMPTS = new Set(['eth_signTypedData_v4', 'eth_signTypedData_v3', 'eth_signTypedData', 'eth_sendTransaction', 'personal_sign', 'eth_sign', 'wallet_switchEthereumChain', 'wallet_addEthereumChain'])
@@ -2021,7 +2028,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         } catch (e) {
           if (answered) return
           state = 'failed'
-          message = heldBack ?? (isRejection(e) ? 'You declined the authorization in your wallet.' : friendlyError(e, "The authorization didn't go through. Try again."))
+          message = heldBack ?? (isRejection(e) ? 'You declined the authorization in your wallet.' : saysItself(e) ? e.message : friendlyError(e, "The authorization didn't go through. Try again."))
           draw()
           return
         } finally {
