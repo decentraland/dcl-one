@@ -146,9 +146,9 @@ impl CleanupCommand {
         }
     }
 
-    /// Key expiry waits for the broadcast to end, as upstream's key job does.
+    /// Key expiry's own predicate spares only a broadcast live since before the deadline.
     fn permits_running(self) -> bool {
-        !matches!(self, Self::IdleReplacement | Self::KeyExpiry)
+        self != Self::IdleReplacement
     }
 }
 
@@ -283,7 +283,8 @@ pub(super) async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
     let changed:Option<Uuid> = sqlx::query_scalar(
         "WITH removed AS (UPDATE social.scene_stream_access SET active=false,streaming=false \
          WHERE id=$1 AND active AND ($3 OR NOT streaming) AND streaming_state_version=$4 \
-         AND ($2::text IS DISTINCT FROM 'streaming_key_expired' OR (COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()))) \
+         AND ($2::text IS DISTINCT FROM 'streaming_key_expired' OR (COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) \
+           AND (NOT streaming OR streaming_start_time>COALESCE(expiration_time,created_at+interval '4 days')))) \
          AND ($2::text IS DISTINCT FROM 'streaming_time_exceeded' OR (streaming AND streaming_start_time<=timezone('UTC',now())-interval '4 hours')) \
          RETURNING id,place_id,ingress_id) \
          INSERT INTO social.scene_stream_cleanup(access_id,place_id,ingress_id,notification_kind,occurred_at,due_at,recipient,metadata,source_context) \
@@ -305,7 +306,7 @@ async fn expire(state: &CommsState, expiry: Expiry) -> Result<(), ApiError> {
     let query = if matches!(expiry, Expiry::Duration) {
         "SELECT id FROM social.scene_stream_access WHERE active AND streaming AND streaming_start_time<=timezone('UTC',now())-interval '4 hours' AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY streaming_start_time,id LIMIT $1"
     } else {
-        "SELECT id FROM social.scene_stream_access WHERE active AND NOT streaming AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
+        "SELECT id FROM social.scene_stream_access WHERE active AND (NOT streaming OR streaming_start_time>COALESCE(expiration_time,created_at+interval '4 days')) AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
     };
     let ids: Vec<Uuid> = sqlx::query_scalar(query)
         .bind(BATCH)
@@ -650,10 +651,7 @@ mod tests {
                 notification_kind(label).unwrap(),
                 command.notification().unwrap()
             );
-            assert_eq!(
-                command.permits_running(),
-                command != CleanupCommand::KeyExpiry
-            );
+            assert!(command.permits_running());
         }
         assert!(CleanupCommand::IdleReplacement.notification().is_none());
         assert!(!CleanupCommand::IdleReplacement.permits_running());
