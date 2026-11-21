@@ -3,14 +3,13 @@
 //! administer the place the signed metadata stands on. List, add and reset
 //! require the signed scene to be the current deployment on its parcel and
 //! authorize against that deployment: its footprint decides ownership and its
-//! place key finds the explicit admins `/scene-admin` granted, while the
-//! credential is stored for the place based on its base parcel. A world has
-//! one credential for all its scenes, so there only authority over the whole
-//! world counts: its owner, an admin of the world place, a deployment or
-//! streaming grantee without a parcel restriction. Remove needs
-//! only the place (a world by its realm, a Genesis place by its
-//! parcel), so a key can still be revoked after a redeploy, by the admins of
-//! the scene standing there now. List, add and reset are refused to
+//! place key finds the explicit admins `/scene-admin` granted. Each scene has
+//! its own credential, streaming into its own room: a Genesis scene's is
+//! stored for the catalogue place based on its base parcel, a world scene's
+//! for its place (`ActiveDeployment::place_key`), as upstream keys it on the
+//! world scene's place ([`KeyTarget`]). Remove also takes the scene standing
+//! on the signed parcel now, so a key can still be revoked after a redeploy,
+//! by the admins of that scene. List, add and reset are refused to
 //! a platform-banned wallet BEFORE that check, because LiveKit honours the
 //! key without re-checking the wallet, and remove stays ungated (upstream's
 //! `*-scene-stream-access-handler.ts`). One active row per place in
@@ -159,88 +158,33 @@ pub async fn scene_stream_access(
         let denied = forbidden(NOT_AUTHORIZED_TO_STREAM_MSG);
         refuse_barred(&state, &sf.signer, device_id.as_deref(), denied).await?;
     }
-    let (place_id, place, room, scene) = if method == Method::DELETE {
-        // Revocation needs no current deployment: the place is found by the
-        // signed realm and parcel alone, and the authority on that same realm.
-        let realm = Context::signed_realm(&sf.metadata, &state.settings.realm_name)?;
-        let world = realm.world();
-        let parcel = meta_str(&sf.metadata, "parcel");
-        if world.is_none() && parcel.is_none() {
-            return Err(ApiError::bad_request(
-                "invalid signed-fetch request, no parcel",
-            ));
-        }
-        let place_id = resolve_place_id(
-            &state.pool,
-            world,
-            parcel.as_deref().unwrap_or_default(),
-            false,
-        )
-        .await?
-        .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-        let place =
-            revocation_authority(&state, &sf.metadata, &realm, parcel.as_deref(), &place_id)
-                .await?;
-        // In a world, the signed scene is resolved only if the world-wide
-        // decision refuses (see below), so a revocation by the owner never
-        // waits on the resolver.
-        let scene = match realm.world() {
-            Some(_) => KeyScene::Signed,
-            None => KeyScene::None,
-        };
-        (place_id, place, None, scene)
+    let target = if method == Method::DELETE {
+        revocation_target(&state, &sf.metadata).await?
     } else {
         // One resolution binds the signed scene to its parcel; the room and the
         // authorizing footprint both come from it.
-        let bound = Context::resolve(&state, &sf.metadata).await?;
-        let world = bound.world_scene.as_ref().map(|(world, _)| world);
-        let base = bound.footprint.base_position.clone().unwrap_or_default();
-        let place_id = resolve_place_id(&state.pool, world, &base, true)
-            .await?
-            .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
-        // The credential is stored under the catalogue place; the scene's
-        // explicit admins are granted on its place (`/scene-admin`), which
-        // `bound.place` carries with the deployment's footprint.
-        let scene = match world {
-            Some(_) => KeyScene::Bound(bound.place.admin_key().to_owned()),
-            None => KeyScene::None,
-        };
-        let place = key_authority(&state, &place_id, world, bound.place);
-        (place_id, place, Some(bound.room), scene)
+        KeyTarget::bound(&state, Context::resolve(&state, &sf.metadata).await?).await?
     };
-    let mut decision = scene::scene_manager_decision(&state, &place, &sf.signer).await;
-    if lacks_authority(&decision) {
-        // A world's scene admin may revoke the key it may reset: the signed
-        // scene when it is the world's current deployment.
-        let world_scene = match scene {
-            KeyScene::None => None,
-            KeyScene::Bound(key) => Some(key),
-            KeyScene::Signed => match Context::resolve(&state, &sf.metadata).await {
-                Ok(bound) => Some(bound.place.admin_key().to_owned()),
-                Err(error) if error.code >= 500 => return Err(error),
-                Err(_) => None,
-            },
-        };
-        if let Some(world_scene) = world_scene {
-            decision = world_scene_admin(&state, &place, &world_scene, &sf.signer, decision).await;
-        }
-    }
-    match decision {
+    match target.decide(&state, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             return Err(forbidden(NOT_AUTHORIZED_TO_STREAM_MSG));
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let room = room.unwrap_or_default();
+    let (place_id, alias, room) = (
+        target.place_id.as_str(),
+        target.alias_room.as_deref(),
+        target.room.as_str(),
+    );
     let ingress = state.ingress();
     if method == Method::GET {
         // A key the place no longer holds (its scene redeployed, its minter
         // without the place) is never the one answered.
-        cast::recheck_keys(&state, cast::Keys::Place(&place_id)).await;
+        recheck_target(&state, place_id, alias).await;
     }
     match method {
-        Method::GET => match active_access(&state.pool, &place_id).await? {
+        Method::GET => match active_access(&state.pool, place_id, alias).await? {
             Some(row) => {
                 // Upstream's list handler: the stored expiry is the one
                 // answered, and a credential past it that the expiry job has
@@ -253,13 +197,13 @@ pub async fn scene_stream_access(
             }
             None => Err(ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG)),
         },
-        Method::POST => issue_access(&state, &ingress, &place_id, &room, &sf.signer)
+        Method::POST => issue_access(&state, &ingress, (place_id, alias), room, &sf.signer)
             .await
             .map(|resp| Json(resp).into_response()),
-        Method::PUT => reset_access(&state, &ingress, &place_id, &room, &sf.signer)
+        Method::PUT => reset_access(&state, &ingress, (place_id, alias), room, &sf.signer)
             .await
             .map(|resp| Json(resp).into_response()),
-        Method::DELETE => remove_access(&state, &ingress, &place_id).await,
+        Method::DELETE => remove_access(&state, place_id, alias).await,
         _ => Ok(StatusCode::METHOD_NOT_ALLOWED.into_response()),
     }
 }
@@ -307,58 +251,104 @@ pub(super) async fn scene_authority<'a>(
     }))
 }
 
-/// The lookup the stream-key verbs decide on. A world has ONE credential for
-/// all its scenes, so authority over one scene (a grantee of some of its
-/// parcels) must not reach it: the world place with no footprint admits the
-/// owner and a grantee whose grant has no parcel restriction, and no
-/// `/scene-admin` grant. A Genesis place is its scene's. The one scene-level grant
-/// that reaches a world's key is decided apart, in [`world_scene_admin`].
-pub(super) fn key_authority<'a>(
-    state: &'a CommsState,
-    place_id: &str,
-    world: Option<&WorldName>,
-    scene: PlaceLookup<'a>,
-) -> PlaceLookup<'a> {
-    match world {
-        Some(world) => world_authority(state, place_id, world),
-        None => scene,
-    }
+/// The credential a stream-key verb acts on and the authority it decides on.
+/// Each scene has its own key, streaming into its own room: a Genesis scene's
+/// is stored under the catalogue place based on its base parcel, a world
+/// scene's under its place (`ActiveDeployment::place_key`, where `/scene-admin`
+/// grants and scene bans live too, kept across a redeploy of that place).
+pub(super) struct KeyTarget<'a> {
+    pub place_id: String,
+    /// The room the scene's key streams into (empty for a Genesis revocation).
+    pub room: String,
+    /// A world scene's room: an active key minted there under the world's
+    /// catalogue place, before world keys were per scene, is this scene's
+    /// until a reset or renewal replaces it or it expires ([`active_access`]).
+    pub alias_room: Option<String>,
+    authority: PlaceLookup<'a>,
+    /// A world scene: the world-wide lookup and the scene's admin key
+    /// ([`world_scene_admin`]).
+    world: Option<(PlaceLookup<'a>, String)>,
 }
 
-/// The world place with no footprint: its owner and the grantees with no
-/// parcel restriction hold it, and no `/scene-admin` grant does.
-pub(super) fn world_authority<'a>(
-    state: &'a CommsState,
-    place_id: &str,
-    world: &WorldName,
-) -> PlaceLookup<'a> {
-    PlaceLookup::resolved(
-        state,
-        place_id,
-        scene::PlaceInfo {
+impl<'a> KeyTarget<'a> {
+    /// The scene a request is bound to ([`Context::resolve`]). 404 for a
+    /// Genesis scene the catalogue lists no place for.
+    pub async fn bound(state: &'a CommsState, bound: Context<'a>) -> Result<Self, ApiError> {
+        if let Some((world, _)) = &bound.world_scene {
+            let key = bound.place.admin_key().to_owned();
+            return Ok(Self::world(state, world, key, bound.footprint, bound.room));
+        }
+        let base = bound.footprint.base_position.clone().unwrap_or_default();
+        let place_id = resolve_place_id(&state.pool, &base, true)
+            .await?
+            .ok_or_else(|| ApiError::not_found("place not found for this scene"))?;
+        Ok(Self {
+            place_id,
+            room: bound.room,
+            alias_room: None,
+            authority: bound.place,
+            world: None,
+        })
+    }
+
+    /// The world scene `deployment`, whose room is `room`.
+    pub fn deployed(
+        state: &'a CommsState,
+        world: &WorldName,
+        deployment: &crate::rooms::ActiveDeployment,
+        room: String,
+    ) -> Self {
+        let footprint = scene::PlaceInfo {
+            world: true,
+            world_name: Some(world.key().to_owned()),
+            positions: deployment.parcels.iter().map(Parcel::canonical).collect(),
+            base_position: Some(deployment.base.canonical()),
+        };
+        Self::world(state, world, deployment.place_key(), footprint, room)
+    }
+
+    /// The world-wide lookup of `world` under `place_id`: the world with no
+    /// footprint, which its owner and the grantees with no parcel restriction
+    /// hold, and no `/scene-admin` grant. A world scene admin's granter is
+    /// decided on it, for the key and for the key's notices.
+    pub fn world_wide(state: &'a CommsState, place_id: &str, world: &WorldName) -> PlaceLookup<'a> {
+        let footprint = scene::PlaceInfo {
             world: true,
             world_name: Some(world.key().to_owned()),
             positions: Vec::new(),
             base_position: None,
-        },
-        scene::NO_ADMINS,
-    )
-}
+        };
+        PlaceLookup::resolved(state, place_id, footprint, scene::NO_ADMINS)
+    }
 
-/// The decision for a stream-key verb on `authority` ([`key_authority`]),
-/// with the admin key of the world scene the request is bound to, if any.
-pub(super) async fn key_decision(
-    state: &CommsState,
-    authority: &PlaceLookup<'_>,
-    world_scene: Option<&str>,
-    signer: &Address,
-) -> PermissionDecision {
-    let decision = scene::scene_manager_decision(state, authority, signer).await;
-    match world_scene {
-        Some(scene) if lacks_authority(&decision) => {
-            world_scene_admin(state, authority, scene, signer, decision).await
+    /// A world scene's key decides on the scene's footprint without explicit
+    /// admins: the world's owner and a deployment or streaming grantee whose
+    /// grant has no parcel restriction or overlaps the scene's parcels. The
+    /// scene's explicit admins are decided apart ([`world_scene_admin`]).
+    fn world(
+        state: &'a CommsState,
+        world: &WorldName,
+        key: String,
+        footprint: scene::PlaceInfo,
+        room: String,
+    ) -> Self {
+        Self {
+            authority: PlaceLookup::resolved(state, &key, footprint, scene::NO_ADMINS),
+            world: Some((Self::world_wide(state, &key, world), key.clone())),
+            alias_room: Some(room.clone()),
+            place_id: key,
+            room,
         }
-        _ => decision,
+    }
+
+    pub async fn decide(&self, state: &CommsState, signer: &Address) -> PermissionDecision {
+        let decision = scene::scene_manager_decision(state, &self.authority, signer).await;
+        match &self.world {
+            Some((world_wide, scene)) if lacks_authority(&decision) => {
+                world_scene_admin(state, world_wide, scene, signer, decision).await
+            }
+            _ => decision,
+        }
     }
 }
 
@@ -369,17 +359,16 @@ pub(super) fn lacks_authority(decision: &PermissionDecision) -> bool {
     )
 }
 
-/// After the world-wide decision `refused` the signer for lack of authority:
-/// an explicit admin of the world `scene` holds the world's one credential
-/// when whoever granted it still holds world-wide authority. `/scene-admin`
-/// keys that grant on the scene's place (`scene`), so no admin of the world
-/// place can be granted, and upstream's admin of a world's place holds its stream
-/// key. A grantee restricted to some parcels may grant `/scene-admin` on its
-/// scene, so an admin it granted (or one granted by another scene admin)
-/// stays refused: the grant never widens its granter's authority.
+/// After the scene's decision `refused` the signer for lack of authority: an
+/// explicit admin of the world `scene` holds that scene's key when whoever
+/// granted it holds world-wide authority (`world_wide`: the owner, a grantee
+/// without a parcel restriction). A grantee restricted to some parcels may
+/// grant `/scene-admin` on its scene, so an admin it granted (or one granted
+/// by another scene admin) stays refused: the grant never widens its
+/// granter's authority.
 async fn world_scene_admin(
     state: &CommsState,
-    authority: &PlaceLookup<'_>,
+    world_wide: &PlaceLookup<'_>,
     scene: &str,
     signer: &Address,
     refused: PermissionDecision,
@@ -389,29 +378,71 @@ async fn world_scene_admin(
         Ok(None) => return refused,
         Err(error) => return PermissionDecision::undetermined("social.scene_admins", &error),
     };
-    match scene::scene_manager_decision(state, authority, &granter).await {
+    match scene::scene_manager_decision(state, world_wide, &granter).await {
         PermissionDecision::Allowed => PermissionDecision::Allowed,
         decision if lacks_authority(&decision) => refused,
         undetermined => undetermined,
     }
 }
 
-/// The world scene a stream-key verb may fall back to ([`world_scene_admin`]).
-enum KeyScene {
-    None,
-    /// The admin key of the scene the request is bound to.
-    Bound(String),
-    /// A revocation: the signed scene, resolved only when needed.
-    Signed,
+/// The key a revocation acts on. Revocation needs no current deployment: in
+/// a world, the signed scene when it is current, else the scene standing on
+/// the signed parcel now (its place keeps its key across a redeploy); a
+/// Genesis place by the signed parcel, decided by [`revocation_authority`].
+async fn revocation_target<'a>(
+    state: &'a CommsState,
+    metadata: &serde_json::Value,
+) -> Result<KeyTarget<'a>, ApiError> {
+    let realm = Context::signed_realm(metadata, &state.settings.realm_name)?;
+    let parcel = meta_str(metadata, "parcel");
+    let not_found = || ApiError::not_found("place not found for this scene");
+    let Some(world) = realm.world() else {
+        let parcel = parcel
+            .ok_or_else(|| ApiError::bad_request("invalid signed-fetch request, no parcel"))?;
+        let place_id = resolve_place_id(&state.pool, &parcel, false)
+            .await?
+            .ok_or_else(not_found)?;
+        let authority =
+            revocation_authority(state, metadata, &realm, Some(&parcel), &place_id).await?;
+        return Ok(KeyTarget {
+            place_id,
+            room: String::new(),
+            alias_room: None,
+            authority,
+            world: None,
+        });
+    };
+    match Context::resolve(state, metadata).await {
+        Ok(bound) => return KeyTarget::bound(state, bound).await,
+        Err(error) if error.code >= 500 => return Err(error),
+        Err(_) => {}
+    }
+    let parcel = parcel
+        .and_then(|raw| Parcel::parse(&raw).ok())
+        .ok_or_else(not_found)?;
+    let request = RoomRequest::Parcel {
+        realm: &realm,
+        parcel,
+    };
+    match state.scenes.resolve(request).await {
+        Ok(current) => match current.deployment.as_ref() {
+            Some(deployment) => Ok(KeyTarget::deployed(state, world, deployment, current.room)),
+            None => Err(not_found()),
+        },
+        Err(crate::rooms::ResolveError::Db(error)) => {
+            tracing::warn!(%error, "scene resolver unavailable for a stream key revocation");
+            Err(service_unavailable("Scene identity is unavailable"))
+        }
+        Err(_) => Err(not_found()),
+    }
 }
 
-/// The lookup a revocation is authorized on. A world's credential takes
-/// authority over the whole world ([`key_authority`]). A Genesis place: the
-/// signed scene when it is the current deployment, as for the other verbs;
-/// else the scene standing on the signed parcel now, so the admins of the
-/// scene that replaced it can still revoke the key; with no scene there, the
-/// place's owner alone. A resolver or catalogue that cannot be read is an
-/// error (503), never one of the narrower lookups.
+/// The lookup a Genesis revocation is authorized on: the signed scene when it
+/// is the current deployment, as for the other verbs; else the scene standing
+/// on the signed parcel now, so the admins of the scene that replaced it can
+/// still revoke the key; with no scene there, the place's owner alone. A
+/// resolver or catalogue that cannot be read is an error (503), never one of
+/// the narrower lookups.
 async fn revocation_authority<'a>(
     state: &'a CommsState,
     metadata: &serde_json::Value,
@@ -420,9 +451,6 @@ async fn revocation_authority<'a>(
     place_id: &str,
 ) -> Result<PlaceLookup<'a>, ApiError> {
     let stored = PlaceLookup::new(state, place_id, scene::NO_ADMINS);
-    if let Some(world) = realm.world() {
-        return Ok(key_authority(state, place_id, Some(world), stored));
-    }
     match Context::resolve(state, metadata).await {
         Ok(bound) => return Ok(bound.place),
         Err(error) if error.code >= 500 => return Err(error),
@@ -449,6 +477,15 @@ async fn revocation_authority<'a>(
         .unwrap_or(stored))
 }
 
+/// Rechecks the keys a verb may answer ([`cast::recheck_keys`]): the place's,
+/// and, for a world scene, the one streaming into its room.
+pub(super) async fn recheck_target(state: &SharedState, place_id: &str, alias: Option<&str>) {
+    cast::recheck_keys(state, cast::Keys::Place(place_id)).await;
+    if let Some(room) = alias {
+        cast::recheck_keys(state, cast::Keys::Room(room)).await;
+    }
+}
+
 /// The place's active credential when it is still valid for `room`, else a
 /// new one: an idle credential for another room or past its expiry is
 /// replaced (its ingress cleanup is a durable intent), a streaming one is a
@@ -459,13 +496,13 @@ async fn revocation_authority<'a>(
 async fn issue_access(
     state: &SharedState,
     ingress: &IngressClient<'_>,
-    place_id: &str,
+    (place_id, alias): (&str, Option<&str>),
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     // A key whose minter lost the place is never the one answered.
-    cast::recheck_keys(state, cast::Keys::Place(place_id)).await;
-    if let Some(existing) = active_access(&state.pool, place_id).await? {
+    recheck_target(state, place_id, alias).await;
+    if let Some(existing) = active_access(&state.pool, place_id, alias).await? {
         match renewal(&existing, room, now_utc()) {
             Renewal::Reuse => return Ok(existing.response()),
             Renewal::Conflict => {
@@ -591,28 +628,14 @@ async fn refuse_barred(
     }
 }
 
-/// The place the bound scene stands on: its world (published here or
-/// mirrored) by name, else the Genesis place holding `parcel`. With
+/// The Genesis place holding `parcel`, preferring the one based there. With
 /// `based_there` only a place based on `parcel` counts, so a catalogue that
 /// has not caught up with a redeploy never lends another scene's admins.
 async fn resolve_place_id(
     pool: &PgPool,
-    world: Option<&WorldName>,
     parcel: &str,
     based_there: bool,
 ) -> Result<Option<String>, ApiError> {
-    if let Some(world) = world {
-        return Ok(sqlx::query_scalar(
-            "SELECT id FROM explore.place WHERE world AND lower(world_name) = lower($1) \
-             UNION ALL \
-             SELECT id FROM explore.place_world_local WHERE world AND lower(world_name) = lower($1) \
-             LIMIT 1",
-        )
-        .bind(world.display())
-        .fetch_optional(pool)
-        .await?);
-    }
-    // A live Genesis place on the parcel, preferring the one based there.
     Ok(sqlx::query_scalar(
         "SELECT id FROM explore.place WHERE NOT world AND NOT disabled \
          AND raw->'positions' @> jsonb_build_array($1::text) \
@@ -625,11 +648,21 @@ async fn resolve_place_id(
     .await?)
 }
 
-async fn active_access(pool: &PgPool, place_id: &str) -> Result<Option<AccessRow>, sqlx::Error> {
+/// The place's active credential; with `alias`, a world scene's room, else
+/// the one streaming into that room under another place (a key minted there
+/// before world keys were per scene).
+async fn active_access(
+    pool: &PgPool,
+    place_id: &str,
+    alias: Option<&str>,
+) -> Result<Option<AccessRow>, sqlx::Error> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access WHERE place_id = $1 AND active"
+        "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access \
+         WHERE active AND (place_id = $1 OR room_id = $2) \
+         ORDER BY place_id = $1 DESC, created_at DESC LIMIT 1"
     )))
     .bind(place_id)
+    .bind(alias)
     .fetch_optional(pool)
     .await
 }
@@ -712,30 +745,58 @@ async fn replace_access(
     }
 }
 
-/// Ends a removed place's credential in the removal's transaction, as a
-/// revocation does (its cleanup deletes the ingress and removes the Cast
-/// publishers) but with no key notice: the removal tells the owner. Returns
-/// the credential to settle after the commit.
+/// The active credentials a removed place ends: a removed world's are every
+/// key streaming into one of its scene rooms (each scene's, and a key stored
+/// under the world's catalogue place); a Genesis place's is the one stored
+/// under it, never a world scene's key with the same id. `world` is the
+/// world's key.
+const REMOVED_PLACE_KEYS: &str = "active AND CASE WHEN $2::text IS NULL \
+     THEN place_id = $1 AND (room_id IS NULL OR NOT starts_with(room_id, $3)) \
+     ELSE place_id = $1 OR starts_with(room_id, $2) END";
+
+/// Whether a removed place has a key with a live ingress ([`REMOVED_PLACE_KEYS`]).
+pub(crate) async fn removed_place_has_ingress(
+    pool: &PgPool,
+    place_id: &str,
+    world: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access \
+         WHERE {REMOVED_PLACE_KEYS} AND ingress_id <> '')"
+    )))
+    .bind(place_id)
+    .bind(world.map(crate::rooms::world_scene_room_prefix))
+    .bind(crate::rooms::SCENE_ROOM_PREFIX)
+    .fetch_one(pool)
+    .await
+}
+
+/// Ends a removed place's credentials ([`REMOVED_PLACE_KEYS`]) in the
+/// removal's transaction, as a revocation does (its cleanup deletes the
+/// ingress and removes the Cast publishers) but with no key notice: the
+/// removal tells the owner. Returns the credentials to settle after the commit.
 pub(crate) async fn end_removed_place(
     tx: &mut sqlx::PgConnection,
     place_id: &str,
+    world: Option<&str>,
     removed_at: NaiveDateTime,
-) -> Result<Option<Uuid>, sqlx::Error> {
+) -> Result<Vec<Uuid>, sqlx::Error> {
     // A key made after the removal belongs to the place that came back.
-    let row: Option<(Uuid, i64)> = sqlx::query_as(
+    let rows: Vec<(Uuid, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, streaming_state_version FROM social.scene_stream_access \
-         WHERE place_id = $1 AND active AND created_at <= $2 FOR UPDATE",
-    )
+         WHERE {REMOVED_PLACE_KEYS} AND created_at <= $4 ORDER BY id FOR UPDATE"
+    )))
     .bind(place_id)
+    .bind(world.map(crate::rooms::world_scene_room_prefix))
+    .bind(crate::rooms::SCENE_ROOM_PREFIX)
     .bind(removed_at)
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
-    let Some((id, version)) = row else {
-        return Ok(None);
-    };
     let command = jobs::CleanupCommand::PlaceRemoval;
-    jobs::enqueue_prepared(tx, id, command, version, None, None).await?;
-    Ok(Some(id))
+    for (id, version) in &rows {
+        jobs::enqueue_prepared(&mut *tx, *id, command, *version, None, None).await?;
+    }
+    Ok(rows.into_iter().map(|(id, _)| id).collect())
 }
 
 /// Runs the committed cleanup now, in a task of its own: the swap or
@@ -808,7 +869,7 @@ async fn store_access(
     if let Some(row) = inserted {
         return Ok(row.response());
     }
-    let winner = active_access(pool, place_id).await?.ok_or_else(|| {
+    let winner = active_access(pool, place_id, None).await?.ok_or_else(|| {
         ApiError::internal("scene stream access vanished during a concurrent mint")
     })?;
     if !info.ingress_id.is_empty()
@@ -863,12 +924,12 @@ fn concurrent_change() -> ApiError {
 async fn reset_access(
     state: &SharedState,
     ingress: &IngressClient<'_>,
-    place_id: &str,
+    (place_id, alias): (&str, Option<&str>),
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let result = async {
-        let row = active_access(&state.pool, place_id)
+        let row = active_access(&state.pool, place_id, alias)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
         // The replacement's ingress first: a LiveKit failure keeps the old credential.
@@ -899,10 +960,10 @@ async fn reset_access(
 
 async fn remove_access(
     state: &SharedState,
-    _ingress: &IngressClient<'_>,
     place_id: &str,
+    alias: Option<&str>,
 ) -> Result<Response, ApiError> {
-    let row = active_access(&state.pool, place_id)
+    let row = active_access(&state.pool, place_id, alias)
         .await?
         .ok_or_else(|| ApiError::not_found("no active stream access for this scene"))?;
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
@@ -1096,5 +1157,111 @@ mod moderation_boundary_tests {
                 .code,
             503
         );
+    }
+}
+
+#[cfg(test)]
+mod scene_key_tests {
+    use super::*;
+    use crate::world_identity::SceneId;
+
+    async fn key(pool: &PgPool, place: &str, room: &str) -> Uuid {
+        sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, active) \
+             VALUES ($1, 'rtmp://example.org', $2, '', $3, 'test', true) RETURNING id",
+        )
+        .bind(place)
+        .bind(Uuid::new_v4().to_string())
+        .bind(room)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    fn room(world: &WorldName, scene: &str) -> String {
+        crate::rooms::worlds_service_scene_room(world, &SceneId::parse(scene).unwrap())
+    }
+
+    /// A world scene reads its own key, else the key streaming into its room
+    /// under another place (the world's, from before keys were per scene);
+    /// another scene never reads it.
+    #[tokio::test]
+    async fn a_world_scene_reads_its_key_then_the_one_streaming_into_its_room() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("keys{}.dcl.eth", &tag[..10])).unwrap();
+        let (room_a, room_b) = (room(&world, "SceneA"), room(&world, "SceneB"));
+        let (place_a, place_b) = (format!("a-{tag}"), format!("b-{tag}"));
+        let legacy = key(&pool, &format!("world-{tag}"), &room_a).await;
+        let read = |place: String, alias: Option<String>| {
+            let pool = pool.clone();
+            async move {
+                active_access(&pool, &place, alias.as_deref())
+                    .await
+                    .unwrap()
+                    .map(|row| row.id)
+            }
+        };
+        assert_eq!(
+            read(place_a.clone(), Some(room_a.clone())).await,
+            Some(legacy)
+        );
+        assert_eq!(read(place_b.clone(), Some(room_b.clone())).await, None);
+        assert_eq!(
+            read(place_a.clone(), None).await,
+            None,
+            "a Genesis read has no alias"
+        );
+        let own = key(&pool, &place_a, &room_a).await;
+        assert_eq!(
+            read(place_a, Some(room_a)).await,
+            Some(own),
+            "its own key first"
+        );
+    }
+
+    /// A removed world ends every key streaming into one of its scene rooms,
+    /// its catalogue place's included; a removed Genesis place ends its own
+    /// key alone, never a world scene's key stored under the same id.
+    #[tokio::test]
+    async fn a_removed_world_ends_each_scene_key_and_a_genesis_place_its_own() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("gone{}.dcl.eth", &tag[..10])).unwrap();
+        let other = WorldName::parse(&format!("gone{}x.dcl.eth", &tag[..10])).unwrap();
+        let catalogue = format!("world-{tag}");
+        let scene_a = key(&pool, &format!("a-{tag}"), &room(&world, "SceneA")).await;
+        let scene_b = key(&pool, &format!("b-{tag}"), &room(&world, "SceneB")).await;
+        let legacy = key(&pool, &catalogue, &room(&world, "SceneC")).await;
+        let elsewhere = key(&pool, &format!("c-{tag}"), &room(&other, "SceneA")).await;
+        let genesis_id = format!("g-{tag}");
+        let world_scene = key(&pool, &genesis_id, &room(&world, "SceneD")).await;
+        let genesis = key(&pool, &format!("h-{tag}"), &format!("scene:main:{tag}")).await;
+        let later = chrono::Utc::now().naive_utc() + chrono::Duration::minutes(1);
+        let ended = |place: String, world: Option<String>| {
+            let pool = pool.clone();
+            async move {
+                let mut tx = pool.begin().await.unwrap();
+                let ids = end_removed_place(&mut tx, &place, world.as_deref(), later)
+                    .await
+                    .unwrap();
+                tx.rollback().await.unwrap();
+                ids
+            }
+        };
+        let mut expected = vec![scene_a, scene_b, legacy, world_scene];
+        expected.sort();
+        assert_eq!(
+            ended(catalogue, Some(world.key().to_owned())).await,
+            expected
+        );
+        assert_eq!(ended(genesis_id, None).await, Vec::<Uuid>::new());
+        assert_eq!(ended(format!("h-{tag}"), None).await, vec![genesis]);
+        assert!(!expected.contains(&elsewhere));
     }
 }

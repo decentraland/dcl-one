@@ -215,14 +215,21 @@ pub(super) async fn prepare(
     id: Uuid,
     command: CleanupCommand,
 ) -> Result<Option<Prepared>, ApiError> {
-    let snapshot: Option<(String,i64)> = sqlx::query_as("SELECT place_id,streaming_state_version FROM social.scene_stream_access WHERE id=$1 AND active")
+    let snapshot: Option<(String, i64, Option<String>)> = sqlx::query_as("SELECT place_id,streaming_state_version,room_id FROM social.scene_stream_access WHERE id=$1 AND active")
         .bind(id).fetch_optional(&state.pool).await?;
-    let Some((place_id, version)) = snapshot else {
+    let Some((place_id, version, room)) = snapshot else {
         return Ok(None);
     };
-    let context = RemovedPlaces::new(state.pool.clone())
-        .place(&place_id)
-        .await?;
+    let feed = RemovedPlaces::new(state.pool.clone());
+    // A world scene room's key is stored under its scene's place, which is no
+    // catalogue row: its world tells the owner and the location.
+    let context = match room
+        .as_deref()
+        .and_then(crate::rooms::decode_world_scene_room)
+    {
+        Some((world, _)) => Some(world_key_context(&feed, &place_id, &world).await?),
+        None => feed.place(&place_id).await?,
+    };
     let event = if let (Some(kind), Some(context)) = (command.notification(), context.as_ref()) {
         let key = format!("{}-{id}", kind.as_str());
         match tokio::time::timeout(
@@ -257,6 +264,27 @@ pub(super) async fn prepare(
         event,
         context,
     }))
+}
+
+/// The notice context of a key streaming into a scene room of `world`: the
+/// world's catalogue place, else the world alone, under the key's place.
+async fn world_key_context(
+    feed: &RemovedPlaces,
+    place_id: &str,
+    world: &crate::world_identity::WorldName,
+) -> Result<PlaceContext, sqlx::Error> {
+    let catalogued = feed.world(world.key()).await?;
+    Ok(PlaceContext {
+        place_id: place_id.to_owned(),
+        ..catalogued.unwrap_or_else(|| PlaceContext {
+            place_id: String::new(),
+            owner_address: None,
+            world: true,
+            world_name: Some(world.key().to_owned()),
+            base_position: String::new(),
+            positions: serde_json::json!([]),
+        })
+    })
 }
 
 fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> {
@@ -463,10 +491,15 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
     let kind = notification_kind(kind_str)?;
     if kind == StreamingNotificationKind::KeyExpired || kind == StreamingNotificationKind::KeyReset
     {
+        // A world scene room's key also replaces one stored under the world's
+        // catalogue place, from before world keys were per scene.
         let replacement: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id=$1 AND active)",
+            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access n WHERE n.active AND (n.place_id = $1 \
+             OR n.room_id = (SELECT o.room_id FROM social.scene_stream_access o WHERE o.id = $2 AND starts_with(o.room_id, $3))))",
         )
         .bind(&row.place_id)
+        .bind(row.access_id)
+        .bind(crate::rooms::SCENE_ROOM_PREFIX)
         .fetch_one(&state.pool)
         .await?;
         if kind == StreamingNotificationKind::KeyExpired && replacement {

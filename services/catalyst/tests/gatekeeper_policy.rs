@@ -1896,10 +1896,27 @@ mod stream_access {
             }
         }
         assert!(refused.is_empty(), "{refused:#?}");
+        // The key is the scene's, stored under its place (its world-scene identity).
+        let scene_place = |entity: String| {
+            let pool = pool.clone();
+            let world = world.key().to_owned();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT identity::text FROM explore.world_scene_place \
+                     WHERE world_name = $1 AND entity_id = $2 AND active",
+                )
+                .bind(world)
+                .bind(entity)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let main_place = scene_place(scene_id.clone()).await;
         let room: String = sqlx::query_scalar(
             "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 ORDER BY created_at DESC LIMIT 1",
         )
-        .bind(&place_id)
+        .bind(&main_place)
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -1940,11 +1957,10 @@ mod stream_access {
             assert_eq!(claims["video"]["room"], room.as_str(), "{realm} {scene}");
         }
 
-        // The world has ONE credential. A grantee of a second scene's parcels
-        // only never reaches it, nor does an admin that grantee adds on that
-        // scene; a grantee without a parcel restriction and an admin the
-        // world's owner granted on that scene (`/scene-admin` keys it on the
-        // scene's entity id) do.
+        // Each scene has its own key. A grantee of a second scene's parcels
+        // and an admin the world's owner granted on that scene reach that
+        // scene's key alone; an admin the grantee adds there reaches none; a
+        // grantee without a parcel restriction reaches every scene's.
         let side_id = format!("SideScene{tag}");
         let side_parcels: ParcelSet = [Parcel::parse("5,5").unwrap()].into_iter().collect();
         // An earlier scene at the side parcel, replaced by the side scene.
@@ -2007,18 +2023,8 @@ mod stream_access {
                     .unwrap();
             }
         }
-        // A scene admin is granted on the scene's place: its identity, which
-        // for an imported place is the id of the world's catalogue place.
-        let side_place: String = sqlx::query_scalar(
-            "UPDATE explore.world_scene_place SET identity = $3::uuid WHERE world_name = $1 AND entity_id = $2 \
-             RETURNING identity::text",
-        )
-        .bind(world.key())
-        .bind(&side_id)
-        .bind(&place_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        // A scene admin is granted on the scene's place: its identity.
+        let side_place = scene_place(side_id.clone()).await;
         state
             .moderation
             .add_admin(
@@ -2040,14 +2046,18 @@ mod stream_access {
             "signer": SCENE_SIGNER, "sceneId": format!("ForeignScene{tag}"), "parcel": "5,5", "realm": realm,
         })
         .to_string();
-        let credential = || async {
-            sqlx::query_scalar::<_, Uuid>(
-                "SELECT id FROM social.scene_stream_access WHERE place_id = $1 AND active",
-            )
-            .bind(&place_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap()
+        let credential = |place: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (Uuid, String, String)>(
+                    "SELECT id, room_id, streaming_key FROM social.scene_stream_access \
+                     WHERE place_id = $1 AND active",
+                )
+                .bind(place)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+            }
         };
         // The parcel-scoped grantee may moderate its scene, so it can add a
         // second wallet it holds as that scene's admin.
@@ -2079,7 +2089,11 @@ mod stream_access {
                 .await
                 .unwrap();
         }
-        let before = credential().await;
+        let before = credential(main_place.clone()).await;
+        assert!(
+            before.is_some(),
+            "the main scene's key, minted by its stream link"
+        );
         let verbs = [
             ("GET", PATH),
             ("POST", PATH),
@@ -2089,7 +2103,16 @@ mod stream_access {
         ];
         let mut refused = Vec::new();
         for (who, key, meta) in [
-            ("parcel-scoped grantee", &scoped_key, &side_meta),
+            (
+                "parcel-scoped grantee on another scene",
+                &scoped_key,
+                &scene_meta,
+            ),
+            (
+                "side scene's admin on another scene",
+                &side_admin_key,
+                &scene_meta,
+            ),
             (
                 "admin added by the scoped grantee",
                 &scoped_admin_key,
@@ -2114,19 +2137,31 @@ mod stream_access {
             }
         }
         assert!(refused.is_empty(), "admitted: {refused:#?}");
-        assert_eq!(credential().await, before, "the world's key is untouched");
+        assert_eq!(
+            credential(main_place.clone()).await,
+            before,
+            "the main scene's key is untouched"
+        );
+        assert_eq!(
+            credential(side_place.clone()).await,
+            None,
+            "and no side key was minted"
+        );
         let (status, body) = call_at(&app, &wide_key, "GET", PATH, &side_meta).await;
         assert_eq!(
-            status,
-            StatusCode::OK,
-            "a grantee of the whole world reads the key: {body}"
+            (status, body["error"].as_str()),
+            (StatusCode::NOT_FOUND, Some(STREAM_ACCESS_NOT_FOUND_MSG)),
+            "the side scene has no key of its own yet"
         );
-        assert!(body["streaming_key"].is_string(), "{body}");
+        let side_room = catalyst::comms::rooms::worlds_service_scene_room(
+            &world,
+            &catalyst::comms::world_identity::SceneId::parse(&side_id).unwrap(),
+        );
         for (method, path, expected) in [
+            ("POST", PATH, StatusCode::OK),
             ("GET", PATH, StatusCode::OK),
             ("PUT", PATH, StatusCode::OK),
             ("DELETE", PATH, StatusCode::NO_CONTENT),
-            ("POST", PATH, StatusCode::OK),
             ("GET", "/cast/generate-stream-link", StatusCode::OK),
         ] {
             let mut answer = call_at(&app, &side_admin_key, method, path, &side_meta).await;
@@ -2141,6 +2176,80 @@ mod stream_access {
             let (status, body) = answer;
             assert_eq!(status, expected, "side scene admin {method} {path}: {body}");
         }
+        // Two keys, each streaming into its own scene's room.
+        let main = credential(main_place.clone()).await.unwrap();
+        let side = credential(side_place.clone()).await.unwrap();
+        assert_eq!(
+            (main.1.as_str(), side.1.as_str()),
+            (scene_room.as_str(), side_room.as_str())
+        );
+        assert_ne!(main.2, side.2);
+        assert_eq!(
+            main,
+            before.unwrap(),
+            "the side scene's verbs leave the main key alone"
+        );
+        // The parcel grantee, the grantee of the whole world and the owner
+        // read the side scene's key; the owner reads the main scene's too.
+        for (who, key, meta, expected) in [
+            ("parcel-scoped grantee", &scoped_key, &side_meta, &side.2),
+            ("world grantee", &wide_key, &side_meta, &side.2),
+            ("owner", &admin_key, &side_meta, &side.2),
+            ("owner", &admin_key, &scene_meta, &main.2),
+        ] {
+            let (status, body) = call_at(&app, key, "GET", PATH, meta).await;
+            assert_eq!(status, StatusCode::OK, "{who}: {body}");
+            assert_eq!(body["streaming_key"], expected.as_str(), "{who}");
+        }
+
+        // A key minted under the world's catalogue place before keys were per
+        // scene is the key of the scene whose room it streams into, until a
+        // reset stores its replacement under that scene's place.
+        let (status, _) = call_at(&app, &admin_key, "DELETE", PATH, &scene_meta).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        settled(&pool, &main_place).await;
+        let legacy: Uuid = sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
+             VALUES ($1, 'rtmp://ingest.local/live', 'legacy-world-key', '', $2, $3, timezone('UTC', now()), \
+                     timezone('UTC', now()) + interval '4 days', true) RETURNING id",
+        )
+        .bind(&place_id)
+        .bind(&scene_room)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (status, body) = call_at(&app, &admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some("legacy-world-key"))
+        );
+        let (status, body) = call_at(&app, &side_admin_key, "GET", PATH, &side_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some(side.2.as_str()))
+        );
+        let (status, body) = call_at(&app, &side_admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "another scene's admin: {body}"
+        );
+        let (status, body) = call_at(&app, &admin_key, "PUT", PATH, &scene_meta).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let reset = credential(main_place.clone()).await.unwrap();
+        assert_eq!(
+            (reset.1.as_str(), reset.2.as_str()),
+            (scene_room.as_str(), body["streaming_key"].as_str().unwrap())
+        );
+        let legacy_active: bool =
+            sqlx::query_scalar("SELECT active FROM social.scene_stream_access WHERE id = $1")
+                .bind(legacy)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!legacy_active, "the reset replaced the legacy key");
     }
 
     /// The answer to `signer`'s `GET /scene-stream-access` for the scene of

@@ -9,11 +9,9 @@ use serde_json::{Value, json};
 
 #[cfg(test)]
 use crate::interfaces::StreamingNotification;
+use crate::world_identity::WorldName;
 #[cfg(test)]
-use crate::{
-    Address,
-    world_identity::{Parcel, WorldName},
-};
+use crate::{Address, world_identity::Parcel};
 #[cfg(test)]
 use chrono::NaiveDateTime;
 
@@ -52,12 +50,15 @@ async fn cleanup(
         Err(error) => Err(error),
     };
     if event.cleaned_at.is_none() {
-        let ingress: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id = $1 AND active AND ingress_id <> '')",
-        )
-        .bind(&event.place_id)
-        .fetch_one(&state.pool)
-        .await?;
+        // A removed world ends the key of each of its scenes.
+        let world = event
+            .world_name
+            .as_deref()
+            .filter(|_| event.world)
+            .and_then(|name| WorldName::parse(name).ok());
+        let world = world.as_ref().map(WorldName::key);
+        let ingress =
+            streaming::removed_place_has_ingress(&state.pool, &event.place_id, world).await?;
         if ingress && !state.livekit.configured {
             return Err(ApiError::http(503, "LiveKit ingress unavailable"));
         }
@@ -112,10 +113,10 @@ async fn cleanup(
         .execute(&mut *tx)
         .await?;
         let ended =
-            streaming::end_removed_place(&mut tx, &event.place_id, event.removed_at).await?;
+            streaming::end_removed_place(&mut tx, &event.place_id, world, event.removed_at).await?;
         RemovedPlaces::mark_cleaned(&mut tx, event.event_id).await?;
         tx.commit().await?;
-        if let Some(id) = ended {
+        for id in ended {
             streaming::settle_cleanup(state, id, &event.place_id);
         }
     }

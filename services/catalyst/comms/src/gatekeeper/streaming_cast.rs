@@ -97,7 +97,7 @@ use super::super::errors::{ApiError, forbidden, service_unavailable, unauthorize
 use super::super::livekit::{AccessToken, TRACK_SOURCE_MICROPHONE, VideoGrants};
 use super::super::{CommsState, SharedState};
 use super::{
-    Context, FOUR_DAYS_MS, NOT_AUTHORIZED_TO_STREAM_MSG, active_access, issue_access,
+    Context, FOUR_DAYS_MS, KeyTarget, NOT_AUTHORIZED_TO_STREAM_MSG, active_access, issue_access,
     refuse_barred, resolve_place_id,
 };
 use crate::access::SceneBanKey;
@@ -129,7 +129,6 @@ pub const SCENE_BANNED_WATCHER_MSG: &str = "You are banned from this scene";
 pub const NO_REALM_MSG: &str = "Access denied, invalid signed-fetch request, no realm";
 pub const INVALID_PRESENTER_IDENTITY_MSG: &str =
     "participantIdentity must be a valid Ethereum address or streamer identity";
-const PLACE_NOT_FOUND_MSG: &str = "place not found for this scene";
 const LIVEKIT_UNCONFIGURED_MSG: &str =
     "LiveKit is not configured (set LIVEKIT_API_KEY / LIVEKIT_API_SECRET)";
 
@@ -244,15 +243,26 @@ async fn key_ends(
     let Some(minter) = minter else {
         return Ok(None);
     };
-    let scene = match &resolved {
-        Some(resolved) => super::scene_authority(state, resolved, &access.place_id).await?,
-        None => None,
-    }
-    .unwrap_or_else(|| PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS));
-    let world = resolved.as_ref().and_then(|room| room.realm.world());
-    let world_scene = world.map(|_| scene.admin_key().to_owned());
-    let authority = super::key_authority(state, &access.place_id, world, scene);
-    match super::key_decision(state, &authority, world_scene.as_deref(), &minter).await {
+    // A world scene's key is decided on that scene, wherever the row is stored.
+    let world_scene = resolved.as_ref().and_then(|resolved| {
+        let world = resolved.realm.world()?;
+        Some((world, resolved.deployment.as_ref()?))
+    });
+    let decision = match world_scene {
+        Some((world, deployment)) => {
+            let target = KeyTarget::deployed(state, world, deployment, room.to_owned());
+            target.decide(state, &minter).await
+        }
+        None => {
+            let scene = match &resolved {
+                Some(resolved) => super::scene_authority(state, resolved, &access.place_id).await?,
+                None => None,
+            }
+            .unwrap_or_else(|| PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS));
+            scene::scene_manager_decision(state, &scene, &minter).await
+        }
+    };
+    match decision {
         PermissionDecision::Allowed => Ok(None),
         decision if super::lacks_authority(&decision) => Ok(Some("its minter lost the place")),
         PermissionDecision::Refused(why) => Err(why.into()),
@@ -584,32 +594,122 @@ async fn load_place(pool: &PgPool, id: &str) -> Result<Option<CastPlace>, sqlx::
     .await
 }
 
-/// A watch location's place: a name ending in `.eth` is a world, anything
-/// else a Genesis parcel, resolved as the stream link keyed its credential.
-async fn watch_place(pool: &PgPool, location: &str) -> Result<(String, CastPlace), ApiError> {
+/// The place a world scene's key shows: the world's catalogue row (the
+/// local one first, as the removal feed reads it), else the world alone.
+async fn world_place(pool: &PgPool, world: &WorldName) -> Result<CastPlace, sqlx::Error> {
+    let row = sqlx::query_as(
+        "SELECT title, world, world_name, base_position FROM explore.place_indexed \
+         WHERE world AND lower(world_name) = $1 \
+         ORDER BY (raw->>'local' = 'true') DESC NULLS LAST, id LIMIT 1",
+    )
+    .bind(world.key())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.unwrap_or_else(|| CastPlace {
+        title: None,
+        world: true,
+        world_name: Some(world.display().to_owned()),
+        base_position: String::new(),
+    }))
+}
+
+/// The place a key stored under `place_id` streaming into `room` shows: a
+/// world scene room's world ([`world_place`]), else the catalogue place.
+async fn key_place(
+    pool: &PgPool,
+    place_id: &str,
+    room: Option<&str>,
+) -> Result<Option<CastPlace>, sqlx::Error> {
+    match room.and_then(crate::rooms::decode_world_scene_room) {
+        Some((world, _)) => world_place(pool, &world).await.map(Some),
+        None => load_place(pool, place_id).await,
+    }
+}
+
+/// The key a watch location reads, with the room alias of a world scene
+/// ([`active_access`]), and the place it shows. A name ending in `.eth` is a
+/// world: the scene on `parcel`, or without one the world's only scene (a
+/// multi-scene world needs the parcel, as upstream's `fetchWorldSceneId`).
+/// Anything else is a Genesis parcel, resolved as the stream link keyed its
+/// credential.
+async fn watch_place(
+    state: &CommsState,
+    location: &str,
+    parcel: Option<&str>,
+) -> Result<(String, Option<String>, CastPlace), ApiError> {
+    let pool = &state.pool;
     let id = if location.to_lowercase().ends_with(".eth") {
         let not_found =
             || ApiError::not_found(format!("No world scene place found for world {location}"));
         let world = WorldName::parse(location).map_err(|_| not_found())?;
-        resolve_place_id(pool, Some(&world), "", false)
-            .await?
-            .ok_or_else(not_found)?
+        let realm = crate::world_identity::RealmId::World(world.clone());
+        let resolved = match parcel {
+            Some(raw) => {
+                let parcel = Parcel::parse(raw).map_err(|_| not_found())?;
+                state
+                    .scenes
+                    .resolve(RoomRequest::Parcel {
+                        realm: &realm,
+                        parcel,
+                    })
+                    .await
+            }
+            None => {
+                let scenes: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM (SELECT 1 FROM explore.world_scene_place \
+                     WHERE world_name = $1 AND active LIMIT 2) scenes",
+                )
+                .bind(world.key())
+                .fetch_one(pool)
+                .await?;
+                if scenes > 1 {
+                    return Err(ApiError::bad_request(format!(
+                        "A parcel is required to resolve a scene in multi-scene world {location}"
+                    )));
+                }
+                // A world-shaped scene id resolves to the world's active scene.
+                let scene = crate::world_identity::SceneId::parse(world.display())
+                    .map_err(|_| not_found())?;
+                state
+                    .scenes
+                    .resolve(RoomRequest::Adapter {
+                        realm: &realm,
+                        scene: &scene,
+                    })
+                    .await
+            }
+        };
+        let resolved = match resolved {
+            Ok(resolved) => resolved,
+            Err(ResolveError::Db(error)) => {
+                return Err(AuthorityNotEstablished::store_unavailable(
+                    "worlds.world_scenes",
+                    &error,
+                )
+                .into());
+            }
+            Err(_) => return Err(not_found()),
+        };
+        if resolved.realm != realm {
+            return Err(not_found());
+        }
+        let deployment = resolved.deployment.as_ref().ok_or_else(not_found)?;
+        let place = world_place(pool, &world).await?;
+        return Ok((deployment.place_key(), Some(resolved.room), place));
     } else {
         let not_found = || ApiError::not_found(format!("No place found with parcel {location}"));
         // Upstream matches the place's `positions` verbatim.
         match Parcel::parse(location) {
-            Ok(parcel) if parcel.canonical() == location => {
-                resolve_place_id(pool, None, location, false)
-                    .await?
-                    .ok_or_else(not_found)?
-            }
+            Ok(parcel) if parcel.canonical() == location => resolve_place_id(pool, location, false)
+                .await?
+                .ok_or_else(not_found)?,
             _ => return Err(not_found()),
         }
     };
     let place = load_place(pool, &id)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("No place found with id {id}")))?;
-    Ok((id, place))
+    Ok((id, None, place))
 }
 
 /// The scene `room` belongs to, with its realm (a world or the shared
@@ -1187,20 +1287,11 @@ pub async fn generate_stream_link(
     let device_id = device_identifier(&sf.metadata);
     let denied = forbidden(NOT_AUTHORIZED_TO_STREAM_MSG);
     refuse_barred(&state, &sf.signer, device_id.as_deref(), denied).await?;
-    // The room and the authorizing place both come from the one bound scene.
+    // The room, the key and the authority all come from the one bound scene.
     let bound = Context::resolve(&state, &sf.metadata).await?;
-    let world = bound.world_scene.as_ref().map(|(world, _)| world);
-    let base = bound.footprint.base_position.clone().unwrap_or_default();
-    let place_id = resolve_place_id(&state.pool, world, &base, true)
-        .await?
-        .ok_or_else(|| ApiError::not_found(PLACE_NOT_FOUND_MSG))?;
-    // Explicit admins are granted on the bound scene's place
-    // (`/scene-admin`); the credential stays under the catalogue place, and
-    // a world's one credential takes authority over the whole world or an
-    // admin of the bound scene.
-    let world_scene = world.map(|_| bound.place.admin_key().to_owned());
-    let authority = super::key_authority(&state, &place_id, world, bound.place);
-    match super::key_decision(&state, &authority, world_scene.as_deref(), &sf.signer).await {
+    let target = KeyTarget::bound(&state, bound).await?;
+    let place_id = target.place_id.clone();
+    match target.decide(&state, &sf.signer).await {
         PermissionDecision::Allowed => {}
         PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
             tracing::warn!(signer = %sf.signer, place_id, "stream link refused: not a scene admin");
@@ -1208,8 +1299,10 @@ pub async fn generate_stream_link(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let access = issue_access(&state, &state.ingress(), &place_id, &bound.room, &sf.signer).await?;
-    let row = load_place(&state.pool, &place_id).await?;
+    let alias = target.alias_room.as_deref();
+    let key = (place_id.as_str(), alias);
+    let access = issue_access(&state, &state.ingress(), key, &target.room, &sf.signer).await?;
+    let row = key_place(&state.pool, &place_id, Some(&target.room)).await?;
     let (title, location) = match &row {
         Some(row) => (
             row.title.clone().filter(|t| !t.is_empty()),
@@ -1263,7 +1356,7 @@ pub async fn stream_info(
             "Stream access is missing room information",
         ));
     }
-    let place = load_place(&state.pool, &access.place_id)
+    let place = key_place(&state.pool, &access.place_id, access.room_id.as_deref())
         .await?
         .ok_or_else(|| ApiError::bad_request("Place not found"))?;
     let world_name = place.world_name.filter(|w| !w.is_empty());
@@ -1369,8 +1462,9 @@ pub async fn watcher_token(
     let device_id = device_identifier(&sf.metadata);
     let denied = unauthorized(super::super::voice::DENY_LISTED_MSG);
     refuse_barred(&state, watcher, device_id.as_deref(), denied).await?;
-    let (place_id, place) = watch_place(&state.pool, location).await?;
-    let access = active_access(&state.pool, &place_id)
+    let parcel = text(&body, "parcel").filter(|parcel| !parcel.is_empty());
+    let (place_id, alias, place) = watch_place(&state, location, parcel).await?;
+    let access = active_access(&state.pool, &place_id, alias.as_deref())
         .await?
         .ok_or_else(|| no_active_stream(location))?;
     if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
@@ -1882,8 +1976,14 @@ async fn presenter_room(state: &CommsState, sf: &SignedFetch) -> Result<String, 
     let access = access_by_room(&state.pool, &room)
         .await?
         .ok_or_else(|| no_active_stream(&room))?;
+    // A Genesis key's catalogue place must still exist; a world scene's key
+    // is stored under its scene's place, which is no catalogue row.
     let stored = PlaceLookup::new(state, &access.place_id, scene::NO_ADMINS);
-    match stored.get().await {
+    let stored = match bound.world_scene {
+        Some(_) => Ok(Some(&bound.footprint)),
+        None => stored.get().await,
+    };
+    match stored {
         Ok(Some(_)) => {}
         Ok(None) => {
             return Err(ApiError::not_found(format!(

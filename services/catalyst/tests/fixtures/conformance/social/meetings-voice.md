@@ -66,17 +66,21 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
-- A world has one stream credential for all its scenes. `/scene-stream-access` and
-  `/cast/generate-stream-link` admit there its owner, an admin of the world place, a deployment or
-  streaming grantee without a parcel restriction, and an admin granted through `/scene-admin` on the
-  scene the request is signed from, while the wallet that granted it still holds one of those
-  world-wide authorities (the grant is keyed on the scene's place, its world-scene identity, kept
-  across a redeploy; upstream keys it on the world's place). A grantee of some parcels, an admin it or another scene admin granted, and an
-  admin of a scene that is not the world's current deployment are refused (403); on a Genesis place
-  a parcel grantee is admitted. So in a multi-scene world an admin the owner adds on one scene can
-  read, reset and revoke the stream of every scene. Pinned by
-  `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
-  (`C/tests/gatekeeper_policy.rs`).
+- Each world scene has its own stream credential, stored under its place (its world-scene identity,
+  kept across a redeploy), as upstream keys it on the world scene's place. `/scene-stream-access` and
+  `/cast/generate-stream-link` admit there the world's owner, a deployment or streaming grantee whose
+  grant has no parcel restriction or overlaps the scene's parcels, and an admin granted through
+  `/scene-admin` on that scene while the wallet that granted it holds world-wide authority (the
+  owner, a grantee without a parcel restriction). Upstream admits any admin of the world scene's
+  place; here an admin that a parcel-scoped grantee or another scene admin granted is refused (403),
+  and so is an admin of another scene. A revocation takes the signed scene when it is current, else
+  the scene on the signed parcel. A key stored under the world's catalogue place by an earlier
+  version is the key of the scene whose room it streams into until it is replaced or expires. Pinned
+  by `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
+  (`C/tests/gatekeeper_policy.rs`) and `scene_key_tests` (`G/streaming.rs`).
+- A watcher names a world scene by the body's `parcel`, else the world's only scene; a world with
+  several scenes and no parcel answers 400, as upstream. Pinned by
+  `a_multi_scene_world_needs_the_parcel_to_watch_a_scene`.
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
   `presentation-bot:<room>:<access id>:<uuid>`). Revoking or replacing a key removes its WebRTC
   publishers from the room, and the `participant_joined` webhook removes one that joins later with a

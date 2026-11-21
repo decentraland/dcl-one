@@ -1116,16 +1116,19 @@ async fn canonical_stream_route_creates_and_persists_ingress_for_the_joined_scen
             observed.lock().unwrap().last().unwrap()["roomName"],
             "w1:d:mixed.dcl.ethSceneB"
         );
+        // The key is the scene's, stored under its place.
+        let world = WorldName::parse("mixed.dcl.eth").unwrap();
+        let scene_place = deployment(&world, "SceneB").place_key();
         let stored: String = sqlx::query_scalar(
             "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
         )
-        .bind(&place_id)
+        .bind(&scene_place)
         .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(stored, "w1:d:mixed.dcl.ethSceneB");
         sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id = $1")
-            .bind(&place_id)
+            .bind(&scene_place)
             .execute(&pool)
             .await
             .unwrap();

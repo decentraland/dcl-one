@@ -2713,6 +2713,7 @@ a cleaned row deleted, and the place's `place_removal_state` row with it once
 neither catalogue holds the place and no pending row for it remains. Its context lookups read
 `explore.place_indexed`, joined to `content.active_pointers` and
 `content.deployments` for shared-scene rooms, by primary key or world name.
+Its cleanup ends the stream keys of the removed place ("Scene stream keys").
 Neither table has an FK: queue rows outlive catalogue deletion.
 
 ## Scene admin grants
@@ -2827,6 +2828,40 @@ Invariants:
   keeps its entity id.
 - A kick intent queued before the release names the entity id; the removal
   job reads its ban again on the scene's place (`legacy_ban_key`).
+
+## Scene stream keys
+
+`social.scene_stream_access` (`schemas/40_social.sql`) holds at most one active
+stream key for each `place_id` (`scene_stream_access_active_place_key`). The
+place of a Genesis scene's key is the catalogue place based on its base parcel;
+the place of a world scene's key is the scene's place
+(`ActiveDeployment::place_key`, its `explore.world_scene_place` identity), so
+each scene of a world has its own key, streaming into its own room
+([ADR](docs/adr/2026-11-21-world-stream-keys-per-scene.md)).
+
+Workload: one read of the place's active key for each scene-signed stream
+verb, stream link and watcher token, hundreds a day; a world scene's read also
+matches the active key of its room (`place_id = $1 OR room_id = $2`, the two
+partial unique and room indexes over hundreds of active rows). A watcher of a
+world without a parcel reads at most two active `explore.world_scene_place`
+rows of the world (`world_scene_place_deployment_idx`).
+
+Invariants:
+
+- A world scene's key names a room of that scene (`room_id`); the room, not the
+  place, tells a world key from a Genesis key, because an imported world-scene
+  identity is a place UUID.
+- A key minted under the world's catalogue place before keys were per scene
+  stays the key of the scene whose room it streams into: that scene reads,
+  resets and revokes it, and its replacement is stored under the scene's place.
+  No row is rewritten (publisher identities carry the place); the key ends at
+  its first replacement, a revocation or its expiry, four days at most.
+- A removed world ends every active key whose room is one of its scene rooms
+  (`starts_with(room_id, <world room prefix>)`), the catalogue place's
+  included. A removed Genesis place ends its own key and no key streaming
+  into a world scene room.
+- The notice of a world scene key's cleanup names the world (its catalogue
+  place, else the world alone); its owner is the world's.
 
 ## Stream key notifications
 

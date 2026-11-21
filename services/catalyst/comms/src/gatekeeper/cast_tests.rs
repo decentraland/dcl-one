@@ -1052,12 +1052,14 @@ async fn a_world_scene_admin_gets_a_link_watchers_open_by_world_name() {
         body["watcherLink"],
         format!("https://cast.example/w/{}", world.display())
     );
-    // Untitled: the place id names it.
-    assert_eq!(body["placeName"], place_id.as_str());
+    // The key is the scene's, stored under its place; untitled, the place id names it.
+    let scene_place = room.deployment.as_ref().unwrap().place_key();
+    assert_eq!(body["placeId"], scene_place.as_str());
+    assert_eq!(body["placeName"], scene_place.as_str());
     let stored: String = sqlx::query_scalar(
         "SELECT room_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
     )
-    .bind(&place_id)
+    .bind(&scene_place)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -1412,6 +1414,93 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
             .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{location}");
     }
+}
+
+/// A world location names one scene: the one on the body's parcel, or the
+/// world's only scene; a multi-scene world needs the parcel (upstream's
+/// `fetchWorldSceneId`). The watcher reads that scene's own key.
+#[tokio::test]
+async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
+    let Some(pool) = scratch().await else { return };
+    let world = WorldName::parse(&format!("castmulti{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
+    let scene_id = format!("bafkreimulti{}", tag());
+    let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
+    let h = harness(
+        pool.clone(),
+        Some(room.clone()),
+        PermissionDecision::Allowed,
+        None,
+    )
+    .await;
+    let scene_place = room.deployment.as_ref().unwrap().place_key();
+    seed_access(
+        &pool,
+        &scene_place,
+        Some(&room.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let watch = |parcel: Option<&str>| {
+        let mut body = json!({"location": world.display(), "identity": "Viewer"});
+        if let Some(parcel) = parcel {
+            body["parcel"] = json!(parcel);
+        }
+        body
+    };
+    let viewer = random_key();
+    let (status, body) = h
+        .signed(
+            &viewer,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch(None)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "the world's only scene: {body}");
+    assert_eq!(body["roomId"], room.room);
+    for (entity, parcel) in [(scene_id.as_str(), "3,4"), ("bafkreisecond", "9,9")] {
+        sqlx::query(
+            "INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) \
+             VALUES ($1, $2, $3, ARRAY[$4])",
+        )
+        .bind(world.key())
+        .bind(Uuid::new_v4())
+        .bind(entity)
+        .bind(parcel)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let (status, body) = h
+        .signed(
+            &viewer,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch(None)),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["error"],
+        format!(
+            "A parcel is required to resolve a scene in multi-scene world {}",
+            world.display()
+        )
+    );
+    let (status, body) = h
+        .signed(
+            &viewer,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch(Some("3,4"))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["roomId"], room.room);
 }
 
 #[tokio::test]
