@@ -43,8 +43,6 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
 
-import { buildRequestPayload } from "../../../ui3/src/data/auth/signerCore.ts";
-
 import { freePort, launchChromium, Tab } from "./cdp.mts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -333,7 +331,9 @@ async function signedFetch(w: Wallet, method: string, url: string, metadata: Rec
   const timestamp = String(Date.now());
   const meta = JSON.stringify(metadata);
   const headers: Record<string, string> = { "x-identity-timestamp": timestamp, "x-identity-metadata": meta };
-  (await chain(w, buildRequestPayload(method, pathname, timestamp, meta))).forEach((link, i) => {
+  // crypto-middleware 6.x payload: method and path folded, metadata signed verbatim
+  const payload = `${method.toLowerCase()}:${pathname.toLowerCase()}:${timestamp}:${meta}`;
+  (await chain(w, payload)).forEach((link, i) => {
     headers[`x-identity-auth-chain-${i}`] = JSON.stringify(link);
   });
   return fetch(url, { method, headers });
