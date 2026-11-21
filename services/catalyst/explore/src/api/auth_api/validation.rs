@@ -914,7 +914,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        assert!(validate_auth_chain(&chain, None).await.is_err());
+        invalid(validate_auth_chain(&chain, None).await);
 
         for link_type in [
             AuthLinkType::EcdsaScopedEphemeral,
@@ -926,7 +926,7 @@ mod tests {
                 invalid(validate_auth_chain(&identity, None).await),
                 "Could not get final authority from auth chain"
             );
-            assert!(validate_identity_chain(&identity, None).await.is_err());
+            invalid(validate_identity_chain(&identity, None).await);
         }
     }
 
