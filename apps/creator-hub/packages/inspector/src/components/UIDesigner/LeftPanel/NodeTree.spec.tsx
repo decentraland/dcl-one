@@ -17,10 +17,21 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../Tree', () => {
   type RowProps = {
     value: UINode;
+    doubleClick?: string;
     renderActionArea: (n: UINode, tabIndex: 0 | -1) => React.ReactNode;
+    renderRenameField?: (
+      n: UINode,
+      p: { label: string; onSubmit: (v: string) => void; onCancel: () => void },
+    ) => React.ReactNode;
   };
-  const Row = ({ value, renderActionArea }: RowProps): JSX.Element => (
-    <div>
+  const Row = ({
+    value,
+    doubleClick,
+    renderActionArea,
+    renderRenameField,
+  }: RowProps): JSX.Element => (
+    <div data-double-click={doubleClick}>
+      {renderRenameField?.(value, { label: value.name, onSubmit: () => {}, onCancel: () => {} })}
       {renderActionArea(value, 0)}
       {value.children.map(child => (
         <Row
@@ -89,27 +100,27 @@ describe('NodeTree row actions', () => {
       expect(eye.getAttribute('aria-pressed')).toBe('false');
     });
 
-    it('should render a delete button named after the node', () => {
+    it('should offer no delete button, since delete lives in the menu and on the key', () => {
       render(<NodeTree />);
-      expect(screen.getByRole('button', { name: 'Delete Panel' }).tagName).toBe('BUTTON');
+      expect(screen.queryByRole('button', { name: 'Delete Panel' })).toBeNull();
     });
 
-    it('should put the actions in Tab order lock, eye, delete', () => {
+    it('should rename in the rail field, named after the node', () => {
+      render(<NodeTree />);
+      expect(screen.getByLabelText('Rename Panel')).toBeTruthy();
+    });
+
+    it('should rename a node on double-click, as the GUI rows do', () => {
+      render(<NodeTree />);
+      expect(document.querySelector('[data-double-click="rename"]')).not.toBeNull();
+    });
+
+    it('should put the actions in Tab order lock, eye', () => {
       render(<NodeTree />);
       const area = screen.getByRole('button', { name: 'Lock Panel' }).closest('.action-area');
       const buttons = within(area as HTMLElement).getAllByRole('button');
-      expect(buttons.map(b => b.getAttribute('aria-label'))).toEqual([
-        'Lock Panel',
-        'Hide Panel',
-        'Delete Panel',
-      ]);
+      expect(buttons.map(b => b.getAttribute('aria-label'))).toEqual(['Lock Panel', 'Hide Panel']);
       buttons.forEach(b => expect(b.tabIndex).toBe(0));
-    });
-
-    it('should remove the node when delete is clicked', () => {
-      render(<NodeTree />);
-      fireEvent.click(screen.getByRole('button', { name: 'Delete Panel' }));
-      expect(mocks.remove).toHaveBeenCalledWith(7);
     });
 
     it('should lock the node when the lock is clicked', () => {

@@ -18,6 +18,7 @@ export type { MoveAnchor } from './store-splices';
 
 import {
   createRootUnlocked,
+  duplicateRootUnlocked,
   exclusive,
   redoCodeUnlocked,
   removeRootUnlocked,
@@ -73,6 +74,7 @@ export const redoCode = exclusive(redoCodeUnlocked);
 export const createRoot = exclusive(createRootUnlocked);
 export const removeRoot = exclusive(removeRootUnlocked);
 export const renameRoot = exclusive(renameRootUnlocked);
+export const duplicateRoot = exclusive(duplicateRootUnlocked);
 export const toggleTopLevel = exclusive(toggleTopLevelUnlocked);
 export const setRootScreenInset = exclusive(setRootScreenInsetUnlocked);
 export const spliceComponentPatch = exclusive(spliceComponentPatchUnlocked);

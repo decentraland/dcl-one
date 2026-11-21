@@ -10,6 +10,7 @@ import {
   resetNodeState,
   selectNodes,
 } from '../../../redux/ui-designer';
+import { MOBILE_HUD_MODULE, wireMobileHudEdits } from '../MobileHud/mobile-hud-emit';
 import {
   DEFAULT_SCREEN_INSET,
   generateRootComponent,
@@ -466,10 +467,28 @@ export const UNDO_CAP = 100;
 export const undoStacks = new Map<string, string[]>();
 export const redoStacks = new Map<string, string[]>();
 
+type RootLifecycleOp = {
+  kind: 'removed' | 'created';
+  root: CodeRoot;
+  source: string;
+  mobileHud?: string;
+};
+
+/** GUI create/delete steps, undone before the active file's history; any new source edit drops them. */
+export const rootUndoStack: RootLifecycleOp[] = [];
+export const rootRedoStack: RootLifecycleOp[] = [];
+
+function recordRootOp(op: RootLifecycleOp): void {
+  rootUndoStack.push(op);
+  if (rootUndoStack.length > UNDO_CAP) rootUndoStack.shift();
+  rootRedoStack.length = 0;
+  publishHistory();
+}
+
 export function publishHistory(): void {
   const file = state.filename;
-  const canUndo = !!file && (undoStacks.get(file)?.length ?? 0) > 0;
-  const canRedo = !!file && (redoStacks.get(file)?.length ?? 0) > 0;
+  const canUndo = rootUndoStack.length > 0 || (!!file && (undoStacks.get(file)?.length ?? 0) > 0);
+  const canRedo = rootRedoStack.length > 0 || (!!file && (redoStacks.get(file)?.length ?? 0) > 0);
   if (canUndo !== state.canUndo || canRedo !== state.canRedo) set({ canUndo, canRedo });
 }
 
@@ -479,6 +498,8 @@ export function pushUndoSnapshot(filename: string, source: string): void {
   if (stack.length > UNDO_CAP) stack.shift();
   undoStacks.set(filename, stack);
   redoStacks.delete(filename);
+  rootUndoStack.length = 0;
+  rootRedoStack.length = 0;
   publishHistory();
 }
 
@@ -489,6 +510,15 @@ export function clearHistory(filename: string): void {
 }
 
 export async function undoCodeUnlocked(): Promise<boolean> {
+  const rootOp = rootUndoStack.pop();
+  if (rootOp) {
+    await (rootOp.kind === 'removed'
+      ? restoreRootFile(rootOp)
+      : dropRootFile(rootOp.root.filename));
+    rootRedoStack.push(rootOp);
+    publishHistory();
+    return true;
+  }
   const file = state.filename;
   if (!file) return false;
   const stack = undoStacks.get(file);
@@ -497,12 +527,22 @@ export async function undoCodeUnlocked(): Promise<boolean> {
   const redo = redoStacks.get(file) ?? [];
   redo.push(state.source);
   redoStacks.set(file, redo);
+  rootRedoStack.length = 0;
   await loadAndParse(file, prev);
   publishHistory();
   return true;
 }
 
 export async function redoCodeUnlocked(): Promise<boolean> {
+  const rootOp = rootRedoStack.pop();
+  if (rootOp) {
+    await (rootOp.kind === 'removed'
+      ? dropRootFile(rootOp.root.filename)
+      : restoreRootFile(rootOp));
+    rootUndoStack.push(rootOp);
+    publishHistory();
+    return true;
+  }
   const file = state.filename;
   if (!file) return false;
   const stack = redoStacks.get(file);
@@ -691,17 +731,52 @@ export async function findReferrers(
 }
 
 export async function removeRootUnlocked(filename: string): Promise<string[] | null> {
-  const storage = getStorage();
-  if (!storage) return null;
-  const name = state.roots.find(r => r.filename === filename)?.name;
-  if (name) {
-    const referrers = await findReferrers(name, filename);
+  if (!getStorage()) return null;
+  const root = state.roots.find(r => r.filename === filename);
+  if (root) {
+    const referrers = await findReferrers(root.name, filename);
     if (referrers.length > 0) {
       const names = referrers.map(r => r.root.name);
-      set({ error: `Can't delete ${name} — used by ${names.join(', ')}` });
+      set({ error: `Can't delete ${root.name} — used by ${names.join(', ')}` });
       return names;
     }
   }
+  const source = filename === state.filename ? state.source : await readFromDisk(filename);
+  const lastRoot = state.roots.length === 1 && !!root;
+  const mobileHud = lastRoot ? await readFromDisk(MOBILE_HUD_MODULE) : '';
+  await dropRootFile(filename);
+  if (root) recordRootOp({ kind: 'removed', root, source, mobileHud: mobileHud || undefined });
+  return null;
+}
+
+async function restoreMobileHud(module: string): Promise<void> {
+  await writeToDisk(MOBILE_HUD_MODULE, module);
+  const entry = await readFromDisk(SCENE_ENTRY);
+  const parser = getCodeParser();
+  if (!entry || !parser) return;
+  const { program, errors } = await parser.parse(SCENE_ENTRY, entry);
+  if (errors && errors.length > 0) return;
+  const next = applyEdits(entry, wireMobileHudEdits(program as { body?: any[] }, entry));
+  if (next !== entry) await writeToDisk(SCENE_ENTRY, next);
+}
+
+async function restoreRootFile(op: RootLifecycleOp): Promise<void> {
+  await writeToDisk(op.root.filename, op.source);
+  const roots = (await refreshRoots()).map(r =>
+    r.filename === op.root.filename
+      ? { ...r, topLevel: op.root.topLevel, screenInset: op.root.screenInset }
+      : r,
+  );
+  set({ roots });
+  await regenerateAggregator(roots);
+  await ensureMainWired();
+  if (op.mobileHud) await restoreMobileHud(op.mobileHud);
+  await selectRootFile(op.root.filename);
+}
+
+async function dropRootFile(filename: string): Promise<void> {
+  const storage = getStorage();
+  if (!storage) return;
   await storage.delete(filename).catch(() => undefined);
   clearHistory(filename);
   const roots = await refreshRoots();
@@ -720,7 +795,6 @@ export async function removeRootUnlocked(filename: string): Promise<string[] | n
         componentTrees: {},
       });
   }
-  return null;
 }
 
 export async function renameRootUnlocked(filename: string, desiredName: string): Promise<void> {
@@ -789,6 +863,8 @@ export async function duplicateRootUnlocked(filename: string): Promise<void> {
   const roots = await refreshRoots();
   await regenerateAggregator(roots);
   await loadAndParse(newFilename, copied, { persist: false });
+  const copy = roots.find(r => r.filename === newFilename);
+  if (copy) recordRootOp({ kind: 'created', root: copy, source: copied });
 }
 
 export let watchTimer: ReturnType<typeof setInterval> | null = null;
