@@ -1393,6 +1393,61 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(2);
   });
 
+  it.each([
+    ["sold out", { priceWei: (2_300n * 10n ** 15n).toString(), available: 0 }],
+    ["repriced", { priceWei: (2_500n * 10n ** 15n).toString(), available: 10 }],
+  ])("a listing %s while the wallet signs the approval is read again after it, under its lock: no credit, no sale, the lock let go", async (_, after) => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // The approval is signed; meanwhile the store's listing changes.
+    const request = demo.wallet.request.bind(demo.wallet);
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      const answer = await request(args);
+      if (args.method === "eth_signTypedData_v4") demo.services.resolvers!.store = async () => after;
+      return answer;
+    }) as typeof demo.wallet.request;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText("We couldn't complete the purchase. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
+    // The approval alone went out; nothing was reserved or sent for a sale the listing no longer allows.
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a dialog closed while the approval reads the listing asks nothing of the wallet: no prompt, no POST, no credit, the lock let go", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // The store's listing is read when the purchase starts, then again at the approve click: that second read waits.
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 2) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    act(() => {
+      fireEvent.click(screen.getByTestId("authorize-step-action"));
+    });
+    await waitFor(() => expect(reads).toBe(2));
+    shown.unmount();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
   it("without Web Locks no approval is asked for: nothing is signed, authorized or sent", async () => {
     const { demo, unmount, again } = setup();
     unmount();

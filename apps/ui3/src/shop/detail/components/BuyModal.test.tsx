@@ -549,12 +549,27 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
     await waitFor(() => expect(confirm).toBeEnabled());
+    // The wallet holds its signature until the dialog is gone.
+    let sign!: () => void;
+    const signing = new Promise<void>((resolve) => (sign = resolve));
+    const request = demo.wallet.request.bind(demo.wallet);
+    let asked = 0;
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method === "eth_signTypedData_v4") {
+        asked++;
+        await signing;
+      }
+      return request(args);
+    }) as typeof demo.wallet.request;
     await act(async () => fireEvent.click(confirm));
     fireEvent.click(await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 5000 });
     unmount();
     // The wallet signs once the dialog is gone: that approval goes no further, and no grant is left to reconcile.
-    await waitFor(() => expect(demo.wallet.requests.some((r) => r.method === "eth_signTypedData_v4")).toBe(true), { timeout: 5000 });
-    await act(async () => {});
+    await act(async () => {
+      sign();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
     const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
     expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toEqual([]);
     expect(demo.chain.allowances.get(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`) ?? 0n).toBe(0n);

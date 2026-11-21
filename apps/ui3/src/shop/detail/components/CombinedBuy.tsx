@@ -124,6 +124,9 @@ const UNKEPT = "This browser couldn't save this purchase's transaction. Once you
 const SPLIT_ITEM_HELD = "A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.";
 const SPLITS_UNREADABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.";
 
+/** The exact grant's lock an approval took and hands to its sale: how to let it go, its name, and the terms it was for. */
+type HeldGrant = { release: () => void; name: string; terms: Terms };
+
 /** What holds a split back: why, and the other item whose purchase does, when its record names it. */
 type SplitBlocked = { message: string; held?: HeldItem };
 
@@ -215,9 +218,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const [agreed, setAgreed] = useState<MixedPayment | null>(null);
   // An approval granted after its screen closed must not go on to buy: nothing would be left to show it.
   const mounted = useRef(true);
-  // The grant's lock this dialog's approval took at the click, with the listing it checked and the terms it was for: handed
-  // to the sale (`approved`, then `pay`), which keeps it through its hand-off; let go if nothing takes it.
-  const handedGrant = useRef<{ release: () => void; target: PurchaseTarget; terms: Terms } | null>(null);
+  // The grant's lock this dialog's approval took at the click, its name and the terms it was for: handed to the sale
+  // (`approved`, then `pay`), which keeps it through its hand-off; let go if nothing takes it.
+  const handedGrant = useRef<HeldGrant | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -380,15 +383,16 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   }
 
   /**
-   * The sale, under the exact grant's lock: `heldGrant` when this dialog's own approval took it at the approve click and
-   * hands it over (held since, so no other window's purchase starts between that approval and this sale), else taken here,
-   * once. No chain is read under it: which other splits' credits are proven over was read before (by `start`, or by the
-   * approval).
+   * The sale, under the exact grant's lock: `held` when this dialog's own approval took it at the approve click and hands it
+   * over (held since, so no other window's purchase starts between that approval and this sale), else taken here, once.
+   * After an approval, the listing is read again under that lock: still buyable on the terms agreed, through the same
+   * manager, or nothing is reserved or sent and the lock is let go. No chain is read under it: which other splits' credits
+   * are proven over was read before (by `start`, or by the approval).
    */
-  async function pay(ctx: RailContext, agreedTerms: Terms, known?: PurchaseTarget, heldGrant?: () => void) {
+  async function pay(ctx: RailContext, agreedTerms: Terms, known?: PurchaseTarget, held?: HeldGrant) {
     setPhase({ kind: "working" });
     if (!services.locks) {
-      heldGrant?.();
+      held?.release();
       setPhase({ kind: "error", message: UNGUARDED });
       return;
     }
@@ -396,14 +400,21 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     try {
       target = known ?? (await resolveTarget(ctx, agreedTerms.offer));
     } catch (e) {
-      heldGrant?.();
+      held?.release();
       setPhase({ kind: "error", message: friendlyError(e, FALLBACK, { sale: true }) });
+      return;
+    }
+    const grantName = exactGrantLock(spendingAuth(target), ctx.buyer);
+    if (held && (held.name !== grantName || !stillAgreed(agreedTerms)())) {
+      // Another manager than the one approved, or a dialog closed (or terms changed) while the listing was read again.
+      held.release();
+      if (held.name !== grantName) setPhase({ kind: "error", message: FALLBACK });
       return;
     }
     // The exact grant's lock, then the item's, in every window in that order: the sale reconciles and spends the manager's
     // allowance with no approval starting beside it, and holds the item's record from its first read to its last write,
     // so two windows never both find it free and both send.
-    const grantRelease = heldGrant ?? (await webLock(services.locks, exactGrantLock(spendingAuth(target), ctx.buyer)));
+    const grantRelease = held?.release ?? (await webLock(services.locks, grantName));
     if (!grantRelease) {
       setPhase({ kind: "error", message: APPROVING_ELSEWHERE });
       return;
@@ -690,7 +701,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       const agreedTerms = terms.current;
       if (!agreedTerms) throw new Error("Start the purchase again to approve.");
       const auth = phase.auth;
-      // Read before any lock is taken: which other splits' credits the chain proves expired, and the listing as it stands.
+      // Read before any lock is taken: which other splits' credits the chain proves expired, and the listing as it stands (an
+      // item gone by now asks nothing of the wallet; the sale reads it again once the approval is in).
       await proveCreditsOver(ctx.buyer);
       const target = await resolveTarget(ctx, agreedTerms.offer);
       const grantName = exactGrantLock(auth, ctx.buyer);
@@ -703,8 +715,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // What held the approval back under its lock, said instead of a plain "cancelled".
       let heldBack: string | null = null;
       try {
-        // Under it, before the wallet is asked: a hold of this item, another item's split that may still spend the
-        // allowance, or purchases this browser can't read.
+        // Under it, before the wallet is asked: a dialog closed (or terms changed) while those reads ran, a hold of this
+        // item, another item's split that may still spend the allowance, or purchases this browser can't read.
+        if (!stillAgreed(agreedTerms)()) throw new GrantCancelledError();
         const blocked = splitBlock(ctx.buyer, true);
         if (blocked) throw new GrantCancelledError(blocked.message);
         // Exactly the MANA the buyer agreed to pay, never an unlimited allowance to the CreditsManager.
@@ -732,13 +745,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         release?.();
         throw e instanceof GrantCancelledError && heldBack ? new GrantCancelledError(heldBack) : e;
       }
-      if (release) handedGrant.current = { release, target, terms: agreedTerms };
+      if (release) handedGrant.current = { release, name: grantName, terms: agreedTerms };
     },
     approved: () => {
       const ctx = context();
       const handed = handedGrant.current;
       handedGrant.current = null;
-      if (mounted.current && ctx && terms.current && (!handed || handed.terms === terms.current)) void pay(ctx, terms.current, handed?.target, handed?.release);
+      if (mounted.current && ctx && terms.current && (!handed || handed.terms === terms.current)) void pay(ctx, terms.current, undefined, handed ?? undefined);
       else handed?.release();
     },
     declined: () => setPhase({ kind: "error", message: "MANA spending was not approved, so nothing was bought." }),
