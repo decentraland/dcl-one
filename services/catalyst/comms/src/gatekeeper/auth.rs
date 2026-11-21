@@ -1053,6 +1053,29 @@ mod tests {
             401
         );
         // As upstream: the 60 s window and the current payload only.
+        let current = signed_as(
+            KEY,
+            Shape::V6,
+            "get",
+            "/bans",
+            r#"{"note":"Hi"}"#,
+            r#"{"note":"Hi"}"#,
+        )
+        .await;
+        assert_eq!(
+            authorize_moderator(
+                &creds,
+                &current,
+                "get",
+                &SignedPath::local("/bans"),
+                ModeratorMode::Read,
+                None,
+                None
+            )
+            .await
+            .unwrap(),
+            listed.as_str()
+        );
         let stale = (chrono::Utc::now().timestamp_millis() - 120 * 1000).to_string();
         let legacy = signed_as(
             KEY,
