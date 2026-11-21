@@ -535,13 +535,16 @@ impl CommsState {
     }
 
     /// The wallets the moderator gate admits, read on every check: the
-    /// `platform_user_moderators` flag (none while it is off) once a flags
-    /// document is held, `PLATFORM_USER_MODERATORS` before that. A failed
-    /// refresh keeps the last document.
+    /// `platform_user_moderators` flag once a flags document is held (none
+    /// while the flag or its variant is off), `PLATFORM_USER_MODERATORS`
+    /// before that (`FF_URL` unset, or never fetched and none stored).
+    /// A failed refresh keeps the last document with no age limit, so a
+    /// revocation waits for the next successful refresh; social's
+    /// `social_dapps_flags_last_refresh_timestamp_seconds` shows its age.
     pub fn platform_moderators(&self) -> std::borrow::Cow<'_, [Address]> {
         match self.platform_moderator_flags.get() {
             Some(flags) if flags.is_sourced() => flags
-                .variant_values("dapps", PLATFORM_USER_MODERATORS_FLAG)
+                .enabled_variant_values("dapps", PLATFORM_USER_MODERATORS_FLAG)
                 .unwrap_or_default()
                 .iter()
                 .filter_map(|value| Address::parse(value).ok())

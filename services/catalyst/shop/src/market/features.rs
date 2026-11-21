@@ -84,7 +84,7 @@ impl DappsFlags {
     pub(super) fn new() -> Self {
         let on = cfg!(any(test, feature = "test-support"));
         Self {
-            snapshot: feature_flags::Snapshot::from_document(document(on)),
+            snapshot: feature_flags::Snapshot::from_document(document(on), false),
             fetched: Mutex::new(None),
             overrides: Mutex::new(None),
         }
@@ -384,8 +384,8 @@ mod tests {
 
     #[test]
     fn a_document_names_the_marketplace_only_when_it_is_on() {
-        let on = feature_flags::Snapshot::from_document(document(true));
-        let off = feature_flags::Snapshot::from_document(document(false));
+        let on = feature_flags::Snapshot::from_document(document(true), false);
+        let off = feature_flags::Snapshot::from_document(document(false), false);
         assert!(on.enabled(APP, MARKETPLACE_FEATURES));
         assert!(!off.enabled(APP, MARKETPLACE_FEATURES));
     }

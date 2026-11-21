@@ -48,8 +48,7 @@ pub async fn reload(snapshot: &Snapshot, pool: &PgPool, app: &str) -> sqlx::Resu
         }
     });
     let doc = with_local_overrides(pool, app, doc).await?;
-    snapshot.replace(doc);
-    snapshot.mark_sourced(sourced);
+    snapshot.replace_sourced(doc, sourced);
     Ok(())
 }
 
