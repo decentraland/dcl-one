@@ -1,0 +1,58 @@
+.TabBar {
+  display: flex;
+  box-sizing: border-box;
+  height: 36px;
+  background-color: var(--base-20);
+  border-bottom: 1px solid var(--palette-whiteTransparent-subtle);
+}
+
+.TabBar-tab {
+  flex: 1 1 0;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 0 4px;
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: normal;
+  letter-spacing: 0;
+  text-align: center;
+  text-transform: uppercase;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    color 80ms linear,
+    border-color 80ms linear,
+    background-color 80ms linear;
+}
+
+.TabBar-tab:first-child[aria-selected="true"] {
+  color: var(--palette-neutral-gray4);
+  border-bottom-color: var(--palette-neutral-gray4);
+}
+
+.TabBar-tab:last-child[aria-selected="true"] {
+  color: var(--palette-neutral-softWhite);
+  border-bottom-color: var(--palette-neutral-softWhite);
+}
+
+.TabBar-tab:first-child[aria-selected="false"] {
+  color: var(--palette-whiteTransparent-blurry);
+}
+
+.TabBar-tab:last-child[aria-selected="false"] {
+  color: var(--palette-neutral-gray3);
+}
+
+.TabBar-tab:hover {
+  background-color: var(--palette-whiteTransparent-subtle);
+}
+
+.TabBar-tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
+}

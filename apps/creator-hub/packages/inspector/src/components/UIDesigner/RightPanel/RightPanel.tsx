@@ -13,6 +13,7 @@ import { CodePropsPanel } from './LogicPanel/CodePropsPanel';
 import { CodeCallbacksPanel } from './LogicPanel/CodeCallbacksPanel';
 import { ComponentRefPanel } from './LogicPanel/ComponentRefPanel';
 
+import '../../../theme/tab-bar.css';
 import '../UIDesigner.css';
 
 type RightTab = 'properties' | 'logic';
@@ -52,14 +53,14 @@ const RightPanel: React.FC = () => {
   return (
     <Box className="ui-designer-right-rail">
       <div
-        className="ui-designer-right-rail-tabs"
+        className="ui-designer-right-rail-tabs TabBar"
         role="tablist"
       >
         <button
           type="button"
           role="tab"
           aria-selected={tab === 'properties'}
-          className={`ui-designer-right-rail-tab${tab === 'properties' ? ' active' : ''}`}
+          className={`ui-designer-right-rail-tab TabBar-tab${tab === 'properties' ? ' active' : ''}`}
           onClick={() => setTab('properties')}
         >
           Properties
@@ -68,7 +69,7 @@ const RightPanel: React.FC = () => {
           type="button"
           role="tab"
           aria-selected={tab === 'logic'}
-          className={`ui-designer-right-rail-tab${tab === 'logic' ? ' active' : ''}`}
+          className={`ui-designer-right-rail-tab TabBar-tab${tab === 'logic' ? ' active' : ''}`}
           onClick={() => setTab('logic')}
         >
           Logic

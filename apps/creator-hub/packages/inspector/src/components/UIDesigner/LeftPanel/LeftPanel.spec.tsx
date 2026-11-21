@@ -8,6 +8,10 @@ import { LeftPanel } from './LeftPanel';
 
 const mocks = vi.hoisted(() => ({
   createRoot: vi.fn(),
+  spliceSetRootChild: vi.fn(),
+  selectedNodes: [1] as number[],
+  mobileHudSelected: false,
+  picker: null as null | { parent?: unknown; onAdd?: (type: string) => void },
   track: vi.fn(),
   roots: [] as { name: string; filename: string; topLevel: boolean }[],
   filename: null as string | null,
@@ -22,6 +26,7 @@ vi.mock('../../../lib/logic/analytics', async importActual => ({
 
 vi.mock('../code/store', () => ({
   createRoot: mocks.createRoot,
+  spliceSetRootChild: mocks.spliceSetRootChild,
   useCodeState: () => ({
     roots: mocks.roots,
     filename: mocks.filename,
@@ -33,19 +38,27 @@ vi.mock('../shared/useUINodeTree', () => ({ useUINodeTree: () => mocks.tree }));
 
 vi.mock('../../../redux/hooks', () => ({
   useAppSelector: (selector: (state: unknown) => unknown) =>
-    selector({ uiDesigner: { selectedNodes: [1], mobileHudSelected: false } }),
+    selector({
+      uiDesigner: {
+        selectedNodes: mocks.selectedNodes,
+        mobileHudSelected: mocks.mobileHudSelected,
+      },
+    }),
   useAppDispatch: () => vi.fn(),
 }));
 
-// The two lists are stubbed: what the rail decides is WHICH sections exist and
-// what term they get — the lists' own rendering is covered by their own specs.
 vi.mock('./NodeTree', () => ({
   NodeTree: ({ filter }: { filter?: string }) => <div data-testid="nodes">{filter}</div>,
 }));
 vi.mock('./CodeRootsList', () => ({
   CodeRootsList: ({ filter }: { filter?: string }) => <div data-testid="guis">{filter}</div>,
 }));
-vi.mock('./WidgetPicker', () => ({ WidgetPicker: () => null }));
+vi.mock('./WidgetPicker', () => ({
+  WidgetPicker: (props: { parent?: unknown; onAdd?: (type: string) => void }) => {
+    mocks.picker = props;
+    return null;
+  },
+}));
 
 const root = (over: Partial<UINode> = {}): UINode =>
   ({ entity: 1, type: 'UiEntity', name: 'UiEntity', children: [], ...over }) as UINode;
@@ -54,9 +67,6 @@ const search = () => screen.getByLabelText('Search GUIs and nodes');
 const guis = () => screen.queryByTestId('guis');
 const nodes = () => screen.queryByTestId('nodes');
 
-// ui/TextField reports changes through a debounce (0ms, but still a timer), so
-// the term lands on the next tick. A controlled clock keeps every assertion
-// synchronous instead of racing a waitFor.
 function type(term: string) {
   fireEvent.change(search(), { target: { value: term } });
   act(() => {
@@ -77,7 +87,17 @@ beforeEach(() => {
   mocks.filename = 'src/ui/MainUI.tsx';
   mocks.tree = root({ uiName: 'Sidebar', children: [] } as Partial<UINode>);
   mocks.emptyRoot = false;
+  mocks.selectedNodes = [1];
+  mocks.mobileHudSelected = false;
+  mocks.picker = null;
+  mocks.spliceSetRootChild.mockClear();
 });
+
+const header = (name: 'New GUI' | 'Add Node') => {
+  const el = screen.getByLabelText(name);
+  expect(el.tagName).toBe('BUTTON');
+  return el;
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -95,6 +115,16 @@ describe('when no GUI is selected', () => {
   });
 });
 
+describe('when the MobileHUD is selected', () => {
+  it('should not show the Nodes section', () => {
+    mocks.mobileHudSelected = true;
+    renderRail();
+
+    expect(nodes()).toBeNull();
+    expect(screen.queryByLabelText('Add Node')).toBeNull();
+  });
+});
+
 describe('when a GUI is selected', () => {
   it('should show both sections', () => {
     renderRail();
@@ -103,13 +133,83 @@ describe('when a GUI is selected', () => {
     expect(nodes()).not.toBeNull();
   });
 
-  it('should still show the Nodes section for an empty GUI, whose + adds the first element', () => {
-    mocks.tree = null;
-    mocks.emptyRoot = true;
+  it('should split the rail without a resize handle', () => {
+    const { container } = render(<LeftPanel />);
+
+    expect(container.querySelector('[data-panel-resize-handle-id]')).toBeNull();
+    expect(container.querySelector('.ui-designer-rail-handle')).toBeNull();
+  });
+});
+
+describe('the section headers', () => {
+  it('should each be one button, named New GUI and Add Node, holding its label', () => {
     renderRail();
 
-    expect(screen.queryByText('Nodes')).not.toBeNull();
-    expect((screen.getByLabelText('Add widget') as HTMLButtonElement).disabled).toBe(false);
+    expect(header('New GUI').textContent).toContain('GUIs');
+    expect(header('Add Node').textContent).toContain('Nodes');
+    expect(screen.queryByLabelText('Add widget')).toBeNull();
+  });
+
+  it('should create a GUI and track it from the GUIs row', () => {
+    renderRail();
+    fireEvent.click(header('New GUI'));
+
+    expect(mocks.createRoot).toHaveBeenCalled();
+    expect(mocks.track).toHaveBeenCalledWith(Event.CREATE_UI, {});
+  });
+
+  it('should leave no ripple after either row is pressed', () => {
+    const { container } = render(<LeftPanel />);
+    fireEvent.click(header('New GUI'));
+    fireEvent.click(header('Add Node'));
+
+    expect(container.querySelectorAll('.ui-designer-rail-add-ripple')).toHaveLength(0);
+  });
+});
+
+describe('when adding a node', () => {
+  it('should add under the selected node', () => {
+    mocks.selectedNodes = [7];
+    renderRail();
+    fireEvent.click(header('Add Node'));
+
+    expect(mocks.picker?.parent).toBe(7);
+    expect(mocks.picker?.onAdd).toBeUndefined();
+  });
+
+  describe('and nothing is selected', () => {
+    beforeEach(() => {
+      mocks.selectedNodes = [];
+    });
+
+    it('should stay enabled', () => {
+      renderRail();
+
+      expect((header('Add Node') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("should append to the GUI's top-level element, never replacing the GUI's JSX", () => {
+      renderRail();
+      fireEvent.click(header('Add Node'));
+
+      expect(mocks.picker?.parent).toBe(1);
+      expect(mocks.picker?.onAdd).toBeUndefined();
+      expect(mocks.spliceSetRootChild).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('and the GUI is empty', () => {
+    it('should set the first element as the root', () => {
+      mocks.selectedNodes = [];
+      mocks.tree = null;
+      mocks.emptyRoot = true;
+      renderRail();
+      fireEvent.click(header('Add Node'));
+      mocks.picker?.onAdd?.('UiEntity');
+
+      expect(mocks.picker?.parent).toBeUndefined();
+      expect(mocks.spliceSetRootChild).toHaveBeenCalledWith('UiEntity', undefined);
+    });
   });
 });
 
@@ -117,37 +217,19 @@ describe('when searching', () => {
   it('should pass the same term to both lists', () => {
     renderRail('side');
 
-    expect(guis()).toBeNull();
+    expect(guis()!.textContent).toBe('side');
     expect(nodes()!.textContent).toBe('side');
   });
 
-  it('should hide the Nodes section when only a GUI matches', () => {
-    renderRail('mainui');
-
-    expect(guis()!.textContent).toBe('mainui');
-    expect(nodes()).toBeNull();
-  });
-
-  it('should hide the GUIs section when only a node matches', () => {
-    renderRail('sidebar');
-
-    expect(guis()).toBeNull();
-    expect(nodes()).not.toBeNull();
-  });
-
-  it('should hide both sections when nothing matches', () => {
+  it('should keep both headers and lists when nothing matches, with both rows working', () => {
     renderRail('nothinghere');
-
-    expect(guis()).toBeNull();
-    expect(nodes()).toBeNull();
-  });
-
-  it('should restore both sections when the term is cleared', () => {
-    renderRail('nothinghere');
-    type('');
 
     expect(guis()).not.toBeNull();
     expect(nodes()).not.toBeNull();
+    fireEvent.click(header('New GUI'));
+    fireEvent.click(header('Add Node'));
+    expect(mocks.createRoot).toHaveBeenCalled();
+    expect(mocks.picker).not.toBeNull();
   });
 
   it('should clear the term from a named Clear search button', () => {
@@ -159,61 +241,7 @@ describe('when searching', () => {
       vi.advanceTimersByTime(1);
     });
 
-    expect(guis()).not.toBeNull();
-    expect(nodes()).not.toBeNull();
-  });
-});
-
-describe('when pressing an add button', () => {
-  const ripples = (label: string) =>
-    screen.getByLabelText(label).querySelectorAll('.ui-designer-rail-add-ripple');
-
-  it('should show no ripple until the button is pressed', () => {
-    renderRail();
-
-    expect(ripples('New GUI')).toHaveLength(0);
-    expect(ripples('Add widget')).toHaveLength(0);
-  });
-
-  it('should ripple the pressed button only', () => {
-    renderRail();
-    fireEvent.click(screen.getByLabelText('New GUI'));
-
-    expect(ripples('New GUI')).toHaveLength(1);
-    expect(ripples('Add widget')).toHaveLength(0);
-  });
-
-  it('should ripple the Nodes + too', () => {
-    renderRail();
-    fireEvent.click(screen.getByLabelText('Add widget'));
-
-    expect(ripples('Add widget')).toHaveLength(1);
-  });
-
-  it('should replace the ripple on every press, so a second press restarts the animation', () => {
-    renderRail();
-    const button = screen.getByLabelText('New GUI');
-    fireEvent.click(button);
-    const first = ripples('New GUI')[0];
-    fireEvent.click(button);
-
-    expect(ripples('New GUI')).toHaveLength(1);
-    expect(ripples('New GUI')[0]).not.toBe(first);
-  });
-});
-
-describe('when creating a GUI from the section header', () => {
-  it('should call createRoot', () => {
-    renderRail();
-    fireEvent.click(screen.getByLabelText('New GUI'));
-
-    expect(mocks.createRoot).toHaveBeenCalled();
-  });
-
-  it('should track the creation', () => {
-    renderRail();
-    fireEvent.click(screen.getByLabelText('New GUI'));
-
-    expect(mocks.track).toHaveBeenCalledWith(Event.CREATE_UI, {});
+    expect(guis()!.textContent).toBe('');
+    expect(nodes()!.textContent).toBe('');
   });
 });

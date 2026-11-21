@@ -322,6 +322,7 @@ const NodeTreeImpl: React.FC<{ filter?: string }> = ({ filter = '' }) => {
   );
 
   if (!tree) return null;
+  if (term && !matchesFilter(tree, term)) return <div className="ui-designer-nodetree" />;
 
   return (
     <div className="ui-designer-nodetree">
