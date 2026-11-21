@@ -859,15 +859,15 @@ async fn a_lookup_without_a_device_id_is_widened_to_the_recorded_device() {
 }
 
 /// GET /users/{address}/bans answers an address ban with its record and a
-/// ban of the wallet's recorded device without it.
+/// ban of the wallet's recorded device without it, whatever the address casing.
 #[tokio::test]
 async fn the_ban_status_route_reports_what_the_ban_matched_on() {
     let Some(pool) = scratch().await else { return };
     let state = state_with(pool, Settings::for_tests());
     let s = seed_device_ban(&state).await;
     let app = super::router(state.clone());
-    let status = |address: &Address| {
-        let request = Request::get(format!("/users/{}/bans", address.as_str()))
+    let status = |address: &str| {
+        let request = Request::get(format!("/users/{address}/bans"))
             .body(Body::empty())
             .unwrap();
         let app = app.clone();
@@ -878,17 +878,23 @@ async fn the_ban_status_route_reports_what_the_ban_matched_on() {
         }
     };
 
-    let own = status(&s.banned).await;
+    let own = status(s.banned.as_str()).await;
     assert_eq!(own["isBanned"], true);
     assert_eq!(own["matchedOn"], "address");
     assert_eq!(own["ban"]["bannedAddress"], s.banned.as_str());
     assert!(own["ban"].get("bannedDeviceId").is_none());
+    // The checksummed form, or upper case when the checksum has no letter to raise.
+    let mut mixed = s.banned.checksummed();
+    if mixed == s.banned.as_str() {
+        mixed = format!("0x{}", s.banned.as_str()[2..].to_ascii_uppercase());
+    }
+    assert_eq!(status(&mixed).await, own, "the path address is lowercased");
     assert_eq!(
-        status(&s.same_device).await,
+        status(s.same_device.as_str()).await,
         serde_json::json!({ "isBanned": true, "matchedOn": "device" })
     );
     assert_eq!(
-        status(&s.clean).await,
+        status(s.clean.as_str()).await,
         serde_json::json!({ "isBanned": false })
     );
 }
