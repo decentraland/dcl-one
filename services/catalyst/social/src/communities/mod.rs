@@ -162,7 +162,7 @@ pub struct State {
     /// `None` reads such chains as unverifiable.
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
-    pub referral: referral::Referral,
+    pub referral: Arc<referral::Referral>,
     /// The Pulse wallet topology, attached with the social RPC's (`serve`):
     /// who `onlyOnline` counts as online. Unattached, no one is.
     pub topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
@@ -260,8 +260,11 @@ impl State {
         explore: crate::explore::SharedState,
     ) -> Self {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
-        let referral =
-            referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
+        let referral = Arc::new(referral::Referral::new(
+            pool.clone(),
+            http.clone(),
+            settings.referral.clone(),
+        ));
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
             pool,

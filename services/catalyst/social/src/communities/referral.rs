@@ -2,7 +2,9 @@
 //! The invited user is always the signed-fetch signer: POST records the
 //! attribution (first referrer wins), PATCH marks the signer as signed up,
 //! GET reports the signer's own stats as a referrer. Login events grant
-//! progress after the configured distinct UTC login days. `POST
+//! progress after the configured distinct UTC login days; they come from
+//! the signed `POST /v1/client-login` and from verified explorer
+//! `logged_in`/`logged_in_cached` Segment events (`segment_webhooks`). `POST
 //! /v1/referral-email` stores the contact email of a referrer at the IRL-swag
 //! tier, checked as upstream's `setReferralEmail` checks it.
 

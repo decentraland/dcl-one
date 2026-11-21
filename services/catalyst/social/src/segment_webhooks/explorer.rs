@@ -4,19 +4,20 @@
 //! `FORCE_EXPLORER_CONTEXT_VALIDATION`; the auth chain, which every write
 //! waits for; then, keyed on the chain owner, the CP7 checkpoint side effect
 //! (`otp_verification_success` records CP7 reached and ends the request;
-//! `logged_in`/`logged_in_cached` record CP7 completed and continue); the
-//! row; the metrics. A checkpoint carries neither the event's email nor
+//! `logged_in`/`logged_in_cached` count toward the owner's referral, record
+//! CP7 completed and continue); the row; the metrics. A checkpoint carries neither the event's email nor
 //! metadata.
 
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 use super::store::{ClientEventRow, insert_client_event};
 use super::{Settings, SharedState, gate, identity, object, parse_time, refused, reply, text};
 use crate::auth::{AuthChain, AuthLinkType, is_eth_address, parse_ephemeral_payload};
+use crate::communities::referral::Referral;
 use crate::explore::api::onboarding::{CheckpointRequest, OnboardingState};
 
 const OTP_VERIFICATION_SUCCESS: &str = "otp_verification_success";
@@ -62,6 +63,11 @@ pub(super) async fn forward(
         return refused(StatusCode::UNAUTHORIZED, "Invalid AuthChain");
     }
     if matches!(parsed.row.sub_type, "logged-in" | "logged-in-cached") {
+        if let Some(referral) = state.referral.get()
+            && let Err(response) = credit_referral(referral, &parsed.row).await
+        {
+            return response;
+        }
         record(
             &state.onboarding,
             checkpoint(&parsed.row.address, "completed"),
@@ -86,6 +92,37 @@ pub(super) async fn forward(
             .record(segment_to_webhook);
     }
     reply(StatusCode::OK, json!({ "ok": true }))
+}
+
+/// Namespace of the referral login ids derived from Segment `messageId`s.
+const LOGIN_ID_NAMESPACE: uuid::Uuid = uuid::uuid!("3f0b7a52-8d4e-5c1a-9b6f-2e7d40c9a815");
+
+/// A verified login counts toward the chain owner's referral as
+/// `POST /v1/client-login` does (legacy `logged-in-handler.ts`): a 5xx is
+/// returned so Segment redelivers, and the `messageId` receipt keeps the
+/// redelivery from counting twice. A refused login (quota, stale) is logged.
+async fn credit_referral(referral: &Referral, row: &ClientEventRow) -> Result<(), Response> {
+    let login_id = uuid::Uuid::new_v5(&LOGIN_ID_NAMESPACE, row.key.as_bytes());
+    let occurred_at = row.received_at.timestamp_millis();
+    let Err(error) = referral
+        .record_authenticated_login(&row.address, login_id, occurred_at)
+        .await
+    else {
+        return Ok(());
+    };
+    tracing::warn!(
+        ?error,
+        address = row.address,
+        key = row.key,
+        "Segment login not credited to the referral"
+    );
+    if error.into_response().status().is_server_error() {
+        return Err(refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+        ));
+    }
+    Ok(())
 }
 
 /// `otp_verification_success` (`forward-explorer-events.ts:63-105`), handled
@@ -307,6 +344,7 @@ fn auth_chain_is_valid(chain: Option<&AuthChain>, address: &str) -> bool {
 mod tests {
     use super::*;
     use crate::auth::Wallet;
+    use std::sync::Arc;
 
     /// An onboarding store over a database of its own; `None` skips without
     /// `CATALYST_TEST_DATABASE_URL`.
@@ -573,6 +611,210 @@ mod tests {
         assert_eq!(state.wallet.as_deref(), Some(wallet));
         assert_eq!(state.metadata, None);
         assert!(onboarding.checkpoint_state(wallet, 7).await.is_none());
+    }
+
+    const KEY: &[u8] = b"fixture-signing-key";
+
+    /// A webhook state over `pool` whose verified logins credit `min_login_days` referrals.
+    fn referral_state(pool: &sqlx::PgPool, min_login_days: f64) -> (SharedState, Arc<Referral>) {
+        let settings = crate::communities::referral::Settings {
+            min_login_days,
+            ..crate::communities::referral::Settings::for_tests()
+        };
+        let referral = Arc::new(Referral::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        let state = Arc::new(super::super::State::new(
+            pool.clone(),
+            Settings {
+                signing_key: Some(String::from_utf8(KEY.to_vec()).unwrap()),
+                ..Settings::default()
+            },
+            Arc::new(OnboardingState::new(pool.clone())),
+        ));
+        state.set_referral(referral.clone());
+        (state, referral)
+    }
+
+    /// `owner` invited by a fresh referrer; the referrer.
+    async fn invited(referral: &Referral, owner: &str) -> crate::Address {
+        let referrer = crate::Address::parse(&Wallet::random().unwrap().address()).unwrap();
+        let invited = crate::Address::parse(owner).unwrap();
+        referral
+            .create(&referrer, &invited, "192.0.2.1")
+            .await
+            .unwrap();
+        referrer
+    }
+
+    async fn post(
+        state: &SharedState,
+        name: &str,
+        message_id: &str,
+        context: &Value,
+    ) -> StatusCode {
+        let now = chrono::Utc::now().to_rfc3339();
+        let body = json!({
+            "event": name,
+            "type": "track",
+            "messageId": message_id,
+            "receivedAt": now,
+            "timestamp": now,
+            "context": context,
+        })
+        .to_string();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-signature",
+            crate::shared::segment_signature::sign(KEY, body.as_bytes())
+                .parse()
+                .unwrap(),
+        );
+        forward(State(state.clone()), headers, Bytes::from(body))
+            .await
+            .status()
+    }
+
+    async fn progress(pool: &sqlx::PgPool, invited: &str) -> (String, usize, i64) {
+        let (status, days): (String, Vec<chrono::NaiveDate>) = sqlx::query_as(
+            "SELECT status, login_days FROM social.referral_progress WHERE invited_user = $1",
+        )
+        .bind(invited)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let receipts: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user = $1",
+        )
+        .bind(invited)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (status, days.len(), receipts)
+    }
+
+    async fn accepted_notices(pool: &sqlx::PgPool, referrer: &crate::Address) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM social.notifications \
+             WHERE address = $1 AND type = 'referral_invited_users_accepted'",
+        )
+        .bind(referrer)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_verified_login_finalizes_the_referral_once_and_notifies_the_referrer() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, referral) = referral_state(&pool, 0.0);
+        let (owner, context) = signed_context();
+        let referrer = invited(&referral, &owner).await;
+
+        assert_eq!(
+            post(&state, "logged_in", "m-1", &context).await,
+            StatusCode::OK
+        );
+        assert_eq!(progress(&pool, &owner).await, ("tier_granted".into(), 0, 1));
+        assert_eq!(accepted_notices(&pool, &referrer).await, 1);
+        // The referral badge counts the referrer's granted invitations.
+        let granted: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.referral_progress WHERE referrer = $1 AND tier_granted",
+        )
+        .bind(&referrer)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(granted, 1);
+
+        assert_eq!(
+            post(&state, "logged_in", "m-1", &context).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            post(&state, "logged_in_cached", "m-2", &context).await,
+            StatusCode::OK
+        );
+        assert_eq!(accepted_notices(&pool, &referrer).await, 1, "granted once");
+    }
+
+    #[tokio::test]
+    async fn verified_logins_count_one_login_day_per_utc_day() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, referral) = referral_state(&pool, 3.0);
+        let (owner, context) = signed_context();
+        let referrer = invited(&referral, &owner).await;
+
+        for (name, id) in [
+            ("logged_in", "m-1"),
+            ("logged_in", "m-1"),
+            ("logged_in_cached", "m-2"),
+        ] {
+            assert_eq!(post(&state, name, id, &context).await, StatusCode::OK);
+        }
+        assert_eq!(
+            progress(&pool, &owner).await,
+            ("pending".into(), 1, 2),
+            "a redelivered messageId is one receipt"
+        );
+        assert_eq!(accepted_notices(&pool, &referrer).await, 0);
+    }
+
+    #[tokio::test]
+    async fn an_unverified_or_forged_chain_credits_no_referral() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (state, referral) = referral_state(&pool, 0.0);
+        let (victim, signed) = signed_context();
+        let referrer = invited(&referral, &victim).await;
+
+        // Another wallet's valid chain, claimed for the invitee.
+        let (_, mut borrowed) = signed_context();
+        borrowed["dcl_eth_address"] = json!(victim);
+        // The invitee named as signer, the delegation signed by another key.
+        let mut forged = signed.clone();
+        let mut links: Value =
+            serde_json::from_str(signed["auth_chain"].as_str().unwrap()).unwrap();
+        let payload = links[1]["payload"].as_str().unwrap().to_string();
+        links[1]["signature"] = json!(
+            Wallet::random()
+                .unwrap()
+                .sign_message(payload.as_bytes())
+                .unwrap()
+        );
+        forged["auth_chain"] = json!(links.to_string());
+        // An expired delegation of the invitee's own chain shape.
+        let mut stale = signed.clone();
+        let mut links: Value =
+            serde_json::from_str(signed["auth_chain"].as_str().unwrap()).unwrap();
+        links[1]["payload"] = json!(payload.replace(
+            payload.rsplit("Expiration: ").next().unwrap(),
+            "2020-01-01T00:00:00.000Z"
+        ));
+        stale["auth_chain"] = json!(links.to_string());
+        let mut unsigned = signed.clone();
+        unsigned.as_object_mut().unwrap().remove("auth_chain");
+
+        for (case, context) in [("borrowed", borrowed), ("forged", forged), ("stale", stale)] {
+            assert_eq!(
+                post(&state, "logged_in", case, &context).await,
+                StatusCode::UNAUTHORIZED,
+                "{case}"
+            );
+        }
+        assert_eq!(
+            post(&state, "logged_in", "unsigned", &unsigned).await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(progress(&pool, &victim).await, ("pending".into(), 0, 0));
+        assert_eq!(accepted_notices(&pool, &referrer).await, 0);
     }
 
     #[test]

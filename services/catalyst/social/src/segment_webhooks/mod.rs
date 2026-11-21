@@ -35,7 +35,7 @@
 //!
 //! | Route | Auth | Writes |
 //! |---|---|---|
-//! | `POST /forward` | Segment HMAC, then the auth chain | `social.client_events`, the CP7 checkpoint |
+//! | `POST /forward` | Segment HMAC, then the auth chain | `social.client_events`, the CP7 checkpoint, the referral login |
 //! | `POST /forward-web` | Segment HMAC | `social.client_events` |
 //! | `POST /forward-onboarding-checkpoint` | Segment HMAC | nothing |
 //!
@@ -67,6 +67,12 @@
 //!   checkpoint by the email it carried, before any check, and
 //!   `/forward-onboarding-checkpoint` lifted a client-chosen body, which
 //!   here answers as the notifier did and records nothing;
+//! - a verified `logged_in`/`logged_in_cached` counts toward the chain
+//!   owner's referral through the same login path as `POST
+//!   /v1/client-login` (social-service-ea's `logged-in-handler.ts` read the
+//!   notifier's SNS event): the login id is derived from `messageId`, the
+//!   occurrence is `receivedAt`, and a transient failure answers 503 so
+//!   Segment redelivers;
 //! - the multi-accounting detector (`event-parser.ts:110-179`), the
 //!   anonymous-id denylist (`client-denylister.ts`) and the `/admin/anonids`
 //!   routes are not served: no event is refused for its anonymous id,
@@ -91,7 +97,7 @@ mod explorer;
 pub mod store;
 mod web;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::shared::routing::post;
@@ -101,6 +107,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
+use crate::communities::referral::Referral;
 use crate::explore::api::onboarding::OnboardingState;
 use crate::jobs::{Jobs, PeriodicCfg};
 
@@ -126,6 +133,8 @@ pub struct State {
     pub settings: Settings,
     /// The explore onboarding checkpoints a forwarded event records into.
     pub onboarding: Arc<OnboardingState>,
+    /// The referral progress a verified explorer login records into; unset, none.
+    referral: OnceLock<Arc<Referral>>,
 }
 
 pub type SharedState = Arc<State>;
@@ -136,7 +145,13 @@ impl State {
             pool,
             settings,
             onboarding,
+            referral: OnceLock::new(),
         }
+    }
+
+    /// Credits verified explorer logins to the invitee's referral progress.
+    pub fn set_referral(&self, referral: Arc<Referral>) {
+        let _ = self.referral.set(referral);
     }
 
     /// The hourly purge of rows older than the retention: at most a million
