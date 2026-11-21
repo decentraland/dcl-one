@@ -320,8 +320,10 @@ native and web, with no flag; the headless build has none. The CSV writer
 (`crates/system_ui/src/sysinfo.rs`) read it from the diagnostics store.
 
 - **What it is.** The time between two GPU timestamps that bracket the frame's render-graph work.
-  Two empty compute passes write them, one recorded before every node of the main render graph
-  and one after every node, so both go to the GPU in the frame's own submission. Not counted:
+  Two compute passes write them, one recorded before every node of the main render graph
+  and one after every node, so both go to the GPU in the frame's own submission. Each dispatches
+  one 1x1x1 workgroup of a shader that does nothing: in Chrome on macOS (Metal) a pass that holds
+  no work does not write its end timestamp. Not counted:
   the render world's CPU work to prepare the frame, uploads queued ahead of the submission and
   standalone submits outside the graph. The brackets enclose the nodes that exist when the
   plugin finishes; on the first render frame it checks that every node of the graph runs
@@ -330,7 +332,8 @@ native and web, with no flag; the headless build has none. The CSV writer
   mapped without waiting; a later frame reads it and converts the ticks with the queue's timestamp
   period. A frame is not measured while every slot is in use: nothing blocks, nothing grows, and
   the CSV row carries the previous value. A readback that fails retires its slot for good, with
-  one warning under `gpu_time`; with every slot retired nothing more is measured.
+  one warning under `gpu_time`; with every slot retired nothing more is measured. A reading whose
+  end is before its begin is dropped, with one warning under `gpu_time` naming the first pair.
 - **Lag.** A measurement is recorded three frames after the frame it measures when the GPU
   finishes each frame before the next one is submitted, later when it does not (measured in
   world on desktop). So a row's GPU value is the GPU time of the frame three frames before it,
@@ -340,6 +343,10 @@ native and web, with no flag; the headless build has none. The CSV writer
   under target `gpu_time` (`GPU frame time unavailable: the adapter has no timestamp queries`)
   and registers nothing: the CSV's GPU is 0 and the panel shows a dash. The report then gives no
   GPU verdict.
+- **Metal in Chrome.** Some frames read back an end timestamp earlier than their begin, and a
+  30-second run has given a median far below its neighbours (0.1 ms against about 9 ms); the
+  cause is not known, so treat web GPU values from macOS with care and compare medians across
+  repeated runs.
 - **Chrome.** It quantises timestamps unless it starts with WebGPU developer features, which the
   runner does not do: a web GPU value is a multiple of Chrome's step, 65.536 µs in the checked
   Chrome (measurements (evidence supplied for the task)), well under the verdict's 0.5 ms threshold. A
@@ -356,7 +363,7 @@ native and web, with no flag; the headless build has none. The CSV writer
 
 **Tests.** The unit tests cover the sample arithmetic, the slot ring and the publisher. Two test
 files under `crates/perf_output/tests/` need a GPU, so their tests are `#[ignore]`d and CI
-skips them: `gpu_timestamps.rs` (an empty pass writes its timestamp) and
+skips them: `gpu_timestamps.rs` (a bracket pass writes its timestamp) and
 `gpu_frame_time.rs` (a known compute workload
 reads its own time, a 50 ms stall in the render world is not counted, and a device without
 timestamp queries logs its one line and registers nothing). Run them per backend, from
