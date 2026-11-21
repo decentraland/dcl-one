@@ -7,8 +7,10 @@ import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color4 } from '@babylonjs/core/Maths/math.color';
 
+import { isColliderName } from '../../lib/utils/gltf';
+
 // Same rule the scene renderer uses to tell collision proxies from visible geometry.
-export const isColliderMesh = (mesh: AbstractMesh) => mesh.name.toLowerCase().includes('collider');
+export const isColliderMesh = (mesh: AbstractMesh) => isColliderName(mesh.name);
 
 /** A transparent scene with a camera and the two lights every model preview shares. */
 export function createPreviewScene(engine: Engine) {

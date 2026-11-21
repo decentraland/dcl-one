@@ -100,6 +100,7 @@ function AssetsInner({ isAssetsPanelCollapsed, onToggleCollapse }: Props) {
 
   const {
     assets: cleanAssets,
+    codeScanned,
     isScanning,
     scanAssets,
   } = useScanAssets([
@@ -564,6 +565,7 @@ function AssetsInner({ isAssetsPanelCollapsed, onToggleCollapse }: Props) {
       <CleanAssets
         isOpen={showCleanAssetsModal}
         assets={cleanAssets}
+        codeScanned={codeScanned}
         isScanning={isScanning}
         selectedAssets={selectedCleanAssets}
         onClose={handleCloseCleanAssetsModal}

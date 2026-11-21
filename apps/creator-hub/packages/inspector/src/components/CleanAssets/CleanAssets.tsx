@@ -19,11 +19,27 @@ import type { Props } from './types';
 
 import './CleanAssets.css';
 
+/** The side note about files used by code, for the current selection and scan. */
+export function getCodeNote(usedFileSelected: boolean, codeScanned: boolean): string {
+  const selection = usedFileSelected
+    ? 'At least one of the files you marked for deletion is used by your scene or its code.'
+    : codeScanned
+      ? 'Files that your code names are kept.'
+      : '';
+  const limits = codeScanned
+    ? 'A file whose name the code builds while running (like "monster" + i + ".glb") or gets ' +
+      'from a server still shows as unused, so check the list before removing.'
+    : 'No scene code was read, so a file that only code uses may show as unused. Check the ' +
+      'list before removing.';
+  return [selection, limits].filter(Boolean).join(' ');
+}
+
 const CleanAssets: React.FC<Props> = ({
   isOpen,
   onClose,
   onScan,
   assets,
+  codeScanned,
   isScanning,
   selectedAssets,
   onSelect,
@@ -39,6 +55,10 @@ const CleanAssets: React.FC<Props> = ({
   const totalSize = useMemo(() => assets.reduce((sum, a) => sum + a.size, 0), [assets]);
   const selectedSize = useMemo(
     () => assets.reduce((sum, a) => (selectedAssets.has(a.path) ? sum + a.size : sum), 0),
+    [assets, selectedAssets],
+  );
+  const usedFileSelected = useMemo(
+    () => assets.some(asset => !asset.unused && selectedAssets.has(asset.path)),
     [assets, selectedAssets],
   );
   const reducedSize = useMemo(() => totalSize - selectedSize, [totalSize, selectedSize]);
@@ -135,12 +155,10 @@ const CleanAssets: React.FC<Props> = ({
   const validateRemove = useCallback(() => {
     if (selectedAssets.size === 0) return;
 
-    const hasSelectedInUse = assets.some(asset => selectedAssets.has(asset.path) && !asset.unused);
-
     // Show remove confirmation modal if any selected asset is in use
-    if (hasSelectedInUse) setShowConfirmation(true);
+    if (usedFileSelected) setShowConfirmation(true);
     else handleRemoveSelected();
-  }, [assets, selectedAssets, handleRemoveSelected]);
+  }, [selectedAssets, usedFileSelected, handleRemoveSelected]);
 
   return (
     <Modal
@@ -174,7 +192,7 @@ const CleanAssets: React.FC<Props> = ({
             </div>
             <div>
               <FiAlertTriangle />
-              <p>If your scene uses code, referenced files may also be removed.</p>
+              <p>{getCodeNote(usedFileSelected, codeScanned)}</p>
             </div>
           </div>
         </div>
@@ -198,8 +216,10 @@ const CleanAssets: React.FC<Props> = ({
                   className="checkbox"
                 />
                 <p className="FilesCounter">{assets.length} FILES</p>
-                <p className="TotalSize">Total size: {normalizeBytes(totalSize)}</p>
-                <p className="ReducedSize">Reduced size: {normalizeBytes(reducedSize)}</p>
+                <p className="TotalSize">All assets: {normalizeBytes(totalSize)}</p>
+                <p className="ReducedSize">
+                  After deleting selected: {normalizeBytes(reducedSize)}
+                </p>
               </div>
 
               <div className="FileList">
@@ -221,6 +241,18 @@ const CleanAssets: React.FC<Props> = ({
                       />
                       <span>{asset.path}</span>
                       {asset.unused && <CleanupIcon />}
+                      {!asset.unused && selectedAssets.has(asset.path) && (
+                        <span
+                          className="InUse"
+                          title={
+                            asset.usedByCode
+                              ? 'Your code uses this file'
+                              : 'Your scene uses this file'
+                          }
+                        >
+                          <FiAlertTriangle />
+                        </span>
+                      )}
                       <span className="size">{normalizeBytes(asset.size)}</span>
                     </label>
                   ))

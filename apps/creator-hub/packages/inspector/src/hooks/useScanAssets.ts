@@ -63,6 +63,8 @@ async function getDclIgnorePatterns(
 
 export interface UseCleanAssetsResult {
   assets: AssetFile[];
+  /** The last scan read all of the scene's code. */
+  codeScanned: boolean;
   isScanning: boolean;
   scanAssets: () => Promise<AssetFile[]>;
 }
@@ -79,6 +81,7 @@ export function useScanAssets(ignoredPatterns: string[] = []): UseCleanAssetsRes
   const sdk = useSdk();
   const [isScanning, setIsScanning] = useState(false);
   const [assets, setAssets] = useState<AssetFile[]>([]);
+  const [codeScanned, setCodeScanned] = useState(false);
 
   const scanAssets = useCallback(async () => {
     if (!sdk) return [];
@@ -87,6 +90,7 @@ export function useScanAssets(ignoredPatterns: string[] = []): UseCleanAssetsRes
     if (!dataLayer) return [];
 
     let assets: AssetFile[] = [];
+    let codeScanned = false;
     try {
       setIsScanning(true);
 
@@ -100,12 +104,13 @@ export function useScanAssets(ignoredPatterns: string[] = []): UseCleanAssetsRes
       });
 
       if (files.length > 0) {
-        assets = await scanForUnusedAssets(sdk, files, dataLayer);
+        ({ assets, codeScanned } = await scanForUnusedAssets(sdk, files, dataLayer));
       }
     } catch (err) {
       console.error('Error scanning assets:', err);
     } finally {
       setAssets(assets);
+      setCodeScanned(codeScanned);
       setIsScanning(false);
     }
     return assets;
@@ -113,6 +118,7 @@ export function useScanAssets(ignoredPatterns: string[] = []): UseCleanAssetsRes
 
   return {
     assets,
+    codeScanned,
     isScanning,
     scanAssets,
   };

@@ -207,17 +207,22 @@
   fill: var(--text);
 }
 
+.CleanAssets .RightPanel .FileList .FileItem .InUse {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.CleanAssets .RightPanel .FileList .FileItem .InUse svg {
+  fill: none;
+  color: var(--warning-main);
+}
+
 .CleanAssets .RightPanel .FileList .FileItem .checkbox {
   flex-grow: 0;
 }
 
-.CleanAssets .RightPanel .FileList .FileItem .checkbox input {
+.CleanAssets .RightPanel .FileList .FileItem .checkbox input:not(:checked) {
   border: 1px solid var(--base-11);
-  background-color: transparent;
-}
-
-.CleanAssets .RightPanel .FileList .FileItem .checkbox input:checked {
-  border-color: var(--text);
 }
 
 /* Footer */
