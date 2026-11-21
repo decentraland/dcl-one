@@ -34,9 +34,8 @@ async fn cleanup(
     if let Ok(recipient) = &recipient {
         feed.save_owner(event.event_id, recipient.as_str()).await?;
     }
-    // Read before the transaction below revokes the place's admin grants.
     let recipients = match recipient {
-        Ok(owner) => recipients(state, &context, owner.clone())
+        Ok(owner) => recipients(state, &context, owner.clone(), Some(event.removed_at))
             .await
             .map(|all| (owner, all)),
         Err(error) => Err(error),
@@ -1120,7 +1119,9 @@ mod tests {
 
     #[tokio::test]
     async fn notification_failure_keeps_checkpoint_and_readd_writes_survive_retry() {
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        // A database of its own: the place's base parcel holds only this
+        // test's grants.
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let (mut state, directory, event) = setup(pool.clone()).await;
@@ -1137,6 +1138,9 @@ mod tests {
             ..Default::default()
         });
         let wallet = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        // A scene admin on the base parcel, whose grant this cleanup revokes.
+        let admin = "0xdddddddddddddddddddddddddddddddddddddddd";
+        grant_before(&pool, &event, admin).await;
         sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)").bind(&event.place_id).bind(wallet).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         directory.fail.store(true, Ordering::SeqCst);
         let (feed, state) = (RemovedPlaces::new(pool.clone()), Arc::new(state));
@@ -1168,9 +1172,69 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 0, "ack follows successful notification");
+        let active: bool = sqlx::query_scalar(
+            "SELECT active FROM social.scene_admins WHERE place_id = $1 AND admin_address = $2",
+        )
+        .bind(&event.base_position)
+        .bind(admin)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!active, "the first pass revoked the grant");
         let notifications = directory.stub.streaming_notifications.lock().unwrap();
-        assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].recipient.as_str(), land_owner);
+        let mut told: Vec<&str> = notifications.iter().map(|n| n.recipient.as_str()).collect();
+        told.sort();
+        assert_eq!(
+            told,
+            [land_owner, admin],
+            "the retry still tells the revoked admin"
+        );
+    }
+
+    async fn grant_before(pool: &sqlx::PgPool, event: &RemovedPlace, admin: &str) {
+        sqlx::query("INSERT INTO social.scene_admins (place_id, admin_address, added_by, added_at) VALUES ($1, $2, $2, $3)")
+            .bind(&event.base_position)
+            .bind(admin)
+            .bind(event.removed_at - chrono::Duration::seconds(1))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_removal_notice_reaches_the_owner_operators_and_admins_of_the_place() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (mut state, directory, event) = setup(pool.clone()).await;
+        let (owner, operator, admin) = (
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+            "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "0xdddddddddddddddddddddddddddddddddddddddd",
+        );
+        state.policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: owner.into(),
+                operator: Some(operator.into()),
+                update_operator: None,
+                update_managers: vec![admin.into()],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        grant_before(&pool, &event, admin).await;
+        let state = Arc::new(state);
+        cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
+            .await
+            .unwrap();
+        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        let mut told: Vec<&str> = notifications.iter().map(|n| n.recipient.as_str()).collect();
+        told.sort();
+        assert_eq!(told, [owner, admin, operator], "once each");
+        assert!(notifications.iter().all(|n| {
+            n.kind == StreamingNotificationKind::PlaceUpdated
+                && n.metadata["address"] == n.recipient.as_str()
+        }));
     }
     #[tokio::test]
     async fn unknown_owner_does_not_block_cleanup_and_notification_remains_pending() {

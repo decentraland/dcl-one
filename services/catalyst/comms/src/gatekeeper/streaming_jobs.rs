@@ -541,7 +541,7 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
         Some(context) => {
             let recipients = tokio::time::timeout(
                 Duration::from_secs(5),
-                super::notifications::recipients(state, context, event.recipient.clone()),
+                super::notifications::recipients(state, context, event.recipient.clone(), None),
             )
             .await
             .map_err(|_| ApiError::internal("stream notification recipients timed out"))??;
@@ -650,6 +650,73 @@ async fn clear_stale(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_cleanup_notice_reaches_the_stored_owner_and_every_admin_and_operator_once() {
+        use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (owner, approved, admin) = (
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+        );
+        let directory = Arc::new(StubDirectory::default());
+        let state = CommsState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::gatekeeper::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy {
+                land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                    owner: owner.into(),
+                    approved_for_all: vec![approved.into(), owner.into()],
+                    ..Default::default()
+                })))),
+                ..Default::default()
+            }),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            directory.clone(),
+        );
+        sqlx::query("INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ('-130,8', $1, $1)")
+            .bind(admin).execute(&pool).await.unwrap();
+        let context = PlaceContext {
+            place_id: "catalogue-place".into(),
+            owner_address: None,
+            world: false,
+            world_name: None,
+            base_position: "-130,8".into(),
+            positions: serde_json::json!(["-130,8"]),
+        };
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_cleanup(access_id,place_id,notification_kind,occurred_at,due_at,recipient,metadata,source_context) \
+            VALUES($1,'catalogue-place','streaming_key_revoke',timezone('UTC',now()),timezone('UTC',now()),$2,$3,$4)")
+            .bind(id).bind(owner).bind(serde_json::json!({"title":"snapshot","address":owner}))
+            .bind(serde_json::to_value(&context).unwrap()).execute(&pool).await.unwrap();
+
+        cleanup_access(&state, id).await.unwrap();
+
+        let told = directory.streaming_notifications.lock().unwrap();
+        let mut recipients: Vec<&str> = told.iter().map(|n| n.recipient.as_str()).collect();
+        recipients.sort();
+        assert_eq!(recipients, [owner, approved, admin]);
+        for notice in told.iter() {
+            assert_eq!(notice.event_key, format!("streaming_key_revoke-{id}"));
+            assert_eq!(notice.metadata["title"], "snapshot");
+            assert_eq!(notice.metadata["address"], notice.recipient.as_str());
+        }
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id=$1)",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!pending, "the delivered row is gone");
+    }
 
     #[test]
     fn cleanup_commands_keep_persisted_labels_and_reject_non_cleanup_kinds() {

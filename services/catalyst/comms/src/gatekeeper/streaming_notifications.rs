@@ -34,12 +34,15 @@ pub(in crate::gatekeeper) fn place_info(context: &PlaceContext) -> scene::PlaceI
 /// upstream's `getAdminsAndExtraAddresses`: for a Genesis place its active
 /// scene admins (granted on its base parcel) and the LAND owner, operators
 /// and managers; for a world its owner and the deployment/streaming grantees
-/// of its parcels. No `/scene-admin` grant is on a world's place. A surface
-/// that cannot be read is an error, never a smaller set.
+/// of its parcels. The admins of a world's scenes are not told. A place
+/// removal passes its `removed_at`, so a retry after its cleanup still tells
+/// the admins that cleanup revoked. A surface that cannot be read is an
+/// error, never a smaller set.
 pub(in crate::gatekeeper) async fn recipients(
     state: &CommsState,
     context: &PlaceContext,
     owner: Address,
+    revoked_at: Option<NaiveDateTime>,
 ) -> Result<BTreeSet<Address>, ApiError> {
     let mut out = BTreeSet::from([owner]);
     let extra = scene::try_get_extra_addresses(state, &place_info(context)).await?;
@@ -49,9 +52,9 @@ pub(in crate::gatekeeper) async fn recipients(
     {
         let admins = state
             .moderation
-            .list_active_admins(&base.canonical(), None)
+            .notice_admins(&base.canonical(), revoked_at)
             .await?;
-        out.extend(admins.iter().filter_map(|a| Address::parse(&a.admin).ok()));
+        out.extend(admins.iter().filter_map(|a| Address::parse(a).ok()));
     }
     Ok(out)
 }
@@ -265,7 +268,9 @@ mod tests {
         grant(&pool, "-120,6", &removed, false).await;
         grant(&pool, &context.place_id, &catalogue_admin, true).await;
 
-        let recipients = recipients(&state, &context, owner.clone()).await.unwrap();
+        let recipients = recipients(&state, &context, owner.clone(), None)
+            .await
+            .unwrap();
         assert_eq!(
             recipients,
             BTreeSet::from([owner, operator, updater, manager, approved, admin])
@@ -312,7 +317,9 @@ mod tests {
         grant(&pool, "-120,6", &scene_admin, true).await;
         grant(&pool, &context.place_id, &scene_admin, true).await;
 
-        let recipients = recipients(&state, &context, owner.clone()).await.unwrap();
+        let recipients = recipients(&state, &context, owner.clone(), None)
+            .await
+            .unwrap();
         assert_eq!(recipients, BTreeSet::from([owner, deployer, streamer]));
     }
 
@@ -342,7 +349,7 @@ mod tests {
             ),
         ] {
             let state = state(pool.clone(), policy);
-            let error = recipients(&state, &context(world, "-120,6"), address('a'))
+            let error = recipients(&state, &context(world, "-120,6"), address('a'), None)
                 .await
                 .unwrap_err();
             assert_eq!(error.code, 503);
