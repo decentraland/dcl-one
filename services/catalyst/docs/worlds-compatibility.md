@@ -58,10 +58,13 @@ difference not listed here is a gap, not a decision.
   `file-type@16`'s Content-Type for scene formats: images, glTF binary,
   audio, video, fonts, PDF, WebAssembly, gzip and ZIP. Other formats, and a
   ZIP's office or EPUB subtypes, are `application/octet-stream` (or the type
-  of a ported signature their bytes also match) or `application/zip`. XML is
-  `application/octet-stream` (upstream: `application/xml`): these routes
-  share the node's origin, where a browser would run an XHTML or SVG
-  document's scripts. A file that opens with `{` or `[` is
+  of a ported signature their bytes also match) or `application/zip`. A
+  document type (`text/*`, `*/xml`, `*+xml` or HTML; of the ported checks,
+  XML) is `application/octet-stream` (upstream: `application/xml`): these
+  routes share the node's origin, where a browser would run an XHTML or SVG
+  document's scripts. Every answer carries `Content-Security-Policy: sandbox`
+  and `X-Content-Type-Options: nosniff`, so a file opened as a page runs
+  sandboxed. A file that opens with `{` or `[` is
   `application/json` (upstream: `application/octet-stream`). A file of more
   than 16 chained ID3 tags, 256 PNG chunks before the image data, or 64 EBML
   header elements is `application/octet-stream`.
