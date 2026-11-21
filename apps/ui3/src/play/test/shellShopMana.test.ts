@@ -1114,6 +1114,37 @@ describe('the in-world purchase with MANA', () => {
       expect(w.relay.posts).toHaveLength(0)
     })
 
+    it('reads the chain before taking the approval\'s lock, and holds the sale on a split that showed up meanwhile, unproven', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      const relay = w.relay.fetchImpl
+      // Once the approve has gone, another tab's split of another item hands off: its credit past its expiry by this page's
+      // clock (500 s against 1,000 s), so the chain is asked.
+      w.relay.fetchImpl = (async (...args: Parameters<typeof relay>) => {
+        const answer = await relay(...args)
+        writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, creditExpiresAt: 500 })
+        return answer
+      }) as typeof relay
+      const reads: number[] = []
+      let answer: (time: number) => void = () => {}
+      const evidence = { ...w.evidence, finalizedTime: (chainId: number) => (reads.push(chainId), new Promise<number>((resolve) => (answer = resolve))) }
+      const p = page(w, { split: splitOn, creditsCents: 50, services: { ...managed, manaEvidence: () => evidence as never } })
+      const grantLock = exactGrantLock(getManaSpendingAuthorization(137, MANAGER as never), BUYER)
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      ;(await p.until('authorize')).handlers.onAuthorize?.()
+      // The read after the approval has started, and this purchase doesn't hold the approval's lock while it waits.
+      await vi.waitFor(() => expect(reads).toHaveLength(1))
+      expect(p.locks.held.has(grantLock)).toBe(false)
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+      // The chain is behind its expiry (400 s): nothing proves it can't spend, so the sale is held.
+      answer(400)
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining('Another purchase with Credits and MANA') })
+      expect(relayedTo(w)).toEqual([MANA])
+      expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
+    })
+
     it('isn\'t held by another item\'s split that can\'t spend anything any more: its credit expired, or its purchase here is over', async () => {
       on()
       const w = world()

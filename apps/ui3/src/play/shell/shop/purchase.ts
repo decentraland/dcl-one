@@ -1885,6 +1885,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // An approval of this account still able to run (its answer lost) holds the sale even where the allowance looks covered.
     const ready = await exactAllowanceReady(auth, quote.buyer, gap, svc.reader()).catch(() => false)
     if (!ready && !(await authorizeGap(op, quote, part, wallet, current, auth, gap, blockedNow))) return 'stop'
+    // The chain is read before the approval's lock is taken, never under it: a split that shows up meanwhile, its expiry
+    // not yet proven, still holds this one once the lock is held (blockedNow reads the holds again there).
+    await proveCreditsOver(quote.buyer)
     if (op.state !== 'reviewing' || !slot.holds(op) || !current()) return 'stop'
     // The approval's lock, held through the sale's hand-off, and the allowance read again under it. Right after this
     // page's own approval let it go, it is asked for again (RELOCK_TRIES); otherwise once, as another window's.
@@ -1892,7 +1895,6 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (!release) return { why: SPLIT_APPROVING_ELSEWHERE }
     // Under it, no other split of this buyer's can start (each hands off holding it, its hold written by then): this item
     // held, or another item's split that may still spend the allowance, holds this one.
-    await proveCreditsOver(quote.buyer)
     const inFlight = blockedNow()
     if (inFlight) {
       release()
