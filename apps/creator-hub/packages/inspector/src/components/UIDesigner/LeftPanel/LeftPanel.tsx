@@ -17,15 +17,18 @@ import '../UIDesigner.css';
 type SectionHeaderProps = {
   label: string;
   name: 'New GUI' | 'Add Node';
+  /** True while an empty state points the author at this header's + chip. */
+  pulsing: boolean;
   onClick: () => void;
 } & Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'aria-haspopup' | 'aria-expanded'>;
 
 const SectionHeader = React.forwardRef<HTMLSpanElement, SectionHeaderProps>(
-  ({ label, name, onClick, ...popup }, chipRef) => (
+  ({ label, name, pulsing, onClick, ...popup }, chipRef) => (
     <button
       type="button"
       className="ui-designer-rail-header"
       aria-label={name}
+      data-pulsing={pulsing ? 'true' : undefined}
       onClick={onClick}
       {...popup}
     >
@@ -55,7 +58,7 @@ const LeftPanel: React.FC = () => {
 
   const selected = useAppSelector(getSelectedNode);
   const mobileHudSelected = useAppSelector(getMobileHudSelected);
-  const { filename, emptyRoot } = useCodeState();
+  const { roots, filename, emptyRoot } = useCodeState();
   const tree = useUINodeTree();
 
   const showNodes = !mobileHudSelected && !!filename;
@@ -94,6 +97,7 @@ const LeftPanel: React.FC = () => {
         <SectionHeader
           label="GUIs"
           name="New GUI"
+          pulsing={roots.length === 0}
           onClick={() => {
             void createRoot();
             analytics.track(Event.CREATE_UI, {});
@@ -107,6 +111,7 @@ const LeftPanel: React.FC = () => {
             ref={addNodeRef}
             label="Nodes"
             name="Add Node"
+            pulsing={emptyRoot}
             aria-haspopup="dialog"
             aria-expanded={pickerOpen}
             onClick={() => setPickerOpen(true)}

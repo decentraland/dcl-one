@@ -100,8 +100,20 @@
 }
 
 .ui-designer-canvas-node.drop-over {
-  outline: 2px dashed var(--ui-designer-accent-80);
-  background: var(--ui-designer-accent-05);
+  outline: none;
+  box-shadow: inset 0 0 0 calc(1px / var(--uid-scale, 1)) var(--palette-info-light);
+}
+
+.ui-designer-canvas-viewport.palette-dragging .ui-designer-canvas-node.selected {
+  outline-color: transparent;
+}
+
+.ui-designer-canvas-viewport.palette-dragging .ui-designer-resize-handle {
+  display: none;
+}
+
+.ui-designer-canvas-viewport.palette-dragging .ui-designer-node-actions {
+  display: none;
 }
 
 /* Code that doesn't follow the UI Designer convention (loops, conditionals,
@@ -283,69 +295,23 @@
   justify-content: center;
   width: 100%;
   height: 100%;
-  color: #888;
 }
 
-/* Empty-GUI drop zone: a dashed target for the first element. */
-.ui-designer-canvas-emptyroot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--uid-space-2);
-  padding: var(--uid-space-6);
-  min-width: 320px;
-  min-height: 180px;
-  border: 2px dashed var(--ui-designer-control-border);
-  border-radius: 8px;
-  color: var(--sub-text);
-  text-align: center;
-  transition:
-    border-color 120ms ease,
-    background-color 120ms ease;
+.ui-designer-canvas-empty.over {
+  box-shadow: inset 0 0 0 1px var(--palette-info-light);
 }
 
-.ui-designer-canvas-empty.over .ui-designer-canvas-emptyroot {
-  border-color: var(--ui-designer-accent);
-  background-color: var(--ui-designer-accent-08);
+.ui-designer-canvas-empty--empty-gui {
+  position: absolute;
+  inset: 0;
 }
 
-.ui-designer-canvas-emptyroot-title {
-  margin: 0;
-  color: var(--title);
-  font-weight: 600;
+.ui-designer-canvas-empty--no-gui .ui-designer-empty-state {
+  width: 468px;
 }
 
-.ui-designer-canvas-emptyroot-hint {
-  margin: 0;
-  max-width: 260px;
-  font-size: 12px;
-}
-
-.ui-designer-canvas-emptyroot-add {
-  margin-top: var(--uid-space-2);
-  padding: 6px 12px;
-  background: var(--ui-designer-accent);
-  border: none;
-  border-radius: 6px;
-  color: var(--base-20);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ui-designer-canvas-emptyroot-add:hover {
-  filter: brightness(1.08);
-}
-
-.ui-designer-canvas-emptyroot-add:focus-visible {
-  outline: 2px solid var(--ui-designer-control-accent);
-  outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ui-designer-canvas-emptyroot {
-    transition: none;
-  }
+.ui-designer-canvas-empty--empty-gui .ui-designer-empty-state {
+  width: 614px;
 }
 
 .ui-designer-canvas-input {
@@ -565,45 +531,4 @@
 .ui-designer-canvas-screen {
   position: relative;
   overflow: visible;
-}
-
-/* The canvas empty state is the editor's first-run hero, not a panel hint: the
-   Figma sizes its title well above the body and gives the glyph real presence.
-   Scoped here so the shared EmptyState stays panel-sized everywhere else. */
-.ui-designer-canvas-empty .ui-designer-empty-state {
-  gap: var(--uid-space-3);
-}
-
-.ui-designer-canvas-empty .ui-designer-empty-state-icon svg {
-  width: 80px;
-  height: 50px;
-}
-
-.ui-designer-canvas-empty .ui-designer-empty-state-title {
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.ui-designer-canvas-empty .ui-designer-empty-state-message {
-  font-size: 13px;
-  max-width: 440px;
-}
-
-.ui-designer-canvas-empty .ui-designer-empty-state-action button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--uid-space-2);
-  height: 44px;
-  padding: 0 18px;
-  border-radius: 10px;
-  color: var(--ui-designer-text);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.ui-designer-canvas-empty .ui-designer-empty-state-action button svg {
-  width: 18px;
-  height: 18px;
 }

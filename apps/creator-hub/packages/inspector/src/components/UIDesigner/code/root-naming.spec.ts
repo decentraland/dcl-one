@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { toComponentName, uniqueName } from './root-naming';
+import { DEFAULT_ROOT_NAME, toComponentName, uniqueName } from './root-naming';
 
 describe('when deriving a UI-root component name', () => {
   it('should PascalCase words and strip non-identifier characters', () => {
@@ -10,15 +10,21 @@ describe('when deriving a UI-root component name', () => {
   });
 
   it('should guarantee a valid leading character', () => {
-    // A TS identifier can't start with a digit.
     expect(toComponentName('123 panel')).toBe('Panel');
-    expect(toComponentName('99')).toBe('MainUI');
+    expect(toComponentName('99')).toBe('GUI');
   });
 
-  it('should fall back to MainUI for empty/garbage input', () => {
-    expect(toComponentName('')).toBe('MainUI');
-    expect(toComponentName('   ')).toBe('MainUI');
-    expect(toComponentName('!@#$')).toBe('MainUI');
+  it('should fall back to GUI for empty/garbage input', () => {
+    expect(toComponentName('')).toBe('GUI');
+    expect(toComponentName('   ')).toBe('GUI');
+    expect(toComponentName('!@#$')).toBe('GUI');
+  });
+
+  it('should name new GUIs GUI, GUI1, GUI2 by default', () => {
+    expect(DEFAULT_ROOT_NAME).toBe('GUI');
+    expect(uniqueName(DEFAULT_ROOT_NAME, [])).toBe('GUI');
+    expect(uniqueName(DEFAULT_ROOT_NAME, ['GUI'])).toBe('GUI1');
+    expect(uniqueName(DEFAULT_ROOT_NAME, ['GUI', 'GUI1'])).toBe('GUI2');
   });
 });
 
@@ -31,7 +37,6 @@ describe('when ensuring a unique name', () => {
   it('should append the smallest free numeric suffix on collision', () => {
     expect(uniqueName('MainUI', ['MainUI'])).toBe('MainUI1');
     expect(uniqueName('MainUI', ['MainUI', 'MainUI1', 'MainUI2'])).toBe('MainUI3');
-    // Gaps are filled by the smallest missing suffix.
     expect(uniqueName('MainUI', ['MainUI', 'MainUI2'])).toBe('MainUI1');
   });
 

@@ -91,8 +91,14 @@ export function interactionLayerValue(
   return (node.interaction.states[layer]?.[field] as Record<string, unknown>) ?? null;
 }
 
+/** Whether an element edit (a drop, a splice) may write into `node`: false for component instances, opaque code, platform variants and dynamic props. */
+export function acceptsElementWrite(node: CodeUINode | undefined): boolean {
+  return !(node?.componentRef || node?.opaque || node?.platformVariant || node?.dynamicProps);
+}
+
 export function guardElementWrite(entityId: number, opName: string): boolean {
   const node = findCodeNode(state.parsed?.root, entityId);
+  if (acceptsElementWrite(node)) return true;
   if (node?.componentRef) {
     console.warn(
       `[code-mode] ${opName}: <${node.componentRef.name} /> takes only its declared props — move/size its wrapper UiEntity instead`,

@@ -6,6 +6,7 @@ import { Box } from '../../Box';
 import { findCodeNode, useCodeState } from '../code/store';
 import type { CodeUINode } from '../code/types';
 import { GUIRoot } from '../../Icons/figma';
+import { EmptyState } from '../EmptyState';
 import { MobileHudPanel } from './MobileHudPanel';
 import { PropertyPanel } from './PropertyPanel';
 import { CodeVariablesPanel } from './LogicPanel/CodeVariablesPanel';
@@ -46,6 +47,23 @@ const RightPanel: React.FC = () => {
     return (
       <Box className="ui-designer-right-rail">
         <MobileHudPanel />
+      </Box>
+    );
+  }
+
+  if (!codeNode) {
+    return (
+      <Box className="ui-designer-right-rail">
+        <EmptyState
+          variant="panel"
+          title="No node selected"
+          message={
+            <>
+              Select a <span className="ui-designer-empty-state-emphasis">node</span> to start
+              editing its properties and logic.
+            </>
+          }
+        />
       </Box>
     );
   }

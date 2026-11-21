@@ -5,7 +5,7 @@ import { expect, test } from './fixtures';
 
 declare const page: Page;
 
-const ROOT = 'MainUI';
+const ROOT = 'GUI';
 
 test.describe('UI Designer empty state', () => {
   test.beforeAll(async () => {

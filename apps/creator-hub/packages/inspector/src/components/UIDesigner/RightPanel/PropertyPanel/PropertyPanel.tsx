@@ -600,23 +600,12 @@ const PropertyPanelComponent: React.FC = () => {
     [codeNode, activeLayer],
   );
 
-  if (selected === null || type === null) {
-    return (
-      <EmptyState
-        icon={<IoOptionsOutline />}
-        title="No node selected"
-        message={
-          <>
-            Select a <strong>node</strong> to start editing its properties.
-          </>
-        }
-      />
-    );
-  }
+  if (selected === null || type === null) return null;
 
   if (codeNode?.componentRef) {
     return (
       <EmptyState
+        variant="inline"
         icon={
           <Prefab
             fontSize="inherit"
@@ -631,6 +620,7 @@ const PropertyPanelComponent: React.FC = () => {
   if (codeNode?.platformVariant) {
     return (
       <EmptyState
+        variant="inline"
         icon={<IoOptionsOutline />}
         title="Device variants"
         message="This node renders a different subtree per device. Pick the Desktop or Mobile branch in the tree — or flip the canvas device toggle — to edit one."

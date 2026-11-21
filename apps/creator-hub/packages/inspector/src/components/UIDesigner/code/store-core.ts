@@ -33,7 +33,7 @@ import { hasComponentMarker } from './component-marker';
 import { applyEdits, type Edit } from './emit-adapter';
 import { formatUiSource } from './formatting';
 import { codeToUINodes, findComponentIdSpan } from './parse-adapter';
-import { toComponentName, uniqueName } from './root-naming';
+import { DEFAULT_ROOT_NAME, toComponentName, uniqueName } from './root-naming';
 import type { CodeUINode, ParsedUI } from './types';
 
 export interface CodeRoot {
@@ -686,7 +686,7 @@ export async function restoreOrphanedUiImport(): Promise<void> {
 
 export async function createRootUnlocked(desiredName?: string): Promise<string> {
   const name = uniqueName(
-    toComponentName(desiredName ?? 'MainUI'),
+    toComponentName(desiredName ?? DEFAULT_ROOT_NAME),
     state.roots.map(r => r.name),
   );
   const filename = `${UI_DIR}/${name}${TSX}`;

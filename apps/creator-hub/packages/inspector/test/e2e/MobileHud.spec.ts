@@ -18,7 +18,7 @@ const CONFIGURABLE_KINDS = [
   'action4',
 ];
 
-const ROOT = 'MainUI';
+const ROOT = 'GUI';
 
 const joystickGuide = () => page.locator(`${UIDesigner.hudGuideSelector}[data-kind="joystick"]`);
 
