@@ -3157,6 +3157,20 @@ mod relay_authority_policy {
         );
         let (player, banned, other) = (wallet(), wallet(), wallet());
         let scene = format!("bafkrei{}", Uuid::new_v4().simple());
+        let n = Uuid::new_v4().as_u128();
+        let parcel = format!("{},{}", 20_000 + n % 9_000, 20_000 + (n >> 32) % 9_000);
+        sqlx::query(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+             entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+             VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, \
+             timezone('UTC', now()), '[]'::json)",
+        )
+        .bind(&scene)
+        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel } })))
+        .bind(vec![parcel.clone()])
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             relay
                 .authorize(&room(
@@ -3184,6 +3198,27 @@ mod relay_authority_policy {
                 .await,
             Err(DenialReason::NotAuthorized)
         );
+        // A scene ban is read on the place, the base parcel; a Genesis room
+        // no deployment stands behind is refused.
+        let scene_banned = wallet();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+            .bind(&parcel)
+            .bind(&scene_banned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (who, room_name) in [
+            (&scene_banned, format!("scene:main:{scene}")),
+            (&player, "scene:main:bafkreinotdeployed".to_string()),
+        ] {
+            assert_eq!(
+                relay
+                    .authorize(&room(who.as_str(), who.as_str(), &room_name, ""))
+                    .await,
+                Err(DenialReason::NotAuthorized),
+                "{room_name}"
+            );
+        }
         assert_eq!(
             relay
                 .authorize(&room(player.as_str(), player.as_str(), "island-abc", ""))
