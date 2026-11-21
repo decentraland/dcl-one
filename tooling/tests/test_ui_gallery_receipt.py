@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,6 +45,7 @@ class FakeGitHub:
         self.run_status = {}  # sha -> run status, 'completed' by default
         self.artifacts = {}   # sha -> zip bytes
         self.scans = []       # key-scan runs: dict(id, sha, conclusion, created, path, event, branch, ran)
+        self.unreadable = set()  # key-scan job ids whose log cannot be fetched
 
     @staticmethod
     def run_id(sha):
@@ -83,7 +85,10 @@ class FakeGitHub:
         raise KeyError(path)
 
     def text(self, path):
-        scan = self.scans[int(re.fullmatch(r'actions/jobs/(\d+)/logs', path)[1]) - 100]
+        job = int(re.fullmatch(r'actions/jobs/(\d+)/logs', path)[1])
+        scan = self.scans[job - 100]
+        if job in self.unreadable or scan['conclusion'] == 'skipped':
+            raise receipt.FetchError(f'GET {path} failed')
         return scan_log(scan['sha'], scan['artifact'], scan['ran'])
 
     def download(self, artifact_id):
@@ -175,6 +180,28 @@ class ReceiptTest(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, 'concluded failure'):
             self.require()
 
+    def test_an_unreadable_log_of_a_newer_failing_scan_fails_instead_of_reaching_an_older_pass(self):
+        self.built(HEAD)
+        self.gh.scan(HEAD)
+        self.gh.scan(HEAD, 'failure')
+        self.gh.unreadable.add(self.gh.scans[-1]['id'])
+        with self.assertRaises(receipt.FetchError):
+            self.require()
+
+    def test_an_unreadable_log_fails_the_ancestor_walk_too(self):
+        self.gh.library[HEAD] = 'skipped'
+        self.built(PARENT)
+        self.gh.scan(PARENT)
+        self.gh.unreadable.add(self.gh.scans[-1]['id'])
+        with self.assertRaises(receipt.FetchError):
+            self.require()
+
+    def test_a_skipped_scan_job_without_a_log_is_passed_over(self):
+        self.built(HEAD)
+        self.gh.scan(HEAD)
+        self.gh.scan(HEAD, 'skipped')
+        self.assertEqual(self.require(), HEAD)
+
     def test_an_unchanged_library_reuses_the_nearest_trusted_scan_of_identical_bytes(self):
         self.gh.library[HEAD] = 'skipped'
         self.built(PARENT, {**FILES, 'hud.html': b'older'})
@@ -197,6 +224,38 @@ class ReceiptTest(unittest.TestCase):
         self.gh.parents = {HEAD: PARENT, PARENT: HEAD}
         with self.assertRaisesRegex(receipt.ReceiptError, 'last 200 first-parent ancestors.*kept 90 days.*flake.lock'):
             self.require()
+
+
+class GitHubFetchTest(unittest.TestCase):
+    """Every answer the receipt reads either parses or fails: none reads as "nothing found"."""
+
+    def fetch(self, returncode, stdout, call='api'):
+        result = subprocess.CompletedProcess([], returncode, stdout, b'')
+        with unittest.mock.patch.object(receipt.subprocess, 'run', return_value=result):
+            gh = receipt.GitHub('decentraland/dcl-one')
+            return getattr(gh, call)('actions/jobs/1/logs' if call == 'text' else 'actions/artifacts/1')
+
+    def test_a_failed_call_fails(self):
+        for call in ('api', 'text', 'download'):
+            with self.subTest(call=call), self.assertRaisesRegex(receipt.FetchError, 'exit 1'):
+                self.fetch(1, b'{}', call if call != 'download' else 'api')
+        with self.assertRaises(receipt.FetchError):
+            result = subprocess.CompletedProcess([], 1, b'PK', b'')
+            with unittest.mock.patch.object(receipt.subprocess, 'run', return_value=result):
+                receipt.GitHub('decentraland/dcl-one').download(1)
+
+    def test_an_empty_answer_fails(self):
+        for call in ('api', 'text'):
+            with self.subTest(call=call), self.assertRaisesRegex(receipt.FetchError, 'answered nothing'):
+                self.fetch(0, b'', call)
+
+    def test_malformed_json_fails(self):
+        with self.assertRaisesRegex(receipt.FetchError, 'answered no JSON'):
+            self.fetch(0, b'{"workflow_runs": [')
+
+    def test_a_parsed_answer_is_returned(self):
+        self.assertEqual(self.fetch(0, b'{"default_branch": "main"}'), {'default_branch': 'main'})
+        self.assertEqual(self.fetch(0, b'HEAD_SHA: x\n', 'text'), 'HEAD_SHA: x\n')
 
 
 class DigestTest(unittest.TestCase):

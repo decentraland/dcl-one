@@ -52,6 +52,11 @@ class ReceiptError(Exception):
     pass
 
 
+class FetchError(Exception):
+    """A GitHub API call that failed or answered nothing usable. It always fails the receipt: an unreadable answer is
+    never read as "nothing found", so it cannot hide a newer failing scan behind an older passing one."""
+
+
 def _digest(files):
     """sha256 over `<sha256>  <path>` lines sorted by path; the same digest as gallery/scripts/hosted-digest.mjs."""
     lines = [f'{hashlib.sha256(data).hexdigest()}  {name}' for name, data in sorted(files)]
@@ -102,16 +107,23 @@ class GitHub:
     def _path(self, path):
         return f'repos/{self.repo}/{path}' if path else f'repos/{self.repo}'
 
+    def _get(self, path):
+        result = subprocess.run(['gh', 'api', self._path(path)], capture_output=True)
+        if result.returncode != 0 or not result.stdout:
+            raise FetchError(f'GET {path} failed (exit {result.returncode}) or answered nothing')
+        return result.stdout
+
     def api(self, path):
-        return json.loads(subprocess.check_output(['gh', 'api', self._path(path)], text=True))
+        try:
+            return json.loads(self._get(path))
+        except ValueError as error:
+            raise FetchError(f'GET {path} answered no JSON: {error}') from error
 
     def text(self, path):
-        # A job with no log (skipped, or its log expired) reads as empty: it names no commit, so it proves nothing.
-        result = subprocess.run(['gh', 'api', self._path(path)], capture_output=True, text=True, errors='replace')
-        return result.stdout if result.returncode == 0 else ''
+        return self._get(path).decode('utf-8', errors='replace')
 
     def download(self, artifact_id):
-        return subprocess.check_output(['gh', 'api', self._path(f'actions/artifacts/{artifact_id}/zip')])
+        return self._get(f'actions/artifacts/{artifact_id}/zip')
 
 
 def _time(value):
@@ -155,6 +167,10 @@ def trusted_scan(gh, sha, run, default_branch):
         job = max(jobs, key=lambda job: job['id'])
         if job.get('status') != 'completed':
             pending = True
+            continue
+        # Only a skipped job has no log; a skipped scan read nothing. Any other log must be read, or the receipt
+        # fails (FetchError): an unreadable log could be the newest scan of this commit, and it may have failed.
+        if job.get('conclusion') == 'skipped':
             continue
         log = gh.text(f'actions/jobs/{job["id"]}/logs')
         if not re.search(rf'^\S*\s+HEAD_SHA: {sha}\r?$', log, re.M):
@@ -238,7 +254,7 @@ def main(argv=None):
     try:
         digest = tree_digest(args.gallery)
         receipt = require_receipt(GitHub(args.repo), args.head, digest)
-    except (ReceiptError, subprocess.CalledProcessError, zipfile.BadZipFile, KeyError, ValueError) as error:
+    except (ReceiptError, FetchError, zipfile.BadZipFile, KeyError, ValueError) as error:
         print(f'::error::UI gallery receipt: {error}', file=sys.stderr)
         return 1
     print(f'The Sites image ships UI gallery {digest}, scanned on {receipt}')
