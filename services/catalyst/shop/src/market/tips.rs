@@ -19,6 +19,19 @@
 //! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
 //! gateway) is not limited before it.
+//! A signed forward the MANA transfer index cannot serve is refused and
+//! nothing is stored. With no `mana_transfers` cursor (past
+//! [`FIRST_PASS_GRACE`] with the local setting on), one without its whole
+//! history, or one not advanced for [`INDEX_ABANDONED_SECS`], it is a 503 with
+//! the body code [`TIP_INDEX_UNAVAILABLE`]: its claim could only expire, so
+//! clients stop. With a whole-history walk lagging or paused
+//! ([`chain_walk::is_walked`] false), or the local walk's first pass still to
+//! come, it is a 503 with `Retry-After`; when the cursor cannot be read, a
+//! 500. The age check reads `updated_at`, which a walk sets just outside the
+//! live window once its first head read in a process answers, unless it is
+//! held at its stop block ([`chain_walk::touch_started`]): an index back after
+//! hours down reads as behind, neither abandoned nor live, until its first
+//! window really lands.
 //! The auth dApp posts cross-origin with signed-fetch headers, so the route
 //! answers the browser's preflight with the events-notifier's CORS ([`CORS`]).
 //! A transfer below the minimum amount, or mined longer than the maximum age
@@ -133,6 +146,7 @@ const CORS: crate::shared::cors::HttpServerCors = crate::shared::cors::HttpServe
 };
 
 pub fn router(state: SharedState) -> Router {
+    std::sync::LazyLock::force(&STARTED);
     Router::new()
         .route("/forward-blockchain", post(forward))
         .layer(axum::middleware::from_fn(|req, next| CORS.run(req, next)))
@@ -235,10 +249,10 @@ static SOURCE_LIMITER: LazyLock<ForwardLimiter> =
 static SIGNER_LIMITER: LazyLock<ForwardLimiter> =
     LazyLock::new(|| ForwardLimiter::new(LIMITER_KEYS));
 
-fn retry_later(message: &str, secs: i64) -> Response {
+fn retry_later(status: StatusCode, message: &str, secs: i64) -> Response {
     let secs = secs.max(1);
     (
-        StatusCode::TOO_MANY_REQUESTS,
+        status,
         [(header::RETRY_AFTER, secs.to_string())],
         Json(json!({ "error": message, "retryAfter": secs })),
     )
@@ -292,7 +306,7 @@ async fn forward(
     if let Some(ip) = ip
         && !SOURCE_LIMITER.allow(&source_keys(&ip))
     {
-        return retry_later("rate limit exceeded", 1);
+        return retry_later(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded", 1);
     }
     let signer = match signed_fetch::require_signer_at(
         &headers,
@@ -316,18 +330,46 @@ async fn forward(
         }
     };
     if !SIGNER_LIMITER.allow(&[(signer.clone(), FORWARDS_PER_MINUTE)]) {
-        return retry_later("rate limit exceeded", 2);
+        return retry_later(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded", 2);
     }
     let tx = match parse_body(&body) {
         Ok(tx) => tx,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
+    match index_state(&state, STARTED.elapsed()).await {
+        IndexState::Serves => {}
+        IndexState::Off => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "error": "Tip confirmation is unavailable on this node",
+                    "code": TIP_INDEX_UNAVAILABLE,
+                })),
+            )
+                .into_response();
+        }
+        IndexState::Behind => {
+            return retry_later(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Tip confirmation is behind on this node, retry later",
+                INDEX_BEHIND_RETRY_SECS,
+            );
+        }
+        IndexState::Unknown => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Tip could not be processed",
+            );
+        }
+    }
     match claim(&state.pool, &state.settings.market.tips, &tx, &signer).await {
         Ok(Outcome::Notified) => StatusCode::NO_CONTENT.into_response(),
         Ok(Outcome::Pending) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
-        Ok(Outcome::Busy { retry_after_secs }) => {
-            retry_later("Too many tips waiting for confirmation", retry_after_secs)
-        }
+        Ok(Outcome::Busy { retry_after_secs }) => retry_later(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many tips waiting for confirmation",
+            retry_after_secs,
+        ),
         Ok(Outcome::Rejected(why)) => error(StatusCode::BAD_REQUEST, why.message(&tx)),
         Err(e) => {
             tracing::error!(error = %e, tx, "tip forward failed");
@@ -335,6 +377,74 @@ async fn forward(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Tip could not be processed",
             )
+        }
+    }
+}
+
+/// The 503 body code for a node with no MANA transfer index: a client stops
+/// asking. Any other 503 is worth retrying.
+const TIP_INDEX_UNAVAILABLE: &str = "tip-index-unavailable";
+/// The `Retry-After` of a forward refused while the walk is behind.
+const INDEX_BEHIND_RETRY_SECS: i64 = 60;
+/// A whole-history cursor not advanced for this long is one nothing walks (or
+/// one held at `MARKETPLACE_INDEX_STOP_BLOCK_MATIC`): no index, not a lag.
+const INDEX_ABANDONED_SECS: i64 = 3 * CLAIM_TTL_SECS;
+
+/// What the MANA transfer index, walked here or by another process, can do
+/// for a forward now.
+#[derive(Debug, PartialEq, Eq)]
+enum IndexState {
+    /// A live walk near the head ([`chain_walk::is_walked`] within the claim's hour).
+    Serves,
+    /// No cursor (setting off, or on past [`FIRST_PASS_GRACE`]), one without its
+    /// whole history, or one not advanced for [`INDEX_ABANDONED_SECS`]: no claim
+    /// can settle.
+    Off,
+    /// A whole-history walk lagging or paused, or, just after start, the local
+    /// walk not started yet: it may serve again soon.
+    Behind,
+    /// The cursor could not be read.
+    Unknown,
+}
+
+/// When this process started serving forwards.
+static STARTED: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
+/// How long after start a missing cursor, with the local setting on, reads as
+/// the walk's first pass still to come. The walk runs in the index role and
+/// may never start there (no Polygon RPC), so past this it reads as no index.
+const FIRST_PASS_GRACE: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// What a missing cursor means `uptime` after start.
+fn missing_cursor(enabled: bool, uptime: std::time::Duration) -> IndexState {
+    if enabled && uptime < FIRST_PASS_GRACE {
+        IndexState::Behind
+    } else {
+        IndexState::Off
+    }
+}
+
+/// `uptime`: how long this process has served forwards.
+async fn index_state(state: &SharedState, uptime: std::time::Duration) -> IndexState {
+    let now = chrono::Utc::now();
+    match chain_walk::cursor(&state.pool, INDEXER_MANA, NET).await {
+        Ok(Some(c)) if !c.full_history => IndexState::Off,
+        Ok(Some(c))
+            if chain_walk::is_walked(&c, now, chrono::Duration::seconds(CLAIM_TTL_SECS)) =>
+        {
+            IndexState::Serves
+        }
+        Ok(Some(c))
+            if now.naive_utc().signed_duration_since(c.updated_at)
+                > chrono::Duration::seconds(INDEX_ABANDONED_SECS) =>
+        {
+            IndexState::Off
+        }
+        Ok(Some(_)) => IndexState::Behind,
+        Ok(None) => missing_cursor(state.settings.market.indexes.mana_transfers_enabled, uptime),
+        Err(e) => {
+            tracing::error!(error = %e, "cannot read the MANA transfer cursor; refusing the tip forward");
+            IndexState::Unknown
         }
     }
 }
@@ -705,7 +815,7 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
     let settings = state.settings.market.tips.clone();
     if !state.settings.market.indexes.mana_transfers_enabled {
         tracing::warn!(
-            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED is off here: tip forwards wait for an index another process must walk, and expire unconfirmed without one"
+            "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED is off here: tip forwards answer 503 unless another process walks the MANA transfer index on this database"
         );
     }
     let pool = state.pool.clone();
@@ -815,13 +925,31 @@ mod tests {
     }
 
     async fn publish_at(pool: &PgPool, block: i64, time: i64) {
+        put_cursor(pool, block, time, true, "0 seconds", true).await;
+    }
+
+    /// The `mana_transfers` cursor at `block` (mined at `time`), with its whole
+    /// history or not, last advanced `advanced` ago by the database clock, and
+    /// published there or not.
+    async fn put_cursor(
+        pool: &PgPool,
+        block: i64,
+        time: i64,
+        full: bool,
+        advanced: &str,
+        published: bool,
+    ) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history, chain_id) \
-             VALUES ('mana_transfers', 'matic', 0, $1, $2, $1, timezone('UTC', now()), true, 137) \
-             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_time = $2, folded_block = $1",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, last_block_time, folded_block, folded_at, full_history, updated_at, chain_id) \
+             VALUES ('mana_transfers', 'matic', 0, $1, $2, CASE WHEN $3 THEN $1 END, CASE WHEN $3 THEN timezone('UTC', now()) END, $4, timezone('UTC', now()) - $5::interval, 137) \
+             ON CONFLICT (indexer, network) DO UPDATE SET last_block = $1, last_block_time = $2, \
+               folded_block = EXCLUDED.folded_block, folded_at = EXCLUDED.folded_at, full_history = $4, updated_at = EXCLUDED.updated_at",
         )
         .bind(block)
         .bind(time)
+        .bind(published)
+        .bind(full)
+        .bind(advanced)
         .execute(pool)
         .await
         .unwrap();
@@ -866,12 +994,13 @@ mod tests {
     fn forward_app(trusted: &[&str]) -> Router {
         let mut settings = crate::market::Settings::for_tests();
         settings.market.trusted_proxy_cidrs = trusted.iter().map(|c| c.parse().unwrap()).collect();
-        Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db_settings(
-                settings,
-            )),
-        )
+        forward_router(crate::market::tests::support::state_without_db_settings(
+            settings,
+        ))
+    }
+
+    fn forward_router(state: SharedState) -> Router {
+        Router::new().nest("/events-notifier", router(state))
     }
 
     const PATH: &str = "/events-notifier/forward-blockchain";
@@ -882,6 +1011,18 @@ mod tests {
         real_ip: Option<&str>,
         signed: Option<&crate::outfits::testkit::Wallet>,
     ) -> StatusCode {
+        send_signed_body(app, peer, real_ip, signed, "{}".into())
+            .await
+            .status()
+    }
+
+    async fn send_signed_body(
+        app: &Router,
+        peer: &str,
+        real_ip: Option<&str>,
+        signed: Option<&crate::outfits::testkit::Wallet>,
+        body: String,
+    ) -> Response {
         use tower::ServiceExt;
         let mut req = axum::http::Request::post(PATH)
             .extension(ConnectInfo(SocketAddr::new(peer.parse().unwrap(), 4242)));
@@ -894,10 +1035,9 @@ mod tests {
             }
         }
         app.clone()
-            .oneshot(req.body(axum::body::Body::from("{}")).unwrap())
+            .oneshot(req.body(axum::body::Body::from(body)).unwrap())
             .await
             .unwrap()
-            .status()
     }
 
     async fn send_from(app: &Router, peer: &str, real_ip: Option<&str>) -> StatusCode {
@@ -1194,11 +1334,11 @@ mod tests {
             );
         }
         assert_eq!(tip_count(pool).await, 2);
-        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        assert_eq!(pending, 0, "every verdict settles its claim");
+        assert_eq!(
+            claim_count(pool).await,
+            0,
+            "every verdict settles its claim"
+        );
         let lenient = TipSettings::parse("1", 10 * 86_400, 10).unwrap();
         transfer(pool, 16, 0, &hash(7), TIPPER, RECEIVER, "1", t - 2 * 86_400).await;
         assert_eq!(
@@ -1440,10 +1580,7 @@ mod tests {
     #[tokio::test]
     async fn an_unsigned_forward_is_refused() {
         use tower::ServiceExt;
-        let app = Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db()),
-        );
+        let app = forward_router(crate::market::tests::support::state_without_db());
         let res = app
             .oneshot(
                 axum::http::Request::post("/events-notifier/forward-blockchain")
@@ -1455,13 +1592,261 @@ mod tests {
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 
+    async fn forward_tip(app: &Router, w: &crate::outfits::testkit::Wallet) -> Response {
+        let body = json!({ "type": "tip-received", "transactionHash": hash(7) }).to_string();
+        send_signed_body(app, "10.77.0.1", None, Some(w), body).await
+    }
+
+    /// Without an index walked here or elsewhere a forward is refused unstored
+    /// (no cursor with the setting off; the setting on or off once a cursor
+    /// exists); with either it is kept as a claim as before.
+    #[tokio::test]
+    async fn a_forward_needs_a_running_index() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_no_index").await else {
+            return;
+        };
+        let app_with = |enabled: bool| {
+            let mut settings = crate::market::Settings::for_tests();
+            settings.market.indexes.mana_transfers_enabled = enabled;
+            forward_router(std::sync::Arc::new(crate::market::MarketplaceState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                settings,
+            )))
+        };
+        let off = app_with(false);
+        let w = crate::outfits::testkit::scratch_wallet();
+        let index_off = Some(json!({
+            "error": "Tip confirmation is unavailable on this node",
+            "code": "tip-index-unavailable",
+        }));
+        let behind = Some(json!({
+            "error": "Tip confirmation is behind on this node, retry later",
+            "retryAfter": 60,
+        }));
+
+        assert_eq!(
+            refused(forward_tip(&off, &w).await).await,
+            (None, index_off.clone())
+        );
+        assert_eq!(claim_count(&db.pool).await, 0, "nothing stored");
+        // A missing cursor with the setting on depends on uptime:
+        // `a_missing_cursor_waits_for_the_first_pass_only_briefly`.
+
+        // An unpublished walk this many minutes behind, last advanced
+        // `advanced` ago by the database clock.
+        let walk = |full: bool, behind_mins: i64, advanced: &'static str| {
+            put_cursor(
+                &db.pool,
+                10,
+                now_secs() - behind_mins * 60,
+                full,
+                advanced,
+                false,
+            )
+        };
+        for (full, behind_mins, advanced, expected, why) in [
+            (
+                true,
+                5,
+                "2 hours",
+                (Some("60"), behind.clone()),
+                "a walk that paused",
+            ),
+            (
+                false,
+                5,
+                "0 seconds",
+                (None, index_off.clone()),
+                "a walk without its whole history never publishes",
+            ),
+            (
+                true,
+                120,
+                "0 seconds",
+                (Some("60"), behind.clone()),
+                "a catch-up lagging behind the hour",
+            ),
+            (
+                true,
+                300,
+                "4 hours",
+                (None, index_off.clone()),
+                "a cursor nothing has walked for hours",
+            ),
+        ] {
+            walk(full, behind_mins, advanced).await;
+            assert_eq!(
+                refused(forward_tip(&off, &w).await).await,
+                (expected.0.map(String::from), expected.1),
+                "{why}"
+            );
+        }
+
+        let on = app_with(true);
+        walk(true, 120, "0 seconds").await;
+        assert_eq!(
+            refused(forward_tip(&on, &w).await).await.0.as_deref(),
+            Some("60"),
+            "the local setting does not skip the check"
+        );
+        walk(true, 5, "0 seconds").await;
+        assert_eq!(
+            forward_tip(&on, &w).await.status(),
+            StatusCode::ACCEPTED,
+            "walked here"
+        );
+        assert_eq!(claim_count(&db.pool).await, 1);
+        walk(true, 5, "2 hours").await;
+        assert_eq!(
+            refused(forward_tip(&on, &w).await).await.0.as_deref(),
+            Some("60"),
+            "a retried claim once the local walk stalled"
+        );
+
+        walk(true, 5, "0 seconds").await;
+        assert_eq!(
+            forward_tip(&off, &crate::outfits::testkit::scratch_wallet())
+                .await
+                .status(),
+            StatusCode::ACCEPTED,
+            "walked by another process"
+        );
+        walk(true, 5, "-5 minutes").await;
+        assert_eq!(
+            forward_tip(&off, &crate::outfits::testkit::scratch_wallet())
+                .await
+                .status(),
+            StatusCode::ACCEPTED,
+            "a database clock ahead of this node's"
+        );
+        db.drop().await;
+    }
+
+    #[test]
+    fn a_missing_cursor_waits_for_the_first_pass_only_briefly() {
+        let minute = std::time::Duration::from_secs(60);
+        assert_eq!(missing_cursor(true, minute), IndexState::Behind);
+        assert_eq!(
+            missing_cursor(true, FIRST_PASS_GRACE + minute),
+            IndexState::Off,
+            "a walk that never started on this database"
+        );
+        assert_eq!(missing_cursor(false, minute), IndexState::Off);
+    }
+
+    /// A 503's `Retry-After` and body.
+    async fn refused(res: Response) -> (Option<String>, Option<Value>) {
+        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let retry_after = res
+            .headers()
+            .get(header::RETRY_AFTER)
+            .map(|v| v.to_str().unwrap().to_string());
+        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        (retry_after, serde_json::from_slice(&body).ok())
+    }
+
+    #[tokio::test]
+    async fn a_walk_restarted_after_hours_down_reads_as_behind() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_restarted").await else {
+            return;
+        };
+        let state = std::sync::Arc::new(crate::market::MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        ));
+        let minute = std::time::Duration::from_secs(60);
+        let touch = || chain_walk::touch_started(&db.pool, INDEXER_MANA, NET);
+        let updated_at = || async {
+            chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
+                .await
+                .unwrap()
+                .unwrap()
+                .updated_at
+        };
+
+        put_cursor(&db.pool, 10, now_secs() - 5 * 3600, true, "4 hours", false).await;
+        assert_eq!(index_state(&state, minute).await, IndexState::Off);
+        touch().await.unwrap();
+        assert_eq!(
+            index_state(&state, minute).await,
+            IndexState::Behind,
+            "back, but still hours behind"
+        );
+
+        put_cursor(&db.pool, 10, now_secs() - 5 * 60, true, "4 hours", false).await;
+        touch().await.unwrap();
+        assert_eq!(
+            index_state(&state, minute).await,
+            IndexState::Behind,
+            "near the head, but not live until it advances"
+        );
+        let db_now: chrono::NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', now())")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        let skewed = db_now.and_utc() - chain_walk::MAX_CLOCK_SKEW;
+        assert!(
+            !chain_walk::is_walked(
+                &chain_walk::cursor(&db.pool, INDEXER_MANA, NET)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                skewed,
+                chrono::Duration::seconds(CLAIM_TTL_SECS),
+            ),
+            "not live even from a clock behind the database's"
+        );
+
+        put_cursor(&db.pool, 10, now_secs() - 5 * 60, true, "5 minutes", false).await;
+        let before = updated_at().await;
+        touch().await.unwrap();
+        assert_eq!(updated_at().await, before, "a newer advance is kept");
+        assert_eq!(index_state(&state, minute).await, IndexState::Serves);
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_cursor_that_cannot_be_read_is_a_500() {
+        let app = forward_router(crate::market::tests::support::state_without_db());
+        let res = forward_tip(&app, &crate::outfits::testkit::scratch_wallet()).await;
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn a_missing_cursor_is_read_with_the_setting_and_uptime() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_no_cursor").await else {
+            return;
+        };
+        let state_with = |enabled: bool| {
+            let mut settings = crate::market::Settings::for_tests();
+            settings.market.indexes.mana_transfers_enabled = enabled;
+            std::sync::Arc::new(crate::market::MarketplaceState::new(
+                db.pool.clone(),
+                crate::http::Outbound::for_tests(),
+                settings,
+            ))
+        };
+        let (on, off) = (state_with(true), state_with(false));
+        let minute = std::time::Duration::from_secs(60);
+        assert_eq!(index_state(&on, minute).await, IndexState::Behind);
+        assert_eq!(index_state(&on, FIRST_PASS_GRACE).await, IndexState::Off);
+        assert_eq!(index_state(&off, minute).await, IndexState::Off);
+        db.drop().await;
+    }
+
+    async fn claim_count(pool: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn a_cross_origin_forward_is_preflighted() {
         use tower::ServiceExt;
-        let app = Router::new().nest(
-            "/events-notifier",
-            router(crate::market::tests::support::state_without_db()),
-        );
+        let app = forward_router(crate::market::tests::support::state_without_db());
         let requested = "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-auth-chain-2,x-identity-timestamp,x-identity-metadata";
         let res = app
             .clone()

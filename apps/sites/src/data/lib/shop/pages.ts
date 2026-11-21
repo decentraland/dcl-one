@@ -11,6 +11,8 @@ export type ShopSeo = {
   title: string;
   description: string;
   image?: string;
+  /** The image is a wide picture (a LAND map), shown as a large card rather than a thumbnail's small one. */
+  largeImage?: boolean;
   /** Absolute URL of the page without its query (the canonical identity of the asset or list). */
   canonical?: string;
   noindex: boolean;
@@ -27,8 +29,6 @@ export type ShopPageData = {
   /** The session id the page's own telemetry is tagged with (set by the route loader). */
   sid?: string;
 };
-
-const SITE = "Decentraland";
 
 const DESCRIPTIONS: Partial<Record<ShopPageId, string>> = {
   overview: "Shop Decentraland wearables, emotes, NAMEs and LAND: featured drops, trending items and the latest listings.",
@@ -91,36 +91,4 @@ export function defaultShopSeo(page: ShopPageId, canonical?: string): ShopSeo {
     canonical: isPrivateShopPage(page) || isMarketplaceShopPage(page) ? undefined : canonical,
     noindex: isPrivateShopPage(page) || isMarketplaceShopPage(page),
   };
-}
-
-/** The document title: "<page> | Shop | Decentraland", the overview as "Shop | Decentraland". */
-export function shopDocumentTitle(seo: Pick<ShopSeo, "title">): string {
-  return seo.title === "Shop" ? `Shop | ${SITE}` : `${seo.title} | Shop | ${SITE}`;
-}
-
-export type MetaDescriptor =
-  | { title: string }
-  | { name: string; content: string }
-  | { property: string; content: string }
-  | { tagName: "link"; rel: string; href: string };
-
-/** react-router meta descriptors for a Shop page head. */
-export function shopMetaDescriptors(seo: ShopSeo): MetaDescriptor[] {
-  const title = shopDocumentTitle(seo);
-  const out: MetaDescriptor[] = [
-    { title },
-    { name: "description", content: seo.description },
-    { property: "og:title", content: title },
-    { property: "og:description", content: seo.description },
-    { property: "og:type", content: "website" },
-    { property: "og:site_name", content: SITE },
-    { name: "twitter:card", content: seo.image ? "summary_large_image" : "summary" },
-  ];
-  if (seo.image) out.push({ property: "og:image", content: seo.image });
-  if (seo.canonical) {
-    out.push({ property: "og:url", content: seo.canonical });
-    out.push({ tagName: "link", rel: "canonical", href: seo.canonical });
-  }
-  if (seo.noindex) out.push({ name: "robots", content: "noindex" });
-  return out;
 }

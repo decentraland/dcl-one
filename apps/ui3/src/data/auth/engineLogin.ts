@@ -1,13 +1,13 @@
 
 import type { SetIdentityPayload } from "../../generated/bridge/SetIdentityPayload";
 import { getBridge, sendBridge } from "../../overlay/bridge";
-import { check } from "../../validate";
+import { check } from "@web-core/validate";
 import { StoredAuthIdentitySchema } from "../persisted-schemas";
-import type { AuthIdentity } from "./identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 
-export { IDENTITY_STORAGE_KEY, toStoredIdentity } from "./identity";
-export type { StoredAuthIdentity } from "./identity";
-import { IDENTITY_STORAGE_KEY, toStoredIdentity, type StoredAuthIdentity } from "./identity";
+export { IDENTITY_STORAGE_KEY, toStoredIdentity } from "@web-core/auth/identity";
+export type { StoredAuthIdentity } from "@web-core/auth/identity";
+import { IDENTITY_STORAGE_KEY, toStoredIdentity, type StoredAuthIdentity } from "@web-core/auth/identity";
 
 type EngineAuthStatus = "none" | "pending" | "signedIn";
 export type EngineAuthState = { status: EngineAuthStatus; address: string | null };

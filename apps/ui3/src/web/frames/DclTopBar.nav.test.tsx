@@ -3,8 +3,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 
 import DclTopBar from "./DclTopBar";
 import ChromeShell from "../../components/ChromeShell";
-import { ChromeNavContext, chromeLinkProps, isSameDocumentHref, type ChromeNavigate } from "./chrome-nav";
-import { ChromeAuthContext, type ChromeAuth } from "./chrome-auth";
+import { ChromeNavContext, chromeLinkProps, isSameDocumentHref, type ChromeNavigate } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 import { getJSON } from "../../data/catalyst/client";
 
 vi.mock("../../data/catalyst/client", async importOriginal => ({

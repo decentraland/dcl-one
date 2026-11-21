@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useShopServices } from "../checkout/services";
-import { waitForReceipt } from "../checkout/chain/rpc";
+import { defaultSleep, waitForReceipt } from "../checkout/chain/rpc";
 import { fetchOwnsItem } from "../checkout/lib/api";
 
 export type Settlement = "pending" | "indexing" | "confirmed" | "failed" | "timed-out";
@@ -31,7 +31,7 @@ export function useSettlement(
     // Leaving the page stops the receipt reads at once, the one in flight and the wait before the next.
     const stop = new AbortController();
     const attempts = opts.attempts ?? 8;
-    const sleep = wait?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleep = wait?.sleep ?? ((ms: number) => defaultSleep(ms, stop.signal));
     const run = async () => {
       const outcomes = await Promise.all(
         txs.map(async (tx) => {
@@ -50,10 +50,11 @@ export function useSettlement(
       if (!own) return setState("confirmed");
       setState("indexing");
       for (let i = 0; i < 40 && !cancelled; i++) {
-        if (await fetchOwnsItem(own.owner, own.contractAddress, own.itemId, client)) {
+        if (await fetchOwnsItem(own.owner, own.contractAddress, own.itemId, client, stop.signal)) {
           if (!cancelled) setState("confirmed");
           return;
         }
+        if (cancelled) return;
         await sleep(3000);
       }
       if (!cancelled) setState("timed-out");

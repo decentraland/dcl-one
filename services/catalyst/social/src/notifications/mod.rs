@@ -88,7 +88,7 @@ pub struct Settings {
     /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never, but
     /// a hold for a missing key still ends): see [`delivery::expire`].
     pub delivery_max_age: Option<Duration>,
-    /// Deployment origin used by event notice links (`/whats-on/{id}`).
+    /// Deployment origin used by event notice links (the Sites `/events` pages).
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,

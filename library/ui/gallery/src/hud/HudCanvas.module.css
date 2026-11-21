@@ -1,0 +1,8 @@
+/* The canvas fills its window and scrolls inside it, as the Showcase does in a HUD host: a section wider than the
+   window overflows on its own, and the others keep the window's width. */
+.window {
+  height: 100%;
+  overflow-y: auto;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+}
