@@ -416,6 +416,43 @@ The HUD and input:
   shorter than its frames plus 3, whatever `--timeout-frames` says.
   A blocked outcome is a resolved reply with `diagnosis` set, not a failure.
   [Interaction](interaction.md) has every option and reply field.
+- `/walk <dx> <dy> [--seconds S] [--kind walk|jog|run] [--jump] [--ignore-input-modifiers]`
+  (`src/automation/walk.rs`): walk camera-relative by holding the keys bound to the movement
+  actions for `--seconds` (1 by default, at most 30), as the keyboard does: `dx` is right (+) or
+  left (-), `dy` forward (+) or backward (-), each from -1 to 1, and a component at least 0.3 from
+  0 presses its key. The movement scene sets the gait from the actions held with them: `IaWalk`
+  for `walk`, `IaModifier` for `run`, neither for `jog` (the default). `--jump` presses jump as
+  the walk starts and holds it at most 0.5 s. The movement scene applies the active
+  `InputModifier`, which the engine passes it in the avatar movement info;
+  `--ignore-input-modifiers` withholds it for the walk (`InputModifierBypass`). Because the keys
+  are real input, a walk also reaches the scene root as `IaForward` (and the other actions) presses,
+  as a person's walk does. It answers, once the player has been still for 3 frames after the keys
+  are up (or 3 s have passed: `settled:false`), with JSON: `startPosition`, `endPosition`
+  (Decentraland world coordinates), `distance` (straight), `parcel`, `seconds` (how long the keys
+  were down), `kind`, `jump`, `keys`, `modifierActive`, `modifier` (what the active
+  `InputModifier` disabled during the walk: `all`, `walk`, `jog`, `run`, `jump`, ..., or `null`;
+  reported with the bypass too) and `ignoreInputModifiers`. A walk that cannot start is refused
+  before a key is pressed, with `{"refused", "cause"}`: a second walk (`cause.holder` `walk`), an
+  action with a gamepad binding or none (`cause.input`), input the HUD holds (`cause.input`,
+  `cause.holder` `hud`), no player. A walk whose player is removed while it runs lets its keys go
+  and fails the same way, with the stage it was at in `cause.stage`. `/walk_player_to` walks to a
+  point instead. The walk is
+  camera-relative and the third-person camera sits beside and behind the avatar, so with the
+  camera aimed at a near point a walk runs a few degrees off the avatar's line to that point; aim
+  it at a far point on the line to walk straight.
+- `/player_state` (`crates/user_input/src/debug_panel.rs`): JSON `position`, `rotationEuler`,
+  `parcel`, `velocity` (Decentraland axes), `grounded` (within 0.2 m of the ground; `null` before
+  the movement controller has run), `outOfWorld`, `camera` (`mode`: `first_person`,
+  `third_person`, `cinematic` under a scene's camera, `free` in photo mode; `position`,
+  `rotationEuler`, `fov` in degrees, `modeChangeAllowed`: false while a scene holds the camera;
+  `pointerLocked`) and `pointerLocked` (the scene's pointer lock). Euler angles are
+  Decentraland's, as a scene reads them: degrees 0 to 360, `x` the pitch with looking down
+  positive, `y` the yaw clockwise from north. It is one read of what `/player_position`,
+  `/camera_state` and `/movement_state` each report a part of, through the same conversions.
+- `/gesture_state` (`src/automation/gesture.rs`): JSON `running` (each running automation
+  gesture by command name, with its stage and the keys it holds, such as `{"walk": "holding KeyW
+  ShiftLeft"}`) and `inputModifierWithheld`. The debug panel's "Automation gestures" section reads
+  it.
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
   cast) and `/raycast_budget [ms|auto]` (show the capped budget, a tenth of the target frame, or

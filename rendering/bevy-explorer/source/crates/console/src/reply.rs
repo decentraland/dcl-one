@@ -1,8 +1,13 @@
 //! What the automation commands' replies and arguments share
 //! (docs/adr/2026-11-17-console-command-conventions.md): the `screen` a coordinate is read
-//! against and normalized coordinates.
+//! against, normalized coordinates, points, the measured frame time a command counts seconds in,
+//! and refusals that name their cause.
 
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{
+    diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    prelude::*,
+    window::PrimaryWindow,
+};
 use serde_json::{json, Value};
 
 /// The primary window in logical pixels, the space `/click_at`, `/entity_screen_position` and the
@@ -61,9 +66,10 @@ pub fn normalized_point(x: f32, y: f32) -> Result<Vec2, String> {
     }
 }
 
-/// Hundredths, finer than anything a click or a scene can tell, so replies stay short.
+/// Hundredths, finer than anything a click or a scene can tell, so replies stay short. Never a
+/// negative zero (adding 0 makes it a plain one), which JSON would print as `-0.0`.
 pub fn round(v: f32) -> f64 {
-    (f64::from(v) * 100.0).round() / 100.0
+    (f64::from(v) * 100.0).round() / 100.0 + 0.0
 }
 
 /// Ten-thousandths, for normalized coordinates: a hundredth of a pixel on a 10000-pixel screen.
@@ -71,9 +77,98 @@ pub fn round_fine(v: f32) -> f64 {
     (f64::from(v) * 10000.0).round() / 10000.0
 }
 
+/// A point or a vector as `{"x", "y", "z"}`, in hundredths.
+pub fn xyz([x, y, z]: [f32; 3]) -> Value {
+    json!({ "x": round(x), "y": round(y), "z": round(z) })
+}
+
+/// How long a frame takes, as `FrameTimeDiagnosticsPlugin` smooths it, for a command that counts
+/// seconds in frames. A sixtieth of a second until a frame has been measured.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FrameRate {
+    /// seconds a frame takes
+    pub frame_seconds: f32,
+}
+
+impl Default for FrameRate {
+    fn default() -> Self {
+        Self {
+            frame_seconds: 1.0 / 60.0,
+        }
+    }
+}
+
+impl FrameRate {
+    pub fn measured(diagnostics: &DiagnosticsStore) -> Self {
+        diagnostics
+            .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+            .and_then(Diagnostic::smoothed)
+            .map(|milliseconds| (milliseconds / 1000.0) as f32)
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map_or_else(Self::default, |frame_seconds| Self { frame_seconds })
+    }
+
+    /// The frames `seconds` last, at least one for a positive duration.
+    pub fn frames_in(&self, seconds: f32) -> u32 {
+        if seconds <= 0.0 {
+            return 0;
+        }
+        (seconds / self.frame_seconds).round().max(1.0) as u32
+    }
+}
+
+/// A refusal: the command did nothing, and says why and what stood in the way. Sent as the failed
+/// reply's text, `{"refused": reason, "cause": {...}}`, the cause naming the input, holder or
+/// entity that refused.
+pub fn refusal(reason: impl Into<String>, cause: Option<Value>) -> String {
+    let mut reply = json!({ "refused": reason.into() });
+    if let Some(cause) = cause {
+        reply["cause"] = cause;
+    }
+    reply.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rounding_never_gives_a_negative_zero() {
+        assert!(round(-0.0).is_sign_positive());
+        assert!(round(-0.001).is_sign_positive());
+        assert_eq!(round(-1.234), -1.23);
+        assert_eq!(
+            xyz([1.006, -0.001, -2.5]).to_string(),
+            r#"{"x":1.01,"y":0.0,"z":-2.5}"#
+        );
+    }
+
+    #[test]
+    fn seconds_count_in_frames_at_the_measured_rate() {
+        let rate = FrameRate {
+            frame_seconds: 1.0 / 30.0,
+        };
+        assert_eq!(rate.frames_in(2.0), 60);
+        assert_eq!(rate.frames_in(0.001), 1);
+        assert_eq!(rate.frames_in(0.0), 0);
+        // nothing measured yet: a sixtieth of a second
+        assert_eq!(
+            FrameRate::measured(&DiagnosticsStore::default()),
+            FrameRate::default()
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_its_cause() {
+        let text = refusal(
+            "the HUD holds the input",
+            Some(json!({"input": "IaForward"})),
+        );
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["refused"], "the HUD holds the input");
+        assert_eq!(value["cause"]["input"], "IaForward");
+        assert_eq!(refusal("busy", None), r#"{"refused":"busy"}"#);
+    }
 
     const SCREEN: Screen = Screen {
         width: 1280.0,

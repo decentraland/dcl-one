@@ -1,9 +1,14 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{AvatarDynamicState, PrimaryCamera, PrimaryUser};
-use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
-use dcl_component::proto_components::common::Vector3;
-use serde_json::json;
+use common::structs::{
+    AvatarDynamicState, CameraView, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
+};
+use console::{
+    reply, AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand,
+};
+use dcl_component::{proto_components::common::Vector3, transform_and_parent::DclTranslation};
+use scene_runner::vec3_to_parcel;
+use serde_json::{json, Value};
 
 use crate::avatar_movement::{
     ActivePlayerComponent, AvatarLocomotionSettings, AvatarMovement, AvatarMovementInfo,
@@ -15,6 +20,7 @@ impl Plugin for InputDebugPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_console_command::<CameraState, _>(camera_state)
             .add_console_command::<MovementState, _>(movement_state)
+            .add_console_command::<PlayerState, _>(player_state)
             .add_preview_console_command::<CameraSensitivity, _>(camera_sensitivity)
             .add_preview_debug_inputs(DebugSection {
                 title: "Camera",
@@ -87,6 +93,19 @@ fn camera_sensitivity(
     }
 }
 
+/// A perspective camera's far clip, in metres, and vertical field of view, in degrees.
+fn lens(projection: &Projection) -> (Option<f32>, Option<f32>) {
+    match projection {
+        Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
+        _ => (None, None),
+    }
+}
+
+/// A velocity in Decentraland's axes, as the movement scene is told of it.
+fn dcl_velocity(velocity: &Vec3) -> Vector3 {
+    Vector3::world_vec_from_vec3(velocity)
+}
+
 fn camera_state(
     mut cmd: ConsoleCommand<CameraState>,
     camera: Query<(&PrimaryCamera, &Projection)>,
@@ -96,10 +115,7 @@ fn camera_state(
         cmd.reply_failed("player camera unavailable");
         return;
     };
-    let (far, fov) = match projection {
-        Projection::Perspective(p) => (Some(p.far), Some(p.fov.to_degrees())),
-        _ => (None, None),
-    };
+    let (far, fov) = lens(projection);
     cmd.reply_ok(json!({"sensitivity":camera.sensitivity, "distance":camera.distance, "far":far, "fov":fov, "override":camera.scene_override.is_some()}).to_string());
 }
 
@@ -118,15 +134,16 @@ fn movement_state(
     let loc = active.single().ok().map(|active| &active.component.0);
     let player = player.single().ok();
     let vector = |v: Vector3| [v.x, v.y, v.z];
-    let requested = info.0.requested_velocity.or_else(|| {
-        player.map(|(movement, _)| Vector3::world_vec_from_vec3(&movement.component.velocity))
-    });
+    let requested = info
+        .0
+        .requested_velocity
+        .or_else(|| player.map(|(movement, _)| dcl_velocity(&movement.component.velocity)));
     // The controller skips the displacement solve when idle or movement is suppressed.
     // It explicitly sets its velocity to zero in that case, leaving SDK feedback absent.
     let actual = info.0.actual_velocity.or_else(|| {
         player
             .filter(|(_, dynamics)| dynamics.velocity == Vec3::ZERO)
-            .map(|(_, dynamics)| Vector3::world_vec_from_vec3(&dynamics.velocity))
+            .map(|(_, dynamics)| dcl_velocity(&dynamics.velocity))
     });
     let setting_reason = if loc.is_some() {
         "The active locomotion settings do not specify this value."
@@ -147,6 +164,102 @@ fn movement_state(
             "external":"No SDK force or impulse in the last frame.",
         },
     }).to_string());
+}
+
+/// How far below the player's ground height counts as standing on it.
+const GROUNDED_METRES: f32 = 0.2;
+
+/// Read the player's and the camera's pose as JSON: position, rotationEuler, parcel, velocity,
+/// grounded, outOfWorld, pointerLocked and camera {mode, position, rotationEuler, fov,
+/// modeChangeAllowed, pointerLocked}. Positions and the velocity are in Decentraland world
+/// coordinates; euler angles are Decentraland's, in degrees from 0 to 360 (x the pitch, looking
+/// down positive; y the yaw clockwise from north; z the roll). /player_position, /camera_state
+/// and /movement_state read one part each
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/player_state")]
+struct PlayerState;
+
+/// A bevy rotation as Decentraland euler angles, `{"x", "y", "z"}` in degrees from 0 to 360.
+/// Decentraland mirrors bevy's z axis, which turns a yaw or a pitch the other way and keeps a roll.
+fn dcl_euler(rotation: Quat) -> Value {
+    let (yaw, pitch, roll) = rotation.to_euler(EulerRot::YXZ);
+    let degrees = |radians: f32| {
+        let degrees = reply::round(radians.to_degrees().rem_euclid(360.0));
+        if degrees >= 360.0 {
+            0.0
+        } else {
+            degrees
+        }
+    };
+    json!({ "x": degrees(-pitch), "y": degrees(-yaw), "z": degrees(roll) })
+}
+
+fn mode_name(camera: &PrimaryCamera, photo: bool) -> &'static str {
+    if photo {
+        return "free";
+    }
+    match camera.view() {
+        CameraView::FirstPerson => "first_person",
+        CameraView::ThirdPerson => "third_person",
+        CameraView::Cinematic => "cinematic",
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn player_state(
+    mut cmd: ConsoleCommand<PlayerState>,
+    player: Query<
+        (
+            &GlobalTransform,
+            Option<&AvatarDynamicState>,
+            Has<OutOfWorld>,
+        ),
+        With<PrimaryUser>,
+    >,
+    camera: Query<(
+        &GlobalTransform,
+        &PrimaryCamera,
+        &Projection,
+        Has<PhotoMode>,
+    )>,
+    locks: Res<CursorLocks>,
+) {
+    let Some(Ok(_)) = cmd.take() else { return };
+    let Ok((transform, dynamics, out_of_world)) = player.single() else {
+        cmd.reply_failed("no player");
+        return;
+    };
+    let (_, rotation, position) = transform.to_scale_rotation_translation();
+    let parcel = vec3_to_parcel(position);
+    let velocity = dcl_velocity(&dynamics.map_or(Vec3::ZERO, |d| d.velocity));
+    let pointer_locked = locks.0.contains("camera");
+    let camera = camera
+        .single()
+        .ok()
+        .map(|(transform, camera, projection, photo)| {
+            let (_, rotation, position) = transform.to_scale_rotation_translation();
+            json!({
+                "mode": mode_name(camera, photo),
+                "position": reply::xyz(DclTranslation::from_bevy_translation(position).0),
+                "rotationEuler": dcl_euler(rotation),
+                "fov": lens(projection).1.map(reply::round),
+                "modeChangeAllowed": camera.scene_override.is_none(),
+                "pointerLocked": pointer_locked,
+            })
+        });
+    cmd.reply_ok(
+        json!({
+            "position": reply::xyz(DclTranslation::from_bevy_translation(position).0),
+            "rotationEuler": dcl_euler(rotation),
+            "parcel": [parcel.x, parcel.y],
+            "velocity": reply::xyz([velocity.x, velocity.y, velocity.z]),
+            "grounded": dynamics.map(|d| d.ground_height < GROUNDED_METRES),
+            "outOfWorld": out_of_world,
+            "camera": camera,
+            "pointerLocked": pointer_locked,
+        })
+        .to_string(),
+    );
 }
 
 #[cfg(test)]
@@ -181,5 +294,55 @@ mod tests {
         assert_eq!(report["requested"], json!([0.0, 0.0, 0.0]));
         assert_eq!(report["actual"], json!([0.0, 0.0, 0.0]));
         assert!(report["external"].is_null());
+    }
+
+    #[test]
+    fn euler_is_decentralands_yaw_from_north_and_pitch_down_positive() {
+        assert_eq!(
+            dcl_euler(Quat::IDENTITY),
+            json!({"x": 0.0, "y": 0.0, "z": 0.0})
+        );
+        // a bevy yaw of +90 degrees looks west: 270 clockwise from north
+        let west = Quat::from_rotation_y(90f32.to_radians());
+        assert_eq!(dcl_euler(west)["y"], 270.0);
+        // a bevy pitch of +30 degrees looks up: -30, so 330
+        let up = Quat::from_rotation_x(30f32.to_radians());
+        assert_eq!(dcl_euler(up)["x"], 330.0);
+    }
+
+    #[test]
+    fn the_player_state_reads_the_pose_the_parcel_and_the_camera() {
+        let mut app = App::new();
+        app.add_event::<ConsoleCommandEntered>()
+            .add_event::<PrintConsoleLine>()
+            .init_resource::<CursorLocks>()
+            .add_systems(Update, player_state);
+        // Decentraland (24.5, 1, 40): bevy's z is mirrored
+        let at = Transform::from_xyz(24.5, 1.0, -40.0);
+        app.world_mut().spawn((
+            PrimaryUser::default(),
+            at,
+            GlobalTransform::from(at),
+            AvatarDynamicState {
+                velocity: Vec3::new(1.0, 0.0, -2.0),
+                ..default()
+            },
+        ));
+        let (tx, rx) = mpsc::channel();
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/player_state".into(),
+            args: vec![],
+            responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+        });
+        app.update();
+        let reply = rx.try_recv().unwrap().unwrap();
+        let report: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(report["position"], json!({"x": 24.5, "y": 1.0, "z": 40.0}));
+        assert_eq!(report["parcel"], json!([1, 2]));
+        assert_eq!(report["velocity"], json!({"x": 1.0, "y": 0.0, "z": 2.0}));
+        assert_eq!(report["grounded"], true);
+        assert_eq!(report["outOfWorld"], false);
+        assert!(report["camera"].is_null());
+        assert_eq!(report["pointerLocked"], false);
     }
 }

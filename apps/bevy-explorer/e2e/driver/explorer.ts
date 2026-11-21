@@ -59,6 +59,60 @@ export interface PointerReport {
   diagnosis: string | null
 }
 
+/** What `/walk` reports once the player has settled. Positions are Decentraland world coordinates. */
+export interface WalkReport {
+  startPosition: { x: number; y: number; z: number }
+  endPosition: { x: number; y: number; z: number }
+  /** straight from the start to the end */
+  distance: number
+  parcel: [number, number]
+  /** how long the keys were down */
+  seconds: number
+  kind: 'walk' | 'jog' | 'run'
+  jump: boolean
+  /** the keys held, by `KeyboardEvent.code` */
+  keys: string[]
+  /** an InputModifier disabled something while the walk ran */
+  modifierActive: boolean
+  /** what it disabled (`all`, `walk`, `jog`, `run`, `jump`, ...), null without one */
+  modifier: string[] | null
+  ignoreInputModifiers: boolean
+  /** the player stopped within 3 s of the keys going up */
+  settled: boolean
+}
+
+/** Decentraland euler angles, in degrees from 0 to 360: `x` the pitch (looking down positive), `y`
+ *  the yaw clockwise from north, `z` the roll. */
+export interface Euler {
+  x: number
+  y: number
+  z: number
+}
+
+/** What `/player_state` reports. Positions and velocity are Decentraland world coordinates. */
+export interface PlayerState {
+  position: { x: number; y: number; z: number }
+  rotationEuler: Euler
+  parcel: [number, number]
+  velocity: { x: number; y: number; z: number }
+  /** null before the movement controller has run */
+  grounded: boolean | null
+  outOfWorld: boolean
+  camera: {
+    /** `cinematic` under a scene's camera, `free` in photo mode */
+    mode: 'first_person' | 'third_person' | 'cinematic' | 'free'
+    position: { x: number; y: number; z: number }
+    rotationEuler: Euler
+    /** vertical, in degrees */
+    fov: number | null
+    /** false while a scene holds the camera */
+    modeChangeAllowed: boolean
+    pointerLocked: boolean
+  } | null
+  /** the scene's pointer lock */
+  pointerLocked: boolean
+}
+
 /** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
 export interface RaycastStats {
   budgetMs: number
@@ -1060,6 +1114,27 @@ export class Explorer {
     if (options.event) line += ` --event ${options.event}`
     if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
     return this.json<PointerReport>(line)
+  }
+
+  /** Walks camera-relative by holding the movement keys: `dx` right (+) or left (-), `dy` forward (+)
+   *  or backward (-), each -1 to 1; resolves once the player has settled. A walk that cannot start
+   *  rejects with `{"refused", "cause"}` as the error's output. */
+  walk(
+    dx: number,
+    dy: number,
+    options: { seconds?: number; kind?: 'walk' | 'jog' | 'run'; jump?: boolean; ignoreInputModifiers?: boolean } = {}
+  ): Promise<WalkReport> {
+    let line = `/walk ${dx} ${dy}`
+    if (options.seconds !== undefined) line += ` --seconds ${options.seconds}`
+    if (options.kind) line += ` --kind ${options.kind}`
+    if (options.jump) line += ' --jump'
+    if (options.ignoreInputModifiers) line += ' --ignore-input-modifiers'
+    return this.json<WalkReport>(line)
+  }
+
+  /** The player's and the camera's pose in one read. */
+  playerState(): Promise<PlayerState> {
+    return this.json<PlayerState>('/player_state')
   }
 
   raycastStats(): Promise<RaycastStats> {

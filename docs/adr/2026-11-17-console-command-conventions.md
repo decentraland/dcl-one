@@ -20,7 +20,8 @@ also drives the Unity Explorer through its MCP server. It names arguments and re
 
 The console's automation commands follow these rules. `crates/console/src/line.rs` and
 `crates/console/src/reply.rs` hold the shared pieces. A rule for a kind of command the console
-does not have yet (durations, waits, refusals, entity ids) is added here with its first command.
+does not have yet (warnings, world-aimed presses, bulk captures, entity ids) is added here with
+its first command.
 
 1. **Quoting.** A line is split into words on whitespace (Unicode's White_Space); a double-quoted
    run is part of a word with its quotes removed, and inside it `\"` and `\\` escape. A backslash
@@ -38,6 +39,14 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
    screenshot's pixels are `scale` times as many. The pixel commands (`/click_at`,
    `/entity_screen_position`) take logical pixels; `/click_at --normalized` takes the normalized
    form.
+3. **Durations.** A command that lasts takes `--seconds <f32>`. Where it counts frames, seconds
+   count at the frame time `FrameTimeDiagnosticsPlugin` smooths (`reply::FrameRate`).
+4. **Waiting.** A command waits for its effect inside the command, for a bounded time, and replies
+   with what it observed; a reply that ran out of time says so (`/walk` answers `settled: false`).
+5. **Refusals.** A command that does nothing fails with `{"refused": "<reason>", "cause": {...}}`
+   (`reply::refusal`), the cause naming what stood in the way, and it refuses before it acts. A
+   command that runs over several frames refuses a second call while it runs, naming itself as
+   `cause.holder` (`GestureArbiter`, `src/automation/gesture.rs`), instead of queueing it.
 
 ## Consequences
 
@@ -53,6 +62,8 @@ does not have yet (durations, waits, refusals, entity ids) is added here with it
   own commands (`/goto`, `/world`, `/help`, bare `/reload`) and refuses the ones it hides.
 - `/click_at` replies JSON: `x`, `y`, `normalized`, `button`, `screen` and, on the web, `input`.
 - A value holding a lone `"` is quoted or escaped on non-JSON commands.
+- A caller tells a refusal from a bad argument by the failed reply's text: a refusal is JSON with
+  `refused`, an argument error a sentence.
 
 ## Alternatives considered
 

@@ -255,7 +255,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 one argument (`/chat nearby "two words"`), in the chat input as over a transport; a command that
 takes JSON takes the rest of the line, split on whitespace alone. A reply with a screen position carries `screen` (`width`, `height` in logical pixels, `scale`);
 the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.md) has the rules
-(quoting, normalized coordinates).
+(quoting, normalized coordinates, durations, waits, refusals).
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
@@ -346,6 +346,14 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
   lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+- Movement: `/walk <dx> <dy> [--seconds S] [--kind walk|jog|run] [--jump]
+  [--ignore-input-modifiers]` holds the movement keys camera-relative, with the walk or run key
+  for the gait, and answers once the player has settled with `startPosition`, `endPosition`,
+  `distance`, `parcel`, the held `seconds` and whether an `InputModifier` was active
+  (`modifierActive`, `modifier`); a walk that cannot start is refused with `{"refused", "cause"}`.
+  `/player_state` reads the player's pose, `parcel`, velocity, `grounded`, the camera's mode and
+  pose, `modeChangeAllowed` and `pointerLocked` in one reply. `/gesture_state` reads the running
+  gestures, for the debug panel. `docs/guidelines/running.md` has the details.
 - Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
   uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
   capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go

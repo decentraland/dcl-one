@@ -84,7 +84,7 @@ impl AutomationOptions {
     }
 }
 
-/// `/press_key`, `/click_at`, `/hover_entity` and `/click_entity`, in every build.
+/// `/press_key`, `/click_at`, the pointer commands and `/walk`, in every build.
 pub struct AutomationPlugin;
 
 impl Plugin for AutomationPlugin {
@@ -96,11 +96,17 @@ impl Plugin for AutomationPlugin {
                 PreUpdate,
                 input::play_input_script.before(bevy::input::InputSystem),
             );
-        app.add_plugins(pointer::AutomationPointerPlugin);
+        app.add_plugins((
+            gesture::AutomationGesturePlugin,
+            pointer::AutomationPointerPlugin,
+            walk::AutomationWalkPlugin,
+        ));
     }
 }
 
+pub(crate) mod gesture;
 pub(crate) mod pointer;
+pub(crate) mod walk;
 
 pub(crate) mod input {
     use std::collections::VecDeque;

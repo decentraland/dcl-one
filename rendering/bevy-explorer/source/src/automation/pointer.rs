@@ -82,7 +82,7 @@ impl Plugin for AutomationPointerPlugin {
 }
 
 /// The input script step pressing or releasing `binding`; `None` for a gamepad binding.
-fn binding_step(binding: &InputIdentifier, state: ButtonState) -> Option<Step> {
+pub(crate) fn binding_step(binding: &InputIdentifier, state: ButtonState) -> Option<Step> {
     match *binding {
         InputIdentifier::Key(key_code) => {
             // bevy names key codes as the DOM does, so the press carries the key and text a

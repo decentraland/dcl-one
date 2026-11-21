@@ -139,8 +139,8 @@ fn player_position_cmd(
     if let Some(Ok(_)) = input.take() {
         match player.single() {
             Ok(transform) => {
-                let p = transform.translation;
-                input.reply_ok(format!("({}, {}, {})", p.x, p.y, -p.z));
+                let [x, y, z] = DclTranslation::from_bevy_translation(transform.translation).0;
+                input.reply_ok(format!("({x}, {y}, {z})"));
             }
             Err(_) => input.reply_failed("player not found"),
         }
