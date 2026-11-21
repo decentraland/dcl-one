@@ -23,6 +23,8 @@ type LandTradeBuyProps = {
   onClose(): void;
   onDone?(txHash: string): void;
    loadTrade?: (tradeId: string) => Promise<Trade>;
+  /** The LAND on sale, as its page's queries key it: a purchase reads that token again, not every token. */
+  land?: { contractAddress: string; tokenId: string };
 };
 
 type Phase =
@@ -39,7 +41,7 @@ export function tradeManaPrice(trade: Trade): ManaWei | null {
   return leg && "amount" in leg ? (BigInt(leg.amount) as ManaWei) : null;
 }
 
-export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, loadTrade = fetchTrade }: LandTradeBuyProps) {
+export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, loadTrade = fetchTrade, land }: LandTradeBuyProps) {
   const wallet = useShopWallet();
   const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
@@ -93,13 +95,18 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, l
       });
       setPhase({ kind: "success", txHash: hash });
       // The trade spent MANA: the balances, the token and the buyer's lists are read again.
-      invalidateAfterPurchase(qc);
+      invalidateAfterPurchase(qc, land);
       onDone?.(hash);
     } catch (e) {
-      if (isTxPending(e)) setPhase({ kind: "pending", txHash: (e as { txHash: string }).txHash });
+      // Sent but not confirmed: the MANA is probably spent, so the balances and the token are read again here too.
+      const pending = (txHash: string) => {
+        setPhase({ kind: "pending", txHash });
+        invalidateAfterPurchase(qc, land);
+      };
+      if (isTxPending(e)) pending((e as { txHash: string }).txHash);
       else if (declined(e)) setPhase({ kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." });
       else if (isTxReverted(e)) setPhase({ kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." });
-      else if (sent) setPhase({ kind: "pending", txHash: sent });
+      else if (sent) pending(sent);
       else setPhase({ kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." });
     }
   }
