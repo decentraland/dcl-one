@@ -107,7 +107,6 @@ pub(crate) fn is_js_whitespace(c: u32) -> bool {
     )
 }
 
-/// `String.prototype.trim`.
 /// `String.prototype.trim`: JS whitespace, which leaves U+0085 (NEL).
 pub(crate) fn js_trim(value: &str) -> &str {
     value.trim_matches(|c: char| is_js_whitespace(c as u32))

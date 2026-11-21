@@ -68,6 +68,11 @@ available.
 - **Expirations** read as `Date.parse` reads them
   (`dcl_auth::js_date`, checked against Node over a fixture corpus). A scoped
   login's expiration must be the exact `toISOString` form.
+- **Metadata values** read as canonical (`require_signer`, `reject_if_signer`,
+  `canonical_field` and the scene-signer check) are trimmed as
+  `String.prototype.trim` trims, as the reference's `isCanonical` does:
+  U+0085 (NEL) is not whitespace there, so a value ending in it is not
+  canonical.
 
 ### Deliberate differences from the reference
 
