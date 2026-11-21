@@ -1317,7 +1317,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      checks: read
     uses: ./.github/workflows/apis-sites-images.yml
   web-pr-target:
     # Compiles the web engine as a pull request does (16 codegen units, no wasm-opt) and saves the

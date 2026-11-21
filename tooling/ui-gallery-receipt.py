@@ -2,46 +2,52 @@
 """Require a trusted key-scan receipt for the UI gallery bytes a Sites image ships.
 
 The Shared UI library run (ui-library.yml) puts its hosted gallery build in the `ui-review-<sha>` artifact as
-`ui-gallery/`. The UI library key scan (ui-library-key-scan.yml) runs from the default branch on workflow_run, reads
-that artifact and posts the "UI library key scan" check run on the commit. The Sites image carries a separate Nix
-build of the same gallery (infra/packages/ui-gallery.nix). Before an image is published, this script requires:
+`ui-gallery/`. The UI library key scan (ui-library-key-scan.yml) runs from the default branch on workflow_run and reads
+that artifact. The Sites image carries a separate Nix build of the same gallery (infra/packages/ui-gallery.nix).
+Before an image is published, this script requires, for a commit whose gallery bytes are the image's:
 
-- a run of ui-library-key-scan.yml, on the default branch and from a workflow_run, created after the latest attempt
-  of the commit's Shared UI library push run started, whose key-scan job succeeded and whose log names the commit
-  (HEAD_SHA), ran the key check and downloaded the `ui-review-<sha>` artifact by id. The newest such run decides. The
-  check run alone is not trusted: any workflow holding checks: write can post one, and a check run posted from a
-  workflow_run lands in the triggering run's check suite, so its suite cannot name the scan workflow;
-- that artifact, uploaded by that Shared UI library run, holding exactly the bytes of the image's
-  `build/client/ui-gallery`.
+- a run of ui-library-key-scan.yml, on the default branch and from a workflow_run, created between the start of the
+  latest attempt of the commit's Shared UI library push run and an hour after that run ended, whose key-scan job
+  succeeded and whose log names the commit (HEAD_SHA), ran the key check and downloaded that run's `ui-review-<sha>`
+  artifact by id. The newest such run decides. The "UI library key scan" check run is not read: any workflow holding
+  checks: write can post one, and one posted from a workflow_run lands in the triggering run's check suite, so its
+  suite cannot name the scan workflow;
+- that artifact holding exactly the bytes of the image's `build/client/ui-gallery`.
 
-For the head commit when its Shared UI library run built the gallery (it waits for the run and its scan); otherwise
-(library/ui and the gallery's Nix inputs unchanged at the head, so no artifact) for the nearest first-parent ancestor
-whose trusted scan read identical bytes. A missing, stale, foreign or failed scan, a missing artifact or a digest
-mismatch fails: nothing is published unscanned.
+The commits tried are the head, then, newest first, the head's ancestors that last changed a gallery input (GALLERY
+INPUTS): the gallery bytes only change with them, so the newest such commit built the bytes the head ships. A missing,
+stale, foreign or failed scan, a missing artifact, a digest mismatch or any GitHub answer that fails, is empty or is
+not JSON fails: nothing is published unscanned.
 """
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 
 LIBRARY_WORKFLOW = '.github/workflows/ui-library.yml'
 SCAN_WORKFLOW = '.github/workflows/ui-library-key-scan.yml'
 PREFIX = 'ui-gallery/'
-# The gallery bytes change with library/ui, which main changes every few hours, and every such main commit leaves a
-# receipt whose artifact is kept 90 days. 200 first-parent commits is weeks of main history: a walk that ends without
-# a receipt means the receipt expired or was never made, which a longer walk would not fix.
-ANCESTORS = 200
-SCAN_RUNS = 100
-# A scan starts minutes after its Shared UI library run ends; a rerun moves the window with the run's latest attempt.
-SCAN_WINDOW = timedelta(hours=6)
+# What the gallery bytes are built from: infra/packages/ui-gallery.nix's fileset roots, the package itself and the
+# flake lock that pins its Node and pnpm. The Shared UI library scope (both workflows' pathspecs) holds all of them.
+GALLERY_INPUTS = ('library/ui', 'library/explorer-core', 'infra/packages/ui-gallery.nix', 'flake.lock')
+# The newest commits, per input, that changed it. The newest one overall built the bytes the head ships; older ones
+# only matter when that one has no usable receipt, so one page per input reaches far past the 90 days a main
+# artifact is kept.
+CANDIDATES_PER_INPUT = 100
+PAGE = 100
+MAX_PAGES = 10
+# A scan run is created when its Shared UI library run ends; a rerun moves the window with the run's latest attempt.
+SCAN_MARGIN = timedelta(hours=1)
 RECONCILE = ('The hosted gallery the Shared UI library run scanned and the one Nix built for the image differ. Both '
              'must build with the same Node major and pnpm lockfile: compare setup-node in the library job of '
              '.github/workflows/ui-library.yml with nodejs-slim in infra/packages/ui-gallery.nix, and the fileset '
@@ -100,24 +106,56 @@ def artifact_digest(archive):
     return _digest(files)
 
 
-class GitHub:
-    def __init__(self, repo):
-        self.repo = repo
+class _NoAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Logs and artifacts redirect to signed storage URLs, which must not receive the token."""
 
-    def _path(self, path):
-        return f'repos/{self.repo}/{path}' if path else f'repos/{self.repo}'
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.remove_header('Authorization')
+        return new
+
+
+class GitHub:
+    """The REST API over HTTPS with the job's token. Logs come back as bytes, escape sequences included."""
+
+    def __init__(self, repo, token, api='https://api.github.com'):
+        self.repo, self.token, self.base = repo, token, api
+        self.opener = urllib.request.build_opener(_NoAuthOnRedirect)
+
+    def _url(self, path):
+        return f'{self.base}/repos/{self.repo}/{path}' if path else f'{self.base}/repos/{self.repo}'
 
     def _get(self, path):
-        result = subprocess.run(['gh', 'api', self._path(path)], capture_output=True)
-        if result.returncode != 0 or not result.stdout:
-            raise FetchError(f'GET {path} failed (exit {result.returncode}) or answered nothing')
-        return result.stdout
+        request = urllib.request.Request(self._url(path), headers={
+            'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
+            'Authorization': f'Bearer {self.token}', 'User-Agent': 'ui-gallery-receipt'})
+        try:
+            with self.opener.open(request, timeout=60) as response:
+                body = response.read()
+        except (urllib.error.URLError, OSError) as error:
+            raise FetchError(f'GET {path} failed: {error}') from error
+        if not body:
+            raise FetchError(f'GET {path} answered nothing')
+        return body
 
     def api(self, path):
         try:
             return json.loads(self._get(path))
         except ValueError as error:
             raise FetchError(f'GET {path} answered no JSON: {error}') from error
+
+    def pages(self, path, key, max_pages=MAX_PAGES):
+        """Every item under `key` across pages of `path` (which carries per_page=PAGE); fails past `max_pages`."""
+        items = []
+        for page in range(1, max_pages + 1):
+            answer = self.api(f'{path}&page={page}')
+            if not isinstance(answer.get(key), list):
+                raise FetchError(f'GET {path} answered no {key}')
+            items += answer[key]
+            if len(answer[key]) < PAGE:
+                return items
+        raise FetchError(f'GET {path} holds more than {max_pages} pages')
 
     def text(self, path):
         return self._get(path).decode('utf-8', errors='replace')
@@ -130,9 +168,14 @@ def _time(value):
     return datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
+def _stamp(value):
+    return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
 def library_run(gh, sha):
     """The commit's Shared UI library push run, latest attempt; None when there is none."""
-    runs = gh.api(f'actions/workflows/ui-library.yml/runs?head_sha={sha}&event=push&per_page=100')['workflow_runs']
+    runs = gh.pages(f'actions/workflows/ui-library.yml/runs?head_sha={sha}&event=push&per_page={PAGE}',
+                    'workflow_runs')
     runs = [run for run in runs if run.get('head_sha') == sha and run.get('event') == 'push'
             and run.get('path') == LIBRARY_WORKFLOW]
     return max(runs, key=lambda run: run['id']) if runs else None
@@ -144,23 +187,23 @@ def built_gallery(gh, run):
         return None
     if run.get('conclusion') != 'success':
         raise ReceiptError(f'the Shared UI library run {run["id"]} concluded {run.get("conclusion")}')
-    jobs = gh.api(f'actions/runs/{run["id"]}/jobs?per_page=100')['jobs']
+    jobs = gh.pages(f'actions/runs/{run["id"]}/jobs?per_page={PAGE}', 'jobs')
     return any(job.get('name') == 'library' and job.get('conclusion') == 'success' for job in jobs)
 
 
 def trusted_scan(gh, sha, run, default_branch):
-    """The newest run of the trusted scan workflow naming `sha`, created after `run`'s latest attempt started, as
-    (conclusion, artifact id); None when none names `sha` yet."""
-    started = run['run_started_at']
-    until = (_time(started) + SCAN_WINDOW).strftime('%Y-%m-%dT%H:%M:%SZ')
-    runs = gh.api(f'actions/workflows/ui-library-key-scan.yml/runs?event=workflow_run&branch={default_branch}'
-                  f'&created={started}..{until}&per_page={SCAN_RUNS}')['workflow_runs']
+    """The newest run of the trusted scan workflow that read `run`'s artifact for `sha`, as (conclusion, artifact id);
+    ('in_progress', None) while a scan in the window is unfinished, None when none read it."""
+    started = _time(run['run_started_at'])
+    until = _time(run['updated_at']) + SCAN_MARGIN
+    runs = gh.pages(f'actions/workflows/ui-library-key-scan.yml/runs?event=workflow_run&branch={default_branch}'
+                    f'&created={_stamp(started)}..{_stamp(until)}&per_page={PAGE}', 'workflow_runs')
     pending = False
     for scan in sorted(runs, key=lambda scan: scan['id'], reverse=True):
         if (scan.get('path') != SCAN_WORKFLOW or scan.get('event') != 'workflow_run'
-                or scan.get('head_branch') != default_branch or _time(scan['created_at']) < _time(started)):
+                or scan.get('head_branch') != default_branch or not started <= _time(scan['created_at']) <= until):
             continue
-        jobs = [job for job in gh.api(f'actions/runs/{scan["id"]}/jobs?per_page=100')['jobs']
+        jobs = [job for job in gh.pages(f'actions/runs/{scan["id"]}/jobs?per_page={PAGE}', 'jobs')
                 if job.get('name') == 'key-scan']
         if not jobs:
             continue
@@ -168,7 +211,7 @@ def trusted_scan(gh, sha, run, default_branch):
         if job.get('status') != 'completed':
             pending = True
             continue
-        # Only a skipped job has no log; a skipped scan read nothing. Any other log must be read, or the receipt
+        # Only a skipped job has no log, and a skipped scan read nothing. Any other log must be read, or the receipt
         # fails (FetchError): an unreadable log could be the newest scan of this commit, and it may have failed.
         if job.get('conclusion') == 'skipped':
             continue
@@ -176,6 +219,11 @@ def trusted_scan(gh, sha, run, default_branch):
         if not re.search(rf'^\S*\s+HEAD_SHA: {sha}\r?$', log, re.M):
             continue
         downloaded = re.search(rf'^\S*\s+- ui-review-{sha} \(ID: (\d+),', log, re.M)
+        if downloaded:
+            # A pull request whose head is this commit gets a scan of its own run's artifact: not this run's.
+            artifact = gh.api(f'actions/artifacts/{downloaded[1]}')
+            if (artifact.get('workflow_run') or {}).get('id') != run['id']:
+                continue
         ran = re.search(r'^\S*\s+check key: ran\r?$', log, re.M)
         if job.get('conclusion') == 'success' and not (downloaded and ran):
             return ('success without reading the artifact', None)
@@ -192,9 +240,9 @@ def scanned_digest(gh, sha, artifact_id, run):
     return artifact_digest(gh.download(artifact_id))
 
 
-def receipt_for(gh, sha, digest, default_branch):
-    """'ok' when a trusted scan of `sha` read `digest`, 'none' when `sha` has no gallery to scan, 'wait' while its run
-    or scan is not finished; raises when the scan failed or read other bytes."""
+def receipt_for(gh, sha, digest, default_branch, now):
+    """'ok' when a trusted scan of `sha` read `digest`; 'none' when `sha` has no scanned gallery; 'wait' while its run
+    or scan is unfinished; raises when the scan failed or read other bytes."""
     run = library_run(gh, sha)
     if run is None:
         return 'none'
@@ -204,7 +252,9 @@ def receipt_for(gh, sha, digest, default_branch):
     if not built:
         return 'none'
     scan = trusted_scan(gh, sha, run, default_branch)
-    if scan is None or scan[0] == 'in_progress':
+    if scan is None:
+        return 'wait' if now() <= _time(run['updated_at']) + SCAN_MARGIN else 'none'
+    if scan[0] == 'in_progress':
         return 'wait'
     conclusion, artifact_id = scan
     if conclusion != 'success':
@@ -215,34 +265,45 @@ def receipt_for(gh, sha, digest, default_branch):
     return 'ok'
 
 
-def require_receipt(gh, head, digest, wait=2700, poll=30, sleep=time.sleep):
+def candidates(gh, head):
+    """The head, then its ancestors that changed a gallery input, newest first."""
+    commits = {}
+    for path in GALLERY_INPUTS:
+        answer = gh.api(f'commits?sha={head}&path={urllib.parse.quote(path)}&per_page={CANDIDATES_PER_INPUT}')
+        if not isinstance(answer, list):
+            raise FetchError(f'GET commits for {path} answered no list')
+        for commit in answer:
+            commits[commit['sha']] = _time(commit['commit']['committer']['date'])
+    commits.pop(head, None)
+    return [head] + sorted(commits, key=lambda sha: commits[sha], reverse=True)
+
+
+def require_receipt(gh, head, digest, wait=2700, poll=30, sleep=time.sleep,
+                    now=lambda: datetime.now(timezone.utc)):
     default_branch = gh.api('')['default_branch']
+    tried = candidates(gh, head)
     deadline = time.monotonic() + wait
     while True:
-        state = receipt_for(gh, head, digest, default_branch)
-        if state == 'ok':
-            return head
-        if state == 'none':
-            break
-        if time.monotonic() >= deadline:
-            raise ReceiptError(f'no completed trusted key scan of {head} within {wait}s')
-        sleep(poll)
-    sha = head
-    for _ in range(ANCESTORS):
-        parents = gh.api(f'commits/{sha}')['parents']
-        if not parents:
-            raise ReceiptError(f'no trusted key scan of {head} or its ancestors read the bytes {digest}')
-        sha = parents[0]['sha']
-        try:
-            if receipt_for(gh, sha, digest, default_branch) == 'ok':
+        for sha in tried:
+            try:
+                state = receipt_for(gh, sha, digest, default_branch, now)
+            except ReceiptError:
+                if sha == head:
+                    raise
+                continue
+            if state == 'ok':
                 return sha
-        except ReceiptError:
-            continue
-    raise ReceiptError(
-        f'no trusted key scan of {head} or its last {ANCESTORS} first-parent ancestors read the bytes {digest}: the '
-        'receipt expired (main artifacts are kept 90 days) or was never made. A main commit that changes library/ui, '
-        'library/explorer-core, infra/packages/ui-gallery.nix or flake.lock makes a new one. If the bytes still differ '
-        f'from every scan, {RECONCILE}')
+            if state == 'wait':
+                break
+        else:
+            raise ReceiptError(
+                f'no trusted key scan of {head} or of the {len(tried) - 1} ancestors that last changed '
+                f'{", ".join(GALLERY_INPUTS)} read the bytes {digest}: the receipt expired (main artifacts are kept '
+                f'90 days) or was never made. A main commit that changes one of them makes a new one. If the bytes '
+                f'still differ from every scan, {RECONCILE}')
+        if time.monotonic() >= deadline:
+            raise ReceiptError(f'the trusted key scan of {sha} did not finish within {wait}s')
+        sleep(poll)
 
 
 def main(argv=None):
@@ -251,10 +312,13 @@ def main(argv=None):
     parser.add_argument('--head', required=True)
     parser.add_argument('--gallery', required=True, help="the image's build/client/ui-gallery")
     args = parser.parse_args(argv)
+    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
     try:
+        if not token:
+            raise FetchError('GH_TOKEN is not set')
         digest = tree_digest(args.gallery)
-        receipt = require_receipt(GitHub(args.repo), args.head, digest)
-    except (ReceiptError, FetchError, zipfile.BadZipFile, KeyError, ValueError) as error:
+        receipt = require_receipt(GitHub(args.repo, token), args.head, digest)
+    except (ReceiptError, FetchError, zipfile.BadZipFile, KeyError, ValueError, TypeError) as error:
         print(f'::error::UI gallery receipt: {error}', file=sys.stderr)
         return 1
     print(f'The Sites image ships UI gallery {digest}, scanned on {receipt}')

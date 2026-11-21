@@ -15,8 +15,6 @@ on:
 permissions:
   contents: read
   actions: read
-  # The UI gallery receipt reads the key scan's check run (tooling/ui-gallery-receipt.py).
-  checks: read
 jobs:
   source:
     if: >-
@@ -283,7 +281,8 @@ jobs:
       # Nothing is published with UI gallery bytes no key scan read: a successful scan of the head, or of the nearest
       # ancestor whose scanned artifact holds the same bytes (tooling/ui-gallery-receipt.py).
       - name: Require a key scan of the UI gallery the Sites image ships
-        if: github.event_name != 'pull_request'
+        # Every build that can publish: main pushes (through Bevy CI), tags, and manual runs on main asked to publish.
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
