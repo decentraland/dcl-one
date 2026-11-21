@@ -352,11 +352,14 @@ mod tests {
         ) -> Result<bool, crate::auth::AuthError> {
             Ok(false)
         }
-        async fn verification_time_block(&self, _: i64) -> Result<u64, crate::auth::AuthError> {
+        async fn verification_time_block(
+            &self,
+            _: i64,
+        ) -> Result<Option<u64>, crate::auth::AuthError> {
             if self.hold_lookup {
                 self.release.acquire().await.unwrap().forget();
             }
-            Ok(4)
+            Ok(Some(4))
         }
         async fn validate_signature_at_block(
             &self,
@@ -605,6 +608,39 @@ mod tests {
             ));
             assert_eq!(store.pending(), 1);
         }
+    }
+
+    /// A scoped login (ADR-162) never answers the challenge, and leaves it pending.
+    #[tokio::test]
+    async fn a_scoped_login_cannot_answer_the_challenge() {
+        let store = ChallengeStore::new(cfg());
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let address = root.address();
+        let challenge = offered(&store, &address);
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "comms".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let expiration = chrono::Utc::now().timestamp_millis() + 600_000;
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root, &ephemeral, expiration, &grants, &challenge,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let result = store
+            .verify_stored(&address, &address, &challenge, &challenge, &chain, None)
+            .await;
+        assert!(
+            matches!(&result, Err(AuthError::InvalidChain(m)) if m.contains("without a service identifier")),
+            "{result:?}"
+        );
+        assert_eq!(store.pending(), 1);
     }
 
     fn mandate(address: &str, expiration: &str) -> String {

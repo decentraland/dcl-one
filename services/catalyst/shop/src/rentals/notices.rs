@@ -541,6 +541,28 @@ mod tests {
         rent(31, 0, t0 + 4 * DAY, "9", 1, false).await;
         assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(0));
         assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(0));
+
+        // An operator rewind over history: the periods ending since t0 and
+        // the rents since block 10 are read again, and only the ones never
+        // announced (token 7's end; the rents at 10 to 12) are stored.
+        use notice_cursor::{RewindFrom, rewind};
+        rewind(&pool, KIND_ENDED, RewindFrom::Time(t0), "t", false)
+            .await
+            .unwrap();
+        rewind(&pool, KIND_STARTED, RewindFrom::Block(10), "t", false)
+            .await
+            .unwrap();
+        assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(1));
+        assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(3));
+        let ended: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM social.notifications WHERE type = $1 ORDER BY occurred_at",
+        )
+        .bind(KIND_ENDED)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ended[0], ended_id("ethereum", &key(10).await));
+        assert_eq!(ended.len(), 3, "nothing twice");
         db.drop().await;
     }
 }

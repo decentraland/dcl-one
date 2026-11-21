@@ -4,7 +4,9 @@
 //! which only the Polygon MarketplaceV2 `OrderSuccessful` (and the legacy
 //! ERC721BidV2 `BidAccepted`, no sale since 2025-01-01) ever set: the cut is
 //! `price * royaltiesCutPerMillion / 1e6` and the collector the item's
-//! beneficiary or creator, the same split the contract pays in MANA.
+//! beneficiary or creator, the same split the contract pays in MANA. A
+//! collector reselling the item is paid that cut and hears of it beside
+//! their `item_sold`.
 //! Here the sale is the nft index's `order_successful` row of that
 //! marketplace, read only up to the published block while the index is
 //! ready; the first pass starts at the published block (no history is
@@ -90,12 +92,11 @@ impl Venue {
     /// `$1` network, `$2`/`$3` cursor, `$4` published block, `$5` emitter,
     /// `$6` cut per million, `$7` the zero address, `$8` page size.
     fn sql(self) -> String {
-        let (key, from, seller, price, item, kind) = match self {
+        let (key, from, price, item, kind) = match self {
             Venue::Orders => (
                 notice_cursor::token_log_key("e"),
                 "shop.nft_event e \
                  LEFT JOIN shop.nft n ON n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id",
-                "e.from_address",
                 "e.amount",
                 "i.network = n.network AND i.contract_address = n.contract_address AND i.item_id = n.item_id".to_string(),
                 "order_successful",
@@ -107,7 +108,6 @@ impl Venue {
                     "(e.kind || ':' || e.contract_address || ':' || e.token_id || ':' || coalesce(e.bid_id, ''))",
                 ),
                 "shop.sale_event e",
-                "e.seller",
                 "e.price",
                 format!("i.network = e.network AND i.contract_address = e.contract_address AND i.item_id = div(e.token_id, {ITEM_SHIFT})"),
                 "bid_accepted",
@@ -117,7 +117,6 @@ impl Venue {
             "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
                     div({price} * $6, 1000000)::text AS cut, \
                     lower(CASE WHEN i.beneficiary IS NOT NULL AND i.beneficiary <> $7 THEN i.beneficiary ELSE i.creator END) AS collector, \
-                    lower({seller}) AS seller, \
                     i.image, i.name, i.rarity, i.item_type, i.item_id IS NOT NULL AS mirrored \
              FROM {from} \
              LEFT JOIN shop.items i ON {item} \
@@ -138,7 +137,6 @@ struct SaleRow {
     token_id: String,
     cut: Option<String>,
     collector: Option<String>,
-    seller: Option<String>,
     image: Option<String>,
     name: Option<String>,
     rarity: Option<String>,
@@ -260,8 +258,6 @@ async fn drain(
                     .collector
                     .as_deref()
                     .filter(|c| *c != super::nft_index::ZERO_ADDRESS)
-                    // A creator reselling their own item hears item_sold only.
-                    .filter(|c| row.seller.as_deref() != Some(*c))
                     .and_then(|c| Address::parse(c).ok())?;
                 Some(NewNotification {
                     id: venue.id(&row.id_key),
@@ -427,7 +423,7 @@ mod tests {
     /// On a database of its own (the nft cursor row is global): nothing
     /// before the index is published; the first pass replays no history;
     /// a MarketplaceV2 sale notifies the item's beneficiary (else creator)
-    /// with the old metadata, unless they sold it themselves; the V1
+    /// with the old metadata, also when they sold it themselves; the V1
     /// marketplace and unpublished blocks are not read; a retried pass
     /// inserts nothing twice.
     #[tokio::test]
@@ -448,7 +444,8 @@ mod tests {
 
         item(&pool, 1, "1", Some(BENEFICIARY)).await;
         item(&pool, 2, "2", None).await;
-        // The seller of every test sale collects this item's royalties.
+        // The seller of every test sale collects this item's royalties, and
+        // hears of them.
         item(
             &pool,
             3,
@@ -473,7 +470,7 @@ mod tests {
         sale(&pool, 102, 1, MARKETPLACE_V2, "9", "5000000000000000000").await;
         sale(&pool, 105, 0, MARKETPLACE_V2, "2", "1000000000000000000").await;
         publish(&pool, 103).await;
-        assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::Emitted(2));
+        assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::Emitted(3));
         assert_eq!(
             run_once(&pool, BASE).await.unwrap(),
             Pass::Emitted(0),
@@ -487,7 +484,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         let by = |a: &str| rows.iter().find(|r| r.1 == a).unwrap();
         let (id, _, m) = by(BENEFICIARY);
         assert_eq!(
@@ -519,6 +516,12 @@ mod tests {
         assert_eq!(
             m["royaltiesCut"], "25000000000000000",
             "no beneficiary: the creator"
+        );
+        let (_, _, m) = by("0x00000000000000000000000000000000000000aa");
+        assert_eq!(
+            (&m["nftName"], &m["royaltiesCut"]),
+            (&json!("Hat 3"), &json!("25000000000000000")),
+            "a beneficiary reselling the item still collects its royalty"
         );
 
         let cursor: (i64, i32) = sqlx::query_as(
@@ -586,7 +589,7 @@ mod tests {
     }
 
     /// An ERC721BidV2 acceptance pays its item's beneficiary (else creator)
-    /// the pinned cut, unless they sold it themselves; only after the sales
+    /// the pinned cut, also when they sold it themselves; only after the sales
     /// index publishes, never for history, never twice.
     #[tokio::test]
     async fn published_bid_sales_notify_their_royalty_collector_once() {
@@ -646,7 +649,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             run_bids_once(&pool, BASE, true).await.unwrap(),
-            Pass::Emitted(2)
+            Pass::Emitted(3)
         );
         let cursor = || async {
             sqlx::query_as::<_, (i64, i32)>(
@@ -700,11 +703,7 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(
-            rows.len(),
-            3,
-            "no royalty for a zero price or to a creator selling their own item"
-        );
+        assert_eq!(rows.len(), 4, "no royalty for a zero price");
         let first = rows.iter().find(|(_, m)| m["nftName"] == "Hat 1").unwrap();
         assert_eq!(first.0, BENEFICIARY);
         assert_eq!(first.1["royaltiesCut"], "500000000000000000");
@@ -722,6 +721,113 @@ mod tests {
             "the zero-address beneficiary falls back to the creator"
         );
         assert_eq!(zero.1["royaltiesCollector"], CREATOR);
+        let own = rows.iter().find(|(_, m)| m["nftName"] == "Hat 2").unwrap();
+        assert_eq!(
+            (own.0.as_str(), &own.1["royaltiesCut"]),
+            (CREATOR, &json!("25000000000000000")),
+            "a creator selling their own item collects its royalty"
+        );
+
+        pool.close().await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
+    }
+
+    async fn sale_by(pool: &PgPool, block: i64, token: &str, seller: &str, price: &str) {
+        sqlx::query(
+            "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount) \
+             VALUES ('matic', $1, 0, 1700000000, 'order_successful', $2, $3, $4::numeric, $5, '0x00000000000000000000000000000000000000bb', $6::numeric)",
+        )
+        .bind(block)
+        .bind(MARKETPLACE_V2)
+        .bind(COLLECTION)
+        .bind(token)
+        .bind(seller)
+        .bind(price)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// A creator, or an item's beneficiary, reselling the item collects its
+    /// royalty and hears of it beside the sale itself.
+    #[tokio::test]
+    async fn a_collector_reselling_their_own_item_hears_of_sale_and_royalty() {
+        let Ok(base_url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let opts: PgConnectOptions = base_url.parse().unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.database("postgres"))
+            .await
+            .unwrap();
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let name = pool.connect_options().get_database().unwrap().to_string();
+        let links = super::super::sale_notices::Links {
+            marketplace: BASE.to_string(),
+            land_images: "https://land.example".to_string(),
+            items_mirror_enabled: false,
+            trade_chains: (1, 137),
+        };
+
+        // The sale notice describes the token through its collection.
+        sqlx::query(
+            "INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, is_approved, is_editable, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, 137, 'Coll', $2, $2, 'urn:coll', true, true, false, 1, 1, 1, timezone('UTC', now()))",
+        )
+        .bind(COLLECTION)
+        .bind(CREATOR)
+        .execute(&pool)
+        .await
+        .unwrap();
+        item(&pool, 4, "4", None).await;
+        item(&pool, 5, "5", Some(BENEFICIARY)).await;
+        publish(&pool, 100).await;
+        assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::Emitted(0));
+        super::super::sale_notices::run_once(&pool, &links, chrono::Utc::now())
+            .await
+            .unwrap();
+
+        sale_by(&pool, 101, "4", CREATOR, "1000000000000000000").await;
+        sale_by(&pool, 102, "5", BENEFICIARY, "2000000000000000000").await;
+        publish(&pool, 102).await;
+        assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::Emitted(2));
+        let sold = super::super::sale_notices::run_once(&pool, &links, chrono::Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(sold.emitted, 2);
+
+        let rows: Vec<(String, String, Value)> = sqlx::query_as(
+            "SELECT address, type, metadata FROM social.notifications ORDER BY occurred_at, type",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let kinds = |a: &str| {
+            rows.iter()
+                .filter(|r| r.0 == a)
+                .map(|r| r.1.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(CREATOR),
+            [super::super::sale_notices::KIND_ITEM_SOLD, KIND]
+        );
+        assert_eq!(
+            kinds(BENEFICIARY),
+            [super::super::sale_notices::KIND_ITEM_SOLD, KIND]
+        );
+        let royalty = |a: &str| &rows.iter().find(|r| r.0 == a && r.1 == KIND).unwrap().2;
+        assert_eq!(royalty(CREATOR)["royaltiesCollector"], CREATOR);
+        assert_eq!(royalty(CREATOR)["royaltiesCut"], "25000000000000000");
+        assert_eq!(royalty(BENEFICIARY)["royaltiesCollector"], BENEFICIARY);
+        assert_eq!(royalty(BENEFICIARY)["royaltiesCut"], "50000000000000000");
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(

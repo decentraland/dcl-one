@@ -832,7 +832,8 @@ Peer sync is not a backup of local state: a node taking local writes holds the o
 `shared::notifications` (`services/catalyst/shared/src/notifications.rs`) is the
 one writer of `social.notifications` and its `social.notification_deliveries`
 email row, for every producer: Social's own and Shop's sale, royalty, transfer,
-rental, tip, favorite-discount, credits and goal notices. Each batch is one statement on the
+rental, on-chain bid (`bid_received`, `shop/src/market/bid_notices.rs`), tip,
+favorite-discount, credits and goal notices. Each batch is one statement on the
 producer's executor, so the notice commits with the producer's transaction: an
 upsert by `id` (or by `(address, broadcast_key)` for keyed notices) and, for new
 rows only, a `pending` delivery row, or `skipped` with the reason when the type has
@@ -2278,7 +2279,7 @@ pass claims the projection again and acts.
    WHERE indexer = '<indexer>' AND network = '<network>';
   ```
 
-**Deploys.** A binary from before step `0053_shop_chain_cursor_ownership`
+**Deploys.** A binary from before step `0054_shop_chain_cursor_ownership`
 does not check `owner_generation`, and one from before the per-network
 supervisors takes leases named after the index alone (`nft-index`), which do
 not exclude the new ones. Stop the process that runs the indexes

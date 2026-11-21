@@ -555,7 +555,8 @@ pub mod test_support {
             AuthLink {
                 link_type: AuthLinkType::SIGNER,
                 payload: format!("{:#x}", wallet.address()),
-                signature: None,
+                // Clients send the SIGNER link with an empty signature.
+                signature: Some(String::new()),
             },
             AuthLink {
                 link_type: AuthLinkType::EcdsaSignedEntity,

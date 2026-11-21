@@ -6231,6 +6231,43 @@ async fn worlds_prefix_reads_answer_cors_and_preflights() {
     }
 }
 
+/// `/world-storage` allows any origin without credentials (signed fetch
+/// authorizes in headers); the worlds routes keep reflecting credentials.
+#[tokio::test]
+async fn world_storage_cors_sends_no_credentials_and_worlds_routes_do() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let origin = "https://explorer.example.org";
+    let requested = "x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata,x-confirm-delete-all";
+    let preflight = [
+        ("origin", origin),
+        ("access-control-request-method", "DELETE"),
+        ("access-control-request-headers", requested),
+    ];
+    let (status, headers, _) =
+        served_with(&app, "GET", "/world-storage/ping", &[("origin", origin)]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], origin);
+    assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+    let (status, headers, _) =
+        served_with(&app, "OPTIONS", "/world-storage/values", &preflight).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], origin);
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_HEADERS], requested);
+    assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+
+    for path in [format!("{NEST}/status"), "/worlds/status".to_owned()] {
+        for method in ["GET", "OPTIONS"] {
+            let (_, headers, _) = served_with(&app, method, &path, &preflight).await;
+            assert_eq!(
+                headers[header::ACCESS_CONTROL_ALLOW_CREDENTIALS],
+                "true",
+                "{method} {path}"
+            );
+        }
+    }
+}
+
 async fn served_with(
     app: &Router,
     method: &str,

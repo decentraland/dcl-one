@@ -146,8 +146,11 @@ and the `SignedFetch` scheme from upstream `docs/openapi.yaml`
   `Slow consumer` trigger counts the writer task's queue, not uWS's buffered
   amount, so a very small `WS_MAX_BACKPRESSURE` can trip on scheduling delay
   (local `social/src/rpc/stream.rs:311-356`, `:846-850`).
-- `WS_IDLE_TIMEOUT_IN_SECONDS` is not read, and one `AUTH_WINDOW_SECS` stands
-  for `WS_AUTH_TIMEOUT_IN_MS` and `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`.
+- The socket signature window (`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`) falls
+  back to `AUTH_WINDOW_SECS` (300 s, upstream's default) and bounds the
+  timestamp on both sides of now as upstream's, and the signed timestamp is
+  digits only, where upstream reads a JavaScript Number
+  (`docs/comms/comms-crate.md`).
 
 ### Community writes and notifications (read at `social-service-ea` @ `b6b2cef`)
 
