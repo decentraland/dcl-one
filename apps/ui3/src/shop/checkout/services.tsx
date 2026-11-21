@@ -33,6 +33,8 @@ export type ShopServices = {
   walletSetupUrl?: string;
   /** The browser's Web Locks (the page's by default): one tab at a time runs a credits + MANA sale of an item. */
   locks?: LockManager | null;
+  /** How long a read of the chain's finalized time (what proves a credit expired) may take; FINALIZED_TIME_MS unless set. */
+  finalizedTimeMs?: number;
 };
 
 const Ctx = createContext<Partial<ShopServices>>({});
@@ -57,6 +59,7 @@ function defaults(partial: Partial<ShopServices>): ShopServices {
     signer: partial.signer ?? null,
     walletSetupUrl: partial.walletSetupUrl ?? "https://decentraland.org/help/wallets/",
     locks: partial.locks !== undefined ? partial.locks : pageLocks(),
+    finalizedTimeMs: partial.finalizedTimeMs,
   };
 }
 

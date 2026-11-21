@@ -217,10 +217,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const checkingNow = useRef(false);
   // Credits of other splits proven unable to spend anything any more, by the chain's own time: once proven, for good.
   const creditsOver = useRef(new Set<string>());
+  // The chain's finalized time, each read bounded (readerFinalizedTime): one that runs late proves nothing.
+  const finalizedTime = readerFinalizedTime(services.reader, services.finalizedTimeMs);
 
   /**
    * Proves, by the chain's finalized time (splitCreditOverOnChain), which of `account`'s held splits can't spend anything
-   * any more, for splitBlock to read without waiting. Only those the local clock says are past their expiry are asked.
+   * any more, for splitBlock to read without waiting. Only those the local clock says are past their expiry are asked, each
+   * read bounded; it runs before any lock is taken, so no lock waits on the chain.
    */
   async function proveCreditsOver(account: string): Promise<void> {
     let holds: { line: string; hold: SplitHold }[];
@@ -230,7 +233,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       return;
     }
     for (const { hold } of holds) {
-      if (hold.creditId !== null && !creditsOver.current.has(hold.creditId) && (await splitCreditOverOnChain(hold, readerFinalizedTime(services.reader)))) creditsOver.current.add(hold.creditId);
+      if (hold.creditId !== null && !creditsOver.current.has(hold.creditId) && (await splitCreditOverOnChain(hold, finalizedTime))) creditsOver.current.add(hold.creditId);
     }
   }
 
@@ -366,6 +369,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setPhase({ kind: "error", message: friendlyError(e, FALLBACK, { sale: true }) });
       return;
     }
+    // Read before the locks (bounded): which other splits' credits the chain proves expired, for the check under them.
+    await proveCreditsOver(ctx.buyer);
     // The exact grant's lock, then the item's, in every window in that order: the sale reconciles and spends the manager's
     // allowance with no approval starting beside it, and holds the item's record from its first read to its last write,
     // so two windows never both find it free and both send.
@@ -376,8 +381,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     }
     try {
       // Under it, no other split of this account can start (each hands off holding it, its hold written by then): another
-      // item's split that may still spend the allowance holds this one. This item's own is the claim's to read, just below.
-      await proveCreditsOver(ctx.buyer);
+      // item's split that may still spend the allowance holds this one (its credit not proven over just above; a hold that
+      // appeared since counts as in flight). This item's own is the claim's to read, just below.
       const inFlight = splitBlock(ctx.buyer, false);
       if (inFlight) {
         setPhase({ kind: "error", message: inFlight });
@@ -433,7 +438,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
      * the outcome once its record can go.
      */
     const settledLive = async (record: SplitHold): Promise<boolean> => {
-      const settled = await settleSplitHold(record, { account: ctx.buyer, reader: ctx.reader, client: ctx.client }).catch(() => null);
+      const settled = await settleSplitHold(record, { account: ctx.buyer, reader: ctx.reader, client: ctx.client, finalizedTime: readerFinalizedTime(ctx.reader, services.finalizedTimeMs) }).catch(() => null);
       if (settled?.kind !== "spent" && settled?.kind !== "elsewhere") return false;
       if (!clearSplitHold(ctx.buyer, lineId, attempt)) {
         // Kept with the hash that settled it (a sibling the node attributed, say), so the next check reads that one at once.
@@ -612,7 +617,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setPhase({ kind: "error", message: unsent.message });
       return;
     }
-    const settled = await settleSplitHold(record, { account, reader: services.reader, client: services.client });
+    const settled = await settleSplitHold(record, { account, reader: services.reader, client: services.client, finalizedTime });
     if (!settled || !account) return;
     if (settled.kind === "expiring") {
       // Its credit expired unspent: noted, so the grace runs from now in every tab, and the item stays held until it ends.

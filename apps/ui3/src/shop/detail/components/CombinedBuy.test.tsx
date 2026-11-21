@@ -693,6 +693,37 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(1);
   });
 
+  it("a finalized time read that hangs after the approve gives way before the sale takes a lock: the other split holds, no credit, the grant's lock free", async () => {
+    const { demo, line, unmount, again } = setup();
+    unmount();
+    demo.services.finalizedTimeMs = 50;
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    let signal: AbortSignal | undefined;
+    let heldDuringRead: string[] | null = null;
+    demo.chain.finalizedTime = (_chainId, s) => {
+      signal = s;
+      heldDuringRead = [...locks.held];
+      return new Promise<number>(() => {});
+    };
+    // Once the approve is relayed, another item's split shows up, its credit past its expiry on this browser's clock only.
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      if (relayedApproval(JSON.parse(String(args[1]?.body)))) anotherItemHeld(line, { creditExpiresAt: nowSeconds() - 60 });
+      return answer;
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText(IN_FLIGHT, {}, { timeout: 5000 })).toBeTruthy();
+    expect(signal?.aborted).toBe(true);
+    // No lock waited on the chain, and none is left held: another window can take the grant's lock and try.
+    expect(heldDuringRead).toEqual([]);
+    expect([...locks.held]).toEqual([]);
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(1);
+  });
+
   it("a record of another purchase this browser can't read stops this one before anything is asked, and says so", async () => {
     const { demo, line } = setup();
     // A credit id that isn't a string: not a hold this browser can tell anything from.
@@ -1358,7 +1389,17 @@ describe("a held split with no transaction to read", () => {
   function heldSplit(
     status: { value: "PENDING" | "SETTLED" | "EXPIRED" | null },
     creditExpiresAt: number,
-    opts: { userPurchases?: Listing; attempt?: string; txHash?: string; settledBy?: "this" | "other" | "stranger" | "none"; expiredSeenAt?: number; envelope?: Hex } = {},
+    opts: {
+      userPurchases?: Listing;
+      attempt?: string;
+      txHash?: string;
+      settledBy?: "this" | "other" | "stranger" | "none";
+      expiryProvenAt?: number;
+      /** A sighting noted before the chain's proof was asked, by the local clock alone. */
+      expiredSeenAt?: number;
+      envelope?: Hex;
+      finalizedTimeMs?: number;
+    } = {},
   ) {
     const demo = createDemo({
       session: "web3",
@@ -1390,15 +1431,23 @@ describe("a held split with no transaction to read", () => {
         creditId: CREDIT,
         creditExpiresAt,
         sale: opts.envelope ? { ...SALE, envelope: opts.envelope } : SALE,
+        ...(opts.expiryProvenAt !== undefined ? { expiryProvenAt: opts.expiryProvenAt } : {}),
         ...(opts.expiredSeenAt !== undefined ? { expiredSeenAt: opts.expiredSeenAt } : {}),
       }),
     );
-    render(
+    if (opts.finalizedTimeMs !== undefined) demo.services.finalizedTimeMs = opts.finalizedTimeMs;
+    const tree = () => (
       <DemoShell demo={demo} path="/shop/item/x/7">
         <CombinedBuy line={line} offer={offer} mixed={mixed} onClose={() => {}} portal={false} />
-      </DemoShell>,
+      </DemoShell>
     );
-    return Object.assign(demo, { lineId: splitHoldLine(line.asset) });
+    const shown = render(tree());
+    // The page loaded again: the dialog starts over from the stored record.
+    const reload = () => {
+      shown.unmount();
+      render(tree());
+    };
+    return Object.assign(demo, { lineId: splitHoldLine(line.asset), reload });
   }
   const nowSeconds = () => Math.floor(Date.now() / 1000);
 
@@ -1442,12 +1491,63 @@ describe("a held split with no transaction to read", () => {
     await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
     expect(screen.getByText(/still confirming/)).toBeTruthy();
     expect(screen.queryByText(/expired unspent/)).toBeNull();
-    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiredSeenAt ?? null).toBeNull();
+    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiryProvenAt ?? null).toBeNull();
     // The finalized block reaches it: expiring, its sighting noted from this look.
     demo.chain.chainTime = expiresAt;
     await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
     expect(await screen.findByTestId("combined-check-notice")).toHaveTextContent(/expired unspent/);
-    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiredSeenAt).toEqual(expect.any(Number));
+    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiryProvenAt).toEqual(expect.any(Number));
+  });
+
+  it("a sighting this browser's clock noted before the chain proved the expiry starts no grace: from the first proven look, held 15 minutes, through a reload", async () => {
+    /** Check again clicked, and done reading. */
+    const checkAgain = async () => {
+      await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+      await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    };
+    // A clock an hour ahead of the credit's expiry noted EXPIRED half an hour ago; the finalized block is a second short.
+    const expiresAt = nowSeconds() - 60 * 60;
+    const legacy = Date.now() - 30 * 60 * 1000;
+    const demo = heldSplit({ value: "EXPIRED" }, expiresAt, { attempt: "a1", expiredSeenAt: legacy });
+    demo.chain.chainTime = expiresAt - 1;
+    await screen.findByTestId("combined-check-again");
+    await checkAgain();
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)).toMatchObject({ expiredSeenAt: legacy, expiryProvenAt: null });
+    // The finalized block reaches it: the first proven look starts the grace, and the old sighting doesn't shorten it.
+    demo.chain.chainTime = expiresAt;
+    await checkAgain();
+    expect(screen.getByTestId("combined-check-notice")).toHaveTextContent(/expired unspent/);
+    expect(screen.queryByTestId("combined-confirm")).toBeNull();
+    const proven = readSplitHoldRecord(BOOK.buyer, demo.lineId)!.expiryProvenAt!;
+    expect(proven).toBeGreaterThan(legacy);
+    demo.reload();
+    expect(await screen.findByText(/still confirming/)).toBeTruthy();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(proven + SPLIT_EXPIRY_CONFIRM_MS - 1_000);
+    try {
+      await checkAgain();
+      expect(screen.getByText(/still confirming/)).toBeTruthy();
+      expect(screen.queryByTestId("combined-confirm")).toBeNull();
+      clock.mockReturnValue(proven + SPLIT_EXPIRY_CONFIRM_MS);
+      await act(async () => fireEvent.click(screen.getByTestId("combined-check-again")));
+      expect(await screen.findByTestId("combined-confirm")).toBeEnabled();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a finalized time read that hangs gives way: Check again is back once it runs late, the split held and nothing noted", async () => {
+    const demo = heldSplit({ value: "EXPIRED" }, nowSeconds() - 60, { finalizedTimeMs: 50 });
+    let signal: AbortSignal | undefined;
+    demo.chain.finalizedTime = (_chainId, s) => {
+      signal = s;
+      return new Promise<number>(() => {});
+    };
+    await act(async () => fireEvent.click(await screen.findByTestId("combined-check-again")));
+    await waitFor(() => expect(screen.getByTestId("combined-check-again")).toBeEnabled());
+    expect(signal?.aborted).toBe(true);
+    expect(screen.getByText(/still confirming/)).toBeTruthy();
+    expect(readSplitHoldRecord(BOOK.buyer, demo.lineId)?.expiryProvenAt ?? null).toBeNull();
   });
 
   it("a credit the node says this split spent completes the purchase, never offering it again", async () => {
@@ -1620,7 +1720,7 @@ describe("a held split with no transaction to read", () => {
     ] as const) {
       const own = `0x${"5a".repeat(32)}`;
       // Its credit expired twenty minutes ago, and EXPIRED was seen past that for the whole grace: it decides on this click.
-      const demo = heldSplit({ value }, nowSeconds() - 20 * 60, { txHash: own, expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000 });
+      const demo = heldSplit({ value }, nowSeconds() - 20 * 60, { txHash: own, expiryProvenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000 });
       // Its own receipt can't be read; the node's evidence (the SETTLED transaction) can.
       const read = demo.chain.receipt;
       demo.chain.receipt = async (chainId, hash) => {
@@ -1663,7 +1763,7 @@ describe("a held split with no transaction to read", () => {
     const lines = Array.from({ length: 400 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 25 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[170] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 20 * 60, {
-      expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
+      expiryProvenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       // It sends 150 rows a page whatever was asked.
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
@@ -1679,7 +1779,7 @@ describe("a held split with no transaction to read", () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: n % 20 === 0 ? "SOMETHING_NEW" : "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 20 * 60, {
-      expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
+      expiryProvenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
         const limit = Number(query.get("limit") ?? 50);
@@ -1695,7 +1795,7 @@ describe("a held split with no transaction to read", () => {
     const lines = Array.from({ length: 450 }, (_, n) => ({ id: `0x${n.toString(16).padStart(64, "0")}:0`, status: "SETTLED", usdCents: 10, createdAt: 1, txHash: null }));
     lines[420] = { id: `${CREDIT}:0`, status: "EXPIRED", usdCents: 50, createdAt: 1, txHash: null };
     const demo = heldSplit({ value: null }, nowSeconds() - 20 * 60, {
-      expiredSeenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
+      expiryProvenAt: Date.now() - SPLIT_EXPIRY_CONFIRM_MS - 1_000,
       userPurchases: ({ query }) => {
         const offset = Number(query.get("offset") ?? 0);
         const limit = Number(query.get("limit") ?? 50);
