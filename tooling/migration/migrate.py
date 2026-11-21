@@ -232,6 +232,20 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
 );
+-- Upstream's ranking row as last loaded (unchanged: the node's counters are left alone) and the
+-- photo/stream counters written then (the node's own additions are what it holds above them).
+CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ranking_loaded (
+    community_id uuid PRIMARY KEY,
+    events_count integer NOT NULL,
+    photos_count integer NOT NULL,
+    streams_count integer NOT NULL,
+    events_total_attendees integer NOT NULL,
+    streams_total_participants integer NOT NULL,
+    ranking_score real NOT NULL,
+    written_photos_count integer NOT NULL,
+    written_streams_count integer NOT NULL,
+    written_streams_total_participants integer NOT NULL
+);
 -- The has_started_program the wallet import last wrote; a wallet that no longer matches started
 -- the program on the node.
 CREATE TABLE IF NOT EXISTS dcl_migration.credit_wallet_loaded (

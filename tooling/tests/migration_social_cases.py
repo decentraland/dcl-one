@@ -1,4 +1,6 @@
 """Social, referral and global notification imports against the actual target schema."""
+import contextlib
+import io
 import json
 import os
 import re
@@ -215,7 +217,11 @@ class SocialMigrationCases:
         CREATE TABLE user_mutes (muter_address text, muted_address text, muted_at timestamp);
         CREATE TABLE communities (id uuid PRIMARY KEY, name text, description text, owner_address text,
           private boolean, active boolean, unlisted boolean, editors_choice boolean,
-          created_at timestamp, updated_at timestamp);
+          created_at timestamp, updated_at timestamp, ranking_score real NOT NULL DEFAULT 0);
+        CREATE TABLE community_ranking_metrics (community_id uuid PRIMARY KEY, events_count integer NOT NULL DEFAULT 0,
+          photos_count integer NOT NULL DEFAULT 0, streams_count integer NOT NULL DEFAULT 0,
+          events_total_attendees integer NOT NULL DEFAULT 0, streams_total_participants integer NOT NULL DEFAULT 0,
+          has_thumbnail boolean NOT NULL DEFAULT false, updated_at timestamp NOT NULL DEFAULT now());
         CREATE TABLE community_members (community_id uuid, member_address text, role text, joined_at timestamp);
         CREATE TABLE community_bans (community_id uuid, banned_address text, banned_by text, banned_at timestamp,
           reason text, active boolean, unbanned_by text, unbanned_at timestamp);
@@ -291,6 +297,65 @@ class SocialMigrationCases:
         code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
         self.assertEqual(code, 1, out)
         self.assertIn('not an image 1', out)
+
+    RANKING_COLUMNS = ('SELECT ranking_events_count, ranking_photos_count, ranking_streams_count,'
+                       ' ranking_events_total_attendees, ranking_streams_total_participants, ranking_score'
+                       ' FROM social.communities WHERE id = {!r};')
+
+    def ranking_of(self, tgt, community):
+        return self.sql(tgt, self.RANKING_COLUMNS.format(community)).strip().split('\t')
+
+    def test_when_importing_ranking_metrics_it_should_carry_them_and_keep_the_nodes_counts(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        mirrored = '00000000-0000-4000-8000-0000000000b1'
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO communities VALUES
+            ('{mirrored}', 'm', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01', 0.25);
+            UPDATE communities SET ranking_score = 0.5 WHERE id = '{self.SOCIAL_COMMUNITY}';
+            INSERT INTO community_ranking_metrics (community_id, events_count, photos_count, streams_count,
+              events_total_attendees, streams_total_participants, has_thumbnail)
+            VALUES ('{self.SOCIAL_COMMUNITY}', 3, 5, 2, 40, 10, true);""")
+        # a community the mirror held since long ago, tracking from then
+        self.sql(tgt, f"""INSERT INTO social.communities (id, name, owner_address, origin, ranking_tracking_since,
+            created_at, updated_at) VALUES ('{mirrored}', 'm', '{owner}', 'upstream', '2025-01-01', '2025-01-01',
+            '2025-01-01');""")
+        self.social_ea_run('communities', 'community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['3', '5', '2', '40', '10', '0.5'])
+        self.assertEqual(self.ranking_of(tgt, mirrored), ['0', '0', '0', '0', '0', '0.25'])
+        moved = ("SELECT count(*) FROM social.communities"
+                 " WHERE ranking_tracking_since > timezone('UTC', now()) - interval '1 hour';")
+        self.assertEqual(self.sql(tgt, moved).strip(), '2')
+        # the node counts an event, a photo and a stream; an unchanged upstream leaves them
+        self.sql(tgt, f"""UPDATE social.communities SET ranking_events_count = 4, ranking_photos_count = 7,
+            ranking_streams_count = 3, ranking_streams_total_participants = 14, ranking_score = 0.9
+            WHERE id = '{self.SOCIAL_COMMUNITY}';""")
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['4', '7', '3', '40', '14', '0.9'])
+        # upstream moves on: events are upstream's, photos and streams keep the node's additions
+        self.sql(src, f"""UPDATE community_ranking_metrics SET events_count = 6, photos_count = 6,
+            events_total_attendees = 55 WHERE community_id = '{self.SOCIAL_COMMUNITY}';""")
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '8', '3', '55', '14', '0.5'])
+        self.social_ea_run('community_ranking_metrics')
+        self.assertEqual(self.ranking_of(tgt, self.SOCIAL_COMMUNITY), ['6', '8', '3', '55', '14', '0.5'])
+
+    def test_when_community_places_are_missing_from_the_catalogue_it_should_report_them(self):
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        self.social_ea_community(src, owner)
+        known, unknown = '00000000-0000-4000-8000-0000000000d1', '00000000-0000-4000-8000-0000000000d2'
+        self.sql(src, f"""CREATE TABLE community_places (id text, community_id uuid, added_by text, added_at timestamp);
+            INSERT INTO community_places VALUES ('{known}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('{unknown}', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01'),
+            ('some.dcl.eth', '{self.SOCIAL_COMMUNITY}', '{owner}', '2026-01-01');""")
+        self.sql(tgt, f"""INSERT INTO explore.place (id, base_position, title, raw, origin)
+            VALUES ('{known}', '1,1', 'k', '{{"source": "places", "local": true}}', 'local');""")
+        notices = io.StringIO()
+        with contextlib.redirect_stderr(notices):
+            self.social_ea_run('communities', 'community_places')
+        self.assertIn('1 place ids of this batch are not in explore.place', notices.getvalue())
+        self.assertEqual(self.sql(tgt, 'SELECT count(*) FROM social.community_places;').strip(), '3')
 
     def test_when_the_node_changed_imported_settings_it_should_keep_them_on_a_rerun(self):
         src, tgt = self.social_ea_dbs()
