@@ -16,13 +16,18 @@ export const SHOP_QUERY_KEYS = {
 
 export function invalidateAfterPurchase(qc: QueryClient, item?: { contractAddress: string; tokenId?: string; itemId?: string | null }): void {
   const scoped = (key: string, ...parts: (string | null | undefined)[]) => void qc.invalidateQueries({ queryKey: item ? [key, ...parts] : [key] });
+  // The pages key a token by its contract in lowercase.
+  const contract = item?.contractAddress.toLowerCase();
   void qc.invalidateQueries({ queryKey: [SHOP_QUERY_KEYS.balance] });
   void qc.invalidateQueries({ queryKey: [SHOP_QUERY_KEYS.manaBalance] });
   void qc.invalidateQueries({ queryKey: ["detail-trade"] });
   void qc.invalidateQueries({ queryKey: ["shop-item"] });
-  scoped("owned-token", item?.contractAddress, item?.tokenId);
-  scoped("public-token", item?.contractAddress, item?.tokenId);
-  scoped("item-resales", item?.contractAddress, item?.itemId);
+  scoped("owned-token", contract, item?.tokenId);
+  scoped("public-token", contract, item?.tokenId);
+  scoped("item-resales", contract, item?.itemId);
+  // A LAND's page reads the token and its open order under keys of its own.
+  scoped("land-token", contract, item?.tokenId);
+  scoped("land-token-order", contract, item?.tokenId);
   void qc.invalidateQueries({ queryKey: ["shop-items"] });
   void qc.invalidateQueries({ queryKey: ["catalog-items"] });
   void qc.invalidateQueries({ queryKey: ["overview-listings"] });

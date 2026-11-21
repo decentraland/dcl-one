@@ -474,7 +474,7 @@ function SaleRentBox({ result, land, account, onSignIn, onChanged }: SaleRentBox
         </div>
       ) : null}
       {buying && order && priceWei && order.tradeId ? (
-        <LandTradeBuy name={nft.name} tradeId={order.tradeId} quoted={priceWei as ManaWei} land={{ contractAddress: nft.contractAddress.toLowerCase(), tokenId: nft.tokenId }} onClose={() => setBuying(false)} onDone={() => onChanged()} />
+        <LandTradeBuy name={nft.name} tradeId={order.tradeId} quoted={priceWei as ManaWei} land={{ contractAddress: nft.contractAddress, tokenId: nft.tokenId }} onClose={() => setBuying(false)} onDone={() => onChanged()} />
       ) : null}
       {buying && order && priceWei && !order.tradeId ? (
         <LegacyOrderBuy

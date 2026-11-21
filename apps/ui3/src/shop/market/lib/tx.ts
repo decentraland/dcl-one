@@ -34,6 +34,9 @@ export function isTxPending(e: unknown): e is TxPendingError {
   return (e as { name?: string } | null)?.name === "TxPendingError";
 }
 
+/** A buy dialog's answer when the wait that ran out was the MANA approval's: the sale itself was never sent. */
+export const APPROVAL_STILL_PENDING = "Your MANA approval is still confirming, so nothing was bought. Buy again once it confirms.";
+
 export function isTxReverted(e: unknown): e is TxRevertedError {
   return (e as { name?: string } | null)?.name === "TxRevertedError";
 }

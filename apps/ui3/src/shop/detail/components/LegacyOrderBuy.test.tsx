@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
 import { createDemo, DemoShell } from "../../checkout/demo";
-import { TxPendingError } from "../../market/lib/tx";
+import { APPROVAL_STILL_PENDING, TxPendingError } from "../../market/lib/tx";
 import { executeLegacyOrder } from "../../market/purchase/executeOrder";
 import { BOOK } from "@shop/payment/fixtures";
 import LegacyOrderBuy from "./LegacyOrderBuy";
@@ -23,6 +23,7 @@ function QueryProbe() {
 
 const balance = [SHOP_QUERY_KEYS.manaBalance, BOOK.buyer.toLowerCase(), 137];
 const invalidated = (key: unknown[]) => pageQueries!.getQueryState(key)?.isInvalidated;
+const SALE = `0x${"d".repeat(64)}`;
 
 /** Opens the dialog over a page holding a MANA balance, and presses Buy. */
 async function buy() {
@@ -55,11 +56,24 @@ describe("LegacyOrderBuy", () => {
     await vi.waitFor(() => expect(invalidated(balance)).toBe(true));
   });
 
-  it("an order still confirming has the page read its MANA balance again too", async () => {
-    vi.mocked(executeLegacyOrder).mockRejectedValueOnce(new TxPendingError(`0x${"d".repeat(64)}`, "The purchase"));
+  it("a sale still confirming has the page read its MANA balance again too", async () => {
+    // The sale went out (its hash reached onSubmitted) and then its wait ran out.
+    vi.mocked(executeLegacyOrder).mockImplementationOnce(async (opts) => {
+      opts.onSubmitted?.(SALE);
+      throw new TxPendingError(SALE, "The purchase");
+    });
     await buy();
-    await screen.findByText(/still confirming/);
+    await screen.findByText(/The purchase was sent and is still confirming/);
     expect(invalidated(balance)).toBe(true);
+  });
+
+  it("an approval still confirming sent no sale: it says so and reads nothing again", async () => {
+    // The MANA approval's wait ran out: the sale was never sent, so onSubmitted never ran.
+    vi.mocked(executeLegacyOrder).mockRejectedValueOnce(new TxPendingError(`0x${"a".repeat(64)}`, "The MANA approval"));
+    await buy();
+    await screen.findByText(APPROVAL_STILL_PENDING);
+    expect(screen.queryByText(/The purchase was sent/)).toBeNull();
+    expect(invalidated(balance)).toBe(false);
   });
 
   it("a declined order spent nothing and reads nothing again", async () => {
