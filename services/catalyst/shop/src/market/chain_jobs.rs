@@ -624,19 +624,29 @@ fn dispatch_close(
             {
                 holdings.forget(index.indexer(), index.net());
             }
-            closed.map(|()| out)
+            let closed = closed.map(|()| out);
+            // Whether a backfill is owed now, read in this projection's own
+            // task: a slow read holds back no one else.
+            let alone = match &closed {
+                Ok(_) => {
+                    chain_group::walks_alone(&sup.pool, index.as_ref(), sup.member_deadline).await
+                }
+                Err(_) => false,
+            };
+            Ok::<_, anyhow::Error>((closed, alone))
         };
         let close = std::panic::AssertUnwindSafe(close).catch_unwind();
-        let attempt = tokio::select! {
+        let (attempt, alone) = tokio::select! {
             biased;
-            _ = lost.cancelled() => Attempt::Interrupted,
-            _ = stop.cancelled() => Attempt::Interrupted,
+            _ = lost.cancelled() => (Attempt::Interrupted, false),
+            _ = stop.cancelled() => (Attempt::Interrupted, false),
             outcome = close => match outcome {
-                Ok(result) => Attempt::Ran(result),
-                Err(panic) => Attempt::Panicked(panic_message(panic.as_ref())),
+                Ok(Ok((result, alone))) => (Attempt::Ran(result), alone),
+                Ok(Err(e)) => (Attempt::Ran(Err(e)), false),
+                Err(panic) => (Attempt::Panicked(panic_message(panic.as_ref())), false),
             },
         };
-        Done::Attempted(attempt, checkpoint, false)
+        Done::Attempted(attempt, checkpoint, alone)
     });
     running.insert(handle.id(), Running::one(i));
     slot.phase = Phase::Running;
@@ -1004,15 +1014,20 @@ fn settle_member(
             out,
             checkpoint,
             close: Some(fold_since),
+            ..
         } if !stopping => {
             slot.checkpoint = checkpoint;
             dispatch_close(ctx, supervisor, j, slot, out, fold_since, tasks, running);
             return;
         }
         MemberEnd::Walked {
-            out, checkpoint, ..
+            out,
+            checkpoint,
+            alone,
+            ..
         } => {
             ctx.pass_done();
+            slot.solo_once |= alone;
             if let Some(a) = slot.acquisition.as_mut() {
                 a.failures = 0;
             }
@@ -1165,7 +1180,12 @@ async fn attempt(
                     .ok()
                     .flatten()
                     .and_then(|c| Checkpoint::of(&c)),
-                index.walks_alone(&supervisor.pool).await.unwrap_or(false),
+                chain_group::walks_alone(
+                    &supervisor.pool,
+                    index.as_ref(),
+                    supervisor.member_deadline,
+                )
+                .await,
             ),
             Err(_) => (None, false),
         };

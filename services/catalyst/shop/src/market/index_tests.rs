@@ -4802,6 +4802,12 @@ mod supervisor {
         /// `write_entered`.
         committed_gate: Option<Arc<tokio::sync::Semaphore>>,
         commit_armed: Arc<std::sync::atomic::AtomicBool>,
+        /// While `alone_armed`, `walks_alone` lets `alone_pass` calls through
+        /// and then waits for `alone_gate`, counting in `alone_held`.
+        alone_gate: Option<Arc<tokio::sync::Semaphore>>,
+        alone_armed: Arc<std::sync::atomic::AtomicBool>,
+        alone_pass: Arc<AtomicUsize>,
+        alone_held: Arc<AtomicUsize>,
     }
 
     impl Hooked {
@@ -4910,6 +4916,16 @@ mod supervisor {
             self.inner().begin_pass()
         }
         async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
+            if let Some(gate) = &self.alone_gate
+                && self.alone_armed.load(Ordering::SeqCst)
+                && self
+                    .alone_pass
+                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                    .is_err()
+            {
+                self.alone_held.fetch_add(1, Ordering::SeqCst);
+                gate.acquire().await.unwrap().forget();
+            }
             self.inner().walks_alone(pool).await
         }
         async fn window_committed(&self) {
@@ -6838,6 +6854,88 @@ mod supervisor {
             .unwrap();
         assert!(!matches!(job.state, JobState::Finished | JobState::Failed));
         armed.store(false, Ordering::SeqCst);
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// The walks-alone hint after a shared walk is each member's own: nft's
+    /// read at the walk's opening answers, the one after its close is held,
+    /// and sales walks, closes and publishes meanwhile.
+    #[tokio::test]
+    async fn a_held_walks_alone_read_holds_back_no_companion() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 1), s + 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let hooks = Hooked {
+            alone_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            ..Hooked::default()
+        };
+        let mut projections = nft_and_sales(&url);
+        projections[0].make = {
+            let (gate, armed, pass, held) = (
+                hooks.alone_gate.clone(),
+                hooks.alone_armed.clone(),
+                hooks.alone_pass.clone(),
+                hooks.alone_held.clone(),
+            );
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(NftIndex::new(ChainNet::Matic))),
+                    alone_gate: gate.clone(),
+                    alone_armed: armed.clone(),
+                    alone_pass: pass.clone(),
+                    alone_held: held.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, projections));
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The opening's read answers; the next one, after nft's close, waits.
+        hooks.alone_pass.store(1, Ordering::SeqCst);
+        hooks.alone_armed.store(true, Ordering::SeqCst);
+        add_sale(&chain, c1, v2_token(0, 2), s + 700);
+        *chain.head.lock() = s + 1_500;
+        let target = (s + 1_498) as i64;
+        eventually("nft's read after its close is held", || async {
+            hooks.alone_held.load(Ordering::SeqCst) >= 1
+        })
+        .await;
+        eventually("sales walks, closes and publishes meanwhile", || async {
+            last_block(&db.pool, INDEXER_SALES).await == target
+                && published(&db.pool, INDEXER_SALES, ChainNet::Matic).await
+        })
+        .await;
+        assert_eq!(
+            last_block(&db.pool, INDEXER_NFT).await,
+            target,
+            "the walk was shared"
+        );
+        hooks.alone_armed.store(false, Ordering::SeqCst);
+        hooks.alone_gate.as_ref().unwrap().add_permits(100);
         assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
         db.drop().await;
     }

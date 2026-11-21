@@ -84,6 +84,10 @@ pub enum MemberEnd {
         out: PassOutcome,
         checkpoint: Option<Checkpoint>,
         close: Option<Option<i64>>,
+        /// It owes a backfill now (taken in during the walk), or that could
+        /// not be read: its next walk is alone. Read here for a member paused
+        /// by its budget; one that reached the target reads it in its close.
+        alone: bool,
     },
     /// Its gate said wait.
     Waiting(String),
@@ -160,11 +164,57 @@ where
     }
 }
 
+/// Whether `ix` must walk alone next ([`ChainIndex::walks_alone`]), a
+/// planning hint read under `deadline` with its panic caught: a read that
+/// fails, overruns or panics is logged and says yes, so the next turn walks
+/// alone and its opening asks again.
+pub(crate) async fn walks_alone(pool: &PgPool, ix: &dyn ChainIndex, deadline: Duration) -> bool {
+    match timed(deadline, ix.walks_alone(pool)).await {
+        Ok(alone) => alone,
+        Err(e) => {
+            let why = match e {
+                StepError::Failed(e) => format!("{e:#}"),
+                StepError::TimedOut => "it overran the member deadline".to_string(),
+                StepError::Panicked(msg) => format!("it panicked: {msg}"),
+            };
+            tracing::warn!(indexer = ix.indexer(), network = ix.net().db_name(), error = %why, "marketplace chain index: could not read whether a projection walks alone; its next turn walks alone");
+            true
+        }
+    }
+}
+
+/// Settles the walks-alone hint of each member paused by its budget, side by
+/// side, each under its deadline: none holds back the others' closes for
+/// longer than that.
+async fn with_hints(
+    mut ends: Vec<(usize, MemberEnd)>,
+    hints: Vec<(usize, Arc<dyn ChainIndex>)>,
+    pool: &PgPool,
+    deadline: Duration,
+) -> Vec<(usize, MemberEnd)> {
+    let read = futures::future::join_all(
+        hints
+            .into_iter()
+            .map(|(at, ix)| async move { (at, walks_alone(pool, ix.as_ref(), deadline).await) }),
+    )
+    .await;
+    for (at, hint) in read {
+        if let Some((_, MemberEnd::Walked { alone, .. })) = ends.get_mut(at) {
+            *alone = hint;
+        }
+    }
+    ends
+}
+
 /// The first topics a filter takes: `None` when it takes any.
 type TopicSet = Option<BTreeSet<String>>;
 
 /// The first topics of `group`, when its `topics` constrain the first
-/// position only (a string, or a list of strings); `Err` for anything else.
+/// position only, with a string or a non-empty list of strings; `None` when
+/// it has no positions at all (any log, one without topics too). `Err` for
+/// anything else, an open first position (`null`, an empty list) included:
+/// it requires a first topic of any value, which a shared read does not tell
+/// apart, so such a member walks alone.
 fn first_topics(group: &LogGroup) -> Result<TopicSet, ()> {
     let topics = match &group.topics {
         Value::Null => return Ok(None),
@@ -173,8 +223,8 @@ fn first_topics(group: &LogGroup) -> Result<TopicSet, ()> {
     };
     match topics.as_slice() {
         [] => Ok(None),
-        [Value::Null] => Ok(None),
         [Value::String(t)] => Ok(Some(BTreeSet::from([t.to_ascii_lowercase()]))),
+        [Value::Array(list)] if list.is_empty() => Err(()),
         [Value::Array(list)] => list
             .iter()
             .map(|t| t.as_str().map(str::to_ascii_lowercase).ok_or(()))
@@ -503,6 +553,7 @@ pub async fn walk_together(
     }
 
     // The windows.
+    let mut hints: Vec<(usize, Arc<dyn ChainIndex>)> = Vec::new();
     let mut chunk = settings.address_chunk.max(1);
     let mut next = (at.block + 1).max(0) as u64;
     let mut first = true;
@@ -561,12 +612,15 @@ pub async fn walk_together(
                 w.out.requests = 0;
                 w.out.elapsed_ms = started.elapsed().as_millis() as u64;
                 let checkpoint = Some(w.checkpoint(at.full_history));
+                // Its walks-alone hint is read once the walk is over.
+                hints.push((ends.len(), w.member.index.clone()));
                 ends.push((
                     w.member.slot,
                     MemberEnd::Walked {
                         out: w.out,
                         checkpoint,
                         close: None,
+                        alone: false,
                     },
                 ));
                 continue;
@@ -616,7 +670,7 @@ pub async fn walk_together(
                 for w in walking {
                     ends.push((w.member.slot, MemberEnd::Fallback { budget: w.budget }));
                 }
-                return ends;
+                return with_hints(ends, hints, pool, deadline).await;
             }
         };
         // Each member's share, committed in the fixed order.
@@ -672,16 +726,21 @@ pub async fn walk_together(
         w.out.elapsed_ms = started.elapsed().as_millis() as u64;
         let reached = (w.out.indexed_to.max(0) as u64) >= target;
         let checkpoint = Some(w.checkpoint(at.full_history));
+        if !reached {
+            hints.push((ends.len(), w.member.index.clone()));
+        }
+        // A member that reached the target reads its hint in its own close.
         ends.push((
             w.member.slot,
             MemberEnd::Walked {
                 close: reached.then_some(w.fold_since),
                 out: w.out,
                 checkpoint,
+                alone: false,
             },
         ));
     }
-    ends
+    with_hints(ends, hints, pool, deadline).await
 }
 
 #[cfg(test)]
@@ -717,14 +776,17 @@ mod tests {
                 .addresses
                 .iter()
                 .any(|a| a.eq_ignore_ascii_case(&log.address));
-            let topic = match &g.topics[0] {
-                Value::Null => true,
-                Value::String(t) => log.topics[0].eq_ignore_ascii_case(t),
-                Value::Array(list) => list
-                    .iter()
-                    .any(|t| log.topics[0].eq_ignore_ascii_case(t.as_str().unwrap())),
-                _ => unreachable!(),
-            } || g.topics.as_array().is_some_and(Vec::is_empty);
+            // As Geth reads it: no positions take any log, one without
+            // topics too; a first position requires a first topic.
+            let positions = g.topics.as_array().unwrap();
+            let topic = positions.is_empty()
+                || log.topics.first().is_some_and(|t0| match &positions[0] {
+                    Value::String(t) => t0.eq_ignore_ascii_case(t),
+                    Value::Array(list) => list
+                        .iter()
+                        .any(|t| t0.eq_ignore_ascii_case(t.as_str().unwrap())),
+                    _ => unreachable!("filters a shared read takes"),
+                });
             address && topic
         })
     }
@@ -755,6 +817,10 @@ mod tests {
             log(&b.to_ascii_uppercase().replace("0X", "0x"), t1, 4),
             log(c, t3, 5),
             log(c, "0xt9", 6), // the second takes any topic on c
+            RpcLog {
+                topics: vec![],
+                ..log(c, "-", 8) // no topics: only the one with no positions takes it
+            },
             log("0x00000000000000000000000000000000000000dd", t1, 7),
         ];
         let (f1, f2) = (filter_of(&first).unwrap(), filter_of(&second).unwrap());
@@ -794,6 +860,18 @@ mod tests {
         assert!(filter_of(&[group(&["0xaa"], json!(["0xt1", "0xt2"]))]).is_err());
         assert!(filter_of(&[group(&["0xaa"], json!([["0xt1"], null, ["0xt2"]]))]).is_err());
         assert!(filter_of(&[group(&["0xaa"], json!([[1]]))]).is_err());
-        assert!(filter_of(&[group(&["0xaa"], json!([null]))]).is_ok());
+        // An open first position requires a first topic of any value, which
+        // a shared read does not tell apart from no positions: alone.
+        assert!(filter_of(&[group(&["0xaa"], json!([null]))]).is_err());
+        assert!(filter_of(&[group(&["0xaa"], json!([[]]))]).is_err());
+        // No positions take any log, one without topics too.
+        let any = filter_of(&[group(&["0xaa"], json!([]))]).unwrap();
+        let bare = RpcLog {
+            topics: vec![],
+            ..log("0xaa", "-", 1)
+        };
+        assert!(takes(&any, &bare));
+        let first = filter_of(&[group(&["0xaa"], json!([["0xt1"]]))]).unwrap();
+        assert!(!takes(&first, &bare), "a first topic is required");
     }
 }
