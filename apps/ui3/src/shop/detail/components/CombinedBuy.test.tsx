@@ -19,7 +19,7 @@ import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, 
 import { evmAddress } from "@shop/model/address";
 import { tokenAsset } from "@shop/model/asset";
 import { CHAIN } from "@shop/model/chain";
-import { createDemo, DemoShell } from "../../checkout/demo";
+import { createDemo, demoIdentity, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
 import { presentPayment, type MixedPayment } from "@shop/payment/present";
 import { BOOK, creatorOrder, storeMint } from "@shop/payment/fixtures";
@@ -87,7 +87,7 @@ function setup(signedFor?: string, confirm?: "none" | "reverted", value = MANA, 
     </DemoShell>
   );
   const shown = render(shell());
-  return { demo, mixed, line, unmount: shown.unmount, again: () => render(shell()) };
+  return { demo, mixed, line, shell, unmount: shown.unmount, again: () => render(shell()) };
 }
 
 
@@ -1438,6 +1438,47 @@ describe("a split whose outcome is not known", () => {
     });
     await waitFor(() => expect(reads).toBe(2));
     shown.unmount();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it.each([
+    ["the wallet moves to another account", "wallet"],
+    ["the session and its wallet both move to another account", "session"],
+  ] as const)("when %s while the approval reads the listing, nothing is asked of the wallet: no prompt, no POST, no credit, the lock let go", async (_, what) => {
+    const { demo, shell, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    // The store's listing is read when the purchase starts, then again at the approve click: that second read waits.
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 2) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    act(() => {
+      fireEvent.click(screen.getByTestId("authorize-step-action"));
+    });
+    await waitFor(() => expect(reads).toBe(2));
+    const other = BOOK.reseller.toLowerCase();
+    act(() => {
+      // The wallet moves; with "session", the signed-in account follows it, so the two agree again, on another buyer.
+      demo.wallet.emit("accountsChanged", [other]);
+      if (what === "session") {
+        demo.host = { ...demo.host, identity: demoIdentity(other) };
+        shown.rerender(shell());
+      }
+    });
     await act(async () => {
       answer();
       await new Promise((resolve) => setTimeout(resolve, 30));

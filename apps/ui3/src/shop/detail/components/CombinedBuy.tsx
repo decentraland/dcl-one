@@ -195,7 +195,7 @@ type CombinedBuyRun = {
   checkAgain(): Promise<void>;
 };
 
-type Terms = { offer: PurchaseOffer; mixed: MixedPayment };
+type Terms = { offer: PurchaseOffer; mixed: MixedPayment; buyer: string };
 
 /**
  * The credits+MANA purchase itself, for whichever screen draws it: this file's dialog, or Buy now's (BuyModal), which
@@ -229,8 +229,17 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       handedGrant.current = null;
     };
   }, []);
-  /** Whether the purchase agreed on as `agreed` is still this dialog's: open, with those very terms. */
-  const stillAgreed = (agreed: Terms) => () => mounted.current && terms.current === agreed;
+  // The signed-in account and the wallet as last drawn: a step that waited reads them again, never what its click saw.
+  const walletNow = useRef(wallet);
+  useEffect(() => {
+    walletNow.current = wallet;
+  });
+  /**
+   * Whether the purchase agreed on as `agreed` is still this dialog's: open, with those very terms, for the account it was
+   * agreed by, with the wallet still on it (a session or wallet account changed meanwhile ends it).
+   */
+  const stillAgreed = (agreed: Terms) => () =>
+    mounted.current && terms.current === agreed && !walletNow.current.accountMismatch && walletNow.current.account?.toLowerCase() === agreed.buyer.toLowerCase();
   // The hold's key: the item, whatever listing this dialog buys it through (another surface may use another).
   const lineId = splitHoldLine(line.asset);
   const [sent, setSent] = useState(() => readSplitHold(wallet.account, lineId));
@@ -364,7 +373,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       setPhase({ kind: "error", ...blockedNow });
       return;
     }
-    const agreedTerms: Terms = { offer, mixed };
+    const agreedTerms: Terms = { offer, mixed, buyer: ctx.buyer };
     terms.current = agreedTerms;
     setAgreed(mixed);
     try {
@@ -715,8 +724,9 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // What held the approval back under its lock, said instead of a plain "cancelled".
       let heldBack: string | null = null;
       try {
-        // Under it, before the wallet is asked: a dialog closed (or terms changed) while those reads ran, a hold of this
-        // item, another item's split that may still spend the allowance, or purchases this browser can't read.
+        // Under it, before the wallet is asked: a dialog closed, terms changed, or the session or the wallet's account changed
+        // while those reads ran; a hold of this item, another item's split that may still spend the allowance, or purchases
+        // this browser can't read.
         if (!stillAgreed(agreedTerms)()) throw new GrantCancelledError();
         const blocked = splitBlock(ctx.buyer, true);
         if (blocked) throw new GrantCancelledError(blocked.message);
