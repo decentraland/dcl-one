@@ -402,13 +402,14 @@ node's one signed-request verifier ([ADR](../../../../docs/adr/2026-11-18-one-re
 current payload only, the scene signer refused (400), EIP-1654 links through
 the node's validator (503 when it cannot be asked). The signature window is
 `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` milliseconds, else `AUTH_WINDOW_SECS`
-(300 s by default, as the source service). A zero, negative or NaN value accepts no past signature and an
-infinite one never expires. A timestamp equal to the current time passes
-under any of them, where the source refuses it under a negative window. The future side is bounded by the window and
-never exceeds 60 s, the cap of the
-[signed-fetch window ADR](../../../../docs/adr/2026-11-13-signed-fetch-window.md);
-the source accepts a timestamp up to the whole window ahead (300 s by
-default). The timestamp is digits only, where the source reads it as a
+(300 s by default, as the source service). The window bounds both sides of
+now, as the source's crypto-middleware does: a timestamp up to the whole window
+ahead passes (300 s by default), not only up to the 60 s cap of the
+[signed-fetch window ADR](../../../../docs/adr/2026-11-13-signed-fetch-window.md),
+which records this exception (`future_bound_follows_window`). A zero, negative
+or NaN value accepts only the current millisecond and an infinite one bounds
+neither side. A timestamp equal to the current time passes under any of them,
+where the source refuses it under a negative window. The timestamp is digits only, where the source reads it as a
 JavaScript Number: the `timestamps` cases of `ws-numbers-source-cases.json`
 are replayed against these rules, and the other forms the source accepts
 (`0x…`, `…e0`, padded) are refused.

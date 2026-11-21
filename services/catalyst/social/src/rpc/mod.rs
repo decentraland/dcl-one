@@ -178,8 +178,8 @@ impl Settings {
         Duration::from_millis(ms)
     }
     /// The handshake signature window: `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`,
-    /// else `AUTH_WINDOW_SECS` (300 s, the source's default). Zero, negative or
-    /// NaN accepts no past signature; an infinite one never expires.
+    /// else `AUTH_WINDOW_SECS` (300 s, the source's default), past and future. Zero,
+    /// negative or NaN accepts only the current millisecond; an infinite one bounds neither side.
     pub(crate) fn auth_signature_expiration(&self) -> Duration {
         let ms = self
             .ws_auth_signature_expiration_ms

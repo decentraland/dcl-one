@@ -4,7 +4,8 @@
 //! socket's own paths. The first path is the source protocol path; each
 //! further one, a mounted alias kept for shipped clients, is tried only after
 //! a 401. Proxy headers never add a path. The window is
-//! `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`, else `AUTH_WINDOW_SECS` (300 s).
+//! `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`, else `AUTH_WINDOW_SECS` (300 s), on
+//! both sides of now, as the source service's crypto-middleware applies it.
 
 use axum::http::HeaderMap;
 use thiserror::Error;
@@ -33,7 +34,8 @@ impl SocketAuthError {
 fn options(state: &State) -> VerifyOptions {
     crate::request_auth::build(
         crate::request_auth::builder(state.eip1654.as_ref())
-            .expiration(state.settings.auth_signature_expiration()),
+            .expiration(state.settings.auth_signature_expiration())
+            .future_bound_follows_window(true),
     )
 }
 

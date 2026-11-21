@@ -939,17 +939,23 @@ async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
     let mut negative_window_at_now = 0;
     // Digit forms around the current time, which the capture does not hold: checked against
     // the rules only.
+    // The future side runs to the whole window, as the source's.
+    let at = |offset: i64| (now + offset).to_string();
     let local = [
-        (now + 1, "0", false),
-        (now + 1, "1.5", true),
-        (now + 2, "1.5", false),
-        (now + 60_000, "Infinity", true),
-        (now + 60_001, "Infinity", false),
-        (now - 1, "1.5", true),
-        (now - 2, "1.5", false),
+        (at(1), "0", false),
+        (at(1), "1.5", true),
+        (at(2), "1.5", false),
+        (at(300_000), "300000", true),
+        (at(300_001), "300000", false),
+        (at(-300_000), "300000", true),
+        (at(-300_001), "300000", false),
+        (at(3_600_000), "Infinity", true),
+        ("9".repeat(30), "Infinity", true),
+        (at(-1), "1.5", true),
+        (at(-2), "1.5", false),
     ]
-    .map(|(ts, window, accepted)| {
-        serde_json::json!({ "raw": ts.to_string(), "window": window, "accepted": accepted, "local": true })
+    .map(|(raw, window, accepted)| {
+        serde_json::json!({ "raw": raw, "window": window, "accepted": accepted, "local": true })
     });
     for case in fixture["timestamps"]
         .as_array()
@@ -973,24 +979,23 @@ async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
             ..Settings::default()
         }
         .auth_signature_expiration();
-        let options =
-            crate::request_auth::build(crate::request_auth::builder(None).expiration(expiration));
+        let options = crate::request_auth::build(
+            crate::request_auth::builder(None)
+                .expiration(expiration)
+                .future_bound_follows_window(true),
+        );
         let parts = frame_parts(&fields, "get", SignedPath::local("/"));
         let result = crate::auth::request::verify_request_at(&parts, &options, now).await;
 
-        // Absent or empty reads as 0; the future side stops at the window, at most 60 s.
+        // Absent or empty reads as 0; the window bounds both sides, an infinite one neither.
         let text = raw.filter(|r| !r.is_empty()).unwrap_or("0");
         let digits = Some(text)
             .filter(|r| r.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|r| r.parse::<i64>().ok());
-        let window_ms = expiration.as_millis();
-        let expected = digits.is_some_and(|ts| {
-            if ts >= now {
-                (ts - now) as u128 <= window_ms.min(60_000)
-            } else {
-                expiration == Duration::MAX || (now - ts) as u128 <= window_ms
-            }
-        });
+            .map(|r| r.parse::<i128>().unwrap_or(i128::MAX));
+        let window_ms = expiration.as_millis() as i128;
+        let now_ms = i128::from(now);
+        let expected = digits
+            .is_some_and(|ts| expiration == Duration::MAX || (ts - now_ms).abs() <= window_ms);
         assert_eq!(result.is_ok(), expected, "{case} {result:?}");
 
         let source_accepted = case["accepted"].as_bool().unwrap();
@@ -1002,12 +1007,10 @@ async fn source_timestamp_cases_follow_the_digits_only_verdicts() {
             None if source_accepted => refused_forms += 1,
             None => {}
             // A negative window still passes the current time; the source refuses it.
-            Some(ts) if window < 0.0 && ts == now => {
+            Some(ts) if window < 0.0 && ts == now_ms => {
                 assert!(result.is_ok() && !source_accepted, "{case} {result:?}");
                 negative_window_at_now += 1;
             }
-            // The source's future side runs to the whole window.
-            Some(ts) if ts - now > 60_000 && window > 60_000.0 => {}
             Some(_) => assert_eq!(result.is_ok(), source_accepted, "{case} {result:?}"),
         }
     }
