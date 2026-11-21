@@ -49,13 +49,14 @@ describe('when the HUD canvas is type-checked in CI', () => {
 })
 
 describe('when Sites serves the hosted gallery', () => {
-  it('should put the build checked against the recorded digest into the scanned artifact before the scans', () => {
+  it('should put the hosted build, refused with a hidden path, into the scanned artifact before the scans', () => {
     const library = steps('library')
     const index = library.findIndex((step) => step.run?.includes('--mode hosted'))
     const hosted = library[index]!.run!
     const urlScan = library.findIndex((step) => step.run?.includes('key-guard.mjs'))
     const upload = library.find((step) => step.uses?.startsWith('actions/upload-artifact@'))!
-    expect(hosted).toContain('hosted-digest.mjs gallery/dist --check gallery/hosted-build.sha256')
+    expect(hosted).toContain('node gallery/scripts/hosted-digest.mjs gallery/dist\n')
+    expect(hosted.indexOf('hosted-digest.mjs')).toBeLessThan(hosted.indexOf('cp -R'))
     expect(hosted).toContain(
       `cp -R gallery/dist ${String(upload.with!.path).replace('library/ui/', '')}/ui-gallery`
     )

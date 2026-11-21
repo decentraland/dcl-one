@@ -172,12 +172,12 @@ jobs:
           wait "$nested" || status=1
           exit "$status"
       # The hosted gallery Sites serves at /ui-gallery/ (infra/packages/ui-gallery.nix), built as that package builds
-      # it. Both builds must match the recorded digest, and this one rides in the scanned artifact, so Sites ships the
-      # bytes the key scan reads.
+      # it, rides in the scanned artifact: an image is published only with a successful key scan of these exact bytes
+      # (tooling/ui-gallery-receipt.py). The digest fails on a hidden path, which the upload would drop unscanned.
       - name: Add the hosted gallery Sites serves to the scanned artifact
         run: |
           pnpm exec vite build --config gallery/vite.config.ts --mode hosted
-          node gallery/scripts/hosted-digest.mjs gallery/dist --check gallery/hosted-build.sha256
+          node gallery/scripts/hosted-digest.mjs gallery/dist
           cp -R gallery/dist figma/review/review-dist/ui-gallery
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
@@ -187,7 +187,9 @@ jobs:
         with:
           name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
           path: library/ui/figma/review/review-dist
-          retention-days: 14
+          # A main build stays the receipt for its gallery bytes until the gallery changes again
+          # (tooling/ui-gallery-receipt.py), so it is kept longer.
+          retention-days: ${{ github.event_name == 'push' && 90 || 14 }}
       # The gallery's HUD canvas compiles the Explorer HUD, checked under the profile and the TypeScript 7 its hosts
       # use. Last, and run whatever check failed before it, so a type error here hides no other one; not after a
       # failed install, which leaves nothing to check with.

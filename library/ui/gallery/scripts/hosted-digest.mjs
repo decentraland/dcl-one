@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 // The digest of a hosted gallery build (`vite build --mode hosted`): sha256 over one `<sha256>  <path>` line per
-// file, sorted by path. gallery/hosted-build.sha256 records it. The Shared UI library run checks its build against
-// the record before uploading it in the scanned Review artifact, and the Nix package Sites serves
-// (infra/packages/ui-gallery.nix) checks its own build against the same record, so Sites ships the bytes the key
-// scan read. Only regular files count: a link, or anything else, fails.
+// file, sorted by path. The Shared UI library run prints it for the build it puts in the scanned Review artifact as
+// ui-gallery/, and the Nix package Sites serves (infra/packages/ui-gallery.nix) prints it for its own build; before
+// an image is published, tooling/ui-gallery-receipt.py computes the same digest on both sides and requires a
+// successful key scan of identical bytes. Only regular files count, and a hidden path fails: the artifact upload drops
+// hidden files, so one would ship without being scanned.
 //
-//   node gallery/scripts/hosted-digest.mjs <dir>                  prints the digest
-//   node gallery/scripts/hosted-digest.mjs <dir> --check <file>   fails unless <file> holds it
-//   node gallery/scripts/hosted-digest.mjs <dir> --write <file>   records it
+//   node gallery/scripts/hosted-digest.mjs <dir>
 import { createHash } from 'node:crypto'
-import { lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 
@@ -18,6 +17,10 @@ export function hostedDigest(root) {
   const walk = (relative) => {
     for (const name of readdirSync(path.join(root, relative)).sort()) {
       const entry = relative ? `${relative}/${name}` : name
+      if (name.startsWith('.'))
+        throw new Error(
+          `${entry} is hidden: the artifact upload drops it, so it would ship unscanned`
+        )
       const stat = lstatSync(path.join(root, entry))
       if (stat.isDirectory()) walk(entry)
       else if (stat.isFile())
@@ -38,28 +41,9 @@ export function hostedDigest(root) {
     .digest('hex')
 }
 
-function main(argv) {
-  const [dir, mode, file] = argv
-  if (!dir || (mode && !['--check', '--write'].includes(mode)) || (mode && !file)) {
-    console.error('usage: hosted-digest.mjs <dir> [--check <file> | --write <file>]')
-    return 2
-  }
-  const digest = hostedDigest(dir)
-  if (mode === '--write') writeFileSync(file, `${digest}\n`)
-  else if (mode === '--check') {
-    const recorded = readFileSync(file, 'utf8').trim()
-    if (recorded !== digest) {
-      console.error(
-        `The hosted gallery build is ${digest}, but ${file} records ${recorded || 'nothing'}. ` +
-          'From library/ui: pnpm exec vite build --config gallery/vite.config.ts --mode hosted && ' +
-          'node gallery/scripts/hosted-digest.mjs gallery/dist --write gallery/hosted-build.sha256'
-      )
-      return 1
-    }
-  }
-  console.log(digest)
-  return 0
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
+  if (process.argv.length !== 3) {
+    console.error('usage: hosted-digest.mjs <dir>')
+    process.exitCode = 2
+  } else console.log(hostedDigest(process.argv[2]))
 }
-
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename))
-  process.exitCode = main(process.argv.slice(2))

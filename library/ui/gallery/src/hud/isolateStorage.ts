@@ -3,7 +3,8 @@
 // and would keep its preferences, recents and analytics queue in that origin's storage, where real players' HUD reads
 // them. Before any HUD module loads, this document's storage is replaced with storage that lives in this page alone:
 // Web Storage and cookies in memory, and IndexedDB and Cache Storage refused, which the HUD's prefs treat as values
-// that last the session. Nothing a reviewer does in the canvas reaches the origin's storage.
+// that last the session. That covers the HUD's preferences, Web Storage and cookies; BroadcastChannel and same-origin
+// access through window.parent stay available to the canvas.
 
 class MemoryStorage implements Storage {
   #items = new Map<string, string>()

@@ -15,6 +15,8 @@ on:
 permissions:
   contents: read
   actions: read
+  # The UI gallery receipt reads the key scan's check run (tooling/ui-gallery-receipt.py).
+  checks: read
 jobs:
   source:
     if: >-
@@ -278,6 +280,18 @@ jobs:
             wait "$apis_load"
           fi
           df -h /
+      # Nothing is published with UI gallery bytes no key scan read: a successful scan of the head, or of the nearest
+      # ancestor whose scanned artifact holds the same bytes (tooling/ui-gallery-receipt.py).
+      - name: Require a key scan of the UI gallery the Sites image ships
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The Sites package the image build above realised: evaluated, not built again.
+          sites=$(nix eval --impure --raw 'git+file:.?lfs=1#sites.outPath')
+          test -d "$sites/build/client/ui-gallery"
+          python3 tooling/ui-gallery-receipt.py --repo "$GITHUB_REPOSITORY" --head "$GITHUB_SHA" \
+            --gallery "$sites/build/client/ui-gallery"
       - name: Test the exact images before publication
         run: |
           python3 tooling/image-smoke.py --revision "$GITHUB_SHA"

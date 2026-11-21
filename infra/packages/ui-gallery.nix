@@ -29,7 +29,7 @@ let
       /index.ts /css-modules.d.ts /content.helpers.ts /link.helpers.ts /text-styles.ts
       /components /foundations /apps/hud
       /gallery/index.html /gallery/frame.html /gallery/hud.html /gallery/vite.config.ts
-      /gallery/tsconfig.json /gallery/src /gallery/scripts/hosted-digest.mjs /gallery/hosted-build.sha256
+      /gallery/tsconfig.json /gallery/src /gallery/scripts/hosted-digest.mjs
     ]) ++ [ (root + /library/explorer-core) ]);
   };
 in stdenv.mkDerivation {
@@ -56,8 +56,8 @@ in stdenv.mkDerivation {
   '';
   installPhase = ''
     runHook preInstall
-    # The Shared UI library run checks its build against the same record and the key scan reads that build.
-    node gallery/scripts/hosted-digest.mjs gallery/dist --check gallery/hosted-build.sha256
+    # Fails on a hidden path, which the scanned artifact would not carry; prints the digest the publish receipt compares.
+    node gallery/scripts/hosted-digest.mjs gallery/dist
     cp -r gallery/dist "$out"
     for page in index frame hud; do
       grep -qF 'name="robots" content="noindex"' "$out/$page.html" || { echo "$page.html is indexable" >&2; exit 1; }

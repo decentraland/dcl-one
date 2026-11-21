@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -47,28 +47,28 @@ describe('when a hosted gallery build is digested', () => {
   })
 })
 
-describe('when the digest is checked against the record', () => {
-  it('should pass on the recorded digest and print it', () => {
-    const record = path.join(dir, '..', `${path.basename(dir)}.sha256`)
-    execFileSync('node', [script, dir, '--write', record])
-    const result = spawnSync('node', [script, dir, '--check', record], { encoding: 'utf8' })
+describe('when the digest script runs on a build', () => {
+  it('should print the digest of the build', () => {
+    const result = spawnSync('node', [script, dir], { encoding: 'utf8' })
     expect(result.status).toBe(0)
-    expect(result.stdout.trim()).toBe(readFileSync(record, 'utf8').trim())
-    rmSync(record)
+    expect(result.stdout.trim()).toBe(hostedDigest(dir))
   })
 
-  it('should fail on a stale record and name the command that records the build', () => {
-    const record = path.join(dir, '..', `${path.basename(dir)}.sha256`)
-    writeFileSync(record, `${'0'.repeat(64)}\n`)
-    const result = spawnSync('node', [script, dir, '--check', record], { encoding: 'utf8' })
+  it('should fail on a hidden file, which the artifact upload would drop unscanned', () => {
+    writeFileSync(path.join(dir, 'assets/.vite-manifest.json'), '{}')
+    const result = spawnSync('node', [script, dir], { encoding: 'utf8' })
     expect(result.status).toBe(1)
-    expect(result.stderr).toContain(`records ${'0'.repeat(64)}`)
-    expect(result.stderr).toContain('--write gallery/hosted-build.sha256')
-    rmSync(record)
+    expect(result.stderr).toContain('assets/.vite-manifest.json is hidden')
   })
 
-  it('should refuse an unknown mode without writing anything', () => {
-    const result = spawnSync('node', [script, dir, '--update'], { encoding: 'utf8' })
-    expect(result.status).toBe(2)
+  it('should fail on a hidden directory', () => {
+    mkdirSync(path.join(dir, '.well-known'))
+    writeFileSync(path.join(dir, '.well-known/x.txt'), 'x')
+    expect(() => hostedDigest(dir)).toThrow('.well-known is hidden')
+  })
+
+  it('should refuse a missing or extra argument', () => {
+    expect(spawnSync('node', [script], { encoding: 'utf8' }).status).toBe(2)
+    expect(spawnSync('node', [script, dir, '--check', 'x'], { encoding: 'utf8' }).status).toBe(2)
   })
 })
