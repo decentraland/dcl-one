@@ -1,0 +1,160 @@
+/* The branded HTTP error screen. The static pages (apps/sites/scripts/gen-error-pages.mts) inline this
+   module with the --dcl-* tokens it reads, so a value with a token is written as that token; the
+   literals below have none. */
+.page {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  margin: 0;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  background:
+    radial-gradient(90% 60% at 50% -10%, rgba(255, 45, 85, 0.18), transparent 62%),
+    radial-gradient(70% 50% at 100% 110%, rgba(162, 59, 255, 0.14), transparent 60%), #0d0c11;
+  color: #f4f2f7;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(560px, 100%);
+  text-align: center;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin-bottom: var(--dcl-space-8);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-button-lg);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+.logoMark {
+  width: 28px;
+  height: 28px;
+}
+
+.art {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 220px;
+  filter: drop-shadow(0 18px 40px rgba(255, 45, 85, 0.25));
+}
+
+.code {
+  margin: 6px 0 0;
+  color: #ff7a93;
+  font-size: var(--dcl-font-size-button-sm);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(26px, 5vw, 38px);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.message {
+  max-width: 460px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--dcl-space-12);
+  margin-top: var(--dcl-space-12);
+}
+
+.button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 22px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: var(--dcl-font-size-button-lg);
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-white);
+  outline-offset: 3px;
+}
+
+.primary {
+  background: var(--dcl-primary-primary-dark-2);
+  color: var(--dcl-neutrals-white);
+}
+
+.primary:hover {
+  background: var(--dcl-primary-primary);
+}
+
+.secondary {
+  border-color: var(--dcl-transparencies-white-40);
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+}
+
+.secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dev {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 18px;
+  padding: 10px 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  text-align: left;
+}
+
+.devSummary {
+  color: #ffb3c1;
+  font-size: var(--dcl-font-size-button-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.devDetail {
+  max-height: 280px;
+  margin: 10px 0 0;
+  overflow: auto;
+  color: rgba(255, 255, 255, 0.85);
+  font:
+    var(--dcl-font-size-body-xs) / 1.45 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

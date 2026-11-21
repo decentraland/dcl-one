@@ -1,5 +1,5 @@
 import { generateTokens } from './tokens.js'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { snapshotSource } from '../../test/snapshot.js'
 import { generateAll } from './index.js'
 import type { GeneratedFile } from './types.js'
@@ -9,7 +9,7 @@ const context = {}
 describe('generateTokens', () => {
   let files: Map<string, string>
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     const result = await generateAll(snapshotSource(), context)
     files = new Map(result.files.map((file: GeneratedFile) => [file.path, file.content]))
   })
@@ -109,14 +109,16 @@ describe('generateTokens', () => {
   })
 
   describe('when two tokens would share a CSS variable name', () => {
-    it('should fail loudly instead of overwriting one of them', async () => {
+    let broken: ReturnType<typeof snapshotSource>
+
+    beforeEach(async () => {
       const source = snapshotSource()
       const collections = await source.getTokenCollections()
       const duplicate = {
         ...collections[1]!,
         variables: [...collections[1]!.variables, { ...collections[1]!.variables[0]! }]
       }
-      const broken = Object.assign(Object.create(source), {
+      broken = Object.assign(Object.create(source), {
         getTokenCollections: async () => [
           collections[0]!,
           duplicate,
@@ -124,14 +126,18 @@ describe('generateTokens', () => {
           collections[3]!
         ]
       })
+    })
 
-      await expect(generateAll(broken, context)).rejects.toThrow('CSS variable collision')
+    it('should fail loudly instead of overwriting one of them', async () => {
+      await expect(generateAll(broken, context)).rejects.toThrow(/^CSS variable collision: --dcl-/)
     })
   })
 })
 
 describe('when a Figma font family contains CSS syntax', () => {
-  it('should keep quotes and newlines inside the font family string', async () => {
+  let css: string
+
+  beforeEach(async () => {
     const files = generateTokens(
       {
         collections: await snapshotSource().getTokenCollections(),
@@ -150,8 +156,14 @@ describe('when a Figma font family contains CSS syntax', () => {
       },
       {}
     )
-    const css = files.find((file) => file.path === 'tokens/text-styles.module.css')!.content
+    css = files.find((file) => file.path === 'tokens/text-styles.module.css')!.content
+  })
+
+  it('should keep quotes and newlines escaped inside the font family string', () => {
     expect(css).toContain("font-family: 'A\\27 ; color:red;/*\\a B', sans-serif;")
+  })
+
+  it('should not let the raw quote break out of the string', () => {
     expect(css).not.toContain("A'; color:red")
   })
 })

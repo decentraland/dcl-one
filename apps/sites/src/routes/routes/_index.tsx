@@ -1,11 +1,11 @@
 import { useContext, useEffect, useRef } from "react";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@ui/web/frames/sites-locale";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { homeCopy } from "@/features/home/locale";
 import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
@@ -27,6 +27,7 @@ import { loadHomeLive } from "@/data/lib/catalyst/landings/home.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
+import { homeMeta, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/_index";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
@@ -39,8 +40,8 @@ const STORY = "discover";
 /** The reference's count while its download counter loads or fails. */
 const DOWNLOADS_FALLBACK = "+400K";
 
-export function meta() {
-  return [{ title: "Decentraland" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return homeMeta(publicBase(matches));
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -97,7 +98,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         .replace("{total}", String(total)),
   };
   return (
-    <SitesChrome
+    <SitesLayout
       active="play"
       overlayNav
       headerSurface="overlay"
@@ -157,6 +158,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           store={store}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

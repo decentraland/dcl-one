@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import ChromeLink from "./ChromeLink";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import { flatIcon } from "../../atoms/MaskIcon";
-import type { ChromeNavigate } from "./chrome-nav";
+import type { ChromeNavigate } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 import "../../components/sidenavitem.css";
 
 type Item<Id extends string> = { id: Id; label: ReactNode; href?: string; icon?: ReactNode; className?: string };

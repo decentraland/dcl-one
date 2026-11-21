@@ -222,7 +222,7 @@ function PingField(): React.JSX.Element {
   return (
       <div className={styles.field}>
         <div className={styles.fieldHead}>
-          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise." side="bottom" multiline className={styles.hint}>
+          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise. Sending a message sounds only on All Messages." side="bottom" multiline className={styles.hint}>
             <span className={styles.label}>Notification Ping</span>
           </Tooltip>
         </div>

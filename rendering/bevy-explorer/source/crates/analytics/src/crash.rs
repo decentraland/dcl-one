@@ -8,7 +8,10 @@ use std::sync::Mutex;
 
 use bevy::prelude::*;
 use chrono::Utc;
-use common::structs::AppConfig;
+use common::{
+    feature_flags::{FeatureFlags, FlagsSource},
+    structs::AppConfig,
+};
 
 use crate::{
     data_definition::{
@@ -24,12 +27,19 @@ struct Snapshot {
     /// the terms are accepted: nothing goes out otherwise, a crash included
     consent: bool,
     common: SegmentEventCommonExplorerFields,
+    /// The session's flags and the launch option's overrides (`common::feature_flags`), so the
+    /// session can be run again with them; None until the read settles
+    feature_flags: Option<(String, String)>,
 }
 
 static SNAPSHOT: Mutex<Option<Snapshot>> = Mutex::new(None);
 
-pub fn refresh_crash_snapshot(config: Res<SegmentConfig>, app_config: Res<AppConfig>) {
-    if !config.is_changed() && !app_config.is_changed() {
+pub fn refresh_crash_snapshot(
+    config: Res<SegmentConfig>,
+    app_config: Res<AppConfig>,
+    flags: Res<FeatureFlags>,
+) {
+    if !config.is_changed() && !app_config.is_changed() && !flags.is_changed() {
         return;
     }
     if let Ok(mut snapshot) = SNAPSHOT.lock() {
@@ -38,6 +48,8 @@ pub fn refresh_crash_snapshot(config: Res<SegmentConfig>, app_config: Res<AppCon
             write_key: config.write_key().to_owned(),
             consent: app_config.terms_accepted(),
             common: config.common().clone(),
+            feature_flags: (flags.source() != FlagsSource::Pending)
+                .then(|| (flags.report(), flags.overrides_report())),
         });
     }
 }
@@ -59,7 +71,19 @@ pub fn crash_batch(message: &str, source: &str) -> Option<(String, String)> {
         uuid::Uuid::new_v4().to_string(),
     )
     .ok()?;
-    let item = serde_json::to_string(&item).ok()?;
+    let mut item = serde_json::to_value(&item).ok()?;
+    if let (Some((flags, overridden)), Some(properties)) = (
+        &snapshot.feature_flags,
+        item.get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut),
+    ) {
+        properties.insert("feature_flags".to_owned(), flags.clone().into());
+        properties.insert(
+            "feature_flags_override".to_owned(),
+            overridden.clone().into(),
+        );
+    }
+    let item = item.to_string();
     Some((
         SEGMENT_BATCH_URL.to_owned(),
         batch_body(&snapshot.write_key, &[item]),
@@ -74,18 +98,19 @@ mod tests {
     #[test]
     fn crash_batch_needs_consent_and_carries_the_snapshot() {
         let common = SegmentEventCommonExplorerFields::new("s".into(), "1.0".into(), None);
-        let set = |consent| {
+        let set = |consent, feature_flags| {
             *SNAPSHOT.lock().unwrap() = Some(Snapshot {
                 user_id: "u".into(),
                 write_key: "k".into(),
                 consent,
                 common: common.clone(),
+                feature_flags,
             })
         };
         assert!(crash_batch("panicked at x", "panic").is_none());
-        set(false);
+        set(false, None);
         assert!(crash_batch("panicked at x", "panic").is_none());
-        set(true);
+        set(true, None);
         let (url, body) = crash_batch("panicked at x", "panic").unwrap();
         assert_eq!(url, SEGMENT_BATCH_URL);
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -97,5 +122,14 @@ mod tests {
         assert_eq!(item["properties"]["error_type"], "Crash");
         assert_eq!(item["properties"]["error_message"], "[panic] panicked at x");
         assert!(item["timestamp"].is_string());
+        assert!(item["properties"].get("feature_flags").is_none());
+
+        set(true, Some(("-*,bevy-test".into(), "bevy-test".into())));
+        let (_, body) = crash_batch("panicked at x", "panic").unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let properties = &body["batch"][0]["properties"];
+        assert_eq!(properties["feature_flags"], "-*,bevy-test");
+        assert_eq!(properties["feature_flags_override"], "bevy-test");
+        assert_eq!(properties["session_id"], "s");
     }
 }

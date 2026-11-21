@@ -48,12 +48,17 @@ export interface ManaExecution {
 /** The chain reads this needs, each through an explicit block where it matters. */
 export interface ManaEvidence {
   finalized(chainId: number): Promise<bigint>
+  /** The finalized block's time (unix seconds): every later block's is past it. What proves a credit's expiry. */
+  finalizedTime(chainId: number): Promise<number>
   /** The venue's meta-transaction nonce for `user`, as of `block`. */
   nonceAt(chainId: number, venue: { address: string; metaTx: MetaTxStyle }, user: string, block: bigint): Promise<bigint>
   /** Every MetaTransactionExecuted of `venue` in [from, to], complete or a throw. */
   executions(chainId: number, venue: string, from: bigint, to: bigint): Promise<ManaExecution[]>
-  /** A transaction's target and input, or null when the chain doesn't know it. */
-  transaction(chainId: number, hash: string): Promise<{ to: string | null; input: Hex } | null>
+  /**
+   * A transaction's target, input and sender, or null when the chain doesn't know it. The sender is what tells whose a
+   * useCredits the buyer's own wallet sent is (a relayed one names its user inside the call).
+   */
+  transaction(chainId: number, hash: string): Promise<{ to: string | null; input: Hex; from?: string | null } | null>
   receipt(chainId: number, hash: string): Promise<TxReceipt | null>
 }
 
@@ -173,6 +178,7 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
   const hex = (n: bigint): string => `0x${n.toString(16)}`
   return {
     finalized: async (chainId) => BigInt((await rpc<{ number: Hex }>(chainId, 'eth_getBlockByNumber', ['finalized', false])).number),
+    finalizedTime: async (chainId) => Number(BigInt((await rpc<{ timestamp: Hex }>(chainId, 'eth_getBlockByNumber', ['finalized', false])).timestamp)),
     nonceAt: async (chainId, venue, user, block) => {
       // The Shop's own nonce read, asked at the block: the reader's call is redirected through it.
       const atBlock: ChainReader = { ...opts.reader, call: (c, to, data) => rpc<Hex>(c, 'eth_call', [{ to, data }, hex(block)]) }
@@ -189,8 +195,8 @@ export function createManaEvidence(opts: { url?: (chainId: ChainId) => string | 
       return out
     },
     transaction: async (chainId, hash) => {
-      const tx = await rpc<{ to: string | null; input: Hex } | null>(chainId, 'eth_getTransactionByHash', [hash])
-      return tx ? { to: tx.to, input: tx.input } : null
+      const tx = await rpc<{ from?: string | null; to: string | null; input: Hex } | null>(chainId, 'eth_getTransactionByHash', [hash])
+      return tx ? { to: tx.to, input: tx.input, from: tx.from ?? null } : null
     },
     receipt: (chainId, hash) => deadline(opts.reader.receipt(chainId as ChainId, hash, AbortSignal.timeout(readMs)), readMs)
   }
@@ -294,4 +300,46 @@ export async function resolveMana(
     if (await ours(match.txHash)) return { kind: 'succeeded', txHash: match.txHash }
   }
   return { kind: 'waiting', retry: false }
+}
+
+/**
+ * Whether the attempt's sale is on chain past its checkpoint, final or not yet: a hash the relay gave for one of its
+ * sends is a successful transaction past the checkpoint, and either it is this sale's own signed execution (its bytes,
+ * sent to the venue), or, at a verified venue, its block holds the execution that consumed the sale's nonce with the
+ * sale's call (a forwarder's carriage). A receipt alone is never enough: the relay's hash may name some other
+ * transaction. This never settles the sale (only resolveMana's finalized evidence does). It says only that what comes
+ * after the sale in a checkout may go, since its nonce is spent by the sale itself. Anything it can't read is a no.
+ */
+export async function manaIncluded(
+  attempt: ManaAttemptRecord,
+  ctx: { chainId: number; buyer: string; venue: { address: string; metaTx: MetaTxStyle }; evidence: ManaEvidence }
+): Promise<boolean> {
+  const payloads = new Set(attempt.sends.flatMap((s) => (s.stage === 'dispatched' && s.payload ? [s.payload] : [])))
+  if (attempt.nonce == null || attempt.data == null || attempt.fromBlock == null || payloads.size === 0) return false
+  const { chainId, evidence } = ctx
+  const buyer = ctx.buyer.toLowerCase()
+  const venue = ctx.venue.address.toLowerCase()
+  const nonce = BigInt(attempt.nonce)
+  const call = keccak256(attempt.data)
+  const fromBlock = BigInt(attempt.fromBlock)
+  for (const send of attempt.sends) {
+    if (!send.hash) continue
+    const receipt = await evidence.receipt(chainId, send.hash)
+    if (!receipt || receipt.status !== 'success' || receipt.blockNumber <= fromBlock) continue
+    const tx = await evidence.transaction(chainId, send.hash)
+    if (tx && tx.to?.toLowerCase() === venue && payloads.has(keccak256(tx.input))) return true
+    if (!verifiedVenue(chainId, venue)) continue
+    // At a verified venue each execution moves its signer's nonce once and logs its call: the block holds the one that
+    // consumed N only when it counts exactly as many of the buyer's executions as the nonce moved across it.
+    const block = receipt.blockNumber
+    const start = await evidence.nonceAt(chainId, ctx.venue, buyer, block - 1n)
+    const end = await evidence.nonceAt(chainId, ctx.venue, buyer, block)
+    if (nonce < start || nonce >= end) continue
+    const logs = new Map((await evidence.executions(chainId, venue, block, block)).filter((e) => e.user === buyer).map((e) => [`${e.blockNumber}:${e.logIndex}`, e]))
+    const mine = [...logs.values()].sort(inChainOrder)
+    if (BigInt(mine.length) !== end - start) continue
+    const at = mine[Number(nonce - start)]
+    if (at && keccak256(at.call) === call) return true
+  }
+  return false
 }

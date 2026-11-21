@@ -45,6 +45,10 @@ describe('NavBar', () => {
     user = userEvent.setup()
   })
 
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
   describe('when signed out with a sign-in action', () => {
     let onSignIn: Mock<() => void>
     beforeEach(() => {
@@ -64,9 +68,14 @@ describe('NavBar', () => {
       expect(screen.getByRole('link', { name: 'Shop' })).toHaveAttribute('href', '/shop')
     })
 
-    it('should call the sign-in onSelect when Sign in is pressed', async () => {
-      await user.click(screen.getByRole('button', { name: 'Sign in' }))
-      expect(onSignIn).toHaveBeenCalledOnce()
+    describe('and Sign in is pressed', () => {
+      beforeEach(async () => {
+        await user.click(screen.getByRole('button', { name: 'Sign in' }))
+      })
+
+      it('should call the sign-in onSelect', () => {
+        expect(onSignIn).toHaveBeenCalledOnce()
+      })
     })
 
     it('should not render an account trigger', () => {
@@ -982,14 +991,15 @@ describe('NavBar', () => {
     let consoleError: MockInstance<typeof console.error>
     let container: HTMLElement
     let root: Root
-    const props: NavBarProps = {
-      sections,
-      account: { ...account, avatarUrl: '/face.png' },
-      balances: { credits: 30, mana: 12.5 },
-      notifications: { count: 4, onSelect: () => {} },
-      accountActions: [{ label: 'Sign out', onSelect: () => {} }]
-    }
+    let props: NavBarProps
     beforeEach(async () => {
+      props = {
+        sections,
+        account: { ...account, avatarUrl: '/face.png' },
+        balances: { credits: 30, mana: 12.5 },
+        notifications: { count: 4, onSelect: () => {} },
+        accountActions: [{ label: 'Sign out', onSelect: () => {} }]
+      }
       recoverable = vi.fn<(error: unknown) => void>()
       consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
       container = document.createElement('div')
@@ -1016,40 +1026,49 @@ describe('NavBar', () => {
 })
 
 describe('when native popup chrome must retain keyboard dismissal ownership', () => {
+  let user: UserEvent
+
+  beforeEach(() => {
+    user = userEvent.setup()
+    render(<NavBar sections={sections} account={account} />)
+  })
+
   for (const kind of ['section', 'account'] as const) {
-    it(`should close the ${kind} popup after clicking its noninteractive padding`, async () => {
-      const user = userEvent.setup()
-      render(<NavBar sections={sections} account={account} />)
-      const trigger = screen.getByRole('button', {
-        name: kind === 'section' ? 'Discover' : /^Account/
+    describe(`and the ${kind} popup is used`, () => {
+      let trigger: HTMLElement
+
+      beforeEach(() => {
+        trigger = screen.getByRole('button', {
+          name: kind === 'section' ? 'Discover' : /^Account/
+        })
       })
-      await user.click(trigger)
-      const popup = document.getElementById(trigger.getAttribute('aria-controls')!)!
-      expect(fireEvent.mouseDown(popup)).toBe(true)
-      await user.click(popup)
-      expect(popup).toHaveFocus()
-      await user.keyboard('{Escape}')
-      expect(trigger).toHaveAttribute('aria-expanded', 'false')
-      expect(trigger).toHaveFocus()
-    })
-    it(`should focus the ${kind} trigger when pointer activation does not focus buttons`, async () => {
-      const user = userEvent.setup()
-      render(<NavBar sections={sections} account={account} />)
-      const trigger = screen.getByRole('button', {
-        name: kind === 'section' ? 'Discover' : /^Account/
+
+      it(`should close the ${kind} popup after clicking its noninteractive padding`, async () => {
+        await user.click(trigger)
+        const popup = document.getElementById(trigger.getAttribute('aria-controls')!)!
+        expect(fireEvent.mouseDown(popup)).toBe(true)
+        await user.click(popup)
+        expect(popup).toHaveFocus()
+        await user.keyboard('{Escape}')
+        expect(trigger).toHaveAttribute('aria-expanded', 'false')
+        expect(trigger).toHaveFocus()
       })
-      fireEvent.click(trigger)
-      expect(trigger).toHaveFocus()
-      await user.keyboard('{Escape}')
-      expect(trigger).toHaveAttribute('aria-expanded', 'false')
-      expect(trigger).toHaveFocus()
+
+      describe('and pointer activation does not focus buttons', () => {
+        it(`should focus the ${kind} trigger and return focus to it on Escape`, async () => {
+          fireEvent.click(trigger)
+          expect(trigger).toHaveFocus()
+          await user.keyboard('{Escape}')
+          expect(trigger).toHaveAttribute('aria-expanded', 'false')
+          expect(trigger).toHaveFocus()
+        })
+      })
     })
   }
+
   it.each(['name', 'address'])(
     'should close the account popup after selecting static account text %s',
     async (text) => {
-      const user = userEvent.setup()
-      render(<NavBar sections={sections} account={account} />)
       const trigger = screen.getByRole('button', { name: /^Account/ })
       await user.click(trigger)
       await user.click(
@@ -1063,28 +1082,34 @@ describe('when native popup chrome must retain keyboard dismissal ownership', ()
 })
 
 describe('when a native popup link owns Escape before its parent', () => {
+  let user: UserEvent
+
+  function ChildLink(props: NavBarLinkProps) {
+    return (
+      <a
+        {...props}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') event.preventDefault()
+          props.onKeyDown?.(event)
+        }}
+      />
+    )
+  }
+
+  beforeEach(() => {
+    user = userEvent.setup()
+    render(
+      <NavBar
+        sections={sections}
+        account={account}
+        accountActions={[{ label: 'Profile', href: '/profile' }]}
+        linkComponent={ChildLink}
+      />
+    )
+  })
+
   for (const kind of ['section', 'account'] as const) {
     it(`should preserve the ${kind} popup until Escape is unclaimed`, async () => {
-      const user = userEvent.setup()
-      function ChildLink(props: NavBarLinkProps) {
-        return (
-          <a
-            {...props}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') event.preventDefault()
-              props.onKeyDown?.(event)
-            }}
-          />
-        )
-      }
-      render(
-        <NavBar
-          sections={sections}
-          account={account}
-          accountActions={[{ label: 'Profile', href: '/profile' }]}
-          linkComponent={ChildLink}
-        />
-      )
       const trigger = screen.getByRole('button', {
         name: kind === 'section' ? 'Discover' : /^Account/
       })
@@ -1102,22 +1127,29 @@ describe('when a native popup link owns Escape before its parent', () => {
   }
 })
 
-it('should focus the notification opener before a pointer activation callback', () => {
-  let opener: Element | null = null
-  render(
-    <NavBar
-      sections={sections}
-      account={account}
-      notifications={{
-        onSelect: () => {
-          opener = document.activeElement
-        }
-      }}
-    />
-  )
-  const bell = notifications()
-  fireEvent.click(bell)
-  expect(opener).toBe(bell)
+describe('when the notification opener is activated by a pointer', () => {
+  let opener: Element | null
+
+  beforeEach(() => {
+    opener = null
+    render(
+      <NavBar
+        sections={sections}
+        account={account}
+        notifications={{
+          onSelect: () => {
+            opener = document.activeElement
+          }
+        }}
+      />
+    )
+  })
+
+  it('should focus the notification opener before the activation callback runs', () => {
+    const bell = notifications()
+    fireEvent.click(bell)
+    expect(opener).toBe(bell)
+  })
 })
 
 describe('when the mobile menu owns a pending upward exit', () => {
@@ -1139,6 +1171,10 @@ describe('when the mobile menu owns a pending upward exit', () => {
     panel = screen.getByTestId('navbar-panel')
     animations = vi.fn(() => [{ finished: pending }])
     Object.defineProperty(panel, 'getAnimations', { configurable: true, value: animations })
+  })
+
+  afterEach(() => {
+    vi.resetAllMocks()
   })
 
   it('should retain modal ownership, body lock and header focus until its own completion', async () => {
@@ -1181,20 +1217,31 @@ describe('when the mobile menu owns a pending upward exit', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('should return focus to desktop navigation if CSS cancellation wins the resize event', async () => {
-    await user.click(screen.getByRole('button', { name: 'Close menu' }))
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn((query: string) => ({ matches: query.includes('min-width') }))
-    )
-    try {
+  describe('and CSS cancellation wins the resize event', () => {
+    beforeEach(async () => {
+      await user.click(screen.getByRole('button', { name: 'Close menu' }))
+      vi.stubGlobal(
+        'matchMedia',
+        vi.fn((query: string) => ({ matches: query.includes('min-width') }))
+      )
       await act(async () => fail(new Error('Desktop CSS cancelled the exit')))
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
-      expect(document.body.style.overflow).not.toBe('hidden')
-    } finally {
+    })
+
+    afterEach(() => {
       vi.unstubAllGlobals()
-    }
+    })
+
+    it('should close the dialog', () => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should return focus to desktop navigation', () => {
+      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
+    })
+
+    it('should release the body scroll lock', () => {
+      expect(document.body.style.overflow).not.toBe('hidden')
+    })
   })
 
   it('should recover ownership after the current animation is cancelled', async () => {
@@ -1212,25 +1259,43 @@ describe('when the mobile menu owns a pending upward exit', () => {
     expect(document.body.style.overflow).not.toBe('hidden')
   })
 
-  it('should release immediately if the environment provides no active animation', async () => {
-    Object.defineProperty(panel, 'getAnimations', { value: () => [] })
-    await user.click(screen.getByRole('button', { name: 'Close menu' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(document.body.style.overflow).not.toBe('hidden')
+  describe('and the environment provides no active animation', () => {
+    beforeEach(async () => {
+      Object.defineProperty(panel, 'getAnimations', { value: () => [] })
+      await user.click(screen.getByRole('button', { name: 'Close menu' }))
+    })
+
+    it('should close the dialog immediately', () => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should release the body scroll lock immediately', () => {
+      expect(document.body.style.overflow).not.toBe('hidden')
+    })
   })
 })
 
 describe('when the mobile menu trigger renders its navigation glyph', () => {
-  it('should use the maintained three horizontal strokes without changing its accessible name', async () => {
+  let user: UserEvent
+  let trigger: HTMLElement
+
+  beforeEach(() => {
+    user = userEvent.setup()
     render(<NavBar sections={sections} signIn={{ onSelect: vi.fn() }} />)
-    const trigger = screen.getByRole('button', { name: 'Open menu' })
+    trigger = screen.getByRole('button', { name: 'Open menu' })
+  })
+
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('should use the maintained three horizontal strokes without changing its accessible name', async () => {
     const svg = trigger.querySelector('svg')
     expect(svg).toHaveAttribute('viewBox', '0 0 24 24')
     expect(svg).toHaveAttribute('aria-hidden', 'true')
     expect(svg?.querySelector('path')).toHaveAttribute('d', 'M3 6h18M3 12h18M3 18h18')
     expect(svg).toHaveAttribute('focusable', 'false')
     expect(svg?.querySelector('circle')).toBeNull()
-    const user = userEvent.setup()
     await user.click(trigger)
     expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
     expect(trigger).toHaveAccessibleName('Close menu')
@@ -1252,6 +1317,10 @@ describe('when the mobile menu lists sections with and without items', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Open menu' }))
     expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
     panel = screen.getByTestId('navbar-panel')
+  })
+
+  afterEach(() => {
+    vi.resetAllMocks()
   })
 
   it('should give every section one top-level row', () => {
@@ -1291,13 +1360,15 @@ describe('when the desktop navigation is used with a mouse', () => {
     learn = screen.getByRole('button', { name: 'Learn' })
   })
 
-  it('should keep the disclosure open when clicking its hovered trigger', async () => {
-    await user.hover(discover)
-    expect(discover).toHaveAttribute('aria-expanded', 'true')
-    await user.click(discover)
-    expect(discover).toHaveAttribute('aria-expanded', 'true')
-    await user.unhover(discover)
-    expect(discover).toHaveAttribute('aria-expanded', 'true')
+  describe('and its hovered trigger is clicked', () => {
+    it('should keep the disclosure open through the click and after the pointer leaves', async () => {
+      await user.hover(discover)
+      expect(discover).toHaveAttribute('aria-expanded', 'true')
+      await user.click(discover)
+      expect(discover).toHaveAttribute('aria-expanded', 'true')
+      await user.unhover(discover)
+      expect(discover).toHaveAttribute('aria-expanded', 'true')
+    })
   })
 
   it('should keep the disclosure open as the pointer enters a nested link', async () => {
@@ -1336,11 +1407,14 @@ describe('when the desktop navigation is used with a mouse', () => {
     expect(destination).toHaveFocus()
   })
 
-  it('should keep outside dismissal subscribed while an open disclosure rerenders', async () => {
-    await user.click(discover)
-    const added = vi.spyOn(document, 'addEventListener')
-    const removed = vi.spyOn(document, 'removeEventListener')
-    try {
+  describe('and an open disclosure rerenders', () => {
+    let added: MockInstance<typeof document.addEventListener>
+    let removed: MockInstance<typeof document.removeEventListener>
+
+    beforeEach(async () => {
+      await user.click(discover)
+      added = vi.spyOn(document, 'addEventListener')
+      removed = vi.spyOn(document, 'removeEventListener')
       view.rerender(
         <NavBar
           sections={sections}
@@ -1348,33 +1422,48 @@ describe('when the desktop navigation is used with a mouse', () => {
           labels={{ navigation: 'Main menu' }}
         />
       )
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('should not resubscribe the outside pointer dismissal', () => {
       expect(added.mock.calls.filter(([type]) => type === 'pointerdown')).toEqual([])
       expect(removed.mock.calls.filter(([type]) => type === 'pointerdown')).toEqual([])
+    })
+
+    it('should keep outside dismissal subscribed', () => {
       fireEvent.pointerDown(document.body)
       expect(discover).toHaveAttribute('aria-expanded', 'false')
-    } finally {
-      added.mockRestore()
-      removed.mockRestore()
-    }
+    })
   })
 })
 
-it('should switch between a public disclosure and the account popup on activation', async () => {
-  const user = userEvent.setup()
-  render(<NavBar sections={sections} account={{ address: '0x1234', name: 'Ada' }} />)
-  const discover = screen.getByRole('button', { name: 'Discover' })
-  const account = screen.getByRole('button', { name: 'Account: Ada' })
+describe('when a public disclosure and the account popup share the header', () => {
+  let user: UserEvent
+  let discover: HTMLElement
+  let accountTrigger: HTMLElement
 
-  await user.hover(discover)
-  expect(discover).toHaveAttribute('aria-expanded', 'true')
-  await user.click(account)
-  expect(discover).toHaveAttribute('aria-expanded', 'false')
-  await user.hover(discover)
-  expect(discover).toHaveAttribute('aria-expanded', 'false')
-  expect(account).toHaveAttribute('aria-expanded', 'true')
-  await user.click(discover)
-  expect(discover).toHaveAttribute('aria-expanded', 'true')
-  expect(account).toHaveAttribute('aria-expanded', 'false')
+  beforeEach(() => {
+    user = userEvent.setup()
+    render(<NavBar sections={sections} account={{ address: '0x1234', name: 'Ada' }} />)
+    discover = screen.getByRole('button', { name: 'Discover' })
+    accountTrigger = screen.getByRole('button', { name: 'Account: Ada' })
+  })
+
+  it('should switch between a public disclosure and the account popup on activation', async () => {
+    await user.hover(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+    await user.click(accountTrigger)
+    expect(discover).toHaveAttribute('aria-expanded', 'false')
+    await user.hover(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'false')
+    expect(accountTrigger).toHaveAttribute('aria-expanded', 'true')
+    await user.click(discover)
+    expect(discover).toHaveAttribute('aria-expanded', 'true')
+    expect(accountTrigger).toHaveAttribute('aria-expanded', 'false')
+  })
 })
 
 describe('when the public drawer has its own navigation', () => {

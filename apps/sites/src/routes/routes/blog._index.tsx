@@ -1,14 +1,16 @@
 import { BlogIndexView } from "@/pages/blog/BlogIndexView";
 import { loadBlogHome } from "@/data/lib/blog/pages";
+import { parseBlogPage } from "@/data/lib/blog/normalize";
 import "@dcl/one-ui/foundations/foundations.css";
 
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
-import { blogHeaders, blogResponse } from "../lib/blog";
-
+import { blogHeaders, blogIndexMeta, blogResponse } from "../lib/blog";
+import { publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/blog._index";
 
-export function meta() {
-  return [{ title: "Decentraland Blog" }, { name: "description", content: "News, creator stories, events, and updates from the Decentraland community." }];
+export function meta({ loaderData, matches, location }: Route.MetaArgs) {
+  const page = parseBlogPage(new URLSearchParams(location.search).get("page"));
+  return blogIndexMeta(loaderData, publicBase(matches), page > 1 ? `/blog?page=${page}` : "/blog");
 }
 
 export const handle = { agentMarkdown: "blogIndex" } satisfies AgentMarkdownHandle;

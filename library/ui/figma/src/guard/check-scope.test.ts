@@ -81,7 +81,7 @@ describe('checkScope', () => {
         '.card { color: var(--alias); }'
       )
     })
-    it('should reject the indirect change even if component bytes are unchanged', async () => {
+    it('should reject the indirect change although the component bytes are unchanged', async () => {
       expect((await run({ foundationsCaptured: true })).violations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -91,74 +91,99 @@ describe('checkScope', () => {
         ])
       )
     })
-    it('should allow the change when the dependent page is captured', async () => {
-      expect((await run({ captured: [BUTTONS, PLACES], foundationsCaptured: true })).ok).toBe(true)
+    describe('and the dependent page is captured', () => {
+      it('should allow the change', async () => {
+        expect((await run({ captured: [BUTTONS, PLACES], foundationsCaptured: true })).ok).toBe(
+          true
+        )
+      })
     })
-    it('should allow an explicit developer change', async () => {
-      expect((await run({ runKind: 'developer' })).ok).toBe(true)
+    describe('and the run is a developer run', () => {
+      it('should allow an explicit developer change', async () => {
+        expect((await run({ runKind: 'developer' })).ok).toBe(true)
+      })
     })
   })
 
   describe('when retirement consistency changes', () => {
-    it('should reject removal of a permanent identity even in developer mode', async () => {
-      const record: Retirements = {
-        schema: 1,
-        retired: [
-          {
-            pageId: 'gone',
-            name: 'Gone',
-            reason: 'Removed',
-            owned: [],
-            sharedExclusions: []
-          }
-        ]
-      }
-      await put(base, `figma/ledger/retirements.json`, record)
-      expect((await run({ runKind: 'developer' })).violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            kind: 'retirement-edit',
-            cause: expect.stringContaining('permanent')
-          })
-        ])
-      )
-    })
-    it('should reject a newly added pending record in a developer PR', async () => {
-      await put(staged, `figma/ledger/retirements.json`, {
-        schema: 1,
-        retired: [
-          {
-            pageId: BUTTONS,
-            name: 'Buttons',
-            reason: 'Removed',
-            owned: [`${GEN}/components/buttons/Button.tsx`],
-            sharedExclusions: []
-          }
-        ]
+    describe('and a permanent identity is removed', () => {
+      let record: Retirements
+
+      beforeEach(async () => {
+        record = {
+          schema: 1,
+          retired: [
+            {
+              pageId: 'gone',
+              name: 'Gone',
+              reason: 'Removed',
+              owned: [],
+              sharedExclusions: []
+            }
+          ]
+        }
+        await put(base, `figma/ledger/retirements.json`, record)
       })
-      expect(
-        (await run({ runKind: 'developer' })).violations.some(
-          (violation) => violation.kind === 'pending-retirement'
+
+      it('should reject the removal even in developer mode', async () => {
+        expect((await run({ runKind: 'developer' })).violations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'retirement-edit',
+              cause: expect.stringContaining('permanent')
+            })
+          ])
         )
-      ).toBe(true)
-    })
-    it('should reject a seal with an incorrect input hash', async () => {
-      await put(staged, `${REVIEW}/promotion.json`, {
-        schema: 2,
-        components: [],
-        excluded: [],
-        files: { [`${GEN}/components/buttons/Button.tsx`]: 'forged' }
       })
-      expect((await run()).violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ cause: expect.stringContaining('fingerprint') })
-        ])
-      )
+    })
+
+    describe('and a developer PR adds a pending record', () => {
+      beforeEach(async () => {
+        await put(staged, `figma/ledger/retirements.json`, {
+          schema: 1,
+          retired: [
+            {
+              pageId: BUTTONS,
+              name: 'Buttons',
+              reason: 'Removed',
+              owned: [`${GEN}/components/buttons/Button.tsx`],
+              sharedExclusions: []
+            }
+          ]
+        })
+      })
+
+      it('should reject the newly added pending record', async () => {
+        expect(
+          (await run({ runKind: 'developer' })).violations.some(
+            (violation) => violation.kind === 'pending-retirement'
+          )
+        ).toBe(true)
+      })
+    })
+
+    describe('and a seal carries an incorrect input hash', () => {
+      beforeEach(async () => {
+        await put(staged, `${REVIEW}/promotion.json`, {
+          schema: 2,
+          components: [],
+          excluded: [],
+          files: { [`${GEN}/components/buttons/Button.tsx`]: 'forged' }
+        })
+      })
+
+      it('should reject the seal', async () => {
+        expect((await run()).violations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ cause: expect.stringContaining('fingerprint') })
+          ])
+        )
+      })
     })
   })
 
   describe('when a selected inventory page expands beyond its exception', () => {
-    it('should retain implicit membership without treating expansion as removal', async () => {
+    beforeEach(async () => {
       await put(base, `${SNAP}/generation-inventory.json`, {
         schema: 1,
         review: [{ pageId: BUTTONS, componentIds: ['b1'] }],
@@ -169,99 +194,137 @@ describe('checkScope', () => {
         review: [{ pageId: BUTTONS }],
         promotion: []
       })
+    })
+
+    it('should retain implicit membership without treating expansion as removal', async () => {
       expect((await run()).ok).toBe(true)
     })
   })
 
   describe('when a new shared asset is staged', () => {
-    it('should allow an asset used only by a selected component', async () => {
-      await put(staged, `${GEN}/components/assets/selected.svg`, '<svg/>')
-      await put(
-        staged,
-        `${GEN}/components/buttons/Button.tsx`,
-        "import artwork from '../assets/selected.svg'"
-      )
-      expect((await run()).ok).toBe(true)
-    })
-    it('should reject an unowned asset', async () => {
-      await put(staged, `${GEN}/components/assets/orphan.svg`, '<svg/>')
-      expect((await run()).violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: `${GEN}/components/assets/orphan.svg`,
-            cause: expect.stringContaining('unowned')
-          })
-        ])
-      )
-    })
-    it('should reject a restored asset still used by a frozen component', async () => {
-      for (const root of [base, staged])
+    describe('and only a selected component uses it', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/assets/selected.svg`, '<svg/>')
         await put(
-          root,
-          `${GEN}/components/places/PlaceCard.tsx`,
-          "import artwork from '../assets/shared.svg'"
+          staged,
+          `${GEN}/components/buttons/Button.tsx`,
+          "import artwork from '../assets/selected.svg'"
         )
-      await put(
-        staged,
-        `${GEN}/components/buttons/Button.tsx`,
-        "import artwork from '../assets/shared.svg'"
-      )
-      await put(staged, `${GEN}/components/assets/shared.svg`, '<svg/>')
-      expect((await run()).violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: `${GEN}/components/assets/shared.svg`,
-            cause: expect.stringContaining('unselected')
-          })
-        ])
-      )
+      })
+
+      it('should allow the asset', async () => {
+        expect((await run()).ok).toBe(true)
+      })
     })
-    it('should allow a shared asset when all its users were captured', async () => {
-      await put(
-        staged,
-        `${GEN}/components/buttons/Button.tsx`,
-        "import artwork from '../assets/shared.svg'"
-      )
-      await put(
-        staged,
-        `${GEN}/components/places/PlaceCard.tsx`,
-        "import artwork from '../assets/shared.svg'"
-      )
-      await put(staged, `${GEN}/components/assets/shared.svg`, '<svg/>')
-      expect((await run({ captured: [BUTTONS, PLACES] })).ok).toBe(true)
-    })
-    it('should reject an asset consumed by foreign code', async () => {
-      for (const root of [base, staged])
-        await put(
-          root,
-          'figma/review/src/custom/Keep.tsx',
-          "import artwork from '../generated/components/assets/shared.svg'"
+
+    describe('and nothing owns it', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/assets/orphan.svg`, '<svg/>')
+      })
+
+      it('should reject the unowned asset', async () => {
+        expect((await run()).violations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: `${GEN}/components/assets/orphan.svg`,
+              cause: expect.stringContaining('unowned')
+            })
+          ])
         )
-      await put(staged, `${GEN}/components/assets/shared.svg`, '<svg/>')
-      expect((await run({ captured: [BUTTONS, PLACES] })).ok).toBe(false)
+      })
     })
-    it('should keep existing shared asset bytes immutable', async () => {
-      for (const root of [base, staged]) {
+
+    describe('and a frozen component still uses the restored asset', () => {
+      beforeEach(async () => {
+        for (const root of [base, staged])
+          await put(
+            root,
+            `${GEN}/components/places/PlaceCard.tsx`,
+            "import artwork from '../assets/shared.svg'"
+          )
         await put(
-          root,
+          staged,
           `${GEN}/components/buttons/Button.tsx`,
           "import artwork from '../assets/shared.svg'"
         )
-        await put(root, `${GEN}/components/assets/shared.svg`, '<svg/>')
-      }
-      await put(staged, `${GEN}/components/assets/shared.svg`, '<svg>changed</svg>')
-      expect((await run({ captured: [BUTTONS, PLACES] })).violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: `${GEN}/components/assets/shared.svg`,
-            cause: expect.stringContaining('bytes must remain unchanged')
-          })
-        ])
-      )
+        await put(staged, `${GEN}/components/assets/shared.svg`, '<svg/>')
+      })
+
+      it('should reject the restored asset', async () => {
+        expect((await run()).violations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: `${GEN}/components/assets/shared.svg`,
+              cause: expect.stringContaining('unselected')
+            })
+          ])
+        )
+      })
+    })
+
+    describe('and all its users were captured', () => {
+      beforeEach(async () => {
+        await put(
+          staged,
+          `${GEN}/components/buttons/Button.tsx`,
+          "import artwork from '../assets/shared.svg'"
+        )
+        await put(
+          staged,
+          `${GEN}/components/places/PlaceCard.tsx`,
+          "import artwork from '../assets/shared.svg'"
+        )
+        await put(staged, `${GEN}/components/assets/shared.svg`, '<svg/>')
+      })
+
+      it('should allow the shared asset', async () => {
+        expect((await run({ captured: [BUTTONS, PLACES] })).ok).toBe(true)
+      })
+    })
+
+    describe('and foreign code consumes it', () => {
+      beforeEach(async () => {
+        for (const root of [base, staged])
+          await put(
+            root,
+            'figma/review/src/custom/Keep.tsx',
+            "import artwork from '../generated/components/assets/shared.svg'"
+          )
+        await put(staged, `${GEN}/components/assets/shared.svg`, '<svg/>')
+      })
+
+      it('should reject the asset', async () => {
+        expect((await run({ captured: [BUTTONS, PLACES] })).ok).toBe(false)
+      })
+    })
+
+    describe('and an existing shared asset changes bytes', () => {
+      beforeEach(async () => {
+        for (const root of [base, staged]) {
+          await put(
+            root,
+            `${GEN}/components/buttons/Button.tsx`,
+            "import artwork from '../assets/shared.svg'"
+          )
+          await put(root, `${GEN}/components/assets/shared.svg`, '<svg/>')
+        }
+        await put(staged, `${GEN}/components/assets/shared.svg`, '<svg>changed</svg>')
+      })
+
+      it('should keep existing shared asset bytes immutable', async () => {
+        expect((await run({ captured: [BUTTONS, PLACES] })).violations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: `${GEN}/components/assets/shared.svg`,
+              cause: expect.stringContaining('bytes must remain unchanged')
+            })
+          ])
+        )
+      })
     })
   })
   describe('when a public component name is reused for another ID', () => {
-    it('should reject identity replacement even on a selected page', async () => {
+    beforeEach(async () => {
       const next = components.map((component) =>
         component.name === 'Button' ? { ...component, id: 'replacement' } : component
       )
@@ -274,6 +337,9 @@ describe('checkScope', () => {
         ],
         foundations: { tokens: [] }
       })
+    })
+
+    it('should reject identity replacement even on a selected page', async () => {
       expect((await run()).violations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -297,125 +363,176 @@ describe('checkScope', () => {
       (_, i) => `${GEN}/components/places/Extra${String(i).padStart(2, '0')}.tsx`
     )
 
-    it('should report every file once and in path order', async () => {
+    beforeEach(async () => {
       for (const file of extras) await put(staged, file, 'extra')
+    })
 
+    it('should report every file once and in path order', async () => {
       expect(await kinds()).toEqual(extras.map((file) => `out-of-scope-change:${file}`))
     })
 
-    it('should fail closed when one read in a window is rejected', async () => {
-      for (const file of extras) await put(staged, file, 'extra')
-      const outside = path.join(base, 'outside.tsx')
-      await writeFile(outside, 'outside')
-      await rm(path.join(staged, extras[40]!))
-      await symlink(outside, path.join(staged, extras[40]!))
+    describe('and one read in a window is rejected', () => {
+      beforeEach(async () => {
+        const outside = path.join(base, 'outside.tsx')
+        await writeFile(outside, 'outside')
+        await rm(path.join(staged, extras[40]!))
+        await symlink(outside, path.join(staged, extras[40]!))
+      })
 
-      await expect(run()).rejects.toThrow(/symlink/i)
+      it('should fail closed', async () => {
+        await expect(run()).rejects.toThrow(/symlink/i)
+      })
     })
   })
 
   describe('when a captured page updates its own artifacts', () => {
-    it('should allow its files and its entries in the shared aggregates', async () => {
-      await put(staged, `${GEN}/components/buttons/Button.tsx`, 'button v2')
-      await put(staged, `${GEN}/components/buttons/Button.module.css`, 'css v2')
-      await put(staged, `${SNAP}/components/Buttons.json`, {
-        v: 2,
-        page: { id: BUTTONS, name: 'Buttons' },
-        components: [{ id: 'b1', name: 'Button', base: { id: '10:1' }, others: [] }]
-      })
-      const next = components.map((c) => (c.name === 'Button' ? { ...c, notes: ['updated'] } : c))
-      await put(staged, `${GEN}/components/manifest.ts`, manifest(next))
-      await put(staged, `${REVIEW}/catalog.json`, {
-        components: next.map(({ name, page, id, variants }) => ({ name, page, id, variants })),
-        pages: [
-          { id: BUTTONS, name: 'Buttons' },
-          { id: PLACES, name: 'Places' }
-        ],
-        foundations: { tokens: [] }
+    describe('and it updates its files and its entries in the shared aggregates', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/buttons/Button.tsx`, 'button v2')
+        await put(staged, `${GEN}/components/buttons/Button.module.css`, 'css v2')
+        await put(staged, `${SNAP}/components/Buttons.json`, {
+          v: 2,
+          page: { id: BUTTONS, name: 'Buttons' },
+          components: [{ id: 'b1', name: 'Button', base: { id: '10:1' }, others: [] }]
+        })
+        const next = components.map((c) => (c.name === 'Button' ? { ...c, notes: ['updated'] } : c))
+        await put(staged, `${GEN}/components/manifest.ts`, manifest(next))
+        await put(staged, `${REVIEW}/catalog.json`, {
+          components: next.map(({ name, page, id, variants }) => ({ name, page, id, variants })),
+          pages: [
+            { id: BUTTONS, name: 'Buttons' },
+            { id: PLACES, name: 'Places' }
+          ],
+          foundations: { tokens: [] }
+        })
       })
 
-      expect(await run()).toEqual({ ok: true, violations: [] })
+      it('should allow its files and its entries in the shared aggregates', async () => {
+        expect(await run()).toEqual({ ok: true, violations: [] })
+      })
     })
 
-    it('should allow a new component on the captured page', async () => {
-      const added = { name: 'Chip', page: 'Buttons', id: 'c1', file: 'buttons/Chip', variants: [] }
-      await put(staged, `${SNAP}/components/Buttons.json`, {
-        v: 1,
-        page: { id: BUTTONS, name: 'Buttons' },
-        components: [
-          { id: 'b1', name: 'Button', base: { id: '10:1' }, others: [] },
-          { id: 'c1', name: 'Chip', others: [] }
-        ]
+    describe('and it adds a new component', () => {
+      beforeEach(async () => {
+        const added = {
+          name: 'Chip',
+          page: 'Buttons',
+          id: 'c1',
+          file: 'buttons/Chip',
+          variants: []
+        }
+        await put(staged, `${SNAP}/components/Buttons.json`, {
+          v: 1,
+          page: { id: BUTTONS, name: 'Buttons' },
+          components: [
+            { id: 'b1', name: 'Button', base: { id: '10:1' }, others: [] },
+            { id: 'c1', name: 'Chip', others: [] }
+          ]
+        })
+        await put(staged, `${GEN}/components/buttons/Chip.tsx`, 'chip')
+        await put(staged, `${GEN}/components/manifest.ts`, manifest([...components, added]))
+        await put(staged, `${GEN}/components/index.ts`, index([...components, added]))
       })
-      await put(staged, `${GEN}/components/buttons/Chip.tsx`, 'chip')
-      await put(staged, `${GEN}/components/manifest.ts`, manifest([...components, added]))
-      await put(staged, `${GEN}/components/index.ts`, index([...components, added]))
 
-      expect(await run()).toEqual({ ok: true, violations: [] })
+      it('should allow a new component on the captured page', async () => {
+        expect(await run()).toEqual({ ok: true, violations: [] })
+      })
     })
   })
 
   describe('when an unselected page changes', () => {
-    it('should reject its component file', async () => {
-      await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
-
-      expect(await kinds()).toEqual([`out-of-scope-change:${GEN}/components/places/PlaceCard.tsx`])
-    })
-
-    it('should reject its snapshot, render and reference image', async () => {
-      await put(staged, `${SNAP}/components/Places.json`, {
-        v: 2,
-        page: { id: PLACES, name: 'Places' },
-        components: []
+    describe('and its component file changes', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
       })
-      await put(staged, 'figma/review/public/dcl-ui-review/renders/PlaceCard-0.png', 'png2')
-      await put(staged, 'figma/review/public/dcl-ui-review/references/live-20-1.png', 'png2')
 
-      expect((await kinds()).every((entry) => entry.startsWith('out-of-scope-change'))).toBe(true)
-      expect(await kinds()).toHaveLength(3)
+      it('should reject its component file', async () => {
+        expect(await kinds()).toEqual([
+          `out-of-scope-change:${GEN}/components/places/PlaceCard.tsx`
+        ])
+      })
     })
 
-    it('should reject a changed unselected entry in a shared aggregate', async () => {
-      const catalog = JSON.parse(
-        await readFile(path.join(staged, `${REVIEW}/catalog.json`), 'utf8')
-      )
-      catalog.components.find((entry: { name: string }) => entry.name === 'PlaceCard').variants = [
-        'changed'
-      ]
-      await put(staged, `${REVIEW}/catalog.json`, catalog)
+    describe('and its snapshot, render and reference image change', () => {
+      beforeEach(async () => {
+        await put(staged, `${SNAP}/components/Places.json`, {
+          v: 2,
+          page: { id: PLACES, name: 'Places' },
+          components: []
+        })
+        await put(staged, 'figma/review/public/dcl-ui-review/renders/PlaceCard-0.png', 'png2')
+        await put(staged, 'figma/review/public/dcl-ui-review/references/live-20-1.png', 'png2')
+      })
 
-      expect(await kinds()).toEqual([`aggregate-entry-changed:${REVIEW}/catalog.json`])
+      it('should reject them as out-of-scope changes', async () => {
+        expect((await kinds()).every((entry) => entry.startsWith('out-of-scope-change'))).toBe(true)
+      })
+
+      it('should reject each of the three', async () => {
+        expect(await kinds()).toHaveLength(3)
+      })
     })
 
-    it('should reject a reordered catalog of unselected entries', async () => {
-      const more = [
-        ...components,
-        { name: 'Zeta', page: 'Places', id: 'z', file: 'places/Zeta', variants: [] }
-      ]
-      await put(base, `${GEN}/components/manifest.ts`, manifest(more))
-      await put(staged, `${GEN}/components/manifest.ts`, manifest([more[0]!, more[2]!, more[1]!]))
+    describe('and its entry in a shared aggregate changes', () => {
+      beforeEach(async () => {
+        const catalog = JSON.parse(
+          await readFile(path.join(staged, `${REVIEW}/catalog.json`), 'utf8')
+        )
+        catalog.components.find((entry: { name: string }) => entry.name === 'PlaceCard').variants =
+          ['changed']
+        await put(staged, `${REVIEW}/catalog.json`, catalog)
+      })
 
-      expect((await run()).violations.map((v) => v.cause).join(' ')).toContain('order')
+      it('should reject the changed unselected entry', async () => {
+        expect(await kinds()).toEqual([`aggregate-entry-changed:${REVIEW}/catalog.json`])
+      })
+    })
+
+    describe('and the catalog of its entries is reordered', () => {
+      beforeEach(async () => {
+        const more = [
+          ...components,
+          { name: 'Zeta', page: 'Places', id: 'z', file: 'places/Zeta', variants: [] }
+        ]
+        await put(base, `${GEN}/components/manifest.ts`, manifest(more))
+        await put(staged, `${GEN}/components/manifest.ts`, manifest([more[0]!, more[2]!, more[1]!]))
+      })
+
+      it('should reject the reordered catalog', async () => {
+        expect((await run()).violations.map((v) => v.cause).join(' ')).toContain('order')
+      })
     })
   })
 
   describe('when something is removed', () => {
-    it('should reject a removed file even of a captured page', async () => {
-      await rm(path.join(staged, `${GEN}/components/buttons/Button.module.css`))
+    describe('and it is a file of a captured page', () => {
+      beforeEach(async () => {
+        await rm(path.join(staged, `${GEN}/components/buttons/Button.module.css`))
+      })
 
-      expect(await kinds()).toEqual([`removed:${GEN}/components/buttons/Button.module.css`])
+      it('should reject the removed file', async () => {
+        expect(await kinds()).toEqual([`removed:${GEN}/components/buttons/Button.module.css`])
+      })
     })
 
-    it('should reject a removed entry in a shared aggregate', async () => {
-      await put(staged, `${GEN}/components/manifest.ts`, manifest([components[0]!]))
+    describe('and it is an entry in a shared aggregate', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/manifest.ts`, manifest([components[0]!]))
+      })
 
-      expect((await kinds()).some((entry) => entry.startsWith('removed:'))).toBe(true)
+      it('should reject the removed entry', async () => {
+        expect((await kinds()).some((entry) => entry.startsWith('removed:'))).toBe(true)
+      })
     })
 
-    it('should reject a removed snapshot page', async () => {
-      await rm(path.join(staged, `${SNAP}/components/Places.json`))
+    describe('and it is a snapshot page', () => {
+      beforeEach(async () => {
+        await rm(path.join(staged, `${SNAP}/components/Places.json`))
+      })
 
-      expect(await kinds()).toEqual([`removed:${SNAP}/components/Places.json`])
+      it('should reject the removed snapshot page', async () => {
+        expect(await kinds()).toEqual([`removed:${SNAP}/components/Places.json`])
+      })
     })
   })
 
@@ -451,130 +568,213 @@ describe('checkScope', () => {
       await put(staged, `${REVIEW}/references.json`, { 'Button-0': { file: '/a.png' } })
     }
 
-    it('should allow removing exactly what the record owns', async () => {
-      const owned = await computeOwned(base, { pageId: PLACES })
-      await applyCleanup(owned)
+    let owned: string[]
 
-      expect(await run({ runKind: 'developer', retirements: retire(owned) })).toEqual({
-        ok: true,
-        violations: []
+    describe('and the cleanup removes exactly what the record owns', () => {
+      beforeEach(async () => {
+        owned = await computeOwned(base, { pageId: PLACES })
+        await applyCleanup(owned)
+      })
+
+      it('should allow the removal', async () => {
+        expect(await run({ runKind: 'developer', retirements: retire(owned) })).toEqual({
+          ok: true,
+          violations: []
+        })
       })
     })
 
-    it('should still reject a removal that no record owns', async () => {
+    describe('and no record owns a removal', () => {
       const file = `${GEN}/components/places/PlaceCard.tsx`
-      await rm(path.join(staged, file))
 
-      expect(await kinds({ runKind: 'developer' })).toEqual([`removed:${file}`])
+      beforeEach(async () => {
+        await rm(path.join(staged, file))
+      })
+
+      it('should still reject the removal', async () => {
+        expect(await kinds({ runKind: 'developer' })).toEqual([`removed:${file}`])
+      })
     })
 
-    it('should allow a developer change to a frozen page', async () => {
-      await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
+    describe('and a frozen page changes', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
+      })
 
-      expect(await run({ runKind: 'developer' })).toEqual({ ok: true, violations: [] })
+      it('should allow the developer change', async () => {
+        expect(await run({ runKind: 'developer' })).toEqual({ ok: true, violations: [] })
+      })
     })
 
-    it('should report a record whose output is still present as pending', async () => {
-      const owned = await computeOwned(base, { pageId: PLACES })
+    describe("and the record's output is still present", () => {
+      let found: Awaited<ReturnType<typeof run>>['violations']
 
-      const found = (await run({ runKind: 'developer', retirements: retire(owned) })).violations
+      beforeEach(async () => {
+        owned = await computeOwned(base, { pageId: PLACES })
 
-      expect(found.every((v) => v.kind === 'pending-retirement')).toBe(true)
-      expect(found.map((v) => v.path)).toContain(`${GEN}/components/places/PlaceCard.tsx`)
-      expect(found.map((v) => v.cause).join(' ')).toContain('still listed')
+        found = (await run({ runKind: 'developer', retirements: retire(owned) })).violations
+      })
+
+      it('should report only pending retirements', () => {
+        expect(found.every((v) => v.kind === 'pending-retirement')).toBe(true)
+      })
+
+      it('should report the still present output', () => {
+        expect(found.map((v) => v.path)).toContain(`${GEN}/components/places/PlaceCard.tsx`)
+      })
+
+      it('should say the output is still listed', () => {
+        expect(found.map((v) => v.cause).join(' ')).toContain('still listed')
+      })
     })
 
-    it('should flag a retired component by its own identity only', async () => {
-      const owned = await computeOwned(base, { pageId: PLACES, componentId: 'p1' })
+    describe('and the record retires a single component', () => {
+      let causes: string
 
-      const found = (await run({ runKind: 'developer', retirements: retire(owned, 'p1') }))
-        .violations
+      beforeEach(async () => {
+        owned = await computeOwned(base, { pageId: PLACES, componentId: 'p1' })
 
-      expect(found.map((v) => v.cause).join(' ')).toContain('PlaceCard')
-      expect(found.map((v) => v.cause).join(' ')).not.toContain('Button')
+        causes = (await run({ runKind: 'developer', retirements: retire(owned, 'p1') })).violations
+          .map((v) => v.cause)
+          .join(' ')
+      })
+
+      it('should flag the retired component', () => {
+        expect(causes).toContain('PlaceCard')
+      })
+
+      it('should flag it by its own identity only', () => {
+        expect(causes).not.toContain('Button')
+      })
     })
   })
 
   describe('when automation touches retirements', () => {
-    it('should reject an edit to the retirements file', async () => {
+    beforeEach(async () => {
       await put(staged, `figma/ledger/retirements.json`, {
         ...emptyRetirements(),
         retired: [{ pageId: BUTTONS, name: 'x', reason: 'y', owned: [], sharedExclusions: [] }]
       })
+    })
 
+    it('should reject an edit to the retirements file', async () => {
       expect(await kinds()).toContain(`retirement-edit:figma/ledger/retirements.json`)
     })
   })
 
   describe('when a shared input changes', () => {
-    it('should reject tokens unless a foundation page was captured', async () => {
+    beforeEach(async () => {
       await put(staged, `${GEN}/tokens/tokens.css`, 'tokens v2')
+    })
 
-      expect(await kinds()).toEqual([`out-of-scope-change:${GEN}/tokens/tokens.css`])
-      expect(await run({ foundationsCaptured: true })).toEqual({ ok: true, violations: [] })
+    describe('and no foundation page was captured', () => {
+      it('should reject the tokens', async () => {
+        expect(await kinds()).toEqual([`out-of-scope-change:${GEN}/tokens/tokens.css`])
+      })
+    })
+
+    describe('and a foundation page was captured', () => {
+      it('should allow the tokens', async () => {
+        expect(await run({ foundationsCaptured: true })).toEqual({ ok: true, violations: [] })
+      })
     })
   })
 
   describe('when an artifact has no owner or cannot be parsed', () => {
-    it('should reject an unowned generated file', async () => {
-      await put(staged, `${GEN}/components/mystery/Thing.tsx`, 'x')
+    describe('and a generated file has no owner', () => {
+      beforeEach(async () => {
+        await put(staged, `${GEN}/components/mystery/Thing.tsx`, 'x')
+      })
 
-      expect(await kinds()).toEqual([`out-of-scope-change:${GEN}/components/mystery/Thing.tsx`])
+      it('should reject the unowned generated file', async () => {
+        expect(await kinds()).toEqual([`out-of-scope-change:${GEN}/components/mystery/Thing.tsx`])
+      })
     })
 
-    it('should report an unreadable aggregate instead of passing it', async () => {
-      await put(staged, `${REVIEW}/catalog.json`, '{ not json')
+    describe('and an aggregate cannot be read', () => {
+      beforeEach(async () => {
+        await put(staged, `${REVIEW}/catalog.json`, '{ not json')
+      })
 
-      expect((await run()).violations[0]?.kind).toBe('unreadable')
+      it('should report the unreadable aggregate instead of passing it', async () => {
+        expect((await run()).violations[0]?.kind).toBe('unreadable')
+      })
     })
   })
 
   describe('when a run tries to take over or fake ownership', () => {
-    it('should reject a remap of a frozen component to a captured page', async () => {
-      const moved = components.map((c) => (c.name === 'PlaceCard' ? { ...c, page: 'Buttons' } : c))
-      await put(staged, `${GEN}/components/manifest.ts`, manifest(moved))
-      await put(staged, `${REVIEW}/catalog.json`, {
-        components: moved.map(({ name, page, id, variants }) => ({ name, page, id, variants })),
-        pages: [
-          { id: BUTTONS, name: 'Buttons' },
-          { id: PLACES, name: 'Places' }
-        ],
-        foundations: { tokens: [] }
-      })
-      await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
-
-      const found = await kinds()
-
-      expect(found).toContain(`out-of-scope-change:${GEN}/components/places/PlaceCard.tsx`)
-      expect(
-        (await run()).violations.find((violation) => violation.path.endsWith('PlaceCard.tsx'))
-          ?.owner
-      ).toEqual({ pageId: PLACES, componentId: 'p1' })
-    })
-
-    it('should preserve ID ownership when a manifest changes only a frozen page label', async () => {
-      const moved = components.map((c) => (c.name === 'PlaceCard' ? { ...c, page: 'Buttons' } : c))
-      await put(staged, `${GEN}/components/manifest.ts`, manifest(moved))
-
-      expect((await run()).violations.map((v) => v.cause).join(' ')).toContain(
-        'which was not captured'
-      )
-    })
-
-    it('should reject an aggregate that did not exist before', async () => {
-      await put(staged, `${SNAP}/generation-inventory.json`, {
-        schema: 1,
-        review: [],
-        promotion: []
+    describe('and it remaps a frozen component to a captured page', () => {
+      beforeEach(async () => {
+        const moved = components.map((c) =>
+          c.name === 'PlaceCard' ? { ...c, page: 'Buttons' } : c
+        )
+        await put(staged, `${GEN}/components/manifest.ts`, manifest(moved))
+        await put(staged, `${REVIEW}/catalog.json`, {
+          components: moved.map(({ name, page, id, variants }) => ({ name, page, id, variants })),
+          pages: [
+            { id: BUTTONS, name: 'Buttons' },
+            { id: PLACES, name: 'Places' }
+          ],
+          foundations: { tokens: [] }
+        })
+        await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')
       })
 
-      expect((await run()).violations[0]?.cause).toContain('created')
+      it('should reject the change to the frozen component', async () => {
+        expect(await kinds()).toContain(
+          `out-of-scope-change:${GEN}/components/places/PlaceCard.tsx`
+        )
+      })
+
+      it('should keep the frozen page as its owner', async () => {
+        expect(
+          (await run()).violations.find((violation) => violation.path.endsWith('PlaceCard.tsx'))
+            ?.owner
+        ).toEqual({ pageId: PLACES, componentId: 'p1' })
+      })
     })
 
-    it('should reject duplicate entry keys instead of keeping the last one', async () => {
-      await put(staged, `${GEN}/components/manifest.ts`, manifest([...components, components[0]!]))
+    describe('and a manifest changes only a frozen page label', () => {
+      beforeEach(async () => {
+        const moved = components.map((c) =>
+          c.name === 'PlaceCard' ? { ...c, page: 'Buttons' } : c
+        )
+        await put(staged, `${GEN}/components/manifest.ts`, manifest(moved))
+      })
 
-      expect((await run()).violations.map((v) => v.kind)).toContain('unreadable')
+      it('should preserve ID ownership', async () => {
+        expect((await run()).violations.map((v) => v.cause).join(' ')).toContain(
+          'which was not captured'
+        )
+      })
+    })
+
+    describe('and an aggregate did not exist before', () => {
+      beforeEach(async () => {
+        await put(staged, `${SNAP}/generation-inventory.json`, {
+          schema: 1,
+          review: [],
+          promotion: []
+        })
+      })
+
+      it('should reject the created aggregate', async () => {
+        expect((await run()).violations[0]?.cause).toContain('created')
+      })
+    })
+
+    describe('and an aggregate holds duplicate entry keys', () => {
+      beforeEach(async () => {
+        await put(
+          staged,
+          `${GEN}/components/manifest.ts`,
+          manifest([...components, components[0]!])
+        )
+      })
+
+      it('should reject them instead of keeping the last one', async () => {
+        expect((await run()).violations.map((v) => v.kind)).toContain('unreadable')
+      })
     })
   })
 
@@ -602,77 +802,101 @@ describe('checkScope', () => {
         )
       })
 
-      it('should keep rejecting a Review token change that affects an unselected page', async () => {
-        await put(base, `${GEN}/tokens/tokens.css`, ':root { --color: red; }')
-        await put(staged, `${GEN}/tokens/tokens.css`, ':root { --color: blue; }')
-        for (const root of [base, staged])
-          await put(
-            root,
-            `${GEN}/components/places/PlaceCard.module.css`,
-            '.a { color: var(--color); }'
-          )
+      describe('and a Review token change affects an unselected page', () => {
+        beforeEach(async () => {
+          await put(base, `${GEN}/tokens/tokens.css`, ':root { --color: red; }')
+          await put(staged, `${GEN}/tokens/tokens.css`, ':root { --color: blue; }')
+          for (const root of [base, staged])
+            await put(
+              root,
+              `${GEN}/components/places/PlaceCard.module.css`,
+              '.a { color: var(--color); }'
+            )
+        })
 
-        expect((await run({ stage: 'partial' })).violations).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              path: `${GEN}/components/places/PlaceCard.module.css`,
-              kind: 'out-of-scope-change',
-              cause: expect.stringContaining('shared input change affects an unselected page')
-            })
-          ])
-        )
+        it('should keep rejecting it', async () => {
+          expect((await run({ stage: 'partial' })).violations).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                path: `${GEN}/components/places/PlaceCard.module.css`,
+                kind: 'out-of-scope-change',
+                cause: expect.stringContaining('shared input change affects an unselected page')
+              })
+            ])
+          )
+        })
       })
     })
 
     describe('and a partial stage writes library bytes', () => {
-      it('should reject a staged library change', async () => {
-        await put(staged, 'components/buttons/Button.tsx', 'new')
-
-        expect(await kinds({ stage: 'partial', captured: [BUTTONS, PLACES] })).toEqual([
-          'out-of-scope-change:components/buttons/Button.tsx'
-        ])
-      })
-
-      it('should reject a staged library addition', async () => {
-        await put(staged, 'components/buttons/Extra.tsx', 'new')
-
-        expect(await kinds({ stage: 'partial', captured: [BUTTONS, PLACES] })).toEqual([
-          'out-of-scope-change:components/buttons/Extra.tsx'
-        ])
-      })
-
-      it('should reject a staged removal of library entries', async () => {
-        await put(staged, 'components/promotion.json', {
-          schema: 1,
-          files: {},
-          components: ['Button']
+      describe('and a library file changes', () => {
+        beforeEach(async () => {
+          await put(staged, 'components/buttons/Button.tsx', 'new')
         })
 
-        expect(await kinds({ stage: 'partial', captured: [BUTTONS, PLACES] })).toEqual([
-          'out-of-scope-change:components/promotion.json'
-        ])
+        it('should reject the staged library change', async () => {
+          expect(await kinds({ stage: 'partial', captured: [BUTTONS, PLACES] })).toEqual([
+            'out-of-scope-change:components/buttons/Button.tsx'
+          ])
+        })
+      })
+
+      describe('and a library file is added', () => {
+        beforeEach(async () => {
+          await put(staged, 'components/buttons/Extra.tsx', 'new')
+        })
+
+        it('should reject the staged library addition', async () => {
+          expect(await kinds({ stage: 'partial', captured: [BUTTONS, PLACES] })).toEqual([
+            'out-of-scope-change:components/buttons/Extra.tsx'
+          ])
+        })
+      })
+
+      describe('and library entries are removed', () => {
+        beforeEach(async () => {
+          await put(staged, 'components/promotion.json', {
+            schema: 1,
+            files: {},
+            components: ['Button']
+          })
+        })
+
+        it('should reject the staged removal', async () => {
+          expect(await kinds({ stage: 'partial', captured: [BUTTONS, PLACES] })).toEqual([
+            'out-of-scope-change:components/promotion.json'
+          ])
+        })
       })
     })
 
     describe('and a complete stage mutates the library', () => {
-      it('should reject a promotion entry the run does not own', async () => {
-        await put(staged, 'components/promotion.json', {
-          schema: 1,
-          files: {},
-          components: ['Button', 'PlaceCard', 'Unowned']
+      describe('and it adds a promotion entry the run does not own', () => {
+        beforeEach(async () => {
+          await put(staged, 'components/promotion.json', {
+            schema: 1,
+            files: {},
+            components: ['Button', 'PlaceCard', 'Unowned']
+          })
         })
 
-        expect(await kinds({ stage: 'complete', ...cliDefaults })).toEqual([
-          'aggregate-entry-changed:components/promotion.json'
-        ])
+        it('should reject the promotion entry', async () => {
+          expect(await kinds({ stage: 'complete', ...cliDefaults })).toEqual([
+            'aggregate-entry-changed:components/promotion.json'
+          ])
+        })
       })
 
-      it('should reject a removed library entry point', async () => {
-        await rm(path.join(staged, 'index.ts'))
+      describe('and it removes the library entry point', () => {
+        beforeEach(async () => {
+          await rm(path.join(staged, 'index.ts'))
+        })
 
-        expect(await kinds({ stage: 'complete', ...cliDefaults })).toEqual(
-          expect.arrayContaining(['removed:index.ts'])
-        )
+        it('should reject the removed library entry point', async () => {
+          expect(await kinds({ stage: 'complete', ...cliDefaults })).toEqual(
+            expect.arrayContaining(['removed:index.ts'])
+          )
+        })
       })
     })
   })
@@ -687,79 +911,121 @@ describe('checkScope', () => {
     })
     const watch = { removalsOnly: ['components'], directories: [] as string[] }
 
-    it('should allow a promotion to add and change library files', async () => {
-      await put(staged, 'components/buttons/Button.tsx', 'button2')
-      await put(staged, 'components/b.ts', 'b')
+    describe('and a promotion adds and changes library files', () => {
+      beforeEach(async () => {
+        await put(staged, 'components/buttons/Button.tsx', 'button2')
+        await put(staged, 'components/b.ts', 'b')
+      })
 
-      expect(await run(watch)).toEqual({ ok: true, violations: [] })
+      it('should allow them', async () => {
+        expect(await run(watch)).toEqual({ ok: true, violations: [] })
+      })
     })
 
-    it('should preserve existing unowned library files even in the narrow promotion scope', async () => {
-      await put(staged, 'components/a.ts', 'changed')
-      expect((await run(watch)).violations).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: 'components/a.ts',
-            owner: null,
-            cause: expect.stringContaining('no recorded base ownership')
-          })
-        ])
-      )
+    describe('and an existing unowned library file changes', () => {
+      beforeEach(async () => {
+        await put(staged, 'components/a.ts', 'changed')
+      })
+
+      it('should preserve it even in the narrow promotion scope', async () => {
+        expect((await run(watch)).violations).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: 'components/a.ts',
+              owner: null,
+              cause: expect.stringContaining('no recorded base ownership')
+            })
+          ])
+        )
+      })
     })
 
-    it('should reject deleting a hand-written library directory', async () => {
-      await rm(path.join(staged, 'components/Modal'), { recursive: true })
+    describe('and a hand-written library directory is deleted', () => {
+      beforeEach(async () => {
+        await rm(path.join(staged, 'components/Modal'), { recursive: true })
+      })
 
-      expect(await kinds(watch)).toEqual(['removed:components/Modal/Modal.tsx'])
+      it('should reject the deletion', async () => {
+        expect(await kinds(watch)).toEqual(['removed:components/Modal/Modal.tsx'])
+      })
     })
   })
 
   describe('when a retirement touches the promoted library', () => {
-    const retirePlace = async (): Promise<Retirements> => ({
-      schema: 1,
-      retired: [
-        {
-          pageId: PLACES,
-          name: 'Places',
-          reason: 'gone',
-          owned: await computeOwned(base, { pageId: PLACES }),
-          sharedExclusions: []
-        }
-      ]
+    let retirements: Retirements
+
+    beforeEach(async () => {
+      retirements = {
+        schema: 1,
+        retired: [
+          {
+            pageId: PLACES,
+            name: 'Places',
+            reason: 'gone',
+            owned: await computeOwned(base, { pageId: PLACES }),
+            sharedExclusions: []
+          }
+        ]
+      }
     })
 
-    it('should own the library copy, the exports and the promotion entry', async () => {
-      const owned = (await retirePlace()).retired[0]!.owned
+    describe('and its owned paths are computed', () => {
+      let owned: string[]
 
-      expect(owned).toEqual(
-        expect.arrayContaining([
-          'components/places/PlaceCard.tsx',
-          'components/places/PlaceCard.figma.ts',
-          'index.ts#value:PlaceCard',
-          'index.ts#type:PlaceCardProps',
-          'components/promotion.json#component:PlaceCard'
-        ])
-      )
-      expect(owned.join(' ')).not.toContain('Button')
-      expect(owned.join(' ')).not.toContain('Modal')
+      beforeEach(() => {
+        owned = retirements.retired[0]!.owned
+      })
+
+      it('should own the library copy, the exports and the promotion entry', () => {
+        expect(owned).toEqual(
+          expect.arrayContaining([
+            'components/places/PlaceCard.tsx',
+            'components/places/PlaceCard.figma.ts',
+            'index.ts#value:PlaceCard',
+            'index.ts#type:PlaceCardProps',
+            'components/promotion.json#component:PlaceCard'
+          ])
+        )
+      })
+
+      it('should not own the live Button', () => {
+        expect(owned.join(' ')).not.toContain('Button')
+      })
+
+      it('should not own the hand-written Modal', () => {
+        expect(owned.join(' ')).not.toContain('Modal')
+      })
     })
 
-    it('should flag a retired component the library still exports or lists', async () => {
-      const found = (await run({ runKind: 'developer', retirements: await retirePlace() }))
-        .violations
+    describe('and the library still exports and lists the retired component', () => {
+      let causes: string
 
-      expect(found.map((v) => v.cause).join(' ')).toContain('value:PlaceCard')
-      expect(found.map((v) => v.cause).join(' ')).toContain('component:PlaceCard')
+      beforeEach(async () => {
+        causes = (await run({ runKind: 'developer', retirements })).violations
+          .map((v) => v.cause)
+          .join(' ')
+      })
+
+      it('should flag the export', () => {
+        expect(causes).toContain('value:PlaceCard')
+      })
+
+      it('should flag the promotion entry', () => {
+        expect(causes).toContain('component:PlaceCard')
+      })
     })
 
-    it('should require what the retirement shares with live items to stay', async () => {
-      const retirements = await retirePlace()
-      retirements.retired[0]!.sharedExclusions = [`${GEN}/components/buttons/Button.tsx`]
-      await rm(path.join(staged, `${GEN}/components/buttons/Button.tsx`))
+    describe('and what it shares with live items is missing', () => {
+      beforeEach(async () => {
+        retirements.retired[0]!.sharedExclusions = [`${GEN}/components/buttons/Button.tsx`]
+        await rm(path.join(staged, `${GEN}/components/buttons/Button.tsx`))
+      })
 
-      expect(
-        (await run({ runKind: 'developer', retirements })).violations.map((v) => v.cause)
-      ).toContain('shared with live items by the retirement of Places, but missing')
+      it('should require it to stay', async () => {
+        expect(
+          (await run({ runKind: 'developer', retirements })).violations.map((v) => v.cause)
+        ).toContain('shared with live items by the retirement of Places, but missing')
+      })
     })
   })
 })

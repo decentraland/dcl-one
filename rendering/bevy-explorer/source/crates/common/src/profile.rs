@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use bevy::log::warn;
 use dcl_component::proto_components::common::Color3;
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +12,75 @@ pub struct AvatarSnapshots {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AvatarEmote {
+    #[serde(deserialize_with = "integral_slot")]
     pub slot: u32,
     pub urn: String,
+}
+
+/// `value` as a `u32` when it is a whole number in range.
+fn integral_u32(value: f64) -> Option<u32> {
+    (value.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&value)).then_some(value as u32)
+}
+
+/// A slot in any integral JSON number form (`1`, `1.0`, `1e0`): the catalyst
+/// accepts and serves them all.
+fn integral_slot<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let slot = f64::deserialize(deserializer)?;
+    integral_u32(slot).ok_or_else(|| {
+        serde::de::Error::custom(format!(
+            "invalid emote slot {slot}, expected a non-negative integer"
+        ))
+    })
+}
+
+/// Emotes that do not parse (a non-integral slot, a missing `urn`) are dropped
+/// with a warning, so one entry does not fail the whole profile, nor a batched
+/// profile fetch with it.
+fn valid_emotes<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<AvatarEmote>>, D::Error> {
+    let Some(entries) = Option::<Vec<serde_json::Value>>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let total = entries.len();
+    let mut first_error = None;
+    let emotes: Vec<AvatarEmote> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            AvatarEmote::deserialize(entry)
+                .inspect_err(|e| {
+                    first_error.get_or_insert_with(|| e.to_string());
+                })
+                .ok()
+        })
+        .collect();
+    if let Some(error) = first_error {
+        // serde errors can quote the input, so the reason is cut short.
+        let error: String = error.chars().take(120).collect();
+        warn!(
+            "dropped {} of {total} emotes of a profile, first: {error}",
+            total - emotes.len()
+        );
+    }
+    Ok(Some(emotes))
+}
+
+/// A profile version in any integral JSON number form, bounded to the `u32`
+/// the profile cache ranks by; any other value reads as 0, like a missing one.
+fn profile_version<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value.as_f64().and_then(integral_u32) {
+        Some(version) => Ok(version.into()),
+        None => {
+            match &value {
+                serde_json::Value::Number(n) => {
+                    warn!("reading the invalid profile version {n} as 0")
+                }
+                _ => warn!("reading a non-numeric profile version as 0"),
+            }
+            Ok(0)
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
@@ -52,7 +120,11 @@ pub struct AvatarWireFormat {
     pub wearables: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_render: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "valid_emotes",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub emotes: Option<Vec<AvatarEmote>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<AvatarSnapshots>,
@@ -113,7 +185,7 @@ pub struct SerializedProfile {
     pub user_id: Option<String>,
     #[serde(default)]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "profile_version")]
     pub version: i64,
     pub eth_address: String,
     #[serde(default)]
@@ -197,6 +269,123 @@ impl Default for SerializedProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emote_slots_read_in_every_integral_json_number_form() {
+        let slot = |slot: &str| {
+            serde_json::from_str::<AvatarEmote>(&format!(r#"{{"slot": {slot}, "urn": "wave"}}"#))
+                .map(|emote| emote.slot)
+        };
+        for (text, expected) in [
+            ("1", 1),
+            ("1.0", 1),
+            ("1e0", 1),
+            ("-0.0", 0),
+            ("4294967295", u32::MAX),
+        ] {
+            assert_eq!(slot(text).unwrap(), expected, "{text}");
+        }
+        for text in ["1.5", "-1", "\"1\"", "4294967296", "1e300"] {
+            assert!(slot(text).is_err(), "{text}");
+        }
+
+        // The scene IPC still round-trips a profile's integer slots.
+        let mut profile = SerializedProfile::default();
+        profile.avatar.emotes = Some(vec![AvatarEmote {
+            slot: 3,
+            urn: "wave".to_owned(),
+        }]);
+        let bytes = crate::rpc::rmp_encode(&profile).unwrap();
+        let decoded: SerializedProfile = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.avatar.emotes, profile.avatar.emotes);
+    }
+
+    #[test]
+    fn emotes_with_an_invalid_slot_are_dropped_from_a_profile_batch() {
+        let batch: LambdaProfiles = serde_json::from_str(
+            r#"{"avatars": [{
+                "ethAddress": "0x1",
+                "avatar": {"wearables": [], "emotes": [
+                    {"slot": 1.5, "urn": "spin"},
+                    {"slot": 2.0, "urn": "wave"}
+                ]}
+            }]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            batch.avatars[0].avatar.emotes,
+            Some(vec![AvatarEmote {
+                slot: 2,
+                urn: "wave".to_owned(),
+            }])
+        );
+
+        let no_emotes: AvatarWireFormat = serde_json::from_str(r#"{"wearables": []}"#).unwrap();
+        assert_eq!(no_emotes.emotes, None);
+        let null_emotes: AvatarWireFormat =
+            serde_json::from_str(r#"{"wearables": [], "emotes": null}"#).unwrap();
+        assert_eq!(null_emotes.emotes, None);
+    }
+
+    #[test]
+    fn emotes_that_do_not_parse_are_dropped_from_a_profile() {
+        let avatar: AvatarWireFormat = serde_json::from_str(
+            r#"{"wearables": [], "emotes": [
+                {"slot": 1},
+                {"slot": 2, "urn": 7},
+                "wave",
+                {"slot": 3, "urn": "wave"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            avatar.emotes,
+            Some(vec![AvatarEmote {
+                slot: 3,
+                urn: "wave".to_owned(),
+            }])
+        );
+    }
+
+    #[test]
+    fn profile_versions_read_as_bounded_integers() {
+        let version = |version: &str| {
+            serde_json::from_str::<SerializedProfile>(&format!(
+                r#"{{"ethAddress": "0x1", "version": {version}, "avatar": {{"wearables": []}}}}"#
+            ))
+            .unwrap()
+            .version
+        };
+        for (text, expected) in [("7", 7), ("7.0", 7), ("7e0", 7), ("4294967295", 4294967295)] {
+            assert_eq!(version(text), expected, "{text}");
+        }
+        for text in ["1.5", "-1", "4294967296", "\"7\"", "null"] {
+            assert_eq!(version(text), 0, "{text}");
+        }
+        let missing: SerializedProfile =
+            serde_json::from_str(r#"{"ethAddress": "0x1", "avatar": {"wearables": []}}"#).unwrap();
+        assert_eq!(missing.version, 0);
+
+        // One profile with an invalid version does not fail the batch.
+        let batch: LambdaProfiles = serde_json::from_str(
+            r#"{"avatars": [
+                {"ethAddress": "0x1", "version": 1.5, "avatar": {"wearables": []}},
+                {"ethAddress": "0x2", "version": 3.0, "avatar": {"wearables": []}}
+            ]}"#,
+        )
+        .unwrap();
+        let versions: Vec<i64> = batch.avatars.iter().map(|p| p.version).collect();
+        assert_eq!(versions, [0, 3]);
+
+        // The scene IPC still round-trips the version.
+        let profile = SerializedProfile {
+            version: 42,
+            ..Default::default()
+        };
+        let bytes = crate::rpc::rmp_encode(&profile).unwrap();
+        let decoded: SerializedProfile = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(decoded.version, 42);
+    }
 
     #[test]
     fn compact_profile_of_a_full_profile() {

@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { AuthIdentity } from "../../data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 import { createCartStore, type CartStorage, type CartStore } from "../cart/store";
 import type { OfferFetcher } from "../cart/revalidate";
 import type { CartListingRef, PurchaseOffer, PurchaseState } from "@shop/model/purchase";
@@ -10,7 +10,7 @@ import type { Session } from "@shop/model/settlement";
 import { BOOK, SIGNED_OUT, web2, web3 } from "@shop/payment/fixtures";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost } from "../wallet/session";
-import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, resaleTrade, type FakeHandlers } from "./fakes";
+import { batchAuthorization, createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, resaleTrade, type FakeHandlers } from "./fakes";
 import type { SettlementResolvers } from "./purchase/cart";
 import { ShopServicesProvider, type ShopServices } from "./services";
 
@@ -116,7 +116,18 @@ export function createDemo(s: DemoScenario) {
     createPackOrder: ({ body }) => ({ orderId: `order-${(body as { packId: string }).packId}`, url: "https://checkout.stripe.com/c/pay/demo" }),
     ...s.handlers,
   });
-  const wallet = createFakeWallet({ chainId: s.walletChainId ?? 137, account: s.walletAccount ?? BOOK.buyer });
+  // What the wallet sends lands on the fake chain as a transaction (its receipt stays the test's to give), so its sale
+  // can be read back as a direct useCredits from its sender.
+  let sends = 0;
+  const wallet = createFakeWallet({
+    chainId: s.walletChainId ?? 137,
+    account: s.walletAccount ?? BOOK.buyer,
+    onSend: (tx) => {
+      const hash = `0x${(++sends).toString(16).padStart(64, "0")}` as `0x${string}`;
+      chain.transactions.set(hash, { from: ((tx as { from?: string }).from ?? s.walletAccount ?? BOOK.buyer).toLowerCase(), to: tx.to, input: tx.data });
+      return hash;
+    },
+  });
 
   const offersMode = s.offers ?? "live";
   const fetchOffers: OfferFetcher | null =
@@ -159,6 +170,8 @@ export function createDemo(s: DemoScenario) {
       },
     },
     openExternal: () => {},
+    // One browser's locks, shared by every dialog the demo renders, as tabs share them.
+    locks: createFakeLocks(),
   };
 
   const host: ShopWalletHost = {

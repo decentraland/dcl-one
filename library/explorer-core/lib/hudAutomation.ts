@@ -946,19 +946,54 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
       { name: 'x', kind: 'string', optional: false },
       { name: 'y', kind: 'string', optional: false }
     ],
-    help: 'Click at a page position, in CSS pixels from the top left, as the mouse would: the HUD gets it where it is, the world elsewhere. --button is left (the default), right or middle. The web page asks the test runner driving the browser for a real click, and dispatches DOM events without one',
+    help: 'Click at a page position, in CSS pixels from the top left (or, with --normalized, 0 to 1 of the page from the top left), as the mouse would: the HUD gets it where it is, the world elsewhere. --button is left (the default), right or middle. Replies JSON {"x", "y"} in pixels, "normalized" {"x", "y"}, "button", the page\'s "screen" {"width", "height", "scale"} and "input": "trusted" when the test runner driving the browser clicked, "synthetic" for DOM events',
     run: async (rest) => {
-      const [xText, yText, flag, value] = rest.trim().split(/\s+/)
-      const x = Number(xText)
-      const y = Number(yText)
-      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('expected /click_at <x> <y>')
-      const button = flag === '--button' ? value : undefined
+      const words = rest.trim().split(/\s+/)
+      const [xText, yText] = words
+      let button: string | undefined
+      let normalized = false
+      for (let i = 2; i < words.length; i++) {
+        if (words[i] === '--button') {
+          button = words[++i]
+          if (button === undefined) throw new Error('--button needs a value: left, right or middle')
+        } else if (words[i] === '--normalized') normalized = true
+        else throw new Error(`unexpected \`${words[i]}\`: /click_at <x> <y> [--button b] [--normalized]`)
+      }
+      const given = { x: Number(xText), y: Number(yText) }
+      if (!Number.isFinite(given.x) || !Number.isFinite(given.y)) throw new Error('expected /click_at <x> <y>')
       if (button != null && button !== 'left' && button !== 'right' && button !== 'middle') {
         throw new Error(`unknown button \`${button}\`: use left, right or middle`)
       }
-      await clickAt(x, y, button)
-      return `clicked at (${x}, ${y})`
+      const screen = { width: window.innerWidth, height: window.innerHeight, scale: window.devicePixelRatio }
+      if (normalized && !(given.x >= 0 && given.x <= 1 && given.y >= 0 && given.y <= 1)) {
+        throw new Error(`normalized coordinates run from 0 to 1 from the top left; got (${given.x}, ${given.y})`)
+      }
+      // 1 is the page's last pixel, not the one past it, where no element is
+      const x = normalized ? Math.max(0, Math.min(given.x * screen.width, screen.width - 1)) : given.x
+      const y = normalized ? Math.max(0, Math.min(given.y * screen.height, screen.height - 1)) : given.y
+      const input = await clickAt(x, y, button)
+      return JSON.stringify(clickAtReply(x, y, button ?? 'left', screen, input))
     }
+  }
+}
+
+/** /click_at's reply, as the engine words it natively (src/automation.rs, click_at_reply): where
+ *  it clicked, in pixels and normalized, and on what page; and how. */
+function clickAtReply(
+  x: number,
+  y: number,
+  button: MouseButtonName,
+  screen: { width: number; height: number; scale: number },
+  input: InputKind
+) {
+  const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places
+  return {
+    x: round(x, 2),
+    y: round(y, 2),
+    normalized: { x: round(x / screen.width, 4), y: round(y / screen.height, 4) },
+    button,
+    screen: { width: round(screen.width, 2), height: round(screen.height, 2), scale: round(screen.scale, 2) },
+    input
   }
 }
 

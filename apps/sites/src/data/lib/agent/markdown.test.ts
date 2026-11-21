@@ -393,6 +393,15 @@ describe("whatsOnToMarkdown", () => {
     const md = whatsOnToMarkdown({ live: [], upcoming: [] });
     expect(md).toContain("0 live now, 0 upcoming.");
     expect(md).toContain("No events right now");
+    expect(md).not.toContain("## My Events");
+  });
+
+  it("keeps the public listing and adds the sign-in pointer for My Events", () => {
+    const md = whatsOnToMarkdown({ live: [], upcoming: [], tab: "my" });
+    expect(md.startsWith("# What's On in Decentraland")).toBe(true);
+    expect(md).toContain("## My Events");
+    expect(md).toContain("[Open My Events](/events?tab=my)");
+    expect(md).not.toContain("My Hangouts");
   });
 });
 

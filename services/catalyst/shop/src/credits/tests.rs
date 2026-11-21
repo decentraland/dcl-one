@@ -56,6 +56,8 @@ pub(crate) struct FakeMarket {
     pub orders: Vec<ListingRow>,
     pub trades: HashMap<String, TradeLookup>,
     pub mana_usd: Option<String>,
+    /// The creator coupon every trade is priced with, when set.
+    pub coupon: Option<crate::types::TradeCoupon>,
     pub item_reads: AtomicUsize,
     pub order_reads: AtomicUsize,
     pub oracle_reads: AtomicUsize,
@@ -109,6 +111,15 @@ impl FakeMarket {
         self.trades.insert(id.to_string(), TradeLookup::Open(trade));
         self
     }
+
+    fn with_coupon(mut self, discount_ppm: u32) -> Self {
+        self.coupon = Some(crate::types::TradeCoupon {
+            contract: crate::types::EvmAddress::parse("0xc914507fe297b2dddd1232ac3a8903f1c125e794")
+                .unwrap(),
+            discount_ppm,
+        });
+        self
+    }
 }
 
 #[async_trait]
@@ -151,7 +162,7 @@ impl Market for FakeMarket {
         _trade: &crate::types::SignedTrade,
         _trade_type: &str,
     ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
-        Ok(None)
+        Ok(self.coupon)
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
@@ -374,8 +385,18 @@ pub(super) fn scratch_wallet() -> Wallet {
 }
 
 pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    signed_headers_with(w, method, path, "{}").await
+}
+
+/// [`signed_headers`] with `metadata` signed into the payload.
+pub(super) async fn signed_headers_with(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    metadata: &'static str,
+) -> HeaderMap {
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let payload = build_payload_v6(method, path, &timestamp, metadata);
     let signature = w
         .signer
         .sign_message(payload.as_bytes())
@@ -399,7 +420,7 @@ pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Head
         AUTH_TIMESTAMP_HEADER,
         HeaderValue::from_str(&timestamp).unwrap(),
     );
-    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(metadata));
     for (i, link) in chain.iter().enumerate() {
         headers.insert(
             axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
@@ -439,6 +460,22 @@ pub(super) async fn send(
     let body = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     (status, headers, body)
+}
+
+/// A signed web3 session's metadata, as the web Shop signs it (`walletKind`).
+const WEB3: &str = r#"{"walletKind":"web3"}"#;
+
+/// [`call`] with `metadata` signed into the request.
+async fn call_signed(
+    app: &Router,
+    w: &Wallet,
+    path: &str,
+    metadata: &'static str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let headers = signed_headers_with(w, "post", path, metadata).await;
+    let (status, _, body) = send(app, "POST", path, headers, Some(body)).await;
+    (status, body)
 }
 
 /// A signed call over the PUBLIC path (`/credits/...`), the way the explorer signs it.
@@ -7902,6 +7939,7 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
         contract_address: None,
         item_id: None,
         registered_name: None,
+        credits_cents: None,
     };
     let derived =
         super::batch::derive_line(&state, ChainId::POLYGON, session, rate, 0, &line(offered))
@@ -8394,6 +8432,25 @@ async fn opid_lane_with(
     market: FakeMarket,
     trial: Option<super::trial::TrialBuyers>,
 ) -> Router {
+    opid_lane_flagged(pool, contract, market, trial, split_on()).await
+}
+
+/// The market's flags with the Credits + MANA split on: a node that takes a Credits part.
+fn split_on() -> Arc<crate::market::features::DappsFlags> {
+    crate::market::features::DappsFlags::for_tests(&[(
+        crate::market::features::CREDITS_MANA_SPLIT,
+        true,
+    )])
+}
+
+/// [`opid_lane_with`] over the given `dapps` flags.
+async fn opid_lane_flagged(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+    flags: Arc<crate::market::features::DappsFlags>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -8424,7 +8481,8 @@ async fn opid_lane_with(
             Arc::new(MockBroker::configured()),
             None,
         )
-        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_dapps_flags(flags),
     );
     app(state)
 }
@@ -8549,6 +8607,572 @@ async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_
     let (status, _) = authorize(opid_item(200, "200", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}
+
+/// A request of one line of one unit may pay part of the price with credits
+/// (`creditsCents`) and the rest with MANA, on either route. The price check
+/// stays on the whole quote; the Credits part alone is reserved, recorded and
+/// echoed; the credit is that part's share of the whole price's cap; an
+/// operation binds the part. Every refusal comes before a reservation.
+#[tokio::test]
+async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
+    let Some((db, lane, wallet)) = opid_setup("credits-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let post = |w: &'static str, body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, w, WEB3, body).await }
+    };
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = |cents: i64, item: &str, leg: Value| {
+        let mut body = opid_item(cents, item, None);
+        body["creditsCents"] = leg;
+        body
+    };
+    // Item 200 is 4 MANA at 0.5 USD/MANA, a 200-cent quote: a part's credit is
+    // its share of those 4 MANA, with no buffer and no headroom.
+    let share = |leg: u64| {
+        (alloy_primitives::U256::from(4_000_000_000_000_000_000u64)
+            * alloy_primitives::U256::from(leg)
+            / alloy_primitives::U256::from(200u64))
+        .to_string()
+    };
+
+    let mut two_units = part(200, "200", json!(120));
+    two_units["quantity"] = json!(2);
+    for (body, why) in [
+        (part(200, "200", json!(200)), "the whole price"),
+        (part(200, "200", json!(210)), "above the price"),
+        (part(200, "200", json!(125)), "not whole credits"),
+        (part(200, "200", json!(0)), "nothing"),
+        (part(200, "200", json!(-10)), "negative"),
+        (part(200, "200", json!("120")), "not a number"),
+        (two_units, "two units"),
+        (
+            json!({ "usdPriceCents": 500, "name": "mauri", "creditsCents": 100 }),
+            "a NAME registration",
+        ),
+    ] {
+        let (status, v) = post(SINGLE, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("\"creditsCents\""),
+            "{why}: the message names the field: {v}"
+        );
+    }
+    for (items, index) in [
+        (
+            json!([part(200, "200", json!(120)), opid_item(95, "95", None)]),
+            0,
+        ),
+        (
+            json!([opid_item(95, "95", None), part(200, "200", json!(120))]),
+            1,
+        ),
+    ] {
+        let (status, v) = post(BATCH, json!({ "items": items })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(
+            v["error"],
+            format!("items[{index}]: {}", super::batch::CREDITS_CENTS_ALONE),
+            "a Credits part beside another line"
+        );
+    }
+    let (status, v) = post(SINGLE, part(210, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    assert_eq!(
+        v["error"], "Price changed",
+        "the whole price is still checked"
+    );
+    let poor = scratch_wallet();
+    seed_paid_credits(&pool, &poor.address, "5").await;
+    let (status, v) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
+    assert_eq!(
+        (v["balanceCents"].as_i64(), v["requiredCents"].as_i64()),
+        (Some(50), Some(120)),
+        "the balance is checked against the part"
+    );
+    let (status, _) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(50))).await;
+    assert_eq!(status, StatusCode::OK, "a part the balance covers");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused request reserved anything"
+    );
+
+    // The single route: the part is reserved and echoed, the credit is its share.
+    let (status, v) = post(SINGLE, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["usdCents"], 120);
+    assert_eq!(
+        v["credit"]["amount"],
+        share(120),
+        "floor(4 MANA * 120 / 200): 2.4 MANA, the buyer's MANA the other 1.6"
+    );
+    assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 120);
+    let salt = v["credit"]["id"].as_str().unwrap().to_string();
+    let (quoted, charged): (Option<i64>, i64) =
+        sqlx::query_as("SELECT quoted_cents, usd_cents FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (quoted, charged),
+        (Some(200), 120),
+        "the quote checked, the part charged"
+    );
+    let line: (i64, i64) = sqlx::query_as(
+        "SELECT quoted_cents, charged_cents FROM credits.authorization_lines WHERE authorization_id = $1",
+    )
+    .bind(&salt)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        line,
+        (120, 120),
+        "the line is its Credits part, quoted and charged"
+    );
+
+    // The batch route with one line, as the in-world Shop authorizes: the
+    // operation binds the part; a retry replays one credit, another part is
+    // refused without a reservation.
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let body = json!({ "operationId": op, "items": [part(200, "200", json!(80))] });
+    let (status, first) = post(BATCH, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        (
+            first["usdCents"].as_i64(),
+            first["lines"][0]["usdCents"].as_i64()
+        ),
+        (Some(80), Some(80))
+    );
+    assert_eq!(first["credit"]["amount"], share(80));
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = post(BATCH, body).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    for other in [
+        json!({ "operationId": op, "items": [part(200, "200", json!(90))] }),
+        json!({ "operationId": op, "items": [opid_item(200, "200", None)] }),
+    ] {
+        let (status, v) = post(BATCH, other).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{v}");
+        assert_eq!(v["code"], "operation_reused", "{v}");
+    }
+    assert_eq!(
+        (
+            authorized_count(&pool, &wallet.address).await,
+            authorized_sum_cents(&pool, &wallet.address).await
+        ),
+        (2, 200),
+        "the refused operations reserved nothing"
+    );
+
+    db.drop().await;
+}
+
+/// A Credits part is judged on the session the signed metadata states, as
+/// the quote that offered it was: a signed web2 session, or none stated, is
+/// refused on both routes with nothing reserved; a signed web3 wallet is
+/// authorized. A whole-price credit needs no metadata, as before.
+#[tokio::test]
+async fn a_credits_part_needs_a_signed_web3_session_on_both_routes() {
+    let Some((db, lane, wallet)) = opid_setup("part-session").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = json!({ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200", "creditsCents": 120 });
+    let bodies = [
+        (SINGLE, part.clone()),
+        (BATCH, json!({ "items": [part.clone()] })),
+    ];
+    for (metadata, why) in [
+        (r#"{"walletKind":"web2"}"#, "a signed web2 session"),
+        ("{}", "no stated session"),
+    ] {
+        for (route, body) in bodies.clone() {
+            let (status, v) = call_signed(&lane, &wallet, route, metadata, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why} on {route}: {v}");
+            assert_eq!(
+                v["refusal"], "mana_remainder_not_allowed",
+                "{why} on {route}: {v}"
+            );
+        }
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused session reserved anything"
+    );
+    for (route, body) in bodies {
+        let (status, v) = call_signed(&lane, &wallet, route, WEB3, body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a signed web3 wallet on {route}: {v}"
+        );
+        assert_eq!(v["usdCents"], 120);
+    }
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        SINGLE,
+        &[],
+        Some(opid_item(200, "200", None)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price needs no metadata: {v}"
+    );
+
+    db.drop().await;
+}
+
+/// The Credits + MANA split's rollout (`dapps-shop-credits-mana-split`) is read
+/// on the shared authorization path. Off, a request with `creditsCents` is a
+/// 400 on either route before anything else, a replay of an operation it
+/// authorized while on included, and nothing new is reserved; a whole price
+/// authorizes, and a credit issued while it was on is still cancelled. On, a
+/// Credits part authorizes on both routes.
+#[tokio::test]
+async fn a_credits_part_follows_its_rollout_on_both_routes_and_a_whole_price_never_does() {
+    let Some(db) = OwnDatabase::create("split-rollout").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_mana_usd("0.5");
+    let flags = crate::market::features::DappsFlags::for_tests(&[]);
+    let lane = opid_lane_flagged(&pool, OPID_MANAGER, market, None, flags.clone()).await;
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "200").await;
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let split = crate::market::features::CREDITS_MANA_SPLIT;
+    const OP_A: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a01";
+    const OP_B: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a02";
+    let part = |op: &str| {
+        let mut body = opid_item(200, "200", Some(op));
+        body["creditsCents"] = json!(120);
+        body
+    };
+    let refused = |status: StatusCode, v: &Value, why: &str| {
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert_eq!(v["code"], "credits_mana_split_off", "{why}: {v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("dapps-shop-credits-mana-split"),
+            "{why}: {v}"
+        );
+    };
+
+    // Off from the start (absent reads off): no Credits part on either route, nothing reserved.
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "single, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "batch, off");
+    assert_eq!(v["index"], 0);
+    assert_eq!(rows_of(&pool, &wallet.address).await, 0);
+
+    // On: both routes authorize the part.
+    flags.set_for_tests(split, true);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    assert_eq!(status, StatusCode::OK, "single, on: {v}");
+    assert_eq!(v["usdCents"], 120);
+    let issued = v["credit"]["id"].as_str().unwrap().to_string();
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch, on: {v}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+
+    // Off again: a replay of the operation it authorized is refused before it is recovered, and nothing new is
+    // reserved; a whole price authorizes on both routes.
+    flags.set_for_tests(split, false);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "a replay, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "a batch replay, off");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK, "a whole price, off: {v}");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        "{}",
+        json!({ "items": [opid_item(200, "200", None)] }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price on the batch route, off: {v}"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 4);
+
+    // A credit issued while it was on is still cancelled.
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/credits/authorize/cancel",
+        &[],
+        Some(json!({ "salts": [issued] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["released"].as_i64(), Some(1), "{v}");
+
+    db.drop().await;
+}
+
+/// A USD-pegged trade has no Credits part: its MANA is only fixed when the
+/// marketplace reads its feed at settlement. Refused with the rule's reason,
+/// before the feed is read and before anything is reserved; its whole price
+/// still authorizes.
+#[tokio::test]
+async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_reservation() {
+    let Some(db) = OwnDatabase::create("feed-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    // $2.00 pegged (USD wei) on Polygon's V3 marketplace.
+    let trade = json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+        "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+        "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+        "received": [{ "assetType": 2, "contractAddress": MANA_POLYGON, "amount": "2000000000000000000", "beneficiary": CREATOR }] });
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "4", "4000000000000000000", true)
+        .with_trade("be6e", trade)
+        .with_mana_usd("0.5");
+    let feed = Arc::new(FakeFeed::default());
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some(OPID_MANAGER.to_string()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(OPID_MANAGER.to_string()),
+        ..super::usage::Settings::default()
+    };
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone())
+        .with_dapps_flags(split_on()),
+    );
+    let lane = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "50").await;
+    feed.answer(Address::from_str(LISTED).unwrap(), Ok("0.55"));
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, "/credits/credits/authorize", WEB3, body).await }
+    };
+
+    let (status, v) =
+        authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e", "creditsCents": 80 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+    assert!(feed.asked().is_empty(), "the feed was not read");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "nothing reserved"
+    );
+    let (status, whole) = authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e" })).await;
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+
+    db.drop().await;
+}
+
+/// The split vector through the route: a listing of 101 MANA wei with a 10%
+/// coupon moves 91; quoted 30 cents, a 10-cent part. The credit signs 30 wei
+/// (floor(91 * 10 / 30)), the buyer's MANA is the other 61, the 10 cents are
+/// what is reserved, and none of it moves with the node's buffer or headroom.
+/// A listing paid in another ERC-20 than the chain's MANA is refused before
+/// anything is reserved.
+#[tokio::test]
+async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_sizing() {
+    let Some(db) = OwnDatabase::create("split-vector").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let trade = |token: &str| {
+        json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+            "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+            "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+            "received": [{ "assetType": 1, "contractAddress": token, "amount": "101", "beneficiary": CREATOR }] })
+    };
+    let lane = |buffer_bps: u32, headroom_pct: u32| {
+        // 3.2e15 USD a MANA: 101 wei is 33 cents rounded up, 30 after the coupon.
+        let market = FakeMarket::default()
+            .with_item(COLLECTION, "4", "4000000000000000000", true)
+            .with_trade("5b1a", trade(MANA_POLYGON))
+            .with_trade("0e20", trade("0x00000000000000000000000000000000000000e2"))
+            .with_coupon(100_000)
+            .with_mana_usd("3200000000000000");
+        let mut settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            mock_card: true,
+            usage_chain_id: super::usage::CHAIN_AMOY,
+            credits_onchain_authorize_enabled: true,
+            credits_signer_key: Some(
+                "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+            ),
+            credits_manager_contract: Some(OPID_MANAGER.to_string()),
+            mana_price_max_staleness_secs: 3600,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        settings.usage = super::usage::Settings {
+            enabled: true,
+            rpc_url: Some("http://127.0.0.1:9/".into()),
+            chain_id: 137,
+            contract: Some(OPID_MANAGER.to_string()),
+            ..super::usage::Settings::default()
+        };
+        settings.credit_buffer_bps = buffer_bps;
+        settings.credit_cap_headroom_pct = headroom_pct;
+        app(Arc::new(
+            State::with_sources(
+                pool.clone(),
+                Outbound::for_tests(),
+                settings,
+                Arc::new(market),
+                Arc::new(MockBroker::configured()),
+                None,
+            )
+            .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+            .with_dapps_flags(split_on()),
+        ))
+    };
+    let part = json!({ "usdPriceCents": 30, "tradeId": "5b1a", "creditsCents": 10 });
+
+    for (buffer, headroom) in [(200, 100), (1_000, 150)] {
+        let lane = lane(buffer, headroom);
+        let wallet = scratch_wallet();
+        seed_paid_credits(&pool, &wallet.address, "50").await;
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+        assert_eq!(
+            authorized_count(&pool, &wallet.address).await,
+            0,
+            "nothing reserved for another ERC-20"
+        );
+
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            part.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{buffer} bps, {headroom}%: {v}");
+        assert_eq!(
+            v["credit"]["amount"], "30",
+            "floor(91 * 10 / 30), with no buffer or headroom"
+        );
+        assert_eq!(v["maxCreditedValue"], "30");
+        assert_eq!(v["usdCents"], 10, "the part is what is charged");
+        assert_eq!(
+            authorized_sum_cents(&pool, &wallet.address).await,
+            10,
+            "and what is reserved"
+        );
+    }
 
     db.drop().await;
 }

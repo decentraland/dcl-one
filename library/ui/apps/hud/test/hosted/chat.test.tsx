@@ -31,8 +31,25 @@ describe('chat domain', () => {
     act(() => h.session().chat.send('/kill https://example.com/scene'))
     expect(h.driver.sentOf('consoleCommand')).toEqual([])
     expect(h.driver.sentOf('sendChat')).toEqual([])
-    act(() => h.session().chat.send('/time 12 0'))
-    expect(h.driver.last('consoleCommand')).toMatchObject({ command: 'time', args: ['12', '0'] })
+  })
+
+  it('runs a typed command as the whole line on the engine console and shows its reply', async () => {
+    const w = window as Window & { engine_console_command?: (line: string) => Promise<string> }
+    const lines: string[] = []
+    w.engine_console_command = async (line) => {
+      lines.push(line)
+      return 'time set'
+    }
+    try {
+      const h = renderSession()
+      await enterAsGuest(h)
+      await act(async () => h.session().chat.send(`/time 12 "a  b" it's`))
+      expect(lines).toEqual([`/time 12 "a  b" it's`])
+      expect(h.driver.sentOf('consoleCommand')).toEqual([])
+      expect(h.session().chat.messages.at(-1)).toMatchObject({ sender: '', message: 'time set' })
+    } finally {
+      delete w.engine_console_command
+    }
   })
 
   it('relayed chat messages append to the log', async () => {
