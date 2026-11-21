@@ -448,7 +448,8 @@ export function ProcessingBody({ text }: { text: string }) {
 }
 
 /** The failure panel: the reason (or that the Credits are safe), and a retry when there is one to make. */
-export function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry?: () => void }) {
+/** The failure panel; `link`, a page that can clear it (another item whose purchase holds this one, say). */
+export function ErrorBody({ message, onClose, onRetry, link }: { message: string | null; onClose(): void; onRetry?: () => void; link?: { href: string; label: string } }) {
   return (
     <DialogBody>
       <div className={styles.error} data-testid="buy-error">
@@ -456,6 +457,11 @@ export function ErrorBody({ message, onClose, onRetry }: { message: string | nul
         <p className={styles.errorText}>
           <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
         </p>
+        {link ? (
+          <a className={styles.warningLink} href={link.href} data-testid="buy-error-link">
+            {link.label}
+          </a>
+        ) : null}
       </div>
       <DialogCtas>
         <DialogButton variant="outline" full={!onRetry} onClick={onClose}>

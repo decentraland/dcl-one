@@ -66,6 +66,7 @@ import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { isMetaTxPending } from "../../checkout/purchase/tx-confirm";
 import { useShopServices } from "../../checkout/services";
 import type { CartAddInput } from "../../cart/store";
+import { parseAssetKey } from "@shop/model/asset";
 import { formatMana } from "@shop/model/money";
 import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
 import type { MixedPayment } from "@shop/payment/present";
@@ -87,7 +88,10 @@ type CombinedPhase =
   | { kind: "working" }
   | { kind: "success"; txHash: string | null }
   | { kind: "pending" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; held?: HeldItem };
+
+/** Another item whose purchase holds this one back, as its record names it, and its page, where it can be checked again. */
+export type HeldItem = { name: string; href: string };
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 // Reached only before the sale leaves (a sale that left is held, whatever its receipt says): the approval's own revert.
@@ -114,6 +118,25 @@ const UNKEPT = "This browser couldn't save this purchase's transaction. Once you
 const SPLIT_IN_FLIGHT = "Another purchase with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.";
 const SPLIT_ITEM_HELD = "A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.";
 const SPLITS_UNREADABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.";
+const splitInFlightOf = (name: string) => `Your purchase of ${name} with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.`;
+
+/** What holds a split back: why, and the other item whose purchase does, when its record names it. */
+type SplitBlocked = { message: string; held?: HeldItem };
+
+/** The page of the item `line` (an asset key) names; null for a key that names none. */
+function itemPage(line: string): string | null {
+  const asset = parseAssetKey(line);
+  if (!asset) return null;
+  return asset.token.kind === "item" ? `/shop/item/${asset.contract}/${asset.token.itemId}` : `/shop/token/${asset.contract}/${asset.token.tokenId}`;
+}
+
+/** Another item's split, held: named, with its page, when its record says which item it is; said generically otherwise. */
+function inFlightBlock({ line, hold }: { line: string; hold: SplitHold }): SplitBlocked {
+  const name = hold.itemName?.trim();
+  if (!name) return { message: SPLIT_IN_FLIGHT };
+  const href = itemPage(line);
+  return { message: splitInFlightOf(name), ...(href ? { held: { name, href } } : {}) };
+}
 /** How often, and how far apart, the sale asks again for the grant's lock right after this tab's own approval let it go. */
 const GRANT_LOCK_TRIES = 5;
 const GRANT_LOCK_RETRY_MS = 50;
@@ -245,17 +268,19 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
    * Why a split of this item by `account` can't start now, read at once (so the approval's `live` check, under its lock,
    * can ask it): another item's split that may still spend the allowance (its credit not proven over by the chain), any
    * hold of this item while it is kept (`sameItem`; a credit proven over doesn't let it go, only its purchase found out),
-   * or purchases this browser can't read. Null: nothing holds it.
+   * or purchases this browser can't read. Another item's is named, with its page, when its record names it. Null: nothing
+   * holds it.
    */
-  function splitBlock(account: string, sameItem: boolean): string | null {
+  function splitBlock(account: string, sameItem: boolean): SplitBlocked | null {
     let live: { line: string; hold: SplitHold }[];
     try {
       live = splitsInFlight(account, Date.now(), (l, hold) => l !== lineId && hold.creditId !== null && creditsOver.current.has(hold.creditId));
     } catch {
-      return SPLITS_UNREADABLE;
+      return { message: SPLITS_UNREADABLE };
     }
-    if (sameItem && live.some((held) => held.line === lineId)) return SPLIT_ITEM_HELD;
-    return live.some((held) => held.line !== lineId) ? SPLIT_IN_FLIGHT : null;
+    if (sameItem && live.some((held) => held.line === lineId)) return { message: SPLIT_ITEM_HELD };
+    const other = live.find((held) => held.line !== lineId);
+    return other ? inFlightBlock(other) : null;
   }
   const [notice, setNotice] = useState<string | null>(null);
   // A run that proved it sent nothing, whose record the storage kept: its attempt, and the outcome shown once it clears.
@@ -327,7 +352,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     await proveCreditsOver(ctx.buyer);
     const blockedNow = splitBlock(ctx.buyer, false);
     if (blockedNow) {
-      setPhase({ kind: "error", message: blockedNow });
+      setPhase({ kind: "error", ...blockedNow });
       return;
     }
     const agreedTerms: Terms = { offer, mixed };
@@ -389,7 +414,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // appeared since counts as in flight). This item's own is the claim's to read, just below.
       const inFlight = splitBlock(ctx.buyer, false);
       if (inFlight) {
-        setPhase({ kind: "error", message: inFlight });
+        setPhase({ kind: "error", ...inFlight });
         return;
       }
       // The item's claim, read under its lock: a split another tab or surface sent since this screen opened is shown
@@ -424,6 +449,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     const kept: { sale: SplitSale | null; reverted: string | null } = { sale: null, reverted: null };
     // Set once the sale itself goes to the relay or the wallet: before it, a failure is the MANA approval's, and no sale left.
     let dispatched = false;
+    // Kept with each record, so a purchase of another item this one holds back can say which item to check.
+    const itemName = line.display.name;
     /** Held for this account and item, with what is known of it, and shown confirming. */
     /** Whether its record now says so; if not, the notice says it can only be checked by its credit later. */
     const holdConfirming = (record: SplitHold): boolean => {
@@ -492,7 +519,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       /** Keeps `sale` as this run's record before the sale may leave: a browser that cannot keep it sends nothing. */
       const recordSale = (sale: SplitSale) => {
         kept.sale = sale;
-        if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: saleChain, creditId: id, creditExpiresAt, sale })) {
+        if (!writeSplitHold(ctx.buyer, lineId, { at: Date.now(), attempt, txHash: null, chainId: saleChain, creditId: id, creditExpiresAt, sale, itemName })) {
           throw new SplitNotRecorded(NOT_RECORDED);
         }
       };
@@ -539,7 +566,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // A successful receipt for the hash the rail returned is no proof on its own (the relay may answer another
       // transaction's hash): it completes only once attributed to this sale, as Check again does; until then it is held,
       // with that hash, and shown confirming.
-      const returned: SplitHold = { at: Date.now(), attempt, txHash: hash, chainId: sentChain, creditId: id, creditExpiresAt, sale: kept.sale };
+      const returned: SplitHold = { at: Date.now(), attempt, txHash: hash, chainId: sentChain, creditId: id, creditExpiresAt, sale: kept.sale, itemName };
       if (!(await settledLive(returned))) holdConfirming(returned);
     } catch (e) {
       if (creditId) guard.current.submitFinished(creditId);
@@ -548,13 +575,13 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       // a credit the node retired stays spendable until it expires. So the revert releases nothing and retires no credit:
       // the node's record may settle it at once (a replay it settled, or the credit spent elsewhere); if not, it is held.
       if (dispatched && kept.reverted && creditId && kept.sale) {
-        const revertedAs: SplitHold = { at: Date.now(), attempt, txHash: kept.reverted, chainId: sentChain, creditId, creditExpiresAt, sale: kept.sale };
+        const revertedAs: SplitHold = { at: Date.now(), attempt, txHash: kept.reverted, chainId: sentChain, creditId, creditExpiresAt, sale: kept.sale, itemName };
         if (await settledLive(revertedAs)) return;
       }
       // A sale handed off that may have consumed its credit (a broadcast, reverted or not, an answer the relay or the
       // wallet lost) is still confirming: held for this account and item, never offered again until it is found out.
       if (dispatched && (stillPending || (creditId !== null && guard.current.mayBeConsumed(creditId)))) {
-        holdConfirming({ at: Date.now(), attempt, txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt, sale: kept.sale });
+        holdConfirming({ at: Date.now(), attempt, txHash: sentHash, chainId: sentChain, creditId, creditExpiresAt, sale: kept.sale, itemName });
         return;
       }
       if (creditId && !guard.current.mayBeConsumed(creditId)) await cancelUsdIntents([creditId], ctx.client).catch(() => 0);
@@ -682,7 +709,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           // a dialog closed or terms changed meanwhile leave no grant, and neither does a hold of this item by another
           // purchase, nor another item's split that may still spend the allowance (this approve would set it from under it).
           live: () => {
-            heldBack = splitBlock(ctx.buyer, true);
+            heldBack = splitBlock(ctx.buyer, true)?.message ?? null;
             return heldBack === null && stillAgreed(agreedTerms)();
           },
         });
@@ -791,6 +818,13 @@ export default function CombinedBuy({ line, offer, mixed, onClose, onDone, porta
             {phase.kind === "error" ? (
               <p className="shop-orderbuy__error" role="alert">
                 {phase.message}
+              </p>
+            ) : null}
+            {phase.kind === "error" && phase.held ? (
+              <p className="shop-orderbuy__note">
+                <a href={phase.held.href} data-testid="combined-held-item">
+                  Open {phase.held.name}
+                </a>
               </p>
             ) : null}
             <div className="shop-orderbuy__actions">

@@ -12,6 +12,7 @@ import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
 import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, relayedApproval, type FakeHandlers } from "../../checkout/fakes";
+import { evmAddress } from "@shop/model/address";
 import { CHAIN } from "@shop/model/chain";
 import { usdCents } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
@@ -498,6 +499,26 @@ describe("Buy now's dialog", () => {
     await act(async () => fireEvent.click(confirm));
     expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
     expect(authorizations(demo)).toHaveLength(1);
+  });
+
+  it("a split held back by another item's purchase names that item, with a link to its page, and asks for nothing", async () => {
+    const { demo, line } = renderBuy({ session: "web3", balanceCents: 30, handlers: { authorizeCredit: singleCredit } }, { tweak: holdMana(2n * 10n ** 18n) });
+    // Another item's split, from another tab, its credit still spendable.
+    const other = splitHoldLine({ ...line.asset, contract: evmAddress(`0x${"ab".repeat(20)}`) });
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${other}`,
+      JSON.stringify({ at: Date.now(), attempt: "another", txHash: null, chainId: 137, creditId: `0x${"0f".repeat(32)}`, creditExpiresAt: Math.floor(Date.now() / 1000) + 300, itemName: "Neon Visor" }),
+    );
+    const dialog = await settledDialog();
+    const confirm = within(await within(dialog).findByTestId("payment-method-step")).getByRole("button", { name: "Buy" });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    await act(async () => fireEvent.click(confirm));
+    expect(await within(dialog).findByTestId("buy-error", undefined, { timeout: 5000 })).toHaveTextContent("Your purchase of Neon Visor with Credits and MANA is still confirming.");
+    const itemId = line.asset.token.kind === "item" ? line.asset.token.itemId : "";
+    expect(within(dialog).getByTestId("buy-error-link")).toHaveTextContent("Open Neon Visor");
+    expect(within(dialog).getByTestId("buy-error-link")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCredit")).toBe(false);
   });
 
   it("during the split's MANA approval nothing closes the dialog: not Escape, not a close; only the approval's own Cancel", async () => {

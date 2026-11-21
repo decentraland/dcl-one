@@ -188,6 +188,8 @@ const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another tra
 const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
 /** Another of the buyer's purchases with Credits and MANA, of another item, may still spend the MANA it approved. */
 const SPLIT_IN_FLIGHT = 'Another purchase with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.'
+/** The same, naming the item, when that purchase's record says which item it is. */
+const splitInFlightOf = (name: string): string => `Your purchase of ${name} with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.`
 const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.'
 const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
 /** The buyer's other purchases with Credits and MANA can't be read here, so nothing proves none may spend the allowance. */
@@ -1075,8 +1077,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * can ask it): a split of this item held by another purchase, another item's split that may still spend the allowance
    * (splitsInFlight), or purchases it can't read. A hold of one of this page's own purchases that is over never counts.
    * This item's hold counts for as long as it is kept (a credit proven over doesn't let it go: only its purchase found out
-   * does, as the item's claim reads it); another item's stops counting once its credit is proven over (proveCreditsOver).
-   * Null: nothing holds it.
+   * does, as the item's claim reads it); another item's stops counting once its credit is proven over (proveCreditsOver),
+   * and is named when its record names it. Null: nothing holds it.
    */
   const splitBlock = (buyer: string, line: string): string | null => {
     let live: { line: string; hold: SplitHold }[]
@@ -1086,7 +1088,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return SPLIT_UNCHECKABLE
     }
     if (live.some((held) => held.line === line)) return SPLIT_ITEM_HELD
-    return live.length > 0 ? SPLIT_IN_FLIGHT : null
+    const other = live.find((held) => held.line !== line)
+    if (!other) return null
+    const name = other.hold.itemName?.trim()
+    return name ? splitInFlightOf(name) : SPLIT_IN_FLIGHT
   }
 
   /** Read only: whether another page holds `name` now (what an `ifAvailable` request would find); false where it can't say. */
@@ -2195,7 +2200,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
                     const sale: SplitSale = { buyer: quote.buyer, chainId, manager: manager.address, creditId: credit.id, creditWei: split.creditWei.toString(), gapWei: split.gapWei.toString(), target: split.target, selector: split.selector, callData: split.callData, hold: split.hold, creditExpiresAt: credit.expiresAt }
                     // The shared hold, with the sale's terms so either surface can find it out, written and read back
                     // before anything is signed: unkept, nothing goes.
-                    const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt, sale })
+                    // The item's name too, so a purchase of another item this one holds back can say which item to check.
+                    const itemName = part.priced[0]?.line.display.name ?? null
+                    const held = writeSplitHold(quote.buyer, split.hold.line, { at: Date.now(), attempt: split.hold.attempt, txHash: null, chainId, creditId: credit.id, creditExpiresAt: credit.expiresAt, sale, itemName })
                     if (!held) return false
                     issued = credit
                     op.split = sale

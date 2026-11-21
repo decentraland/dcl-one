@@ -922,6 +922,38 @@ describe('the in-world purchase with MANA', () => {
       expect(w.shop.log.some((q) => q.name === 'authorizeCreditBatch')).toBe(false)
     })
 
+    it('names the other item when its record does, and says it generically when the record is from before names were kept', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      expect(writeSplitHold(BUYER, OTHER_LINE, { ...otherHold, itemName: 'Neon Visor' })).toBe(true)
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: 'Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.' })
+      expect(authorizeShown(p)).toBe(false)
+      // A record with no name: the generic notice.
+      localStorage.setItem(splitHoldKey(BUYER, OTHER_LINE), JSON.stringify(otherHold))
+      const again = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await again.open()
+      ;(await again.until('method')).handlers.onPay?.('split')
+      expect((await again.until('failed')).view).toMatchObject({ message: 'Another purchase with Credits and MANA is still confirming. Try again once it’s done. Nothing was charged here.' })
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
+    it('reads a record whose item name is not text as one it can\'t read: nothing asked', async () => {
+      on()
+      const w = world()
+      splitShop(w)
+      localStorage.setItem(splitHoldKey(BUYER, OTHER_LINE), JSON.stringify({ ...otherHold, itemName: 42 }))
+      const p = page(w, { split: splitOn, creditsCents: 50, services: managed })
+      await p.open()
+      ;(await p.until('method')).handlers.onPay?.('split')
+      expect((await p.until('failed')).view).toMatchObject({ message: expect.stringContaining("can't read your other purchases") })
+      expect(authorizeShown(p)).toBe(false)
+      expect(w.relay.posts).toHaveLength(0)
+    })
+
     it('starts no split over another item\'s even where the allowance already covers the gap', async () => {
       on()
       const w = world()
@@ -1285,7 +1317,8 @@ describe('the in-world purchase with MANA', () => {
       ;(await p.until('method')).handlers.onPay?.('split')
       await p.until('pending')
       const held = readSplitHold(BUYER, HOLD_LINE)
-      expect(held).toMatchObject({ creditId: `0x${'a1'.repeat(32)}` })
+      // With the item's name, so a purchase of another item this one holds back can say which item to check.
+      expect(held).toMatchObject({ creditId: `0x${'a1'.repeat(32)}`, itemName: 'Golden Armour' })
       // What the web Shop's Buy finds: this item is held.
       expect(await claimSplitHold(createFakeLocks(), BUYER, HOLD_LINE)).toMatchObject({ kind: 'held' })
     })

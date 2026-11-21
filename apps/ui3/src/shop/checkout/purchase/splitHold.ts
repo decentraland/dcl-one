@@ -51,7 +51,9 @@ export const SPLIT_EXPIRY_CONFIRM_MS = 15 * 60 * 1000;
  * execution must carry to count as this split (none on a record from before they were kept: nothing settles it then).
  * `expiryProvenAt`: when the node was first seen to report its credit EXPIRED with its expiry proven by the chain's
  * finalized block time; the grace counts from it. `expiredSeenAt`: a sighting noted before that proof was asked (judged by
- * the local clock alone), read so a record keeping one still reads, and counted for nothing.
+ * the local clock alone), read so a record keeping one still reads, and counted for nothing. `itemName`: the item's name
+ * as the buyer saw it, so a purchase this one holds back can say which item to check (none on a record from before it was
+ * kept).
  */
 export type SplitHold = {
   at: number;
@@ -63,6 +65,7 @@ export type SplitHold = {
   sale?: SplitSale | null;
   expiredSeenAt?: number | null;
   expiryProvenAt?: number | null;
+  itemName?: string | null;
 };
 
 /**
@@ -123,6 +126,7 @@ function parseSplitHold(raw: string, strict = false): SplitHold | null {
       fits(hold.creditExpiresAt, "number") &&
       fits(hold.expiredSeenAt, "number") &&
       fits(hold.expiryProvenAt, "number") &&
+      fits(hold.itemName, "string") &&
       (hold.sale === undefined || hold.sale === null || isSplitSale(hold.sale));
     if (!typed) return null;
   }
@@ -136,6 +140,7 @@ function parseSplitHold(raw: string, strict = false): SplitHold | null {
     sale: isSplitSale(hold.sale) ? hold.sale : null,
     expiredSeenAt: typeof hold.expiredSeenAt === "number" ? hold.expiredSeenAt : null,
     expiryProvenAt: typeof hold.expiryProvenAt === "number" ? hold.expiryProvenAt : null,
+    itemName: typeof hold.itemName === "string" ? hold.itemName : null,
   };
 }
 

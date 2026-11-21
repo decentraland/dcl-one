@@ -16,6 +16,7 @@ import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval, spl
 import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
 import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
 import { evmAddress } from "@shop/model/address";
+import { tokenAsset } from "@shop/model/asset";
 import { CHAIN } from "@shop/model/chain";
 import { createDemo, DemoShell } from "../../checkout/demo";
 import { usdCents } from "@shop/model/money";
@@ -251,7 +252,8 @@ describe("buying with Credits and MANA", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/still confirming/, {}, { timeout: 8000 })).toBeTruthy();
-    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).not.toBeNull();
+    // With the item's name, so a purchase of another item it holds back can say which item to check.
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.itemName).toBe("Rainbow Hat");
     unmount();
     again();
     expect(await screen.findByText(/still confirming/)).toBeTruthy();
@@ -422,6 +424,8 @@ describe("a split whose outcome is not known", () => {
     });
     // Its envelope, the identity of those very bytes, was kept before they went to the relay.
     expect(seen.record?.sale?.envelope).toBe(splitEnvelope(seen.posted!));
+    // And the item's name, so a purchase of another item it holds back can say which item to check.
+    expect(seen.record?.itemName).toBe("Rainbow Hat");
     answer();
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
   });
@@ -634,6 +638,8 @@ describe("a split whose outcome is not known", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
     expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    // Its record, from before names were kept, says no item: nothing to link to.
+    expect(screen.queryByTestId("combined-held-item")).toBeNull();
     // A run of it still preparing (no credit yet, a fresh hold) holds this one the same.
     anotherItemHeld(line, { creditId: null, creditExpiresAt: null });
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
@@ -756,6 +762,39 @@ describe("a split whose outcome is not known", () => {
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText(IN_FLIGHT)).toBeTruthy();
     expect(most).toBe(2);
+    expect(authorizations(demo)).toBe(0);
+  });
+
+  it("another item's split whose record names it is named, with a link to that item's page, where it can be checked again", async () => {
+    const { demo, line } = setup();
+    anotherItemHeld(line, { itemName: "Neon Visor" });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Your purchase of Neon Visor with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.")).toBeTruthy();
+    const itemId = line.asset.token.kind === "item" ? line.asset.token.itemId : "";
+    expect(screen.getByTestId("combined-held-item")).toHaveTextContent("Open Neon Visor");
+    expect(screen.getByTestId("combined-held-item")).toHaveAttribute("href", `/shop/item/0x${"ab".repeat(20)}/${itemId}`);
+    // A resale's hold links to the token's page.
+    localStorage.removeItem(`dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${anotherItem(line)}`);
+    const token = splitHoldLine(tokenAsset(CHAIN.POLYGON, evmAddress(`0x${"cd".repeat(20)}`), "42"));
+    localStorage.setItem(
+      `dcl-shop-buynow-split:v1:${BOOK.buyer.toLowerCase()}:${token}`,
+      JSON.stringify({ at: Date.now(), attempt: "resale", txHash: null, chainId: CHAIN.POLYGON, creditId: `0x${"2f".repeat(32)}`, creditExpiresAt: nowSeconds() + 300, itemName: "Rare Cape" }),
+    );
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("Your purchase of Rare Cape with Credits and MANA is still confirming. Try again once it's done. Nothing was charged here.")).toBeTruthy();
+    expect(screen.getByTestId("combined-held-item")).toHaveAttribute("href", `/shop/token/0x${"cd".repeat(20)}/42`);
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
+  });
+
+  it("a record of another purchase whose item name isn't text is one this browser can't read: nothing asked", async () => {
+    const { demo, line } = setup();
+    anotherItemHeld(line, { itemName: 42 });
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.")).toBeTruthy();
+    expect(screen.queryByTestId("combined-held-item")).toBeNull();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
     expect(authorizations(demo)).toBe(0);
   });
 
