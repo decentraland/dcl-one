@@ -17,6 +17,7 @@ import { areGizmosDisabled, getHiddenPanels } from '../../redux/ui';
 import { PanelName } from '../../redux/ui/types';
 import type { SdkContextValue } from '../../lib/sdk/context';
 import { useEntitiesWith } from '../sdk/useEntitiesWith';
+import { isMenuOpen } from '../useHotkey';
 
 const GIZMO_FOR_MODE: Record<TransformInputMode, GizmoType> = {
   position: GizmoType.POSITION,
@@ -127,7 +128,7 @@ export function useTransformInput(sdk: SdkContextValue | null): TransformInputVi
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (isTypingTarget(event.target)) return;
+      if (isTypingTarget(event.target) || isMenuOpen()) return;
       // Modifier combos are the editor's own shortcuts (undo, copy, duplicate…)
       // and are never part of this grammar.
       if (event.metaKey || event.ctrlKey || event.altKey) return;
