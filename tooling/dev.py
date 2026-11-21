@@ -132,9 +132,10 @@ def livekit_credentials():
 
 def ingress_ports_free(base):
     # Valkey, the ingress HTTP relay and its health check on loopback; RTMP on every interface, where
-    # livekit-ingress always listens (it has no bind address setting).
+    # livekit-ingress always listens (it has no bind address setting). +4 is the message router's metrics.
     return bindable([(socket.SOCK_STREAM, base, '127.0.0.1'), (socket.SOCK_STREAM, base + 1, '0.0.0.0'),
-                     (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1')])
+                     (socket.SOCK_STREAM, base + 2, '127.0.0.1'), (socket.SOCK_STREAM, base + 3, '127.0.0.1'),
+                     (socket.SOCK_STREAM, base + 4, '127.0.0.1')])
 
 
 def ingress_block(base):
@@ -147,10 +148,16 @@ def ingress_block(base):
     raise RuntimeError('No free ports for LiveKit Ingress; set ingress_port in .cache/dev/settings.json.')
 
 
+def message_router_key():
+    # 32 bytes, base64url without padding: the format both the API and the router parse.
+    return base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode()
+
+
 def missing_settings(config):
     """The generated settings `config` lacks: the LiveKit pair, the moderator token the API checks and Pulse
     polls its ban snapshots with (`catalyst secrets init` derives the same pair for a deployment), the
-    LiveKit Ingress port block and the password LiveKit and the ingress use for Valkey."""
+    LiveKit Ingress port block, the password LiveKit and the ingress use for Valkey and the key the
+    message router signs its token requests with."""
     added = {}
     if 'LIVEKIT_API_SECRET' not in config:
         added.update(livekit_credentials())
@@ -160,6 +167,8 @@ def missing_settings(config):
         added['ingress_port'] = ingress_block(config['port'])
     if 'VALKEY_PASSWORD' not in config:
         added['VALKEY_PASSWORD'] = secrets.token_hex(32)
+    if 'MESSAGE_ROUTER_KEY' not in config:
+        added['MESSAGE_ROUTER_KEY'] = message_router_key()
     return added
 
 
@@ -258,6 +267,58 @@ def cast_settings(config):
     if 'CAST_BOT_BIN' in env and not os.access(env['CAST_BOT_BIN'], os.X_OK):
         print(f"settings.json: cast_bot_bin {env.pop('CAST_BOT_BIN')} is not executable; Cast presentations answer 503",
               file=sys.stderr)
+    return env
+
+
+# Community chat on this stack, from settings.json. `"message_router_bin"`: the built `catalyst-message-router`
+# (`cargo build -p catalyst-message-router --features livekit` in services/catalyst), run as the `message-router`
+# task; unset, or a path that is not executable (a warning, never a stop), community chat is not routed.
+def message_router_bin(config):
+    path = config.get('message_router_bin')
+    if not path:
+        return None
+    if not os.access(path, os.X_OK):
+        print(f'settings.json: message_router_bin {path} is not executable; community chat is not routed',
+              file=sys.stderr)
+        return None
+    return str(path)
+
+
+def message_router_identity_prefix(config):
+    # The Explorer trusts `message-router-prd-0` when its base domain is decentraland.org, else `-dev-0`
+    # (bevy-explorer crates/comms/src/community_chat.rs). /play passes the engine a base domain only when the
+    # page host is a bare dotted name (apps/ui3/src/play/lib/baseDomain.ts); a loopback page names a port, so
+    # the engine keeps decentraland.org.
+    origin = public(config)
+    if origin is None:
+        return 'message-router-prd'
+    scheme, host, _, port = origin
+    if port not in (None, {'http': 80, 'https': 443}[scheme]):
+        return 'message-router-prd'
+    host = host.lower()
+    for apex in ('decentraland.org', 'decentraland.zone'):
+        if host == apex or host.endswith('.' + apex):
+            host = apex
+    bare = re.fullmatch(r'[a-z0-9-]+(\.[a-z0-9-]+)+', host)
+    return 'message-router-dev' if bare and host != 'decentraland.org' else 'message-router-prd'
+
+
+def message_router_metrics_port(config):
+    return ingress_ports(config)[3] + 1
+
+
+def message_router_env(config):
+    # The router holds no LiveKit secret: the API mints its token at the internal route.
+    env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE')
+           if key in os.environ}
+    env.update({
+        'DATABASE_URL': database_url(config),
+        'MESSAGE_ROUTER_TOKEN_URL': f"http://127.0.0.1:{config['port']}/internal/message-router/token/v1",
+        # Loopback signaling, not the public front the token names behind a public origin.
+        'MESSAGE_ROUTER_LIVEKIT_URL': f'ws://127.0.0.1:{livekit_ports(config)[0]}',
+        'MESSAGE_ROUTER_KEY': config['MESSAGE_ROUTER_KEY'], 'MESSAGE_ROUTER_REPLICA': '0',
+        'MESSAGE_ROUTER_METRICS_BIND': f'127.0.0.1:{message_router_metrics_port(config)}',
+    })
     return env
 
 
@@ -564,6 +625,9 @@ def runtime_env(config, refuse_exposed_relayer=True):
     # The stream links of /cast/generate-stream-link name this stack's Cast pages, not decentraland.org's.
     env['CAST2_URL'] = env['PUBLIC_URL'] + '/cast'
     env.update(cast_settings(config))
+    if message_router_bin(config):
+        env.update(MESSAGE_ROUTER_KEY=config['MESSAGE_ROUTER_KEY'],
+                   MESSAGE_ROUTER_IDENTITY_PREFIX=message_router_identity_prefix(config))
     # Explicit development settings, without a production posture/restore gate.
     # Authentication and mirrored-row ownership checks still apply.
     if config['profile'] == 'offline':
@@ -911,6 +975,11 @@ def project(config, postgres_only=False):
         'web-install': process('web-install'), 'sites': sites, 'valkey': valkey, 'livekit': livekit,
         'ingress': ingress, 'pulse': pulse, 'nats': nats,
     }
+    if message_router_bin(config):
+        # The router exits when it cannot stay in the room (LiveKit or the API restarting); restart it as Pulse.
+        router = process('message-router', {'livekit': 'process_healthy', 'api': 'process_healthy'})
+        router['availability'] = dict(pulse['availability'])
+        processes['message-router'] = router
     if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
         # runs in `serve`: its fold debits the credits ledger.
@@ -1062,7 +1131,7 @@ def import_asset_catalog(config, binary):
 # Long-running tasks and the signal that stops each one cleanly.
 SERVICES = {'postgres': signal.SIGINT, 'api': signal.SIGTERM, 'sites': signal.SIGTERM, 'index': signal.SIGTERM,
             'valkey': signal.SIGTERM, 'livekit': signal.SIGTERM, 'ingress': signal.SIGTERM,
-            'pulse': signal.SIGTERM, 'nats': signal.SIGTERM}
+            'pulse': signal.SIGTERM, 'nats': signal.SIGTERM, 'message-router': signal.SIGTERM}
 
 
 def started(pid):
@@ -1158,6 +1227,10 @@ def task(name):
         certificate, key = pulse_certificate(config)
         binary = BACKEND / 'target/debug/catalyst'
         os.execve(binary, [str(binary), 'pulse'], pulse_env(config, certificate, key))
+    elif name == 'message-router':
+        if not (binary := message_router_bin(config)):
+            raise SystemExit('settings.json: message_router_bin is unset or not executable')
+        os.execve(binary, [binary], message_router_env(config))
     elif name == 'index':
         binary = BACKEND / 'target/debug/catalyst'
         os.execve(binary, [str(binary), 'index'], runtime_env(config))
@@ -1585,8 +1658,8 @@ def main():
         commands.add_parser(command)
     commands.add_parser('up').add_argument('--postgres-only', action='store_true',
                                           help='Start only PostgreSQL for backend tests')
-    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'service'))
-    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats'))
+    commands.add_parser('logs').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'message-router', 'service'))
+    commands.add_parser('restart').add_argument('service', choices=('api', 'api-build', 'sites', 'postgres', 'web-install', 'index', 'valkey', 'livekit', 'ingress', 'pulse', 'nats', 'message-router'))
     commands.add_parser('service', help='Run the stack as a per-user systemd unit or LaunchAgent').add_argument(
         'action', choices=('install', 'uninstall'))
     wait_parser = commands.add_parser('wait')
@@ -1600,7 +1673,7 @@ def main():
     commands.add_parser('trades-snapshot', help="Write the mirrored trades to a gzipped SQL file").add_argument('out')
     commands.add_parser('_task', help='Internal supervised process').add_argument('task', choices=(
         'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'valkey', 'valkey-ready',
-        'livekit', 'ingress', 'pulse', 'nats'))
+        'livekit', 'ingress', 'pulse', 'nats', 'message-router'))
     args = parser.parse_args()
     if args.command == '_task':
         task(args.task)

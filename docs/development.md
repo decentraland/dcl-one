@@ -22,8 +22,8 @@ Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. Behind a [public origin](#serving-over-https) Pulse's ENet is UDP 7777 instead.
 The ingress takes the first free block 10000 above the base (`ingress_port`):
-Valkey +0, RTMP +1 (every interface), the ingress relay +2 and health +3. An occupied
-saved port fails startup.
+Valkey +0, RTMP +1 (every interface), the ingress relay +2, health +3 and the message
+router's `/metrics` and `/health` +4. An occupied saved port fails startup.
 
 A stream key from `/scene-stream-access` streams to the `rtmp://…/x` URL it comes with
 (`foundation-dev status` prints it). Behind a public origin that URL names the origin's
@@ -51,6 +51,24 @@ and shows no other avatars:
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="$(mktemp -d)" \
   --webtransport-developer-mode --ignore-certificate-errors-spki-list=<hash from status>
 ```
+
+Community chat needs the message router, which the stack runs only when
+`.cache/dev/settings.json` names its binary:
+
+```sh
+(cd services/catalyst && cargo build -p catalyst-message-router --features livekit --bin catalyst-message-router)
+# settings.json: "message_router_bin": "<checkout>/services/catalyst/target/debug/catalyst-message-router"
+foundation-dev down && foundation-dev up
+```
+
+The `message-router` task then starts after LiveKit and the API, and restarts
+whenever it exits. It signs its token requests with the generated
+`MESSAGE_ROUTER_KEY`, and the API mints its LiveKit identity. That identity is
+`message-router-prd-0` on loopback or behind an origin with a port, and
+`message-router-dev-0` behind a bare host. Those are the identities `/play`'s
+Explorer trusts. A native Explorer trusts `-dev-0` only when started with a
+`--base-domain` other than decentraland.org. A path that is not executable only
+prints a warning.
 
 `/about` answers 503 while Pulse is down. Pulse exits when it loses its generation lease (a PostgreSQL
 restart, or a keepalive slower than the lease after sleep or under load), and the supervisor starts it
