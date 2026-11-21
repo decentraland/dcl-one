@@ -16,6 +16,7 @@ import { requireContracts } from "../../checkout/chain/contracts";
 import { batchAuthorization, createFakeLocks, creatorTrade, relayedApproval, splitSaleTransaction, type FakeHandlers } from "../../checkout/fakes";
 import { encodeExecuteMetaTransaction } from "../../checkout/chain/metatx";
 import { encodeAuthorizationCall, exactGrantLock, getManaSpendingAuthorization, metaTxTargetFor } from "../../checkout/lib/authorizations";
+import { webLock } from "../../checkout/lib/web-lock";
 import { evmAddress } from "@shop/model/address";
 import { tokenAsset } from "@shop/model/asset";
 import { CHAIN } from "@shop/model/chain";
@@ -1444,6 +1445,93 @@ describe("a split whose outcome is not known", () => {
     });
     expect(signatures(demo)).toBe(0);
     expect(demo.relay.posts).toHaveLength(0);
+    expect(authorizations(demo)).toBe(0);
+    expect([...locks.held]).toEqual([]);
+  });
+
+  it("a dialog closed while its listing is read again after the approval lets the lock go at once: another window takes it, and the late answer sends nothing", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const name = exactGrantLock(getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address), BOOK.buyer);
+    // The store's listing: read when the purchase starts, at the approve click, and once the approval is in; that one waits.
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => {
+      if (++reads === 3) await waiting;
+      return store(...args);
+    };
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(reads).toBe(3), { timeout: 5000 });
+    expect(locks.held.has(name)).toBe(true);
+    shown.unmount();
+    // Another window asks for the same lock before that read answers (once the browser has let it go), and gets it.
+    await act(async () => {});
+    const other = await webLock(locks, name);
+    expect(other).not.toBeNull();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    // Only the approval went out, nothing was reserved, and the other window still holds its lock.
+    expect(demo.relay.posts).toHaveLength(1);
+    expect(relayedApproval(demo.relay.posts[0])).not.toBeNull();
+    expect(authorizations(demo)).toBe(0);
+    expect(locks.held.has(name)).toBe(true);
+    other!();
+    await act(async () => {});
+    expect(locks.held.has(name)).toBe(false);
+  });
+
+  it("a dialog closed once its sale is under way keeps the lock until that sale is done: no other window takes it meanwhile", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const name = exactGrantLock(getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address), BOOK.buyer);
+    // The sale's own POST to the relay waits.
+    const relayed = demo.services.fetchImpl!;
+    let saleSent = false;
+    let answer!: () => void;
+    const waiting = new Promise<void>((resolve) => (answer = resolve));
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      if (!relayedApproval(JSON.parse(String(args[1]?.body)))) {
+        saleSent = true;
+        await waiting;
+      }
+      return relayed(...args);
+    }) as typeof fetch;
+    const shown = again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    await waitFor(() => expect(saleSent).toBe(true), { timeout: 5000 });
+    shown.unmount();
+    await act(async () => {});
+    // The sale is out: its lock stays with it, so no other window can start beside it.
+    expect(await webLock(locks, name)).toBeNull();
+    await act(async () => {
+      answer();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    await waitFor(() => expect(locks.held.has(name)).toBe(false), { timeout: 5000 });
+  });
+
+  it("a listing read again after the approval that never answers gives way, the dialog still open: no credit, no sale, the lock let go", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    demo.services.listingReadMs = 50;
+    const locks = demo.services.locks as ReturnType<typeof createFakeLocks>;
+    const store = demo.services.resolvers!.store;
+    let reads = 0;
+    demo.services.resolvers!.store = async (...args: Parameters<typeof store>) => (++reads === 3 ? new Promise<never>(() => {}) : store(...args));
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText("We couldn't complete the purchase. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
     expect(authorizations(demo)).toBe(0);
     expect([...locks.held]).toEqual([]);
   });

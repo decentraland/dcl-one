@@ -125,7 +125,34 @@ const SPLIT_ITEM_HELD = "A purchase of this item with Credits and MANA is still 
 const SPLITS_UNREADABLE = "This browser can't read your other purchases with Credits and MANA right now, so nothing was charged here.";
 
 /** The exact grant's lock an approval took and hands to its sale: how to let it go, its name, and the terms it was for. */
-type HeldGrant = { release: () => void; name: string; terms: Terms };
+type HeldGrant = { release: () => void; released: () => boolean; name: string; terms: Terms };
+
+/** `release` as a HeldGrant: let go once, however many times it is asked (the sale, a failure and an unmount may all ask). */
+function heldGrant(release: () => void, name: string, terms: Terms): HeldGrant {
+  let gone = false;
+  return {
+    release: () => {
+      if (gone) return;
+      gone = true;
+      release();
+    },
+    released: () => gone,
+    name,
+    terms,
+  };
+}
+
+/** How long the listing may take to be read again after an approval, under the lock it kept; past it, nothing goes. */
+const LISTING_READ_MS = 10_000;
+
+/** `promise`, or a rejection once `ms` passed: a read that stalls doesn't keep a lock with it. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("The listing took too long to read")), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
 
 /** What holds a split back: why, and the other item whose purchase does, when its record names it. */
 type SplitBlocked = { message: string; held?: HeldItem };
@@ -407,18 +434,27 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
     }
     let target: PurchaseTarget;
     try {
-      target = known ?? (await resolveTarget(ctx, agreedTerms.offer));
+      // After an approval, read within LISTING_READ_MS: the lock it kept waits on this read, and a dialog closed meanwhile
+      // lets the lock go at once (its unmount), whether the read ever answers or not.
+      target = known ?? (await (held ? within(resolveTarget(ctx, agreedTerms.offer), services.listingReadMs ?? LISTING_READ_MS) : resolveTarget(ctx, agreedTerms.offer)));
     } catch (e) {
+      if (held && handedGrant.current === held) handedGrant.current = null;
       held?.release();
       setPhase({ kind: "error", message: friendlyError(e, FALLBACK, { sale: true }) });
       return;
     }
     const grantName = exactGrantLock(spendingAuth(target), ctx.buyer);
-    if (held && (held.name !== grantName || !stillAgreed(agreedTerms)())) {
-      // Another manager than the one approved, or a dialog closed (or terms changed) while the listing was read again.
-      held.release();
-      if (held.name !== grantName) setPhase({ kind: "error", message: FALLBACK });
-      return;
+    if (held) {
+      // From here the sale keeps the lock through its hand-off: an unmount no longer lets it go (the sale's `live` ends it).
+      if (handedGrant.current === held) handedGrant.current = null;
+      // Let go already (the dialog closed while the listing was read: another window may hold it now), another manager than
+      // the one approved, or terms or account changed: nothing is reserved or sent.
+      if (held.released() || held.name !== grantName || !stillAgreed(agreedTerms)()) {
+        held.release();
+        // Said to a dialog still on this purchase (its account changed, or another manager); a closed one shows nothing.
+        if (mounted.current && terms.current === agreedTerms) setPhase({ kind: "error", message: FALLBACK });
+        return;
+      }
     }
     // The exact grant's lock, then the item's, in every window in that order: the sale reconciles and spends the manager's
     // allowance with no approval starting beside it, and holds the item's record from its first read to its last write,
@@ -755,14 +791,17 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         release?.();
         throw e instanceof GrantCancelledError && heldBack ? new GrantCancelledError(heldBack) : e;
       }
-      if (release) handedGrant.current = { release, name: grantName, terms: agreedTerms };
+      if (release) handedGrant.current = heldGrant(release, grantName, agreedTerms);
     },
     approved: () => {
       const ctx = context();
+      // The lock stays where the unmount finds it until the sale takes it over, after reading the listing again (`pay`).
       const handed = handedGrant.current;
-      handedGrant.current = null;
       if (mounted.current && ctx && terms.current && (!handed || handed.terms === terms.current)) void pay(ctx, terms.current, undefined, handed ?? undefined);
-      else handed?.release();
+      else {
+        handedGrant.current = null;
+        handed?.release();
+      }
     },
     declined: () => setPhase({ kind: "error", message: "MANA spending was not approved, so nothing was bought." }),
     reset: () => {
