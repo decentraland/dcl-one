@@ -415,7 +415,9 @@ difference not listed here is a gap, not a decision.
   names no header, and sets `X-Content-Type-Options: nosniff`. Upstream
   answers `Access-Control-Allow-Origin: *`. `/world-storage` reflects any
   `Origin` the same way but never sends `Access-Control-Allow-Credentials`:
-  signed fetch carries its auth in headers, not cookies.
+  signed fetch carries its auth in headers, not cookies. Upstream
+  world-storage reflects only the origins that match its `CORS_ORIGINS`
+  patterns and exposes `ETag, Retry-After`.
 - **`/available-content`** answers a cid on the content denylist as
   `available: false`.
 - **`POST /entities/active`** answers a body that is not JSON with 400
