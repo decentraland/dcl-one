@@ -2970,6 +2970,53 @@ async fn a_live_ingress_with_the_flag_down_is_flagged_and_capped() {
     crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
 }
 
+/// A key that expires during a broadcast keeps the stream; the key job's
+/// first pass after the broadcast ends retires it.
+#[tokio::test]
+async fn an_expired_key_is_retired_after_its_broadcast_ends() {
+    // A database of its own: the pass reads every active credential.
+    let Some(pool) = own_db().await else { return };
+    let (_, room, metadata) = seeded_scene(&pool).await;
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = created_at WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let state = || async {
+        sqlx::query_as::<_, (bool, Option<String>)>(
+            "SELECT a.active, c.notification_kind FROM social.scene_stream_access a \
+             LEFT JOIN social.scene_stream_cleanup c ON c.access_id = a.id WHERE a.id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let pass = crate::gatekeeper::streaming::key_expiry_pass_for_test;
+
+    pass(&h.state).await;
+    assert_eq!(
+        state().await,
+        (true, None),
+        "the live broadcast keeps its key"
+    );
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 0);
+
+    report_ingress(&h, &ingress, "ENDPOINT_INACTIVE");
+    ingress_webhook(&h, "ingress_ended", &ingress).await;
+    assert!(!streaming_flag(&pool, id).await, "the broadcast ended");
+    pass(&h.state).await;
+    assert_eq!(
+        state().await,
+        (false, Some("streaming_key_expired".into())),
+        "the ended broadcast's key expires"
+    );
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
+}
+
 /// The same lost webhook, before the pass: a link request that would
 /// replace the credential is refused as for a live broadcast.
 #[tokio::test]

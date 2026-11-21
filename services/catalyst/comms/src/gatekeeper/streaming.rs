@@ -68,6 +68,12 @@ pub(crate) async fn ttl_pass_for_test(state: &CommsState, id: Uuid) -> bool {
     jobs::enqueue(state, id, cut).await.unwrap()
 }
 
+/// The key expiry job's pass, for tests with a database of their own.
+#[cfg(test)]
+pub(crate) async fn key_expiry_pass_for_test(state: &CommsState) {
+    jobs::expire_keys(state).await.unwrap();
+}
+
 pub const PATH: &str = "/scene-stream-access";
 pub const FOUR_DAYS_MS: i64 = 4 * 24 * 60 * 60 * 1000;
 pub const STREAM_ACCESS_NOT_FOUND_MSG: &str = "No active streaming access found for place";
