@@ -27,6 +27,7 @@ import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { useShopServices } from "./services";
 import { cartOfferFetcher, useOfferSource } from "../detail/offers";
+import { useCreditsManaSplit } from "../discovery/flags";
 import { needsMarketplace, useMarketplaceAccess } from "../market/access";
 import type { ManaWei, UsdCents } from "@shop/model/money";
 import { creditsCeil } from "@shop/model/money";
@@ -197,18 +198,20 @@ export function useCheckout(
   }, [lines, revalidation.offers]);
 
   const unpriced = !fetchOffers || revalidation.status === "failed";
+  // Credits and MANA together, as this render holds the rollout: the MANA option's split and the cart's note about it.
+  const split = useCreditsManaSplit();
   const views = useMemo(() => {
     const out: Record<string, PaymentPresentation | null> = {};
     for (const line of lines) {
       const offer = offers[line.id];
       out[line.id] = offer
-        ? presentPayment(offer, session, { creditsBalance: balance?.balanceCents ?? null, manaBalance: manaBalance as ManaWei | null, report: () => {} })
+        ? presentPayment(offer, session, { creditsBalance: balance?.balanceCents ?? null, manaBalance: manaBalance as ManaWei | null, split, report: () => {} })
         : unpriced
           ? presentUnpriced(lineRule(line, session))
           : null;
     }
     return out;
-  }, [lines, offers, session, balance?.balanceCents, manaBalance, unpriced]);
+  }, [lines, offers, session, balance?.balanceCents, manaBalance, unpriced, split]);
 
   const partition = useMemo(() => {
     if (lines.length === 0) return null;

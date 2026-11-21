@@ -359,6 +359,16 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "LAND_AUTHZ_INDEX_ENABLED"),
     mirrored("indexes", "CREDITS_USAGE_INDEX_ENABLED"),
     mirrored("indexes", "SHOP_RENTALS_INDEX_ENABLED"),
+    // A pass of these walks makes its eth_getLogs calls (seven for Polygon's
+    // collections alone) whether or not a block held an event. A mirror pauses
+    // 30 s between the end of one pass and the start of the next, not 5 s.
+    row(
+        "indexes",
+        "MARKETPLACE_INDEX_INTERVAL_SECS",
+        Is("30"),
+        Default("5"),
+        Default("5"),
+    ),
     row(
         "indexes",
         "CREDITS_MANAGER_CONTRACT",
@@ -381,18 +391,14 @@ const ROWS: &[Row] = &[
     row(
         "upstreams",
         "ETH_RPC_URL",
-        Default(
-            "https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content by ETH_NETWORK",
-        ),
+        Default("https://rpc.decentraland.org/<mainnet|sepolia>?project=dcl-one by ETH_NETWORK"),
         Is(""),
         Is(""),
     ),
     row(
         "upstreams",
         "RPC_ENDPOINT_POLYGON",
-        Default(
-            "https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content by ETH_NETWORK",
-        ),
+        Default("https://rpc.decentraland.org/<polygon|amoy>?project=dcl-one by ETH_NETWORK"),
         Is(""),
         Is(""),
     ),
