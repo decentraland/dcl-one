@@ -229,7 +229,8 @@ export function splitTerms(opts: {
 
 /**
  * The purchase stopped being its caller's (`RailContext.live`: its dialog closed, or its terms changed) before its sale was
- * kept or signed: nothing of the sale was sent. Its credit is released like any purchase that failed before it left.
+ * kept or sent: after its approval, or while its own signature was asked. Nothing of the sale was sent, and its credit is
+ * released like any purchase that failed before it left.
  */
 export class SaleCancelledError extends Error {
   constructor() {
@@ -291,7 +292,15 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {
-      relayed = await buyOneGasless(ctx, { purchase, built, onSignedCall: ({ data }) => opts.onEnvelope?.(data) });
+      relayed = await buyOneGasless(ctx, {
+        purchase,
+        built,
+        // Signed, not yet kept or sent: a purchase gone while its wallet prompt was open sends nothing (as its approval).
+        onSignedCall: ({ data }) => {
+          if (ctx.live?.() === false) throw new SaleCancelledError();
+          opts.onEnvelope?.(data);
+        },
+      });
       opts.onBroadcast?.({ txHash: relayed });
       await waitForSettlement(ctx.reader, chainId, relayed, ctx.wait);
       return relayed;
@@ -320,6 +329,8 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
       purchase,
       built,
       onHandoff: (data) => {
+        // Right before the wallet is asked to send it: a purchase gone by now isn't handed over.
+        if (ctx.live?.() === false) throw new SaleCancelledError();
         opts.onEnvelope?.(data);
         handedOff = true;
       },

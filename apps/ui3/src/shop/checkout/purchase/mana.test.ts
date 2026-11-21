@@ -14,7 +14,7 @@ import { createFakeChain, createFakeLocks, createFakeRelay, createFakeShop, crea
 import { buildGroupUseCreditsArgs, groupPurchases } from "./credits";
 import type { SpendableCredit } from "./encoding";
 import { tradeManaPrice } from "./cart";
-import { buyMintWithCreditsAndMana, buyMintWithMana, buyWithCreditsAndMana, splitTerms, type MintToBuy, type SplitDispatch } from "./mana";
+import { buyMintWithCreditsAndMana, buyMintWithMana, buyWithCreditsAndMana, SaleCancelledError, splitTerms, type MintToBuy, type SplitDispatch } from "./mana";
 import type { RailContext } from "./rail";
 
 const MANA = 10n ** 18n;
@@ -127,6 +127,30 @@ describe("a split's dispatch, and the bytes it leaves as", () => {
     expect(asked("eth_sendTransaction")).toBe(1);
     expect(seen.envelope).toBe(wallet.sent[0]!.data);
     expect(wallet.sent[0]!.data).toBe(seen.dispatched!.useCredits);
+  });
+
+  it("a purchase no longer its caller's once its allowance is in place (its terms changed, say) is neither kept, signed nor sent", async () => {
+    const { relay, seen, outcome, asked } = await split({ live: () => false });
+    expect(outcome).toBeInstanceOf(SaleCancelledError);
+    expect(seen.order).toEqual([]);
+    expect(asked("eth_signTypedData_v4") + asked("eth_sendTransaction")).toBe(0);
+    expect(relay.posts).toHaveLength(0);
+  });
+
+  it("a purchase gone while its sale's signature is asked sends nothing: relayed, signed but never posted; from the wallet, never handed over", async () => {
+    // Still the caller's once its allowance is in place; gone by the time its sale would leave.
+    const liveOnce = () => {
+      let calls = 0;
+      return () => calls++ === 0;
+    };
+    const relayed = await split({ live: liveOnce() });
+    expect(relayed.outcome).toBeInstanceOf(SaleCancelledError);
+    expect(relayed.seen.order).toEqual(["dispatch"]);
+    expect(relayed.asked("eth_signTypedData_v4")).toBe(1);
+    expect(relayed.relay.posts).toHaveLength(0);
+    const direct = await split({ gasless: false, live: liveOnce() });
+    expect(direct.outcome).toBeInstanceOf(SaleCancelledError);
+    expect(direct.asked("eth_sendTransaction")).toBe(0);
   });
 
   it("a throw while its call is kept stops it before anything is signed or sent", async () => {

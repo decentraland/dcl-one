@@ -265,6 +265,15 @@ describe("reading a credit's record from the history", () => {
     expect(await settleSplitHold(hold({ creditExpiresAt: seconds() - 1 }), { account: ACCOUNT, reader: createFakeChain(), client: shop.client })).toBeNull();
   });
 
+  it("full pages none of whose rows decode, with no total, are read up to the cap only: no answer, held", async () => {
+    let calls = 0;
+    // Every row has a status the decoder drops: no line to compare, so only the cap stops it.
+    const undecodable = (page: number) => otherLines(page).map((line) => ({ ...line, status: "SOMETHING_NEW" }));
+    const shop = createFakeShop({ userPurchases: () => ({ purchases: ++calls > HISTORY_MAX_PAGES + 10 ? [] : undecodable(calls) }) });
+    await expect(findCreditRecord(ACCOUNT, CREDIT, shop.client)).rejects.toBeInstanceOf(HistoryUnfinishedError);
+    expect(calls).toBe(HISTORY_MAX_PAGES);
+  });
+
   it("a server that ignores the offset (the same page every time) is caught on the second page: no answer, held", async () => {
     let calls = 0;
     const shop = createFakeShop({ userPurchases: () => ((calls += 1), { purchases: otherLines(0) }) });

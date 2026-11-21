@@ -896,6 +896,62 @@ describe("a split whose outcome is not known", () => {
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
   });
 
+  it("a dialog closed while the sale's own wallet prompt is open sends no sale, though the buyer signs it: no POST, its credit let go", async () => {
+    const { demo, line, unmount } = setup();
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    // The wallet holds the sale's signature until the dialog is gone.
+    let sign!: () => void;
+    const signing = new Promise<void>((resolve) => (sign = resolve));
+    const request = demo.wallet.request.bind(demo.wallet);
+    let asked = 0;
+    demo.wallet.request = (async (args: Parameters<typeof request>[0]) => {
+      if (args.method === "eth_signTypedData_v4") {
+        asked++;
+        await signing;
+      }
+      return request(args);
+    }) as typeof demo.wallet.request;
+    act(() => {
+      fireEvent.click(screen.getByTestId("combined-confirm"));
+    });
+    await waitFor(() => expect(asked).toBe(1), { timeout: 5000 });
+    unmount();
+    await act(async () => {
+      sign();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))).toBeNull();
+    expect(demo.shop.log.filter((r) => r.name === "cancelCreditAuthorizations")).toHaveLength(1);
+  });
+
+  it("an approval the sale itself made that didn't take effect says so, nothing bought, with try again last", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    // Enough allowance when the purchase starts, none once its credit is issued: the sale approves first.
+    demo.chain.allowances.set(managerKey(), 10n ** 21n);
+    const call = demo.chain.call.bind(demo.chain);
+    let short = false;
+    demo.chain.call = async (chainId, to, data) => {
+      if (!short && data.startsWith("0xdd62ed3e") && demo.shop.log.some((r) => r.name === "authorizeCredit")) {
+        short = true;
+        demo.chain.allowances.delete(managerKey());
+      }
+      return call(chainId, to, data);
+    };
+    // Its approve runs, but another call takes its nonce: the allowance is left short.
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      demo.chain.allowances.delete(managerKey());
+      return answer;
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByText("The approval didn't take effect. Nothing was bought. Try again.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(1);
+  });
+
   it("a dialog closed while its sale's own approval confirms sends no sale: only the approve went out, its credit is let go", async () => {
     const { demo, line, unmount } = setup();
     // The allowance reads enough when the purchase starts, then nothing once its credit is issued: the sale approves first.
@@ -966,6 +1022,34 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
     expect(Object.keys(localStorage).filter((k) => k.startsWith("dcl-shop-exact-grant:"))).toEqual([]);
     expect(authorizations(demo)).toBe(0);
+  });
+
+  it("an approval whose effect can't then be checked (its nonce passed, the allowance unread) says so, and a retry buys", async () => {
+    const { demo, unmount, again } = setup();
+    unmount();
+    // The approve runs; the allowance read right after it fails.
+    const down = { on: false };
+    const call = demo.chain.call.bind(demo.chain);
+    demo.chain.call = async (chainId, to, data) => {
+      if (down.on && data.startsWith("0xdd62ed3e")) throw new Error("upstream unavailable");
+      return call(chainId, to, data);
+    };
+    const relayed = demo.services.fetchImpl!;
+    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
+      const answer = await relayed(...args);
+      if (relayedApproval(JSON.parse(String(args[1]?.body)))) down.on = true;
+      return answer;
+    }) as typeof fetch;
+    again();
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    expect(await screen.findByText("We couldn't check whether the approval took effect. Try again in a moment.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText(/still confirming/)).toBeNull();
+    // Read again, the approve is in place: nothing more is signed, and the purchase goes through.
+    down.on = false;
+    await act(async () => fireEvent.click(screen.getByTestId("authorize-step-action")));
+    expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts.map(relayedApproval).filter((a) => a !== null)).toHaveLength(1);
   });
 
   it("an approval that went through but didn't take effect (its nonce passed, the allowance short) says to try again, and a retry buys", async () => {

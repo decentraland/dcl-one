@@ -154,8 +154,9 @@ function declined(e: unknown): boolean {
 }
 
 /**
- * Which nonce a signature may be at: no lower than `minNonce`, or exactly `exactNonce`, never both (a call that passes both
- * anyway is refused, `RangeError`, before anything is read, signed or sent).
+ * Which nonce a signature may be at: no lower than `minNonce`, or exactly `exactNonce`. The type takes one or the other; a
+ * call that passes both anyway is signed at `exactNonce` if the two agree, and refused (`RangeError`, before anything is
+ * read, signed or sent) when `minNonce` is above it.
  */
 type NonceChoice =
   /** A nonce already observed on chain: never sign against a staler one (load-balanced RPCs lag). */
@@ -201,8 +202,8 @@ export class NonceMovedError extends Error {
 
 export async function relayMetaTransaction(opts: RelayOptions): Promise<Relayed> {
   const { provider, reader, target, from, functionData } = opts;
-  // Read loosely: the type keeps the two apart, and a caller that passes both anyway is refused here.
-  const { exactNonce, minNonce } = opts as { exactNonce?: bigint; minNonce?: bigint };
+  // The type keeps the two apart; a caller that passes both anyway is refused here when they can't both hold.
+  const { exactNonce, minNonce } = opts;
   if (exactNonce !== undefined && minNonce !== undefined && minNonce > exactNonce) {
     throw new RangeError(`A signature can't be at nonce ${exactNonce} and at least ${minNonce}`);
   }
