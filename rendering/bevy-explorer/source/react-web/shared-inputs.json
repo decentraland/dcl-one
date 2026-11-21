@@ -6422,7 +6422,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
-      "sha256": "52ef857cddf356b79127a7870f2ecc544b927a18c9aff44a110b09c05b490f71"
+      "sha256": "be923c2042295eb80aee958e3131bb5e63606e28e6f62f7c3fb61b0e45b54b57"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
@@ -6454,7 +6454,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "e5dd786845a1b00a7f1169bde1f2bf5dd4c4d190bd1b8cb61ad8ba323f8807c2"
+      "sha256": "cef773444cf252fd59610858d053a3ef45ad38afdb261ecdcb3343e31d69f2d0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",

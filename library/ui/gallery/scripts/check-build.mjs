@@ -320,12 +320,16 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
     const widest = await session.evaluate(
       `(() => {
         const select = [...document.querySelectorAll('select')].find((node) => node.closest('label')?.textContent.includes('Width'))
-        const option = [...select.options].filter((item) => /\\d+px$/.test(item.label)).at(-1)
+        const option = [...select.options].filter((item) => item.value !== 'custom' && /\\d+px$/.test(item.label)).at(-1)
         select.value = option.value
         select.dispatchEvent(new Event('change', { bubbles: true }))
         return Number(option.label.match(/(\\d+)px$/)[1])
       })()`
     )
+    if (widest === 375)
+      throw new Error(
+        'the width presets offer no width but 375px, so the HudScale step changes nothing'
+      )
     await shownScale(widest)
 
     const alias = await hudPage('MenuRow', 1280)

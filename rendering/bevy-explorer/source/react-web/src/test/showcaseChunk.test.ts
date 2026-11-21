@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { DESIGN_ROOTS, designSideEffects, showcaseInEagerGraph, showcaseOnly } from '../../vite.config'
+import { statSync } from 'node:fs'
+import { DESIGN_ROOTS, designSideEffects, isShowcase, showcaseInEagerGraph, showcaseOnly } from '../../vite.config'
 
 // The build's chunking of the design modules: what only the dev-only Showcase uses stays out of the eager chunks.
 // The shared HUD's design folder, as the bundler names its modules.
@@ -80,24 +81,28 @@ describe('when the build tree-shakes the design modules', () => {
       expect(designSideEffects(id)).toBeUndefined()
   })
 
-  it('should find the three owned design folders: the app, the shared HUD and the Explorer page core', () => {
-    expect(DESIGN_ROOTS.map((root) => root.split('/').slice(-3).join('/'))).toEqual([
-      'src/design/',
-      'hud/design/',
-      'explorer-core/design/'
-    ])
+  it('should list only design folders that exist: the shared HUD', () => {
+    expect(DESIGN_ROOTS.map((root) => root.split('/').slice(-4).join('/'))).toEqual(['apps/hud/design/'])
+    for (const root of DESIGN_ROOTS) expect(statSync(root).isDirectory(), root).toBe(true)
   })
 
   it('should leave a design folder in a dependency, or one only named like an owned folder, to the default', () => {
-    const root = DESIGN_ROOTS[0]!
     for (const id of [
-      `${root.slice(0, -'src/design/'.length)}node_modules/some-pkg/src/design/Widget.tsx`,
+      `${DESIGN.slice(0, -'design'.length)}node_modules/some-pkg/src/design/Widget.tsx`,
       '/elsewhere/apps/hud/design/Button.tsx',
       '/elsewhere/explorer-core/design/index.ts'
     ]) {
       expect(designSideEffects(id)).toBeUndefined()
       expect(showcaseOnly(graph())(id)).toBe(false)
     }
+  })
+
+  it('should tell the Showcase by its design module name, not by a path that merely contains the word', () => {
+    expect(isShowcase(SHOWCASE)).toBe(true)
+    expect(isShowcase(`${DESIGN}/ShowcaseIndex.ts`)).toBe(true)
+    expect(isShowcase(`${DESIGN}/Button.tsx`)).toBe(false)
+    expect(isShowcase('/home/Showcase/checkout/library/ui/apps/hud/features/shop/ShopPage.tsx')).toBe(false)
+    expect(isShowcase('/elsewhere/apps/hud/design/Showcase.tsx')).toBe(false)
   })
 })
 

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createReadStream, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
+import { extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -200,26 +200,25 @@ function reactProfilingBuild(): Plugin {
   }
 }
 
-// The design folders: this app's own (src), the shared HUD's and the Explorer page core's. Absolute, so a
-// dependency's own design/ folder (node_modules/<pkg>/src/design) is never one of them.
+// The design folders the HUD is built from: the shared HUD's (library/ui/apps/hud/design). Absolute and resolved, so
+// a dependency's own design/ folder (node_modules/<pkg>/src/design) is never one of them, and a folder that does not
+// exist fails the config instead of matching nothing.
 function sharedSource(alias: string): string {
   const root = SHARED_SOURCES[alias]
   if (root == null) throw new Error(`vite.shared.ts has no ${alias} source`)
   return root
 }
-export const DESIGN_ROOTS = [
-  resolve(dirname(fileURLToPath(import.meta.url)), 'src'),
-  sharedSource('@hud'),
-  sharedSource('@explorer-core')
-].map((root) => `${realpathSync(root).replaceAll('\\', '/')}/design/`)
+export const DESIGN_ROOTS = [join(sharedSource('@hud'), 'design')].map(
+  (folder) => `${realpathSync(folder).replaceAll('\\', '/')}/`
+)
 const designPath = (id: string): string | null => {
   const root = DESIGN_ROOTS.find((folder) => id.startsWith(folder))
   return root == null ? null : id.slice(root.length)
 }
 const isDesign = (id: string): boolean => designPath(id) != null
 const isDesignEntry = (id: string): boolean => designPath(id) === 'index.ts'
-// The dev-only Showcase (?showcase=1) and the index of its sections.
-const SHOWCASE = /\/design\/Showcase/
+/** The dev-only Showcase (?showcase=1) and the index of its sections: design modules whose name starts Showcase. */
+export const isShowcase = (id: string): boolean => designPath(id)?.startsWith('Showcase') ?? false
 
 /** The part of the module graph a chunk group's `name` reads. */
 interface ModuleGraph {
@@ -237,7 +236,7 @@ export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
     if (!words.has(entry)) {
       let found: Set<string> | null = new Set()
       for (const importer of graph.getModuleInfo(entry)?.importers ?? []) {
-        if (SHOWCASE.test(importer)) continue
+        if (isShowcase(importer)) continue
         const code = graph.getModuleInfo(importer)?.code
         if (code == null) {
           found = null
@@ -258,7 +257,7 @@ export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
       info != null &&
       info.importers.length > 0 &&
       info.importers.every((importer) => {
-        if (SHOWCASE.test(importer)) return true
+        if (isShowcase(importer)) return true
         if (isDesignEntry(importer)) {
           const named = namedBeside(importer)
           return named != null && !info.exports.some((name) => named.has(name))
@@ -268,13 +267,13 @@ export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
     decided.set(id, result)
     return result
   }
-  return (id) => isDesign(id) && !isDesignEntry(id) && !SHOWCASE.test(id) && only(id)
+  return (id) => isDesign(id) && !isDesignEntry(id) && !isShowcase(id) && only(id)
 }
 const showcaseOnlyByGraph = new WeakMap<ModuleGraph, (id: string) => boolean>()
 
 /** `false` for the design modules (no effect when imported), the Showcase aside; the default for the rest. */
 export const designSideEffects = (id: string): false | undefined =>
-  isDesign(id) && /\.tsx?$/.test(id) && !SHOWCASE.test(id) ? false : undefined
+  isDesign(id) && /\.tsx?$/.test(id) && !isShowcase(id) ? false : undefined
 
 /** The part of a written bundle the Showcase check reads. */
 type BundleFile =
@@ -289,7 +288,7 @@ export function showcaseInEagerGraph(bundle: Record<string, BundleFile>, page: s
   const entry = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.replaceAll('\\', '/').endsWith(`/${page}`))
   if (entry == null) return [`the bundle has no entry chunk for ${page}, so its imports cannot be checked`]
   const holdsShowcase = (chunk: BundleFile & { type: 'chunk' }) =>
-    chunk.name === 'Showcase' || chunk.moduleIds.some((id) => SHOWCASE.test(id))
+    chunk.name === 'Showcase' || chunk.moduleIds.some((id) => isShowcase(id))
   const problems: string[] = []
   const reached = new Set<string>()
   const walk = (fileName: string): void => {
@@ -421,8 +420,7 @@ export default defineConfig(({ command, mode }) => ({
                 if (id.includes('emojis_complete.json') || id.includes('/chat/emojiData')) return 'emoji'
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
-                // The shared HUD (library/ui/apps/hud, library/explorer-core) is split the same way as this app's own sources.
-                if (isDesign(id) && !id.includes('Showcase')) return 'design'
+                if (isDesign(id) && !isShowcase(id)) return 'design'
                 if (/\/(src|apps\/hud|explorer-core)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
                 return null
               }
