@@ -26,6 +26,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use crate::shared::routing::{erase, get, post};
+use crate::storage::gc;
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
 use axum::http::HeaderMap;
@@ -367,9 +368,12 @@ fn authorized_community_binding(
         .map_err(|_| ApiError::bad_request("community_id must be a uuid"))
 }
 
-/// Stores the bytes under their CID; `wrote` is set when this call created
-/// the blob, so a write that then loses its race keeps its budget spent.
+/// Stores the bytes under their CID for a row the caller writes and commits
+/// on `tx` (under the store lock's shared side, [`gc::store_for_row`]); `wrote`
+/// is set when this call created the blob, so a write that then loses its
+/// race keeps its budget spent.
 async fn store_blob(
+    tx: &mut sqlx::PgConnection,
     state: &MessagingState,
     bytes: Vec<u8>,
     wrote: &mut bool,
@@ -382,17 +386,17 @@ async fn store_blob(
             .await
             .map_err(|e| ApiError::internal(format!("mls blob hash task: {e}")))?
     };
-    let stored = async {
-        if !storage.exist(&cid).await? {
-            storage.store(&cid, bytes).await?;
-            *wrote = true;
+    match gc::store_for_row(tx, storage, &cid, bytes).await {
+        Ok(created) => *wrote |= created,
+        Err(gc::GcError::LockTimeout) => {
+            return Err(service_unavailable(
+                "The message store is being collected; retry shortly",
+            ));
         }
-        Ok::<_, crate::storage::StorageError>(())
-    }
-    .await;
-    if let Err(e) = stored {
-        tracing::error!(error = %e, "mls blob store failed");
-        return Err(service_unavailable("The message store is unavailable"));
+        Err(e) => {
+            tracing::error!(error = %e, "mls blob store failed");
+            return Err(service_unavailable("The message store is unavailable"));
+        }
     }
     Ok(cid)
 }
@@ -634,6 +638,7 @@ pub async fn create_group(
         return Err(ApiError::http(409, "group already exists"));
     }
     let (mut spent, mut wrote) = (0, false);
+    let mut tx = state.pool.begin().await?;
     let initial = match &b.initial_commit {
         Some(c) => {
             let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
@@ -650,9 +655,9 @@ pub async fn create_group(
                 commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
             )?;
             let commit_hash = mls::content_hash(&commit_bytes);
-            let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
+            let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut wrote).await?;
             let welcome_cid = match welcome_bytes {
-                Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
+                Some(w) => Some(store_blob(&mut tx, &state, w, &mut wrote).await?),
                 None => None,
             };
             Some((commit_cid, welcome_cid, commit_hash))
@@ -694,8 +699,9 @@ pub async fn create_group(
     .bind(&commit_hash)
     .bind(chrono::Utc::now().timestamp())
     .bind(now)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     if !created {
         if !wrote {
             BLOB_BUDGET.refund(&creator, spent);
@@ -819,9 +825,10 @@ pub async fn submit_commit(
     )?;
     let commit_hash = mls::content_hash(&commit_bytes);
     let mut wrote = false;
-    let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
+    let mut tx = state.pool.begin().await?;
+    let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut wrote).await?;
     let welcome_cid = match welcome_bytes {
-        Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
+        Some(w) => Some(store_blob(&mut tx, &state, w, &mut wrote).await?),
         None => None,
     };
     let now = now_utc();
@@ -857,8 +864,9 @@ pub async fn submit_commit(
     .bind(&added)
     .bind(&removed)
     .bind(now)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     if b.epoch != locked + 1 {
         if !wrote {
             BLOB_BUDGET.refund(&signer, spent);
@@ -1092,7 +1100,8 @@ pub async fn send_message(
     );
     let spent = spend_blob_budget(&signer, ciphertext.len())?;
     let mut wrote = false;
-    let ciphertext_cid = store_blob(&state, ciphertext, &mut wrote).await?;
+    let mut tx = state.pool.begin().await?;
+    let ciphertext_cid = store_blob(&mut tx, &state, ciphertext, &mut wrote).await?;
     let inserted = sqlx::query(
         "INSERT INTO social.mls_message_refs \
             (signature_hash, group_id, author, epoch, ciphertext_hash, ciphertext_cid, signed_at, received_at) \
@@ -1106,9 +1115,10 @@ pub async fn send_message(
     .bind(&ciphertext_cid)
     .bind(now)
     .bind(now_utc())
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    tx.commit().await?;
     if inserted == 0 && !wrote {
         BLOB_BUDGET.refund(&signer, spent);
     }

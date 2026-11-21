@@ -103,6 +103,31 @@ struct SceneRecord {
     updated_at: Option<chrono::NaiveDateTime>,
 }
 
+/// Takes the store lock's shared side on `tx` (at most `gc::SHARED_LOCK_WAIT`), held until the
+/// pass's rows commit, and fails the pass when a blob it fetched or found stored without the lock
+/// (`named`) is gone: an unlink batch removed it, and the next pass fetches it again.
+async fn still_stored(
+    tx: &mut sqlx::PgConnection,
+    storage: &Storage,
+    name: &str,
+    named: &[String],
+) -> Result<()> {
+    if named.is_empty() {
+        return Ok(());
+    }
+    catalyst_storage::gc::lock_store_shared_within(tx, catalyst_storage::gc::SHARED_LOCK_WAIT)
+        .await
+        .context("the content store is being collected")?;
+    let present = storage.exist_multiple(named).await?;
+    if let Some(gone) = named
+        .iter()
+        .find(|h| !present.get(h.as_str()).copied().unwrap_or(false))
+    {
+        bail!("{gone} of {name} left the store during the pass; the next pass fetches it again");
+    }
+    Ok(())
+}
+
 /// Writes a source's settings answer onto a mirrored row that is not disabled, unless the owner
 /// that set its settings here still holds the name ([`mirror_keeps_local`], with [`name_holder`]). A thumbnail the pass could not fetch keeps the stored one. `settings_version` never goes back: it takes the source's counter, or this row's
 /// plus one when a copied column changes and the source's is not ahead, so a consumer ordering
@@ -317,6 +342,10 @@ pub(super) async fn mirror_world(
             let world = WorldName::parse(name)?;
             let holder = name_holder(pool, owners, &world).await;
             let mut tx = pool.begin().await.context("begin tx")?;
+            let thumbnail = world_settings
+                .as_ref()
+                .and_then(|c| c.thumbnail_hash.clone());
+            still_stored(&mut tx, storage, name, thumbnail.as_slice()).await?;
             if let Some(access) = &access {
                 replace_mirrored_access(&mut tx, &world, access, holder.as_ref())
                     .await
@@ -429,6 +458,8 @@ pub(super) async fn mirror_world(
     let access = upstream_access(client, source, name).await?;
 
     let mut new_blobs = 0usize;
+    // Every blob the rows written below name, re-checked under the store lock.
+    let mut named: Vec<String> = Vec::new();
     let mut scene_base_spawn: Option<String> = None;
     let mut records: Vec<SceneRecord> = Vec::new();
     let blob_sem = Arc::new(Semaphore::new(settings.blob_concurrency));
@@ -463,6 +494,8 @@ pub(super) async fn mirror_world(
                     .collect()
             })
             .unwrap_or_default();
+        named.push(cid.clone());
+        named.extend(hashes.iter().cloned());
         let mut set = tokio::task::JoinSet::new();
         for hash in hashes {
             let permit = blob_sem.clone().acquire_owned().await?;
@@ -523,6 +556,16 @@ pub(super) async fn mirror_world(
     let world = WorldName::parse(name)?;
     let holder = name_holder(pool, owners, &world).await;
     let mut tx = pool.begin().await.context("begin tx")?;
+    // The pass fetched without the store lock, so an unlink batch may have removed a blob it
+    // found stored. Under the lock's shared side, held until the rows commit, every named blob
+    // (the copied thumbnail too) is checked; a missing one fails the pass, and the next one fetches it again.
+    if let Some(thumbnail) = world_settings
+        .as_ref()
+        .and_then(|c| c.thumbnail_hash.clone())
+    {
+        named.push(thumbnail);
+    }
+    still_stored(&mut tx, storage, name, &named).await?;
     // A new row takes the source's settings (the `/about` fallback without them); a held one
     // keeps its settings here and takes the answer through `apply_settings` below.
     let copied = world_settings.unwrap_or_default();

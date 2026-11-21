@@ -429,6 +429,7 @@ impl Leader {
         let limits = memory_limits();
         let deployer = Arc::new(LiveSyncDeployer::with_limits(
             self.pool.clone(),
+            self.storage.clone(),
             settings.flush_concurrency,
             limits,
             self.validation.clone(),
@@ -699,6 +700,7 @@ pub fn start_failed_deployments(
         let jobs = registry.clone();
         let deployer = Arc::new(LiveSyncDeployer::with_limits(
             pool.clone(),
+            storage.clone(),
             crate::sync_deployer::DEFAULT_FLUSH_CONCURRENCY,
             memory_limits(),
             validation.clone(),

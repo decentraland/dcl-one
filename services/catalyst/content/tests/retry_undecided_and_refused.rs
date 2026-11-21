@@ -160,6 +160,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
             storage.clone(),
             Arc::new(LiveSyncDeployer::new(
                 pool.clone(),
+                storage.clone(),
                 1,
                 SyncValidation::Content(sources.clone()),
             )),

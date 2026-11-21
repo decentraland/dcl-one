@@ -128,8 +128,36 @@ deploys (`POST /entities` and partial publication) and world scene deploys
 take that lock's shared side in their write transaction and re-check every
 file they name, so an unlink batch never removes a file such a deployment
 references; a content deploy waits at most 5 s for it and answers 503 past
-that. Synced content writes do not take it and rely on the collector's age
-floor.
+that. The peer-sync flush (read-through's too) takes the shared side in its
+batch transaction and probes the batch's distinct files there; an entity
+whose file is gone is left out and recorded in `content.failed_deployments`
+for the retry worker, and the rest commits. So the unlinks that skip the age
+floor never remove a file a content deployment commits: the history prune
+and content's partial-upload cleanup, which deletes up to 20 expired
+uploads' `content.pending_deployments` rows and unlinks the files they wrote
+(`pending_deployment_files.written`) that no reference names in one
+transaction under the exclusive lock. It reads the world scenes' content
+lists before taking the lock and, under it, only the rows written since; a
+lock still busy after 30 s ends the run, and uploads that wrote no file go
+without it. An upload a newer deployment overtook is released the same way
+within its request, which takes the lock only if it is free and otherwise
+marks the upload expired for the cleanup's next run. Builder's item file and
+project blob uploads also take the shared side (waiting at most 5 s, then
+503) before checking whether a blob is stored and hold it until the `builder.uploaded_contents` row (and, for an
+item file, the `builder.item_contents` row) naming it commits. The other
+writers that commit a row naming a blob do the same through
+`gc::store_for_row` (the shared side, at most 5 s, then the blob stored
+unless present, in the row's transaction): the asset-pack catalogue build
+(which re-checks every walked file and stores a removed one again), the
+camera-reel import, community thumbnails and contents, MLS blobs, cached
+profile images, worlds settings thumbnails, event posters and outfit
+thumbnails. A worlds mirror pass re-checks the blobs its rows name under
+the shared side and fails when one is gone, for the next pass to fetch
+again. Camera-reel uploads and player report evidence commit their row
+before storing the blob, so an unlink batch's reference read keeps it.
+Read-through copies (explore's satellite, manifest and poster mirrors, the
+asset catalogue pull) take no lock: a removed blob is fetched again on its
+next read.
 
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a

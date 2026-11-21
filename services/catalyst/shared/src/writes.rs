@@ -347,14 +347,14 @@ mod tests {
         ("explore/src/api/satellite.rs", "mirror"),
         ("explore/src/api/world_manifest.rs", "mirror"),
         ("explore/src/events/posters.rs", "data"),
-        ("shop/src/outfits/mod.rs", "data"),
+        ("shop/src/outfits/store.rs", "data"),
         ("social/src/communities/fed_content.rs", "social"),
         ("social/src/communities/thumbnail.rs", "social"),
         ("social/src/messaging.rs", "social"),
         ("social/src/profile_images/cache.rs", "mirror"),
         ("worlds/src/core/deploy.rs", "worlds"),
         ("worlds/src/core/partial.rs", "worlds"),
-        ("worlds/src/core/settings.rs", "worlds"),
+        ("worlds/src/core/store_settings.rs", "worlds"),
         ("worlds/src/mirror_reconcile.rs", "worlds"),
         ("worlds/src/mirror_upstream.rs", "worlds"),
     ];
@@ -387,7 +387,7 @@ mod tests {
             }
         }
         // Every call of a Storage writer: `store`, `store_file`, `rekey` and
-        // `create_staging_file`, its arguments read to the closing parenthesis
+        // `create_staging_file` (and `gc::store_for_row`, which stores), its arguments read to the closing parenthesis
         // however rustfmt wrapped them. Not a store: an accessor's (no
         // arguments) and an atomic's (its last argument an ordering).
         let writes_blobs = |text: &str| {
@@ -435,7 +435,7 @@ mod tests {
                     .match_indices("#[cfg(test)]\nmod ")
                     .find(|(at, _)| text[*at..].lines().nth(1).is_some_and(|l| l.ends_with('{')))
                     .map_or(text.len(), |(at, _)| at);
-                writes_blobs(&text[..tests_at])
+                writes_blobs(&text[..tests_at]) || text[..tests_at].contains("store_for_row(")
             })
             .map(|file| {
                 file.strip_prefix(root)
