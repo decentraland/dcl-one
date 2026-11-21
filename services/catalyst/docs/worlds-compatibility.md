@@ -577,8 +577,9 @@ at that parcel. Scene admins (`social.scene_admins`) get no Genesis storage
 access.
 
 - **Roles.** A LAND manager of the parcel is its owner (the estate's owner
-  when the parcel sits in an estate), its operator, its update operator (a
-  cleared parcel update operator falls back to the estate's), an
+  when the parcel sits in an estate), its operator (the estate's operator
+  when the parcel sits in an estate), its update operator (a cleared parcel
+  update operator falls back to the estate's), an
   `UpdateManager` of the owner or an `ApprovalForAll` operator of the
   owner. A collaborator is a wallet in the active deployment's
   `metadata.logsPermissions`.
@@ -613,22 +614,33 @@ access.
   shared database whatever its own flag says. A pass runs every
   `LAND_AUTHZ_INDEX_INTERVAL_SECS` (120) and publishes a fold within 25
   blocks of a head kept `LAND_AUTHZ_CONFIRMATIONS` (12) blocks back. The
-  managers read the index while it is caught up (`folded_block` equals
-  `last_block`), its fold is at most 30 minutes old on the database clock
-  and its registries are the node's; a fold older than that drops them to
-  the next source at once. `GET /lambdas/land-authz/status` reports
-  `ready`, `foldAgeSecs` and `readyWindowSecs`.
-- **Collaborator freshness.** The collaborator rule needs a published fold
-  at most 30 minutes old and `history_timestamps_ready` (every indexed log
-  carries its block time), which the status route does not report. For
+  managers read the index while it is caught up, its fold is at most 30
+  minutes old on the database clock and its registries are the node's; a
+  fold older than that drops them to the next source at once.
+  `GET /lambdas/land-authz/status` reports this as top-level `ready`, with
+  `readyWindowSecs` and the cursor's `cursor.foldAgeSecs`,
+  `cursor.foldedBlock` and `cursor.lastBlock` (caught up when the two
+  blocks are equal).
+- **Collaborator freshness.** Collaborator readiness is a separate
+  condition from status `ready`. The collaborator rule needs a full replay
+  started (`cursor.fullReplayStarted`), a published fold
+  (`cursor.foldedBlock` not null) at most 30 minutes old, registries
+  matching the node's and `history_timestamps_ready` (every indexed log
+  carries its block time). It does not need `cursor.foldedBlock` to equal
+  `cursor.lastBlock`. The status route does not report
+  `history_timestamps_ready`; the admin `GET /admin/api/mirrors` returns
+  the whole `land_authz.index_cursor` row under `body.landAuthz`. For
   every parcel of the scene, the latest LAND transfer, the latest estate
   membership change and the estate's latest transfer must be at or below
   the fold and more than 15 minutes older than the deployment's signed
-  timestamp (a deployment's accepted future skew). A parcel the index does
-  not know, or one held by the zero address, refuses the scene; a transfer
-  newer than the fold refuses it until folded. A scene deployed less than
-  15 minutes after a transfer stays refused, since its timestamp never
-  changes: only a new deployment admits its collaborators again.
+  timestamp. That timestamp must not be ahead of the database clock, and
+  the deployer refuses one more than 15 minutes ahead of the node's clock
+  (`REQUEST_TTL_FORWARDS_MS` in `content/src/write_deployer.rs`). A parcel
+  the index does not know, or one held by the zero address, refuses the
+  scene; a transfer newer than the fold refuses it until folded. A scene
+  deployed less than 15 minutes after a transfer stays refused, since its
+  timestamp never changes: only a new deployment admits its collaborators
+  again.
 
 ### HTTP
 
