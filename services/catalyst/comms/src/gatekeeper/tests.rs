@@ -4855,3 +4855,68 @@ async fn community_voice_status_routes_answer_inactive_when_the_store_fails() {
         serde_json::json!({ "userAddress": member.as_str(), "isInCommunityVoiceChat": false })
     );
 }
+
+/// Kicks a seated wallet through the moderator route against a
+/// RemoveParticipant fixture answering `status`; returns the route's
+/// outcome and the presence rows left.
+async fn kick_with_removal_status(
+    status: StatusCode,
+) -> Option<(Result<serde_json::Value, super::errors::ApiError>, usize)> {
+    let pool = scratch().await?;
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/RemoveParticipant",
+        axum::routing::post(move || async move {
+            (status, Json(serde_json::json!({ "code": "unavailable" })))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let state = state_with(pool.clone(), settings);
+    let community = seed_community(&pool).await;
+    let member = wallet();
+    state
+        .voice_db
+        .join_user_to_community_room(community, &member, false)
+        .await
+        .unwrap();
+    let outcome = voice::community_kick_player(
+        State(state.clone()),
+        Path((community.to_string(), member.as_str().to_owned())),
+    )
+    .await
+    .map(|Json(body)| body);
+    server.abort();
+    let rows = state
+        .voice_db
+        .community_users_in_room(community)
+        .await
+        .unwrap()
+        .len();
+    Some((outcome, rows))
+}
+
+#[tokio::test]
+async fn community_kick_reports_failed_livekit_removal() {
+    let Some((outcome, rows)) = kick_with_removal_status(StatusCode::SERVICE_UNAVAILABLE).await
+    else {
+        return;
+    };
+    let error = outcome.unwrap_err();
+    assert_eq!(error.code, 500);
+    assert!(error.message.contains("livekit remove participant"));
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn community_kick_of_absent_participant_succeeds() {
+    let Some((outcome, rows)) = kick_with_removal_status(StatusCode::NOT_FOUND).await else {
+        return;
+    };
+    assert_eq!(
+        outcome.unwrap()["message"],
+        "User kicked from voice chat successfully"
+    );
+    assert_eq!(rows, 0);
+}
