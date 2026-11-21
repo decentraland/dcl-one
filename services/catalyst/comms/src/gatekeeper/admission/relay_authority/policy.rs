@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::proof::VerifiedRoom;
-use crate::access::Access;
+use crate::access::{Access, SceneBanKey};
 use crate::gatekeeper::moderation::{BanStatus, admission_ban};
 use crate::interfaces::{AccessPolicy, SceneIdentity};
 use crate::protocol::room_authority::address_bytes;
@@ -60,7 +60,11 @@ impl CurrentRoomPolicy {
     }
 
     /// The connection-ban predicate and the scene's ban list for `principal`.
-    async fn scene_gate(&self, principal: &Address, scene: &SceneId) -> Result<(), DenialReason> {
+    async fn scene_gate(
+        &self,
+        principal: &Address,
+        scene: &SceneBanKey,
+    ) -> Result<(), DenialReason> {
         let now = chrono::Utc::now().naive_utc();
         match admission_ban(
             self.policy.as_ref(),
@@ -116,7 +120,8 @@ impl CurrentRoomPolicy {
             Err(_) => return Err(DenialReason::Unavailable),
         }
         let by_name = SceneId::parse(world.key()).map_err(|_| DenialReason::NotAuthorized)?;
-        self.scene_gate(principal, &by_name).await
+        self.scene_gate(principal, &SceneBanKey::scene(&by_name))
+            .await
     }
 }
 
@@ -199,14 +204,15 @@ impl RelayPolicy for CurrentRoomPolicy {
                         self.world_gate(&principal, world, &scene).await
                     }
                     None => {
-                        self.scene_gate(
-                            &principal,
-                            resolved
-                                .scene_id
-                                .as_ref()
-                                .ok_or(DenialReason::NotAuthorized)?,
-                        )
-                        .await
+                        let key = resolved
+                            .resolve_ban_key(self.scenes.as_ref())
+                            .await
+                            .map_err(|error| match error {
+                                crate::rooms::ResolveError::Db(_) => DenialReason::Unavailable,
+                                _ => DenialReason::NotAuthorized,
+                            })?
+                            .ok_or(DenialReason::NotAuthorized)?;
+                        self.scene_gate(&principal, &key).await
                     }
                 }
             }
@@ -296,7 +302,7 @@ mod moderation_boundary_tests {
     #[tokio::test]
     async fn relay_keeps_platform_scene_and_authority_fault_denials() {
         let actor = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
-        let scene = SceneId::parse("test-scene").unwrap();
+        let scene = SceneBanKey::scene(&SceneId::parse("test-scene").unwrap());
         for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
             let policy = CurrentRoomPolicy::new(
                 Arc::new(StubScenes::default()),

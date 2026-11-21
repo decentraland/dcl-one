@@ -97,9 +97,19 @@ pub async fn admit(
             Access::InvalidSecret => Err(AdmissionRefused::InvalidSecret),
             Access::NotAllowed => Err(AdmissionRefused::NotAllowed),
         },
+        // A Genesis scene's bans are on its place, which a redeploy keeps.
         SceneKey::Genesis(_) | SceneKey::GenesisParcel(_) => match state
             .policy
-            .is_banned(address, scene_id, None, now)
+            .is_banned(
+                address,
+                scene
+                    .deployment
+                    .as_ref()
+                    .map(crate::comms::access::SceneBanKey::genesis)
+                    .as_ref(),
+                None,
+                now,
+            )
             .await
             .map_err(undetermined)?
         {
