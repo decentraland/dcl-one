@@ -36,6 +36,8 @@ export type LegacyOrderBuyProps = {
   quoted: ManaWei | null;
   onClose(): void;
   onDone?(txHash: string): void;
+  /** The sale was sent and is still confirming: the dialog stays on its notice, and the page may read the token again. */
+  onPending?(txHash: string): void;
   wait?: WaitOptions;
   portal?: boolean;
   /** Reads the Estate registry (defaults to the node's read relay for the order's chain). */
@@ -50,7 +52,7 @@ const STEP_TEXT: Record<OrderPhase, string> = {
   pending: "Waiting for the transaction to confirm…",
 };
 
-export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, wait, portal, reader }: LegacyOrderBuyProps) {
+export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, quoted, onClose, onDone, onPending, wait, portal, reader }: LegacyOrderBuyProps) {
   const wallet = useShopWallet();
   const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
@@ -117,6 +119,7 @@ export default function LegacyOrderBuy({ name, contractAddress, tokenId, order, 
       const salePending = (txHash: string) => {
         setPhase({ kind: "pending", txHash });
         invalidateAfterPurchase(qc, { contractAddress, tokenId });
+        onPending?.(txHash);
       };
       // Only the sale's hash says it was sent: a wait that ran out before it was the MANA approval's.
       if (isTxPending(e)) {

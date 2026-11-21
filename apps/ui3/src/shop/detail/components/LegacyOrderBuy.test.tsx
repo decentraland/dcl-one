@@ -25,8 +25,12 @@ const balance = [SHOP_QUERY_KEYS.manaBalance, BOOK.buyer.toLowerCase(), 137];
 const invalidated = (key: unknown[]) => pageQueries!.getQueryState(key)?.isInvalidated;
 const SALE = `0x${"d".repeat(64)}`;
 
+/** The page's hook for a sale still confirming. */
+let onPending = vi.fn();
+
 /** Opens the dialog over a page holding a MANA balance, and presses Buy. */
 async function buy() {
+  onPending = vi.fn();
   const demo = createDemo({ session: "web3" });
   render(
     <DemoShell demo={demo} path={`/shop/token/${BOOK.collection}/42`}>
@@ -38,6 +42,7 @@ async function buy() {
         order={{ id: "order-1", marketplaceAddress: `0x${"1".repeat(40)}`, price: "1000000000000000000", chainId: 137 }}
         quoted={null}
         onClose={() => {}}
+        onPending={onPending}
         portal={false}
       />
     </DemoShell>,
@@ -65,6 +70,7 @@ describe("LegacyOrderBuy", () => {
     await buy();
     await screen.findByText(/The purchase was sent and is still confirming/);
     expect(invalidated(balance)).toBe(true);
+    expect(onPending).toHaveBeenCalledExactlyOnceWith(SALE);
   });
 
   it("an approval still confirming sent no sale: it says so and reads nothing again", async () => {
@@ -74,6 +80,7 @@ describe("LegacyOrderBuy", () => {
     await screen.findByText(APPROVAL_STILL_PENDING);
     expect(screen.queryByText(/The purchase was sent/)).toBeNull();
     expect(invalidated(balance)).toBe(false);
+    expect(onPending).not.toHaveBeenCalled();
   });
 
   it("a declined order spent nothing and reads nothing again", async () => {

@@ -22,6 +22,8 @@ type LandTradeBuyProps = {
    quoted: ManaWei;
   onClose(): void;
   onDone?(txHash: string): void;
+  /** The sale was sent and is still confirming: the dialog stays on its notice, and the page may read the LAND again. */
+  onPending?(txHash: string): void;
    loadTrade?: (tradeId: string) => Promise<Trade>;
   /** The LAND on sale, as its page's queries key it: a purchase reads that token again, not every token. */
   land?: { contractAddress: string; tokenId: string };
@@ -41,7 +43,7 @@ export function tradeManaPrice(trade: Trade): ManaWei | null {
   return leg && "amount" in leg ? (BigInt(leg.amount) as ManaWei) : null;
 }
 
-export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, loadTrade = fetchTrade, land }: LandTradeBuyProps) {
+export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, onPending, loadTrade = fetchTrade, land }: LandTradeBuyProps) {
   const wallet = useShopWallet();
   const qc = useQueryClient();
   const [phase, setPhase] = useState<Phase>({ kind: "review" });
@@ -102,6 +104,7 @@ export default function LandTradeBuy({ name, tradeId, quoted, onClose, onDone, l
       const salePending = (txHash: string) => {
         setPhase({ kind: "pending", txHash });
         invalidateAfterPurchase(qc, land);
+        onPending?.(txHash);
       };
       // Only the sale's hash says it was sent: a wait that ran out before it was the MANA approval's.
       if (isTxPending(e)) {

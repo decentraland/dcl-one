@@ -27,10 +27,9 @@ function QueryProbe() {
 const PRICE = 10n ** 18n;
 /** A LAND listing priced in MANA on Polygon: only what the dialog reads of it. */
 const trade = { id: "trade-1", contract: `0x${"4".repeat(40)}`, chainId: 137, sent: [], received: [{ assetType: TRADE_ASSET.ERC20, amount: PRICE.toString() }] } as unknown as Trade;
-/** The LAND on sale, its contract in mixed case as a listing may name it; the pages key it in lowercase. */
-const LAND = { contractAddress: `0x${"aB".repeat(20)}`, tokenId: "77" };
-const contract = LAND.contractAddress.toLowerCase();
-const seller = `0x${"7".repeat(40)}`;
+/** The LAND on sale, as its page keys it (contract in lowercase). */
+const LAND = { contractAddress: `0x${"ab".repeat(20)}`, tokenId: "77" };
+const contract = LAND.contractAddress;
 const buyer = BOOK.buyer.toLowerCase();
 const SALE = `0x${"d".repeat(64)}`;
 
@@ -38,22 +37,22 @@ const SALE = `0x${"d".repeat(64)}`;
 const stale = {
   balance: [SHOP_QUERY_KEYS.manaBalance, buyer, 137],
   owned: ["owned-token", contract, LAND.tokenId, buyer],
-  landPage: ["land-token", contract, LAND.tokenId],
-  landOrder: ["land-token-order", contract, LAND.tokenId, seller],
 };
 const untouched = {
-  otherParcel: ["land-token", contract, "78"],
-  otherParcelOrder: ["land-token-order", contract, "78", seller],
+  otherParcel: ["owned-token", contract, "78", buyer],
   otherToken: ["owned-token", `0x${"6".repeat(40)}`, "9", buyer],
 };
+/** The page's hook for a sale still confirming. */
+let onPending = vi.fn();
 
 /** Opens the dialog over a page holding those queries, and presses Buy. */
 async function buy(land?: typeof LAND) {
+  onPending = vi.fn();
   const demo = createDemo({ session: "web3" });
   render(
     <DemoShell demo={demo} path="/shop/lands">
       <QueryProbe />
-      <LandTradeBuy name="Parcel 1,2" tradeId="trade-1" quoted={PRICE as ManaWei} onClose={() => {}} loadTrade={async () => trade} land={land} />
+      <LandTradeBuy name="Parcel 1,2" tradeId="trade-1" quoted={PRICE as ManaWei} onClose={() => {}} loadTrade={async () => trade} land={land} onPending={onPending} />
     </DemoShell>,
   );
   act(() => {
@@ -84,14 +83,16 @@ describe("LandTradeBuy", () => {
     await buy(LAND);
     await vi.waitFor(() => expect(invalidated(stale)).toEqual(all(stale, true)));
     expect(invalidated(untouched)).toEqual(all(untouched, false));
+    expect(onPending).not.toHaveBeenCalled();
   });
 
-  it("a sale still confirming reads the balance and that LAND again too, and no other parcel", async () => {
+  it("a sale still confirming reads the balance and that LAND again too, and tells the page", async () => {
     vi.mocked(buyTradeWithMana).mockImplementationOnce(saleStillConfirming);
     await buy(LAND);
     await screen.findByText(/The purchase was sent and is still confirming/);
     expect(invalidated(stale)).toEqual(all(stale, true));
     expect(invalidated(untouched)).toEqual(all(untouched, false));
+    expect(onPending).toHaveBeenCalledExactlyOnceWith(SALE);
   });
 
   it("an approval still confirming sent no sale: it says so and reads nothing again", async () => {
@@ -101,6 +102,7 @@ describe("LandTradeBuy", () => {
     await screen.findByText(APPROVAL_STILL_PENDING);
     expect(screen.queryByText(/The purchase was sent/)).toBeNull();
     expect(invalidated(stale)).toEqual(all(stale, false));
+    expect(onPending).not.toHaveBeenCalled();
   });
 
   it("a sale sent and then lost track of reads the balance and that LAND again", async () => {
@@ -111,6 +113,7 @@ describe("LandTradeBuy", () => {
     await buy(LAND);
     await screen.findByText(/The purchase was sent and is still confirming/);
     expect(invalidated(stale)).toEqual(all(stale, true));
+    expect(onPending).toHaveBeenCalledExactlyOnceWith(SALE);
   });
 
   it("a declined LAND trade spent nothing and reads nothing again", async () => {
@@ -118,5 +121,6 @@ describe("LandTradeBuy", () => {
     await buy(LAND);
     await screen.findByText(/Nothing was bought/);
     expect(invalidated(stale)).toEqual(all(stale, false));
+    expect(onPending).not.toHaveBeenCalled();
   });
 });
