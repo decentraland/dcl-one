@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
 use crate::failed_deployments_store::{
-    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments,
+    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments, remove_records,
 };
 use crate::storage::Storage;
 use crate::sync_deployer::LiveSyncDeployer;
@@ -44,6 +44,10 @@ pub struct RetryFailedConfig {
     /// Due records per page of a cycle. A cycle keeps paging until the due set it started with
     /// is drained, so this bounds memory and statement size, not the work a cycle does.
     pub retry_batch_size: usize,
+    /// Discard a due entity a newer active entity overtook instead of deploying it as a
+    /// superseded row. Set where the history prune (`CONTENT_HISTORY_PRUNE_ENABLED`) would remove
+    /// that row again; a node that keeps history stores it.
+    pub discard_overtaken: bool,
 }
 
 impl Default for RetryFailedConfig {
@@ -53,6 +57,7 @@ impl Default for RetryFailedConfig {
             max_retries: DEFAULT_MAX_RETRIES,
             retry_concurrency: DEFAULT_RETRY_CONCURRENCY,
             retry_batch_size: DEFAULT_RETRY_BATCH_SIZE,
+            discard_overtaken: false,
         }
     }
 }
@@ -127,6 +132,14 @@ fn retried_record(
         next_retry_at: now_ms + wait_ms as i64,
         ..failure.clone()
     }
+}
+
+/// What a successful retry did with a due record.
+enum Retried {
+    /// Buffered for the flush, whose transaction deletes the record.
+    Buffered,
+    /// Overtaken by a newer entity: the record is deleted and nothing is written.
+    Discarded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +247,7 @@ impl RetryFailedDeployments {
         let content_semaphore = Arc::new(Semaphore::new(50));
         let succeeded = AtomicU64::new(0);
         let still_failing = AtomicU64::new(0);
+        let discarded = AtomicU64::new(0);
         let mut skipped: u64 = 0;
         let mut pages: u64 = 0;
 
@@ -293,6 +307,7 @@ impl RetryFailedDeployments {
             let servers_ref: &[String] = servers.as_deref().unwrap_or_default();
             let succeeded_ref = &succeeded;
             let still_failing_ref = &still_failing;
+            let discarded_ref = &discarded;
             let content_semaphore = &content_semaphore;
 
             futures::stream::iter(due)
@@ -300,7 +315,7 @@ impl RetryFailedDeployments {
                     let content_semaphore = content_semaphore.clone();
                     async move {
                         let attempt = next_attempt(failure);
-                        match deploy_entity_streaming(
+                        let outcome = deploy_entity_streaming(
                             ContentSource {
                                 client: &self.http_client,
                                 storage: self.storage.clone(),
@@ -314,14 +329,34 @@ impl RetryFailedDeployments {
                                 context: DeploymentContext::SyncedFix,
                                 report: None,
                                 retry_state: Some(attempt),
+                                discard_overtaken: self.config.discard_overtaken,
                             },
                         )
-                        .await
-                        {
+                        .await;
+                        // A failed discard is re-reported below like any failed attempt, so the
+                        // record backs off instead of being checked again next cycle.
+                        let outcome = match outcome {
+                            Err(SyncError::Overtaken { .. }) => remove_records(
+                                &self.failed_store.pool,
+                                std::slice::from_ref(&failure.entity_id),
+                            )
+                            .await
+                            .map(|()| Retried::Discarded),
+                            other => other.map(|()| Retried::Buffered),
+                        };
+                        match outcome {
+                            Ok(Retried::Discarded) => {
+                                info!(
+                                    entity_id = %failure.entity_id,
+                                    entity_type = %failure.entity_type,
+                                    "Discarded failed deployment overtaken by newer deployments"
+                                );
+                                discarded_ref.fetch_add(1, Ordering::Relaxed);
+                            }
                             // Buffered, not yet written: the flush transaction that writes
                             // it deletes the failure record, so a crash or a failed flush
                             // before then leaves the record for the next cycle.
-                            Ok(()) => {
+                            Ok(Retried::Buffered) => {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
                             }
@@ -361,6 +396,7 @@ impl RetryFailedDeployments {
         let stats = RetryStats {
             succeeded: succeeded.load(Ordering::Relaxed),
             still_failing: still_failing.load(Ordering::Relaxed),
+            discarded: discarded.load(Ordering::Relaxed),
             waiting,
             evicted,
             skipped,
@@ -373,6 +409,7 @@ impl RetryFailedDeployments {
             info!(
                 succeeded = stats.succeeded,
                 still_failing = stats.still_failing,
+                discarded = stats.discarded,
                 waiting = stats.waiting,
                 evicted = stats.evicted,
                 skipped = stats.skipped,
@@ -422,6 +459,9 @@ impl RetryFailedDeployments {
 pub struct RetryStats {
     pub succeeded: u64,
     pub still_failing: u64,
+    /// Due records dropped because a newer deployment overtook the entity
+    /// ([`RetryFailedConfig::discard_overtaken`]).
+    pub discarded: u64,
     /// Records whose deadline was still ahead when the cycle started.
     pub waiting: u64,
     pub evicted: u64,

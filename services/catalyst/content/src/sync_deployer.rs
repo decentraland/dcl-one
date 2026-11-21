@@ -654,7 +654,7 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
 
     // Every entity of the batch is in content.deployments once this commits, so its failure
     // record goes in the same transaction: the retry worker never drops one earlier.
-    crate::failed_deployments_store::remove_published(&mut tx, &entity_ids).await?;
+    crate::failed_deployments_store::remove_records(&mut *tx, &entity_ids).await?;
 
     if rows.is_empty() {
         tx.commit()
@@ -953,6 +953,59 @@ impl LiveSyncDeployer {
         }
 
         Ok(())
+    }
+
+    /// Whether a newer active entity of the same type holds any pointer of `entity_data`, in the
+    /// order pointer succession uses (`entity_timestamp`, then the lowercased entity id).
+    /// Succession supersedes an entity as a whole, so such an entity can only land as a
+    /// superseded row. An entity a newer deployment of this node's own (`local_entities`) would
+    /// supersede is never overtaken: the history prune keeps the rows such a scene superseded.
+    /// A timestamp Postgres cannot hold is never overtaken, so validation judges the entity.
+    pub async fn is_overtaken(
+        &self,
+        entity_data: &[u8],
+        entity_id: &str,
+    ) -> Result<bool, SyncError> {
+        /// `to_timestamp`'s range, 4714 BC to 294276 AD, in ms.
+        const POSTGRES_TIMESTAMP_MS: std::ops::Range<f64> =
+            -210_866_803_200_000.0..9_224_318_016_000_000.0;
+        let entity = parse_entity_for_deploy(entity_data, entity_id, &Vec::new())?;
+        if entity.entity_pointers.is_empty()
+            || !POSTGRES_TIMESTAMP_MS.contains(&entity.entity_timestamp)
+        {
+            return Ok(false);
+        }
+        sqlx::query_scalar(
+            "WITH overlapping AS MATERIALIZED (
+                 -- Pointer overlap alone drives this scan, as in flush_batch: with the type and
+                 -- order conditions in it the planner ANDs the GIN index with a broad btree.
+                 SELECT d.entity_id, d.entity_type, d.entity_timestamp
+                 FROM content.deployments d
+                 WHERE d.entity_pointers && $1
+             )
+             SELECT EXISTS(
+                 SELECT 1 FROM content.active_pointers ap
+                 JOIN content.deployments d ON d.entity_id = ap.entity_id
+                 WHERE ap.pointer = ANY($1) AND d.entity_type = $4
+                   AND (d.entity_timestamp, lower(d.entity_id))
+                       > (to_timestamp($2 / 1000.0), lower($3)))
+             -- Deliberately broader than the prune, which keeps only rows a local scene is the
+             -- deleter of: any newer local deployment on a shared pointer, active or not, keeps
+             -- the entity. That errs toward storing a row the prune may later remove.
+             AND NOT EXISTS(
+                 SELECT 1 FROM overlapping o
+                 JOIN content.local_entities le ON le.entity_id = o.entity_id
+                 WHERE o.entity_type = $4
+                   AND (o.entity_timestamp, lower(o.entity_id))
+                       > (to_timestamp($2 / 1000.0), lower($3)))",
+        )
+        .bind(&entity.entity_pointers)
+        .bind(entity.entity_timestamp)
+        .bind(entity_id)
+        .bind(&entity.entity_type)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SyncError::Storage(e.to_string()))
     }
 
     /// Flushes the buffer and waits for every in-flight flush to finish.

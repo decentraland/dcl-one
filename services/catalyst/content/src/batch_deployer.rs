@@ -346,6 +346,7 @@ impl BatchDeployer {
                     context: DeploymentContext::Synced,
                     report: report.as_ref(),
                     retry_state: None,
+                    discard_overtaken: false,
                 },
             )
             .await;

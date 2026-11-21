@@ -3,7 +3,7 @@
 
 use crate::sync_types::{FailedDeployment, FailureReason, SyncError};
 use serde_json::Value;
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgPool;
 
 fn reason_label(reason: &FailureReason) -> &'static str {
     match reason {
@@ -128,7 +128,7 @@ pub struct EvictedRecord {
 }
 
 pub struct LiveFailedDeploymentsStore {
-    pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl LiveFailedDeploymentsStore {
@@ -351,20 +351,21 @@ impl LiveFailedDeploymentsStore {
 /// duration.
 const EXHAUSTED_DELETE_BATCH_SIZE: usize = 1000;
 
-/// Remove published entities' failures in the publication transaction.
-pub(crate) async fn remove_published(
-    tx: &mut PgConnection,
+/// Removes the records of `entity_ids`: entities published (in their publication transaction)
+/// or discarded by the retry worker.
+pub(crate) async fn remove_records<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     entity_ids: &[String],
 ) -> Result<(), SyncError> {
     sqlx::query("DELETE FROM content.failed_deployments WHERE entity_id = ANY($1)")
         .bind(entity_ids)
-        .execute(tx)
+        .execute(executor)
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
     Ok(())
 }
 
-/// One pass of the old daily prune: records whose first failure is older than `ttl_days`.
+/// One pass of the daily prune: records whose latest recorded failure is older than `ttl_days`.
 /// Undecided records stay: the retry worker gives up on them after [`crate::sync::retry_failed::UNDECIDED_GIVE_UP_MS`].
 pub async fn prune_failed_deployments(
     pool: &sqlx::PgPool,

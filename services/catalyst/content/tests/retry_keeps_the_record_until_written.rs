@@ -5,30 +5,13 @@
 
 use std::sync::Arc;
 
-use alloy::signers::{Signer, local::PrivateKeySigner};
 use catalyst_content::failed_deployments_store::LiveFailedDeploymentsStore;
 use catalyst_content::sync::retry_failed::{RetryFailedConfig, RetryFailedDeployments};
-use catalyst_content::sync::{AuthChain, AuthLink, AuthLinkType, FailedDeployment, FailureReason};
+use catalyst_content::sync::{FailedDeployment, FailureReason};
 use catalyst_content::sync_deployer::LiveSyncDeployer;
+use catalyst_shared::test_keys::signed_chain;
 
 const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
-async fn signed_chain(entity_id: &str) -> AuthChain {
-    let key: PrivateKeySigner = TEST_KEY.parse().unwrap();
-    let signature = key.sign_message(entity_id.as_bytes()).await.unwrap();
-    vec![
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", key.address()),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload: entity_id.to_string(),
-            signature: Some(signature.to_string()),
-        },
-    ]
-}
 
 #[tokio::test]
 async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
@@ -56,7 +39,7 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
             entity_type: "scene".into(),
             entity_id: entity_id.clone(),
             reason: FailureReason::DeploymentError,
-            auth_chain: signed_chain(&entity_id).await,
+            auth_chain: signed_chain(TEST_KEY, &entity_id).await,
             error_description: "content server unreachable".into(),
             failure_timestamp: 1_700_000_000_000,
             snapshot_hash: None,

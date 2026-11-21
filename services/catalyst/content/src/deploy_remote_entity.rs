@@ -448,6 +448,10 @@ pub struct RemoteDeployment<'a> {
     pub context: DeploymentContext,
     pub report: Option<&'a Arc<DeploymentReport>>,
     pub retry_state: Option<(u32, u64)>,
+    /// Refuse with [`SyncError::Overtaken`], before content is fetched or validated, an entity
+    /// whose file hashes to its id and that a newer active entity overtook
+    /// ([`LiveSyncDeployer::is_overtaken`]).
+    pub discard_overtaken: bool,
 }
 
 pub async fn deploy_entity_streaming(
@@ -467,6 +471,7 @@ pub async fn deploy_entity_streaming(
         context,
         report,
         retry_state,
+        discard_overtaken,
     } = target;
     // The read-through never removes a file held here until the flush takes the entity.
     let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
@@ -502,6 +507,16 @@ pub async fn deploy_entity_streaming(
     }
     let hashes = extract_content_hashes(&entity_data)
         .map_err(|e| entity_parse_error(entity_id, verification, e))?;
+
+    // Only a file proven to hash to its id may discard: any other file is left to validation.
+    if discard_overtaken
+        && verification == CachedEntityVerification::Match
+        && deployer.is_overtaken(&entity_data, entity_id).await?
+    {
+        return Err(SyncError::Overtaken {
+            entity_id: entity_id.to_string(),
+        });
+    }
 
     let mut tasks: tokio::task::JoinSet<Result<(), SyncError>> = tokio::task::JoinSet::new();
 
@@ -1069,6 +1084,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         );
         let observe = async {
