@@ -847,6 +847,7 @@ mod tests {
                 replacement: &Deploy::Owner,
                 forward_to: None,
                 quota: None,
+                places_notices: None,
             },
         )
         .await
@@ -1701,6 +1702,7 @@ mod stream_access {
                 replacement: &Deploy::Owner,
                 forward_to: None,
                 quota: None,
+                places_notices: None,
             },
         )
         .await
@@ -1866,6 +1868,7 @@ mod stream_access {
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    places_notices: None,
                 },
             )
             .await
@@ -2128,6 +2131,7 @@ mod stream_access {
                 replacement: &catalyst::worlds::policy::Deploy::Owner,
                 forward_to: None,
                 quota: None,
+                places_notices: None,
             };
             store::deploy_scene(&pool, &storage, deployment)
                 .await

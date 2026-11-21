@@ -32,6 +32,13 @@
 //!   the `places` channel of the moderation outbox
 //!   (`crate::moderation_hooks`), which delivers it.
 //!
+//! A creator's rating (a scene deployment, a world's settings or publish)
+//! only raises the stored one ([`CreatorRating`]); its raise or refused
+//! lower is reported on the same channel ([`capture_creator_rating`]). An
+//! operator's rating of a derived place is also recorded on its parcels
+//! (`explore.place_parcel_rating`), which the derive pass holds the next
+//! deployment of that place, or a new place by its creator, to.
+//!
 //! The pending rating has two spellings upstream: the route schema's `PR`
 //! (`Place/schemas.ts:343`) and the code enum's `RP`
 //! (`SceneContentRating.RATING_PENDING`), which ingestion and the worlds
@@ -39,13 +46,15 @@
 //! mirrors normalise an upstream `PR` the same way (`mirror::UPSERT`,
 //! `derive::UPSERT*`).
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, SubsecRound, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::rows::PlaceRow;
-use crate::moderation_hooks::{Channel, enqueue};
+use crate::moderation_hooks::{Channel, capture_at, enqueue};
 use crate::shared::errors::ApiError;
 
 /// The stored content-rating codes (gatsby `SceneContentRating`): `RP` is pending.
@@ -71,6 +80,90 @@ pub fn normalize_rating(code: &str) -> &str {
 pub fn is_upgrading_rating(rating: &str, original: &str) -> bool {
     let index = |code: &str| RATING_SCALE.iter().position(|c| *c == code);
     matches!((index(original), index(rating)), (Some(o), Some(n)) if o < n)
+}
+
+/// A code's place on the creator scale, least to most restrictive: the
+/// scale above with ingestion's reading of `E` as `T` and `M` as `A`;
+/// `None` off the scale.
+fn creator_rank(code: &str) -> Option<u8> {
+    match creator_code(code)? {
+        "RP" => Some(0),
+        "T" | "E" => Some(1),
+        "A" => Some(2),
+        "R" => Some(3),
+        _ => None,
+    }
+}
+
+/// The code a creator's rating is stored as: a [`RATINGS`] code, with `PR`
+/// as `RP` and `M` as `A`, read trimmed and in any case; `None` off the scale.
+pub fn creator_code(code: &str) -> Option<&'static str> {
+    let code = code.trim();
+    match RATINGS
+        .iter()
+        .chain(&["PR", "M"])
+        .copied()
+        .find(|r| r.eq_ignore_ascii_case(code))?
+    {
+        "PR" => Some("RP"),
+        "M" => Some("A"),
+        c => Some(c),
+    }
+}
+
+/// The strictest of `codes` on the creator scale (the first of equal rank);
+/// off-scale codes are ignored.
+pub fn strictest<'a>(codes: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    codes
+        .into_iter()
+        .filter_map(|c| creator_rank(c).map(|r| (r, c)))
+        .fold(None, |best: Option<(u8, &str)>, (r, c)| match best {
+            Some((b, _)) if b >= r => best,
+            _ => Some((r, c)),
+        })
+        .map(|(_, c)| c)
+}
+
+/// What a creator's rating (a deployment's `contentRating`, a world's
+/// settings or publish) does to the stored one: a creator may raise a
+/// rating, never lower it; only an operator lowers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreatorRating {
+    /// Off the scale, or a code off the old scale (`E`, `M`) of the stored
+    /// rank: the stored rating stays.
+    Keep,
+    /// Nothing rated is stored, the same code, or the scale's code of the
+    /// stored rank (`E` to `T`): the proposal is stored.
+    Set,
+    /// Stricter than the stored rating: stored, and moderation is told.
+    Raise,
+    /// Laxer than the stored rating: the stored rating stays, and
+    /// moderation is told.
+    Lower,
+}
+
+impl CreatorRating {
+    pub fn of(stored: Option<&str>, proposed: &str) -> Self {
+        match (stored.and_then(creator_rank), creator_rank(proposed)) {
+            (_, None) => Self::Keep,
+            (None, Some(_)) => Self::Set,
+            (Some(s), Some(p)) if p > s => Self::Raise,
+            (Some(s), Some(p)) if p < s => Self::Lower,
+            // The same rank: the scale's code, or the stored one, is taken.
+            (Some(_), Some(_))
+                if !RATING_SCALE.contains(&normalize_rating(proposed))
+                    && stored.map(normalize_rating) != Some(normalize_rating(proposed)) =>
+            {
+                Self::Keep
+            }
+            _ => Self::Set,
+        }
+    }
+
+    /// Whether the proposal is stored.
+    pub fn applies(self) -> bool {
+        matches!(self, Self::Set | Self::Raise)
+    }
 }
 
 /// `to_char` format of the timestamps the projection writes into `raw`
@@ -126,14 +219,18 @@ impl Target<'_> {
     }
 }
 
-/// What goes with a decision beyond the row.
-#[derive(Debug, Default, Clone)]
+/// What goes with a decision beyond the row. Every field is named, so no
+/// caller drops the LAND index.
+#[derive(Clone)]
 pub struct Context<'a> {
     /// The rating's audit comment (`comment` of the old rating body).
     pub comment: Option<&'a str>,
     /// `Some(places site base URL)`: capture a webhook notice for a disable
     /// or a rating upgrade, linking into that site; `None` captures none.
     pub notify: Option<&'a str>,
+    /// The LAND index a place rating reads its parcels' owners from; `None`
+    /// records them unknown.
+    pub land: Option<&'a crate::land_authz::LandAuthzState>,
 }
 
 /// What [`apply_with`] did.
@@ -231,6 +328,90 @@ const OVERLAY: &str = "INSERT INTO explore.place_moderation (place_id, disabled,
          set_by = EXCLUDED.set_by,
          updated_at = EXCLUDED.updated_at";
 
+/// Takes the transaction locks of parcels `$1` (one of 128 hash buckets per
+/// parcel, so a large page holds at most 128), in one order, before a writer
+/// of `explore.place_parcel_rating` touches those rows: the derive pass
+/// inserts missing parcels after locking the others, so row locks alone can
+/// deadlock.
+pub(crate) const LOCK_PARCELS: &str = "SELECT pg_advisory_xact_lock(7422, s.k) FROM \
+     (SELECT DISTINCT hashtext(pos) & 127 AS k FROM unnest($1::text[]) AS pos ORDER BY k) AS s";
+
+/// The parcels of the derived place `$1`.
+const PLACE_PARCELS: &str = r#"
+    SELECT DISTINCT pos FROM explore.place p,
+         jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.raw->'positions') = 'array'
+                                        THEN p.raw->'positions' ELSE '[]'::jsonb END) AS pos
+    WHERE p.id = $1 AND p.raw->>'source' = 'content' AND p.world IS FALSE
+"#;
+
+/// An operator's rating `$2` of the derived place `$1`, recorded on each of
+/// its parcels as an operator's, with the place, its parcel set `$5`
+/// ([`super::parcel_set_hash`]), its creator and the parcel's LAND owner
+/// (`$3` positions, `$4` owners; an unknown owner keeps the one this place
+/// recorded) in `explore.place_parcel_rating`, which the derive pass holds a
+/// new deployment of that place, a new row on exactly its parcels, or a new
+/// row by that creator or on that owner's LAND, to.
+const OPERATOR_PARCEL_RATINGS: &str = r#"
+    INSERT INTO explore.place_parcel_rating AS r
+        (position, content_rating, place_id, parcel_set_hash, creator_address, owner_address, operator)
+    SELECT DISTINCT pos, $2, p.id, $5,
+           NULLIF(lower(btrim(p.creator_address)), ''),
+           NULLIF((SELECT o.owner FROM unnest($3::text[], $4::text[]) AS o(position, owner)
+                   WHERE o.position = pos LIMIT 1), ''), true
+    FROM explore.place p,
+         jsonb_array_elements_text(CASE WHEN jsonb_typeof(p.raw->'positions') = 'array'
+                                        THEN p.raw->'positions' ELSE '[]'::jsonb END) AS pos
+    WHERE p.id = $1 AND p.raw->>'source' = 'content' AND p.world IS FALSE
+    ORDER BY pos
+    ON CONFLICT (position) DO UPDATE
+    SET content_rating = EXCLUDED.content_rating, place_id = EXCLUDED.place_id,
+        parcel_set_hash = EXCLUDED.parcel_set_hash, creator_address = EXCLUDED.creator_address,
+        owner_address = COALESCE(EXCLUDED.owner_address,
+            CASE WHEN r.place_id = EXCLUDED.place_id THEN r.owner_address END),
+        operator = true, updated_at = timezone('UTC', now())
+"#;
+
+/// The LAND owner of each of `parcels` the index knows, on the caller's
+/// transaction ([`LandAuthzState::owners_at`](crate::land_authz::LandAuthzState::owners_at));
+/// none without the index. A failed lookup is logged and answers none, as an
+/// unpublished index does, inside a savepoint so the transaction goes on.
+pub(crate) async fn parcel_owners(
+    tx: &mut Transaction<'_, Postgres>,
+    land: Option<&crate::land_authz::LandAuthzState>,
+    parcels: &[String],
+) -> Result<HashMap<String, String>, sqlx::Error> {
+    let Some(land) = land else {
+        return Ok(HashMap::new());
+    };
+    let coords: Vec<(&String, (i32, i32))> = parcels
+        .iter()
+        .filter_map(|p| {
+            let (x, y) = crate::auth::parse_pointer(p)?;
+            Some((p, (i32::try_from(x).ok()?, i32::try_from(y).ok()?)))
+        })
+        .collect();
+    if coords.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let xy: Vec<(i32, i32)> = coords.iter().map(|(_, c)| *c).collect();
+    let mut savepoint = sqlx::Acquire::begin(&mut *tx).await?;
+    match land.owners_at(&mut savepoint, &xy).await {
+        Ok(owners) => {
+            savepoint.commit().await?;
+            Ok(coords
+                .into_iter()
+                .zip(owners)
+                .filter_map(|((p, _), o)| Some((p.clone(), o?)))
+                .collect())
+        }
+        Err(error) => {
+            savepoint.rollback().await?;
+            tracing::warn!(%error, "places: LAND owner lookup failed; parcel owners unknown");
+            Ok(HashMap::new())
+        }
+    }
+}
+
 /// The `raw` keys a disable decision writes, as `updateDisabled` did
 /// (`Place/model.ts:727-742`): `disabled_at` and `disabled_reason` set or
 /// cleared, `updated_at` moved.
@@ -243,19 +424,24 @@ fn disable_raw_patch(disabled: bool, reason: Option<&str>, at: DateTime<Utc>) ->
     }
 }
 
-/// Records `decision` for `target` as `actor` and projects it onto the row.
+/// Records `decision` for `target` as `actor` and projects it onto the row,
+/// reading a rated place's parcel owners from `land`.
 /// `Ok(None)` when no catalogue row matches (the old routes' 404).
 pub async fn apply(
     pool: &PgPool,
     target: Target<'_>,
     decision: &Decision,
     actor: &str,
+    land: Option<&crate::land_authz::LandAuthzState>,
 ) -> Result<Option<String>, ApiError> {
-    Ok(
-        apply_with(pool, target, decision, actor, Context::default())
-            .await?
-            .map(|applied| applied.id),
-    )
+    let ctx = Context {
+        comment: None,
+        notify: None,
+        land,
+    };
+    Ok(apply_with(pool, target, decision, actor, ctx)
+        .await?
+        .map(|applied| applied.id))
 }
 
 /// [`apply`] with the rating's comment and the webhook capture; see the
@@ -316,6 +502,30 @@ pub async fn apply_with(
                 .bind(highlighted)
                 .bind(rating.as_deref())
                 .bind(&raw_patch)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if let (Some(rating), Target::Place(_)) = (rating.as_deref(), &target) {
+            // A derived place's parcels hold the operator's rating past the row.
+            let parcels: Vec<String> = sqlx::query_scalar(PLACE_PARCELS)
+                .bind(&id)
+                .fetch_all(&mut *tx)
+                .await?;
+            sqlx::query(LOCK_PARCELS)
+                .bind(&parcels)
+                .execute(&mut *tx)
+                .await?;
+            let owners = parcel_owners(&mut tx, ctx.land, &parcels).await?;
+            let owners: Vec<String> = parcels
+                .iter()
+                .map(|p| owners.get(p).cloned().unwrap_or_default())
+                .collect();
+            sqlx::query(OPERATOR_PARCEL_RATINGS)
+                .bind(&id)
+                .bind(rating)
+                .bind(&parcels)
+                .bind(&owners)
+                .bind(super::parcel_set_hash(&parcels))
                 .execute(&mut *tx)
                 .await?;
         }
@@ -394,7 +604,31 @@ fn disabled_message(row: &Resolved) -> Value {
 /// the link is `whatsOnPlaceUrl` / `whatsOnWorldUrl` (`Place/utils.ts:41-56`:
 /// the base with pathname `/whats-on`, so the base's own path is replaced).
 fn rating_upgraded_message(row: &Resolved, original: &str, rating: &str, base: &str) -> Value {
-    let (kind, link) = if row.world {
+    rating_upgraded_by(row, original, rating, base, "Content Moderator")
+}
+
+fn rating_upgraded_by(row: &Resolved, original: &str, rating: &str, base: &str, by: &str) -> Value {
+    let (kind, link) = row_link(row, base);
+    json!({ "blocks": [
+        { "type": "section", "text": { "type": "mrkdwn", "text": format!(":white_check_mark: The {kind} upgrade rating: {link}") } },
+        { "type": "section", "text": { "type": "plain_text", "text": format!("The rating was upgraded by {by}") } },
+        { "type": "section", "text": { "type": "plain_text", "text": format!("Previous rating: {original} - New rating: {rating}") } }
+    ] })
+}
+
+/// `notifyDowngradeRating(place, proposed)` (`Slack/utils.ts`): a creator's
+/// laxer rating, which the row did not take.
+fn rating_downgrade_message(row: &Resolved, stored: &str, proposed: &str, base: &str) -> Value {
+    let (kind, link) = row_link(row, base);
+    json!({ "blocks": [
+        { "type": "section", "text": { "type": "mrkdwn", "text": format!(":warning: The {kind} updated trying to downgrade rating: {link}") } },
+        { "type": "section", "text": { "type": "plain_text", "text": format!("Actual rating: {stored} - Proposed rating: {proposed}") } }
+    ] })
+}
+
+/// The kind and the What's On link of a notice's row.
+fn row_link(row: &Resolved, base: &str) -> (&'static str, String) {
+    if row.world {
         let name = row.world_name.as_deref().unwrap_or(&row.id);
         (
             "world",
@@ -420,12 +654,164 @@ fn rating_upgraded_message(row: &Resolved, original: &str, rating: &str, base: &
                 mrkdwn_escape(&row.base_position)
             ),
         )
+    }
+}
+
+/// The catalogue row a creator's rating is about: a place by its id and
+/// base parcel, or a world by its name.
+#[derive(Debug, Clone, Copy)]
+pub enum RatedRow<'a> {
+    Place { id: &'a str, base_position: &'a str },
+    World(&'a str),
+}
+
+/// Queues the notice of a creator's [`CreatorRating::Raise`] (`rating_upgraded`,
+/// by Content Creator) or [`CreatorRating::Lower`] (`rating_downgrade_refused`)
+/// in the write's transaction, linking into the places site at `base`; any
+/// other outcome queues nothing. The caller holds the row's lock. A
+/// downgrade notice not yet sent takes the new message instead of a new row,
+/// and otherwise a row gets no new one within an hour of its last.
+pub async fn capture_creator_rating(
+    tx: &mut Transaction<'_, Postgres>,
+    base: &str,
+    row: RatedRow<'_>,
+    stored: &str,
+    proposed: &str,
+) -> Result<(), sqlx::Error> {
+    // A code stored before the rule (`M`, `r`) is shown on the scale.
+    let stored = creator_code(stored).unwrap_or(stored);
+    let resolved = match row {
+        RatedRow::Place { id, base_position } => Resolved {
+            id: id.to_string(),
+            world: false,
+            disabled: false,
+            disabled_reason: None,
+            title: None,
+            base_position: base_position.to_string(),
+            world_name: None,
+            content_rating: Some(stored.to_string()),
+            active: true,
+        },
+        RatedRow::World(name) => Resolved {
+            id: name.to_string(),
+            world: true,
+            disabled: false,
+            disabled_reason: None,
+            title: None,
+            base_position: String::new(),
+            world_name: Some(name.to_string()),
+            content_rating: Some(stored.to_string()),
+            active: true,
+        },
     };
-    json!({ "blocks": [
-        { "type": "section", "text": { "type": "mrkdwn", "text": format!(":white_check_mark: The {kind} upgrade rating: {link}") } },
-        { "type": "section", "text": { "type": "plain_text", "text": "The rating was upgraded by Content Moderator" } },
-        { "type": "section", "text": { "type": "plain_text", "text": format!("Previous rating: {original} - New rating: {rating}") } }
-    ] })
+    let (kind, message) = match CreatorRating::of(Some(stored), proposed) {
+        CreatorRating::Raise => (
+            "rating_upgraded",
+            rating_upgraded_by(&resolved, stored, proposed, base, "Content Creator"),
+        ),
+        CreatorRating::Lower => (
+            "rating_downgrade_refused",
+            rating_downgrade_message(&resolved, stored, proposed, base),
+        ),
+        CreatorRating::Keep | CreatorRating::Set => return Ok(()),
+    };
+    // One undelivered downgrade notice per row: a newer attempt replaces its
+    // message. Upgrades share their kind with the operator's, so each is kept.
+    if kind == "rating_downgrade_refused" {
+        let pending = sqlx::query(
+            "UPDATE explore.moderation_hooks SET payload = $3 WHERE channel = 'places' \
+             AND subject = $1 AND kind = $2 AND completed_at IS NULL AND attempts = 0",
+        )
+        .bind(&resolved.id)
+        .bind(kind)
+        .bind(&message)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        if pending > 0 {
+            return Ok(());
+        }
+        // Sent or failing: none within an hour of the row's last.
+        let at = capture_at(tx).await?;
+        sqlx::query(
+            "INSERT INTO explore.moderation_hooks \
+             (id, channel, subject, kind, payload, created_at, next_attempt_at) \
+             SELECT $1, 'places', $2, $3, $4, $5, $5 WHERE NOT EXISTS ( \
+                 SELECT 1 FROM explore.moderation_hooks WHERE channel = 'places' \
+                 AND subject = $2 AND kind = $3 AND created_at > $5 - interval '1 hour')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(&resolved.id)
+        .bind(kind)
+        .bind(&message)
+        .bind(at)
+        .execute(&mut **tx)
+        .await?;
+        return Ok(());
+    }
+    capture(tx, &resolved.id, kind, &message).await
+}
+
+/// The rating a creator's write to the local world `key` is held to: an
+/// operator's rating (`explore.place_moderation`, which the catalogue serves
+/// first), else the world's own `stored`. Locks the operator's row.
+pub async fn world_rating_in_force(
+    tx: &mut Transaction<'_, Postgres>,
+    key: &str,
+    stored: Option<String>,
+) -> Result<Option<String>, sqlx::Error> {
+    let operator: Option<String> = sqlx::query_scalar(
+        "SELECT content_rating FROM explore.place_moderation WHERE place_id = $1 FOR UPDATE",
+    )
+    .bind(key)
+    .fetch_optional(&mut **tx)
+    .await?
+    .flatten();
+    Ok(operator.or(stored))
+}
+
+/// Moves an operator's rating of the local world `key` to the creator's
+/// `rating` the world takes, so the catalogue serves it.
+pub async fn follow_creator_world_rating(
+    tx: &mut Transaction<'_, Postgres>,
+    key: &str,
+    rating: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE explore.place_moderation SET content_rating = $2 \
+         WHERE place_id = $1 AND content_rating IS NOT NULL",
+    )
+    .bind(key)
+    .bind(rating)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// A creator's `proposed` rating for the local world `key`, whose own rating
+/// is `stored`: held to [`world_rating_in_force`], taken only when it raises
+/// that ([`CreatorRating`]), which moves an operator's rating with it, and
+/// reported against the held rating when `notify` (the places site) is set.
+/// The rating the world takes, if any; none without a proposal.
+pub async fn settle_world_rating<'p>(
+    tx: &mut Transaction<'_, Postgres>,
+    key: &str,
+    stored: Option<String>,
+    proposed: Option<&'p str>,
+    notify: Option<&str>,
+) -> Result<Option<&'p str>, sqlx::Error> {
+    let Some(proposed) = proposed else {
+        return Ok(None);
+    };
+    let held = world_rating_in_force(tx, key, stored).await?;
+    let applies = CreatorRating::of(held.as_deref(), proposed).applies();
+    if applies {
+        follow_creator_world_rating(tx, key, proposed).await?;
+    }
+    if let (Some(base), Some(held)) = (notify, held.as_deref()) {
+        capture_creator_rating(tx, base, RatedRow::World(key), held, proposed).await?;
+    }
+    Ok(applies.then_some(proposed))
 }
 
 /// Queues one notice in the decision's transaction.
@@ -515,6 +901,43 @@ mod tests {
             !is_upgrading_rating("T", "PR"),
             "the unnormalised spelling never upgraded upstream"
         );
+    }
+
+    #[test]
+    fn a_creator_raises_a_rating_and_never_lowers_it() {
+        use CreatorRating::*;
+        assert_eq!(CreatorRating::of(Some("T"), "A"), Raise);
+        assert_eq!(CreatorRating::of(Some("RP"), "R"), Raise);
+        assert_eq!(CreatorRating::of(Some("A"), "T"), Lower);
+        assert_eq!(CreatorRating::of(Some("R"), "RP"), Lower);
+        assert_eq!(CreatorRating::of(Some("A"), "E"), Lower, "E reads as T");
+        assert_eq!(CreatorRating::of(Some("E"), "A"), Raise);
+        assert_eq!(CreatorRating::of(Some("E"), "T"), Set, "the scale's code");
+        assert_eq!(CreatorRating::of(Some("T"), "E"), Keep, "the same rank");
+        assert_eq!(CreatorRating::of(Some("E"), "E"), Set);
+        assert_eq!(CreatorRating::of(Some("A"), "M"), Keep, "the same rank");
+        assert_eq!(CreatorRating::of(Some("T"), "T"), Set);
+        assert_eq!(CreatorRating::of(Some("RP"), "PR"), Set, "one code");
+        assert_eq!(CreatorRating::of(Some("T"), "X"), Keep, "off the scale");
+        assert_eq!(CreatorRating::of(None, "A"), Set);
+        assert_eq!(CreatorRating::of(Some("X"), "A"), Set);
+        assert!(Raise.applies() && Set.applies() && !Lower.applies() && !Keep.applies());
+    }
+
+    #[test]
+    fn a_creator_code_is_stored_on_the_scale() {
+        assert_eq!(creator_code("M"), Some("A"));
+        assert_eq!(creator_code("PR"), Some("RP"));
+        assert_eq!(creator_code("E"), Some("E"));
+        assert_eq!(creator_code("X"), None);
+        assert_eq!(creator_code(" r "), Some("R"));
+        assert_eq!(creator_code("m"), Some("A"));
+        assert_eq!(creator_code("pr"), Some("RP"));
+        assert_eq!(CreatorRating::of(Some("r"), "A"), CreatorRating::Lower);
+        assert_eq!(CreatorRating::of(Some(" t"), "A"), CreatorRating::Raise);
+        assert_eq!(strictest(["T", "R", "A"]), Some("R"));
+        assert_eq!(strictest(["E", "T"]), Some("E"), "the first of a rank");
+        assert_eq!(strictest(["X"]), None);
     }
 
     #[test]
@@ -666,7 +1089,11 @@ mod tests {
                 reason: Some("spam".into()),
             },
             actor,
-            Context::default(),
+            Context {
+                comment: None,
+                notify: None,
+                land: None,
+            },
         )
         .await
         .unwrap()
@@ -690,6 +1117,7 @@ mod tests {
             Context {
                 comment: Some(" reviewed "),
                 notify: None,
+                land: None,
             },
         )
         .await
@@ -734,6 +1162,7 @@ mod tests {
                 reason: None,
             },
             actor,
+            None,
         )
         .await
         .unwrap();
@@ -744,7 +1173,11 @@ mod tests {
             Target::Place(&id),
             &Decision::rating("PR").unwrap(),
             actor,
-            Context::default(),
+            Context {
+                comment: None,
+                notify: None,
+                land: None,
+            },
         )
         .await
         .unwrap()
@@ -755,6 +1188,7 @@ mod tests {
             Target::Place(&id),
             &Decision::rating("A").unwrap(),
             actor,
+            None,
         )
         .await
         .unwrap();
@@ -763,7 +1197,8 @@ mod tests {
                 &pool,
                 Target::World(&id),
                 &Decision::Highlighted(true),
-                actor
+                actor,
+                None,
             )
             .await
             .unwrap(),
@@ -775,7 +1210,8 @@ mod tests {
                 &pool,
                 Target::Place("no-such-place"),
                 &Decision::Highlighted(true),
-                actor
+                actor,
+                None,
             )
             .await
             .unwrap(),
@@ -798,6 +1234,7 @@ mod tests {
                 reason: Some("moderation".into()),
             },
             actor,
+            None,
         )
         .await
         .unwrap();
@@ -839,6 +1276,7 @@ mod tests {
                 reason: None,
             },
             actor,
+            None,
         )
         .await
         .unwrap();
@@ -862,6 +1300,98 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM explore.place WHERE id = $1")
             .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A refused downgrade's notice, once sent, holds the row's next one for
+    /// an hour from its capture; an upgrade is never held back.
+    #[tokio::test]
+    async fn a_sent_downgrade_notice_holds_the_next_for_the_hour() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let name = format!("rated-{}.dcl.eth", uuid::Uuid::new_v4());
+        let capture = |stored: &'static str, proposed: &'static str| {
+            let (pool, name) = (pool.clone(), name.clone());
+            async move {
+                let mut tx = pool.begin().await.unwrap();
+                capture_creator_rating(
+                    &mut tx,
+                    "https://decentraland.org/places",
+                    RatedRow::World(&name),
+                    stored,
+                    proposed,
+                )
+                .await
+                .unwrap();
+                tx.commit().await.unwrap();
+            }
+        };
+        let kinds = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT kind FROM explore.moderation_hooks \
+                 WHERE channel = 'places' AND subject = $1 ORDER BY created_at",
+            )
+            .bind(&name)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        let deliver = || async {
+            sqlx::query(
+                "UPDATE explore.moderation_hooks SET attempts = 1, \
+                 completed_at = timezone('UTC', now()) WHERE subject = $1",
+            )
+            .bind(&name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+
+        capture("A", "T").await;
+        capture("A", "RP").await;
+        assert_eq!(
+            kinds().await,
+            ["rating_downgrade_refused"],
+            "unsent: merged"
+        );
+        deliver().await;
+        capture("A", "T").await;
+        capture("A", "E").await;
+        assert_eq!(
+            kinds().await,
+            ["rating_downgrade_refused"],
+            "sent: held for the hour"
+        );
+        capture("A", "R").await;
+        assert_eq!(
+            kinds().await,
+            ["rating_downgrade_refused", "rating_upgraded"],
+            "an upgrade is not held"
+        );
+        sqlx::query(
+            "UPDATE explore.moderation_hooks SET created_at = created_at - interval '61 minutes' \
+             WHERE subject = $1",
+        )
+        .bind(&name)
+        .execute(&pool)
+        .await
+        .unwrap();
+        deliver().await;
+        capture("A", "T").await;
+        assert_eq!(
+            kinds().await,
+            [
+                "rating_downgrade_refused",
+                "rating_upgraded",
+                "rating_downgrade_refused"
+            ],
+            "the next hour takes one more"
+        );
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE subject = $1")
+            .bind(&name)
             .execute(&pool)
             .await
             .unwrap();
@@ -920,6 +1450,7 @@ mod tests {
         let notify = Context {
             comment: None,
             notify: Some("https://decentraland.org/places"),
+            land: None,
         };
         // No notice without the webhook, none for a highlight, a re-enable or
         // a rating that is not an upgrade.
@@ -958,7 +1489,11 @@ mod tests {
             Target::Place(&id),
             &Decision::rating("T").unwrap(),
             actor,
-            Context::default(),
+            Context {
+                comment: None,
+                notify: None,
+                land: None,
+            },
         )
         .await
         .unwrap();

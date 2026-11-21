@@ -266,6 +266,43 @@ CREATE TABLE explore.place_moderation (
         CHECK (content_rating IS NULL OR content_rating IN ('RP', 'E', 'T', 'A', 'R'))
 );
 
+-- The content rating last held on each parcel by the derived place covering it
+-- (src/explore/places/derive.rs, `settle_ratings`), with that place's id and
+-- whole parcel set (`parcel_set_hash`: the hex SHA-256 of the string its
+-- distinct positions make sorted in byte order and joined by `;`), the
+-- deployer address that created it and the parcel's LAND owner (the estate's
+-- owner for a parcel in one, from the local land_authz index, the lessor while
+-- the Rentals contract holds it; NULL while that index is unpublished or the
+-- parcel is unindexed, and filled when a later pass settles the same place
+-- again once the index knows it): the derive pass writes the
+-- rating it settles for a new
+-- deployment or a new row over every parcel of that row (and clears the
+-- parcels of one left with no rating), and fills a missing parcel from the
+-- row's stored rating; an operator's rating of a derived place
+-- (places::moderation) overwrites its parcels and sets `operator`. A new
+-- deployment or a new row is held to the strictest rating of its parcels
+-- recorded by the same place (the same id, or exactly the same parcel set),
+-- the same creator or the same LAND owner, so the rating outlives the row the
+-- pass prunes; another creator on another owner's LAND and another parcel set
+-- starts fresh. An `operator` record is replaced or cleared only by a place
+-- held to it, or by a place on another parcel set whose known LAND owner
+-- differs from the record's known one; a place whose owner is unknown
+-- replaces no record with a known owner. Keyed by the parcel (`x,y`), one row per rated parcel
+-- the catalogue has derived; no FK to explore.place, whose rows come and go.
+-- The PK serves the pass's lookup and upsert by parcel.
+CREATE TABLE explore.place_parcel_rating (
+    position        text PRIMARY KEY,
+    content_rating  text NOT NULL,
+    place_id        text NOT NULL,
+    parcel_set_hash text NOT NULL,
+    creator_address text,
+    owner_address   text,
+    operator        boolean NOT NULL DEFAULT false,
+    updated_at      timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT place_parcel_rating_known
+        CHECK (content_rating IN ('RP', 'E', 'T', 'A', 'R'))
+);
+
 -- An operator's ranking of a catalogue row (src/explore/places/ranking.rs: the
 -- admin routes' ranking and ranking-exclusion, the destinations ranking
 -- replace): `overlay` holds the raw keys decided (`ranking`: number or null,

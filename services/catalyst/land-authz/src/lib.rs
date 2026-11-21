@@ -93,7 +93,8 @@ pub const SCHEMA: &str = "land_authz";
 pub use crate::chain_index::registries::{
     ESTATE_REGISTRY_MAINNET, ESTATE_REGISTRY_SEPOLIA, LAND_MAINNET, LAND_REGISTRY_MAINNET,
     LAND_REGISTRY_SEPOLIA, LAND_SEPOLIA, LAND_START_BLOCK_MAINNET, LAND_START_BLOCK_SEPOLIA,
-    LandNetwork, NETWORK_MAINNET, NETWORK_SEPOLIA, land_network, land_network_of_registry,
+    LandNetwork, NETWORK_MAINNET, NETWORK_SEPOLIA, RENTALS_MAINNET, RENTALS_SEPOLIA, land_network,
+    land_network_of_registry,
 };
 
 pub const KIND_UPDATE_OPERATOR: &str = "update_operator";
@@ -435,6 +436,64 @@ impl LandAuthzState {
         .fetch_optional(conn)
         .await?;
         Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
+    }
+
+    /// The indexed owner of each parcel (its estate's owner when it sits in
+    /// one, never the estate registry), lowercase and positional, on the
+    /// caller's connection with the publication check of [`Self::estate_at`].
+    /// A token the Rentals contract holds answers its lessor: the recipient of
+    /// the token's latest transfer to another address, the one that sent it
+    /// into the contract. An unpublished index, an unindexed parcel or estate,
+    /// no owner, the zero address or a rented token whose earlier transfer is
+    /// not indexed answer `None`.
+    pub async fn owners_at(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        parcels: &[(i32, i32)],
+    ) -> Result<Vec<Option<String>>, sqlx::Error> {
+        let mut out = vec![None; parcels.len()];
+        if parcels.is_empty() {
+            return Ok(out);
+        }
+        let xs: Vec<i32> = parcels.iter().map(|p| p.0).collect();
+        let ys: Vec<i32> = parcels.iter().map(|p| p.1).collect();
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT t.i, o.owner FROM land_authz.index_cursor c \
+             CROSS JOIN unnest($4::int[], $5::int[]) WITH ORDINALITY AS t(x, y, i) \
+             JOIN land_authz.token_right p ON p.token_address=c.land_registry AND p.x=t.x AND p.y=t.y \
+             LEFT JOIN land_authz.estate_land el ON el.land_token_id=p.token_id \
+             LEFT JOIN land_authz.token_right et ON et.token_address=c.estate_registry AND et.token_id=el.estate_token_id \
+             CROSS JOIN LATERAL (SELECT \
+                 CASE WHEN el.estate_token_id IS NOT NULL THEN c.estate_registry ELSE c.land_registry END AS token_address, \
+                 COALESCE(el.estate_token_id, p.token_id) AS token_id, \
+                 lower(CASE WHEN el.estate_token_id IS NOT NULL THEN et.owner ELSE p.owner END) AS holder) h \
+             CROSS JOIN LATERAL (SELECT CASE WHEN h.holder = $7 THEN ( \
+                 SELECT lower(e.account) FROM land_authz.authz_event e \
+                 WHERE e.token_address = h.token_address AND e.token_id = h.token_id \
+                   AND e.kind = 'transfer' AND lower(e.account) <> $7 \
+                 ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1) \
+                 ELSE h.holder END AS owner) o \
+             WHERE c.network=$1 AND c.land_registry=$2 AND c.estate_registry=$3 \
+               AND c.full_replay_started AND c.folded_block=c.last_block \
+               AND c.folded_at <= timezone('UTC', now()) \
+               AND c.folded_at >= timezone('UTC', now()) - make_interval(secs => $6) \
+               AND o.owner <> '' AND o.owner <> '0x0000000000000000000000000000000000000000'",
+        )
+        .bind(&self.settings.network)
+        .bind(&self.settings.land_registry)
+        .bind(&self.settings.estate_registry)
+        .bind(&xs)
+        .bind(&ys)
+        .bind(indexer::READY_WINDOW.num_seconds() as f64)
+        .bind(land_network(&self.settings.network).map_or("", |n| n.rentals))
+        .fetch_all(conn)
+        .await?;
+        for (i, owner) in rows {
+            if let Some(slot) = usize::try_from(i - 1).ok().and_then(|i| out.get_mut(i)) {
+                *slot = Some(owner);
+            }
+        }
+        Ok(out)
     }
 
     /// The Estate token `estate_id` (decimal) when the configured Estate

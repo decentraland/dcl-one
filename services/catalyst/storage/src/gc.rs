@@ -202,6 +202,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "worlds.completed_scene_uploads.entity_id",
         "a completion receipt: worlds.world_scenes holds the reference while the scene is live",
     ),
+    (
+        "explore.place_parcel_rating.parcel_set_hash",
+        "a digest of a place's parcel positions",
+    ),
     ("explore.place_reports.entity_id", "a place id"),
     ("explore.user_favorites.entity_id", "a place id"),
     ("explore.user_likes.entity_id", "a place id"),

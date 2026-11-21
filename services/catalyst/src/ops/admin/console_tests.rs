@@ -1715,6 +1715,98 @@ async fn explorer_overlays_are_module_calls_behind_the_console_switch() {
     cleanup(&pool, &actor).await;
 }
 
+/// A place rating from the console records each parcel's LAND owner from the
+/// attached index, as the explore rating route does.
+#[tokio::test]
+async fn a_console_place_rating_records_the_land_owner() {
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let owner = "0x00000000000000000000000000000000000000a1";
+    let settings = crate::land_authz::Settings::for_tests();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor \
+         (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
+         VALUES ($1, $2, $3, 100, 100, timezone('UTC', now()), true)",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for y in [0, 1] {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) \
+             VALUES ($1, 50 * 340282366920938463463374607431768211456::numeric + $2, 50, $2, $3, 100, 0)",
+        )
+        .bind(&settings.land_registry)
+        .bind(y)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let explore = Arc::new(crate::explore::ExploreState::new(
+        pool.clone(),
+        crate::explore::Settings::for_tests(),
+        None,
+    ));
+    explore
+        .places
+        .set_land_authz(Arc::new(crate::land_authz::LandAuthzState::new(
+            pool.clone(),
+            Outbound::new(Default::default()).unwrap(),
+            settings,
+            None,
+        )));
+    let place = "console-derived-place";
+    sqlx::query(
+        "INSERT INTO explore.place (id, base_position, creator_address, content_rating, raw) \
+         VALUES ($1, '50,0', $2, 'T', $3)",
+    )
+    .bind(place)
+    .bind(owner)
+    .bind(json!({ "id": place, "source": "content", "positions": ["50,0", "50,1"] }))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (app, _actor, cookie) = console(
+        &pool,
+        true,
+        Domains {
+            explore: Some(explore),
+            ..Default::default()
+        },
+    )
+    .await;
+    let (status, body) = post(
+        &app,
+        &cookie,
+        "/admin/api/places/place-rating",
+        json!({ "place_id": place, "rating": "R" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let records: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT position, content_rating, owner_address, operator \
+         FROM explore.place_parcel_rating ORDER BY position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        records,
+        [("50,0", true), ("50,1", true)].map(|(p, op)| (
+            p.to_string(),
+            "R".to_string(),
+            Some(owner.to_string()),
+            op
+        ))
+    );
+}
+
 #[tokio::test]
 async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mirror() {
     let Some(pool) = crate::db::scratch::pool(4).await else {

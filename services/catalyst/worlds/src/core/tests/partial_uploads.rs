@@ -1281,7 +1281,13 @@ async fn an_upload_expiring_during_its_completing_publish_is_refused_as_expired(
     let holder = backend_pid(&mut held).await;
     let ((status, _, body), ()) =
         tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[1])), async {
-            blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
+            blocked_by(
+                &f.pool,
+                holder,
+                "SELECT owner, content_rating FROM worlds.worlds",
+                1,
+            )
+            .await;
             // Meanwhile the upload expires and a file it found stored is collected.
             sqlx::query(
                 "UPDATE worlds.pending_scenes SET created_at = created_at - interval '2 hours' \
@@ -1793,7 +1799,13 @@ async fn an_upload_expiring_while_it_completes_is_reclaimed_by_a_concurrent_clea
         .unwrap();
     let holder = backend_pid(&mut held).await;
     let racer = async {
-        let publish = blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
+        let publish = blocked_by(
+            &f.pool,
+            holder,
+            "SELECT owner, content_rating FROM worlds.worlds",
+            1,
+        )
+        .await;
         age_upload(&f, &u, std::time::Duration::from_secs(2 * 3600)).await;
         let (report, ()) = tokio::join!(partial::delete_expired_uploads(&f.state), async {
             blocked_by(&f.pool, publish[0], "pg_advisory_xact_lock($1)", 1).await;

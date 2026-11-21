@@ -1,11 +1,15 @@
 //! The LAND and estate registries per Ethereum network: what an
 //! authorization's `tokenAddress` is, where the land-authz index starts and
-//! the `index_cursor.network` row it keeps. `land_authz` re-exports these.
+//! the `index_cursor.network` row it keeps, and the Rentals contract that
+//! holds a rented token. `land_authz` re-exports these.
 
 pub const LAND_REGISTRY_MAINNET: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
 pub const ESTATE_REGISTRY_MAINNET: &str = "0x959e104e1a4db6317fa58f8295f586e1a978c297";
 pub const LAND_REGISTRY_SEPOLIA: &str = "0x42f4ba48791e2de32f5fbf553441c2672864bb33";
 pub const ESTATE_REGISTRY_SEPOLIA: &str = "0x369a7fbe718c870c79f99fb423882e8dd8b20486";
+/// The Rentals contract, which holds a rented LAND or estate while the rent lasts.
+pub const RENTALS_MAINNET: &str = "0x3a1469499d0be105d4f77045ca403a5f6dc2f3f5";
+pub const RENTALS_SEPOLIA: &str = "0xe70db6319e9cee3f604909bdade58d1f5c1cf702";
 
 /// The block the LAND registry was deployed in: where a full replay starts.
 pub const LAND_START_BLOCK_MAINNET: u64 = 4_944_642;
@@ -24,6 +28,7 @@ pub struct LandNetwork {
     pub network: &'static str,
     pub land_registry: &'static str,
     pub estate_registry: &'static str,
+    pub rentals: &'static str,
     pub start_block: u64,
 }
 
@@ -32,6 +37,7 @@ pub const LAND_MAINNET: LandNetwork = LandNetwork {
     network: NETWORK_MAINNET,
     land_registry: LAND_REGISTRY_MAINNET,
     estate_registry: ESTATE_REGISTRY_MAINNET,
+    rentals: RENTALS_MAINNET,
     start_block: LAND_START_BLOCK_MAINNET,
 };
 
@@ -40,6 +46,7 @@ pub const LAND_SEPOLIA: LandNetwork = LandNetwork {
     network: NETWORK_SEPOLIA,
     land_registry: LAND_REGISTRY_SEPOLIA,
     estate_registry: ESTATE_REGISTRY_SEPOLIA,
+    rentals: RENTALS_SEPOLIA,
     start_block: LAND_START_BLOCK_SEPOLIA,
 };
 

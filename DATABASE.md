@@ -487,6 +487,72 @@ edit throttle window are preserved. `(created_at,id)` supports retention order. 
 and edit-bucket columns on earlier shared development layouts without removing
 intents, and the object pass recreates the changed due/creator indexes.
 
+The places channel carries operator disables and rating upgrades, and a
+creator's rating change: a stricter rating, which the row takes
+(`rating_upgraded`), or a laxer one, which it keeps out
+(`rating_downgrade_refused`; step `0054_explore_rating_downgrade_notice` admits
+the kind). A creator notice is captured in the transaction of the deployment
+pass or world write that saw the change, once per new deployment or setting
+write, and only while the places webhook is configured; an unsent downgrade
+notice of the same row takes the newer message instead of a new row, and a
+row with a downgrade notice captured in the last hour gets no new row. A local
+world's or a derived place's creator rating is held to the operator's rating in
+`explore.place_moderation` when one is set, and a rating the row takes moves
+that override with it. A new deployment or a newly inserted derived place is
+also held to the ratings, on its parcels, of the same place, of places by
+the same creator (the signed deployer address, `explore.place.creator_address`)
+and of places on the same LAND owner's parcels: the derived places by that
+creator its parcels overlap, which the pass then prunes, and
+`explore.place_parcel_rating`. The same place is the same id (the same base
+parcel) or exactly the same set of parcels under another base, whoever
+deploys it; the new id keeps the place's rating and its operator's record
+(the id stays the UUIDv5 of the base parcel, so links keep resolving and a
+later scene on the old base gets its own id). A place by another creator on
+another owner's LAND and another parcel set starts fresh. The owner is the parcel's (or its estate's) owner in the
+published `land_authz` index, read on the page's connection; a token the
+Rentals contract holds counts as its lessor's (the recipient of its latest
+transfer to another address, one more indexed probe per rented token), so a
+rental does not change the owner; while that index
+is unpublished, a parcel is unindexed or the lookup fails (logged), the owner
+is unknown and only the place and the creator match; another place with an
+unknown owner then replaces no record whose owner is known. A later pass over
+a place settled while an owner was unknown (its own record of a parcel with
+no owner, or another place's record with a known owner on its parcels)
+settles it again once the index knows the owner: it fills the owner and takes
+a rating it is now held to by owner, with a notice only when its rating
+changes. A record of a pruned place keeps an unknown owner.
+
+`explore.place_parcel_rating` keeps the rating last held on each parcel by the
+derived place covering it, with that place's id, whole parcel set
+(`parcel_set_hash`: the hex SHA-256 of the string its distinct positions make
+sorted in byte order and joined by `;`), creator and LAND owner, and
+whether an operator's rating set it, so the rating
+outlives a row the pass prunes (an unpublished scene, or one moved to another
+base parcel by the same creator). Workload: one row per rated parcel the
+catalogue derives (at most the deployed parcels); written in the derive page's
+transaction, one batched upsert for the rows whose rating the page settles
+(new deployments, new rows and rows settled again), one delete for the parcels
+of settled rows left with no rating, and one insert of the missing parcels of
+the other rated rows (an existing catalogue fills on its first pass), and one
+row per parcel for an operator's rating of a derived place; read by primary
+key for each settled row's parcels and, once per pass, for the parcels of
+every unchanged row (rated rows only without a LAND index), plus one batched
+indexed `land_authz` owner lookup per page (the parcels it writes and those of
+rows it may settle again; a parcel the index never knows is looked up on every
+pass) and one per operator place rating. Invariant: a parcel's row
+equals the rating, id, parcel set, creator and owner of the rated derived
+place covering it, or of the last one; an operator's row is replaced or
+cleared only by a place held to it (a place with the same parcel set always
+is), or by one on another parcel set whose known LAND owner differs from the
+row's known one; only the derive pass and the operator's place rating write it. Both
+writers first take transaction advisory locks on the hash buckets (at most 128)
+of the parcels they write, in one sorted order, so a page that inserts a missing
+parcel after locking the recorded ones cannot deadlock with an operator's
+rating; a page locks only the parcels of its new rows and new deployments, the
+unrecorded parcels it fills and the parcels of rows it settles again, so a page of unchanged rows does not delay an
+operator's rating of another place (the page's own rows stay locked). The table is a new object: the object pass of
+`catalyst schema migrate` creates it, so no step exists.
+
 Event notification delivery is owned by Social in
 `social.event_notification_intents`. Explore inserts an event transition snapshot
 through qualified SQL in the same transaction as the event change; Social owns

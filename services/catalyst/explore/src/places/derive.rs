@@ -29,7 +29,7 @@
 //! overwrites a mirrored one on an id collision: the upstream is the
 //! authority for the rows it lists.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -38,8 +38,10 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 
+use super::moderation::{self, CreatorRating, RatedRow};
 use super::query::{EXCLUDE_FROM_RANKING_SQL, raw_float8_sql};
 use crate::jobs::{Jobs, PeriodicCfg};
+use crate::land_authz::LandAuthzState;
 
 pub const JOB_NAME: &str = "places-derive";
 pub const PAGE: i64 = 1000;
@@ -145,11 +147,14 @@ pub fn derive(
     let contact = m.get("contact");
     let contact_name = non_empty(contact.and_then(|c| c.get("name")).and_then(Value::as_str));
     let contact_email = non_empty(contact.and_then(|c| c.get("email")).and_then(Value::as_str));
+    // Stored as a rating code (`M` as `A`); an unknown code reads as none.
     let content_rating = non_empty(
         m.get("policy")
             .and_then(|p| p.get("contentRating"))
             .and_then(Value::as_str),
-    );
+    )
+    .and_then(|c| moderation::creator_code(&c))
+    .map(str::to_string);
     let mut positions = str_array(scene.get("parcels"));
     if positions.is_empty() {
         positions.push(base.clone());
@@ -241,7 +246,9 @@ pub const SELECT_SCENES: &str = r#"
 /// preservation object: the pass rebuilds `raw` wholesale from the deployment,
 /// so a key it does not carry forward is erased by the next pass. The
 /// moderation overlay (`place_moderation`) decides `disabled`, `highlighted`
-/// and `content_rating` of a new row; an existing row keeps its own. A row the
+/// and `content_rating` of a new row; an existing row keeps its own. The
+/// creator rating rule then settles the rating of a new deployment or a new
+/// row ([`upsert_page`]). A row the
 /// places mirror wrote is left to the mirror.
 const UPSERT: &str = r#"
     INSERT INTO explore.place
@@ -479,7 +486,7 @@ pub async fn run_once(
     scope: DeriveScope,
     content_public_url: &str,
 ) -> Result<PassSummary> {
-    run_once_with_storage(pool, scope, content_public_url, None).await
+    run_once_with_storage(pool, scope, content_public_url, None, None, None).await
 }
 
 /// The stored, hash-addressed scene.json supplies creator/runtimeVersion.
@@ -537,6 +544,8 @@ async fn run_once_with_storage(
     scope: DeriveScope,
     content_public_url: &str,
     storage: Option<&crate::storage::Storage>,
+    notify: Option<&str>,
+    land: Option<&LandAuthzState>,
 ) -> Result<PassSummary> {
     let started: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
         .fetch_one(pool)
@@ -631,7 +640,7 @@ async fn run_once_with_storage(
             sqlx::query("UPDATE explore.place SET fetched_at = timezone('UTC', clock_timestamp()) WHERE id = ANY($1) AND raw->>'source' = 'content'")
                 .bind(&failed).execute(pool).await?;
         }
-        upsert_page(pool, page).await?;
+        upsert_page(pool, page, notify, land).await?;
         if fetched < PAGE {
             break;
         }
@@ -671,9 +680,165 @@ fn positions_of(p: &DerivedPlace) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// One transaction per page: a multi-row upsert, one overlap query for the fresh rows,
-/// and one batched curation update. Later duplicates of an id win, as they did row by row.
-async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
+/// A derived row's rating before this page: `(content_rating, deployed_at)`
+/// by id, locked until the page commits.
+const LOCK_RATINGS: &str = "SELECT id, content_rating, deployed_at FROM explore.place \
+     WHERE id = ANY($1) AND raw->>'source' = 'content' ORDER BY id FOR UPDATE";
+
+/// The ratings a new deployment or a new row is held to: its own operator
+/// rating; the rating recorded on each of its parcels by the same place (the
+/// same id or exactly the same parcel set), the same creator or under the same
+/// LAND owner; and the rating of every other derived place by the same creator
+/// its parcels overlap, or with exactly its parcels (the rows it replaces,
+/// which `PRUNE` removes; that row's operator rating first), disabled ones
+/// included. A place by another creator on another owner's LAND and another
+/// parcel set starts fresh; an empty creator or owner matches none. `$1` the
+/// ids, `$2` each one's positions; `$3` to `$7` one entry per parcel: the id,
+/// the position, the lowercase creator, the parcel's LAND owner and the
+/// place's parcel set ([`parcel_set`]). The overlapping places are found one
+/// parcel at a time (`@>` on one position, behind `OFFSET 0`), so each probe
+/// uses `place_positions_path_gin`.
+const HELD_RATINGS: &str = r#"
+    SELECT f.id, m.content_rating AS rating
+    FROM unnest($1::text[]) AS f(id)
+    JOIN explore.place_moderation m ON m.place_id = f.id AND m.content_rating IS NOT NULL
+    UNION ALL
+    SELECT c.id, r.content_rating
+    FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+         AS c(id, position, creator, owner, parcel_set)
+    JOIN explore.place_parcel_rating r ON r.position = c.position
+     AND (r.place_id = c.id OR r.parcel_set_hash = c.parcel_set
+          OR (c.creator <> '' AND r.creator_address = c.creator)
+          OR (c.owner <> '' AND r.owner_address = c.owner))
+    UNION ALL
+    SELECT c.id, COALESCE(m.content_rating, p.content_rating)
+    FROM unnest($3::text[], $4::text[], $5::text[]) AS c(id, position, creator)
+    CROSS JOIN LATERAL (
+        SELECT p.id, p.creator_address, p.content_rating, p.raw FROM explore.place p
+        WHERE p.raw->'positions' @> jsonb_build_array(c.position)
+          AND p.world IS FALSE AND p.raw->>'source' = 'content'
+        OFFSET 0) p
+    JOIN unnest($1::text[], $2::jsonb[]) AS f(id, positions) ON f.id = c.id
+    LEFT JOIN explore.place_moderation m ON m.place_id = p.id
+    WHERE p.id <> c.id
+      AND ((c.creator <> '' AND lower(btrim(p.creator_address)) = c.creator)
+           OR ((p.raw->'positions') @> f.positions AND f.positions @> (p.raw->'positions')))
+"#;
+
+/// The page's parcel ratings, locked after its places as an operator's
+/// rating locks them (`moderation::apply_with`).
+const LOCK_PARCEL_RATINGS: &str = "SELECT 1 FROM explore.place_parcel_rating \
+     WHERE position = ANY($1) ORDER BY position FOR UPDATE";
+
+/// Of the parcels `$1` of the unchanged places `$2`: those with no recorded
+/// rating of a rated place (`$4`; `missing`, which the page fills), and with
+/// a LAND index (`$3`) those recorded with an unknown owner by their own
+/// place, or with a known owner by another place (`missing` false). Either
+/// means the place was settled while a parcel's owner was unknown; once the
+/// index knows it the page settles the place again. An unlocked read: the
+/// page then locks only what it writes.
+const PARCEL_STATES: &str = "SELECT u.pos, u.id, r.position IS NULL AS missing \
+     FROM unnest($1::text[], $2::text[], $4::bool[]) AS u(pos, id, rated) \
+     LEFT JOIN explore.place_parcel_rating r ON r.position = u.pos \
+     WHERE (r.position IS NULL AND u.rated) \
+        OR ($3 AND ((r.place_id = u.id AND r.owner_address IS NULL) \
+                 OR (r.place_id <> u.id AND r.owner_address IS NOT NULL)))";
+
+/// Locks the parcels a page writes, recorded or not, as an operator's rating
+/// does (`moderation::LOCK_PARCELS`), then the recorded rows.
+async fn lock_page_parcels(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    parcels: &[String],
+) -> Result<()> {
+    for sql in [moderation::LOCK_PARCELS, LOCK_PARCEL_RATINGS] {
+        sqlx::query(sql).bind(parcels).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+/// Records `$2` on each parcel `$1` for the place `$3` by the creator `$4`
+/// under the LAND owner `$6`, with the place's parcel set `$7`: `$5` true
+/// overwrites a recorded rating, false only fills a parcel with none. A place
+/// with an operator rating records an operator's rating. An operator's record
+/// is replaced only by a place held to it ([`HELD_RATINGS`], which keeps it an
+/// operator's) or under a known owner other than its known one; another
+/// place with an unknown owner replaces no record with a known owner, which
+/// the page settles again once the owner is known ([`PARCEL_STATES`]). An
+/// unknown owner keeps the owner the same place (or parcel set) recorded, as
+/// `moderation::OPERATOR_PARCEL_RATINGS` does.
+const RECORD_PARCEL_RATINGS: &str = r#"
+    INSERT INTO explore.place_parcel_rating AS r
+        (position, content_rating, place_id, parcel_set_hash, creator_address, owner_address, operator)
+    SELECT DISTINCT ON (u.position) u.position, u.rating, u.place_id, u.parcel_set,
+           NULLIF(lower(btrim(u.creator)), ''), NULLIF(u.owner, ''),
+           EXISTS (SELECT 1 FROM explore.place_moderation m
+                   WHERE m.place_id = u.place_id AND m.content_rating IS NOT NULL)
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $6::text[], $7::text[])
+         AS u(position, rating, place_id, creator, owner, parcel_set)
+    ORDER BY u.position
+    ON CONFLICT (position) DO UPDATE
+    SET content_rating = EXCLUDED.content_rating, place_id = EXCLUDED.place_id,
+        parcel_set_hash = EXCLUDED.parcel_set_hash,
+        creator_address = EXCLUDED.creator_address,
+        owner_address = COALESCE(EXCLUDED.owner_address,
+            CASE WHEN r.place_id = EXCLUDED.place_id OR r.parcel_set_hash = EXCLUDED.parcel_set_hash
+                 THEN r.owner_address END),
+        operator = EXCLUDED.operator OR (r.operator AND COALESCE(
+            r.place_id = EXCLUDED.place_id OR r.parcel_set_hash = EXCLUDED.parcel_set_hash
+            OR r.creator_address = EXCLUDED.creator_address
+            OR r.owner_address = EXCLUDED.owner_address, false)),
+        updated_at = timezone('UTC', now())
+    WHERE $5
+      AND (r.place_id = EXCLUDED.place_id OR r.parcel_set_hash = EXCLUDED.parcel_set_hash
+           OR r.creator_address = EXCLUDED.creator_address
+           OR (r.owner_address IS NOT NULL AND EXCLUDED.owner_address IS NOT NULL)
+           OR (NOT r.operator AND r.owner_address IS NULL))
+      AND (r.content_rating, r.place_id, r.parcel_set_hash, r.creator_address, r.owner_address)
+          IS DISTINCT FROM (EXCLUDED.content_rating, EXCLUDED.place_id, EXCLUDED.parcel_set_hash,
+                            EXCLUDED.creator_address,
+                            COALESCE(EXCLUDED.owner_address,
+                                CASE WHEN r.place_id = EXCLUDED.place_id
+                                       OR r.parcel_set_hash = EXCLUDED.parcel_set_hash
+                                     THEN r.owner_address END))
+"#;
+
+/// Clears the parcels `$1` of a place left with no rating, so a later place
+/// on them is held to none it did not hold. Such a place is held to no
+/// record. A record with a known owner stays while `$2`, the parcel's LAND
+/// owner, is unknown; an operator's record stays unless both owners are known
+/// and differ (the LAND changed owner) and the record is of another parcel
+/// set than `$3`.
+const CLEAR_PARCEL_RATINGS: &str = "DELETE FROM explore.place_parcel_rating r \
+     USING unnest($1::text[], $2::text[], $3::text[]) AS c(position, owner, parcel_set) \
+     WHERE r.position = c.position \
+       AND ((NOT r.operator AND (r.owner_address IS NULL OR c.owner <> '')) \
+            OR (r.owner_address IS NOT NULL AND c.owner <> '' \
+                AND r.owner_address <> c.owner AND r.parcel_set_hash <> c.parcel_set))";
+
+/// The page's operator rows, locked before its places as an operator's
+/// decision locks them (`moderation::apply_with`).
+const LOCK_OVERLAYS: &str = "SELECT 1 FROM explore.place_moderation \
+     WHERE place_id = ANY($1) ORDER BY place_id FOR UPDATE";
+
+const SET_RATINGS: &str = "UPDATE explore.place SET content_rating = u.rating \
+     FROM unnest($1::text[], $2::text[]) AS u(id, rating) WHERE explore.place.id = u.id";
+
+/// An operator's rating follows the rating the row takes, so a later
+/// re-insert of the row (`UPSERT`'s overlay) keeps it.
+const FOLLOW_RATINGS: &str = "UPDATE explore.place_moderation m SET content_rating = u.rating \
+     FROM unnest($1::text[], $2::text[]) AS u(id, rating) \
+     WHERE m.place_id = u.id AND m.content_rating IS NOT NULL \
+       AND m.content_rating IS DISTINCT FROM u.rating";
+
+/// One transaction per page: a multi-row upsert, the creator rating rule
+/// ([`settle_ratings`]), one overlap query for the fresh rows, and one batched
+/// curation update. Later duplicates of an id win, as they did row by row.
+async fn upsert_page(
+    pool: &PgPool,
+    page: Vec<DerivedPlace>,
+    notify: Option<&str>,
+    land: Option<&LandAuthzState>,
+) -> Result<()> {
     let mut slot_of: HashMap<&str, usize> = HashMap::new();
     let mut order: Vec<usize> = Vec::with_capacity(page.len());
     for (i, p) in page.iter().enumerate() {
@@ -690,6 +855,32 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
         return Ok(());
     }
     let mut tx = pool.begin().await?;
+    sqlx::query(LOCK_OVERLAYS)
+        .bind(rows.iter().map(|p| p.id.clone()).collect::<Vec<_>>())
+        .execute(&mut *tx)
+        .await?;
+    let before: HashMap<String, (Option<String>, Option<NaiveDateTime>)> =
+        sqlx::query(LOCK_RATINGS)
+            .bind(rows.iter().map(|p| p.id.clone()).collect::<Vec<_>>())
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>("id").unwrap_or_default(),
+                    (
+                        r.try_get("content_rating").unwrap_or(None),
+                        r.try_get("deployed_at").unwrap_or(None),
+                    ),
+                )
+            })
+            .collect();
+    let PageParcels {
+        locked: parcels,
+        owners,
+        recheck,
+    } = page_parcels(&mut tx, &rows, &before, land).await?;
+    lock_page_parcels(&mut tx, &parcels).await?;
     let inserted: HashMap<String, bool> = sqlx::query(UPSERT)
         .bind(rows.iter().map(|p| p.id.clone()).collect::<Vec<_>>())
         .bind(
@@ -730,6 +921,14 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
             )
         })
         .collect();
+    let page = Page {
+        before: &before,
+        inserted: &inserted,
+        locked: &parcels,
+        owners: &owners,
+        recheck: &recheck,
+    };
+    settle_ratings(&mut tx, &rows, &page, notify).await?;
     let fresh: Vec<(&DerivedPlace, Vec<String>)> = rows
         .iter()
         .filter(|p| inserted.get(&p.id).copied().unwrap_or(false))
@@ -820,7 +1019,352 @@ async fn upsert_page(pool: &PgPool, page: Vec<DerivedPlace>) -> Result<()> {
     Ok(())
 }
 
-/// Registers the periodic derive job (`places-derive`).
+/// What a page writes and reads before it settles: the parcels it may
+/// write, sorted and locked; their LAND owners (one lookup per page); and the
+/// unchanged places it settles again.
+struct PageParcels {
+    locked: Vec<String>,
+    owners: HashMap<String, String>,
+    recheck: HashSet<String>,
+}
+
+/// The parcels a page may write: those of a new row or a new deployment;
+/// the unrecorded ones of a rated row it fills; and every parcel of an
+/// unchanged row it settles again ([`PARCEL_STATES`]: one settled while a
+/// parcel's owner was unknown, once the index knows it). Only these are
+/// locked, so a page of unchanged rows does not hold an operator's rating of
+/// another place. One owner lookup covers them and the parcels whose owner
+/// decides a second settle; a parcel the index never knows is looked up
+/// again on each pass.
+async fn page_parcels(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    rows: &[&DerivedPlace],
+    before: &HashMap<String, (Option<String>, Option<NaiveDateTime>)>,
+    land: Option<&LandAuthzState>,
+) -> Result<PageParcels> {
+    let changed = |p: &DerivedPlace| before.get(&p.id).is_none_or(|(_, at)| *at != p.deployed_at);
+    let mut parcels: Vec<String> = rows
+        .iter()
+        .filter(|p| changed(p))
+        .flat_map(|p| positions_of(p))
+        .collect();
+    let (mut positions, mut places, mut rated) = (Vec::new(), Vec::new(), Vec::new());
+    for p in rows.iter().filter(|p| !changed(p)) {
+        let is_rated = before
+            .get(&p.id)
+            .and_then(|(rating, _)| rating.as_deref())
+            .and_then(moderation::creator_code)
+            .is_some();
+        if !is_rated && land.is_none() {
+            continue;
+        }
+        for position in positions_of(p) {
+            positions.push(position);
+            places.push(p.id.clone());
+            rated.push(is_rated);
+        }
+    }
+    let mut suspect: HashMap<String, Vec<String>> = HashMap::new();
+    if !positions.is_empty() {
+        for r in sqlx::query(PARCEL_STATES)
+            .bind(&positions)
+            .bind(&places)
+            .bind(land.is_some())
+            .bind(&rated)
+            .fetch_all(&mut **tx)
+            .await?
+        {
+            let position: String = r.try_get("pos")?;
+            if r.try_get::<bool, _>("missing")? {
+                parcels.push(position);
+            } else {
+                suspect.entry(r.try_get("id")?).or_default().push(position);
+            }
+        }
+    }
+    let of = |id: &str| {
+        rows.iter()
+            .find(|p| p.id == id)
+            .map(|p| positions_of(p))
+            .unwrap_or_default()
+    };
+    let mut lookup = parcels.clone();
+    for id in suspect.keys() {
+        lookup.extend(of(id));
+    }
+    lookup.sort();
+    lookup.dedup();
+    let owners = moderation::parcel_owners(tx, land, &lookup).await?;
+    let recheck: HashSet<String> = suspect
+        .into_iter()
+        .filter(|(_, at)| at.iter().any(|p| owners.contains_key(p)))
+        .map(|(id, _)| id)
+        .collect();
+    for id in &recheck {
+        parcels.extend(of(id));
+    }
+    parcels.sort();
+    parcels.dedup();
+    Ok(PageParcels {
+        locked: parcels,
+        owners,
+        recheck,
+    })
+}
+
+/// A page's state before its ratings settle: each row's rating and
+/// deployment time before it, which rows the upsert inserted, the locked
+/// parcels, their LAND owners and the unchanged rows settled again.
+struct Page<'a> {
+    before: &'a HashMap<String, (Option<String>, Option<NaiveDateTime>)>,
+    inserted: &'a HashMap<String, bool>,
+    locked: &'a [String],
+    owners: &'a HashMap<String, String>,
+    recheck: &'a HashSet<String>,
+}
+
+/// The creator rating rule (`places::moderation::CreatorRating`) over a page:
+/// a new deployment of an existing row, or a new row, takes the scene's rating
+/// when it raises the one held, never a laxer one. It is held to its stored
+/// or operator rating, and to the ratings of the same place (the same id or
+/// exactly the same parcels, whoever deploys it), the same creator or the
+/// same LAND owner (`owners`) on its parcels: those recorded there and those
+/// of the places it replaces; a place by another creator on another owner's
+/// LAND and other parcels starts fresh. The rating it takes is recorded on its
+/// parcels, and a place left with no rating clears them, an operator's
+/// record only once the LAND changed owner. A pass over the same deployment
+/// leaves the stored rating, an operator's included, and only fills its
+/// parcels' missing records among `locked`, unless the page settles it again
+/// (`recheck`: settled while a parcel's owner was unknown), which may raise
+/// it to a rating now held by owner, and then reports only a change. A scene
+/// that declares no rating keeps the held one, with no notice.
+async fn settle_ratings(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    rows: &[&DerivedPlace],
+    page: &Page<'_>,
+    notify: Option<&str>,
+) -> Result<()> {
+    let Page {
+        before,
+        inserted,
+        locked,
+        owners,
+        recheck,
+    } = *page;
+    let redeployed = |p: &DerivedPlace| match inserted.get(&p.id) {
+        Some(true) => true,
+        Some(false) => before
+            .get(&p.id)
+            .is_some_and(|(_, at)| *at != p.deployed_at),
+        None => false,
+    };
+    let settled: Vec<&DerivedPlace> = rows
+        .iter()
+        .copied()
+        .filter(|p| redeployed(p) || (inserted.contains_key(&p.id) && recheck.contains(&p.id)))
+        .collect();
+    let mut held: HashMap<String, Vec<String>> = HashMap::new();
+    if !settled.is_empty() {
+        let ids: Vec<String> = settled.iter().map(|p| p.id.clone()).collect();
+        let positions: Vec<Value> = settled
+            .iter()
+            .map(|p| Value::from(positions_of(p)))
+            .collect();
+        let (mut cell_ids, mut cells, mut cell_creators, mut cell_owners, mut cell_sets) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for p in &settled {
+            let set = parcel_set(p);
+            for position in positions_of(p) {
+                cell_ids.push(p.id.clone());
+                cell_creators.push(creator_of(p));
+                cell_owners.push(owners.get(&position).cloned().unwrap_or_default());
+                cell_sets.push(set.clone());
+                cells.push(position);
+            }
+        }
+        for r in sqlx::query(HELD_RATINGS)
+            .bind(&ids)
+            .bind(&positions)
+            .bind(&cell_ids)
+            .bind(&cells)
+            .bind(&cell_creators)
+            .bind(&cell_owners)
+            .bind(&cell_sets)
+            .fetch_all(&mut **tx)
+            .await?
+        {
+            let entry = held
+                .entry(r.try_get::<String, _>("id").unwrap_or_default())
+                .or_default();
+            if let Some(rating) = r.try_get::<Option<String>, _>("rating").unwrap_or(None) {
+                entry.push(rating);
+            }
+        }
+    }
+    let (mut ids, mut ratings) = (Vec::new(), Vec::new());
+    let (mut recorded, mut missing) = (Records::default(), Records::default());
+    let (mut cleared, mut cleared_sets): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for p in rows {
+        let fresh = inserted.get(&p.id) == Some(&true);
+        if !settled.iter().any(|s| s.id == p.id) {
+            // A row stored before the rule may hold any code: `M` is recorded
+            // as `A`, an off-scale code not at all.
+            if let Some(rating) = before
+                .get(&p.id)
+                .filter(|_| inserted.contains_key(&p.id))
+                .and_then(|(rating, _)| rating.as_deref())
+                .and_then(moderation::creator_code)
+            {
+                let set = parcel_set(p);
+                for position in positions_of(p) {
+                    if locked.binary_search(&position).is_ok() {
+                        missing.push(position, rating, p, &set, owners);
+                    }
+                }
+            }
+            continue;
+        }
+        // The rating held, and whether a creator's change to it is reported.
+        let held_to = held.remove(&p.id);
+        let is_held = held_to.is_some();
+        let mut codes = held_to.unwrap_or_default();
+        let own = if fresh {
+            None
+        } else {
+            before.get(&p.id).and_then(|(rating, _)| rating.clone())
+        };
+        codes.extend(own.clone());
+        let stored = moderation::strictest(codes.iter().map(String::as_str)).map(str::to_string);
+        // Settled again, the deployment was already applied: only a held
+        // rating moves it, never past an operator's lowering.
+        let declared = p.content_rating.as_deref();
+        let rating = match declared.filter(|_| redeployed(p)) {
+            Some(d) if CreatorRating::of(stored.as_deref(), d).applies() => Some(d.to_string()),
+            _ => stored.clone(),
+        };
+        let code = |r: &Option<String>| r.as_deref().and_then(moderation::creator_code);
+        // Settled again, only a changed rating that refused the scene's is reported.
+        let refused = declared.is_some_and(|d| !CreatorRating::of(stored.as_deref(), d).applies());
+        let report =
+            (!fresh || is_held) && (redeployed(p) || (code(&rating) != code(&own) && refused));
+        if let (Some(base), Some(stored), Some(declared), true) =
+            (notify, stored.as_deref(), declared, report)
+        {
+            let row = RatedRow::Place {
+                id: &p.id,
+                base_position: &p.base_position,
+            };
+            moderation::capture_creator_rating(tx, base, row, stored, declared).await?;
+        }
+        // A held `M` (stored before the rule) is taken as `A`.
+        let Some(rating) = rating
+            .as_deref()
+            .and_then(moderation::creator_code)
+            .map(str::to_string)
+        else {
+            let set = parcel_set(p);
+            for position in positions_of(p) {
+                cleared.push(position);
+                cleared_sets.push(set.clone());
+            }
+            continue;
+        };
+        let set = parcel_set(p);
+        for position in positions_of(p) {
+            recorded.push(position, &rating, p, &set, owners);
+        }
+        if fresh || Some(&rating) != own.as_ref() {
+            ids.push(p.id.clone());
+            ratings.push(rating);
+        }
+    }
+    if !ids.is_empty() {
+        for sql in [SET_RATINGS, FOLLOW_RATINGS] {
+            sqlx::query(sql)
+                .bind(&ids)
+                .bind(&ratings)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+    if !cleared.is_empty() {
+        let cleared_owners: Vec<String> = cleared
+            .iter()
+            .map(|p| owners.get(p).cloned().unwrap_or_default())
+            .collect();
+        sqlx::query(CLEAR_PARCEL_RATINGS)
+            .bind(&cleared)
+            .bind(&cleared_owners)
+            .bind(&cleared_sets)
+            .execute(&mut **tx)
+            .await?;
+    }
+    for (records, overwrite) in [(&recorded, true), (&missing, false)] {
+        if !records.positions.is_empty() {
+            sqlx::query(RECORD_PARCEL_RATINGS)
+                .bind(&records.positions)
+                .bind(&records.ratings)
+                .bind(&records.places)
+                .bind(&records.creators)
+                .bind(overwrite)
+                .bind(&records.owners)
+                .bind(&records.sets)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// A place's creator as its parcel records keep it: the lowercase deployer
+/// address, empty when unknown (which matches no record).
+fn creator_of(p: &DerivedPlace) -> String {
+    p.creator_address
+        .as_deref()
+        .map(|c| c.trim().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// A place's whole parcel set as its parcel records keep it
+/// ([`super::parcel_set_hash`]).
+fn parcel_set(p: &DerivedPlace) -> String {
+    super::parcel_set_hash(&positions_of(p))
+}
+
+/// Parcel records to write: each parcel's rating, place, creator, LAND
+/// owner (empty when unknown) and the place's parcel set.
+#[derive(Default)]
+struct Records {
+    positions: Vec<String>,
+    ratings: Vec<String>,
+    places: Vec<String>,
+    creators: Vec<String>,
+    owners: Vec<String>,
+    sets: Vec<String>,
+}
+
+impl Records {
+    fn push(
+        &mut self,
+        position: String,
+        rating: &str,
+        place: &DerivedPlace,
+        set: &str,
+        owners: &HashMap<String, String>,
+    ) {
+        self.owners
+            .push(owners.get(&position).cloned().unwrap_or_default());
+        self.positions.push(position);
+        self.ratings.push(rating.to_string());
+        self.places.push(place.id.clone());
+        self.creators.push(creator_of(place));
+        self.sets.push(set.to_string());
+    }
+}
+
+/// Registers the periodic derive job (`places-derive`), reading parcel owners
+/// from `land`.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_job(
     jobs: &Jobs,
     pool: PgPool,
@@ -828,15 +1372,31 @@ pub fn spawn_job(
     interval: Duration,
     content_public_url: String,
     storage: Option<Arc<crate::storage::Storage>>,
+    notify: Option<String>,
+    land: Option<Arc<LandAuthzState>>,
 ) {
     tracing::info!(scope = ?scope, interval_secs = interval.as_secs(), "place catalogue: deriving from content deployments");
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval).with_error_backoff(Duration::from_secs(3600)),
         move |ctx| {
-            let (pool, url, storage) = (pool.clone(), content_public_url.clone(), storage.clone());
+            let (pool, url, storage, notify, land) = (
+                pool.clone(),
+                content_public_url.clone(),
+                storage.clone(),
+                notify.clone(),
+                land.clone(),
+            );
             async move {
-                let out = run_once_with_storage(&pool, scope, &url, storage.as_deref()).await?;
+                let out = run_once_with_storage(
+                    &pool,
+                    scope,
+                    &url,
+                    storage.as_deref(),
+                    notify.as_deref(),
+                    land.as_deref(),
+                )
+                .await?;
                 ctx.progress(format!(
                     "{} places derived, {} pruned",
                     out.derived, out.pruned
@@ -848,780 +1408,4 @@ pub fn spawn_job(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn wrapped() -> Value {
-        json!({ "v": {
-            "scene": { "base": "135,2", "parcels": ["135,2", "135,3"] },
-            "display": { "title": "My Scene", "description": "hello", "navmapThumbnail": "t.png" },
-            "contact": { "name": "author", "email": "a@b.c" },
-            "policy": { "contentRating": "E" },
-            "tags": ["game", "art"]
-        }})
-    }
-
-    #[test]
-    fn derives_from_v_wrapped_scene() {
-        let p = derive(
-            "0xABC",
-            &["135,2".to_string()],
-            None,
-            &wrapped(),
-            Some("hash123"),
-            "/content",
-            false,
-        )
-        .expect("derives");
-        assert_eq!(p.base_position, "135,2");
-        assert_eq!(p.title.as_deref(), Some("My Scene"));
-        assert_eq!(p.creator_address.as_deref(), Some("0xabc"));
-        assert_eq!(p.content_rating.as_deref(), Some("E"));
-        assert_eq!(p.raw["image"], "/content/contents/hash123");
-        assert_eq!(p.raw["positions"], json!(["135,2", "135,3"]));
-        assert_eq!(p.raw["source"], "content");
-        assert_eq!(p.raw["world"], false);
-        assert!(p.raw.get("local").is_none());
-        let local = derive("0xABC", &[], None, &wrapped(), None, "/content", true).unwrap();
-        assert_eq!(local.raw["local"], true);
-    }
-
-    #[test]
-    fn scene_file_metadata_cannot_replace_the_signed_deployer_identity() {
-        let mut metadata = wrapped();
-        metadata["v"]["owner"] = json!("0xLAND");
-        metadata["v"]["runtimeVersion"] = json!("6");
-        metadata["v"]["tags"] =
-            json!(["poi", "game", "game", "art", "social", "music", "featured"]);
-        let mut place = derive("0xDEPLOYER", &[], None, &metadata, None, "/content", true).unwrap();
-        apply_scene_file(
-            &mut place,
-            &json!({ "creator": "0xAUTHOR", "runtimeVersion": "7.1" }),
-            &metadata,
-        );
-        assert_eq!(place.creator_address.as_deref(), Some("0xdeployer"));
-        assert_eq!(place.raw["owner"], "0xdeployer");
-        assert_eq!(place.raw["metadata_owner"], "0xLAND");
-        assert_eq!(place.raw["metadata_creator"], "0xAUTHOR");
-        assert_eq!(place.raw["sdk"], "7.1");
-        assert_eq!(place.raw["categories"], json!(["game", "art", "social"]));
-        apply_scene_file(&mut place, &json!({}), &metadata);
-        assert_eq!(place.creator_address.as_deref(), Some("0xdeployer"));
-        assert_eq!(place.raw["sdk"], "6");
-    }
-
-    #[tokio::test]
-    async fn creator_categories_survive_rebuild_and_preserve_editorial_categories() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
-            return;
-        };
-        let token = uuid::Uuid::new_v4().simple().to_string();
-        let mut meta = wrapped();
-        let base = format!(
-            "{},{}",
-            u16::from_str_radix(&token[..4], 16).unwrap(),
-            u16::from_str_radix(&token[4..8], 16).unwrap()
-        );
-        meta["v"]["scene"]["base"] = json!(base);
-        meta["v"]["scene"]["parcels"] = json!([base]);
-        let place = derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap();
-        let id = place.id.clone();
-        upsert_page(&pool, vec![place]).await.unwrap();
-        sqlx::query("UPDATE explore.place SET categories = array_append(categories, 'featured') WHERE id = $1").bind(&id).execute(&pool).await.unwrap();
-        meta["v"]["tags"] = json!(["music"]);
-        upsert_page(
-            &pool,
-            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
-        )
-        .await
-        .unwrap();
-        let categories: Vec<String> =
-            sqlx::query_scalar("SELECT categories FROM explore.place WHERE id = $1")
-                .bind(&id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(categories, vec!["music", "featured"]);
-        meta["v"]["tags"] = json!(["unknown", "poi"]);
-        upsert_page(
-            &pool,
-            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
-        )
-        .await
-        .unwrap();
-        let unchanged: Vec<String> =
-            sqlx::query_scalar("SELECT categories FROM explore.place WHERE id = $1")
-                .bind(&id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(unchanged, categories);
-    }
-
-    #[test]
-    fn the_deployment_time_fills_both_timestamps_upstream_keeps_not_null() {
-        let at = DateTime::parse_from_rfc3339("2026-03-01T10:00:00Z")
-            .expect("parse")
-            .naive_utc();
-        let p = derive("0x1", &[], Some(at), &wrapped(), None, "/content", false).expect("derives");
-        let wire = json!(DateTime::<Utc>::from_naive_utc_and_offset(at, Utc));
-        assert_eq!(p.raw["deployed_at"], wire);
-        assert_eq!(p.raw["created_at"], wire);
-        assert_eq!(p.raw["updated_at"], wire);
-    }
-
-    #[test]
-    fn id_is_stable_for_base_position() {
-        let a = derive("0x1", &[], None, &wrapped(), None, "/content", false).unwrap();
-        let b = derive("0x2", &[], None, &wrapped(), None, "/content", false).unwrap();
-        assert_eq!(a.id, b.id);
-        assert_eq!(a.id, super::super::parcel_place_id("135,2"));
-    }
-
-    #[test]
-    fn no_scene_yields_none() {
-        assert!(derive("0x1", &[], None, &json!({"v": {}}), None, "/content", false).is_none());
-    }
-
-    #[test]
-    fn falls_back_to_pointer_when_base_missing() {
-        let meta = json!({ "v": { "scene": { "parcels": [] } } });
-        let p = derive(
-            "0x1",
-            &["10,10".to_string()],
-            None,
-            &meta,
-            None,
-            "/content",
-            false,
-        )
-        .unwrap();
-        assert_eq!(p.base_position, "10,10");
-        assert_eq!(p.raw["positions"], json!(["10,10"]));
-    }
-
-    #[test]
-    fn the_scope_follows_the_old_mode_and_the_mirror() {
-        assert_eq!(DeriveScope::resolve(true, false), DeriveScope::All);
-        assert_eq!(DeriveScope::resolve(true, true), DeriveScope::Local);
-        assert_eq!(DeriveScope::resolve(false, false), DeriveScope::Local);
-        assert_eq!(DeriveScope::resolve(false, true), DeriveScope::Local);
-    }
-
-    const CREATOR: &str = "0x4f7fe261619141ffa63fefee35bba886581292f4";
-
-    fn banner() -> Curation {
-        Curation {
-            highlighted: true,
-            ranking: Some(1900.0),
-            exclude_from_ranking: false,
-            highlighted_image: Some("/images/places/banner.jpg".to_string()),
-        }
-    }
-
-    fn candidate(creator: &str, curation: Curation) -> CurationCandidate {
-        CurationCandidate {
-            creator_address: Some(creator.to_string()),
-            curation,
-        }
-    }
-
-    #[test]
-    fn carries_curation_from_a_predecessor_by_the_same_creator() {
-        assert_eq!(
-            inherited_curation(&[candidate(CREATOR, banner())], Some(CREATOR)),
-            Some(banner())
-        );
-    }
-
-    #[test]
-    fn a_ranked_but_unhighlighted_predecessor_counts_as_curated() {
-        let ranked = Curation {
-            highlighted: false,
-            ranking: Some(12.0),
-            exclude_from_ranking: false,
-            highlighted_image: None,
-        };
-        assert_eq!(
-            inherited_curation(&[candidate(CREATOR, ranked.clone())], Some(CREATOR)),
-            Some(ranked)
-        );
-    }
-
-    #[test]
-    fn an_excluded_but_unranked_predecessor_counts_as_curated() {
-        let excluded = Curation {
-            highlighted: false,
-            ranking: Some(0.0),
-            exclude_from_ranking: true,
-            highlighted_image: None,
-        };
-        assert_eq!(
-            inherited_curation(&[candidate(CREATOR, excluded.clone())], Some(CREATOR)),
-            Some(excluded)
-        );
-    }
-
-    #[test]
-    fn a_predecessor_by_another_creator_inherits_nothing() {
-        assert_eq!(
-            inherited_curation(
-                &[candidate(CREATOR, banner())],
-                Some("0x0000000000000000000000000000000000000001")
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn more_than_one_curated_predecessor_bails_out() {
-        assert_eq!(
-            inherited_curation(
-                &[candidate(CREATOR, banner()), candidate(CREATOR, banner())],
-                Some(CREATOR)
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn uncurated_neighbours_do_not_count_towards_the_bail_out() {
-        let plain = Curation {
-            highlighted: false,
-            ranking: Some(0.0),
-            exclude_from_ranking: false,
-            highlighted_image: None,
-        };
-        assert_eq!(
-            inherited_curation(
-                &[candidate(CREATOR, banner()), candidate(CREATOR, plain)],
-                Some(CREATOR)
-            ),
-            Some(banner())
-        );
-    }
-
-    #[test]
-    fn a_deployment_without_a_known_creator_inherits_nothing() {
-        assert_eq!(
-            inherited_curation(&[candidate(CREATOR, banner())], None),
-            None
-        );
-        assert_eq!(
-            inherited_curation(&[candidate(CREATOR, banner())], Some("")),
-            None
-        );
-    }
-
-    async fn scene(
-        pool: &PgPool,
-        entity_id: &str,
-        base: &str,
-        parcels: &[&str],
-        deleter: Option<i32>,
-    ) -> i32 {
-        let meta = json!({ "v": { "scene": { "base": base, "parcels": parcels }, "display": { "title": format!("scene {entity_id}") } } });
-        sqlx::query_scalar(
-            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata,
-                 entity_timestamp, entity_pointers, local_timestamp, auth_chain, deleter_deployment)
-             VALUES ('0xAbC', 'v3', 'scene', $1, $2::json, timezone('UTC', now()), $3, timezone('UTC', now()), '[]', $4)
-             RETURNING id",
-        )
-        .bind(entity_id)
-        .bind(meta.to_string())
-        .bind(parcels.iter().map(|p| p.to_string()).collect::<Vec<_>>())
-        .bind(deleter)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn scene_metadata_cache_avoids_reads_and_isolates_storage_faults() {
-        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
-            return;
-        };
-        let opts: sqlx::postgres::PgConnectOptions = base.parse().unwrap();
-        let admin = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts.clone().database("postgres"))
-            .await
-            .unwrap();
-        let token = uuid::Uuid::new_v4().simple().to_string();
-        let name = format!("catalyst_z_scene_cache_{token}");
-        crate::db::scratch::create_database_with_schema(&admin, &name).await;
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(opts.database(&name))
-            .await
-            .unwrap();
-        let root = std::env::temp_dir().join(format!("scene-cache-{token}"));
-        let storage = crate::storage::Storage::from_config(&root).await.unwrap();
-        let first = scene(&pool, "first", "1,1", &["1,1"], None).await;
-        let second = scene(&pool, "second", "2,2", &["2,2"], None).await;
-        let bytes = bytes::Bytes::from_static(br#"{"runtimeVersion":"7","creator":"0xforged"}"#);
-        let hash = crate::auth::hash_bytes(&bytes);
-        storage.store(&hash, bytes).await.unwrap();
-        for deployment in [first, second] {
-            sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'scene.json')")
-                .bind(deployment).bind(&hash).execute(&pool).await.unwrap();
-        }
-        run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
-            .await
-            .unwrap();
-        let path = storage.file_path(&hash).await.unwrap().unwrap();
-        tokio::fs::remove_file(&path).await.unwrap();
-        tokio::fs::create_dir(&path).await.unwrap();
-        assert!(scene_file(&storage, "first", &hash).await.is_err());
-        // Both unchanged deployments use the cached immutable blob despite an I/O fault.
-        assert_eq!(
-            run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
-                .await
-                .unwrap()
-                .derived,
-            2
-        );
-        sqlx::query("UPDATE content.deployments SET entity_id = 'first-redeploy' WHERE id = $1")
-            .bind(first)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let fresh = bytes::Bytes::from_static(br#"{"runtimeVersion":"8"}"#);
-        let fresh_hash = crate::auth::hash_bytes(&fresh);
-        storage.store(&fresh_hash, fresh).await.unwrap();
-        sqlx::query("UPDATE content.content_files SET content_hash = $1 WHERE deployment = $2")
-            .bind(&fresh_hash)
-            .bind(second)
-            .execute(&pool)
-            .await
-            .unwrap();
-        // One changed deployment faults; the other still refreshes and pruning retains the old usable row.
-        assert_eq!(
-            run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
-                .await
-                .unwrap()
-                .derived,
-            1
-        );
-        let rows: Vec<(String, String, String)> = sqlx::query_as("SELECT base_position, raw->>'sdk', creator_address FROM explore.place ORDER BY base_position")
-            .fetch_all(&pool).await.unwrap();
-        assert_eq!(
-            rows,
-            vec![
-                ("1,1".into(), "7".into(), "0xabc".into()),
-                ("2,2".into(), "8".into(), "0xabc".into())
-            ]
-        );
-        tokio::fs::remove_dir(&path).await.unwrap();
-        storage
-            .store(
-                &hash,
-                bytes::Bytes::from_static(br#"{"runtimeVersion":"7"}"#),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
-                .await
-                .unwrap()
-                .derived,
-            2
-        );
-        tokio::fs::remove_dir_all(root).await.unwrap();
-        pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE \"{name}\" WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
-        admin.close().await;
-    }
-
-    /// The local scope derives this node's own scenes (not a synced one, not
-    /// a tombstoned one), a mirrored row at the same id is left alone, the
-    /// places mirror's retire keeps the local rows, and an unpublish prunes
-    /// the place on the next pass.
-    #[tokio::test]
-    async fn local_scenes_become_places_beside_the_mirror_and_leave_when_unpublished() {
-        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
-            return;
-        };
-        let opts: sqlx::postgres::PgConnectOptions = base.parse().expect("a postgres DSN");
-        let admin = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts.clone().database("postgres"))
-            .await
-            .unwrap();
-        let name = format!(
-            "catalyst_z_derive_{}",
-            &uuid::Uuid::new_v4().simple().to_string()[..12]
-        );
-        crate::db::scratch::create_database_with_schema(&admin, &name).await;
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(opts.database(&name))
-            .await
-            .unwrap();
-        let t = uuid::Uuid::new_v4().simple().to_string();
-        let (x, y) = (
-            i64::from_str_radix(&t[..4], 16).unwrap() % 150,
-            i64::from_str_radix(&t[4..8], 16).unwrap() % 150,
-        );
-        let (local_base, synced_base, gone_base) = (
-            format!("{x},{y}"),
-            format!("{x},{}", -y - 1),
-            format!("{},{y}", -x - 1),
-        );
-        let (local_id, synced_id, gone_id) = (
-            format!("bafylocal{t}"),
-            format!("bafysynced{t}"),
-            format!("bafygone{t}"),
-        );
-        scene(&pool, &local_id, &local_base, &[&local_base], None).await;
-        scene(&pool, &synced_id, &synced_base, &[&synced_base], None).await;
-        scene(&pool, &gone_id, &gone_base, &[&gone_base], None).await;
-        for id in [&local_id, &gone_id] {
-            sqlx::query(
-                "INSERT INTO content.local_entities (entity_id, signer) VALUES ($1, '0xabc')",
-            )
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-        let place = |base: &str| super::super::parcel_place_id(base);
-        let row = |id: String| {
-            let pool = pool.clone();
-            async move {
-                sqlx::query_as::<_, (String, String)>(
-                    "SELECT raw->>'source', origin FROM explore.place WHERE id = $1",
-                )
-                .bind(id)
-                .fetch_optional(&pool)
-                .await
-                .unwrap()
-            }
-        };
-
-        let out = run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
-        assert_eq!(
-            out,
-            PassSummary {
-                derived: 2,
-                pruned: 0
-            }
-        );
-        assert_eq!(
-            row(place(&local_base)).await,
-            Some(("content".into(), "local".into()))
-        );
-        assert_eq!(
-            row(place(&gone_base)).await,
-            Some(("content".into(), "local".into()))
-        );
-        assert_eq!(
-            row(place(&synced_base)).await,
-            None,
-            "a synced scene is the mirror's or nobody's in the local scope"
-        );
-
-        // a binary from before `origin` derived one too: the default made it
-        // 'upstream', and its raw.local is what the mirror goes by
-        let legacy = format!("legacy-derived-{t}");
-        sqlx::query(
-            "INSERT INTO explore.place (id, base_position, raw, fetched_at) \
-             VALUES ($1, '-150,-150', '{\"source\": \"content\", \"local\": true}', \
-                     timezone('UTC', now()) - interval '1 day')",
-        )
-        .bind(&legacy)
-        .execute(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            row(legacy.clone()).await,
-            Some(("content".into(), "upstream".into()))
-        );
-
-        // the places mirror's retire keeps the local rows, and so does its
-        // sweep however stale the row is (a stalled derive job)
-        super::super::mirror::retire_derived(&pool).await.unwrap();
-        assert!(row(place(&local_base)).await.is_some());
-        assert_eq!(
-            row(legacy.clone()).await,
-            Some(("content".into(), "local".into())),
-            "reclassified, not retired"
-        );
-        sqlx::query(
-            "UPDATE explore.place SET fetched_at = fetched_at - interval '1 day' WHERE id = $1",
-        )
-        .bind(place(&local_base))
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("UPDATE explore.place SET origin = 'upstream' WHERE id = $1")
-            .bind(&legacy)
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            super::super::mirror::sweep_removed(
-                &pool,
-                super::super::mirror::Leg::Places,
-                Utc::now() - chrono::Duration::hours(1)
-            )
-            .await
-            .unwrap(),
-            super::super::mirror::SweepOutcome::Swept(0)
-        );
-        assert!(row(place(&local_base)).await.is_some());
-        assert_eq!(
-            row(legacy.clone()).await,
-            Some(("content".into(), "local".into())),
-            "reclassified, not swept"
-        );
-
-        // unpublished: the next pass prunes it
-        sqlx::query("UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now()) WHERE entity_id = $1").bind(&gone_id).execute(&pool).await.unwrap();
-        run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
-        assert_eq!(row(place(&gone_base)).await, None);
-        assert!(row(place(&local_base)).await.is_some());
-
-        // the whole-catalogue scope derives the synced scene too
-        run_once(&pool, DeriveScope::All, "https://node.example/content")
-            .await
-            .unwrap();
-        assert_eq!(
-            row(place(&synced_base)).await,
-            Some(("content".into(), "upstream".into()))
-        );
-
-        // a mirrored row at a derived id is the mirror's
-        sqlx::query("UPDATE explore.place SET raw = raw || '{\"source\": \"mirror\"}'::jsonb, title = 'upstream', origin = 'upstream' WHERE id = $1").bind(place(&local_base)).execute(&pool).await.unwrap();
-        run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
-        let title: String = sqlx::query_scalar("SELECT title FROM explore.place WHERE id = $1")
-            .bind(place(&local_base))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(title, "upstream");
-
-        let _ = (&synced_id, &local_id);
-        pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE \"{name}\" WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
-    }
-
-    async fn world(pool: &PgPool, name: &str, mirror: Option<&str>, access: &str) {
-        sqlx::query(
-            "INSERT INTO worlds.worlds (name, owner, title, description, content_rating, categories,
-                 show_in_places, thumbnail_hash, access_type, access_secret_hash, mirror_source)
-             VALUES ($1, '0x00000000000000000000000000000000000000aa', 'Title ' || $1, 'about it',
-                     'T', '{game}', true, 'bafythumb', $2,
-                     CASE WHEN $2 = 'shared-secret' THEN 'hash' END, $3)",
-        )
-        .bind(name)
-        .bind(access)
-        .bind(mirror)
-        .execute(pool)
-        .await
-        .unwrap();
-        let entity = json!({ "metadata": {
-            "scene": { "base": "1,1", "parcels": ["1,1", "1,2"] },
-            "contact": { "name": "builder" },
-            "worldConfiguration": { "name": name.to_uppercase() },
-        }});
-        sqlx::query(
-            "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity,
-                 deployer, parcels, size, mirror_source)
-             VALUES ($1, 'bafy' || $1, '[]', $2, '0xaa', '{\"1,1\",\"1,2\"}', 1, $3)",
-        )
-        .bind(name)
-        .bind(entity)
-        .bind(mirror)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
-    /// A world this node publishes is a catalogue row of the local leg, keyed by
-    /// its name as upstream keys worlds, and the only row of that world: the
-    /// mirrored one goes and the places mirror does not bring it back. A world
-    /// only mirrored is never derived; blocking the world prunes the row until
-    /// it is unblocked, as the worlds listing hides it; unpublishing the last
-    /// local scene prunes the row and the mirror lists the world again.
-    #[tokio::test]
-    async fn local_worlds_reach_the_catalogue_once_and_leave_when_blocked_or_unpublished() {
-        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
-            return;
-        };
-        let opts: sqlx::postgres::PgConnectOptions = base.parse().expect("a postgres DSN");
-        let admin = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .connect_with(opts.clone().database("postgres"))
-            .await
-            .unwrap();
-        let name = format!(
-            "catalyst_z_derive_worlds_{}",
-            &uuid::Uuid::new_v4().simple().to_string()[..12]
-        );
-        crate::db::scratch::create_database_with_schema(&admin, &name).await;
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(opts.database(&name))
-            .await
-            .unwrap();
-
-        let upstream = |id: &str| json!({ "id": id, "world_name": id, "title": "upstream" });
-        for id in ["local.dcl.eth", "mirrored.dcl.eth"] {
-            super::super::mirror::upsert_world(&pool, &upstream(id))
-                .await
-                .unwrap();
-        }
-        world(&pool, "local.dcl.eth", None, "unrestricted").await;
-        world(&pool, "secret.dcl.eth", None, "shared-secret").await;
-        world(
-            &pool,
-            "mirrored.dcl.eth",
-            Some("https://worlds.example"),
-            "unrestricted",
-        )
-        .await;
-        let listed = |world: &str| {
-            let pool = pool.clone();
-            let world = world.to_string();
-            async move {
-                sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
-                    "SELECT id, raw->>'source', title FROM explore.place_indexed
-                     WHERE world IS TRUE AND lower(world_name) = $1 ORDER BY id",
-                )
-                .bind(world)
-                .fetch_all(&pool)
-                .await
-                .unwrap()
-            }
-        };
-        let local = |title: &str| {
-            vec![(
-                "local.dcl.eth".to_string(),
-                Some("worlds".to_string()),
-                Some(title.to_string()),
-            )]
-        };
-        let mirrored = |id: &str| vec![(id.to_string(), None, Some("upstream".to_string()))];
-
-        run_once(&pool, DeriveScope::Local, "https://node.example/content/")
-            .await
-            .unwrap();
-        assert_eq!(listed("local.dcl.eth").await, local("Title local.dcl.eth"));
-        assert_eq!(
-            listed("mirrored.dcl.eth").await,
-            mirrored("mirrored.dcl.eth")
-        );
-        let (world_name, owner, image, private, base): (String, String, String, bool, String) =
-            sqlx::query_as(
-                "SELECT world_name, creator_address, raw->>'image', (raw->>'is_private')::boolean,
-                        base_position
-                 FROM explore.place_world_local WHERE id = 'local.dcl.eth'",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            (
-                world_name.as_str(),
-                owner.as_str(),
-                image.as_str(),
-                private,
-                base.as_str()
-            ),
-            (
-                "LOCAL.DCL.ETH",
-                "0x00000000000000000000000000000000000000aa",
-                "https://node.example/content/contents/bafythumb",
-                false,
-                "1,1"
-            )
-        );
-        let private: bool = sqlx::query_scalar(
-            "SELECT (raw->>'is_private')::boolean FROM explore.place_world_local WHERE id = 'secret.dcl.eth'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(private, "an access-restricted world is private");
-
-        // the places mirror's next pass leaves the local world alone
-        super::super::mirror::upsert_world(&pool, &upstream("local.dcl.eth"))
-            .await
-            .unwrap();
-        assert_eq!(listed("local.dcl.eth").await, local("Title local.dcl.eth"));
-
-        // a settings change shows on the next pass
-        sqlx::query("UPDATE worlds.worlds SET title = 'Renamed' WHERE name = 'local.dcl.eth'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
-        assert_eq!(listed("local.dcl.eth").await, local("Renamed"));
-
-        // a blocked world leaves the catalogue until it is unblocked, and the
-        // places mirror's passes meanwhile do not list upstream's copy of it
-        for (blocked, expected) in [
-            ("timezone('UTC', now())", vec![]),
-            ("NULL", local("Renamed")),
-        ] {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "UPDATE worlds.worlds SET blocked_since = {blocked} WHERE name = 'local.dcl.eth'"
-            )))
-            .execute(&pool)
-            .await
-            .unwrap();
-            run_once(&pool, DeriveScope::Local, "https://node.example/content")
-                .await
-                .unwrap();
-            super::super::mirror::upsert_world(&pool, &upstream("local.dcl.eth"))
-                .await
-                .unwrap();
-            assert_eq!(
-                listed("local.dcl.eth").await,
-                expected,
-                "blocked_since {blocked}"
-            );
-        }
-
-        // the last local scene unpublished: pruned, and the mirror lists it again
-        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = 'local.dcl.eth'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        run_once(&pool, DeriveScope::Local, "https://node.example/content")
-            .await
-            .unwrap();
-        assert_eq!(listed("local.dcl.eth").await, vec![]);
-        super::super::mirror::upsert_world(&pool, &upstream("local.dcl.eth"))
-            .await
-            .unwrap();
-        assert_eq!(listed("local.dcl.eth").await, mirrored("local.dcl.eth"));
-
-        pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE \"{name}\" WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
-    }
-}
+mod tests;

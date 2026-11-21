@@ -196,6 +196,7 @@ pub(super) async fn worlds_states(
     local_urls: &[String],
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
+    places_notices: Option<&str>,
 ) -> anyhow::Result<worlds::Stage5> {
     let max_concurrent_uploads = worlds::core::partial::uploads_within_pool(
         config.worlds.max_concurrent_uploads,
@@ -240,6 +241,7 @@ pub(super) async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_places_notices(places_notices)
                     .with_realm_name(worlds::node_realm_name(config))
                     .with_access_caps(
                         config.worlds.access_max_wallets,

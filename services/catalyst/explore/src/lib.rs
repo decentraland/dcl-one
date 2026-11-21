@@ -220,6 +220,17 @@ impl std::fmt::Debug for Settings {
 }
 
 impl Settings {
+    /// The places site base the places moderation notices link into, while
+    /// the places webhook is configured and operator writes are on; `None`
+    /// captures no notice.
+    pub fn places_notices(&self) -> Option<&str> {
+        let configured = self
+            .places_moderation_webhook
+            .as_deref()
+            .is_some_and(|w| !w.trim().is_empty());
+        (self.operator_writes_enabled && configured).then_some(self.places_base_url.as_str())
+    }
+
     /// Use the complete public base for node-local paths when the node has
     /// a public domain outside decentraland.org.
     pub fn asset_rewrite_base_for(public_url: Option<&str>) -> Option<String> {
@@ -500,7 +511,8 @@ impl ExploreState {
 
     /// Attaches the configured mirrors as periodic jobs: the first pass right
     /// away (jittered), then every interval, doubling the wait after a failed
-    /// pass up to an hour.
+    /// pass up to an hour. The places derive pass reads parcel owners from the
+    /// LAND authority attached before this call (`PlacesComponent::set_land_authz`).
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs, client: crate::http::Outbound) {
         if self.settings.operator_writes_enabled {
             moderation_hooks::spawn(
@@ -547,6 +559,8 @@ impl ExploreState {
                 self.settings.places_derive_interval,
                 self.settings.content_public_url.clone(),
                 self.storage.clone(),
+                self.settings.places_notices().map(str::to_string),
+                self.places.land_authz().cloned(),
             );
         }
         if let Some(source) = self.settings.places_upstream.clone() {

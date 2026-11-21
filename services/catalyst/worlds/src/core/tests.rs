@@ -488,6 +488,7 @@ async fn deploy(
             replacement,
             forward_to: None,
             quota: None,
+            places_notices: None,
         },
     )
     .await
@@ -2448,6 +2449,7 @@ async fn settings_version_tracks_settings_writes() {
             title: Some("Owner Title".into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -2464,6 +2466,7 @@ async fn settings_version_tracks_settings_writes() {
             spawn_coordinates: Some("0,1".into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -2475,6 +2478,258 @@ async fn settings_version_tracks_settings_writes() {
         .await
         .unwrap();
     assert_eq!(version().await, 3, "an access change bumps");
+}
+
+async fn publish_rated(f: &Fixture, world: &WorldName, owner: &Address, id: &str, rating: &str) {
+    let fp = ["0,0"];
+    let mut entity = scene_entity(world, "Rated World", "bafymissing", "0,0", &fp);
+    entity["metadata"]["rating"] = json!(rating);
+    store::deploy_scene(
+        &f.pool,
+        &f.storage,
+        SceneDeployment {
+            world,
+            name_owner: Some(owner),
+            entity_id: id,
+            deployer: owner,
+            deployment_auth_chain: &json!([{ "type": "SIGNER", "payload": owner.as_str() }]),
+            entity: &entity,
+            parcels: &parcels(&fp),
+            size: 1,
+            replacement: &Deploy::Owner,
+            forward_to: None,
+            quota: None,
+            places_notices: Some("https://decentraland.org/places"),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_creator_raises_a_world_rating_and_never_lowers_it() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    let stored = || async {
+        let row = store::get_world_settings(&f.pool, &world)
+            .await
+            .unwrap()
+            .unwrap();
+        (row.content_rating, row.settings_version)
+    };
+    let notices = || async {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT kind, payload::text FROM explore.moderation_hooks \
+             WHERE channel = 'places' AND subject = $1 ORDER BY created_at",
+        )
+        .bind(world.key())
+        .fetch_all(&f.pool)
+        .await
+        .unwrap()
+    };
+    let put = |rating: &str| WorldSettingsUpdate {
+        content_rating: Some(rating.into()),
+        ..Default::default()
+    };
+    let site = Some("https://decentraland.org/places");
+
+    publish_rated(&f, &world, &owner, "bafyrated1", "T").await;
+    assert_eq!(stored().await, (Some("T".into()), 0));
+    publish_rated(&f, &world, &owner, "bafyrated2", "A").await;
+    assert_eq!(stored().await, (Some("A".into()), 1), "a publish raises");
+    publish_rated(&f, &world, &owner, "bafyrated3", "E").await;
+    assert_eq!(
+        stored().await,
+        (Some("A".into()), 1),
+        "a publish never lowers, nor bumps the version for it"
+    );
+    store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &put("T"), site)
+        .await
+        .unwrap();
+    assert_eq!(stored().await, (Some("A".into()), 1), "nor do the settings");
+    store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &put("R"), None)
+        .await
+        .unwrap();
+    assert_eq!(stored().await, (Some("R".into()), 2), "the settings raise");
+    let sent = notices().await;
+    let kinds: Vec<&str> = sent.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        kinds,
+        ["rating_upgraded", "rating_downgrade_refused"],
+        "an unsent notice takes the newer change; none without the webhook"
+    );
+    assert!(
+        sent[1].1.contains("Actual rating: A - Proposed rating: T"),
+        "{}",
+        sent[1].1
+    );
+
+    // An operator's rating, which the catalogue serves first, is the one held.
+    let operator = |rating: &'static str| {
+        sqlx::query(
+            "INSERT INTO explore.place_moderation (place_id, content_rating, set_by) \
+             VALUES ($1, $2, '0xmoderator') \
+             ON CONFLICT (place_id) DO UPDATE SET content_rating = EXCLUDED.content_rating",
+        )
+        .bind(world.key())
+        .bind(rating)
+        .execute(&f.pool)
+    };
+    let operator_rating = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT content_rating FROM explore.place_moderation WHERE place_id = $1",
+        )
+        .bind(world.key())
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+    };
+    operator("T").await.unwrap();
+    store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &put("A"), None)
+        .await
+        .unwrap();
+    assert_eq!(stored().await.0.as_deref(), Some("A"), "a raise over T");
+    assert_eq!(operator_rating().await.as_deref(), Some("A"), "served");
+    operator("R").await.unwrap();
+    publish_rated(&f, &world, &owner, "bafyrated4", "A").await;
+    assert_eq!(
+        operator_rating().await.as_deref(),
+        Some("R"),
+        "never lowered"
+    );
+    let sent = notices().await;
+    assert!(
+        sent.iter().any(|(k, p)| k == "rating_downgrade_refused"
+            && p.contains("Actual rating: R - Proposed rating: A")),
+        "{sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_settings_rating_before_the_world_row_is_held_to_the_operators() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    sqlx::query(
+        "INSERT INTO explore.place_moderation (place_id, content_rating, set_by) \
+         VALUES ($1, 'A', '0xmoderator')",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let put = |rating: &str| WorldSettingsUpdate {
+        content_rating: Some(rating.into()),
+        ..Default::default()
+    };
+    let site = Some("https://decentraland.org/places");
+    let ratings = || async {
+        let own = store::get_world_settings(&f.pool, &world)
+            .await
+            .unwrap()
+            .unwrap()
+            .content_rating;
+        let operator: Option<String> = sqlx::query_scalar(
+            "SELECT content_rating FROM explore.place_moderation WHERE place_id = $1",
+        )
+        .bind(world.key())
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        (own, operator)
+    };
+
+    store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &put("T"), site)
+        .await
+        .unwrap();
+    assert_eq!(
+        ratings().await,
+        (None, Some("A".into())),
+        "a laxer rating is kept out"
+    );
+    let kinds: Vec<String> = sqlx::query_scalar(
+        "SELECT kind FROM explore.moderation_hooks WHERE channel = 'places' AND subject = $1",
+    )
+    .bind(world.key())
+    .fetch_all(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(kinds, ["rating_downgrade_refused"]);
+    store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &put("R"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        ratings().await,
+        (Some("R".into()), Some("R".into())),
+        "a raise"
+    );
+}
+
+#[tokio::test]
+async fn a_first_publish_is_held_to_the_operators_rating() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random().address;
+    let operator = |world: &WorldName, rating: &'static str| {
+        sqlx::query(
+            "INSERT INTO explore.place_moderation (place_id, content_rating, set_by) \
+             VALUES ($1, $2, '0xmoderator')",
+        )
+        .bind(world.key().to_string())
+        .bind(rating)
+        .execute(&f.pool)
+    };
+    let ratings = |world: &WorldName| {
+        let (pool, key) = (f.pool.clone(), world.key().to_string());
+        async move {
+            let own: Option<String> =
+                sqlx::query_scalar("SELECT content_rating FROM worlds.worlds WHERE name = $1")
+                    .bind(&key)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            let operator: Option<String> = sqlx::query_scalar(
+                "SELECT content_rating FROM explore.place_moderation WHERE place_id = $1",
+            )
+            .bind(&key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let kinds: Vec<String> = sqlx::query_scalar(
+                "SELECT kind FROM explore.moderation_hooks \
+                 WHERE channel = 'places' AND subject = $1",
+            )
+            .bind(&key)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            (own, operator, kinds)
+        }
+    };
+
+    let laxer = world_name();
+    operator(&laxer, "A").await.unwrap();
+    publish_rated(&f, &laxer, &owner, "bafyfirst1", "T").await;
+    assert_eq!(
+        ratings(&laxer).await,
+        (
+            None,
+            Some("A".into()),
+            vec!["rating_downgrade_refused".into()]
+        ),
+        "a laxer rating is kept out"
+    );
+
+    let stricter = world_name();
+    operator(&stricter, "T").await.unwrap();
+    publish_rated(&f, &stricter, &owner, "bafyfirst2", "R").await;
+    assert_eq!(
+        ratings(&stricter).await,
+        (
+            Some("R".into()),
+            Some("R".into()),
+            vec!["rating_upgraded".into()]
+        ),
+        "a raise moves the operator's rating"
+    );
 }
 
 #[tokio::test]
@@ -2497,6 +2752,7 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         &owner,
         Some(&owner),
         &spawn_update("0,0"),
+        None,
     )
     .await
     .expect_err("a world without scenes cannot take a spawn");
@@ -2521,10 +2777,16 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     )
     .await
     .unwrap();
-    let err =
-        store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &spawn_update("5,5"))
-            .await
-            .expect_err("a spawn outside the world shape is refused");
+    let err = store::update_world_settings(
+        &f.pool,
+        &world,
+        &owner,
+        Some(&owner),
+        &spawn_update("5,5"),
+        None,
+    )
+    .await
+    .expect_err("a spawn outside the world shape is refused");
     assert!(bad_request(err).contains("must be within the world shape rectangle"));
     assert_eq!(
         store::get_world_settings(&f.pool, &world)
@@ -2535,10 +2797,16 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
             .as_deref(),
         Some("0,0")
     );
-    let (updated, old_spawn) =
-        store::update_world_settings(&f.pool, &world, &owner, Some(&owner), &spawn_update("0,1"))
-            .await
-            .expect("in-shape spawn");
+    let (updated, old_spawn) = store::update_world_settings(
+        &f.pool,
+        &world,
+        &owner,
+        Some(&owner),
+        &spawn_update("0,1"),
+        None,
+    )
+    .await
+    .expect("in-shape spawn");
     assert_eq!(updated.spawn_coordinates.as_deref(), Some("0,1"));
     assert_eq!(old_spawn.as_deref(), Some("0,0"));
 }
@@ -7564,6 +7832,7 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    places_notices: None,
                 },
             )
             .await
@@ -8262,6 +8531,7 @@ async fn concurrent_first_publishes_by_different_holders_report_the_replaced_own
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: None,
+                    places_notices: None,
                 },
             )
             .await
@@ -8653,6 +8923,7 @@ async fn concurrent_publishes_cannot_overrun_the_allowance_together() {
                     replacement: &Deploy::Owner,
                     forward_to: None,
                     quota: Some(&charge),
+                    places_notices: None,
                 },
             )
             .await

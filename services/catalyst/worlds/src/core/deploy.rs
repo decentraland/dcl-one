@@ -1049,6 +1049,7 @@ pub(super) async fn persist_publish_on(
             replacement,
             forward_to: state.forwarder.as_deref().map(|f| f.target()),
             quota: charge.as_ref(),
+            places_notices: state.settings.places_notices.as_deref(),
         },
         completion,
     )
