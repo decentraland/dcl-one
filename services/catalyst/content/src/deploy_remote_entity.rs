@@ -1334,36 +1334,55 @@ mod tests {
     }
 
     /// A render the process may not touch gets no row and fails nothing; an absent one gets no
-    /// row either.
+    /// row either. `refused` is another uid's `0644` file the store can stat, so its refusal
+    /// comes from setting its times; `hidden` sits in a shard the process may not enter, so its
+    /// refusal comes from the stat.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_render_that_cannot_be_touched_is_skipped() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-        if unsafe { libc::geteuid() } == 0 {
-            return; // root ignores the permission bits this test relies on
+        if running_as_root() {
+            eprintln!("skipping: permissions do not bind when running as root");
+            return;
+        }
+        let foreign = std::path::Path::new("/etc/passwd");
+        match std::fs::metadata(foreign) {
+            Ok(meta) if meta.is_file() && meta.uid() != unsafe { libc::geteuid() } => {}
+            _ => {
+                eprintln!(
+                    "skipping: no file owned by another uid at {}",
+                    foreign.display()
+                );
+                return;
+            }
         }
         let (storage, tmp) = temp_storage("render-untouchable").await;
         let _tmp = RemoveOnDrop(tmp);
-        let [held, refused, absent] =
-            [b"held".as_slice(), b"refused", b"absent"].map(hash_bytes_v1);
-        assert_ne!(hex_prefix(&held), hex_prefix(&refused));
-        storage
-            .store(&held, b"held".as_slice().into())
-            .await
-            .unwrap();
-        storage
-            .store(&refused, b"refused".as_slice().into())
-            .await
-            .unwrap();
-        // A shard the process may not enter, as another uid's tree answers.
-        let shard = storage.root().join(hex_prefix(&refused));
+        let [held, refused, hidden, absent] =
+            [b"held".as_slice(), b"refused", b"hidden", b"absent"].map(hash_bytes_v1);
+        assert_ne!(hex_prefix(&held), hex_prefix(&hidden));
+        assert_ne!(hex_prefix(&refused), hex_prefix(&hidden));
+        for (hash, bytes) in [(&held, "held"), (&refused, "refused"), (&hidden, "hidden")] {
+            storage.store(hash, bytes.as_bytes().into()).await.unwrap();
+        }
+        let refused_path = crate::storage::resolve_file_path(storage.root(), &refused).unwrap();
+        std::fs::remove_file(&refused_path).unwrap();
+        std::os::unix::fs::symlink(foreign, &refused_path).unwrap();
+        assert!(storage.exist(&refused).await.unwrap(), "the stat passes");
+        assert!(
+            matches!(storage.touch(&refused).await,
+                Err(crate::storage::StorageError::Io(e)) if e.kind() == std::io::ErrorKind::PermissionDenied),
+            "setting the times is refused"
+        );
+        let shard = storage.root().join(hex_prefix(&hidden));
         std::fs::set_permissions(&shard, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         let renders = vec![
             ("face.png".to_string(), held.clone()),
             ("body.png".to_string(), refused),
-            ("face256.png".to_string(), absent),
+            ("face256.png".to_string(), hidden),
+            ("body256.png".to_string(), absent),
         ];
         let touched = touch_renders(&storage, "entity", renders).await;
         std::fs::set_permissions(&shard, std::fs::Permissions::from_mode(0o755)).unwrap();
