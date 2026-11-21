@@ -46,7 +46,4 @@ export const settings = {
   // --- Jump look & feel ---
   jumpHeight: JUMP_HEIGHT,
   sprintJumpHeight: JUMP_HEIGHT_SPRINT,
-  // How long (s) the glide landing clip shows when touching down while moving,
-  // before blending back into walk/jog/run. 0 = skip it entirely.
-  landRunBlend: 0.2,
 };

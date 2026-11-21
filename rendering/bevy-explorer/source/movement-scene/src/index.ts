@@ -80,9 +80,13 @@ const JUMP_SETS: Record<JumpVariation, { start: string; mid: string; fall: strin
   run: { start: ANIM + 'Run_Jump_Start.glb', mid: ANIM + 'Run_Jump_Mid.glb', fall: ANIM + 'Run_Jump_Fall_Loop.glb', end: ANIM + 'Run_Jump_End.glb' },
 };
 const CLIP_LONG_FALL = ANIM + 'Long_Fall_Loop.glb';
-// Landing clip with the glider close embedded, used when touching down while still
-// gliding so the glider stows as part of the landing (plays from 0).
-const CLIP_GLIDE_LANDING = ANIM + 'Hard_Landing_GliderRig.glb';
+// The tier's End (as in JUMP_SETS) with the glider closing embedded, for a landing while the glider is open: the
+// glider folds and shrinks away over the first 0.267 s, or vanishes with the clip when locomotion takes over earlier.
+const GLIDE_LANDING: Record<JumpVariation, string> = {
+  idle: ANIM + 'Gliding_Idle_Jump_EndRig.glb',
+  jog: ANIM + 'Gliding_Jog_Jump_EndRig.glb',
+  run: ANIM + 'Gliding_Run_Jump_EndRig.glb',
+};
 const CLIP_JOG_STOP = ANIM + 'Jog_Stop.glb';
 // Hard landing on a stunning touchdown out of the long fall loop. The engine's network state reads a stun from these
 // clips played at speed 1 or slower: Enter and Loop, not the faster Exit.
@@ -174,7 +178,7 @@ const GLIDE_FALL_BLEND = 0.1; // the glide's End to Down, at the end of End
 const PRELOAD_CLIPS: string[] = [
   CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN,
   ...Object.values(JUMP_SETS).flatMap((s) => [s.start, s.mid, s.fall, s.end]),
-  CLIP_LONG_FALL, CLIP_GLIDE_LANDING, CLIP_JOG_STOP,
+  CLIP_LONG_FALL, ...Object.values(GLIDE_LANDING), CLIP_JOG_STOP,
   ...Object.values(HARD_LANDING),
   ...Object.values(DOUBLE_JUMP).flatMap((d) => [d.plain, d.right]),
   ...Object.values(GLIDE_AVATAR),
@@ -291,7 +295,7 @@ var animJumps = 0;
 // counts as a jump (past its grace window) starts Jump in the air. A state with a clip per tier picks it on starting
 // and keeps it.
 type AnimState = 'Movement' | 'Jump' | 'Up' | 'UpToDown' | 'Down' | 'LongFall' | 'Grounded' | 'HardLanding'
-  | 'DoubleJump' | 'Gliding' | 'GlideLanding';
+  | 'DoubleJump' | 'Gliding';
 var animState: AnimState = 'Movement';
 // Scene time and tick the state started.
 var animFrom = 0;
@@ -301,9 +305,8 @@ var animTick = 0;
 var animBlend: number | undefined = undefined;
 var animOffset: number | undefined = undefined;
 var animTier: JumpVariation = 'idle';
-// True when the glide landing stuns (vertical model): the clip plays out fully since the avatar is held in place.
-// Otherwise movement input cuts it short after landRunBlend.
-var landingLocked = false;
+// Grounded plays the tier's glide landing (GLIDE_LANDING) instead of its End: the landing of a glide, not of a stow.
+var glideLanding = false;
 
 // --- Double jump ---
 // Clip of the current air jump, picked when DoubleJump starts.
@@ -330,14 +333,14 @@ var glideTilt = 0;
 // Start clip (glider opens) whole from the tick the prop starts opening, 'glide' is the steady
 // forward/idle loop after it while the prop stays open, 'stow' plays the End clip (glider closes)
 // from GLIDE_END_FROM over the rest of its length when the glide ends mid-air, then the fall goes
-// on. A glide that ends by landing skips 'stow' (the landing clip takes over).
+// on. A glide that ends by landing skips 'stow' (the glide landing closes the glider).
 type GlidePhase = 'none' | 'deploy' | 'glide' | 'stow';
 var glidePhase: GlidePhase = 'none';
 // Scene time and tick the current 'deploy' or 'stow' started.
 var glideFrom = 0;
 var glideTick = 0;
-// Set when a glide ends by touching down, so the next landing uses the glider-close
-// landing clip (the stow plays concurrently with the landing). Consumed in stateAnimation.
+// Set when a glide ends by touching down, so its landing plays the glide landing (GLIDE_LANDING).
+// Consumed in stateAnimation.
 var landingFromGlide = false;
 // Glide pose clip published last frame (forward/idle), to detect a swap mid-glide.
 var prevGlideSrc: string | undefined = undefined;
@@ -402,6 +405,7 @@ function enterState(state: AnimState, blend?: number, offset?: number) {
   animTick = tick;
   animBlend = blend;
   animOffset = offset;
+  glideLanding = false;
   if (state !== 'Movement') stopping = false;
   if (state !== 'HardLanding') hardLanding = 'none';
 }
@@ -491,12 +495,13 @@ function stateAnimation(
   }
 
   if (animState === 'Gliding') {
-    // the glide is over: in the air the fall goes on; on the ground a glide (not a stow) lands on the glider-close clip
+    // the glide is over: in the air the fall goes on; on the ground it lands in Grounded (a hard landing comes only
+    // from the long fall), a glide (not a stow) on the glide landing, which closes the glider
     if (airborne) enterState('Down', GLIDE_FALL_BLEND, 0);
-    else if (landingFromGlide) {
-      landingLocked = stunned();
-      enterState('GlideLanding', settings.transAir, 0);
-    } else land(LAND_FROM_AIR_JUMP_BLEND);
+    else {
+      land(LAND_FROM_AIR_JUMP_BLEND);
+      glideLanding = landingFromGlide;
+    }
     landingFromGlide = false;
   } else if (jumpTrigger && jumps > 1) {
     enterState('DoubleJump', DOUBLE_JUMP_BLEND, 0);
@@ -567,31 +572,11 @@ function stateAnimation(
     case 'UpToDown': return clip(set.mid, false);
     case 'Down': return clip(set.fall, true);
     case 'LongFall': return clip(CLIP_LONG_FALL, true);
-    case 'Grounded': return clip(set.end, false, true);
+    case 'Grounded': return clip(glideLanding ? GLIDE_LANDING[animTier] : set.end, false, true);
     case 'DoubleJump': return { ...clip(doubleJumpClip, false), speed: DOUBLE_JUMP_SPEED };
     case 'HardLanding': return hardLandingAnimation();
-    case 'GlideLanding': return glideLandingAnimation();
     default: return null;
   }
-}
-
-// Glide landing: the glider-close landing clip from its start, played out, or cut short by movement input after
-// landRunBlend unless the landing stuns.
-function glideLandingAnimation(): MovementAnimation | null {
-  const moving = Vector3.lengthSquared(movementAxis) > 0;
-  if ((moving && !landingLocked && time - animFrom >= settings.landRunBlend) || clipFinished(CLIP_GLIDE_LANDING)) {
-    enterState('Movement');
-    return null;
-  }
-  return {
-    src: CLIP_GLIDE_LANDING,
-    speed: 1,
-    loop: false,
-    idle: true,
-    transitionSeconds: settings.transAir,
-    playbackTime: animTick === tick ? 0 : undefined,
-    sounds: [],
-  };
 }
 
 // Hard landing after the touchdown frame: Enter to its end, Loop until the stun is over (and at least its blend-in),
@@ -645,11 +630,11 @@ function selectAnimation(): MovementAnimation {
   if (!glideOpen || grounded) {
     // Glide ended, or the avatar is on the ground with the prop still open(ing). Stow (close)
     // only if we ended mid-air (jump released while falling); a glide that ends by landing
-    // lets the landing clip take over. A stow ends at the end of its clip (stateAnimation), on
+    // lets the glide landing take over. A stow ends at the end of its clip (stateAnimation), on
     // touchdown, or when the prop has closed.
     if (glidePhase === 'deploy' || glidePhase === 'glide') {
       if (grounded) {
-        // Landed while gliding: let the landing clip stow the glider (close embedded).
+        // Landed while gliding: the glide landing closes the glider (close embedded).
         glidePhase = 'none';
         landingFromGlide = wasJumpingOrFalling;
       } else {

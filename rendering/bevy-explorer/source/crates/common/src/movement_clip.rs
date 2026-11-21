@@ -60,7 +60,10 @@ impl ClipMotion {
             stem if DOUBLE_JUMPS.contains(&stem) => Self::DoubleJump,
             "Gliding_AvatarStartRig" => Self::GlideOpening,
             "Gliding_AvatarForwardRig" | "Gliding_AvatarIdleRig" => Self::Gliding,
-            "Gliding_AvatarEndRig" | "Hard_Landing_GliderRig" => Self::GlideClosing,
+            "Gliding_AvatarEndRig"
+            | "Gliding_Idle_Jump_EndRig"
+            | "Gliding_Jog_Jump_EndRig"
+            | "Gliding_Run_Jump_EndRig" => Self::GlideClosing,
             _ => Self::None,
         }
     }
@@ -135,7 +138,9 @@ mod tests {
             ("Gliding_AvatarForwardRig.glb", ClipMotion::Gliding),
             ("Gliding_AvatarIdleRig.glb", ClipMotion::Gliding),
             ("Gliding_AvatarEndRig.glb", ClipMotion::GlideClosing),
-            ("Hard_Landing_GliderRig.glb", ClipMotion::GlideClosing),
+            ("Gliding_Idle_Jump_EndRig.glb", ClipMotion::GlideClosing),
+            ("Gliding_Jog_Jump_EndRig.glb", ClipMotion::GlideClosing),
+            ("Gliding_Run_Jump_EndRig.glb", ClipMotion::GlideClosing),
             // a hard landing is no motion the clip names
             ("Hard_Landing.glb", ClipMotion::None),
             ("Hard_Landing_Enter.glb", ClipMotion::None),
