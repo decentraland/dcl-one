@@ -496,11 +496,6 @@ const ROWS: &[Row] = &[
         "LEASE_AUTHORIZATIONS_URL",
         "https://decentraland.github.io/linker-server-authorizations/authorizations.json",
     ),
-    upstream(
-        "upstreams",
-        "BUILDER_FOUNDATION_URL",
-        "https://builder-api.decentraland.org",
-    ),
     // `/convert` fetches a client-named URL only on a mirror.
     mirrored("upstreams", "MEDIA_CONVERT_REMOTE_SOURCES"),
     // Only the scratch journey stack runs on the LiveKit dev pair, which
@@ -941,6 +936,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),
     ("BUILDER_URL", LINK),
+    ("CREATORS_URL", LINK),
     ("CAST2_URL", LINK),
 ];
 const DATABASE: &str = "this node's own database";

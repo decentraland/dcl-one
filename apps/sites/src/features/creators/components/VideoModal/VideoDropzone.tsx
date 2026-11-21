@@ -1,7 +1,7 @@
 import { useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { VideocamOutlinedIcon as VideoIcon } from '../Icons'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { ItemFileError, MAX_VIDEO_FILE_SIZE, VIDEO_EXTENSIONS, toMB, validateVideoFile } from '@/data/lib/creators/itemFiles'
+import { ItemFileError, MAX_VIDEO_FILE_MB, VIDEO_EXTENSIONS, validateVideoFile } from '@/data/lib/creators/itemFiles'
 import { loadVideoMetadata } from '@/data/lib/creators/media'
 import styles from './VideoDropzone.module.css'
 
@@ -96,7 +96,7 @@ export function VideoDropzone({ onPick, children, compact = false, testId = 'vid
             <span className={styles.hint}>
               {t('video_modal.hint', {
                 extensions: VIDEO_EXTENSIONS.join(', ').toUpperCase(),
-                size: toMB(MAX_VIDEO_FILE_SIZE)
+                size: MAX_VIDEO_FILE_MB
               })}
             </span>
           </>

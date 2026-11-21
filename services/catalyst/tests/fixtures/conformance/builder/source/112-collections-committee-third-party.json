@@ -1,0 +1,81 @@
+{
+  "description": "GET /collections signed by a committee member, filtered to third-party collections. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections",
+    "query": {
+      "q": "conformance linked",
+      "type": "third_party"
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x01eba3f0e992f53debaf51ed3738dc2f23e09aee\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xcb35E8511368f0De8759EEeAc3Fe51C8D5ea2e63\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x1a44116ede83b32f13ed080cc98e89d27d7ed635276ab2fabb9276554046bcc56070fc0c8edf5eece56d831406945891ae585e76b8fe1ddb8870481082b9be1d1b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections:1767225600000:{}\",\"signature\":\"0x77d409e9bffc96ecc0192fb8d17c10c2e5bfc746093e738e21dff48cca5bee243ebd5da31e01badfbed26adc020e2863436b26a065a7f769734ca65e39f386131c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-000000000008",
+          "name": "Conformance linked A",
+          "eth_address": "",
+          "salt": "0x8e4b2a7d3c6f5e9a1b0c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6",
+          "contract_address": null,
+          "is_published": false,
+          "created_at": "2025-12-04T00:00:00.000Z",
+          "updated_at": "2025-12-04T00:00:00.000Z",
+          "managers": [],
+          "minters": [],
+          "is_approved": false,
+          "reviewed_at": null,
+          "forum_link": null,
+          "lock": null,
+          "forum_id": null,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "curation_status": null,
+          "last_activity_at": "2025-12-05T00:00:00.000Z",
+          "item_count": "1",
+          "is_mapping_complete": false,
+          "urn": "urn:decentraland:matic:collections-thirdparty:conformance:linked-a"
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-000000000009",
+          "name": "Conformance linked B",
+          "eth_address": "",
+          "salt": "0x9f5c3b8e4d7a6f0b2c1d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7",
+          "contract_address": null,
+          "is_published": false,
+          "created_at": "2025-12-04T00:00:00.000Z",
+          "updated_at": "2025-12-04T00:00:00.000Z",
+          "managers": [],
+          "minters": [],
+          "is_approved": false,
+          "reviewed_at": null,
+          "forum_link": null,
+          "lock": null,
+          "forum_id": null,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "curation_status": null,
+          "last_activity_at": "2025-12-05T00:00:00.000Z",
+          "item_count": "1",
+          "is_mapping_complete": false,
+          "urn": "urn:decentraland:matic:collections-thirdparty:conformance:linked-b"
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

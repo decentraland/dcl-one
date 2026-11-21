@@ -1,30 +1,26 @@
 // from: tests/social_live.rs (the wallet, the node client and the multipart helper), catalyrst/crates/catalyrst-builder/src/ports/publication/tests.rs (the wearable vector), catalyrst/crates/catalyrst-camera-reel/src/handlers/tests (the upload metadata shape)
-//! The stage 5 creator-plane live checks against a RUNNING node with
-//! `CREATE_WRITES_ENABLED=true` (`tests/create/live.sh` starts one, builds
-//! the asset catalogue with `catalyst builder catalog` and runs this). A
-//! random wallet saves a collection and the old publication vector's item
-//! over signed fetch, uploads its model and thumbnail (served back from the
-//! ONE blob store), reads its drafts, a curator approves the item (the
+//! The creator-plane live checks against a RUNNING node with
+//! `CREATE_WRITES_ENABLED=true` and a complete, fresh pass of the Polygon
+//! collections copy (`MARKETPLACE_MIRRORS_ENABLED=true` with
+//! `MATIC_COLLECTIONS_SUBGRAPH_URL`): the builder answers 503 without it. A random wallet saves a collection and the old publication vector's item
+//! over signed fetch, uploads its model and thumbnail (served back to it, and
+//! only to it, from the ONE blob store), reads its drafts, a curator approves the item (the
 //! operator bearer and the `BUILDER_ADMIN_ADDRESSES` wallet), and the
 //! prepared publication matches the vector byte for byte
 //! (`1:w:Hat:A blue hat:hat:BaseFemale,BaseMale`, `DCL-MYCLLCTN`, chain
-//! 137, the salt keccak256 of the id). The asset pack the script built is
-//! listed by `/v1/assetPacks` and its model is served by `/contents/{hash}`.
+//! 137, the salt keccak256 of the id).
 //! Camera reel: the wallet uploads a photo with its metadata, lists it as
 //! owner (private) and as anyone (after the visibility flip), fetches the
 //! bytes and the thumbnail, a stranger is refused, the moderator rejects a
 //! second photo, and a delete leaves the hash unservable. Skips unless
 //! `CATALYST_CREATE_LIVE_URL` is set.
 //!
-//! Environment (the script exports every one):
+//! Environment, each required once `CATALYST_CREATE_LIVE_URL` is set:
 //! `CATALYST_CREATE_LIVE_URL` (`http://127.0.0.1:5432`),
 //! `CATALYST_CREATE_LIVE_BUILDER_TOKEN` (`CATALYRST_BUILDER_ADMIN_TOKEN`),
 //! `CATALYST_CREATE_LIVE_CAMERA_TOKEN` (`CATALYRST_CAMERA_REEL_ADMIN_TOKEN`),
 //! `CATALYST_CREATE_LIVE_CURATOR_KEY` (the private key of the one
-//! `BUILDER_ADMIN_ADDRESSES` wallet), `CATALYST_CREATE_LIVE_PACKS_DIR` (the
-//! `@dcl/asset-packs`-shaped tree the catalogue was built from).
-
-use std::path::Path;
+//! `BUILDER_ADMIN_ADDRESSES` wallet).
 
 use alloy::signers::{Signer, local::PrivateKeySigner};
 use alloy_primitives::keccak256;
@@ -43,9 +39,7 @@ const BUILDER: &str = "/builder-api";
 const REEL: &str = "/camera-reel-service";
 
 fn env(name: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| {
-        panic!("{name} must be set for the live checks (tests/create/live.sh exports it)")
-    })
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set for the live checks"))
 }
 
 struct Wallet {
@@ -289,46 +283,9 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     let builder_token = env("CATALYST_CREATE_LIVE_BUILDER_TOKEN");
     let camera_token = env("CATALYST_CREATE_LIVE_CAMERA_TOKEN");
     let curator = Wallet::from_key(&env("CATALYST_CREATE_LIVE_CURATOR_KEY"));
-    let packs_dir = env("CATALYST_CREATE_LIVE_PACKS_DIR");
     let owner = Wallet::random();
     let stranger = Wallet::random();
 
-    // ── the asset catalogue the operator command built ──────────────────────
-    let packs = node.get(&format!("{BUILDER}/v1/assetPacks")).await;
-    assert_eq!(packs.status, 200, "{}", packs.body);
-    assert_eq!(packs.header("cache-control"), "public, max-age=3600");
-    assert_eq!(packs.body["ok"], true);
-    let pack = packs.body["data"]
-        .as_array()
-        .and_then(|p| p.iter().find(|p| p["id"] == "live-pack"))
-        .cloned()
-        .unwrap_or_else(|| panic!("live-pack missing: {}", packs.body));
-    assert_eq!(pack["title"], "Live pack");
-    let asset = &pack["assets"][0];
-    assert_eq!(
-        (asset["asset_pack_id"].as_str(), asset["model"].as_str()),
-        (Some("live-pack"), Some("model.glb"))
-    );
-    let model_bytes =
-        std::fs::read(Path::new(&packs_dir).join("live-pack/assets/cube/model.glb")).unwrap();
-    let model_hash = hash_bytes_v1(&model_bytes);
-    assert_eq!(
-        asset["contents"]["model.glb"], model_hash,
-        "the catalogue names the CIDv1 of the stored file"
-    );
-    let served = node.get(&format!("{BUILDER}/contents/{model_hash}")).await;
-    assert_eq!(served.status, 200);
-    assert_eq!(
-        served.bytes, model_bytes,
-        "the asset file is served from the ONE blob store"
-    );
-    assert_eq!(
-        node.get(&format!("/contents/{model_hash}")).await.status,
-        200,
-        "the same hash through the content server's root route"
-    );
-
-    // ── a collection and the publication vector's item, over signed fetch ───
     let collection = Uuid::new_v4();
     let item = Uuid::new_v4();
     let c_path = format!("{BUILDER}/v1/collections/{collection}");
@@ -405,7 +362,6 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(saved.status, 200, "{}", saved.body);
     assert_eq!(saved.body["data"]["name"], "Hat");
 
-    // Files first (the FK rule: a draft may only name a hash this node accepted).
     let glb = format!("glTF-live-{}", Uuid::new_v4()).into_bytes();
     let thumb = png(64, 64, 7);
     let (body, ct) = multipart(&[
@@ -437,20 +393,45 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(uploaded.body["data"]["thumbnail.png"], thumb_hash);
 
     let stored = node
-        .get(&format!("{BUILDER}/v1/storage/contents/{thumb_hash}"))
+        .signed(
+            &owner,
+            "get",
+            &format!("{BUILDER}/v1/storage/contents/{thumb_hash}"),
+            None,
+        )
         .await;
     assert_eq!(stored.status, 200);
     assert_eq!(
         stored.bytes, thumb,
-        "the thumbnail is served back from the ONE blob store"
+        "the thumbnail is served back to its owner from the ONE blob store"
     );
     assert_eq!(stored.header("content-type"), "image/png");
+    assert_eq!(stored.header("cache-control"), "private, no-store");
+    assert_eq!(
+        node.get(&format!("{BUILDER}/v1/storage/contents/{thumb_hash}"))
+            .await
+            .status,
+        404,
+        "a draft's file is refused to an unsigned request"
+    );
+    assert_eq!(
+        node.signed(
+            &owner,
+            "get",
+            &format!("/v1/storage/contents/{thumb_hash}/exists"),
+            None
+        )
+        .await
+        .status,
+        200,
+        "the root path (the old builder-api vhost) answers too"
+    );
     assert_eq!(
         node.get(&format!("/v1/storage/contents/{thumb_hash}/exists"))
             .await
             .status,
-        200,
-        "the root path (the old builder-api vhost) answers too"
+        404,
+        "the probe of a draft's file answers an unsigned request as for an absent one"
     );
     assert_eq!(
         node.get(&format!(
@@ -481,12 +462,17 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(read.body["data"]["description"], "A blue hat");
     assert_eq!(
         node.signed(&stranger, "get", &i_path, None).await.status,
-        404,
-        "another wallet has no such draft"
+        401,
+        "another wallet is refused the draft item"
     );
 
     let listing = node
-        .signed(&owner, "get", &format!("{BUILDER}/v1/collections"), None)
+        .signed(
+            &owner,
+            "get",
+            &format!("{BUILDER}/v1/drafts/collections"),
+            None,
+        )
         .await;
     assert_eq!(listing.status, 200, "{}", listing.body);
     let mine = listing.body["data"]
@@ -509,7 +495,6 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     assert_eq!(items.body["data"][0]["is_approved"], false);
     assert_eq!(items.body["data"][0]["contents"]["model.glb"], glb_hash);
 
-    // ── curation: the operator bearer, then the admin-address wallet ────────
     let status_path = format!("{c_path}/items/{item}/status");
     let refused = node
         .signed_json(
@@ -584,9 +569,10 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
     );
     assert_eq!(bulk.body["data"]["updated"], 1);
     let by_admin = node.signed(&curator, "get", &c_path, None).await;
-    assert_eq!(
-        by_admin.status, 200,
-        "an admin address reads any collection"
+    assert!(
+        matches!(by_admin.status, 401 | 503),
+        "an admin address has no role on another wallet's draft (401, or 503 while the committee can't tell): {}",
+        by_admin.body
     );
     let curation = node
         .bearer(
@@ -603,7 +589,6 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
         "empty lists without a collections subgraph"
     );
 
-    // ── the prepared publication is the old vector ──────────────────────────
     let prepared = node
         .signed(&owner, "get", &format!("{c_path}/publication"), None)
         .await;
@@ -668,7 +653,6 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
         .await;
     assert_eq!(status.status, 200, "{}", status.body);
 
-    // ── camera reel ─────────────────────────────────────────────────────────
     let place = Uuid::new_v4().to_string();
     let shot = png(1280, 720, 3);
     let (body, ct) = multipart(&[
@@ -868,7 +852,6 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
         keyset.body
     );
 
-    // The moderator: a second photo rejected disappears from every read.
     let second = png(640, 360, 5);
     let (body, ct) = multipart(&[
         Part {
@@ -966,20 +949,12 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
         404
     );
     assert_eq!(
-        node.get(&format!("/builder-api/contents/{second_hash}"))
-            .await
-            .status,
-        404,
-        "nor by the builder"
-    );
-    assert_eq!(
         node.get(&format!("{user_path}/images")).await.body["images"]
             .as_array()
             .map(Vec::len),
         Some(1)
     );
 
-    // Delete: the row goes, the hash stops being served (the blob stays in the shared store).
     let del_path = format!("{REEL}/api/images/{image_id}");
     assert_eq!(
         node.signed(&stranger, "delete", &del_path, None)
@@ -1000,12 +975,6 @@ async fn the_creator_plane_end_to_end_against_a_running_node() {
         node.get(&format!("/contents/{image_hash}")).await.status,
         404,
         "a deleted photo's bytes are withheld on the content routes too"
-    );
-    assert_eq!(
-        node.get(&format!("/builder-api/contents/{image_hash}"))
-            .await
-            .status,
-        404
     );
     assert_eq!(node.get(&user_path).await.body["currentImages"], 0);
     assert_eq!(

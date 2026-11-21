@@ -7,6 +7,7 @@
 //! into the one [`SyncStatus`] the status routes read.
 
 pub mod dao;
+pub mod item_coverage;
 pub mod orchestrator;
 pub mod pointer_changes;
 pub mod repository;

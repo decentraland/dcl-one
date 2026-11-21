@@ -1,0 +1,48 @@
+{
+  "description": "GET /collections/{id}/itemCurations signed by a committee member. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000402/itemCurations",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x01eba3f0e992f53debaf51ed3738dc2f23e09aee\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xcb35E8511368f0De8759EEeAc3Fe51C8D5ea2e63\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x1a44116ede83b32f13ed080cc98e89d27d7ed635276ab2fabb9276554046bcc56070fc0c8edf5eece56d831406945891ae585e76b8fe1ddb8870481082b9be1d1b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000402/itemcurations:1767225600000:{}\",\"signature\":\"0xfe6322f2a5f17331feb4de8f2f17b1ab6b8e195101cc0f7362d215462cd62ca4182f321353efc36b71820b7c6d350a3e531193148ae1481188b5e2930fc2c0e91b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004d1",
+          "item_id": "c011ec71-0000-4000-8000-0000000004a1",
+          "status": "approved",
+          "created_at": "2025-12-21T00:00:00.000Z",
+          "updated_at": "2025-12-21T06:00:00.000Z",
+          "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "is_mapping_complete": true
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000004d3",
+          "item_id": "c011ec71-0000-4000-8000-0000000004a2",
+          "status": "pending",
+          "created_at": "2025-12-23T00:00:00.000Z",
+          "updated_at": "2025-12-23T00:00:00.000Z",
+          "content_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "is_mapping_complete": false
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

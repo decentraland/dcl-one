@@ -1,12 +1,52 @@
 // @vitest-environment jsdom
 import '../test/setup'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, afterEach, vi, type Mock } from 'vitest'
 import type { Item } from '../items'
-import { fetchContentSize, fetchItemContents, getContentsStorageUrl } from './contents'
+import { fetchContent, fetchContentSize, fetchItemContents, getContentsStorageUrl } from './contents'
+
+vi.mock('../auth', async importOriginal => {
+  const actual = await importOriginal<typeof import('../auth')>()
+  return { ...actual, currentSession: vi.fn(() => null), signedFetch: vi.fn(actual.signedFetch) }
+})
+
+import { currentSession, signedFetch } from '../auth'
+
+const CREATOR = '0x00000000000000000000000000000000000000c1'
+
+describe('when a creator is signed in', () => {
+  afterEach(() => {
+    ;(currentSession as Mock).mockReturnValue(null)
+  })
+
+  it('should read a stored file signed by the session and keep it out of the HTTP cache', async () => {
+    ;(currentSession as Mock).mockReturnValue({ address: CREATOR, kind: 'web3' })
+    ;(signedFetch as Mock).mockResolvedValueOnce(new Response('model'))
+    const blob = await fetchContent('bafmodel')
+    expect(await blob.text()).toBe('model')
+    expect(signedFetch).toHaveBeenLastCalledWith(
+      CREATOR,
+      'http://localhost:3000/builder-api/v1',
+      '/storage/contents/bafmodel',
+      expect.objectContaining({ cache: 'no-store' })
+    )
+  })
+
+  it('should measure a stored file signed by the session and keep it out of the HTTP cache', async () => {
+    ;(currentSession as Mock).mockReturnValue({ address: CREATOR, kind: 'web3' })
+    ;(signedFetch as Mock).mockResolvedValueOnce(new Response('abc', { headers: { 'content-length': '2048' } }))
+    expect(await fetchContentSize('bafmodel')).toBe(2048)
+    expect(signedFetch).toHaveBeenLastCalledWith(
+      CREATOR,
+      'http://localhost:3000/builder-api/v1',
+      '/storage/contents/bafmodel',
+      expect.objectContaining({ cache: 'no-store' })
+    )
+  })
+})
 
 describe('getContentsStorageUrl', () => {
   it('builds the storage URL for a content hash', () => {
-    expect(getContentsStorageUrl('Qmx')).toBe('https://builder-api.decentraland.zone/v1/storage/contents/Qmx')
+    expect(getContentsStorageUrl('Qmx')).toBe('http://localhost:3000/builder-api/v1/storage/contents/Qmx')
   })
 })
 

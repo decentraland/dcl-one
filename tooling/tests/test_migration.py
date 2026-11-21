@@ -111,6 +111,30 @@ class Manifests(unittest.TestCase):
         source = migrate.load_source(write_source(self.tmp))
         self.assertEqual([s.cursor for s in source.steps], [['updated_at', 'id'], ['name']])
 
+    def test_when_the_builder_collections_load_it_should_take_the_forum_origin_from_forum_url(self):
+        step = next(s for s in migrate.load_source(migrate.SOURCES / 'builder-server').steps if s.name == 'collection')
+        with unittest.mock.patch.dict(os.environ, FORUM_URL='https://forum.example.test'):
+            self.assertIn("\\set forum_url 'https://forum.example.test'", migrate.step_vars(step, False))
+        for refused in ('', 'forum.example.test', 'ftp://forum.example.test', 'https://forum.example.test/',
+                        'https://forum.example.test/t', 'https://forum.example.test?x', 'https://user@forum.example.test',
+                        'https://forum.example.test#x', "https://forum.example.test'"):
+            with unittest.mock.patch.dict(os.environ, FORUM_URL=refused):
+                with self.assertRaisesRegex(migrate.MigrationError, 'FORUM_URL', msg=refused):
+                    migrate.step_vars(step, False)
+        other = next(s for s in migrate.load_source(migrate.SOURCES / 'builder-server').steps if s.name == 'item')
+        with unittest.mock.patch.dict(os.environ, FORUM_URL=''):
+            self.assertFalse(any('forum_url' in v for v in migrate.step_vars(other, False)))
+
+    def test_when_a_step_requires_a_relation_it_should_name_it_and_read_nothing_without_it(self):
+        write_source(self.tmp, {**FILES, 'source.toml': MANIFEST.replace('key = ["id"]', 'key = ["id"]\nrequires = 1')})
+        with self.assertRaisesRegex(migrate.MigrationError, '`requires` must name a source relation'):
+            migrate.discover(self.tmp)
+        step = migrate.load_source(write_source(self.tmp / 'valid')).steps[0]
+        self.assertIsNone(step.requires)
+        empty = migrate.extract_text(dataclasses.replace(step, extract=None))
+        self.assertTrue(empty.startswith('SELECT ') and empty.endswith(' WHERE false'), empty)
+        self.assertIn(empty, migrate.extract_sql(dataclasses.replace(step, extract=None), None, None))
+
     def test_when_a_cursor_column_is_undeclared_it_should_refuse(self):
         write_source(self.tmp, {**FILES, 'source.toml': MANIFEST.replace('key = ["id"]', 'key = ["uuid"]')})
         with self.assertRaisesRegex(migrate.MigrationError, "cursor column 'uuid'"):
@@ -1164,6 +1188,19 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         self.assertIn('toy/tags: first walk: 30 rows', out)
         self.assertEqual(self.count(tgt, 'app.tags'), 0)
 
+    def test_when_the_source_lacks_a_steps_required_relation_it_should_read_nothing_dry_or_not(self):
+        _, src, tgt = self.toy()
+        optional = {**FILES, 'source.toml': MANIFEST.replace('name = "tags"', 'name = "tags"\nrequires = "tags"')}
+        opt_dir = self.tmp / 'optional'
+        if not opt_dir.exists():
+            write_source(opt_dir, optional)
+        self.sql(src, 'DROP TABLE tags;\n')
+        for dry in (('--dry-run',), ()):
+            code, out = self.migrate('run', 'toy', *dry, sources_dir=opt_dir)
+            self.assertEqual(code, 0, out)
+            self.assertIn('toy/tags: first walk: 0 rows' if dry else 'tags: done, 0 rows', out)
+        self.assertEqual((self.count(tgt, 'app.things'), self.count(tgt, 'app.tags')), (250, 0))
+
     def test_when_a_batch_fails_it_should_resume_after_the_last_committed_one(self):
         sources, _, tgt = self.toy()
         self.sql(tgt, 'ALTER TABLE app.things ADD CONSTRAINT stop_here CHECK (id <> 150);\n')
@@ -1316,6 +1353,7 @@ class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigration
         env = {s.database_env: '' for s in sources.values()}
         env['TARGET_DATABASE_URL'] = self.url(db)
         env['CAMERA_REEL_IMPORT_API_URL'] = 'https://camera.example.test'
+        env['FORUM_URL'] = 'https://forum.example.test'
         # This mapping depends on the additive runtime filename and MIME capabilities.
         self.sql(db, 'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS original_filename text; '
                      'ALTER TABLE camera_reel.images ADD COLUMN IF NOT EXISTS image_content_type text;')

@@ -1,0 +1,148 @@
+{
+  "description": "GET /collections/{id}/items signed by an on-chain manager of that collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/items",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000302/items:1767225600000:{}\",\"signature\":\"0x6f9a5fee668d61c631214443f3267af32cfd0200935d7a0f946d044e721932c525e1db7983b081d0cb10afcefb796f6826343d869091045cb61726409b08cd361b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": [
+        {
+          "id": "c011ec71-0000-4000-8000-0000000003b1",
+          "name": "Minted hat",
+          "description": null,
+          "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+          "collection_id": "c011ec71-0000-4000-8000-000000000302",
+          "blockchain_item_id": "0",
+          "price": "2000000000000000000",
+          "beneficiary": "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+          "rarity": "rare",
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [
+              {
+                "bodyShapes": [
+                  "urn:decentraland:off-chain:base-avatars:BaseMale"
+                ],
+                "contents": [
+                  "model.glb"
+                ],
+                "mainFile": "model.glb",
+                "overrideHides": [],
+                "overrideReplaces": []
+              }
+            ],
+            "tags": [
+              "conformance"
+            ]
+          },
+          "created_at": "2025-12-14T00:00:00.000Z",
+          "updated_at": "2025-12-14T00:00:00.000Z",
+          "metrics": {
+            "bodies": 1,
+            "entities": 1,
+            "materials": 1,
+            "meshes": 1,
+            "textures": 1,
+            "triangles": 100
+          },
+          "thumbnail": "thumbnail.png",
+          "contents": {
+            "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+            "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+          },
+          "total_supply": 3,
+          "local_content_hash": null,
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000302:0",
+          "in_catalyst": false,
+          "is_approved": false,
+          "is_published": true,
+          "content_hash": "bafkreiitemsmintedhatonchain",
+          "catalyst_content_hash": null
+        },
+        {
+          "id": "c011ec71-0000-4000-8000-0000000003b2",
+          "name": "Unminted cap",
+          "description": null,
+          "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+          "collection_id": "c011ec71-0000-4000-8000-000000000302",
+          "blockchain_item_id": null,
+          "price": null,
+          "beneficiary": null,
+          "rarity": "common",
+          "type": "wearable",
+          "data": {
+            "category": "hat",
+            "hides": [],
+            "replaces": [],
+            "representations": [
+              {
+                "bodyShapes": [
+                  "urn:decentraland:off-chain:base-avatars:BaseMale"
+                ],
+                "contents": [
+                  "model.glb"
+                ],
+                "mainFile": "model.glb",
+                "overrideHides": [],
+                "overrideReplaces": []
+              }
+            ],
+            "tags": [
+              "conformance"
+            ]
+          },
+          "created_at": "2025-12-15T00:00:00.000Z",
+          "updated_at": "2025-12-15T00:00:00.000Z",
+          "metrics": {
+            "bodies": 1,
+            "entities": 1,
+            "materials": 1,
+            "meshes": 1,
+            "textures": 1,
+            "triangles": 100
+          },
+          "thumbnail": "thumbnail.png",
+          "contents": {
+            "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+            "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+          },
+          "total_supply": 0,
+          "local_content_hash": null,
+          "video": null,
+          "utility": null,
+          "mappings": null,
+          "urn": null,
+          "in_catalyst": false,
+          "is_approved": false,
+          "is_published": false,
+          "content_hash": null,
+          "catalyst_content_hash": null
+        }
+      ]
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

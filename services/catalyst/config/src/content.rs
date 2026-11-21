@@ -39,6 +39,21 @@ pub struct ContentConfig {
     #[arg(long, env = "SYNC_FROM_TIMESTAMP_MS", default_value_t = 0)]
     pub sync_from_timestamp_ms: i64,
 
+    /// Seconds between the end of one item history replay pass and the start
+    /// of the next: 0 (off) or 600 to 1440. Each pass reads every source
+    /// catalyst's whole wearable and emote `/pointer-changes` history (about
+    /// 81 MB and 160 requests per source in November 2026), so the default
+    /// 1200 costs each source about 5.3 GB a day, 600 about 9.5 GB, 1440
+    /// about 4.4 GB. A pass proves item coverage for 30 minutes from its
+    /// start; off, the builder can't tell a new third-party item URN is unused.
+    #[arg(long, env = "SYNC_ITEM_REPLAY_INTERVAL_SECS", default_value_t = 1200)]
+    pub sync_item_replay_interval_secs: u64,
+
+    /// Milliseconds between two pages of an item history replay pass: 50 to
+    /// 1000 (a pass of 160 pages takes about 2 minutes at 200).
+    #[arg(long, env = "SYNC_ITEM_REPLAY_PAGE_PAUSE_MS", default_value_t = 200)]
+    pub sync_item_replay_page_pause_ms: u64,
+
     /// Non-profile types first, then profiles; /about reports the ready types.
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,
@@ -453,7 +468,7 @@ pub struct ValidatorConfig {
     // content validator (src/content/validator): the access policy of local
     // deploys (the old catalyrst-server names); its chain checks read
     // ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
-    /// Third Party Registry subgraph on L2 (the approved providers the shop lists); public https.
+    /// Third Party Registry subgraph on L2: the approved providers the shop lists, and every provider the builder reads a third-party collection's managers from (unset: third-party builder requests answer 503); public https.
     #[arg(
         long,
         env = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",

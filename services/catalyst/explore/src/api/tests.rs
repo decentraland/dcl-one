@@ -35,6 +35,9 @@ struct Mock {
     /// The `events` application's document (`events.json`), the one
     /// `events::foundation` reads.
     events_flags: Mutex<Value>,
+    /// The `builder` application's document (`builder.json`); `None`
+    /// answers 404.
+    builder_flags: Mutex<Option<Value>>,
     entities: Mutex<Vec<Value>>,
     profiles: Mutex<Vec<Value>>,
     tiles: Mutex<Value>,
@@ -104,6 +107,10 @@ fn mock() -> Arc<Mock> {
                 "payload": {"type": "json", "value": "[\"0xF0000000000000000000000000000000000000F0\"]"}
             }}
         })),
+        builder_flags: Mutex::new(Some(json!({
+            "flags": {"builder-auto-curation": true},
+            "variants": {}
+        }))),
         entities: Mutex::new(vec![
             entity("bafyscene", &["0,0", "0,1"]),
             entity("bafyother", &["5,5"]),
@@ -168,6 +175,13 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
             Json(m.events_flags.lock().clone()),
         )
             .into_response()
+    }
+    async fn builder_flags(AxState(m): AxState<Arc<Mock>>) -> Response {
+        m.hit("builder-flags");
+        match m.builder_flags.lock().clone() {
+            Some(doc) => (StatusCode::OK, Json(doc)).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        }
     }
     async fn entities(
         AxState(m): AxState<Arc<Mock>>,
@@ -301,6 +315,7 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         .route("/denylist.json", get(denylist))
         .route("/explorer.json", get(flags))
         .route("/events.json", get(events_flags))
+        .route("/builder.json", get(builder_flags))
         .route("/entities/active", post(entities))
         .route("/entities/versions", post(versions))
         .route("/profiles", post(profiles))
@@ -1732,6 +1747,39 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
 
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;
+}
+
+/// The pass also stores the `builder` document beside the explorer one,
+/// which the builder reads its automated review's flag from; a flags
+/// service without it fails nothing and leaves the stored one as it was.
+#[tokio::test]
+async fn feature_flags_mirror_stores_the_builder_document_and_survives_its_absence() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
+    let (_jobs, ctx) = job_ctx().await;
+    let stored = || async {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT document FROM explore_api.feature_flags WHERE app = 'builder'",
+        )
+        .fetch_optional(&db.pool)
+        .await
+        .unwrap()
+    };
+    feature_flags::run_pass(&node.state, &ctx).await.unwrap();
+    let kept = mock.builder_flags.lock().clone();
+    assert_eq!(stored().await, kept);
+    *mock.builder_flags.lock() = None;
+    feature_flags::run_pass(&node.state, &ctx).await.unwrap();
+    assert_eq!(mock.hits("builder-flags"), 2);
+    assert_eq!(
+        stored().await,
+        kept,
+        "an absent document keeps the stored one"
+    );
 }
 
 /// Review architecture-1 explore-change-4: the pass also mirrors the

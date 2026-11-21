@@ -990,19 +990,7 @@ async fn the_cleanup_unlinks_only_what_the_upload_stored() {
     };
     put(&f, &global_file_bytes).await;
     let global = put(&f, &global_bytes).await;
-    let pack_file = put(&f, format!("pack file {tag}").as_bytes()).await;
     let foreign = put(&f, format!("foreign file {tag}").as_bytes()).await;
-    sqlx::query(
-        "INSERT INTO builder.asset_catalog (id, packs, source, built_at) \
-         VALUES (1, $1, 'test', timezone('UTC', now())) \
-         ON CONFLICT (id) DO UPDATE SET packs = builder.asset_catalog.packs || EXCLUDED.packs",
-    )
-    .bind(json!([{ "assets": [{ "contents": { "a.glb": pack_file } }] }]))
-    .execute(&f.pool)
-    .await
-    .unwrap();
-
-    // A manifest naming stored files it never sends, one of its own and one left outstanding.
     let (world, owner) = owned(&f).await;
     let mut u = upload(&world, 2);
     let mut content: Vec<Value> = u
@@ -1011,7 +999,7 @@ async fn the_cleanup_unlinks_only_what_the_upload_stored() {
         .enumerate()
         .map(|(i, (hash, _))| json!({ "file": format!("f{i}.bin"), "hash": hash }))
         .collect();
-    let named = [&global_file, &global, &pack_file, &foreign];
+    let named = [&global_file, &global, &foreign];
     for (i, hash) in named.iter().enumerate() {
         content.push(json!({ "file": format!("named{i}.bin"), "hash": hash }));
     }
@@ -1035,11 +1023,11 @@ async fn the_cleanup_unlinks_only_what_the_upload_stored() {
     let referenced = catalyst_storage::gc::referenced_among(
         &f.pool,
         gc_pins(&f),
-        &[global_file.clone(), global.clone(), pack_file.clone()],
+        &[global_file.clone(), global.clone()],
     )
     .await
     .unwrap();
-    assert_eq!(referenced.len(), 3, "{referenced:?}");
+    assert_eq!(referenced.len(), 2, "{referenced:?}");
 }
 
 #[tokio::test]
@@ -1817,7 +1805,7 @@ async fn an_upload_expiring_while_it_completes_is_reclaimed_by_a_concurrent_clea
 }
 
 #[tokio::test]
-async fn the_cleanup_keeps_a_file_the_catalogue_names_once_its_run_began() {
+async fn the_cleanup_keeps_a_file_a_row_names_once_its_run_began() {
     let Some(f) = fixture().await else { return };
     let (world, owner) = owned(&f).await;
     let u = upload(&world, 2);
@@ -1825,7 +1813,6 @@ async fn the_cleanup_keeps_a_file_the_catalogue_names_once_its_run_began() {
     let _cleanup = CLEANUP.lock().await;
     age_upload(&f, &u, std::time::Duration::from_secs(2 * 3600)).await;
 
-    // A publish holds the store lock while an import starts naming the upload's file.
     let mut held = f.pool.begin().await.unwrap();
     catalyst_storage::gc::lock_store_shared(&mut held)
         .await
@@ -1834,11 +1821,11 @@ async fn the_cleanup_keeps_a_file_the_catalogue_names_once_its_run_began() {
     let (report, ()) = tokio::join!(partial::delete_expired_uploads(&f.state), async {
         blocked_by(&f.pool, holder, "pg_advisory_xact_lock($1)", 1).await;
         sqlx::query(
-            "INSERT INTO builder.asset_catalog (id, packs, source, built_at) \
-             VALUES (1, $1, 'test', timezone('UTC', now())) \
-             ON CONFLICT (id) DO UPDATE SET packs = builder.asset_catalog.packs || EXCLUDED.packs",
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, $2, $3)",
         )
-        .bind(json!([{ "assets": [{ "contents": { "a.glb": u.files[0].0 } }] }]))
+        .bind(&u.files[0].0)
+        .bind(u.files[0].1.len() as i64)
+        .bind(format!("0x{}", "a".repeat(40)))
         .execute(&f.pool)
         .await
         .unwrap();
@@ -1848,9 +1835,14 @@ async fn the_cleanup_keeps_a_file_the_catalogue_names_once_its_run_began() {
     assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
     assert!(
         f.storage.exist(&u.files[0].0).await.unwrap(),
-        "the catalogue names it"
+        "the upload row committed while the cleanup waited names it"
     );
     assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+    sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+        .bind(&u.files[0].0)
+        .execute(&f.pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

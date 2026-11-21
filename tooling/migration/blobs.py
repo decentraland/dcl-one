@@ -196,7 +196,6 @@ class Hasher:
         if SHA256_HEX.fullmatch(key):
             return self.v1() if self.sha256_hex() == key else None
         if key.startswith('Qm'):
-            # Upstream stored both CIDv0 spellings (builder catalog.rs accepts both too).
             return key if key in (self.v0(), self.v0_unixfs() if self.unixfs_v0 else None) else None
         return key if self.v1() == key else None
 

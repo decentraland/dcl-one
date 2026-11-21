@@ -216,7 +216,7 @@ dcl-scene-cli start [--dir D] [-p|--port N] [--skip-build] [--no-watch] [-m|--mo
                     [--no-livekit | --livekit-url WS_URL --livekit-api-key KEY
                      --livekit-api-secret SECRET|--livekit-api-secret-file F] [--livekit-room NAME]
                     [--no-asset-bundles] [--no-mcp] [--mcp-port N] [--error-source-lines-context N]
-                    [--no-host] [--tunnel WSS_URL] [--public-url URL] [--talk [--player URL]]
+                    [--no-host] [--tunnel WSS_URL] [--public-url URL]
                     [--skip-install] [--[no-]optimize-textures] [--[no-]keep-source-textures]
                     [-- EXPLORER_PARAMS...]
 ```
@@ -280,8 +280,8 @@ dcl-scene-cli start --public-url https://preview.example.com
 A browser lets a page served over https fetch plain http from loopback only. The hosted web explorer
 is https, so it plays a preview at `127.0.0.1`/`localhost` or one served over https, and is blocked
 on `http://<LAN address>`: the launch page says so in place of the hint and `/play` answers 409 with
-the same steps. Editing routes still need the token off loopback: open a link `start` printed, which
-carries `#token=`.
+the same steps. Editing routes need the token, which a page gets only on loopback: edit from
+`http://127.0.0.1:<port>`, or send the `token` of the `start --json` `ready` event as a bearer.
 
 ### Problems
 
@@ -312,8 +312,6 @@ need a client with its MCP port on (the default deep link).
 A build with `PLAY_EMBED_DIR` serves the web explorer at `http://127.0.0.1:8000/play/`
 (cross-origin isolated, CSP from `engine/web/csp-policy.mts`; secure context only); otherwise `/play/`
 redirects to the hosted web explorer (`DCL_SCENE_CLI_WEB_EXPLORER`) with this preview as its realm.
-`--talk` opens it (else `DCL_SCENE_CLI_SITE`, `--player` or `DCL_SCENE_CLI_WEB_EXPLORER`) with
-the Scene assistant and prints a `Talk:` URL.
 
 - Cargo: `scripts/compose-play-embed.sh`, then
   `PLAY_EMBED_DIR=$ONE/engine/deploy/web cargo build -p dcl-scene-cli`.
@@ -321,12 +319,12 @@ the Scene assistant and prints a `Talk:` URL.
 
 ### Token
 
-Each `start` mints a capability token. Writes (`/api/project/{file,asset}`, assistant, debug
-commands, `/scene-json`, `/scene-thumbnail`, `/data-layer?token=`) need `Authorization: Bearer
-<token>`, else 401. Pages get it only by `<meta>` on a top-level loopback navigation or a `#token=`
-fragment. With `--data-layer`, the editor's host listens on a loopback port of its own and admits
-only the relay of `/data-layer`, which carries a secret made for each launch of the host: an upgrade
-without it, or with an `Origin`, gets 403. The host gets the secret in its environment
+Each `start` mints a capability token. Writes (`/scene-json`, `/scene-thumbnail`,
+`/data-layer?token=`) need `Authorization: Bearer <token>`, else 401. Pages get it only by `<meta>`
+on a top-level loopback navigation; a program gets it from the `ready` event of `start --json`.
+With `--data-layer`, the editor's host listens on a loopback port of its own and admits only the
+relay of `/data-layer`, which carries a secret made for each launch of the host: an upgrade without
+it, or with an `Origin`, gets 403. The host gets the secret in its environment
 (`DCL_SCENE_CLI_DATA_LAYER_SECRET`), never in its arguments: a program of the same user that can
 read the environment of the host process can read the secret. The file system that the host gives
 the editor refuses each path that leaves the scene folder, symbolic links followed, and works on the
@@ -354,8 +352,8 @@ Keys are camelCase and paths are absolute.
 `deepLink` is the link of the `desktop:` row, with the flags of this run in it (`--skip-auth-screen`
 and `--multi-instance` included), and `webUrl` is the
 one `--web` opens. `dataLayerUrl` is `null` without `--data-layer`; `editorUrl` is `null` without
-`--data-layer` or with no `/inspector/*` UI installed. `clientsOpened` lists the clients (`talk`,
-`desktop`, `web`) for which the opener of the system (`xdg-open`, `open` on macOS, `explorer` on
+`--data-layer` or with no `/inspector/*` UI installed. `clientsOpened` lists the clients
+(`desktop`, `web`) for which the opener of the system (`xdg-open`, `open` on macOS, `explorer` on
 Windows) started: the `desktop:` row prints on every run, so read this field, not the row, to know
 whether a client was started. It is `[]` when the run opened nothing, as with `--explorer-alpha
 --no-client`. A started opener does not say that the client is installed or came up.
@@ -377,7 +375,7 @@ signal ends gives no line. On Linux and macOS the opener runs in a process group
 Ctrl-C in the terminal of the CLI does not go to it. On Windows the status of `explorer` is not
 read.
 
-`token` is the capability token of [Token](#token), the one `/data-layer?token=` and the project
+`token` is the capability token of [Token](#token), the one `/data-layer?token=` and the preview's
 writes ask for. It is on stdout for the parent process, which already owns the project folder; any
 program that can read that pipe can write to the project through this preview while it runs. Do
 not copy these lines into a log that others read. The token ends with the process.
@@ -440,9 +438,7 @@ parse prints no event: the exit code is 2 and the usage text is on stderr.
 `deploy --json` and `deploy --programmatic` print the same `error` event when the run fails
 ([Driving a deploy from a program](#driving-a-deploy-from-a-program)).
 
-The token is in the `ready` event only. With `--json`, the `Talk:` line of `--talk` on stderr shows
-`http://127.0.0.1:<port>/talk`, which has no token: that address sends a browser on this machine to
-the player with the token. Without `--json`, the `Talk:` line shows the player URL with the token.
+The token is in the `ready` event only: stderr does not carry it.
 
 ### Voice and multiplayer
 
@@ -482,13 +478,11 @@ to browse larger listings.
 ```
 HTTP_SERVER_HOST=0.0.0.0 HTTP_SERVER_PORT=9000 TUNNEL_TOKENS=SECRET dcl-preview-tunnel  # public host
 dcl-scene-cli start --tunnel wss://tunnel.example:9000 --tunnel-token SECRET            # your machine
-dcl-scene-cli sync [--dir D] [--node URL] [--project ID] [--sign-key FILE] [--prefer local|remote] [--dry-run]
 ```
 
 The relay is configured by environment (`dcl-preview-tunnel --help`). It refuses to start without `TUNNEL_TOKENS` unless `TUNNEL_ALLOW_ANONYMOUS=true` (a local relay only). A trunk closed with 4401 had a wrong or missing token; 4409 means no free tunnel id or the relay is at `TUNNEL_MAX_AGENTS`.
 
-Prefer `--tunnel-token-file` or `DCL_SCENE_CLI_TUNNEL_TOKEN`. `sync` is a two-way content-hash sync
-with a catalyrst builder project (`.dcl-one/sync.json`).
+Prefer `--tunnel-token-file` or `DCL_SCENE_CLI_TUNNEL_TOKEN`.
 
 ## Publish it
 
@@ -507,7 +501,7 @@ dcl-scene-cli world access add|remove <name> --user U | --community C
 ```
 
 `deploy` signs in a browser on the preview server, or headlessly with `--sign-key FILE` or
-`DCL_PRIVATE_KEY` (the flag wins; every signing command, `unpublish`, `sync`, `storage` and the
+`DCL_PRIVATE_KEY` (the flag wins; every signing command, `unpublish`, `storage` and the
 `world` writes included, takes both). Worlds go to the worlds server, parcels to the first healthy
 public catalyst (`--target-server` / `DCL_SCENE_CLI_TARGET_SERVER` override); only content missing
 from `/available-content` is uploaded (`--force-upload` or `DCL_SCENE_CLI_UPLOAD_ALL=1` sends all).
@@ -788,20 +782,12 @@ docs/testing.md.
 
 ### Creator Hub integration
 
+`--data-layer` serves the inspector at `/inspector/` and its data layer at `/data-layer`. An editor
+page on another origin that opens `/data-layer` needs its origin in `DCL_SCENE_CLI_ALLOWED_ORIGINS`:
+
 ```sh
-DCL_SCENE_CLI_ALLOWED_ORIGINS=https://example.org dcl-scene-cli start --dir ./my-scene
+DCL_SCENE_CLI_ALLOWED_ORIGINS=https://example.org dcl-scene-cli start --dir ./my-scene --data-layer
 ```
-
-**Edit in Creator Hub** opens `<site>/create?projectUrl=…#token=…` (`DCL_SCENE_CLI_CREATOR_HUB_URL`
-overrides). Loopback routes: `/api/project`, `/api/project/{files,file,assets,asset}`
-(revision-checked writes), `/api/project/assistant/{providers,turn,conversations,bridge}`,
-`/api/project/debug[/sessions|/events|/command]`, `/scene-inspector`.
-
-The Scene assistant runs a local `codex`, `claude`, `cursor-agent`, `gemini`, `opencode` or `hermes`;
-extra setups `{id, label, engine, command, model?, args?}` go in
-`$XDG_CONFIG_HOME/dcl-scene-cli/assistants.json` (or `DCL_SCENE_CLI_ASSISTANTS`). Scene tools need a
-separately started `dcl-scene-mcp --http` and `DCL_SCENE_CLI_SCENE_MCP_URL`, `DCL_SCENE_MCP_BEARER`,
-`DCL_SCENE_MCP_TOKEN`.
 
 UI Designer: install `@dcl/inspector` (verified 7.46.1), run
 `bash scripts/install-ui-designer-runtime.sh /path/to/@dcl/inspector`, set `DCL_ONE_INSPECTOR_DIR` and

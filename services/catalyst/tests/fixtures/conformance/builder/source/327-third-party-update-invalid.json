@@ -1,0 +1,43 @@
+{
+  "description": "PATCH /thirdParties/{id} signed by the virtual third party's manager with a kind that is not a boolean. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PATCH",
+    "path": "/v1/thirdParties/urn:decentraland:matic:collections-thirdparty:fresh",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xcd6884d4258edc833f31ac773e24affe6a7d3154\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x69455f42De452C9B6425b41cC3a24d4BAADa6e0b\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xe05d23ed680bbb5276dda6c8326e083b07776128b856b5fa8a3e21bb47a9c4117a5131a2c3677da49f6db82b3dd5addef76231a5c6137042c88c069c03d42d651c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"patch:/v1/thirdparties/urn:decentraland:matic:collections-thirdparty:fresh:1767225600000:{}\",\"signature\":\"0x557478921689c54da060ec3656d6a5243d536adc2ab89e34fc12f1e9bd33a797434f4c81f21a0411b3303b19d99fc5197afc9584c0ee1dde8746921b8155b4fa1c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "isProgrammatic": "yes"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": [
+        {
+          "instancePath": "/isProgrammatic",
+          "schemaPath": "#/properties/isProgrammatic/type",
+          "keyword": "type",
+          "params": {
+            "type": "boolean"
+          },
+          "message": "must be boolean"
+        }
+      ],
+      "error": "Invalid request body"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

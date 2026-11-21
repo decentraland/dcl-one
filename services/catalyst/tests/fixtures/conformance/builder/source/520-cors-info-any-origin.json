@@ -1,0 +1,29 @@
+{
+  "description": "GET /info from an origin CORS_ORIGIN does not list, a route that answers every origin. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/info",
+    "query": {},
+    "headers": {
+      "origin": "https://attacker.example"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "*"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "version": ""
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

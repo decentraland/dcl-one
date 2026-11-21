@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react'
+import { useItemFileSrc } from '../../../hooks/useItemFileSrc'
 import { ActionsMenu, ActionsMenuDivider, ActionsMenuItem } from '../../ActionsMenu'
 import { Button } from '../../Button'
 import { CategorySelect } from '../../CategorySelect'
@@ -19,7 +20,7 @@ import {
   TextureIcon,
   ThirtyFpsSelectIcon as FpsIcon
 } from '../../Icons'
-import { ItemThumbnail } from '../../ItemThumbnail'
+import { ItemFileThumbnail } from '../../ItemThumbnail'
 import { RaritySelect } from '../../RaritySelect'
 import { RequiredPermissions } from '../../RequiredPermissions'
 import { Switch } from '../../Switch'
@@ -32,7 +33,6 @@ import { useItemVideo } from '../../../hooks/useItem'
 import { useDeleteItem } from '../../../hooks/usePublishCollection'
 import { useThumbnailEditor } from '../../../hooks/useThumbnailEditor'
 import { useTranslation } from '@/data/lib/creators/intl'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import {
   ITEM_DESCRIPTION_MAX_LENGTH,
@@ -171,7 +171,8 @@ export function PropertiesPanel({
   const thumbnailHash = item.contents[item.thumbnail]
   const videoHash = item.contents[VIDEO_PATH]
   const draftVideoUrl = useObjectURL(draft.video)
-  const videoUrl = draftVideoUrl ?? (videoHash ? getContentsStorageUrl(videoHash) : null)
+  const storedVideoUrl = useItemFileSrc(item, videoHash)
+  const videoUrl = draftVideoUrl ?? storedVideoUrl
   const canEditVideo = editable
   const videoName = draft.video instanceof File ? draft.video.name : VIDEO_PATH
   const [videoDuration, setVideoDuration] = useState<number | null>(null)
@@ -298,7 +299,7 @@ export function PropertiesPanel({
             data-testid={`${testId}-thumbnail`}
             onClick={() => thumbnailEditor.edit({ kind: 'item', item })}
           >
-            <ItemThumbnail src={thumbnailHash ? getContentsStorageUrl(thumbnailHash) : null} rarity={item.rarity} />
+            <ItemFileThumbnail item={item} hash={thumbnailHash} rarity={item.rarity} />
             {editable && (
               <span className={styles.thumbOverlay} aria-hidden>
                 <CameraIcon />

@@ -38,7 +38,7 @@ import { captureError } from '@/data/lib/creators/monitoring'
 import { springBonesFetcher } from '../../hooks/useSpringBones'
 import { useTranslation } from '@/data/lib/creators/intl'
 import type { AvatarAttributes } from '@/data/lib/creators/avatar'
-import { BuilderServerError, COLLECTION_LOCKED_STATUS, getContentsStorageUrl } from '@/data/lib/creators/builder'
+import { BuilderServerError, COLLECTION_LOCKED_STATUS } from '@/data/lib/creators/builder'
 import {
   canManageCollectionItems,
   canViewCollection,
@@ -66,6 +66,7 @@ import {
 } from '@/data/lib/creators/thirdParty'
 import { useItemCurations, useThirdParty } from '../../hooks/useLinkedCollection'
 import { usePendingLinkedItems } from '../../hooks/useLinkedReview'
+import { useDraftPreviewFiles } from '../../hooks/useDraftPreviewFiles'
 import { useNotifications } from '@/data/lib/creators/notifications'
 import type { AvatarPreviewSource } from '@/data/lib/creators/preview'
 import {
@@ -249,7 +250,15 @@ const ItemEditorPage = () => {
       : items
     return pickDressedItems(withDraft, dressedItemIds, bodyShape)
   }, [items, previewSelected, form.draft.category, dressedItemIds, bodyShape])
-  const source = useMemo<AvatarPreviewSource>(() => ({ kind: 'items', items: previewItems }), [previewItems])
+  const draftFiles = useDraftPreviewFiles(previewSelected)
+  const source = useMemo<AvatarPreviewSource>(
+    () => ({
+      kind: 'items',
+      items: previewItems,
+      unsaved: previewSelected && draftFiles ? { itemId: previewSelected.id, blobs: draftFiles } : undefined
+    }),
+    [previewItems, previewSelected, draftFiles]
+  )
   const collectionEmotes = useMemo(() => items.filter(item => item.type === ItemType.EMOTE), [items])
   const subjectEmote = useMemo(() => previewItems.find(item => item.type === ItemType.EMOTE) ?? null, [previewItems])
   const previewedWearables = useMemo(() => previewItems.filter(item => item.type === ItemType.WEARABLE), [previewItems])
@@ -277,7 +286,7 @@ const ItemEditorPage = () => {
       type: previewSelected.type,
       category: previewSelected.data.category,
       rarity: previewSelected.rarity,
-      thumbnail: storedThumbnail ? getContentsStorageUrl(storedThumbnail) : null
+      thumbnail: storedThumbnail ? { item: previewSelected, hash: storedThumbnail } : null
     }
   }, [previewSelected])
   const validationIssues = useMemo(() => {

@@ -1,0 +1,297 @@
+{
+  "description": "POST /collections/{id}/publish signed by the owner once the chain holds the collection and the item it lacked an on-chain id for, assigning it. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/publish",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000302/publish:1767225600000:{}\",\"signature\":\"0xfbb257b049ebf6aabcc324b7dcf6018582e890a5e2fc725e13d3d14c432bbf195c7c2df18527aa7d191eb3c5620e617f4db5d5aac033a48d9c70028e0f82dbb11c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "collection": {
+          "id": "c011ec71-0000-4000-8000-000000000302",
+          "name": "Items on chain",
+          "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+          "salt": "0x3023023023023023023023023023023023023023023023020000000000000000",
+          "contract_address": "0x5eed000000000000000000000000000000000302",
+          "is_published": true,
+          "created_at": "2025-12-11T00:00:00.000Z",
+          "updated_at": "2025-12-11T00:00:00.000Z",
+          "managers": [
+            "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0"
+          ],
+          "minters": [
+            "0xc1eba15006e9d7f629bcad7a7dd41285f012b949"
+          ],
+          "is_approved": false,
+          "reviewed_at": "1970-01-01T00:00:00.000Z",
+          "forum_link": null,
+          "lock": null,
+          "forum_id": null,
+          "linked_contract_address": null,
+          "linked_contract_network": null,
+          "is_mapping_complete": false,
+          "item_count": "2",
+          "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000302"
+        },
+        "items": [
+          {
+            "id": "c011ec71-0000-4000-8000-0000000003b1",
+            "name": "Minted hat renamed",
+            "description": "Managed",
+            "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+            "collection_id": "c011ec71-0000-4000-8000-000000000302",
+            "blockchain_item_id": "0",
+            "price": "2000000000000000000",
+            "beneficiary": "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0",
+            "rarity": "rare",
+            "type": "wearable",
+            "data": {
+              "category": "hat",
+              "hides": [],
+              "replaces": [],
+              "representations": [
+                {
+                  "bodyShapes": [
+                    "urn:decentraland:off-chain:base-avatars:BaseMale"
+                  ],
+                  "contents": [
+                    "model.glb"
+                  ],
+                  "mainFile": "model.glb",
+                  "overrideHides": [],
+                  "overrideReplaces": []
+                }
+              ],
+              "tags": [
+                "conformance"
+              ]
+            },
+            "created_at": "2025-12-14T00:00:00.000Z",
+            "updated_at": "<<VOLATILE>>",
+            "metrics": {
+              "bodies": 1,
+              "entities": 1,
+              "materials": 1,
+              "meshes": 1,
+              "textures": 1,
+              "triangles": 100
+            },
+            "thumbnail": "thumbnail.png",
+            "contents": {
+              "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+              "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+            },
+            "total_supply": 3,
+            "local_content_hash": "bafkreibk2rcaifdobrjwlon5bbyrn6immanlsfy5yjsa4lisz6mh6rw4dm",
+            "video": null,
+            "utility": null,
+            "mappings": null,
+            "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000302:0",
+            "in_catalyst": false,
+            "is_approved": false,
+            "is_published": true,
+            "content_hash": "bafkreiitemsmintedhatonchain",
+            "catalyst_content_hash": null
+          },
+          {
+            "id": "c011ec71-0000-4000-8000-0000000003b2",
+            "name": "Unminted cap renamed",
+            "description": "",
+            "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+            "collection_id": "c011ec71-0000-4000-8000-000000000302",
+            "blockchain_item_id": "1",
+            "price": "0",
+            "beneficiary": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+            "rarity": "common",
+            "type": "wearable",
+            "data": {
+              "category": "hat",
+              "hides": [],
+              "replaces": [],
+              "representations": [
+                {
+                  "bodyShapes": [
+                    "urn:decentraland:off-chain:base-avatars:BaseMale"
+                  ],
+                  "contents": [
+                    "model.glb"
+                  ],
+                  "mainFile": "model.glb",
+                  "overrideHides": [],
+                  "overrideReplaces": []
+                }
+              ],
+              "tags": [
+                "conformance"
+              ]
+            },
+            "created_at": "2025-12-15T00:00:00.000Z",
+            "updated_at": "<<VOLATILE>>",
+            "metrics": {
+              "bodies": 1,
+              "entities": 1,
+              "materials": 1,
+              "meshes": 1,
+              "textures": 1,
+              "triangles": 100
+            },
+            "thumbnail": "thumbnail.png",
+            "contents": {
+              "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+              "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+            },
+            "total_supply": 0,
+            "local_content_hash": null,
+            "video": null,
+            "utility": null,
+            "mappings": null,
+            "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000302:1",
+            "in_catalyst": false,
+            "is_approved": false,
+            "is_published": true,
+            "content_hash": "bafkreiitemsunmintedcaponchain",
+            "catalyst_content_hash": null
+          }
+        ]
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.items.updated_at"
+  ],
+  "slack": [
+    {
+      "channel": "curation-example",
+      "text": "🎨 New collection ready for review: <https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000302&reviewing=true|Items on chain> by <https://creators.example.org/shop/items/creator/0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e|0xc1ab...c70e> (2 items).",
+      "unfurl_links": false,
+      "unfurl_media": false
+    }
+  ],
+  "queue": [
+    {
+      "collectionId": "c011ec71-0000-4000-8000-000000000302",
+      "items": [
+        {
+          "itemId": "c011ec71-0000-4000-8000-0000000003b1",
+          "contentHash": "bafkreibk2rcaifdobrjwlon5bbyrn6immanlsfy5yjsa4lisz6mh6rw4dm",
+          "metadata": {
+            "id": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000302:0",
+            "name": "Minted hat renamed",
+            "description": "Managed",
+            "collectionAddress": "0x5eed000000000000000000000000000000000302",
+            "rarity": "common",
+            "i18n": [
+              {
+                "code": "en",
+                "text": "Minted hat renamed"
+              }
+            ],
+            "data": {
+              "replaces": [],
+              "hides": [],
+              "tags": [
+                "conformance"
+              ],
+              "category": "hat",
+              "representations": [
+                {
+                  "bodyShapes": [
+                    "urn:decentraland:off-chain:base-avatars:BaseMale"
+                  ],
+                  "contents": [
+                    "model.glb"
+                  ],
+                  "mainFile": "model.glb",
+                  "overrideHides": [],
+                  "overrideReplaces": []
+                }
+              ]
+            },
+            "image": "image.png",
+            "thumbnail": "thumbnail.png",
+            "metrics": {
+              "bodies": 1,
+              "entities": 1,
+              "materials": 1,
+              "meshes": 1,
+              "textures": 1,
+              "triangles": 100
+            }
+          },
+          "contents": {
+            "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+            "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+          }
+        },
+        {
+          "itemId": "c011ec71-0000-4000-8000-0000000003b2",
+          "contentHash": "bafkreidvdvwrg5c75hsxt7ubcmfb5ppjvtkg7wun5abdakvchcujopqhi4",
+          "metadata": {
+            "id": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000302:1",
+            "name": "Unminted cap renamed",
+            "description": "",
+            "collectionAddress": "0x5eed000000000000000000000000000000000302",
+            "rarity": "common",
+            "i18n": [
+              {
+                "code": "en",
+                "text": "Unminted cap renamed"
+              }
+            ],
+            "data": {
+              "replaces": [],
+              "hides": [],
+              "tags": [
+                "conformance"
+              ],
+              "category": "hat",
+              "representations": [
+                {
+                  "bodyShapes": [
+                    "urn:decentraland:off-chain:base-avatars:BaseMale"
+                  ],
+                  "contents": [
+                    "model.glb"
+                  ],
+                  "mainFile": "model.glb",
+                  "overrideHides": [],
+                  "overrideReplaces": []
+                }
+              ]
+            },
+            "image": "image.png",
+            "thumbnail": "thumbnail.png",
+            "metrics": {
+              "bodies": 1,
+              "entities": 1,
+              "materials": 1,
+              "meshes": 1,
+              "textures": 1,
+              "triangles": 100
+            }
+          },
+          "contents": {
+            "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+            "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+          }
+        }
+      ]
+    }
+  ]
+}

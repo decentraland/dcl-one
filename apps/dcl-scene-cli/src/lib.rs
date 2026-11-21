@@ -28,7 +28,6 @@ pub mod netinfo;
 pub mod pack;
 pub mod play_embed;
 pub mod prebuilt;
-pub mod project_sync;
 #[cfg(feature = "rolldown")]
 pub mod rolldown_backend;
 pub mod scene;

@@ -1,0 +1,35 @@
+{
+  "description": "GET /{address}/collections signed by that address, with an address query parameter naming another wallet. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/0x05bb381a642d932037707c4a626f93fb009696b2/collections",
+    "query": {
+      "address": "0xcd6884d4258edc833f31ac773e24affe6a7d3154",
+      "type": "standard"
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x05bb381a642d932037707c4a626f93fb009696b2\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x422212cB25b99a75e4745bf88BEdc92E38fc28e7\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x20886dc7fab75a52aafd6dfbc2bdd4a222de3a11422cd16c65da707ab913e7c5067db0df5cf1de71e3541cc77fcbfebec9cf95a7e2677c4ee8a094ee2cc3e6c31c\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/0x05bb381a642d932037707c4a626f93fb009696b2/collections:1767225600000:{}\",\"signature\":\"0x370263aedaeae0207ace6065418ce0c2a6f452bc3e780aef1ca65084771dcda576b1106bbeaf608e44d56e5657655c5818c69b4bf6809c235ea0c46360d797131b\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {
+        "eth_address": "0xcd6884d4258edc833f31ac773e24affe6a7d3154"
+      },
+      "error": "Unauthorized"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

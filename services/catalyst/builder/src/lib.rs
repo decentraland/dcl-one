@@ -3,50 +3,51 @@
 //! item and collection drafts, uploaded content, the committee's item
 //! curation, standard collection publication (Polygon factory parameters
 //! prepared here, signed and submitted by the client, the receipt verified
-//! here) and linked (third-party) publication (frozen snapshot, stable
-//! nonce, the owner-signed provider-slot cheque, the Foundation review),
-//! plus the asset-packs catalogue, scene projects (upstream's Project,
-//! Manifest and per-project AssetPack routes, and the content-addressed
-//! file set `dcl-scene-cli sync` mirrors: [`projects`], [`project_packs`])
-//! and the newsletter opt-in. Schema `builder` (`schemas/50_create.sql`).
+//! here), third-party publication (the items a provider manager submits for
+//! curation with its signed slot cheque, [`cheques`]), the wearable
+//! validator's review requests, which it pulls ([`validator`]), the review
+//! flow creators, curators and the validator share ([`review`]), and the
+//! newsletter opt-in. It keeps no scenes: no projects, manifests,
+//! asset packs or scene files. Schema `builder` (`schemas/50_create.sql`).
 //!
 //! What it reuses: the ONE pool; the ONE `http::Outbound` client for the
-//! content bucket pull-through and HEAD probes, the Polygon RPC and the
-//! newsletter forward; the ONE blob store (`storage`) for uploaded item
-//! files and asset-pack files (both hash-addressed: the old
-//! `uploaded_contents.bytes` column and the LRU pull cache are gone); signed
+//! Polygon RPC and the newsletter forward; the ONE blob store (`storage`)
+//! for uploaded item files, by hash (an item's video streams there,
+//! [`items::video`]), which it serves itself (who
+//! may read a file is [`access::read_file`]); signed
 //! fetch through `src/auth` and the shared verifier the explore and social
 //! routes use (`shared::signed_fetch`, [`auth`]); the marketplace subgraph
 //! readers (`marketplace::graph`) where the old code read the squid
-//! ([`onchain`]); `shared::cache::TtlMap` for the in-process memos. The one
-//! client it does not share is the Foundation review's
-//! (`linked_publication_review::foundation_client`: guarded as the shared
-//! one, but no redirects; the reason is in that module). Every write goes behind
+//! ([`onchain`]); the shop's copy of the Polygon collections subgraph,
+//! read by shared SQL, for a collection's published and approved state
+//! ([`chain_state`]: 503 while the copy can't tell) and the chain facts a
+//! collection's body and listings merge ([`collections`]). The one
+//! client it does not share is [`guarded_client`]: guarded as the shared
+//! one, but it follows no redirect, so a credential it carries never
+//! reaches another host; the terms-of-service forward to the warehouse
+//! ([`terms`]), the Slack notices and the forum take it. Every write goes behind
 //! `CREATE_WRITES_ENABLED` ([`writes`], default false, 503 with
 //! `Retry-After`, built the way `social::writes` gates the social writes).
 //!
-//! Authorization contracts, kept exactly: owner = `collections.eth_address`
-//! / `items.eth_address` equals the signer on every draft, upload and
-//! publication write (the rows are lowercase by CHECK, the signer is
-//! lowercased by the verifier); a non-owner's collection read and the
-//! curation routes need the admin bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`,
-//! constant-time, fails closed) or a `BUILDER_ADMIN_ADDRESSES` signer; the
-//! on-chain address reads stay anonymous (the old crate's recorded
-//! divergence); chain writes are prepared here and signed and submitted by
-//! the client, the receipt verified over the Polygon RPC; the linked cheque
-//! is verified only; v2 never holds a signing key.
+//! Authorization: [`access`] decides every read and write of a collection or
+//! item (owner, on-chain manager, current committee member, third-party
+//! manager, as builder-server defines them; 503 when a source it needs can't
+//! tell), and the store functions take the grant it returns. The committee is
+//! [`committee`]'s read of the Polygon committee index, by shared SQL.
+//! The curation routes need the admin bearer (`CATALYRST_BUILDER_ADMIN_TOKEN`,
+//! constant-time, fails closed) or a `BUILDER_ADMIN_ADDRESSES` signer; chain
+//! writes are prepared here and signed and submitted by the client, the
+//! receipt verified over the Polygon RPC; a slot cheque is verified only;
+//! v2 never holds a signing key.
 //!
 //! Deviations from the old crate, all deliberate: the signed-fetch window is
-//! the shared verifier's 60 seconds (the old required path allowed 30 minutes); the
-//! subgraph readers replace the squid side pool (503 on the address routes
-//! and empty curation listings without a collections subgraph, as the old
-//! node answered without its pool); `BUILDER_CONTENT_BUCKET_URL` is
-//! optional (unset: an unknown storage hash answers 404 instead of the 301,
-//! and `/contents/{hash}` serves the store only); `BUILDER_POLYGON_RPC_URL`
+//! the shared verifier's 60 seconds (the old required path allowed 30
+//! minutes); the
+//! subgraph readers replace the squid side pool (empty curation listings
+//! without a collections subgraph, as the old node answered without its
+//! pool); `BUILDER_POLYGON_RPC_URL`
 //! must be https to a public host (a plaintext verifier could be fed a fake
-//! receipt); `is_approved` is the declared projection of `curation_status`
-//! (`linked_publication_review::finish_linked_publication`); the item
-//! contents FK replaces the per-file "upload before saving" probe (same 400).
+//! receipt).
 //!
 //! Not carried, by the plan: `dcl-scene-cli` and what only it consumes
 //! (`dcl-scene-authoring`, `dcl-preview-tunnel`,
@@ -57,13 +58,9 @@
 //! `/builder-api` prefix; the content server owns the root).
 //!
 //! Mount: `serve` merges [`root_router`] at the root (the old
-//! `builder-api.` vhost paths, minus `/contents/{hash}`, which the content
-//! server owns there) and nests [`router`] under `/builder-api` (the old
-//! gateway prefix, stripped by nginx before it reached the bundle). The
-//! operator commands are [`catalog::build`] (`catalyst builder catalog
-//! <packs-dir>`) and [`catalog::seed`].
+//! `builder-api.` vhost paths) and nests [`router`] under `/builder-api`
+//! (the old gateway prefix, stripped by nginx before it reached the bundle).
 
-// The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
@@ -71,80 +68,113 @@ pub(crate) use catalyst_db as db;
 pub(crate) use catalyst_shared as shared;
 pub(crate) use catalyst_storage as storage;
 
+pub mod access;
 pub mod auth;
-pub mod catalog;
+pub mod chain_state;
+pub mod cheques;
+pub mod collections;
 pub mod committee;
+pub mod cors;
+pub mod curation;
 pub mod drafts;
 pub mod handlers;
 pub mod http;
 pub mod items;
-pub mod linked_publication;
-pub mod linked_publication_review;
-pub mod linked_publication_store;
+pub mod kept;
+pub mod limits;
 pub mod onchain;
-pub mod project_packs;
-pub mod projects;
 pub mod publication;
 pub mod publication_chain;
 pub mod publication_store;
+pub mod rarities;
+pub mod review;
+pub mod terms;
+pub mod third_parties;
+pub mod validator;
 pub mod writes;
 
 #[cfg(test)]
 pub(crate) mod tests;
 
 use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::{Context, bail};
+use anyhow::{Context as _, bail};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::handler::Handler;
 use axum::routing::{get, patch, post};
 use sqlx::PgPool;
 
 use crate::chain_index::ChainIndex;
-use crate::shared::cache::TtlMap;
 use crate::storage::Storage;
 use dcl_auth::eip1654::Eip1654Validator;
-use dcl_http::Outbound;
+use dcl_http::{HttpClientCfg, Outbound};
 
-use catalog::{CatalogStore, PullSource};
-use items::{ItemsComponent, NewsletterComponent};
+use items::ItemsComponent;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BUILDER_ADMIN_TOKEN";
-const EXISTS_TTL: Duration = Duration::from_secs(300);
-const EXISTS_CACHE_MAX: usize = 8192;
-/// How long a published collection's on-chain `creator()` read (or its
-/// failure) is reused, so reads of one collection share one `eth_call`.
-pub(crate) const CREATOR_MEMO_TTL: Duration = Duration::from_secs(30);
-const CREATOR_MEMO_MAX: usize = 8192;
-/// One 20 MiB upload with its framing; also the cap of a project manifest
-/// (the editor's composite) and of a file set (5000 paths).
-const UPLOAD_BODY_LIMIT: usize = 21 * 1024 * 1024;
+/// One 20 MiB upload with its framing.
+pub const UPLOAD_BODY_LIMIT: usize = 21 * 1024 * 1024;
+/// A request body on a route that takes none of the larger ones below.
+pub const BODY_LIMIT: usize = 64 * 1024;
+/// An item save: ten times the largest item document builder-server holds.
+pub const ITEM_BODY_LIMIT: usize = 256 * 1024;
+/// A collection save (its `data`), a terms acceptance (its hashes) and a
+/// publication (its item ids).
+pub const LARGE_BODY_LIMIT: usize = 2 * 1024 * 1024;
+/// File uploads the node reads at once, each up to [`UPLOAD_BODY_LIMIT`]
+/// in memory; of them per wallet (the `/create` dApp sends one item's files
+/// at a time) and per source address.
+pub const FILE_UPLOADS: usize = 16;
+pub const FILE_UPLOADS_PER_SIGNER: usize = 4;
+pub const FILE_UPLOADS_PER_SOURCE: usize = 8;
 
 /// The newsletter SaaS forward (`NEWSLETTER_SERVICE_URL`,
 /// `NEWSLETTER_PUBLICATION_ID`, `NEWSLETTER_SERVICE_API_KEY`), configured
 /// only when all three are set.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct NewsletterForward {
     pub url: String,
     pub publication_id: String,
     pub api_key: String,
 }
 
+impl std::fmt::Debug for NewsletterForward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewsletterForward")
+            .field("url", &self.url)
+            .field("publication_id", &self.publication_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The warehouse a terms-of-service acceptance is forwarded to
+/// (`WAREHOUSE_URL`, `WAREHOUSE_TOKEN` and the optional
+/// `WAREHOUSE_CONTEXT_PREFIX`), configured only when the URL and the token
+/// are set.
+#[derive(Clone)]
+pub struct WarehouseForward {
+    pub url: String,
+    pub token: String,
+    pub context_prefix: Option<String>,
+}
+
+impl std::fmt::Debug for WarehouseForward {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WarehouseForward")
+            .field("context_prefix", &self.context_prefix)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The environment as `Config` hands it over (the old env names).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct RawSettings {
     /// `CREATE_WRITES_ENABLED` (false).
     pub writes_enabled: bool,
-    /// `BUILDER_CONTENT_BUCKET_URL`: the item content bucket the storage
-    /// route redirects to and `/contents/{hash}` pulls through from.
-    pub content_bucket_url: Option<String>,
-    /// `BUILDER_ASSET_PACKS_BUCKET_URL`: the asset-packs bucket
-    /// `/contents/{hash}` pulls from when the item bucket misses.
-    pub asset_packs_bucket_url: Option<String>,
     /// `BUILDER_POLYGON_RPC_URL`: the Polygon JSON-RPC that verifies
-    /// publication receipts; unset refuses begin/claim/verify with 503.
+    /// publication receipts and reads the rarities' MANA prices
+    /// ([`rarities`]); unset refuses begin/claim/verify and the rarities
+    /// routes with 503.
     pub polygon_rpc_url: Option<String>,
     /// `BUILDER_ADMIN_ADDRESSES`: comma-separated admin wallets.
     pub admin_addresses: String,
@@ -153,21 +183,122 @@ pub struct RawSettings {
     pub newsletter_service_url: Option<String>,
     pub newsletter_publication_id: Option<String>,
     pub newsletter_api_key: Option<String>,
-    /// `BUILDER_FOUNDATION_URL`: the Foundation builder API a linked
-    /// publication is verified against; unset answers 503 there.
-    pub foundation_url: Option<String>,
+    pub warehouse_url: Option<String>,
+    pub warehouse_token: Option<String>,
+    pub warehouse_context_prefix: Option<String>,
+    /// `SLACK_BOT_TOKEN`: the bot the curation notices are posted as.
+    pub slack_bot_token: Option<String>,
+    /// `SLACK_CURATION_CHANNEL`: the curators' channel; notices need both.
+    pub slack_curation_channel: Option<String>,
+    /// `CREATORS_URL`: the creators site a notice links to.
+    pub creators_url: Option<String>,
+    /// `BUILDER_URL`: the legacy builder a notice links to without
+    /// `CREATORS_URL`.
+    pub builder_url: Option<String>,
+    /// `FORUM_URL`: the forum's origin a collection's topic is posted to.
+    pub forum_url: Option<String>,
+    /// `FORUM_API_KEY`: the forum API key; the forum needs all four.
+    pub forum_api_key: Option<String>,
+    /// `FORUM_API_USERNAME`: the forum account the node posts as.
+    pub forum_api_username: Option<String>,
+    /// `FORUM_CATEGORY`: the id of the category a topic is created in.
+    pub forum_category: Option<String>,
+    /// `BUILDER_SERVER_URL`: the public origin of these routes, which a
+    /// forum post's thumbnails link into.
+    pub builder_server_url: Option<String>,
+    /// `WEARABLE_VALIDATOR_CALLBACK_SECRET`: the secret the wearable
+    /// validator signs its calls with; unset, no validation is requested
+    /// and the validator routes refuse.
+    pub validator_secret: Option<String>,
+    /// `CORS_ORIGIN`: the origins that may read the answers ([`cors`]).
+    pub cors_origin: Option<String>,
+    /// `CORS_METHOD`: the methods a preflight allows ([`cors`]).
+    pub cors_method: Option<String>,
+    /// `BUILDER_UNPUBLISHED_MAX_BYTES` ([`limits::NODE_BYTES`] unset).
+    pub unpublished_max_bytes: Option<u64>,
+    /// `BUILDER_UNPUBLISHED_MAX_FILES` ([`limits::NODE_FILES`] unset).
+    pub unpublished_max_files: Option<u64>,
+    /// `BUILDER_VIDEO_UPLOADS_MAX` ([`items::video::MAX_UPLOADS`] unset).
+    pub video_uploads_max: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Settings {
     pub writes_enabled: bool,
-    pub content_bucket_url: Option<String>,
-    pub asset_packs_bucket_url: Option<String>,
     pub polygon_rpc_url: Option<String>,
     pub admin_addresses: Vec<String>,
     pub admin_token: Option<String>,
     pub newsletter: Option<NewsletterForward>,
-    pub foundation_url: Option<String>,
+    pub warehouse: Option<WarehouseForward>,
+    /// The curators' Slack channel; none sends no notice.
+    pub slack: Option<curation::slack::Slack>,
+    pub links: curation::slack::Links,
+    /// The curators' forum; none posts nothing and answers 503.
+    pub forum: Option<curation::forum::Forum>,
+    /// Where a forum post's thumbnails link to.
+    pub builder_server_url: String,
+    /// The wearable validator's secret; none turns validation off.
+    pub validator_secret: Option<validator::Secret>,
+    /// Who may read the answers from another origin.
+    pub cors: cors::Cors,
+    /// The node's bound of unpublished upload bytes, if not the default.
+    pub unpublished_max_bytes: Option<u64>,
+    /// The node's bound of unpublished upload files, if not the default.
+    pub unpublished_max_files: Option<u64>,
+    /// The video uploads the node reads at once, if not the default.
+    pub video_uploads_max: Option<usize>,
+}
+
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Settings")
+            .field("writes_enabled", &self.writes_enabled)
+            .field("polygon_rpc_url", &self.polygon_rpc_url.is_some())
+            .field("admin_addresses", &self.admin_addresses)
+            .field("admin_token", &self.admin_token.is_some())
+            .field("newsletter", &self.newsletter)
+            .field("warehouse", &self.warehouse)
+            .field("slack", &self.slack)
+            .field("links", &self.links)
+            .field("forum", &self.forum)
+            .field("builder_server_url", &self.builder_server_url)
+            .field("validator_secret", &self.validator_secret)
+            .field("cors", &self.cors)
+            .field("unpublished_max_bytes", &self.unpublished_max_bytes)
+            .field("unpublished_max_files", &self.unpublished_max_files)
+            .field("video_uploads_max", &self.video_uploads_max)
+            .finish()
+    }
+}
+
+/// The most video uploads `BUILDER_VIDEO_UPLOADS_MAX` may set: 64 GB of spool.
+pub const MAX_VIDEO_UPLOADS_SETTING: usize = 256;
+
+/// The shortest admin token or validator secret startup accepts.
+pub const MIN_SECRET_BYTES: usize = 32;
+
+/// The settings of one integration, all set or none; one set without the
+/// others refuses to start, naming the first missing.
+fn all_or_none<const N: usize>(
+    named: [(&str, &Option<String>); N],
+) -> anyhow::Result<Option<[String; N]>> {
+    let values = named.map(|(name, value)| (name, non_empty(value)));
+    if values.iter().all(|(_, value)| value.is_none()) {
+        return Ok(None);
+    }
+    if let Some((missing, _)) = values.iter().find(|(_, value)| value.is_none()) {
+        let set: Vec<&str> = named.iter().map(|(name, _)| *name).collect();
+        bail!("{} are set together; {missing} is unset", set.join(", "));
+    }
+    Ok(Some(values.map(|(_, value)| value.unwrap_or_default())))
+}
+
+/// Refuses a URL that carries a token unless it is a public https URL.
+fn token_url(name: &str, url: &str) -> anyhow::Result<()> {
+    if !url.starts_with("https://") || !dcl_http::is_safe_http_url(url) {
+        bail!("{name} must be a public https URL: it carries a token");
+    }
+    Ok(())
 }
 
 fn non_empty(value: &Option<String>) -> Option<String> {
@@ -190,20 +321,6 @@ impl Settings {
     /// The old `Config::from_env` checks over [`RawSettings`], plus the
     /// upstream guards every configured endpoint passes in v2.
     pub fn parse(raw: RawSettings) -> anyhow::Result<Self> {
-        let content_bucket_url =
-            non_empty(&raw.content_bucket_url).map(|u| u.trim_end_matches('/').to_string());
-        if let Some(url) = &content_bucket_url
-            && !dcl_http::is_safe_http_url(url)
-        {
-            bail!("BUILDER_CONTENT_BUCKET_URL must be a public http(s) URL");
-        }
-        let asset_packs_bucket_url =
-            non_empty(&raw.asset_packs_bucket_url).map(|u| u.trim_end_matches('/').to_string());
-        if let Some(url) = &asset_packs_bucket_url
-            && !dcl_http::is_safe_http_url(url)
-        {
-            bail!("BUILDER_ASSET_PACKS_BUCKET_URL must be a public http(s) URL");
-        }
         let polygon_rpc_url = non_empty(&raw.polygon_rpc_url);
         if let Some(url) = &polygon_rpc_url {
             let parsed = url::Url::parse(url)
@@ -216,70 +333,162 @@ impl Settings {
                 );
             }
         }
-        let newsletter = match (
-            non_empty(&raw.newsletter_service_url),
-            non_empty(&raw.newsletter_publication_id),
-            non_empty(&raw.newsletter_api_key),
-        ) {
-            (Some(url), Some(publication_id), Some(api_key)) => {
-                if !dcl_http::is_safe_http_url(&url) {
-                    bail!("NEWSLETTER_SERVICE_URL must be a public http(s) URL");
-                }
-                Some(NewsletterForward {
-                    url,
-                    publication_id,
-                    api_key,
-                })
-            }
-            _ => None,
+        let newsletter = all_or_none([
+            ("NEWSLETTER_SERVICE_URL", &raw.newsletter_service_url),
+            ("NEWSLETTER_PUBLICATION_ID", &raw.newsletter_publication_id),
+            ("NEWSLETTER_SERVICE_API_KEY", &raw.newsletter_api_key),
+        ])?
+        .map(|[url, publication_id, api_key]| {
+            token_url("NEWSLETTER_SERVICE_URL", &url).map(|()| NewsletterForward {
+                url,
+                publication_id,
+                api_key,
+            })
+        })
+        .transpose()?;
+        let warehouse = all_or_none([
+            ("WAREHOUSE_URL", &raw.warehouse_url),
+            ("WAREHOUSE_TOKEN", &raw.warehouse_token),
+        ])?
+        .map(|[url, token]| {
+            token_url("WAREHOUSE_URL", &url).map(|()| WarehouseForward {
+                url,
+                token,
+                context_prefix: non_empty(&raw.warehouse_context_prefix),
+            })
+        })
+        .transpose()?;
+        let slack = all_or_none([
+            ("SLACK_BOT_TOKEN", &raw.slack_bot_token),
+            ("SLACK_CURATION_CHANNEL", &raw.slack_curation_channel),
+        ])?
+        .map(|[token, channel]| curation::slack::Slack {
+            token,
+            channel,
+            api: curation::slack::API.to_string(),
+        });
+        let links = curation::slack::Links {
+            creators_url: non_empty(&raw.creators_url),
+            builder_url: non_empty(&raw.builder_url),
         };
-        let foundation_url =
-            non_empty(&raw.foundation_url).map(|u| u.trim_end_matches('/').to_string());
-        if let Some(url) = &foundation_url
-            && !dcl_http::is_safe_http_url(url)
+        let forum = match all_or_none([
+            ("FORUM_URL", &raw.forum_url),
+            ("FORUM_API_KEY", &raw.forum_api_key),
+            ("FORUM_API_USERNAME", &raw.forum_api_username),
+            ("FORUM_CATEGORY", &raw.forum_category),
+        ])? {
+            Some([url, api_key, api_username, category]) => curation::forum::Forum::parse(
+                Some(url),
+                Some(api_key),
+                Some(api_username),
+                Some(category),
+            )?,
+            None => None,
+        };
+        let builder_server_url = non_empty(&raw.builder_server_url);
+        for (name, url) in [
+            ("CREATORS_URL", &links.creators_url),
+            ("BUILDER_URL", &links.builder_url),
+            ("BUILDER_SERVER_URL", &builder_server_url),
+        ] {
+            if let Some(url) = url
+                && !url::Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+            {
+                bail!("{name} must be an http(s) URL");
+            }
+        }
+        let cors = cors::Cors::parse(raw.cors_origin.as_deref(), raw.cors_method.as_deref())?;
+        let validator_secret = non_empty(&raw.validator_secret);
+        let admin_token = non_empty(&raw.admin_token);
+        for (name, secret) in [
+            ("WEARABLE_VALIDATOR_CALLBACK_SECRET", &validator_secret),
+            ("CATALYRST_BUILDER_ADMIN_TOKEN", &admin_token),
+        ] {
+            if secret.as_ref().is_some_and(|s| s.len() < MIN_SECRET_BYTES) {
+                bail!("{name} must be at least {MIN_SECRET_BYTES} bytes");
+            }
+        }
+        if raw
+            .video_uploads_max
+            .is_some_and(|n| !(1..=MAX_VIDEO_UPLOADS_SETTING).contains(&n))
         {
-            bail!("BUILDER_FOUNDATION_URL must be a public http(s) URL");
+            bail!("BUILDER_VIDEO_UPLOADS_MAX must be 1 to {MAX_VIDEO_UPLOADS_SETTING}");
         }
         Ok(Self {
+            cors,
+            unpublished_max_bytes: raw.unpublished_max_bytes,
+            unpublished_max_files: raw.unpublished_max_files,
+            video_uploads_max: raw.video_uploads_max,
+            slack,
+            links,
+            forum,
+            builder_server_url: builder_server_url.unwrap_or_default(),
+            validator_secret: validator_secret.map(validator::Secret::from),
             writes_enabled: raw.writes_enabled,
-            content_bucket_url,
-            asset_packs_bucket_url,
             polygon_rpc_url,
             admin_addresses: Self::admin_addresses_from(&raw.admin_addresses),
-            admin_token: non_empty(&raw.admin_token),
+            admin_token,
             newsletter,
-            foundation_url,
+            warehouse,
         })
     }
 }
 
 pub struct State {
     pub items: ItemsComponent,
-    pub newsletter: NewsletterComponent,
-    pub catalog: CatalogStore,
     /// The marketplace readers the on-chain routes read; `None` (or one
     /// without a collections subgraph) answers 503 there.
     pub market: Option<Arc<ChainIndex>>,
     pub settings: Settings,
     pub http: Outbound,
-    /// The guarded, no-redirect client of the Foundation review reads.
-    pub foundation: Outbound,
+    /// [`guarded_client`]: the warehouse forward, the Slack notices and the
+    /// forum, whose requests carry a credential.
+    pub guarded: Outbound,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     /// The content state's denylist (the same `Arc`): a hash the camera reel
-    /// withheld (rejected or deleted photo) is a 404 on `/contents/{hash}`
+    /// withheld (rejected or deleted photo) is a 404 on the storage routes
     /// here too, not only on the content server's routes.
     pub denylist: Arc<crate::content::Denylist>,
-    pub(crate) exists_memo: TtlMap<String, bool>,
-    /// A published collection's `creator()` by contract; `None` is a failed
-    /// read, reused for the TTL too.
-    pub(crate) creator_memo: TtlMap<String, Option<String>>,
-    /// Set once `BUILDER_POLYGON_RPC_URL` answered `eth_chainId` 137.
-    pub(crate) polygon_checked: tokio::sync::OnceCell<()>,
+    /// The rarities and their prices (`rarities`), kept a minute.
+    pub rarities: rarities::Rarities,
+    /// The third-party registry (`third_parties`), read per decision.
+    pub third_parties: third_parties::ThirdParties,
+    /// The node's clock, which a collection's lock is set and compared by.
+    pub now: fn() -> chrono::DateTime<chrono::Utc>,
+    /// What the Polygon RPC says of collection contracts, kept per contract.
+    pub deployments: collections::deployment::Deployments,
+    /// The curators' Slack notices.
+    pub notices: curation::slack::Notices,
+    /// The content sync's state: whether this process is its own content
+    /// authority, so an item URN its content lacks is unused.
+    pub content_sync: Arc<crate::content::SyncStatus>,
+    /// The wearable validator's calls per source address.
+    pub validator_calls: crate::shared::limits::RateLimiter,
+    /// The item video uploads' bounds and those in flight.
+    pub videos: items::video::Videos,
+    /// The item file uploads in flight, each holding its body in memory:
+    /// [`FILE_UPLOADS`] on the node, [`FILE_UPLOADS_PER_SIGNER`] of a wallet,
+    /// [`FILE_UPLOADS_PER_SOURCE`] of a source address.
+    pub file_uploads: items::places::Places,
+    /// The longest a file upload's body may take to arrive
+    /// ([`items::upload::DEADLINE`]).
+    pub file_deadline: std::time::Duration,
+    /// The request budgets per source, signer and route ([`limits`]).
+    pub limits: limits::Limits,
 }
 
 pub type SharedState = Arc<State>;
 
+/// The guarded client that follows no redirect, 20 s a request, built once
+/// per process: the shared one follows redirects with the request's headers.
+pub fn guarded_client() -> Outbound {
+    Outbound::new(HttpClientCfg::default().with_total_timeout(std::time::Duration::from_secs(20)))
+        .expect("the guarded client builds")
+}
+
 impl State {
+    /// `blobs` is the node's blob store; the builder keeps its item files in
+    /// its [`Storage::builder`] tree, which the content routes never read.
     pub fn new(
         pool: PgPool,
         blobs: Arc<Storage>,
@@ -289,46 +498,62 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         settings: Settings,
     ) -> anyhow::Result<Self> {
-        let buckets: Vec<String> = [
-            &settings.content_bucket_url,
-            &settings.asset_packs_bucket_url,
-        ]
-        .into_iter()
-        .flatten()
-        .cloned()
-        .collect();
-        let pull = (!buckets.is_empty()).then(|| PullSource {
-            buckets,
-            http: http.clone(),
-        });
-        let catalog =
-            CatalogStore::new(pool.clone(), blobs.clone(), pull).context("builder catalogue")?;
+        let notices = curation::slack::Notices::new(settings.slack.clone(), settings.links.clone());
+        let blobs = blobs
+            .builder()
+            .cloned()
+            .context("the builder keeps its files in the blob store's builder tree")?;
+        let mut limits = limits::Limits::default();
+        limits.node_bytes = settings.unpublished_max_bytes.unwrap_or(limits.node_bytes);
+        limits.node_files = settings.unpublished_max_files.unwrap_or(limits.node_files);
+        let mut videos = items::video::Videos::default();
+        if let Some(places) = settings.video_uploads_max {
+            videos.places = items::places::Places::new(
+                "video uploads",
+                places,
+                items::video::MAX_UPLOADS_PER_SIGNER,
+                items::video::MAX_UPLOADS_PER_SOURCE,
+            );
+        }
         Ok(Self {
-            items: ItemsComponent::new(pool.clone(), blobs),
-            newsletter: NewsletterComponent::new(pool),
-            catalog,
+            items: ItemsComponent::new(pool.clone(), blobs).with_denylist(denylist.clone()),
             market,
             settings,
             http,
-            foundation: linked_publication_review::foundation_client(),
+            guarded: guarded_client(),
             eip1654,
             denylist,
-            exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
-            creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
-            polygon_checked: tokio::sync::OnceCell::new(),
+            rarities: rarities::Rarities::default(),
+            third_parties: third_parties::ThirdParties::default(),
+            now: chrono::Utc::now,
+            deployments: collections::deployment::Deployments::default(),
+            notices,
+            content_sync: Arc::default(),
+            validator_calls: validator::calls_limiter(),
+            videos,
+            file_uploads: items::places::Places::new(
+                "file uploads",
+                FILE_UPLOADS,
+                FILE_UPLOADS_PER_SIGNER,
+                FILE_UPLOADS_PER_SOURCE,
+            ),
+            file_deadline: items::upload::DEADLINE,
+            limits,
         })
     }
 
     /// What `serve` logs at startup.
     pub fn sources_label(&self) -> String {
         format!(
-            "bucket={} asset_packs_bucket={} polygon_rpc={} collections_reader={} admins={} newsletter={}",
-            self.settings.content_bucket_url.is_some(),
-            self.settings.asset_packs_bucket_url.is_some(),
+            "polygon_rpc={} collections_reader={} admins={} newsletter={} warehouse={} slack={} forum={} validator={}",
             self.settings.polygon_rpc_url.is_some(),
             onchain::configured(self.market.as_deref()),
             self.settings.admin_addresses.len(),
             self.settings.newsletter.is_some(),
+            self.settings.warehouse.is_some(),
+            self.settings.slack.is_some(),
+            self.settings.forum.is_some(),
+            self.settings.validator_secret.is_some(),
         )
     }
 }
@@ -338,6 +563,11 @@ fn api_routes() -> Router<SharedState> {
         .route(
             "/v1/items/{id}/files",
             post(handlers::drafts::post_item_files).layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/items/{id}/videos",
+            post(handlers::drafts::post_item_videos)
+                .layer(DefaultBodyLimit::max(items::video::BODY_LIMIT)),
         )
         .route(
             "/v1/collections/{id}/publication",
@@ -352,44 +582,17 @@ fn api_routes() -> Router<SharedState> {
             get(handlers::publication::status),
         )
         .route(
-            "/v1/collections/{id}/linked-publication",
-            get(handlers::linked_publication::prepare)
-                .post(handlers::linked_publication::begin)
-                .patch(handlers::linked_publication::claim)
-                .put(handlers::linked_publication::authorize)
-                .delete(handlers::linked_publication::cancel)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/collections/{id}/linked-publication/status",
-            get(handlers::linked_publication::status)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/collections/{id}/linked-publication/verify",
-            post(handlers::linked_publication::verify)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
             "/v1/drafts/collections",
-            get(handlers::drafts::get_collection_drafts)
-                .layer(axum::middleware::map_response(http::private_response)),
+            get(handlers::drafts::get_collection_drafts),
         )
-        .route(
-            "/v1/drafts/items",
-            get(handlers::drafts::get_item_drafts)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/collections",
-            get(handlers::collections::get_collections),
-        )
+        .route("/v1/drafts/items", get(handlers::drafts::get_item_drafts))
         .route("/v1/items", get(handlers::collections::get_items))
         .route(
             "/v1/items/{id}",
             get(handlers::drafts::get_item)
                 .put(handlers::drafts::put_item)
-                .delete(handlers::drafts::delete_item),
+                .delete(handlers::drafts::delete_item)
+                .layer(DefaultBodyLimit::max(ITEM_BODY_LIMIT)),
         )
         .route(
             "/v1/collections/{id}/items",
@@ -397,11 +600,53 @@ fn api_routes() -> Router<SharedState> {
         )
         .route(
             "/v1/collections/{id}",
-            get(handlers::collections::get_collection).put(handlers::drafts::put_collection),
+            get(handlers::collections::get_collection)
+                .put(handlers::drafts::put_collection)
+                .delete(handlers::lifecycle::delete)
+                .layer(DefaultBodyLimit::max(LARGE_BODY_LIMIT)),
+        )
+        .route("/v1/collections/{id}/lock", post(handlers::lifecycle::lock))
+        .route(
+            "/v1/collections/{id}/owner/sync",
+            post(handlers::lifecycle::owner_sync),
+        )
+        .route(
+            "/v1/collections/{id}/tos",
+            post(handlers::lifecycle::terms).layer(DefaultBodyLimit::max(LARGE_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/collections/{id}/publish",
+            post(handlers::lifecycle::publish).layer(DefaultBodyLimit::max(LARGE_BODY_LIMIT)),
+        )
+        .route(
+            "/v1/collections/{id}/approvalData",
+            get(handlers::lifecycle::approval_data),
         )
         .route(
             "/v1/collections/curation",
             get(handlers::curation::get_curation_collections),
+        )
+        .route("/v1/curations", get(handlers::curation::curations))
+        .route(
+            "/v1/collections/{id}/curation",
+            get(handlers::curation::collection_curation)
+                .patch(handlers::curation::update_collection_curation)
+                .post(handlers::curation::request_collection_curation),
+        )
+        .route(
+            "/v1/collections/{id}/curation/post",
+            post(handlers::forum::reply),
+        )
+        .route("/v1/collections/{id}/post", post(handlers::forum::post))
+        .route(
+            "/v1/collections/{id}/itemCurations",
+            get(handlers::curation::collection_item_curations),
+        )
+        .route(
+            "/v1/items/{id}/curation",
+            get(handlers::curation::item_curation)
+                .patch(handlers::curation::update_item_curation)
+                .post(handlers::curation::request_item_curation),
         )
         .route(
             "/v1/{address}/collections",
@@ -412,76 +657,6 @@ fn api_routes() -> Router<SharedState> {
             get(handlers::collections::get_address_items),
         )
         .route(
-            "/v1/storage/contents/{hash}",
-            get(handlers::storage::get_storage_content)
-                .head(handlers::storage::get_storage_content),
-        )
-        .route(
-            "/v1/storage/contents/{hash}/exists",
-            get(handlers::storage::head_storage_content_exists),
-        )
-        .route("/v1/assetPacks", get(handlers::catalog::get_asset_packs))
-        .route(
-            "/v1/projects",
-            get(handlers::projects::list)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}",
-            get(handlers::projects::get)
-                .put(handlers::projects::put)
-                .delete(handlers::projects::delete)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/public",
-            get(handlers::projects::get_public),
-        )
-        .route(
-            "/v1/projects/{id}/coords",
-            axum::routing::delete(handlers::projects::delete_coords),
-        )
-        .route(
-            "/v1/projects/{id}/manifest",
-            get(handlers::projects::get_manifest)
-                .put(
-                    handlers::projects::put_manifest
-                        .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
-                )
-                .delete(handlers::projects::delete_manifest)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/manifests",
-            get(handlers::projects::get_manifests)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/files",
-            get(handlers::projects::get_files)
-                .put(handlers::projects::put_files.layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)))
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/blobs/{hash}",
-            axum::routing::put(handlers::projects::put_blob)
-                .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
-        )
-        .route(
-            "/v1/projects/{id}/assetPacks",
-            get(handlers::projects::get_asset_packs)
-                .layer(axum::middleware::map_response(http::private_response)),
-        )
-        .route(
-            "/v1/projects/{id}/assetPacks/{pack}",
-            axum::routing::put(handlers::projects::put_asset_pack)
-                .delete(handlers::projects::delete_asset_pack),
-        )
-        .route(
-            "/v1/newsletter",
-            post(handlers::newsletter::post_newsletter),
-        )
-        .route(
             "/v1/collections/{id}/items/{item}/status",
             patch(handlers::curation::patch_item_status),
         )
@@ -489,73 +664,105 @@ fn api_routes() -> Router<SharedState> {
             "/v1/collections/{id}/items/status",
             patch(handlers::curation::patch_items_status_bulk),
         )
+        .route(
+            "/v1/validator/claims",
+            post(handlers::validator::claim)
+                .layer(DefaultBodyLimit::max(handlers::validator::SMALL_BODY)),
+        )
+        .route(
+            "/v1/validator/claims/{id}/lease",
+            post(handlers::validator::lease)
+                .layer(DefaultBodyLimit::max(handlers::validator::SMALL_BODY)),
+        )
+        .route(
+            "/v1/collections/{id}/validations",
+            post(handlers::review::validations),
+        )
+        .route(
+            "/v1/collections/{id}/curation/appeal",
+            post(handlers::review::appeal),
+        )
+        .route("/v1/collections/{id}/events", get(handlers::review::events))
+        .route(
+            "/v1/collections/{id}/comments",
+            post(handlers::review::comments),
+        )
+        .route(
+            "/v1/collections/{id}/validation-result",
+            post(handlers::validator::verdict)
+                .layer(DefaultBodyLimit::max(handlers::validator::VERDICT_BODY)),
+        )
+        .route("/v1/thirdParties", get(handlers::third_parties::list))
+        .route(
+            "/v1/thirdParties/{id}",
+            get(handlers::third_parties::get)
+                .delete(handlers::third_parties::delete)
+                .patch(handlers::third_parties::update),
+        )
+        .route(
+            "/v1/thirdParties/{id}/slots",
+            get(handlers::third_parties::slots),
+        )
+        .route_layer(axum::middleware::map_response(http::private_response))
+        .route(
+            "/v1/collections",
+            get(handlers::collections::get_collections),
+        )
+        .route("/v1/committee", get(handlers::collections::get_committee))
+        .route("/v1/info", get(handlers::small_reads::get_info))
+        .route("/v1/rarities", get(handlers::small_reads::get_rarities))
+        .route(
+            "/v1/rarities/{name}",
+            get(handlers::small_reads::get_rarity),
+        )
+        .route(
+            "/v1/published-collections/{address}/items/{id}/utility",
+            get(handlers::small_reads::get_item_utility),
+        )
+        .route(
+            "/v1/items/{id}/{item}/contents",
+            get(handlers::small_reads::get_item_contents),
+        )
+        .route("/v1/addresses", get(handlers::small_reads::get_addresses))
+        .route(
+            "/v1/storage/contents/{hash}",
+            get(handlers::storage::get_storage_content)
+                .head(handlers::storage::get_storage_content),
+        )
+        .route(
+            "/v1/storage/contents/{hash}/exists",
+            get(handlers::storage::get_storage_content_exists),
+        )
+        .route(
+            "/v1/newsletter",
+            post(handlers::newsletter::post_newsletter),
+        )
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
 }
 
 fn finish(routes: Router<SharedState>, state: SharedState) -> Router {
     let writes_enabled = state.settings.writes_enabled;
+    let cors = state.settings.cors.layer();
     let router = routes
-        .layer(tower_http::cors::CorsLayer::permissive())
+        .route_layer(axum::middleware::map_response(http::enveloped))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            limits::per_source,
+        ))
         .with_state(state);
-    writes::guard(router, writes_enabled)
+    writes::guard(router, writes_enabled).layer(cors)
 }
 
-/// The whole builder surface, for the `/builder-api` nest: the API routes,
-/// `/ping` and `/contents/{hash}` (the asset-pack files).
+/// The whole builder surface, for the `/builder-api` nest: the API routes
+/// and `/ping`.
 pub fn router(state: SharedState) -> Router {
-    finish(
-        api_routes()
-            .route("/ping", get(handlers::ping))
-            .route("/contents/{hash}", get(handlers::catalog::get_content)),
-        state,
-    )
+    finish(api_routes().route("/ping", get(handlers::ping)), state)
 }
 
 /// The routes safe to merge at the root beside the content server (which
-/// owns `/contents/{hashId}` and the root liveness route there).
+/// owns the root liveness route there).
 pub fn root_router(state: SharedState) -> Router {
     finish(api_routes(), state)
-}
-
-#[cfg(test)]
-impl State {
-    /// A copy of this state pulling `/contents/{hash}` misses from `bucket`
-    /// (a loopback stub) through the test client.
-    pub(crate) async fn with_bucket(&self, bucket: String) -> SharedState {
-        self.with_buckets(vec![bucket]).await
-    }
-
-    /// As [`State::with_bucket`], trying `buckets` in order.
-    pub(crate) async fn with_buckets(&self, buckets: Vec<String>) -> SharedState {
-        let http = Outbound::for_tests();
-        let settings = Settings {
-            content_bucket_url: buckets.first().cloned(),
-            asset_packs_bucket_url: buckets.get(1).cloned(),
-            ..self.settings.clone()
-        };
-        let catalog = CatalogStore::new(
-            self.items.pool().clone(),
-            self.items.blobs.clone(),
-            Some(PullSource {
-                buckets,
-                http: http.clone(),
-            }),
-        )
-        .unwrap();
-        Arc::new(State {
-            items: ItemsComponent::new(self.items.pool().clone(), self.items.blobs.clone()),
-            newsletter: NewsletterComponent::new(self.items.pool().clone()),
-            catalog,
-            market: self.market.clone(),
-            settings,
-            http,
-            foundation: self.foundation.clone(),
-            eip1654: None,
-            denylist: self.denylist.clone(),
-            exists_memo: TtlMap::bounded(EXISTS_TTL, EXISTS_CACHE_MAX),
-            creator_memo: TtlMap::bounded(CREATOR_MEMO_TTL, CREATOR_MEMO_MAX),
-            polygon_checked: tokio::sync::OnceCell::new(),
-        })
-    }
 }
 
 #[cfg(test)]
@@ -567,29 +774,12 @@ mod router_tests {
         let s = Settings::parse(RawSettings {
             admin_addresses: " 0xABC, ,0xdef ".into(),
             admin_token: Some("  ".into()),
-            content_bucket_url: Some("https://builder-items.decentraland.org/".into()),
-            asset_packs_bucket_url: Some("https://builder-api.decentraland.org/v1/storage/".into()),
             polygon_rpc_url: Some("https://polygon-rpc.com".into()),
-            newsletter_service_url: Some("https://api.beehiiv.com/v2".into()),
-            newsletter_publication_id: Some("pub_1".into()),
-            newsletter_api_key: None,
             ..RawSettings::default()
         })
         .unwrap();
         assert_eq!(s.admin_addresses, vec!["0xabc", "0xdef"]);
         assert_eq!(s.admin_token, None, "a blank token is unset");
-        assert_eq!(
-            s.content_bucket_url.as_deref(),
-            Some("https://builder-items.decentraland.org")
-        );
-        assert_eq!(
-            s.asset_packs_bucket_url.as_deref(),
-            Some("https://builder-api.decentraland.org/v1/storage")
-        );
-        assert!(
-            s.newsletter.is_none(),
-            "the forward needs all three settings"
-        );
         assert!(!s.writes_enabled);
         let err = Settings::parse(RawSettings {
             polygon_rpc_url: Some("http://rpc.example/v3/SECRET".into()),
@@ -603,24 +793,227 @@ mod router_tests {
         );
         assert!(
             Settings::parse(RawSettings {
-                content_bucket_url: Some("http://127.0.0.1:9/".into()),
-                ..RawSettings::default()
-            })
-            .is_err()
-        );
-        assert!(
-            Settings::parse(RawSettings {
-                asset_packs_bucket_url: Some("http://127.0.0.1:9/".into()),
-                ..RawSettings::default()
-            })
-            .is_err()
-        );
-        assert!(
-            Settings::parse(RawSettings {
                 polygon_rpc_url: Some("https://127.0.0.1/".into()),
                 ..RawSettings::default()
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn an_integration_set_in_part_or_carrying_its_token_in_clear_refuses_to_start() {
+        let some = |v: &str| Some(v.to_string());
+        for (raw, named) in [
+            (
+                RawSettings {
+                    newsletter_service_url: some("https://newsletter.example/v2"),
+                    newsletter_publication_id: some("pub_1"),
+                    ..RawSettings::default()
+                },
+                "NEWSLETTER_SERVICE_API_KEY",
+            ),
+            (
+                RawSettings {
+                    warehouse_url: some("https://warehouse.example/events"),
+                    ..RawSettings::default()
+                },
+                "WAREHOUSE_TOKEN",
+            ),
+            (
+                RawSettings {
+                    slack_bot_token: some("xoxb-example"),
+                    ..RawSettings::default()
+                },
+                "SLACK_CURATION_CHANNEL",
+            ),
+            (
+                RawSettings {
+                    forum_url: some("https://forum.example"),
+                    forum_api_key: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "FORUM_API_USERNAME",
+            ),
+            (
+                RawSettings {
+                    warehouse_url: some("http://warehouse.example/events"),
+                    warehouse_token: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "WAREHOUSE_URL",
+            ),
+            (
+                RawSettings {
+                    newsletter_service_url: some("http://newsletter.example/v2"),
+                    newsletter_publication_id: some("pub_1"),
+                    newsletter_api_key: some("sk-example123"),
+                    ..RawSettings::default()
+                },
+                "NEWSLETTER_SERVICE_URL",
+            ),
+        ] {
+            let err = Settings::parse(raw).unwrap_err().to_string();
+            assert!(
+                err.contains(named) && !err.contains("sk-example123"),
+                "{named}: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_video_places_setting_sizes_the_node_and_refuses_what_it_cannot_hold() {
+        for refused in [0, MAX_VIDEO_UPLOADS_SETTING + 1] {
+            let err = Settings::parse(RawSettings {
+                video_uploads_max: Some(refused),
+                ..RawSettings::default()
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("BUILDER_VIDEO_UPLOADS_MAX"), "{err}");
+        }
+        let settings = Settings::parse(RawSettings {
+            video_uploads_max: Some(2),
+            ..RawSettings::default()
+        })
+        .unwrap();
+        let state = State::new(
+            crate::tests::support::lazy_pool(),
+            crate::tests::support::temp_storage().await,
+            Arc::default(),
+            dcl_http::Outbound::for_tests(),
+            None,
+            None,
+            settings,
+        )
+        .unwrap();
+        let held: Vec<_> = (0..2)
+            .map(|n| state.videos.admit(&format!("0xwallet{n}"), None).ok())
+            .collect();
+        assert!(held.iter().all(Option::is_some));
+        assert!(state.videos.admit("0xwallet2", None).is_err());
+    }
+
+    #[test]
+    fn a_short_admin_token_or_validator_secret_stops_startup_without_showing_it() {
+        let short = "sk-example-31-bytes-long-secret";
+        let long = "sk-example-32-bytes-long-secret!";
+        assert_eq!((short.len(), long.len()), (31, 32));
+        for (name, raw) in [
+            (
+                "CATALYRST_BUILDER_ADMIN_TOKEN",
+                (|v: &str| RawSettings {
+                    admin_token: Some(v.into()),
+                    ..RawSettings::default()
+                }) as fn(&str) -> RawSettings,
+            ),
+            ("WEARABLE_VALIDATOR_CALLBACK_SECRET", |v: &str| {
+                RawSettings {
+                    validator_secret: Some(v.into()),
+                    ..RawSettings::default()
+                }
+            }),
+        ] {
+            let err = Settings::parse(raw(short)).unwrap_err().to_string();
+            assert!(err.contains(name) && !err.contains(short), "{err}");
+            assert!(Settings::parse(raw(long)).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn no_secret_reaches_the_settings_printout() {
+        let settings = Settings::parse(RawSettings {
+            polygon_rpc_url: Some("https://rpc.example/v3/sk-example-rpc".into()),
+            admin_token: Some("sk-example-admin-0123456789abcdef".into()),
+            newsletter_service_url: Some("https://newsletter.example/v2".into()),
+            newsletter_publication_id: Some("pub-example".into()),
+            newsletter_api_key: Some("sk-example-newsletter".into()),
+            warehouse_url: Some("https://warehouse.example/?key=sk-example-warehouse-url".into()),
+            warehouse_token: Some("sk-example-warehouse".into()),
+            slack_bot_token: Some("xoxb-example-slack".into()),
+            slack_curation_channel: Some("curation".into()),
+            forum_url: Some("https://forum.example".into()),
+            forum_api_key: Some("sk-example-forum".into()),
+            forum_api_username: Some("builder".into()),
+            forum_category: Some("7".into()),
+            validator_secret: Some("sk-example-validator-0123456789abcdef".into()),
+            ..RawSettings::default()
+        })
+        .unwrap();
+        let printed = format!("{settings:?}");
+        for secret in [
+            "sk-example-rpc",
+            "sk-example-admin",
+            "sk-example-newsletter",
+            "sk-example-warehouse",
+            "xoxb-example-slack",
+            "sk-example-forum",
+            "sk-example-validator",
+        ] {
+            assert!(!printed.contains(secret), "{secret} in {printed}");
+        }
+    }
+
+    #[test]
+    fn the_warehouse_needs_its_url_and_token_and_a_public_url() {
+        let warehouse = |url: &str, token: Option<&str>, prefix: Option<&str>| {
+            Settings::parse(RawSettings {
+                warehouse_url: Some(url.into()),
+                warehouse_token: token.map(str::to_string),
+                warehouse_context_prefix: prefix.map(str::to_string),
+                ..RawSettings::default()
+            })
+        };
+        let forward = warehouse(
+            "https://warehouse.example/events",
+            Some("sk-example123"),
+            Some(" prd "),
+        )
+        .unwrap()
+        .warehouse
+        .unwrap();
+        assert_eq!(
+            (
+                forward.url.as_str(),
+                forward.token.as_str(),
+                forward.context_prefix.as_deref()
+            ),
+            (
+                "https://warehouse.example/events",
+                "sk-example123",
+                Some("prd")
+            )
+        );
+        assert!(warehouse("https://warehouse.example/events", None, None).is_err());
+        assert!(warehouse("https://warehouse.example/events", Some(" "), None).is_err());
+        assert!(
+            warehouse(
+                "https://warehouse.example/events",
+                Some("sk-example123"),
+                Some("")
+            )
+            .unwrap()
+            .warehouse
+            .unwrap()
+            .context_prefix
+            .is_none()
+        );
+        let settings = warehouse(
+            "https://warehouse.example/events?key=sk-example456",
+            Some("sk-example123"),
+            None,
+        )
+        .unwrap();
+        let printed = format!("{settings:?}");
+        assert!(
+            !printed.contains("sk-example123") && !printed.contains("sk-example456"),
+            "{printed}"
+        );
+        let err = warehouse("http://127.0.0.1/events", Some("sk-example123"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("WAREHOUSE_URL") && !err.contains("sk-example123"),
+            "{err}"
         );
     }
 }

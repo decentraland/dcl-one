@@ -3,6 +3,7 @@ import '@/data/lib/creators/test/setup'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ReactNode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ContractNetwork, Mappings } from '@dcl/schemas'
 import { TranslationProvider } from '@/data/lib/creators/intl'
 import { ItemType, type Item } from '@/data/lib/creators/items'
@@ -29,7 +30,11 @@ const item: Item = {
   updatedAt: 1
 }
 
-const wrapper = ({ children }: { children: ReactNode }) => <TranslationProvider>{children}</TranslationProvider>
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <TranslationProvider>{children}</TranslationProvider>
+  </QueryClientProvider>
+)
 
 function renderRow(onSaveMappings = vi.fn().mockResolvedValue(item)) {
   const onMappingDirtyChange = vi.fn()

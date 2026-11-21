@@ -6,15 +6,18 @@
 //! and each item's on-chain metadata string). The `revision` is the CIDv1 of
 //! the snapshot text, so any edit invalidates a review. Nothing here writes
 //! or signs: `publication_store` records the attempt, `publication_chain`
-//! verifies the receipt.
+//! verifies the receipt. A published collection is refused before its
+//! snapshot is prepared ([`chain_state::published`]).
 
 use alloy_primitives::{Address, B256, U256, keccak256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
+
+use crate::access::Publisher;
 
 use dcl_auth::hash_bytes_v1;
 
+use super::chain_state;
 use super::drafts::ItemDraft;
 use super::http::ApiError;
 use super::items::ItemsComponent;
@@ -55,33 +58,73 @@ pub struct PublicationPreparation {
 impl ItemsComponent {
     pub async fn prepare_publication(
         &self,
-        signer: &str,
-        id: Uuid,
+        publisher: &Publisher,
     ) -> Result<PublicationPreparation, ApiError> {
-        if let Some(state) = self.publication_state(signer, id).await?
+        let (signer, id) = (publisher.signer(), publisher.id());
+        if let Some(state) = self.publication_state(publisher).await?
             && state.status != "reverted"
         {
             return Ok(state.preparation);
         }
-        let snapshot: Value = sqlx::query_scalar(SNAPSHOT_QUERY)
+        let mut conn = self.pool.acquire().await?;
+        let view = chain_state::for_decision(&mut conn).await?;
+        let mut snapshot: Value = sqlx::query_scalar(SNAPSHOT_QUERY)
             .bind(id)
             .bind(signer)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *conn)
             .await?
             .ok_or_else(|| ApiError::not_found("Collection not found"))?;
+        if chain_state::published(&mut conn, &view, id).await? {
+            return Err(already_published());
+        }
+        mark_missing_bytes(&self.blobs, &mut snapshot).await?;
         prepare(snapshot, signer)
     }
+}
+
+/// Marks `missing_content` on each item of `snapshot` that names a hash
+/// the store holds no bytes for.
+pub(super) async fn mark_missing_bytes(
+    blobs: &crate::storage::Storage,
+    snapshot: &mut Value,
+) -> Result<(), ApiError> {
+    let mut held = std::collections::HashMap::new();
+    for item in snapshot["items"].as_array_mut().into_iter().flatten() {
+        let hashes: Vec<String> = item["contents"]
+            .as_object()
+            .into_iter()
+            .flat_map(|contents| contents.values())
+            .filter_map(|hash| hash.as_str().map(str::to_string))
+            .collect();
+        for hash in hashes {
+            let stored = match held.get(&hash) {
+                Some(stored) => *stored,
+                None => {
+                    let stored = blobs
+                        .exist(&hash)
+                        .await
+                        .map_err(|e| ApiError::internal(e.to_string()))?;
+                    held.insert(hash, stored);
+                    stored
+                }
+            };
+            if !stored {
+                item["missing_content"] = Value::Bool(true);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn already_published() -> ApiError {
+    ApiError::bad_request("Collection has already been published")
 }
 
 pub(super) fn prepare(snapshot: Value, signer: &str) -> Result<PublicationPreparation, ApiError> {
     let collection = &snapshot["collection"];
     let id = text(collection, "id")?;
     let name = text(collection, "name")?;
-    if collection["is_published"] == true || !collection["contract_address"].is_null() {
-        return Err(ApiError::bad_request(
-            "Collection has already been published",
-        ));
-    }
     if !collection["third_party_id"].is_null() {
         return Err(ApiError::bad_request(
             "Linked collections use their registered provider's publication flow",
@@ -147,7 +190,8 @@ fn text<'a>(value: &'a Value, field: &str) -> Result<&'a str, ApiError> {
 fn prepare_item(row: &Value, signer: &str) -> Result<PublicationItem, ApiError> {
     let item: ItemDraft = serde_json::from_value(row.clone())
         .map_err(|_| ApiError::bad_request("Invalid collection item"))?;
-    item.validate(item.id, signer)?;
+    item.validate(item.id)?;
+    crate::drafts::owned_by(item.eth_address.as_deref(), signer)?;
     let invalid = |reason: &str| ApiError::bad_request(format!("{}: {reason}", item.name));
     if row["missing_content"] == true {
         return Err(invalid("upload missing content before publishing"));
@@ -310,12 +354,19 @@ fn prepare_item(row: &Value, signer: &str) -> Result<PublicationItem, ApiError> 
 mod tests;
 
 /// The frozen draft: the collection row and its items in creation order,
-/// each with its `contents` map (`items_collection_created_idx`). The old
-/// `missing_content` probe (a content row whose hash was never uploaded) is
-/// gone: `item_contents.hash` is a foreign key to `uploaded_contents`.
+/// each with its `contents` map (`items_collection_created_idx`) and
+/// `missing_content`: whether it names a file whose name's writer never
+/// uploaded it (no `uploaded_contents` row for that hash by the entry's
+/// `named_by`, the attribution the file routes read; for `video.mp4`, none
+/// the videos route wrote), which every preparation and begin of both
+/// publications refuses.
 pub(super) const SNAPSHOT_QUERY: &str = "SELECT jsonb_build_object('collection', to_jsonb(c), 'items', \
              COALESCE((SELECT jsonb_agg(to_jsonb(i) || jsonb_build_object('contents', \
                COALESCE((SELECT jsonb_object_agg(ic.file, ic.hash) FROM builder.item_contents ic \
-                 WHERE ic.item_id=i.id), '{}'::jsonb)) ORDER BY i.created_at, i.id) \
+                 WHERE ic.item_id=i.id), '{}'::jsonb), 'missing_content', EXISTS (SELECT 1 \
+                 FROM builder.item_contents ic WHERE ic.item_id=i.id AND NOT EXISTS (SELECT 1 \
+                 FROM builder.uploaded_contents u WHERE u.hash=ic.hash AND u.uploaded_by=ic.named_by \
+                 AND (u.video OR ic.file <> 'video.mp4')))) \
+                 ORDER BY i.created_at, i.id) \
                FROM builder.items i WHERE i.collection_id=c.id), '[]'::jsonb)) \
              FROM builder.collections c WHERE c.id=$1 AND c.eth_address=$2";

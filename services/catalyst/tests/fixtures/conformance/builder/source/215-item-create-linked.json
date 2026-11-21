@@ -1,0 +1,152 @@
+{
+  "description": "PUT /items/{id} signed by the provider manager, creating a third-party item. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "PUT",
+    "path": "/v1/items/c011ec71-0000-4000-8000-0000000003e5",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xCe07842D186368A1aE9897DD7290156A29CD3406\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x22ad22410544a70b1d27a532e621d93be0a59fb1220fb4d0ae089f4e56d3859c3b90b2ef4535210201488305d04289e47fca8040e79a2d0161139e09bba7fba01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"put:/v1/items/c011ec71-0000-4000-8000-0000000003e5:1767225600000:{}\",\"signature\":\"0xc1812b3ed06f94a7f0a2ed64ba0af183441d3d477b600c5674a869c90f4f82411a56392c0158b05e69d060a0ce7511abfff47105c84198ceccf0b927bbcc10731c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": {
+      "item": {
+        "beneficiary": null,
+        "blockchain_item_id": null,
+        "collection_id": "c011ec71-0000-4000-8000-000000000304",
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "id": "c011ec71-0000-4000-8000-0000000003e5",
+        "is_approved": false,
+        "is_published": false,
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Linked scarf",
+        "price": null,
+        "rarity": null,
+        "thumbnail": "thumbnail.png",
+        "total_supply": 0,
+        "type": "wearable",
+        "urn": "urn:decentraland:matic:collections-thirdparty:conformance:items-linked:scarf-3",
+        "utility": null,
+        "video": null
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "beneficiary": "0x0000000000000000000000000000000000000000",
+        "collection_id": "c011ec71-0000-4000-8000-000000000304",
+        "contents": {
+          "model.glb": "bafkreigl2ikuvlnqi45jrzwowmv4uqdjd6oopfwal3usjqi5fiiwm4yqei",
+          "thumbnail.png": "bafkreicjyysmiyonyudrmq6ejc6b7m42uma5fcnqoy6h4frcmugd7jtfma"
+        },
+        "data": {
+          "category": "hat",
+          "hides": [],
+          "replaces": [],
+          "representations": [
+            {
+              "bodyShapes": [
+                "urn:decentraland:off-chain:base-avatars:BaseMale"
+              ],
+              "contents": [
+                "model.glb"
+              ],
+              "mainFile": "model.glb",
+              "overrideHides": [],
+              "overrideReplaces": []
+            }
+          ],
+          "tags": [
+            "conformance"
+          ]
+        },
+        "description": "",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "id": "c011ec71-0000-4000-8000-0000000003e5",
+        "mappings": null,
+        "metrics": {
+          "bodies": 1,
+          "entities": 1,
+          "materials": 1,
+          "meshes": 1,
+          "textures": 1,
+          "triangles": 100
+        },
+        "name": "Linked scarf",
+        "price": "0",
+        "rarity": null,
+        "thumbnail": "thumbnail.png",
+        "type": "wearable",
+        "utility": null,
+        "video": null,
+        "created_at": "<<VOLATILE>>",
+        "updated_at": "<<VOLATILE>>",
+        "local_content_hash": "f72106fc14d117b7c604d456003f599647a9085c78460b2aac79907d5fdb6f5d",
+        "urn": "urn:decentraland:matic:collections-thirdparty:conformance:items-linked:scarf-3",
+        "in_catalyst": false,
+        "is_approved": false,
+        "is_published": false,
+        "content_hash": null,
+        "catalyst_content_hash": null,
+        "total_supply": 0,
+        "blockchain_item_id": "scarf-3",
+        "isMappingComplete": false
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [
+    "data.created_at",
+    "data.updated_at"
+  ],
+  "volatile_equal": [
+    [
+      "data.created_at",
+      "data.updated_at"
+    ]
+  ]
+}

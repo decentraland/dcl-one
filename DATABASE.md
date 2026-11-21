@@ -824,8 +824,1280 @@ fails its bootstrap on the missing relations and stays down.
 The drop is not reversible without the matching backup. Do not reset a
 database.
 
+### Retired builder scenes
+
+The node keeps no scenes: the builder serves no project, manifest, project
+file, asset pack or asset catalogue, and `schemas/50_create.sql` declares none
+of their tables. A database bootstrapped before the removal keeps
+`builder.projects`, `project_manifests`, `project_files`, `asset_packs`,
+`assets`, `asset_contents` and `asset_catalog` until the release script
+`schemas/releases/builder-scenes-retired.sql` drops them. The bootstrap and
+the object pass neither create nor drop them, so until then they are inert.
+
+What the release destroys:
+
+- Every row of the seven tables and their three indexes
+  (`projects_owner_updated_idx`, `asset_packs_project_idx`,
+  `assets_pack_ordinal_idx`).
+- Each `builder.uploaded_contents` row whose hash only a scene row names: a
+  project file, a project, pack or asset thumbnail, or an asset file, that no
+  `builder.item_contents` row and no `builder.items` hash column (`thumbnail`,
+  `video`, `local_content_hash`, `content_hash`, `catalyst_content_hash`)
+  names. Those hashes stop answering on `/v1/storage/contents/{hash}`.
+
+It keeps every item, collection and publication row, and every
+`uploaded_contents` row an item names or no row names. A row no row names is
+an item file that was replaced or whose item was deleted, an imported row
+whose item is gone, or a project blob that never entered a file set. The last
+kind cannot be told apart from the others, so it stays: its uploader alone
+reads it on `/v1/storage/contents/{hash}` ("Builder item files workload"),
+and it keeps its blob from the collector. Blob bytes are never deleted by the release; they stay in the
+store (`STORAGE_ROOT_FOLDER`) until the collector unlinks them.
+
+Rollout, in order:
+
+1. Deploy the binary without the scene routes on every replica and run its
+   `catalyst schema migrate`, which records step
+   `0054_builder_scenes_retired`. Confirm no `serve` of the old build is
+   left. From this point the new binary's collector no longer counts
+   `builder.asset_catalog`, so the asset-pack files the catalogue pulled into
+   the store become collectable; the other scene blobs stay protected by
+   their `uploaded_contents` rows.
+2. Take a restore point: back up the database and the blob store, and test
+   the restore. The drop is not reversible without that backup.
+3. Run the release once, with the administrative role:
+
+   ```sh
+   psql "$DATABASE_URL" -X -f schemas/releases/builder-scenes-retired.sql
+   ```
+
+4. Run `catalyst storage gc` (a dry run) to see the aged blobs no domain
+   names, then `catalyst storage gc --delete` to unlink them.
+
+The release refuses, changing nothing, a database without
+`meta.schema_steps`, one where step `0054_builder_scenes_retired` is not
+recorded (the new binary has not migrated it), one that holds only some of
+the seven tables, and one whose `builder.projects` or `builder.asset_packs`
+changed in the last ten minutes (an old `serve` still editing). It runs in
+one transaction and waits at most 10 s for its locks. Dropping the tables
+takes an exclusive lock on `builder.uploaded_contents`, because their foreign
+keys point at it, so while the release waits and runs, item file uploads and
+the `/v1/storage/contents/{hash}` routes queue behind it; past 10 s it fails
+and rolls back. A second run notes the tables are gone. An old `serve`
+started after the drop fails its bootstrap on the missing relations; an old
+build's `catalyst schema migrate` re-creates the seven tables empty, and the
+release drops them again. Do not reset a database.
+
+### Retired builder collection flags
+
+The builder stores no published or approved flag on a collection: it derives
+both on read ("Builder chain state workload" below). Step
+`0056_builder_collection_flags_retired` drops the two checks that tied a
+contract address to the flag (`collections_contract_published_check`,
+`collections_pending_not_published_check`), so a draft can hold the contract
+address computed before its deployment. A database bootstrapped before the
+change keeps `builder.collections.is_published` and `is_approved` until the
+release script `schemas/releases/builder-collection-flags-retired.sql` drops
+them. The binary neither reads nor writes them, and the bootstrap and the
+object pass neither create nor drop them, so until then they are inert
+(`false` on every row the binary inserts).
+
+What the two checks enforced, and where it holds now:
+
+- `collections_contract_published_check` allowed a contract address only on a
+  published collection. It is gone on purpose: a draft may hold the contract
+  address computed before its deployment.
+- `collections_pending_not_published_check` kept a published collection from
+  having a publication in flight. The code holds it: the standard
+  publication flow refuses a published collection when it prepares and
+  when it begins, after the collection row is locked
+  (`chain_state::published`), and every draft write refuses it after the same
+  lock.
+
+What the release destroys: the two columns and their values. Every other
+column of every collection and item is kept.
+
+Rollout, in order:
+
+1. Set `CREATE_WRITES_ENABLED=false` on every replica. An old `serve` guards
+   creator writes with the stored `is_published`, which this binary no longer
+   sets, so beside it an old replica would accept edits to a collection the
+   new binary published. This holds from the first replica that runs the new
+   binary, whether or not the release has run.
+2. Deploy the binary that derives collection state on every replica and run
+   its `catalyst schema migrate`, which records step
+   `0056_builder_collection_flags_retired`. Confirm no `serve` of the old
+   build is left, then set `CREATE_WRITES_ENABLED` back.
+3. Take a restore point: back up the database and test the restore. The
+   drop is not reversible without that backup.
+4. Run the release once, with the administrative role:
+
+   ```sh
+   psql "$DATABASE_URL" -X -f schemas/releases/builder-collection-flags-retired.sql
+   ```
+
+The release refuses, changing nothing, a database without
+`meta.schema_steps`, one where step `0056_builder_collection_flags_retired` is
+not recorded, one that holds only one of the two columns, and one where a
+collection flagged published has no row in the Polygon collections copy, no
+verified publication, no submitted linked publication and no item with an
+on-chain id (the derived state would read it as a draft). It runs in one transaction and
+waits at most 10 s for its lock. A second run notes the columns are gone. An
+old `serve` started after the drop fails its collection reads and writes.
+The standard publication's review revision is the content hash of the draft
+row, so a publication prepared before the drop and reverted after it is
+reviewed again. Do not reset a database.
+
+### Retired builder item curation status
+
+The builder stores no curation status on an item: it reads the item's
+newest item curation ("Builder curations workload" below). A database
+bootstrapped before keeps `builder.items.curation_status` and `is_approved`
+until the release script `schemas/releases/builder-item-curation-retired.sql`
+drops them. The binary neither reads nor writes them.
+
+What the release keeps: for each third-party item the node submitted itself
+(`is_published`) that has no item curation, it records one with the stored
+status, the item's `local_content_hash` and the item's `updated_at`, so
+the item stays published. A stored status with no curation behind it, on a
+standard item or an unsubmitted one, is dropped with the column; the release
+reports how many.
+
+A node that imported builder-server before it kept item curations holds its
+imported third-party items with no curation and `is_published` false: the
+release drops their stored statuses, its notice counts them, and they read
+as unpublished until the import's `collection_curation`, `item_curation` and
+`slot_usage_cheque` steps copy their curations from builder-server. Run those
+steps (`migrate.py run builder-server`, which also needs `FORUM_URL`) after
+step 3 of the rollout, before or after the release: the curation rows don't
+depend on the dropped columns, and the release records nothing for an item
+that already has a curation.
+
+Rollout, in order:
+
+1. Set `CREATE_WRITES_ENABLED=false` on every replica.
+2. Deploy the binary that keeps item curations on every replica and run its
+   `catalyst schema migrate`, which records step
+   `0062_builder_collection_forum`. Until the release runs, a third-party
+   item the node submitted itself reads as unpublished.
+3. Take a restore point: back up the database and test the restore.
+4. Run the release once, with the administrative role, then set
+   `CREATE_WRITES_ENABLED` back:
+
+   ```sh
+   psql "$DATABASE_URL" -X -f schemas/releases/builder-item-curation-retired.sql
+   ```
+
+The release refuses, changing nothing, a database without
+`meta.schema_steps`, one where step `0062_builder_collection_forum` is not
+recorded, one that holds only one of the two columns, and one with a
+third-party item submitted here, without an item curation, whose
+`local_content_hash` is not 64 lowercase hex digits. It runs in one
+transaction and waits at most 10 s for its locks.
+
+That last refusal means the node recorded a submission whose content hash is
+not the keccak-256 digest an item curation holds: the Foundation answered the
+linked publication with another value. The release names how many such
+items there are and changes nothing. List them with:
+
+```sql
+SELECT i.id, i.collection_id, i.local_content_hash
+FROM builder.items i JOIN builder.collections c ON c.id = i.collection_id
+WHERE c.third_party_id IS NOT NULL AND i.is_published
+  AND NOT EXISTS (SELECT 1 FROM builder.item_curations k WHERE k.item_id = i.id)
+  AND (i.local_content_hash IS NULL OR i.local_content_hash !~ '^[0-9a-f]{64}$');
+```
+
+Then import those items' curations from builder-server (the `item_curation`
+step), which records the hash builder-server holds; an item with a curation
+needs none from the release. Run the release again. Don't edit
+`local_content_hash` to make the check pass: it is the hash the clients
+compare with the catalyst. A second run notes the
+columns are gone. Do not reset a database.
+
 Peer sync is not a backup of local state: a node taking local writes holds the only copy of that data. Before turning a write switch on, the operator backs up the database, the blob store (`STORAGE_ROOT_FOLDER`) and the credentials (`ENCRYPTION_KEY` among them) and tests a restore; the application does not enforce this. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
+
+### Retired builder linked publications
+
+A third-party collection is submitted through `POST
+/v1/collections/{id}/publish` alone, so `builder.linked_collection_publications`
+has no reader or writer. Fresh databases don't have it. Step
+`0064_builder_linked_publications_retired` clears `publication_pending` on
+every third-party collection, which only that flow set, so an attempt left
+in flight doesn't keep its collection's drafts at 423.
+
+With the new binary serving and a verified backup, run
+`schemas/releases/builder-linked-publications-retired.sql` after
+`builder-linked-forum-retired.sql`. It copies the cheque of each `submitted`
+row into `builder.slot_usage_cheques` (lowercased, `v` stored as 27 or 28,
+`created_at` the row's `updated_at`, a salt its provider already used
+skipped), clears `publication_pending` on third-party collections again and
+drops the table, in one transaction with a 10 s lock timeout. It refuses,
+changing nothing, a database without step 0063, one that still holds the
+linked forum column, and one with a submitted row whose cheque a cheque row
+can't keep. A second run notes the table is gone. Until it runs,
+`approvalData` answers 401 for a collection whose only cheque is in that
+table.
+
+## Builder chain state workload
+
+The builder derives a collection's chain state on read and never stores it
+as a flag (`services/catalyst/builder/src/chain_state.rs`, decided in
+[the builder chain state ADR](docs/adr/2026-11-19-builder-derives-collection-chain-state.md)).
+It reads the shop's copy of the Polygon collections subgraph by shared SQL
+and never writes it: `shop.collections` (`network`, `contract_address`,
+`name`, `is_approved`, `creator`, `owner`, `managers`, `minters`,
+`created_at`, `updated_at`, `reviewed_at`, `mirrored_at`), `shop.items`
+(`network`, `contract_address`, `item_id`, `urn`, `item_type`, `price`,
+`beneficiary`, `rarity`, `total_supply`, `content_hash`, by network, contract
+and item id: a minted item's body; by network and contract: what a changes
+submission compares each item's content with, "Builder validation requests
+workload") and `shop.mirror_state` (`last_complete_pass_at`,
+`pass_started_at` and `cursor_id` of `('collections', 'matic')`). The shop's
+`collections-mirror` and items mirror jobs write them; the builder reads
+`network = 'matic'` only, as upstream reads only the Polygon subgraph.
+
+The builder's own rows: a `builder.collections` row is a creator's draft.
+
+- `eth_address` is its owner: the signed-fetch signer at creation, which
+  every write checks again.
+- A standard collection is published through
+  `builder.collection_publications`, whose verified finish writes its
+  contract address and collections-v2 urn, or it arrives with the contract
+  address computed before its deployment. A deployment the client sent
+  itself is recorded by `POST /v1/collections/{id}/publish`: once the copy,
+  or else the Polygon RPC, holds the contract at that address, each item
+  gets the on-chain id of its place in creation order, and the collection
+  reads as published from then on.
+- A third-party collection carries its provider urn from the draft on
+  (`third_party_id` is the urn without its last segment). It is published
+  once an item of it has an item curation: `POST
+  /v1/collections/{id}/publish` submits the items a provider manager names,
+  with its slot cheque ("Builder curations workload").
+- `publication_pending` freezes the draft and its items while the standard
+  publication row is in flight.
+
+The curation console's under-review listing reads the collections subgraph
+through the marketplace's subgraph readers and adds no table; its committee
+list reads the committee index ("Curation committee" below). The collection body and the collection listings read the copy
+("Builder collection listings workload" below), and so do the item bodies and
+listings ("Builder items workload" below).
+
+Deployment: the node that serves the builder needs that copy, either by
+running the collections mirror (`MARKETPLACE_MIRRORS_ENABLED=true` with
+`MATIC_COLLECTIONS_SUBGRAPH_URL`; `MARKETPLACE_MIRROR_INTERVAL_SECS` sets its
+period) or by sharing a database a mirroring node fills. Without a complete
+pass every builder route that reads published or approved state answers 503:
+the collection read, the draft listings and searches, every draft write and
+the publication preparations. Nodes under the `island` and `journey`
+postures, and the `offline` development profile, run no mirror, so those
+routes answer 503 there. The builder logs the condition (no complete pass,
+or a stale one) once each time it changes, with the settings above.
+
+Invariants:
+
+- Readiness first. Every request that reads derived state reads the copy's
+  last pass in the same connection. No complete pass: 503 in the builder's
+  envelope, with the write gate's kind of message and nothing more. A last
+  complete pass older than 30 minutes (`chain_state::STALE_AFTER`, twice the
+  collections mirror's default period): listings and bodies are served from
+  the copy. Every decision that grants access or allows a write answers 503,
+  and so does the standard publication's preparation, which refuses a
+  published collection.
+- A decision also dates what it read. A row older than 30 minutes by its own
+  `mirrored_at` (every pass rewrites every row it walks) answers 503 when its
+  facts are asked for. An absence is dated by the start of the pass that saw
+  it: the start of the last complete pass, or of the pass in progress once
+  its cursor is past the contract. The cursor comparison is a string
+  comparison of lowercase `0x` contract addresses of one length, the order
+  the subgraph walks them in (`orderBy: id`). An absence older than 30
+  minutes, or one whose pass start was overwritten by the next pass, answers
+  503. A guard reads no copy row for a collection without a contract address.
+- Clocks: the mirror stamps `last_complete_pass_at`, `pass_started_at` and
+  `mirrored_at` with its own host's clock, and the builder measures their age
+  with its own host's clock. The hosts that run the mirror and the builder
+  keep synchronized clocks: a mirror clock ahead of the builder's by some
+  amount lets a decision accept data that much older than 30 minutes, and
+  one behind refuses data that much younger.
+- Published is any of: a `shop.collections` row for `('matic',
+  lower(builder.collections.contract_address))`; a `published`
+  `builder.collection_publications` row; an item of the collection
+  with a `blockchain_item_id`; an item of the collection with an item
+  curation (`builder.item_curations`). The node's own records close the window
+  between a deployment and the copy's next pass. `publication_pending` stays
+  a stored state of the node's flow, not a published flag.
+- Approved is the copy's `is_approved` for a standard collection. A
+  third-party collection, which has no contract, is never approved.
+- A published collection begins no publication and takes no draft write.
+  The standard publication refuses it when it prepares and when it begins
+  (`chain_state::published`, after the collection row is locked); every draft
+  write refuses it after the same lock. A collection may hold its contract
+  address before deployment.
+- Addresses: the copy stores contract, creator and owner lowercase and the
+  role lists as the subgraph sends them; the builder compares
+  `lower(contract_address)` and lowercases the role lists it returns.
+- A write guard takes the collection row `FOR UPDATE` first and reads the
+  derived state in a later statement, so a writer that waited on a
+  publication sees what it committed.
+
+Queries and indexes, measured with `EXPLAIN (ANALYZE, BUFFERS)` on PostgreSQL
+18 with its default JIT, over 52,042 copy rows, 90,000 copy items, 51,745
+builder collections (every standard one on the copy) and 89,000 builder
+items:
+
+| Query | Plan | Time |
+| --- | --- | --- |
+| Readiness, by `(mirror, network)` | a scan of the one-row `mirror_state` | 0.01 ms |
+| A collection's facts by contract | `shop.collections` primary key | 0.01 ms |
+| One collection's derived state (every write guard, `GET /v1/collections/{id}`) | `builder.collections` primary key, the copy joined by its primary key, `items_collection_created_idx` | 0.03 to 0.04 ms |
+| An owner's drafts | `collections_owner_idx`, then per row as above | 0.1 ms |
+| The public search, `LIMIT 1000` | a scan of `builder.collections` filtered by name, the copy hash-joined once | 25 ms (1,111 matches), 53 ms (every row), 13 ms (none) |
+| The committee's drafts, `LIMIT 1000` | the same join; the node's own records probed per row, which costs the plan past the JIT threshold | 272 ms, 191 ms of it JIT |
+| The committee's item drafts, `LIMIT 1000` | an anti join of `builder.items` to `collections_pkey`, a copy probe per item | 547 ms when every item's collection is published |
+
+No index on the copy is added: every probe is a primary-key lookup. The two
+committee listings read every row's derived state; they are signed and
+committee-only.
+
+Freshness: a collection deployed outside the node's own flow reads as a
+draft until the next collections pass, up to three times
+`MARKETPLACE_MIRROR_INTERVAL_SECS` (15 minutes at the default 300) plus the
+subgraph's lag; with the mirror failing, its backoff decides, up to an hour,
+and decisions answer 503 once the pass, the row or the absence is 30 minutes
+old. `shop.items.content_hash` (the subgraph `Item.contentHash`, written by
+the items mirror) follows the items pass, once per interval; a row the
+mirror hasn't walked since the column was added holds NULL.
+
+## Builder collection listings workload
+
+The builder answers a collection's body and its two listings from
+`builder.collections`, `builder.items` and the chain copy
+(`services/catalyst/builder/src/collections/`).
+
+- `GET /v1/collections`, the committee's listing: signed, current committee
+  members only; the curation page asks 12 rows at a time, sorted by
+  relevance, published only. At most 1,000 rows per response.
+- `GET /v1/collections?q=..&is_published=true`, the public search: anyone,
+  within its source address's read budget (`builder::limits`); the
+  marketplace sends `status=approved&limit=5` per keystroke. At most 1,000
+  rows.
+- `GET /v1/{address}/collections`: signed by that address; pages of 20, or
+  the address's unpublished collections unpaginated. At most 5,000 rows (the
+  largest owner holds 1,542 collections).
+- `GET` and `PUT /v1/collections/{id}`: one collection; a save locks its
+  row, takes an advisory lock on the name (standard) or URN (third party) it
+  claims, and checks that no other collection has it. A third-party save
+  that changes the collection's URN moves its items' URNs to the new prefix
+  in the same transaction, and first refuses (409) when an item would take a
+  URN that `content.active_pointers` names with an active
+  `content.deployments` entity (`deleter_deployment IS NULL`), one pointer
+  probe per item of the collection. A save that creates a collection also
+  counts its owner's drafts ("Drafts held per wallet" below).
+
+Invariants:
+
+- Values reach a listing statement only as bound parameters; every
+  fragment, filter and sort is a constant chosen by matching.
+- A listing reads in one read-only repeatable-read transaction with JIT off:
+  the page, its total and its status counts agree, and the plans stay a few
+  milliseconds of work that JIT never paid back.
+- A page selects its ids first (narrow sort, `LIMIT`, `OFFSET`) and builds
+  bodies only for them (`c.id = ANY(ARRAY(...))`).
+- The public search resolves the published collections whose name matches
+  first, probing only the published ids (`items_minted_collection_idx` and
+  the third-party collections with a curated item, then `collections_pkey`
+  with the name
+  filter), and binds them; no statement reachable without a signature reads
+  every collection.
+- An address listing resolves the address's collection ids first (its
+  stored rows by `collections_owner_idx`, and the copy's rows naming it
+  creator, manager or minter), then binds them.
+- Names are unique among standard collections case-insensitively by the
+  save's check under its advisory lock (keyed by PostgreSQL's `lower()`),
+  not by an index: imported data holds 64 groups of duplicate names.
+- A linked contract belongs to one collection per provider:
+  `collections_linked_contract_key UNIQUE (third_party_id,
+  linked_contract_address, linked_contract_network)`, NULLs distinct, the
+  address stored lowercase. Once set, it is never cleared: the `BEFORE
+  UPDATE` trigger `collections_linked_contract_kept` refuses a row that
+  sets either column from a value to NULL. The reference data holds no
+  duplicate.
+- The public search's item tags are at most 5 values of at most 64
+  characters, each matched by a per-collection probe of the items
+  (`OFFSET 0` keeps it a probe), so it never scans every item.
+- Freshness: every save decides from a copy at most 30 minutes old; a read
+  of a draft too, except the stored owner's read of a third-party draft or
+  of a standard draft whose contract the copy doesn't hold, which a
+  complete pass of any age serves, as the owner's listing does.
+
+Indexes created with step `0057_builder_collection_listings` (the step adds the
+columns, checks and the unique constraint; the object pass that follows it
+builds the indexes, the function and the trigger):
+
+| Index | Serves | Cost on write |
+| --- | --- | --- |
+| `items_minted_collection_idx (collection_id) WHERE blockchain_item_id IS NOT NULL` | the published filter and the public search's driving set | one entry per minted item, written when a publication assigns on-chain ids |
+| `collections_standard_name_idx (lower(name)) WHERE third_party_id IS NULL` | the name-in-use check of every standard save | one entry per standard collection save that changes the name |
+| `collections_third_party_urn_idx (urn_suffix) WHERE third_party_id IS NOT NULL` | the URN-in-use check of every third-party save | one entry per third-party collection |
+
+Measured with `EXPLAIN (ANALYZE, BUFFERS)` on PostgreSQL 18 over 51,742
+collections and 89,043 items copied from a production-shaped database and
+52,000 copy rows (5,575 of them the builder's published contracts):
+
+| Query | Time |
+| --- | --- |
+| The committee's drafts listing it replaced, 1,000 rows | 172 ms |
+| Curation page: 12 rows, relevance, published only, and its count | 23 ms + 4 ms |
+| Committee, 1,000 rows unsorted | 11 ms |
+| Committee page of 12 by creation or update date / by name / by last activity | 6 ms / 47 ms / 176 ms |
+| Committee `status=to_review` count; item tag count | 32 ms; 93 ms |
+| Public search, the matching published ids then the page: 1 character (1,000 rows) / 3 characters / no match / 256 characters | 18 / 9.5 / 7.5 / 13 ms |
+| Public search as the marketplace sends it (5 approved rows) | 7.8 ms |
+| Public search, 1 character, 5 tags of 64 characters (the worst the bounds allow) | 13 ms |
+| Address ids, owner of 1,542 / a manager-only wallet | 16 / 22 ms (the copy's role lists are scanned; a signed request about the signer's own wallet) |
+| Address listing, owner of 1,542, page of 20 + total + status counts | 7 + 13 + 60 ms |
+| Address listing, owner of 1,542, unpaginated | 30 ms |
+| One collection's body | 0.22 ms |
+| Save: row lock, advisory lock, name in use, URN in use | 0.11, 0.01, 0.17, 0.10 ms |
+
+No index on the copy is added: a GIN index on its role lists would cost a
+write on every mirror pass for 16 to 22 ms on a signed request.
+
+An address listing's `status` filter and status counts, and the committee
+listing's REQUESTED_AT and MOST_RELEVANT sorts, read each collection's newest
+curation as well: a status is a rejection first, then the chain's approval
+(under review while the newest curation is pending), then an approval the
+chain doesn't show (disabled); REQUESTED_AT is the newest pending item
+curation, else the newest item curation, else the newest collection
+curation, else the creation; MOST_RELEVANT ranks to review, under review,
+approved, rejected, then the rest. Each is a per-row probe of
+`collection_curations_collection_created_key`, and REQUESTED_AT also of
+`items_collection_created_idx` and `item_curations_item_created_key`.
+Measured on a scratch copy of the fresh schema at the reference scale
+(51,742 collections, 89,043 items, 38,211 item curations, 4,755 collection
+curations, 52,000 copy rows), JIT off: curation page of 12 by relevance,
+published only, 44 ms and its count 2 ms; a page of 12 by REQUESTED_AT_DESC
+over every collection 178 ms, published only 48 ms; by relevance over every
+collection 133 ms; the status counts of the owner of 1,542 collections
+27 ms and its `status=rejected` page 26 ms. The sort over every collection
+probes each row once; no index serves the ordering.
+
+The committee listing's `status` and `assignee` filters read each
+collection's newest curation (`collection_curations_collection_created_key`),
+its pending item curations and, for `auto_reviewing` while the review flow is
+on, its open validation request (`validation_requests_open_key`) and the
+timeline events since that request started
+(`collection_events_collection_created_idx`). A collection is in an automated
+review while its newest curation is pending and it has an open request no
+curator decided after; the flow's switch is read only for a listing that
+filters by status or sorts by relevance. Measured on a scratch copy of the fresh schema with 8,298
+collections, 4,149 on chain, two curations each and 794 open requests (count;
+a page of 12 by creation, JIT off): `to_review` 18 ms, `pending` 15 ms,
+`under_review` 6 ms, `auto_reviewing` 6 ms. The cost grows with the
+collections the other filters leave. At the reference scale (51,745
+collections, 38,211 item curations and 4,755 collection curations imported, 5,575
+collections in the copy, JIT off) a committee page reads every collection in a
+sequential scan: 110 to 475 ms without filters, 160 ms to 1.4 s by last
+activity, 33 to 850 ms per status, 1.1 to 2.9 s with five tags, and 3 to
+545 ms for its count. No index is added: the page takes the newest curation
+of every collection and sorts on values derived per row, so no index reaches
+the rows a page answers without changing its answers; the listing is signed
+and committee-only.
+
+## Builder items workload
+
+The builder answers items as builder-server does
+(`services/catalyst/builder/src/items/`): one item by id, a collection's
+items, an address's items, every item for the committee, the save, the
+delete and the file upload.
+
+Tables and what they hold:
+
+- `builder.items`: one row per item. `data` and `metrics` are `json`
+  documents kept as the save wrote them, keys in order, because a published
+  item's content hash (`local_content_hash`) serializes them in that order.
+  `mappings` is `jsonb`. `urn_suffix` holds a third-party item's full URN and
+  the URN the node recorded when it published a standard item.
+  `is_published` is the node's record of its own publication; a
+  third-party item is published once it has an item curation.
+- `builder.item_contents`: one row per file an item names, with its
+  `position` in the item's `contents` (array-index names first, then the
+  order saved). An item may name any content hash; nothing references
+  `builder.uploaded_contents` by key.
+- `builder.uploaded_contents`: one row per hash and uploader, the record that
+  this wallet sent the bytes and the node stored them in the blob store's
+  builder tree (`<STORAGE_ROOT_FOLDER>/builder`), which no content or worlds
+  route reads.
+  An upload stores only a hash its item names, verified against the bytes.
+  `size` is at most 250,000,000 bytes, the largest item video
+  (`uploaded_contents_size_check`; step `0065_builder_uploaded_video_size`
+  sets it on an applied database). `video` is true only on a record the
+  videos route wrote after its MP4 check (step
+  `0068_builder_uploaded_video_checked` adds it, false, to an applied
+  database); both publications and the approval's video pin take no other
+  record for a `video.mp4` entry.
+
+Workload, at about 116,000 items, 51,700 collections and 420,000 content rows
+(the reference data; measured on a scratch copy):
+
+| Statement | Index | Measured |
+| --- | --- | --- |
+| a collection's items, ids then bodies (largest collection 12,665 items) | `items_collection_created_idx` | ids 3 ms; a page of 50 under 1 ms; all 12,665 bodies about 110 to 160 ms |
+| an address's items: its items with no collection, the items of the standard collections it owns (stored owner while the copy lacks the collection, the copy's `creator` once it holds it) and of its providers' collections | `items_owner_updated_idx`, `collections_owner_idx`, the copy's primary key and `collections_creator_idx`, `items_collection_created_idx` | 28 ms for a page of 60 with its total, for the owner of 1,542 collections at the reference scale (a hash join over the copy's 52,000 rows) |
+| `GET /v1/items`, the 1,000 oldest | `items_created_idx`, then primary keys | ids under 1 ms; their 1,000 bodies about 10 ms |
+| a listing's document bytes, before its bodies (data, metrics, mappings and each file name and hash of the page's items) | primary key, `item_contents_pkey` | read with the bodies' transaction; a listing over 64 MiB is refused before its bodies |
+| an item save by URN, before its access decision: the item at the path's full URN in one of the provider's collections | `items_urn_idx` (partial, `urn_suffix IS NOT NULL`), then `collections_pkey` | 0.28 ms on 115,000 synthetic items in 500 collections, against a 12 ms scan without the index |
+| one item by id with its chain merge | primary keys | under 0.3 ms |
+| a save's contents for 198 files, and the upload record cleanup | `item_contents_pkey`, `item_contents_hash_idx` | under 10 ms warm |
+| the catalyst's entity at each listed item's URN (12,665 items, 1,500,000 synthetic deployments, 6,000 at the items' URNs, cold cache) | `active_pointers_pointer_ops_idx` per item, `deployments_entity_id_key` per hit | about 1.6 s for the whole collection; one item 0.5 ms |
+| the third-party URN check's entity probe | `active_pointers_pointer_ops_idx`, `deployments_entity_id_key` | 0.5 ms |
+
+Invariants:
+
+- The catalyst is this node's content. A body reads, by shared SQL and in
+  the same statement, the active (`deleter_deployment IS NULL`) wearable or
+  emote deployment that `content.active_pointers` names at the item's
+  lowercased URN: a third-party item's own URN, a minted item's URN on the
+  chain copy. A third-party item matches only an entity whose metadata `id`
+  is its URN exactly, a minted item one whose `id` equals its URN ignoring
+  case; an entity the content denylist withholds is dropped after the read.
+  A match answers `in_catalyst` true and, for a third-party item, approved,
+  published and `catalyst_content_hash` = `metadata.merkleProof.entityHash`;
+  no match answers the node's own records, never 503. The third-party save
+  that claims a new URN refuses a URN with an active entity (409) and takes
+  one without only when the process is its own content authority or
+  `content::sync::item_coverage::item_history_coverage` answers covered for
+  both item types, read before the last entity probe; otherwise 503 and
+  nothing written. A third-party collection save that changes the
+  collection's URN refuses (409) to move an item onto a URN with an active
+  entity ("Builder collection listings workload"). The builder never writes
+  these tables.
+- Bounds. A collection's or an address's items answer at most 20,000 rows
+  per response, `GET /v1/items` 1,000; an upload carries at most 256 parts,
+  empty ones included, and 20 MiB in all; a video upload one part of at most
+  250,000,000 bytes. Filters are bound values over fixed SQL.
+- Pages first. A listing resolves the page's ids and the total, then reads
+  the bodies of that page only, in a read-only transaction without JIT.
+- One transaction per write. A save, a delete and an upload lock the item's
+  collections and the item (`FOR UPDATE`, collections first, as the
+  publications do) and decide again inside the transaction. A video upload
+  holds no connection while its body streams to a spool file; its
+  transaction starts once the body has arrived. A third-party
+  save also takes an advisory lock on its URN's item part, so two saves never
+  take the same item part in the provider's collections.
+- Upload records follow the names. When a save or a delete leaves a hash no
+  item names, in its contents or as its video, its upload records go in the
+  same transaction. The blob
+  collector keeps a blob while `builder.uploaded_contents.hash` names it; a
+  name in `builder.item_contents.hash` keeps nothing, so once the last record
+  goes the collector may take the bytes.
+- A publication takes only uploaded files. The publication snapshot
+  (`SNAPSHOT_QUERY` in `services/catalyst/builder/src/publication.rs`) marks
+  an item `missing_content` when it names a hash with no upload record by the
+  wallet that wrote that name (`item_contents.named_by`), and both the
+  standard publication and the third-party publish refuse such an item
+  before they write (tests
+  `a_standard_publication_takes_only_files_each_names_writer_uploaded` and
+  `every_refusal_answers_before_anything_is_written`).
+
+Upgrade: step `0058_builder_item_contents_order` adds `item_contents.position`
+and drops the key from `item_contents.hash` to `uploaded_contents`. A step
+can't retype a column or change a primary key, so the release
+`schemas/releases/builder-item-documents-and-uploaders.sql` turns `data` and
+`metrics` into `json` and keys `uploaded_contents` by hash and uploader. It
+refuses a database without step 0057, one where a table still references
+`builder.uploaded_contents` by key (run `builder-scenes-retired.sql` first)
+and one where only one of the two documents is `json`; a second run notes
+it's done. Until it runs, item saves and uploads answer 503 naming the
+release and the item import refuses to load; item reads, listings and
+deletes keep working. A node asks the database once per write until the
+release holds and then stops asking.
+
+Rollout, in order:
+
+1. Deploy the binary on every replica with creator writes closed
+   (`CREATE_WRITES_ENABLED=false`) and run its `catalyst schema migrate`,
+   which records step 0057. Confirm no `serve` of an older build is left.
+   Once the release has run, an older binary answers 500 to every item file
+   upload (its upload record names a key the release replaces) and to a
+   collection listing filtered by tag, and its item saves store documents in
+   `jsonb` key order, which the content hashes don't match.
+2. Run `builder-scenes-retired.sql` if it hasn't run ("Retired builder
+   scenes" above), then this release once, with the administrative role:
+
+   ```sh
+   psql "$DATABASE_URL" -X -f schemas/releases/builder-item-documents-and-uploaders.sql
+   ```
+
+3. Open creator writes, then run the item import if the node takes upstream's
+   items.
+
+The retype holds an exclusive lock on `builder.items` and
+`builder.uploaded_contents` while it rewrites them, about ten seconds at the
+reference data's size without secondary indexes and longer with them.
+
+## Builder item files workload
+
+The builder serves item files from the blob store's builder tree
+(`<STORAGE_ROOT_FOLDER>/builder`) at `GET` and `HEAD
+/v1/storage/contents/{hash}` and answers `GET .../exists`
+(`services/catalyst/builder/src/handlers/storage.rs`). One statement,
+`FILE_READ` in `services/catalyst/builder/src/access.rs`, decides each
+request before any byte is read.
+
+Each `builder.item_contents` row keeps `named_by`, the wallet whose save wrote
+that name (`items/save.rs`: a re-sent file and hash, or a hash the item
+already named under another file name, keeps its writer; a hash the item
+didn't name takes the saving signer; the import writes the item's owner). An
+item's `video` is a name too, with its writer in `builder.items.video_named_by`
+(kept while the video is, else the writer of the item's own entry for that
+hash, else the saving signer; the import writes the owner). A name counts only
+while `builder.uploaded_contents` holds `(hash, named_by)`, or
+`(video, video_named_by)` for a video.
+
+It reads, never writes:
+
+- `builder.uploaded_contents` by `hash`: the wallets that sent the bytes, in
+  upload order for the public answer, and `(hash, signer)` for a signed one.
+- `builder.item_contents` by `(hash, named_by)` and `builder.items` by
+  `(video, video_named_by)` (`items_video_idx`) for each of those wallets,
+  then `builder.items` and `builder.collections` by primary key: whether a
+  name that counts sits in a published item (a third-party item with an item
+  curation, `item_curations_item_created_key`), or, for an entry, in an item the signer owns or whose
+  third-party collection it manages.
+- The chain copy row of each standard collection (`shop.collections` by
+  network and contract, any age) and the node's own publication records, for
+  whether the collection is published.
+
+Workload, at the reference size (51,744 collections, 116,181 items, 417,340
+content rows, 302,093 upload records, 5,575 chain rows; scratch copy, custom
+and generic plans):
+
+| Request | Measured |
+| --- | --- |
+| an unsigned read of a published item's file (the hot path) | 0.25 to 0.3 ms |
+| the same, with a wallet that holds the bytes naming them in 100,000 drafts | 0.22 to 0.26 ms |
+| a signed read of that file, by a stranger or by that wallet | about 0.3 ms |
+| a draft's file named in 100,000 drafts of a wallet without the bytes, unsigned or signed | 0.1 to 0.4 ms |
+| an unsigned read of the hash most items name (2,421) | 2.4 to 2.6 ms |
+| a stranger's signed read of that hash | 2.5 to 13 ms |
+| the largest owner's (12,669 items) signed read of that hash | 9.9 to 13.3 ms |
+| an absent hash | under 0.2 ms |
+| worst case: a hash no published item names, its bytes held by a wallet that names it in 100,000 of its own drafts | about 100 ms |
+
+Every probe is index-served (`uploaded_contents_pkey`,
+`item_contents_hash_named_by_idx`, primary keys,
+`items_minted_collection_idx`). A request's cost grows only with the names
+written by wallets that hold the hash's bytes: names written without the
+bytes are never visited, the public answer stops at the earliest uploader's
+published name, and a signed request runs its own branches only when the
+public answer is no. So a published file's reads, signed or not, stay bounded
+however many drafts name it. The worst case needs a hash no published name
+reaches first, and a wallet that uploaded its bytes itself and names it in
+many drafts: for a private file that wallet already holds the bytes, and the
+cost grows linearly with its own names (about 100 ms at 100,000). Per-signer
+limits on saves bound it.
+
+Invariants:
+
+- The answer depends on the hash and the verified signer only. A hash that
+  isn't a canonical CID never reaches SQL or the store.
+- A stale copy never grants. The copy never deletes a collection row, so a
+  row of any age proves a collection on chain; the decision takes no
+  `DecisionView` and no committee read, and a stale copy only leaves a
+  collection the node holds no record of unpublished a while longer.
+- An upload record is the only proof a wallet holds a file, and a name in an
+  item opens a file only when its writer holds one. On-chain roles never
+  stand in for the writer.
+- A save or a delete that leaves no item naming a hash removes its upload
+  records in the same transaction, so the file is refused at once. A record
+  that no item names (an imported record whose item is gone, a blob of a
+  retired scene project) stays readable by its uploader alone and keeps its
+  blob from the collector.
+
+Upgrade: step `0060_builder_item_video_named_by` adds `video_named_by`
+(nullable, a check that refuses an empty or uppercase writer) and fills each
+video from the writer of the item's own entry for that hash, one holding an
+upload record first; a video no entry of its item names keeps no writer, so it
+opens nothing until a save writes it again. `schema migrate` builds
+`items_video_idx` from `schemas/50_create.sql`.
+
+Upgrade: step `0059_builder_item_contents_named_by` adds `named_by` (`NOT
+NULL DEFAULT ''`, a check that refuses an empty or uppercase writer) and fills
+it in place. Each existing name goes to the first wallet that could have
+written it and holds the bytes, else to the item's owner: in order, the
+item's owner, the stored owner of a third-party collection, a standard
+collection's chain creator (else its stored owner), a chain manager, each
+only when it holds an upload record for the name's hash. The index
+`item_contents_hash_named_by_idx` is created by `schema migrate` from
+`schemas/50_create.sql`.
+
+### Storage held per wallet and per node
+
+A wallet's uploads may hold a bound of bytes and files that no published
+item names, and every wallet's together `BUILDER_UNPUBLISHED_MAX_BYTES` and
+`BUILDER_UNPUBLISHED_MAX_FILES` (`builder::limits::within_storage`; the
+values are in `services/catalyst/docs/builder.md`, "Bounds"). `POST
+/v1/items/{id}/files` and `POST /v1/items/{id}/videos` ask once each, after
+the access decision and the upload's place and before the body is read; the
+body's declared length, else the route's largest body, counts as stored.
+
+Each upload reads two things:
+
+- The wallet's whole total and count, from
+  `uploaded_contents_uploaded_by_idx (uploaded_by) INCLUDE (size)` alone (an
+  index-only scan): 0.1 ms for a wallet of 72 records, 2.7 ms for one of
+  36,000. Most uploads stop here for the wallet.
+- The node's last count of unpublished uploads, kept in process memory for a
+  minute, plus what this process stored since that count ran.
+
+The count runs one at a time per process, in a task of its own once the kept
+count is a minute old. A request waits for a count only when none is kept
+yet (the process's first upload) or when its wallet's whole total passes the
+wallet's bound and no count younger than a minute lists the wallet; no other
+request scans the table. The count has two stages:
+
+1. One aggregate over `builder.uploaded_contents`, grouped by uploader
+   (`GROUPING SETS ((uploaded_by), ())`): the total of every record, and the
+   totals of each wallet whose records come within one largest upload of its
+   bound (a video's body in bytes, an upload's parts in files). A scan of the
+   table.
+2. Only when a wallet is listed or every record together reaches half the
+   node's bound: the records that no published item names, per listed wallet
+   and for the node, as one anti-join of the records against the set of
+   hashes a published item names in a name whose writer holds an upload
+   record (`PUBLIC_HASHES` in `builder/src/access.rs`, the item files rule's
+   public answer as a set, materialized once), under a 50-second statement
+   timeout with JIT off. A count that can't finish in time logs a warning and
+   counts every record, which bounds the unpublished ones from above.
+
+Between counts, a listed wallet's count moves by how much its whole total
+changed since, and the node's by what this process stored, so a publication
+frees a wallet's uploads within a minute.
+
+Measured on PostgreSQL 18 with a release build over a synthetic table: both
+stages at 1,000,000 upload records and 1,000,000 item names took 2.8 to 3.1 s
+with 100 wallets holding each hash and 3.3 s with one holder each. The cost
+is linear in the records and the names and independent of how many wallets
+share a hash; near 10,000,000 records it approaches the statement timeout.
+
+Invariants:
+
+- A published item's files never count, so publishing frees a wallet's
+  bound; deleting an item frees it once no item names the hash (the delete
+  removes the upload records in its transaction).
+- Uploads in flight at once can each pass the check: a wallet's video and
+  four file uploads in flight can overshoot its bound by their sizes, and
+  the node's bound counts another process's uploads only from the next
+  count, at most a minute later.
+- One process runs one count at a time. Once a count is kept, a request
+  whose wallet's whole total is within its bound, or whose wallet a count
+  younger than a minute lists, never waits for one.
+
+`schema migrate` builds the index from `schemas/50_create.sql`.
+
+### Drafts held per wallet
+
+A wallet's drafts are bounded too (`builder::items::save` `within_documents`
+and `builder::collections::save` `within_collections`; the values are in
+`services/catalyst/docs/builder.md`, "Bounds"): the items it holds that no
+publication names, its unpublished collections, and the stored bytes of
+those items' documents. The busiest wallet in the reference data holds
+12,669 items and 1,542 collections.
+
+Every item save, and every save that creates a collection, first takes a
+transaction-scoped advisory lock keyed by its owner (`builder drafts of
+<owner>`), so the saves of one wallet sent at once count one after another.
+Then, in the save's transaction:
+
+- An item save counts every item the owner holds by `eth_address`
+  (`items_owner_updated_idx`), and only when that many items at the largest
+  item body could pass the byte bound, sums their stored documents
+  (`pg_column_size` of `data`, `metrics` and `mappings`).
+- A save that creates a collection counts every collection the owner holds
+  by `eth_address` (`collections_owner_idx`).
+- Only past a bound does it count the unpublished ones: the items of a
+  standard collection that neither the chain copy nor the node's
+  publication records show published, the items with no collection, the
+  third-party items without an item curation, and the collections not
+  published. The save is refused (413) only when those pass the bound.
+
+Invariants:
+
+- A published item or collection never counts, so publishing frees a
+  wallet's bound.
+- Only a new item counts toward the item bound: a wallet at its bound still
+  saves the items it holds, within the byte bound.
+- Two saves of one wallet never both pass a bound by counting before the
+  other writes.
+
+## Builder newsletter workload
+
+`POST /v1/newsletter` forwards each accepted subscription to the
+newsletter service and stores nothing: no statement reads or writes
+`builder.newsletter_subscriptions`, which stays in the schema. Its budgets,
+in process memory, bound the forwards: 10 an hour per source address, 3 a
+day per email, 1,000 an hour per node.
+
+## Builder small reads workload
+
+The builder answers four unsigned reads from its own rows and the chain copy
+(`services/catalyst/builder/src/handlers/small_reads.rs`). The marketplace
+web calls the item contents read for a smart wearable's video and the
+addresses read by tag, on each page view. Neither has a rate limit: an
+addresses read costs 40 to 100 ms of database time at the reference size,
+and a request that varies its query string misses any cache the five-minute
+`Cache-Control` lets in front of it. The rarities and `GET /v1/info` read no
+table.
+
+- `GET /v1/published-collections/{address}/items/{id}/utility` and `GET
+  /v1/items/{address}/{id}/contents`: one item, found by its standard
+  collection's stored contract (`collections_contract_address_key`) and its
+  on-chain id among that collection's minted items
+  (`items_minted_collection_idx`), then read by primary key. A contract that
+  isn't a lowercase address, or an id that isn't decimal digits, reads
+  nothing.
+- The contents read takes the item's entries in order (`item_contents_pkey`)
+  and runs the item files rule's public answer (`access::PUBLIC_FILE`, the
+  predicate `FILE_READ` uses) for each entry in the same statement, and
+  `FILE_READ` for a smart wearable's kept video, so it answers only files an
+  unsigned request may read.
+- `GET /v1/addresses`: the public search's listing over published standard
+  collections only. It resolves the published ids first
+  (`items_minted_collection_idx`), then probes each one's items for the tags
+  (`items_collection_created_idx`), and answers at most 1,000 contract
+  addresses, with their total only when paginated.
+
+Workload, at the reference size (50,015 collections, 112,955 items, 406,229
+content rows, 293,927 upload records, 52,000 chain rows of which 5,105 are
+published builder collections; `EXPLAIN (ANALYZE, BUFFERS)` of the
+statements the node sends):
+
+| Request | Measured |
+| --- | --- |
+| an item's utility, the contract with the most minted items (70) | under 0.5 ms (1.6 ms cold) |
+| an item's contents, the minted item with the most entries (173) | about 1 ms warm, 10 ms cold |
+| addresses, unfiltered (1,000 rows) | published ids 5 ms, the page 6 to 10 ms |
+| addresses by the most used tag (187 collections) | 40 to 60 ms |
+| addresses with `q`, five 64-character tags, paginated (the worst the bounds allow) | about 75 ms with its total |
+
+Invariants:
+
+- No statement reachable without a signature reads every collection or every
+  item: the tag probe stays within the published collections' items.
+- An answer names no draft: an item is found only by an on-chain id, which
+  only a published collection's items hold, and the addresses read lists only
+  published collections, never a draft's precomputed contract.
+- Every value from the path or the query reaches SQL as a bound parameter.
+
+## Builder collection lifecycle workload
+
+The builder's lifecycle routes (`services/catalyst/builder/src/collections/lifecycle.rs`,
+`services/catalyst/builder/src/terms.rs`) are rare writes by a collection's
+owner or managers: a lock and a terms acceptance per publication, a delete
+per abandoned draft, and the old builder web's publish call every five
+seconds until the chain holds the collection.
+
+Tables and what they hold:
+
+- `builder.collections.lock`: the owner's last lock, set by `POST
+  /v1/collections/{id}/lock` with the node's clock to the millisecond. It
+  holds for a day from that instant; while it holds, saves of the
+  collection, item saves and creations in it, item deletes and the
+  collection's delete answer 423. Uploads are never locked.
+- `builder.terms_acceptances`: one row per collection, signer and event,
+  with the body the warehouse receives, the email address included; an
+  acceptance names at most as many hashes as its collection has items, each
+  at most 64 ASCII letters and digits. A new acceptance deletes the row the
+  warehouse already took and merges into the one it hasn't (its hashes, then
+  the new ones it lacks, the newest 40,000 kept), so no acceptance is lost
+  before it is forwarded. A delivery marks the row forwarded only while its
+  body is still the one sent. Only the terms route inserts, updates and
+  deletes its rows, and only its forward reads and updates them; no other
+  statement reads it, no route answers it, and an operator reads it with
+  SQL.
+  A delete of the collection keeps the rows (no foreign key). The schema has
+  no role that narrows who reads it beyond those statements.
+
+Statements:
+
+| Request | Statements | Index |
+| --- | --- | --- |
+| lock | the collection row `FOR UPDATE`, the decision, one update | `collections_pkey` |
+| delete | the collection row, then its items `FOR UPDATE ORDER BY id`; the decision; the items' contents, the items and the row deleted; the upload records no item names any more | `collections_pkey`, `items_collection_created_idx`, `item_contents_pkey`, `item_contents_hash_idx` |
+| publish | the collection's items in creation order, the copy's row and item ids for its contract; to assign ids, the rows locked as for a delete and one update per item | `items_collection_created_idx`, `shop.collections` and `shop.items` primary keys |
+| terms | the collection's item count; one delete of the signer's forwarded row of the event; one read of its waiting row; one insert or update of it; one update when the forward succeeds | `items_collection_created_idx`, `terms_acceptances_collection_signer_event_idx`, `terms_acceptances_pkey` |
+| terms forward pass | claims at most 50 due rows `FOR UPDATE SKIP LOCKED`, one update per delivered row | `terms_acceptances_due_idx` |
+
+Invariants:
+
+- One transaction per write, holding the collection row before its items
+  (the order of the item writes and the publications), with the decision
+  made again inside it.
+- A Polygon RPC read (`eth_getCode` and `itemsCount()` at the finalized
+  block, kept five seconds per contract, one read at a time) runs before the
+  transaction and never holds a connection.
+- A delete leaves no upload record that no item names, and touches no row
+  of another collection.
+- The forward is at least once: at most six attempts, the wait doubling from
+  a minute; a row the warehouse took is never claimed again.
+
+Upgrade: step `0061_builder_collection_lock` adds `collections.lock`; the
+schema's object pass creates `builder.terms_acceptances` and its indexes.
+
+## Builder third parties workload
+
+The builder's third-party routes (`services/catalyst/builder/src/third_parties.rs`,
+`services/catalyst/builder/src/handlers/third_parties.rs`) and every
+decision about a third-party collection read the third-party registry over
+HTTP and `builder.virtual_third_parties` by SQL. The table holds the
+providers the registry doesn't have yet: tens of rows, one per provider a
+creator started before registering it, written rarely.
+
+Tables and what they hold:
+
+- `builder.virtual_third_parties`: a provider id (at most 512 characters),
+  its managers (lowercased addresses), `raw_metadata`
+  (`tp:1:<name>:<description>[:<network>-<address>;...]`) and
+  `is_programmatic`. A save that creates the first collection of a
+  provider neither the registry nor this table has inserts the row, with
+  the signer as its only manager; a save of a collection with a linked
+  contract lists that contract in the row; `PATCH /v1/thirdParties/{id}`
+  sets `is_programmatic`; `DELETE /v1/thirdParties/{id}` removes the row
+  once the registry has the provider; the delete of a provider's last
+  collection removes it. No foreign key: a row outlives its registry
+  record until one of those deletes.
+
+Statements:
+
+| Request | Statements | Index |
+| --- | --- | --- |
+| a decision about a collection or item | whether it is third-party; the collection row with its provider's row (`LEFT JOIN`) | `collections_pkey`, `items_pkey`, `virtual_third_parties_pkey` |
+| an address's own listings and drafts | the provider ids the wallet manages: the rows naming them or listing the wallet; then `third_party_id = ANY($ids)` | `collections_linked_contract_key` (leading `third_party_id`), `items_collection_created_idx` |
+| item URN in use | the provider's items holding the item part | `collections_linked_contract_key`, `items_collection_created_idx` |
+| a signed read of a private file | the providers of the third-party items naming the hash, at most 20 | `item_contents_hash_idx`, `uploaded_contents` primary key |
+| `GET /v1/thirdParties/{id}/slots` | the provider's items with an item curation | `collections_linked_contract_key`, `items_collection_created_idx`, `item_curations_item_created_key` |
+| create, update, delete of a row | an advisory transaction lock on the provider id, the row, one write | `virtual_third_parties_pkey` |
+| collection delete | the provider's lock, then the row if no collection of the provider is left | `collections_linked_contract_key` |
+
+Invariants:
+
+- A write locks the provider id (`pg_advisory_xact_lock`) before it reads
+  the row, in the transaction that writes the collection, so two first
+  collections of one provider create one row and the second save decides
+  on it.
+- The registry read runs before any connection is taken and is never
+  retried inside a transaction; a write decides again inside its
+  transaction from that same read.
+- Measured at the reference size (51,745 collections, 34 third-party,
+  116,190 items, 7 rows): every statement above under 6 ms.
+
+Upgrade: the schema's object pass creates `builder.virtual_third_parties`
+and its constraints; no step. The import's `virtual_third_party` step
+copies upstream's rows (`tooling/migration/sources/builder-server/MAPPING.md`).
+
+## Builder curations workload
+
+The builder keeps builder-server's review records
+(`services/catalyst/builder/src/curation/mod.rs`): a collection's reviews,
+an item's submissions for review, a collection's review events and the slot
+cheques of a third-party publication. Each row is its own state: an item's
+curation status is the status of its newest item curation, read where it is
+needed, and no flag on `builder.items` or `builder.collections` copies it.
+A third-party item is published once it has an item curation, whatever its
+status, and a collection is published once an item of it has one
+(`curation::ITEM_CURATED`, `curation::COLLECTION_ITEMS_CURATED`, part of
+`chain_state`'s published rule).
+
+Sizes at the reference data (May 2025): 4,755 collection curations over 3,502
+collections (at most 11 per collection), 38,211 item curations over 34,974
+third-party items (at most 13 per item), 34 cheques over 23 collections, no
+events. Every review adds about five events.
+
+Tables and what they hold:
+
+- `builder.collection_curations`: one row per review request of a
+  collection: `status` (`pending`, `approved`, `rejected`), `assignee` (a
+  committee member's lowercased address), `reviewed_by` (a lowercased
+  address or `validator`), `rejection_reasons` (one or more of the twelve
+  reasons builder-server accepts), `rejection_message` (1 to 3,000
+  characters). A decision updates the newest row in place; a resubmission,
+  a retry or an appeal inserts a new one. `(collection_id, created_at)` is
+  unique, so the newest row is one row.
+- `builder.item_curations`: one row per submission of a third-party item:
+  `status`, `content_hash` (the keccak-256 digest of the reviewed item, 64
+  lowercase hex digits, not a blob key) and `is_mapping_complete`.
+  `(item_id, created_at)` is unique. Every insert goes through
+  `curation::record_item_curation`, which stamps the row after the item's
+  newest one, so the newest row is the last written.
+- `builder.collection_events`: append-only, one row per review step:
+  `type` (twelve values), `actor` (`creator`, `curator`, `validator`,
+  `system`), `actor_address`, `payload` (a JSON object). Read newest first
+  by `(created_at, id)`. One verdict per validation: the partial unique
+  index on `(collection_id, type, payload->>'validationId',
+  COALESCE(payload->>'reason', ''))` over the four verdict types.
+- `builder.slot_usage_cheques`: one row per signed slot cheque of a
+  third-party publication: `third_party_id`, `signature` (0x and 130 hex
+  digits, `v` 27 or 28), `salt` (0x and 64 hex digits, unique per
+  provider), `qty` (positive). Never updated by a route. A deleted
+  collection's cheques stay with `collection_id` NULL (the foreign key sets
+  it), so a spent salt stays spent; step
+  `0067_builder_slot_cheques_outlive_collections` drops the column's
+  `NOT NULL` and recreates the key with `ON DELETE SET NULL` on a database
+  that has the table.
+- `builder.collections.forum_link` (an `http(s)` URL without spaces, at
+  most 2,048 characters) and `forum_id` (the forum post, only with a
+  link). These columns are the one source of a collection's forum link.
+  The node builds a new link under `FORUM_URL`; it never fetches the stored
+  link. `forum_claimed_at` is a pending topic attempt, only without a link.
+  Claiming locks the collection, checks access again (and a standard
+  collection's publication), and commits before the forum call. A claim
+  holds for 60 seconds and an attempt ends within 45. A stored link is the
+  only proof of a topic: when the forum made one whose link was not
+  stored, the next attempt after the claim asks the forum again. Recording
+  the link clears the claim and keeps a link already stored.
+
+Deletes: an item's curations and a collection's curations and events go
+with them (`ON DELETE CASCADE`); the node refuses to delete a third-party
+collection or item once curated. A cheque keeps its collection
+(`ON DELETE NO ACTION`): a delete that reaches a collection with a cheque
+fails.
+
+Statements:
+
+| Request | Statement | Index |
+| --- | --- | --- |
+| a collection's newest curation, a decision, a listing row's `curation_status` and last activity | `collection_id = $1 ORDER BY created_at DESC LIMIT 1` | `collection_curations_collection_created_key` |
+| the committee's listing by assignee and status | the newest curation per collection (`DISTINCT ON (collection_id) ... ORDER BY collection_id, created_at DESC`), filtered | sequential read of the table (4,755 rows) |
+| `GET /v1/curations` for the committee | the newest curation per collection, at most 20,000 rows | sequential read of the table and a sort |
+| `GET /v1/curations` for another wallet | the newest curation of the collections whose chain copy row names it as creator, manager or minter, and of its providers' collections | `collections_contract_address_key`, `collections_third_party_urn_idx`, then the sequential read above |
+| `GET /v1/collections/:id/itemCurations` | each item of the collection joined to its curations, the newest per item, at most 20,000 rows | `items_collection_created_idx`, a hash join with the item curations |
+| `GET /v1/collections/:id/items` with `synced`, a third-party `status` or `mappingStatus=unpublished_mapping` | each item of the collection with its newest curation (`LATERAL ... LIMIT 1`) | `items_collection_created_idx`, `item_curations_item_created_key`, backward |
+| a curator's decision: the collection's newest `review.approved` or `review.rejected` | `collection_id = $1 AND type IN (...) ORDER BY created_at DESC, id DESC LIMIT 1` | `collection_events_collection_created_idx` |
+| an item's newest curation (`curation::newest_item_curation`, the one definition: the last created), once per listed item | `item_id = $1 ORDER BY created_at DESC LIMIT 1` | `item_curations_item_created_key`, backward |
+| the newest curation of each item of a collection | items by `collection_id`, each item's newest curation | `items_collection_created_idx`, `item_curations_item_created_key` |
+| an item is curated: the file rule, by-id reads, saves, deletes, slots | `EXISTS (... WHERE item_id = i.id)` | `item_curations_item_created_key` |
+| a collection has a curated item or a pending one | items by `collection_id` joined to their curations | `items_collection_created_idx`, `item_curations_item_created_key` |
+| a third-party collection's body: its first curated item's newest curation, `is_mapping_complete` | items by `collection_id` in id order, their newest curation | `items_collection_created_idx`, `item_curations_item_created_key` |
+| the public search's published collections | third-party collections with a curated item | `collections_third_party_urn_idx`, `items_collection_created_idx`, `item_curations_item_created_key` |
+| a collection's events page and its newest event | `collection_id = $1 ORDER BY created_at DESC, id DESC` | `collection_events_collection_created_idx` |
+| the validator sweep's started runs in a window | `type = 'review.automated_started' AND created_at` in range | `collection_events_automated_started_idx` |
+| a verdict recorded once | `INSERT ... ON CONFLICT DO NOTHING` | `collection_events_verdict_validation_idx` |
+| a collection's newest cheque (`approvalData`) | `collection_id = $1 ORDER BY created_at DESC LIMIT 1` | `slot_usage_cheques_collection_created_idx` |
+| a third-party publish's free slots | the distinct items with a curation of the provider's collections | `collections_linked_contract_key` (leading `third_party_id`), `items_collection_created_idx`, `item_curations_item_created_key` |
+| a third-party publish's named items | `id = ANY($1) ... FOR UPDATE`, at most 20,000 ids | `items_pkey` |
+| a third-party publish's pending check | the collection's items joined to their curations, `status = 'pending'` | `items_collection_created_idx`, `item_curations_item_created_key` |
+| a cheque whose salt the provider used | `INSERT ... ON CONFLICT (third_party_id, salt) DO NOTHING` | `slot_usage_cheques_third_party_salt_key` |
+| a third-party publish's item curations | one `INSERT ... SELECT` over the named items, each stamped after its newest curation | `item_curations_item_created_key` |
+| `approvalData`'s content hashes | each curated item of the collection, its newest curation | `items_collection_created_idx`, `item_curations_item_created_key` |
+
+Measured at the reference size, events synthesized at five per review: the
+newest curation of each of the 12,665 items of the largest collection in
+20 ms; that collection's body in 10 ms; the bodies of a 1,000-row
+collection listing page in 82 ms; the slot count of its provider in 9 ms;
+the committee listing's newest curations in 3 ms; every other statement
+under 1 ms. An item list reads each listed item's newest curation with one
+index probe (about 6 µs a row) and never the collection's other items: the
+unpaged bodies of the largest collection's 12,665 items take 742 ms, most of
+it the `id = ANY(...)` lookup of the rows, and the largest owner's 12,669
+items 99 ms. Only an item read by itself reads the collection's first
+curated item (7 ms in the largest collection). The committee's
+`GET /v1/curations` reads its rows in 1.3 ms; `GET
+/v1/collections/:id/itemCurations` of the largest collection in 169 ms; that
+collection's `synced=true` page in 120 ms and its pending `status` page in
+8 ms.
+
+Invariants code upholds:
+
+- Every insert of a curation goes through `curation::record_item_curation`
+  or `curation::record_collection_curation` (which takes a
+  `CurationGrant`): each locks the collection row until the transaction
+  ends and stamps the row 1 µs after the newest of its item or collection
+  when that is later than now. A writer that changes a row sets
+  `updated_at` to `GREATEST(updated_at, now)`.
+- A writer of events stamps `created_at` after the collection's newest
+  event, under the collection lock.
+- A cheque's `third_party_id` is its collection's provider.
+- A third-party publish (`collections/publish_third_party.rs`) runs in one
+  transaction: the collection row `FOR UPDATE`, then the provider's
+  advisory lock (`builder.virtual_third_parties:<id>`, the key every write
+  of the provider takes, always after a collection row), then the access
+  decision again, the free slots, the named items `FOR UPDATE`, the cheque,
+  the item curations (`curation::record_item_curations`) and one new
+  pending collection curation. Two publishes of one provider spend its free
+  slots one after the other. A cheque is stored lowercase with a 65-byte
+  signature (a 64-byte compact one is expanded, `v` 0 and 1 stored as 27
+  and 28); a salt the provider already used refuses the publish with 400
+  and nothing is written. No registry, forum or Slack call runs while it
+  holds the connection.
+- A curation write (`curation::writes`) locks the collection row, decides
+  again who may write, reads the newest curation and asks the transition
+  table, all in one transaction; a committee write adds its
+  `ops.admin_audit` row (domain `create`) in it. A collection's approval
+  also sets each smart wearable's `items.video` to the `video.mp4` hash its
+  contents name, in the same transaction.
+
+Upgrade: the object pass creates the four tables; step
+`0062_builder_collection_forum` adds the forum columns and their checks. The
+import's `collection_curation`, `item_curation`, `collection_event` and
+`slot_usage_cheque` steps copy upstream's rows
+(`tooling/migration/sources/builder-server/MAPPING.md`).
+
+Step `0063_builder_collection_forum_claim` adds the claim timestamp and copies
+any linked publication's retained forum link into its collection before
+writes resume. It preserves an existing collection link. With writers
+stopped and a verified backup, run
+`schemas/releases/builder-linked-forum-retired.sql` to remove the linked
+publication's extra column; this release repeats safely and never replaces
+a collection link. Fresh databases have only the collection's columns.
+
+## Builder forum workload
+
+Each collection can create one forum topic, whose body describes at most
+20 items in creation order. Claims and link writes use the collection's
+primary key; item descriptions use `items_collection_created_idx`. No
+additional index or table is needed. A committee reply reads only its
+collection's forum post id and resolves the topic through the configured
+forum API. Calls hold no database connection.
+
+For a standard collection's creator name, builder reads, never writes,
+`content.active_pointers` (`pointer`, `entity_id`) and `content.deployments`
+(`entity_id`, `entity_type`, `entity_metadata`): the active profile's first
+avatar supplies a nonempty claimed name; otherwise the address is shortened.
+The pointer key and deployment entity index serve this bounded lookup.
+
+## Builder validation requests workload
+
+The builder records the wearable validator's work in
+`builder.validation_requests` and refuses replayed validator calls with
+`builder.validator_seen_signatures`
+(`services/catalyst/builder/src/validator.rs`, `validator/claims.rs`,
+`handlers/validator.rs`; decided in
+[the validator ADR](docs/adr/2026-11-21-builder-validator-pulls-reviews.md)).
+The object pass creates both tables. Step
+`0066_builder_validation_retry` widens `validation_requests_trigger_check`
+to the trigger `retry` on a database that has the table; the object pass
+creates it with that check where it doesn't.
+
+Writers and readers:
+
+- A standard collection's first publication, a creator's changes
+  submission and, with the review flow on, a creator's retry insert a
+  request in their own transaction, under the collection's row lock: a count of the collection's requests that UTC day
+  (`validation_requests_collection_created_idx`), the open one settled
+  `superseded` (`validation_requests_open_key`), then the insert.
+- A claim takes the oldest open request with claims left whose lease isn't
+  held and whose collection's lock doesn't hold
+  (`validation_requests_open_created_idx` joined to the collection's primary
+  key, `FOR UPDATE OF r SKIP LOCKED`, `LIMIT 1`), reads its items, and writes
+  its claim, lease and `content_hashes` in one transaction.
+- A lease extension and a verdict update one request by primary key, with
+  its `claim_id` in the predicate.
+- The leased `builder-validation-requests` job, every 10 minutes while
+  creator writes are on: abandons and expires open requests (both over
+  `validation_requests_open_key`), deletes requests settled more than 30
+  days ago (`validation_requests_settled_idx`) and seen signatures whose
+  window has passed (`validator_seen_signatures_expires_idx`).
+- Each validator call whose signature verifies inserts its signature
+  (`ON CONFLICT DO NOTHING` on the primary key); a call that inserts nothing
+  is a replay.
+
+A changes submission also reads `shop.items.content_hash` for the
+collection's contract on `matic`, by the copy's `(network,
+contract_address)` key, after `chain_state` says the copy holds the
+contract ("Builder chain state workload"). The feature switch reads, never
+writes, `explore_api.feature_flags` (`app`, `document`) and
+`explore_api.feature_flags_local` (`app`, `name`, `value`) for app
+`builder` on the caller's connection, each by its primary key (or its
+prefix), once per publication, submission and validator call, and decides
+with `shared::feature_flags` (on only for the boolean `true`); Explore's
+flags mirror writes the `builder` document.
+
+Invariants:
+
+- At most one open request per collection
+  (`validation_requests_open_key`, unique, `WHERE settled_at IS NULL`).
+- A request names 1 to 50 items, has at most three claims, and its claim
+  id, claim time and lease are set together; `settled_at` and `outcome` are
+  set together.
+- Only the open request's current claim, within its lease, settles it.
+- Requests die with their collection (`ON DELETE CASCADE`).
+
+Size and bounds, measured at the reference data: about one request a day,
+at most 28 in a day. Open requests are bounded by one per collection and by
+the seven-day expiry; settled ones by the 30-day retention, so the table
+holds a few hundred rows. A seen signature is inserted only after its HMAC
+verifies, at most 60 calls a minute per source, and lives five minutes past
+its timestamp, so the table holds at most a few hundred rows. `EXPLAIN
+ANALYZE` with 17,000 collections, 1,000 requests (200 open) and 600 seen
+signatures: the claim is an index scan of
+`validation_requests_open_created_idx` with one primary-key probe of
+`builder.collections` per candidate, under `LockRows`; the daily count an
+index-only scan of `validation_requests_collection_created_idx`; supersede,
+abandon and expire scan `validation_requests_open_key` (199 open rows);
+retention a bitmap scan of `validation_requests_settled_idx`; the
+seen-signature sweep an index scan of
+`validator_seen_signatures_expires_idx`.
+
+## Builder review timeline workload
+
+With the review flow on
+([the review flow ADR](docs/adr/2026-11-21-builder-review-flow.md)), the
+builder writes a collection's review timeline in
+`builder.collection_events` beside its curator decisions
+(`services/catalyst/builder/src/review.rs`, `curation/events.rs`,
+`handlers/review.rs`). No other table is added.
+
+Writers, each under the collection's row lock in its own transaction:
+
+- Recording a validation request writes its start; a first publication
+  also writes the publication; a changes submission writes the submitted
+  item ids, or an appeal when nothing changed since a rejection.
+- A verdict from the current claim writes its event once
+  (`ON CONFLICT DO NOTHING` on `collection_events_verdict_validation_idx`)
+  and, through the transition table, rejects or reopens the newest
+  collection curation in the transaction that settles its request; that
+  transaction locks the collection row before the request row, as every
+  request writer does.
+- A comment and an appeal take a transaction advisory lock on the writing
+  wallet, count that wallet's comments or appeals of the UTC day across
+  collections and the collection's own, and insert one event.
+- The leased `builder-validation-requests` job writes the give-up error of
+  each request it abandons or expires in the statement that settles it.
+- A third-party publication writes its curator hand-off once.
+
+Each insert stamps its row after the collection's newest event, so the
+timeline's order is the order of the writes.
+
+Readers: a timeline page (a count and at most 200 rows newest first, by
+`collection_events_collection_created_idx`); the newest start, a
+validation's verdict, a curator decision after a start, the newest event
+that isn't a comment and the judged content hashes of the last 50 verdicts,
+each over the collection's events; the wallet's daily count over the
+partial index `collection_events_creator_text_idx (actor_address,
+created_at)` on comments and appeals.
+
+Invariants:
+
+- One verdict event per validation and reason.
+- A collection takes at most 200 comments and five appeals in a UTC day; a
+  wallet writes at most 200 comments and 20 appeals in a UTC day.
+- The validator's curation writes set `reviewed_by = 'validator'` and are
+  audited in `ops.admin_audit` with the actor `validator`.
+
+Size: the reference data holds no events. A review writes about five
+events, comments and appeals are bounded per day, so a collection's
+timeline stays in the hundreds. `EXPLAIN ANALYZE` with 17,000 collections
+and 300,000 events: a page and its count are bitmap scans of
+`collection_events_collection_created_idx` (0.14 ms); the collection's daily
+count an index scan of it and the wallet's an index scan of
+`collection_events_creator_text_idx` (0.12 ms together); the judged hashes a
+bitmap-or of `collection_events_verdict_validation_idx` (0.12 ms); the
+newest start, the decision check, the newest event that isn't a comment and
+the stamp index scans of `collection_events_collection_created_idx` (under
+0.03 ms); a validation's verdict an index scan of
+`collection_events_verdict_validation_idx` (0.01 ms).
 
 ## Notification writer
 
@@ -2082,10 +3354,13 @@ revokes, whose `address` a catalog write does not have.
 
 ## Curation committee
 
-Builder's committee routes (the drafts and items of every wallet, another
-wallet's collections and items, the curation console's committee list)
-admit `BUILDER_ADMIN_ADDRESSES` and the current members of the Polygon
-curation committee. Shop's `committee` index
+Every builder decision only the committee could grant (`builder::access`:
+the committee's listings, another wallet's collections and items, draft
+reads, curation writes, forum replies) and `GET /v1/committee` read the
+current members of the Polygon curation committee; `BUILDER_ADMIN_ADDRESSES`
+grants no committee role (its wallets' signed requests, like the curation
+console's bearer, open only the operator's item status routes and
+`GET /v1/collections/curation`). Shop's `committee` index
 (`MARKETPLACE_COMMITTEE_INDEX_ENABLED`) walks the two Committee contracts'
 `MemberSet` logs from the first one's deployment into `shop.committee_event`
 over the `TRADE_RPC_URLS` 137 entry, else on mainnet `RPC_ENDPOINT_POLYGON`,
@@ -2098,10 +3373,20 @@ wallet is a member when its latest event (block, log index) at or below the
 published block (`folded_block`) set it, so rows a pass adds before its
 publish wait for it. Unlike the shop routes' readiness rule, it does not
 require `folded_block = last_block`, so the published membership stays
-readable while a pass runs. An index that is off, not yet published or
-published more than 30 minutes ago (`READY_WINDOW`) admits only the
-configured addresses, and a failed read answers 503. Changing a column builder reads updates this section
-and the AGENTS.md "Ownership" entry in the same change.
+readable while a pass runs. Builder reads it afresh for every decision, so a
+removed member loses the role once the index publishes the block that
+removed it, and a curation write reads it again on its own transaction's
+connection, after its row locks: a curator the committee admitted and the
+assignee it names must still be members (401 otherwise). The
+statement compares `folded_at` with `statement_timestamp()`, so a read
+inside a transaction that began before the index's latest publish still
+sees it published. An index that is off, not yet published or published more than
+30 minutes ago (`READY_WINDOW`), or a failed read, can't tell: a decision
+only the committee could grant and `GET /v1/committee` answer 503, a view
+the committee only widens answers as for any signer, and the console lists
+an empty committee until the index is published. Changing a column builder
+reads updates this section and the AGENTS.md "Ownership" entry in the same
+change.
 
 ## Auth API relay state workload
 
@@ -2574,3 +3859,135 @@ in its own memory with the same rules, like the places reads fall back to the
 API; that mode serves one process only, so a deployment with several Sites
 replicas sets the database URL. The bootstrap defines the table; an existing
 database gains it from the object pass, so no step exists.
+
+## Content item history coverage
+
+The sync leader proves, per item type, that the node holds every wearable and
+emote deployment its peers offer. The proof lets a caller treat a missing item
+as absent from the node's peers, as observed when the last full pass started.
+It never proves global absence. Without a current proof, a missing item is
+unknown.
+
+Workload and invariants:
+
+- Job `item-history-replay` runs in the process that holds the `sync` lease,
+  after the bootstrap. It doesn't run without leases
+  (`JOB_LEASES_ENABLED=false`), without a sync worker, or when
+  `SYNC_ENTITY_TYPES` leaves out both `wearable` and `emote`.
+- Each pass reads every peer's `/pointer-changes` filtered to
+  `entityType=emote&entityType=wearable`, ascending by `local_timestamp`, from
+  `SYNC_FROM_TIMESTAMP_MS`. It pages by the `from`/`lastId` keyset, one request
+  at a time, `SYNC_ITEM_REPLAY_PAGE_PAUSE_MS` apart (default 200, 50 to
+  1000). Peers are read in sorted order.
+- For each page, one batched probe of `content.deployments`
+  (`deployments_entity_id_key`) finds the entities the node doesn't hold. Only
+  those go to the leader's deployer, which applies its download and flush
+  limits. A second probe after the drain counts every entity still missing,
+  every record that doesn't parse, and every implausible timestamp as debt.
+  A recorded failure in `content.failed_deployments` is debt, not
+  acceptance. A page that doesn't advance the keyset also adds debt and ends
+  that peer's walk.
+- The replay never reads or writes `content.server_sync_cursors`,
+  `content.processed_snapshots` or the sync properties in
+  `content.system_properties`. Existing deployment rows are never rewritten.
+- A completed pass starts reading the next one `SYNC_ITEM_REPLAY_INTERVAL_SECS`
+  later (default 1200, 20 minutes). The setting takes 0, which turns the
+  replay off and leaves item coverage unknown, or 600 to 1440; the node
+  refuses to start with any other value. A pass never starts while another
+  runs: the job runs one pass at a time and waits the interval after it ends.
+- Every pass starts from the floor again, so a deployment a peer commits
+  after a pass read past it is recovered by the next pass. Coverage stays
+  continuous while a pass plus the interval fits in the 30-minute staleness
+  window. At the default pause a pass takes about 2 minutes, so the default
+  interval leaves about 8 minutes for a slow pass. At the largest interval and
+  page pause a pass takes about 4.5 minutes and the two leave about 1.5
+  minutes.
+- Passes stay full. A pass that read only past the previous pass's newest
+  `localTimestamp` would be cheaper, but it would date its proof from a start
+  it didn't reread: a deployment a peer commits late, with a timestamp below
+  where the previous pass stopped, would stay hidden under a fresh proof.
+  Coverage measures freshness from the start of a pass that read the whole
+  history, so the replay rereads it.
+
+`content.item_history_replay` holds one row: the pass in progress. It holds
+the pass scope (algorithm, sorted peer set, sorted item types, history floor),
+the pass start, the peer and keyset to resume at, the debt so far and the
+newest `localTimestamp` read. A restarted or new leader resumes a recorded pass
+of the same scope under its original start. Another scope starts a new pass
+and deletes the coverage row of any other scope. Each checkpoint is a
+compare-and-set on the previous checkpoint.
+
+`content.item_history_coverage` holds one row: the last completed pass, its
+scope, start, completion, debt, newest `localTimestamp`, and the lease session
+that wrote it (`lease_namespace`, `lease_pid`, `lease_backend_start`). The
+writer replaces it in the transaction that closes the pass; the next pass
+records its own start when it begins reading.
+
+Every write to either table is one statement conditioned on `pg_locks`
+showing the advisory lock `(hashtext(namespace), hashtext('sync'))` granted to
+the writer's lease session. The coverage row records that session's pid and
+`pg_stat_activity.backend_start`.
+
+Reader: `content::sync::item_coverage::item_history_coverage(conn,
+entity_type)` runs one statement: the coverage row joined to the lock's live
+holder. It answers `Covered { as_of }` (the pass start, UTC) only when all of
+these hold. Otherwise it answers `Unknown` with the reason:
+
+| Condition | Unknown reason |
+| --- | --- |
+| A coverage row exists | `NoRecord` |
+| `algorithm` is the reader's `ALGORITHM` (1) | `Algorithm` |
+| `entity_types` holds the type | `ExcludedType` |
+| `history_floor_ms` is 0 | `HistoryFloor` |
+| `debt` is 0 | `Debt` |
+| The live holder's pid and `backend_start` equal the recorded ones | `OwnerMismatch` |
+| The pass started at most 30 minutes ago (`STALE_AFTER`) | `Stale` |
+
+`OwnerMismatch` covers a lost lease, a takeover by another process, and a
+binary that writes no coverage, at once and regardless of age. A caller that
+reads entities in the same `REPEATABLE READ` transaction reads them from the
+snapshot the answer was taken in.
+
+Roles: the sync leader and every reader (the builder's third-party URN check)
+must connect as the same database role, or the readers' role must hold
+`pg_read_all_stats`. PostgreSQL shows a role without it the `backend_start`
+of its own role's sessions only, so a reader of another role reads every
+coverage as `OwnerMismatch` (test
+`a_reader_connected_as_the_leaders_role_sees_its_coverage_and_another_role_does_not`).
+The lease and the reader's check use the database session's pid and start
+time, so the node must reach PostgreSQL directly or through a pooler in
+session mode: a transaction-mode pooler hands one server backend to several
+clients and breaks the advisory lease itself.
+
+A process that serves unsynced with an empty `SYNC_SOURCE` (an island or a
+journey node) holds the whole of its content.
+`SyncStatus::is_own_content_authority` is true only there, and that process
+needs no replay.
+
+To stop the replay without a restart, run
+`INSERT INTO content.item_history_replay (stopped) VALUES (true) ON CONFLICT
+(id) DO UPDATE SET stopped = true`. To resume it, set `stopped` to false. The
+replay checks the switch before each page. The operator console's sync pause
+holds it too. A pass held for more than 30 minutes completes stale.
+
+Cost, measured on November 20, 2026 against the public
+`peer.decentraland.org` with one sequential client: the whole item history was
+160 pages of 500 deltas (79,702 deltas: 78,539 wearable, 1,163 emote),
+80,888,104 response bytes and 101.7 seconds. The median page took 0.44 s and
+the slowest 16.9 s. Every pass fetches every page again: the probe before
+download skips only the entities the node holds, not the pages. A pass on a
+node that holds everything adds about 32 seconds of page pauses, so it takes
+about 2 minutes and downloads no entity. Estimated from the measurement, the
+daily `/pointer-changes` traffic pulled from each source catalyst is:
+
+| `SYNC_ITEM_REPLAY_INTERVAL_SECS` | Passes a day | Traffic a day | Requests a day |
+| --- | --- | --- | --- |
+| 600 (smallest) | about 118 | about 9.5 GB | about 18,900 |
+| 1200 (default) | about 65 | about 5.3 GB | about 10,400 |
+| 1440 (largest) | about 55 | about 4.4 GB | about 8,800 |
+| 0 (off) | 0 | 0 | 0 |
+
+A node that syncs from several catalysts reads each of them in every pass, so
+its total is that times the number of sources. The page pause changes the
+pass length, not the traffic. Entity downloads on a node that lacks items
+aren't measured here.

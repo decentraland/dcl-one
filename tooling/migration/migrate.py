@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS dcl_migration.blob_missing (
     reason text NOT NULL,
     PRIMARY KEY (source, object_key)
 );
+CREATE TABLE IF NOT EXISTS dcl_migration.builder_imported (
+    step text NOT NULL,
+    id text NOT NULL,
+    fingerprint text,
+    PRIMARY KEY (step, id)
+);
+DO $ddl$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+                 AND table_name = 'builder_imported' AND column_name = 'fingerprint') THEN
+    ALTER TABLE dcl_migration.builder_imported ADD COLUMN fingerprint text;
+  END IF;
+END $ddl$;
 -- The worlds.world_limit_overrides values `worlds-limits` last wrote; a row that no longer
 -- matches them was changed on the node and is left alone.
 CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
@@ -261,6 +273,7 @@ class Step:
     notes: str = ''
     whole: bool = False  # one batch holding the whole extract, so the load sees the full upstream set
     allow_empty: bool = False  # --allow-empty: an empty upstream set may delete every imported row
+    requires: str | None = None  # a source relation; without it the step reads nothing
 
     @property
     def cursor(self):
@@ -355,6 +368,10 @@ def load_source(directory):
             whole = False
         if whole and watermark:
             problems.append(f'{where}: a `whole` step reads the full set every run and takes no watermark')
+        requires = raw.get('requires')
+        if requires is not None and not (isinstance(requires, str) and IDENT.match(requires)):
+            problems.append(f'{where}: `requires` must name a source relation')
+            requires = None
         if watermark and dict(columns).get(watermark, '').lower() not in ('timestamptz', 'timestamp with time zone'):
             problems.append(f'{where}: watermark {watermark!r} must be typed timestamptz')
         files = {}
@@ -365,7 +382,7 @@ def load_source(directory):
                 problems.append(f'{where}: {field} file {rel!r} is missing or outside {directory.name}/')
             files[field] = file
         steps.append(Step(name, step_name, targets, files['extract'], files['load'], key, watermark,
-                          columns, raw.get('notes', ''), whole))
+                          columns, raw.get('notes', ''), whole, requires=requires))
     if problems:
         raise MigrationError('\n'.join(problems))
     source = Source(name, directory, data.get('repository', ''), data.get('revision', ''), database_env,
@@ -704,6 +721,21 @@ def plan_walk(step, checkpoint, *, since, since_last, overlap, restart):
 
 # ── a step's batches ────────────────────────────────────────────────────────
 
+def extract_text(step):
+    """The step's extract, or a typed empty set for a step whose source lacks the relation it requires."""
+    if step.extract is None:
+        return 'SELECT ' + ', '.join(f'NULL::{t} AS {ident(c)}' for c, t in step.columns) + ' WHERE false'
+    return strip_sql_comments(step.extract.read_text()).strip()
+
+
+def without_missing_source(step, source_url):
+    """`step`, reading nothing when the source lacks the relation the step requires."""
+    if step.requires is None:
+        return step
+    present = psql(source_url, f'SELECT to_regclass({literal(step.requires)}) IS NOT NULL;\n', read_only=True)
+    return step if present.strip() == 't' else dataclasses.replace(step, extract=None)
+
+
 def extract_sql(step, walk_since, cursor, flagged=True):
     """The walk's one COPY: every row from `cursor` on, in cursor order, in a single snapshot. Text
     format keeps one row per line (newlines in values are escaped), so batches split on lines.
@@ -712,7 +744,7 @@ def extract_sql(step, walk_since, cursor, flagged=True):
     the committed cursor row itself (skipped), `n` is any other row. Unflagged, it reads past
     `cursor` with no flag column.
     """
-    extract = strip_sql_comments(step.extract.read_text()).strip()
+    extract = extract_text(step)
     cols = ', '.join(f'e.{ident(c)}' for c, _ in step.columns)
     conditions = []
     order = ', '.join(f'e.{ident(c)}' for c in step.cursor)
@@ -834,6 +866,19 @@ def camera_api_url():
             or parsed.username or parsed.password or '?' in value or '#' in value
             or any(ord(c) < 33 for c in value)):
         raise MigrationError('set CAMERA_REEL_IMPORT_API_URL to the exact literal source and target API base')
+    return value
+
+
+def forum_url():
+    """The forum origin builder-server is deployed with (`FORUM_URL`): an imported forum link is kept only
+    under it."""
+    value = os.environ.get('FORUM_URL', '')
+    parsed = urllib.parse.urlsplit(value)
+    if (parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path or parsed.query
+            or parsed.fragment or parsed.username or parsed.password or any(c in value for c in "?#'\\")
+            or any(ord(c) < 33 for c in value)):
+        raise MigrationError('set FORUM_URL to the forum origin builder-server is deployed with, such as '
+                             'https://forum.example.test')
     return value
 
 
@@ -1029,6 +1074,8 @@ def step_vars(step, dry_run):
                  ' \\g /dev/null']
     if step.source == CAMERA:
         variables.append(f'\\set camera_api_url {literal(camera_api_url())}')
+    if step.source == 'builder-server' and step.name == 'collection':
+        variables.append(f'\\set forum_url {literal(forum_url())}')
     return variables
 
 
@@ -1141,6 +1188,7 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log,
     """One source snapshot per walk, then bounded atomic target batches."""
     if step.whole:
         batch_size = None
+    step = without_missing_source(step, source_url)
     camera = step.source == CAMERA
     if camera:
         if store is None:
@@ -1204,6 +1252,7 @@ def dry_run(plans, target_url, log, work_dir=None, timeouts=Timeouts()):
     with tempfile.TemporaryDirectory(prefix='dcl-migration-dry-', dir=work_dir) as tmp:
         lines = ['\\set ON_ERROR_STOP 1', 'BEGIN;', CHECKPOINT_DDL.strip()]
         for index, (step, source_url, walk) in enumerate(plans):
+            step = without_missing_source(step, source_url)
             data = Path(tmp) / f'{index}.tsv'
             with data.open('wb') as fh, \
                     ExtractStream(step, source_url, extract_sql(step, walk.since, walk.cursor), timeouts.source) as stream:
@@ -1298,7 +1347,7 @@ def cmd_check(args, sources):
             where = f'{source.name}/{step.name}'
             if source_url:
                 try:
-                    extract = strip_sql_comments(step.extract.read_text()).strip()
+                    extract = extract_text(without_missing_source(step, source_url))
                     out = psql(source_url, f'{extract} \\gdesc\n', read_only=True)
                     got = [line.split('\t')[0] for line in out.splitlines() if line]
                     want = [c for c, _ in step.columns]

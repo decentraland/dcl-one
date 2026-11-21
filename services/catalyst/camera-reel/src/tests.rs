@@ -2308,9 +2308,8 @@ async fn the_moderator_hides_a_rejected_row_and_its_blobs() {
 }
 
 /// The node as `serve` composes it around the ONE store: the content
-/// server's `/contents/{hash}`, the builder's under `/builder-api` and the
-/// reel under its prefix, the builder and reel states holding the content
-/// state's denylist (`main.rs`).
+/// server's `/contents/{hash}` and the reel under its prefix, the reel state
+/// holding the content state's denylist (`main.rs`).
 async fn node_around(s: &Scratch) -> Router {
     let pool = s.db().pool().clone();
     let storage = s.state.storage.clone();
@@ -2320,31 +2319,17 @@ async fn node_around(s: &Scratch) -> Router {
         storage.clone(),
     );
     content.denylist = s.state.denylist.clone();
-    let builder = Arc::new(
-        crate::builder::State::new(
-            pool,
-            storage,
-            s.state.denylist.clone(),
-            dcl_http::Outbound::for_tests(),
-            None,
-            None,
-            crate::builder::Settings::default(),
-        )
-        .unwrap(),
-    );
     Router::new()
         .merge(crate::content::build_router(Arc::new(content)))
-        .nest("/builder-api", crate::builder::router(builder))
         .nest(PREFIX, router(s.state.clone()))
 }
 
-/// The three routes that can hand out a photo's bytes, as `(status, body)`.
-async fn bytes_everywhere(app: &Router, hash: &str) -> [(StatusCode, bool); 3] {
-    let mut out = [(StatusCode::IM_A_TEAPOT, false); 3];
+/// The two routes that can hand out a photo's bytes, as `(status, body)`.
+async fn bytes_everywhere(app: &Router, hash: &str) -> [(StatusCode, bool); 2] {
+    let mut out = [(StatusCode::IM_A_TEAPOT, false); 2];
     for (i, path) in [
         format!("{PREFIX}/api/files/{hash}"),
         format!("/contents/{hash}"),
-        format!("/builder-api/contents/{hash}"),
     ]
     .iter()
     .enumerate()
@@ -2385,8 +2370,8 @@ async fn a_rejected_or_deleted_photo_is_withheld_on_every_contents_route() {
     let stored_thumbnail = s.db().get_image(&id).await.unwrap().thumbnail_hash;
     let thumb_hash = s.hash(&stored_thumbnail);
     assert_ne!(image_hash, thumb_hash);
-    let served = [(StatusCode::OK, true); 3];
-    let withheld = [(StatusCode::NOT_FOUND, false); 3];
+    let served = [(StatusCode::OK, true); 2];
+    let withheld = [(StatusCode::NOT_FOUND, false); 2];
 
     // private and not rejected: hash-as-capability on every route, as the old reel route
     assert_eq!(bytes_everywhere(&app, &image_hash).await, served);

@@ -1,11 +1,20 @@
 use axum::Json;
-use axum::extract::{OriginalUri, Path, State};
-use axum::http::{HeaderMap, Uri};
+use axum::extract::{Path, RawQuery, State};
+use axum::http::HeaderMap;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::SharedState;
-use crate::auth::{authorize_admin, signed_path};
+use crate::access::{self, CurationScope};
+use crate::auth::{Admin, Signed};
+use crate::chain_state;
+use crate::curation::rows::{
+    self, CollectionCurationOpened, CollectionCurationOut, ItemCurationOpened, ItemCurationOut,
+};
+use crate::curation::transitions::Status;
+use crate::curation::writes;
 use crate::http::{ApiData, ApiError};
 use crate::onchain::{self, CommitteeMemberOut, ReviewRowOut};
 
@@ -40,33 +49,10 @@ pub struct BulkItemStatusPatchOut {
     pub updated: u64,
 }
 
-const CURATION_STATUSES: [&str; 3] = ["pending", "approved", "rejected"];
-const MAX_BULK_ITEMS: usize = 1000;
+pub(crate) const MAX_BULK_ITEMS: usize = 1000;
 
-async fn admin(
-    state: &SharedState,
-    headers: &HeaderMap,
-    method: &str,
-    original: &Uri,
-    local: &Uri,
-) -> Result<(), ApiError> {
-    authorize_admin(
-        state.settings.admin_token.as_deref(),
-        &state.settings.admin_addresses,
-        state.eip1654.as_deref(),
-        headers,
-        method,
-        &signed_path(original, local),
-    )
-    .await
-}
-
-fn validate_status(status: &str) -> Result<(), ApiError> {
-    if CURATION_STATUSES.contains(&status) {
-        Ok(())
-    } else {
-        Err(ApiError::bad_request("Invalid Status provided"))
-    }
+fn parse_status(status: &str) -> Result<Status, ApiError> {
+    Status::parse(status).ok_or_else(|| ApiError::bad_request("Invalid Status provided"))
 }
 
 fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
@@ -74,26 +60,34 @@ fn parse_uuid(raw: &str) -> Result<Uuid, ApiError> {
 }
 
 /// The curation queue: the committee's current members from the Polygon
-/// committee index (empty until it is published) and the collections under
-/// review from the collections subgraphs (empty without a reader).
+/// committee index (empty until it is published, 503 when it can't be read)
+/// and the collections under review from the collections subgraphs (empty
+/// without a reader).
 pub async fn get_curation_collections(
     State(state): State<SharedState>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
+    _: Admin,
 ) -> Result<Json<ApiData<CurationCollectionsOut>>, ApiError> {
-    admin(&state, &headers, "get", &original, &uri).await?;
-
     let committee = match crate::committee::current_members(state.items.pool()).await {
-        Ok(members) => onchain::shape_committee(members.unwrap_or_default()),
+        Ok(members) => members
+            .unwrap_or_default()
+            .into_iter()
+            .map(|address| {
+                CommitteeMemberOut::from(&crate::committee::Member {
+                    id: address.clone(),
+                    address,
+                })
+            })
+            .collect(),
         Err(error) => {
-            tracing::warn!(error = %error, "committee read failed");
-            return Err(ApiError::http(503, "committee unavailable"));
+            tracing::warn!(error = %error, "committee index read failed");
+            return Err(ApiError::service_unavailable(
+                "The curation committee is not available. Try again later.",
+            ));
         }
     };
     let collections = match state
         .market
-        .as_deref()
+        .as_ref()
         .filter(|m| onchain::configured(Some(m)))
     {
         Some(market) => onchain::collections_under_review(market).await?,
@@ -113,22 +107,15 @@ pub struct ItemStatusBody {
 
 pub async fn patch_item_status(
     State(state): State<SharedState>,
+    admin: Admin,
     Path((id, item)): Path<(String, String)>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
     Json(body): Json<ItemStatusBody>,
 ) -> Result<Json<ApiData<ItemStatusPatchOut>>, ApiError> {
-    admin(&state, &headers, "patch", &original, &uri).await?;
-    validate_status(&body.status)?;
-
+    let status = parse_status(&body.status)?;
     let collection_id = parse_uuid(&id)?;
     let item_id = parse_uuid(&item)?;
-
-    let updated = state
-        .items
-        .set_item_curation_status(&collection_id, &item_id, &body.status)
-        .await?;
+    let operator = access::operate(&state, &admin, collection_id).await?;
+    let updated = writes::operate_items(&state, operator, &[item_id], status).await?;
 
     if updated == 0 {
         return Err(ApiError::not_found("Not found"));
@@ -151,15 +138,11 @@ pub struct BulkItemStatusBody {
 
 pub async fn patch_items_status_bulk(
     State(state): State<SharedState>,
+    admin: Admin,
     Path(id): Path<String>,
-    OriginalUri(original): OriginalUri,
-    uri: Uri,
-    headers: HeaderMap,
     Json(body): Json<BulkItemStatusBody>,
 ) -> Result<Json<ApiData<BulkItemStatusPatchOut>>, ApiError> {
-    admin(&state, &headers, "patch", &original, &uri).await?;
-    validate_status(&body.status)?;
-
+    let status = parse_status(&body.status)?;
     if body.item_ids.is_empty() {
         return Err(ApiError::bad_request("itemIds must not be empty"));
     }
@@ -173,10 +156,8 @@ pub async fn patch_items_status_bulk(
         item_ids.push(parse_uuid(raw)?);
     }
 
-    let updated = state
-        .items
-        .set_items_curation_status(&collection_id, &item_ids, &body.status)
-        .await?;
+    let operator = access::operate(&state, &admin, collection_id).await?;
+    let updated = writes::operate_items(&state, operator, &item_ids, status).await?;
 
     Ok(Json(ApiData::ok(BulkItemStatusPatchOut {
         collection_id: id,
@@ -186,16 +167,225 @@ pub async fn patch_items_status_bulk(
     })))
 }
 
+/// `GET /v1/curations` (`getCollectionCurations`): the committee reads the
+/// newest curation of every collection; anyone else the newest of the
+/// collections it creates, manages or mints and of its providers'.
+pub async fn curations(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    headers: HeaderMap,
+) -> Result<Json<ApiData<Vec<CollectionCurationOut>>>, ApiError> {
+    let scope = access::curation_scope(&state, &signer).await?;
+    let mut conn = state.items.pool().acquire().await?;
+    let rows = match scope {
+        CurationScope::Every(_) => rows::newest_of_every_collection(&mut conn).await?,
+        CurationScope::Own(wallet) => {
+            chain_state::for_read(&mut conn).await?;
+            rows::newest_of_wallet(&mut conn, wallet.address(), &wallet.provider_ids()).await?
+        }
+    };
+    drop(conn);
+    crate::limits::charge_rows(&state, &headers, Some(signer.as_str()), rows.len());
+    Ok(Json(ApiData::ok(rows)))
+}
+
+/// `{ok: true}` with the row as `data`, or without `data` when there is none.
+fn maybe<T: serde::Serialize>(row: Option<T>) -> Json<Value> {
+    Json(match row {
+        Some(row) => json!({ "ok": true, "data": row }),
+        None => json!({ "ok": true }),
+    })
+}
+
+/// `GET /v1/collections/:id/curation` (`getCollectionCuration`): the newest
+/// curation of a published collection.
+pub async fn collection_curation(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let curator = access::curate_collection(&state, &signer, &id).await?;
+    let mut conn = state.items.pool().acquire().await?;
+    Ok(maybe(
+        rows::newest_of_collection(&mut conn, curator.collection()).await?,
+    ))
+}
+
+/// The `itemIds` of a query string as builder-server's query parser reads
+/// them: repeated, or bracketed (`itemIds[]`), they are a list; given once
+/// without brackets, a string, which it refuses.
+fn item_ids(query: Option<&str>) -> Result<Option<Vec<Uuid>>, ApiError> {
+    let mut plain = Vec::new();
+    let mut bracketed = Vec::new();
+    for (key, value) in url::form_urlencoded::parse(query.unwrap_or_default().as_bytes()) {
+        match key.as_ref() {
+            "itemIds" => plain.push(value.into_owned()),
+            "itemIds[]" => bracketed.push(value.into_owned()),
+            _ => {}
+        }
+    }
+    if plain.len() == 1 && bracketed.is_empty() {
+        return Err(ApiError::bad_request("Invalid itemIds parameter provided.")
+            .with_data(json!({ "itemIds": plain[0] })));
+    }
+    let raw: Vec<String> = plain.into_iter().chain(bracketed).collect();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.len() as i64 > rows::MAX_ROWS {
+        return Err(ApiError::bad_request("Invalid itemIds parameter provided.")
+            .with_data(json!({ "itemIds": raw.len() })));
+    }
+    Ok(Some(
+        raw.iter()
+            .filter_map(|id| Uuid::parse_str(id).ok())
+            .collect(),
+    ))
+}
+
+/// `GET /v1/collections/:id/itemCurations` (`getCollectionItemCurations`):
+/// the newest curation of each of the collection's items, or of the items
+/// `itemIds` names.
+pub async fn collection_item_curations(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Result<Json<ApiData<Vec<ItemCurationOut>>>, ApiError> {
+    let items = item_ids(query.as_deref())?;
+    let curator = access::curate_collection(&state, &signer, &id).await?;
+    let mut conn = state.items.pool().acquire().await?;
+    let rows =
+        rows::newest_of_collection_items(&mut conn, curator.collection(), items.as_deref()).await?;
+    drop(conn);
+    crate::limits::charge_rows(&state, &headers, Some(signer.as_str()), rows.len());
+    Ok(Json(ApiData::ok(rows)))
+}
+
+/// `GET /v1/items/:id/curation` (`getItemCuration`): the item's newest
+/// curation.
+pub async fn item_curation(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let curator = access::curate_item(&state, &signer, &id).await?;
+    let mut conn = state.items.pool().acquire().await?;
+    let item = curator.item().unwrap_or_default();
+    Ok(maybe(rows::newest_of_item(&mut conn, item).await?))
+}
+
+/// A `PATCH` body's `curation`, which builder-server reads before anything
+/// else.
+fn curation_of(body: &Bytes) -> Result<Value, ApiError> {
+    let body: Value =
+        serde_json::from_slice(body).map_err(|_| ApiError::bad_request("Invalid request body"))?;
+    body.get("curation")
+        .filter(|c| !c.is_null())
+        .cloned()
+        .ok_or_else(|| ApiError::bad_request("Could not get curation from request"))
+}
+
+/// `PATCH /v1/collections/:id/curation` (`updateCollectionCuration`).
+pub async fn update_collection_curation(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<ApiData<CollectionCurationOut>>, ApiError> {
+    let curation = curation_of(&body)?;
+    let curator = access::curate_collection(&state, &signer, &id).await?;
+    let update = writes::parse_update(&curation)?;
+    if update.content_hash.is_some() {
+        return Err(ApiError::bad_request("Invalid schema"));
+    }
+    Ok(Json(ApiData::ok(
+        writes::update_collection(&state, curator, update).await?,
+    )))
+}
+
+/// `POST /v1/collections/:id/curation` (`insertCollectionCuration`).
+pub async fn request_collection_curation(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<ApiData<CollectionCurationOpened>>, ApiError> {
+    let curator = access::curate_collection(&state, &signer, &id).await?;
+    let body: Value = if body.is_empty() {
+        json!({})
+    } else {
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("Invalid request body"))?
+    };
+    let open = writes::parse_open(body.get("curation"))?;
+    Ok(Json(ApiData::ok(
+        writes::open_collection(&state, curator, open).await?,
+    )))
+}
+
+/// `PATCH /v1/items/:id/curation` (`updateItemCuration`).
+pub async fn update_item_curation(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<ApiData<ItemCurationOut>>, ApiError> {
+    let curation = curation_of(&body)?;
+    let curator = access::curate_item(&state, &signer, &id).await?;
+    let update = writes::parse_update(&curation)?;
+    Ok(Json(ApiData::ok(
+        writes::update_item(&state, curator, update).await?,
+    )))
+}
+
+/// `POST /v1/items/:id/curation` (`insertItemCuration`): the body is not
+/// read.
+pub async fn request_item_curation(
+    State(state): State<SharedState>,
+    Signed(signer): Signed,
+    Path(id): Path<String>,
+) -> Result<Json<ApiData<ItemCurationOpened>>, ApiError> {
+    let curator = access::curate_item(&state, &signer, &id).await?;
+    Ok(Json(ApiData::ok(writes::open_item(&state, curator).await?)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn validate_status_accepts_known_and_rejects_unknown() {
-        assert!(validate_status("approved").is_ok());
-        assert!(validate_status("rejected").is_ok());
-        assert!(validate_status("pending").is_ok());
-        assert!(validate_status("bogus").is_err());
+    fn item_ids_are_a_list_only_when_repeated_or_bracketed_and_bounded() {
+        let a = Uuid::from_u128(1);
+        let b = Uuid::from_u128(2);
+        assert_eq!(item_ids(None).unwrap(), None);
+        assert_eq!(item_ids(Some("other=1")).unwrap(), None);
+        assert_eq!(
+            item_ids(Some(&format!("itemIds%5B%5D={a}"))).unwrap(),
+            Some(vec![a])
+        );
+        assert_eq!(
+            item_ids(Some(&format!("itemIds={a}&itemIds={b}"))).unwrap(),
+            Some(vec![a, b])
+        );
+        assert_eq!(
+            item_ids(Some(&format!("itemIds[]=not-a-uuid&itemIds[]={b}"))).unwrap(),
+            Some(vec![b])
+        );
+        assert_eq!(
+            item_ids(Some(&format!("itemIds={a}")))
+                .unwrap_err()
+                .status(),
+            400
+        );
+        let many: Vec<String> = (0..=rows::MAX_ROWS)
+            .map(|_| format!("itemIds[]={a}"))
+            .collect();
+        assert_eq!(item_ids(Some(&many.join("&"))).unwrap_err().status(), 400);
+        let most: Vec<String> = (0..rows::MAX_ROWS)
+            .map(|_| format!("itemIds[]={a}"))
+            .collect();
+        assert!(item_ids(Some(&most.join("&"))).is_ok());
     }
 
     /// Compared as parsed JSON: object key order is not part of the contract and flips

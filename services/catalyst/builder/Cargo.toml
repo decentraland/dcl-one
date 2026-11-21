@@ -2,7 +2,7 @@
 name = "catalyst-builder"
 version.workspace = true
 edition = "2024"
-description = "Builder: the scene builder's projects, pools, items and the creator plane's write gate"
+description = "Builder: wearable and emote drafts, their publication and curation, and the creator plane's write gate"
 publish = false
 
 [dependencies]
@@ -28,8 +28,9 @@ alloy-primitives.workspace = true
 reqwest.workspace = true
 url.workspace = true
 alloy-sol-types.workspace = true
-metrics.workspace = true
 ts-rs = { workspace = true, optional = true }
+futures.workspace = true
+regex.workspace = true
 
 [features]
 ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-content/ts"]
@@ -43,5 +44,4 @@ catalyst-content = { path = "../content", features = ["test-support"] }
 catalyst-db = { path = "../db", features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
-metrics-exporter-prometheus.workspace = true
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

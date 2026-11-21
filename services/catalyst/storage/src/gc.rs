@@ -1,7 +1,8 @@
 //! The ONE blob store's collector. Every domain writes into the same
 //! hash-addressed store (content files and entities, world scenes and
 //! thumbnails, posters, satellite regions, world manifests, community
-//! thumbnails and federated post bodies, camera-reel photos, builder item contents, project files and asset packs,
+//! thumbnails and federated post bodies, camera-reel photos, builder item uploads
+//! (in a tree of their own, [`Storage::builder`], walked after the main one),
 //! player-report evidence, MLS commits and ciphertexts, snapshot files), so
 //! a file may go only when no domain names it. The store is walked once;
 //! its aged files (untouched for the age floor: at least an hour and the
@@ -9,14 +10,14 @@
 //! blob and committing the row that names it) are checked in chunks
 //! against every [`REFERENCE_SOURCES`] column (`= ANY`, index-served on the
 //! large tables) and the JSON documents that embed keys (the world scenes'
-//! and pending partial uploads' content lists, the asset-pack catalogue)
+//! and pending partial uploads' content lists)
 //! plus the global scenes the configuration names, so memory holds a chunk,
 //! never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked (references and age) right before it is unlinked, under
-//! the exclusive store lock that local content deploys and world scene deploys
-//! take shared (synced content writes and other domains rely on the age floor
-//! alone), an empty reference set with
+//! the exclusive store lock that local content deploys, world scene deploys
+//! and builder item uploads take shared (synced content writes and other
+//! domains rely on the age floor alone), an empty reference set with
 //! candidates is refused unless asked for, and the dry run reports without
 //! deleting.
 //!
@@ -45,10 +46,10 @@ pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: &str = "30s";
 
-/// Taken by a local content deploy or a world scene deploy before it checks that the keys it names
-/// exist: an unlink batch re-checks references and unlinks under the exclusive lock, so either the
-/// deploy sees the file gone or the batch sees the committed reference. Synced content writes and
-/// other domains do not take it.
+/// Taken by a local content deploy, a world scene deploy or a builder item upload before it checks
+/// that the keys it names exist: an unlink batch re-checks references and unlinks under the
+/// exclusive lock, so either the writer sees the file gone or the batch sees the committed
+/// reference. Synced content writes and other domains do not take it.
 pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(STORE_LOCK_KEY)
@@ -127,17 +128,10 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "social.mls_commits.welcome_cid",
     "social.mls_message_refs.ciphertext_cid",
     "social.profile_images.blob_cid",
-    "builder.items.thumbnail",
     "builder.items.local_content_hash",
     "builder.items.content_hash",
     "builder.items.catalyst_content_hash",
     "builder.uploaded_contents.hash",
-    "builder.item_contents.hash",
-    "builder.projects.thumbnail",
-    "builder.project_files.hash",
-    "builder.asset_packs.thumbnail",
-    "builder.assets.thumbnail",
-    "builder.asset_contents.hash",
     "camera_reel.images.image_hash",
     "camera_reel.images.thumbnail_hash",
     "shop.outfit_thumbnails.blob_cid",
@@ -145,6 +139,16 @@ pub const REFERENCE_SOURCES: &[&str] = &[
 
 /// Columns whose names look like store keys but are not, with the reason.
 pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
+    (
+        "builder.items.thumbnail",
+        "the file name of an item's thumbnail, a key of its contents: \
+         builder.uploaded_contents.hash holds the reference to that file's bytes",
+    ),
+    (
+        "builder.item_contents.hash",
+        "a name an item gives a file: builder.uploaded_contents.hash holds the reference while an \
+         item names an uploaded file",
+    ),
     (
         "content.snapshots.replaced_hashes",
         "the snapshot files a newer snapshot replaced: garbage for this collector",
@@ -215,7 +219,19 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "an envelope digest",
     ),
     ("worlds.worlds.access_secret_hash", "a bcrypt hash"),
+    (
+        "builder.item_curations.content_hash",
+        "the keccak-256 digest of a reviewed third-party item",
+    ),
+    (
+        "builder.validation_requests.content_hashes",
+        "the entity hashes of the items a validator claim named: a record of what it judged",
+    ),
     ("shop.items.image", "a URL"),
+    (
+        "shop.items.content_hash",
+        "the subgraph's copy of an item's entity hash",
+    ),
     ("shop.trades.hashed_signature", "an order digest"),
     (
         "shop.trade_cancellations.target_hashed_signature",
@@ -354,12 +370,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
 
 /// JSON documents that embed store keys, read by [`reference_set`] beside
 /// the plain sources: the world scene and pending upload entities'
-/// `content[].hash` and the asset-pack catalogue's thumbnails and asset contents.
+/// `content[].hash`.
 pub const JSON_SOURCES: &[&str] = &[
     "worlds.world_scenes.entity",
     "worlds.retired_world_scenes.entity",
     "worlds.pending_scenes.entity",
-    "builder.asset_catalog.packs",
 ];
 
 /// The age floor: at least an hour, and at least the widest store-then-row
@@ -444,51 +459,6 @@ fn content_hashes(
     Ok(())
 }
 
-fn catalogue_hashes(packs: &Value, out: &mut HashSet<String>) -> Result<(), GcError> {
-    let packs = match packs {
-        Value::Array(packs) => packs,
-        _ => {
-            return Err(GcError::Unreadable(
-                "builder.asset_catalog.packs is not an array".into(),
-            ));
-        }
-    };
-    for pack in packs {
-        if let Some(thumbnail) = pack
-            .get("thumbnail")
-            .and_then(Value::as_str)
-            .filter(|t| !t.is_empty())
-        {
-            out.insert(thumbnail.to_string());
-        }
-        for asset in pack
-            .get("assets")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            for hash in asset
-                .get("contents")
-                .and_then(Value::as_object)
-                .into_iter()
-                .flat_map(|c| c.values())
-            {
-                match hash.as_str() {
-                    Some(hash) if !hash.is_empty() => {
-                        out.insert(hash.to_string());
-                    }
-                    _ => {
-                        return Err(GcError::Unreadable(
-                            "an asset-pack content entry has no usable hash".into(),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// The entity id of each `urn:decentraland:entity:<id>[?...]` the
 /// configuration names (the global scenes every world loads).
 pub fn global_scene_entity_ids(urns: &[String]) -> Vec<String> {
@@ -549,14 +519,10 @@ impl<'a> Pins<'a> {
     }
 }
 
-/// The small reference documents read whole: the asset-pack catalogue and
-/// the global scenes the configuration names (their entity file and its
-/// content list).
-pub async fn fixed_references(
-    conn: &mut sqlx::PgConnection,
-    pins: Pins<'_>,
-) -> Result<HashSet<String>, GcError> {
-    let mut keys = catalogue_references(conn).await?;
+/// The small reference documents read whole: the global scenes the
+/// configuration names (their entity file and its content list).
+pub async fn fixed_references(pins: Pins<'_>) -> Result<HashSet<String>, GcError> {
+    let mut keys = HashSet::new();
     for entity_id in global_scene_entity_ids(pins.global_scenes_urn) {
         if let Some(bytes) = pins.storage.retrieve(&entity_id).await? {
             let entity: Value = serde_json::from_slice(&bytes).map_err(|e| {
@@ -571,21 +537,6 @@ pub async fn fixed_references(
             )?;
         }
         keys.insert(entity_id);
-    }
-    Ok(keys)
-}
-
-/// The keys the asset-pack catalogue names (its one row).
-pub async fn catalogue_references(
-    conn: &mut sqlx::PgConnection,
-) -> Result<HashSet<String>, GcError> {
-    let mut keys = HashSet::new();
-    let catalogue: Option<Value> =
-        sqlx::query_scalar("SELECT packs FROM builder.asset_catalog WHERE id = 1")
-            .fetch_optional(&mut *conn)
-            .await?;
-    if let Some(packs) = catalogue {
-        catalogue_hashes(&packs, &mut keys)?;
     }
     Ok(keys)
 }
@@ -649,7 +600,7 @@ async fn referenced_since(
     let current: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::bigint")
         .fetch_one(&mut *conn)
         .await?;
-    let fixed = fixed_references(conn, pins).await?;
+    let fixed = fixed_references(pins).await?;
     let mut found = rows_among(conn, keys, true, (current - fence).max(0)).await?;
     found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
     Ok(found)
@@ -694,7 +645,7 @@ async fn references_among(
     if keys.is_empty() {
         return Ok(HashSet::new());
     }
-    let fixed = fixed_references(conn, pins).await?;
+    let fixed = fixed_references(pins).await?;
     let mut found = rows_among(conn, keys, pending, ALL_ROWS).await?;
     found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
     Ok(found)
@@ -773,8 +724,8 @@ async fn aged(
 }
 
 /// Unlinks those of `keys` a collection pass with `min_age` would: aged
-/// files outside the fixed references (the asset-pack catalogue, the global
-/// scenes) that no domain names, re-checked right before the unlink. For a
+/// files outside the fixed references (the global scenes) that no domain
+/// names, re-checked right before the unlink. For a
 /// writer reclaiming the blobs it staged; younger ones are left to the
 /// collector, which covers the same store-then-row gap. Answers how many
 /// went.
@@ -789,11 +740,7 @@ pub async fn unlink_orphans(
         return Ok(0);
     }
     check_json_sources(pool).await?;
-    let fixed = fixed_references(
-        &mut *pool.acquire().await?,
-        Pins::new(storage, global_scenes_urn),
-    )
-    .await?;
+    let fixed = fixed_references(Pins::new(storage, global_scenes_urn)).await?;
     let now = SystemTime::now();
     let mut candidates: Vec<String> = Vec::new();
     for key in keys {
@@ -813,9 +760,10 @@ pub async fn unlink_orphans(
     Ok(unlinked)
 }
 
-/// One collection pass: the store is walked in chunks of aged files, each
-/// checked against every domain's references; a candidate is re-checked
-/// right before it is unlinked (a deployment may reuse a stored blob).
+/// One collection pass: the store and its builder tree are walked in chunks
+/// of aged files, each checked against every domain's references; a
+/// candidate is re-checked right before it is unlinked (a deployment may
+/// reuse a stored blob).
 pub async fn collect(
     pool: &PgPool,
     storage: &Storage,
@@ -824,7 +772,7 @@ pub async fn collect(
 ) -> Result<GcReport, GcError> {
     check_json_sources(pool).await?;
     let pins = Pins::new(storage, global_scenes_urn);
-    let fixed = fixed_references(&mut *pool.acquire().await?, pins).await?;
+    let fixed = fixed_references(pins).await?;
     let refuse_empty =
         !options.allow_empty_reference_set && fixed.is_empty() && !any_reference(pool).await?;
     let now = SystemTime::now();
@@ -833,40 +781,41 @@ pub async fn collect(
         min_age_seconds: options.min_age.as_secs(),
         ..GcReport::default()
     };
-    let mut orphans: Vec<String> = Vec::new();
-    let mut chunk: Vec<String> = Vec::with_capacity(CHUNK);
-    let mut ids = storage.all_file_ids(None);
-    loop {
-        let next = ids.next().await?;
-        if let Some(id) = &next {
-            report.scanned += 1;
-            if let Some(aged) = aged(storage, id, now, options.min_age).await? {
-                if aged && !fixed.contains(id) {
-                    chunk.push(id.clone());
-                } else if fixed.contains(id) {
-                    report.references += 1;
+    for tree in std::iter::once(storage).chain(storage.builder().map(|tree| &**tree)) {
+        let mut orphans: Vec<String> = Vec::new();
+        let mut chunk: Vec<String> = Vec::with_capacity(CHUNK);
+        let mut ids = tree.all_file_ids(None);
+        loop {
+            let next = ids.next().await?;
+            if let Some(id) = &next {
+                report.scanned += 1;
+                if let Some(aged) = aged(tree, id, now, options.min_age).await? {
+                    if aged && !fixed.contains(id) {
+                        chunk.push(id.clone());
+                    } else if fixed.contains(id) {
+                        report.references += 1;
+                    }
                 }
             }
+            if chunk.len() >= CHUNK || (next.is_none() && !chunk.is_empty()) {
+                chunk.sort();
+                chunk.dedup();
+                let referenced =
+                    rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
+                report.references += referenced.len();
+                orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
+            }
+            if next.is_none() {
+                break;
+            }
         }
-        if chunk.len() >= CHUNK || (next.is_none() && !chunk.is_empty()) {
-            chunk.sort();
-            chunk.dedup();
-            // The fixed references never enter a chunk.
-            let referenced =
-                rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
-            report.references += referenced.len();
-            orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
+        report.candidates += orphans.len();
+        if refuse_empty && !orphans.is_empty() {
+            return Err(GcError::EmptyReferenceSet);
         }
-        if next.is_none() {
-            break;
+        if !options.dry_run {
+            unlink_collected(pool, tree, pins, &orphans, options.min_age, &mut report).await?;
         }
-    }
-    report.candidates = orphans.len();
-    if refuse_empty && !orphans.is_empty() {
-        return Err(GcError::EmptyReferenceSet);
-    }
-    if !options.dry_run {
-        unlink_collected(pool, storage, pins, &orphans, options.min_age, &mut report).await?;
     }
     tracing::info!(?report, "blob store collection finished");
     Ok(report)
@@ -950,14 +899,6 @@ mod tests {
         assert!(out.contains("h1"));
         assert!(content_hashes("s", Some(&json!([{ "file": "a" }])), &mut out).is_err());
         assert!(content_hashes("s", Some(&json!({ "a": "h" })), &mut out).is_err());
-        let mut packs = HashSet::new();
-        catalogue_hashes(
-            &json!([{ "thumbnail": "t1", "assets": [{ "contents": { "a.glb": "g1" } }] }]),
-            &mut packs,
-        )
-        .unwrap();
-        assert_eq!(packs, HashSet::from(["t1".to_string(), "g1".to_string()]));
-        assert!(catalogue_hashes(&json!({}), &mut packs).is_err());
         assert_eq!(
             global_scene_entity_ids(&[
                 "urn:decentraland:entity:bafyx?baseUrl=https://x/".into(),
@@ -965,6 +906,143 @@ mod tests {
             ]),
             vec!["bafyx"]
         );
+    }
+
+    #[tokio::test]
+    async fn a_name_in_an_item_protects_no_blob_and_an_upload_record_does() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let item = uuid::Uuid::new_v4();
+        let named = format!("bafkreinamed{}", item.simple());
+        let owner = "0x1111111111111111111111111111111111111111";
+        sqlx::query("INSERT INTO builder.items (id, eth_address, name, type) VALUES ($1, $2, 'Named', 'wearable')")
+            .bind(item)
+            .bind(owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO builder.item_contents (item_id, file, hash, named_by) VALUES ($1, 'model.glb', $2, $3)",
+        )
+        .bind(item)
+        .bind(&named)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let referenced = async || {
+            let mut conn = pool.acquire().await.unwrap();
+            referenced_rows_among_on(&mut conn, std::slice::from_ref(&named))
+                .await
+                .unwrap()
+                .contains(&named)
+        };
+        assert!(!referenced().await, "a name alone keeps the blob");
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, 1, $2)",
+        )
+        .bind(&named)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(referenced().await, "an upload record keeps the blob");
+        sqlx::query("DELETE FROM builder.items WHERE id = $1")
+            .bind(item)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+            .bind(&named)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_hash_named_as_an_items_thumbnail_protects_no_blob() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let item = uuid::Uuid::new_v4();
+        let named = format!("bafkreithumbnail{}", item.simple());
+        sqlx::query(
+            "INSERT INTO builder.items (id, eth_address, name, type, thumbnail) \
+             VALUES ($1, '0x1111111111111111111111111111111111111111', 'Named', 'wearable', $2)",
+        )
+        .bind(item)
+        .bind(&named)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let referenced = referenced_rows_among_on(&mut conn, std::slice::from_ref(&named))
+            .await
+            .unwrap();
+        drop(conn);
+        sqlx::query("DELETE FROM builder.items WHERE id = $1")
+            .bind(item)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            !referenced.contains(&named),
+            "a thumbnail name alone keeps the blob"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_items_kept_video_protects_its_blob_only_through_an_upload_record() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let item = uuid::Uuid::new_v4();
+        let video = format!("bafkreikeptvideo{}", item.simple());
+        let owner = "0x1111111111111111111111111111111111111111";
+        sqlx::query(
+            "INSERT INTO builder.items (id, eth_address, name, type, video, video_named_by) \
+             VALUES ($1, $2, 'Kept video', 'wearable', $3, $2)",
+        )
+        .bind(item)
+        .bind(owner)
+        .bind(&video)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let referenced = async || {
+            let mut conn = pool.acquire().await.unwrap();
+            referenced_rows_among_on(&mut conn, std::slice::from_ref(&video))
+                .await
+                .unwrap()
+                .contains(&video)
+        };
+        assert!(
+            !referenced().await,
+            "a kept video's name alone keeps the blob"
+        );
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ($1, 1, $2)",
+        )
+        .bind(&video)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            referenced().await,
+            "its writer's upload record keeps the blob"
+        );
+        sqlx::query("DELETE FROM builder.items WHERE id = $1")
+            .bind(item)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+            .bind(&video)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     /// Every hash/cid/entity/thumbnail/image column of the schema is either a
@@ -1156,10 +1234,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// On a database of its own: an aged unreferenced file goes, a
-    /// referenced one (a content file, a poster, a scene's content, a global
-    /// scene) and a fresh one stay; the dry run deletes nothing; an empty
-    /// reference set is refused unless allowed.
     #[tokio::test]
     async fn only_aged_unreferenced_files_are_collected() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -1205,6 +1279,14 @@ mod tests {
         let retired_file = put(b"retired scene file".to_vec()).await;
         let global_file = put(b"global file".to_vec()).await;
         let fresh = put(b"fresh".to_vec()).await;
+        let item_tree = storage.builder().unwrap();
+        let put_item_file = |bytes: Vec<u8>| async move {
+            let key = crate::auth::hash::hash_bytes_v1(&bytes);
+            item_tree.store(&key, Bytes::from(bytes)).await.unwrap();
+            key
+        };
+        let forgotten_item_file = put_item_file(b"forgotten item file".to_vec()).await;
+        let uploaded_item_file = put_item_file(b"uploaded item file".to_vec()).await;
         let global = put(json!({ "content": [{ "file": "a", "hash": global_file }] })
             .to_string()
             .into_bytes())
@@ -1219,6 +1301,13 @@ mod tests {
             &global_file,
         ] {
             let path = storage.file_path(key).await.unwrap().unwrap();
+            std::fs::File::open(path)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(two_hours_ago))
+                .unwrap();
+        }
+        for key in [&forgotten_item_file, &uploaded_item_file] {
+            let path = item_tree.file_path(key).await.unwrap().unwrap();
             std::fs::File::open(path)
                 .unwrap()
                 .set_times(std::fs::FileTimes::new().set_modified(two_hours_ago))
@@ -1265,8 +1354,17 @@ mod tests {
         .await
         .unwrap();
 
+        sqlx::query(
+            "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) \
+             VALUES ($1, 1, '0x1111111111111111111111111111111111111111')",
+        )
+        .bind(&uploaded_item_file)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let dry = collect(&pool, &storage, &globals, options).await.unwrap();
-        assert_eq!((dry.scanned, dry.candidates, dry.removed), (7, 1, 0));
+        assert_eq!((dry.scanned, dry.candidates, dry.removed), (9, 2, 0));
         assert!(
             storage.exist(&orphan).await.unwrap(),
             "the dry run deletes nothing"
@@ -1282,8 +1380,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!((wet.candidates, wet.removed, wet.failed), (1, 1, 0));
+        assert_eq!((wet.candidates, wet.removed, wet.failed), (2, 2, 0));
         assert!(!storage.exist(&orphan).await.unwrap());
+        assert!(!item_tree.exist(&forgotten_item_file).await.unwrap());
+        assert!(item_tree.exist(&uploaded_item_file).await.unwrap());
         for key in [
             &poster,
             &scene_file,
@@ -1294,17 +1394,10 @@ mod tests {
         ] {
             assert!(storage.exist(key).await.unwrap(), "{key} stays");
         }
-        // The key-level check other unlink paths run counts the fixed references too.
-        let pack_file = put(b"asset pack file".to_vec()).await;
-        sqlx::query("INSERT INTO builder.asset_catalog (id, packs, source, built_at) VALUES (1, $1, 'test', timezone('UTC', now()))")
-            .bind(json!([{ "assets": [{ "contents": { "a.glb": pack_file } }] }]))
-            .execute(&pool)
-            .await
-            .unwrap();
-        let keys = vec![global.clone(), global_file.clone(), pack_file.clone()];
+        let keys = vec![global.clone(), global_file.clone()];
         let pins = Pins::new(&storage, &globals);
-        assert_eq!(referenced_among(&pool, pins, &keys).await.unwrap().len(), 3);
-        assert_eq!(published_among(&pool, pins, &keys).await.unwrap().len(), 3);
+        assert_eq!(referenced_among(&pool, pins, &keys).await.unwrap().len(), 2);
+        assert_eq!(published_among(&pool, pins, &keys).await.unwrap().len(), 2);
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{name}\" WITH (FORCE)"

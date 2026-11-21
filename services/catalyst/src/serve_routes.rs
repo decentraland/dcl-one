@@ -161,7 +161,6 @@ pub(super) fn build_routes(
             subscriptions,
             mana,
         }))
-        .merge(shop::campaigns::builder_alias_router(market.clone()))
         // events-notifier.<domain> reaches /events-notifier (gateway subdomain rule).
         .nest(
             "/events-notifier",

@@ -22,8 +22,8 @@
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{OriginalUri, Path, State};
-use axum::http::{Method, StatusCode, Uri, header};
+use axum::extract::{Path, State};
+use axum::http::{Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
@@ -168,10 +168,6 @@ async fn builder_for(
     Ok((bs.clone(), service_headers(Some(token), session.address())))
 }
 
-fn uri(path: &str) -> Uri {
-    path.parse().unwrap_or_else(|_| Uri::from_static("/"))
-}
-
 /// `POST /admin/api/builder/item-status` `{collection_id, item_id, status}`.
 pub async fn builder_item_status(
     session: AdminSession,
@@ -195,19 +191,25 @@ pub async fn builder_item_status(
         Ok(b) => b,
         Err(resp) => return resp,
     };
-    let path = uri(&format!(
-        "/v1/collections/{collection_id}/items/{item_id}/status"
-    ));
-    let answer = crate::builder::handlers::curation::patch_item_status(
-        State(bs),
-        Path((collection_id, item_id.clone())),
-        OriginalUri(path.clone()),
-        path,
-        headers,
-        Json(typed),
+    let path = format!("/v1/collections/{collection_id}/items/{item_id}/status");
+    let answer = match crate::builder::auth::Admin::check(
+        &bs,
+        &headers,
+        "patch",
+        &crate::builder::auth::SignedPath::local(path),
     )
     .await
-    .into_response();
+    {
+        Ok(admin) => crate::builder::handlers::curation::patch_item_status(
+            State(bs),
+            admin,
+            Path((collection_id, item_id.clone())),
+            Json(typed),
+        )
+        .await
+        .into_response(),
+        Err(refusal) => refusal.into_response(),
+    };
     finish(
         &state,
         Call::new(&session, "create", "builder.item.status")
@@ -254,17 +256,25 @@ pub async fn builder_items_status(
             Ok(b) => b,
             Err(resp) => return resp,
         };
-    let path = uri(&format!("/v1/collections/{collection_id}/items/status"));
-    let answer = crate::builder::handlers::curation::patch_items_status_bulk(
-        State(bs),
-        Path(collection_id.clone()),
-        OriginalUri(path.clone()),
-        path,
-        headers,
-        Json(typed),
+    let path = format!("/v1/collections/{collection_id}/items/status");
+    let answer = match crate::builder::auth::Admin::check(
+        &bs,
+        &headers,
+        "patch",
+        &crate::builder::auth::SignedPath::local(path),
     )
     .await
-    .into_response();
+    {
+        Ok(admin) => crate::builder::handlers::curation::patch_items_status_bulk(
+            State(bs),
+            admin,
+            Path(collection_id.clone()),
+            Json(typed),
+        )
+        .await
+        .into_response(),
+        Err(refusal) => refusal.into_response(),
+    };
     finish(
         &state,
         Call::new(&session, "create", "builder.items.status")

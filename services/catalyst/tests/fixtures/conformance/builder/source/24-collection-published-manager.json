@@ -1,0 +1,52 @@
+{
+  "description": "GET /collections/{id} signed by an on-chain manager of the collection. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000006",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0x5672Df71369356f13Ae7E2bC6B530c65C0864Ccd\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0x2e24a6d9762021b78f11900935ea35c5bfade2266b1e0398f97bacd9618abb95234c3261558ae7813c47ddb69c7cb08e4c553bbef76ab317e740d438c96773d41b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/collections/c011ec71-0000-4000-8000-000000000006:1767225600000:{}\",\"signature\":\"0x3777c09219814b88c9f2634bca7997df31f929b341bb0e691ede3c49cc771a8b167772137c35623801d75d6f5943f0ac4439da45b478aac1c14bd88789e3c0631c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "id": "c011ec71-0000-4000-8000-000000000006",
+        "name": "Chain unapproved",
+        "eth_address": "0xc1aba94a79ca07d9d15a62ff5c9b382777e0c70e",
+        "salt": "0x6c2f0e5b1f5d4a8e9b3c7d1e2f3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c",
+        "contract_address": "0x5eed000000000000000000000000000000000006",
+        "is_published": true,
+        "created_at": "2025-12-03T00:00:00.000Z",
+        "updated_at": "2025-12-03T00:00:00.000Z",
+        "managers": [
+          "0x1257bf35fafebbfc08ea47903e1f7c36ecda48c0"
+        ],
+        "minters": [],
+        "is_approved": false,
+        "reviewed_at": "1970-01-01T00:00:00.000Z",
+        "forum_link": null,
+        "lock": null,
+        "forum_id": null,
+        "linked_contract_address": null,
+        "linked_contract_network": null,
+        "is_mapping_complete": false,
+        "item_count": "1",
+        "urn": "urn:decentraland:matic:collections-v2:0x5eed000000000000000000000000000000000006"
+      }
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": []
+}

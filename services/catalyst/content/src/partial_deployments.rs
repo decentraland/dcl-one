@@ -26,7 +26,7 @@
 //! batch; the leased `content-partial-uploads-cleanup` job deletes expired
 //! uploads and unlinks the staged blobs they wrote themselves (a receipt's
 //! `written`) that the collector would: past its age floor, outside its
-//! fixed references (asset packs, global scenes) and named by no domain
+//! fixed references (the global scenes) and named by no domain
 //! ([`gc::unlink_orphans`], which knows the pending tables). A blob still
 //! younger than the floor is left to the collector: a regular deploy may be
 //! committing it (the SDK skips what `/available-content` reports).

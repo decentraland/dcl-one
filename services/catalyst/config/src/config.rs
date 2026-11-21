@@ -193,7 +193,7 @@ impl Config {
     /// bearers, service tokens, the console's session key): a short one is
     /// guessable or brute-forced offline, so startup refuses it. Bearers this
     /// node sends elsewhere keep their issuer's length.
-    pub const OPERATOR_SECRETS: [&'static str; 27] = [
+    pub const OPERATOR_SECRETS: [&'static str; 28] = [
         "SESSION_SECRET",
         "CATALYRST_CONTENT_ADMIN_TOKEN",
         "COMMUNITIES_ADMIN_TOKEN",
@@ -202,6 +202,7 @@ impl Config {
         "CATALYRST_BADGES_ADMIN_TOKEN",
         "CATALYRST_EVENTS_ADMIN_TOKEN",
         "CATALYRST_BUILDER_ADMIN_TOKEN",
+        "WEARABLE_VALIDATOR_CALLBACK_SECRET",
         "CATALYRST_CAMERA_REEL_ADMIN_TOKEN",
         "CAMERA_REEL_METRICS_BEARER_TOKEN",
         "CATALYRST_WORLDS_ADMIN_TOKEN",
@@ -276,7 +277,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 81] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 85] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -386,6 +387,13 @@ impl Config {
             (
                 "NEWSLETTER_SERVICE_API_KEY",
                 &mut self.create.newsletter_service_api_key,
+            ),
+            ("WAREHOUSE_URL", &mut self.create.warehouse_url),
+            ("WAREHOUSE_TOKEN", &mut self.create.warehouse_token),
+            ("FORUM_API_KEY", &mut self.create.forum_api_key),
+            (
+                "WEARABLE_VALIDATOR_CALLBACK_SECRET",
+                &mut self.create.wearable_validator_callback_secret,
             ),
             (
                 "BUILDER_POLYGON_RPC_URL",
@@ -778,16 +786,17 @@ mod tests {
     /// Secret slots that are not this node's own inbound operator secrets: credentials it
     /// sends elsewhere, keys and URLs whose shape another party sets.
     const OTHER_SECRETS: &[&str] = &[
-        // Inbound HMAC key, but Segment issues it: its length is Segment's.
         "SEGMENT_SIGNING_KEY",
         "ETH_RPC_URL",
+        "WAREHOUSE_URL",
+        "WAREHOUSE_TOKEN",
+        "FORUM_API_KEY",
         "LIVEKIT_API_KEY",
         "LIVEKIT_API_SECRET",
         "SLACK_BOT_TOKEN",
         "ANALYTICS_API_TOKEN",
         "OPEN_AI_API_KEY",
         "SENDGRID_API_KEY",
-        // Signs and checks unsubscribe links: rotating a short key breaks links already sent.
         "SIGNING_KEY",
         "SLACK_WEBHOOK",
         "PLACES_MODERATION_WEBHOOK",

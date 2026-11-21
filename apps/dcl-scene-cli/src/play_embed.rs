@@ -1,11 +1,8 @@
 //! The packaged web explorer, carried inside this binary and served at
 //! `/play/` on the preview's own origin. build.rs embeds the tree
-//! `PLAY_EMBED_DIR` names (play_embed_select.rs decides which files), so
-//! `--talk` can open a player that is same-origin with the project API: the
-//! HUD's writes then ride the capability token on 127.0.0.1 and no third
-//! origin has to be let through the gate. Without `PLAY_EMBED_DIR` the table
-//! is empty, `/play/` answers 404 saying so and `--talk` uses the public
-//! player.
+//! `PLAY_EMBED_DIR` names (play_embed_select.rs decides which files).
+//! Without `PLAY_EMBED_DIR` the table is empty and `/play/` answers 404
+//! saying so.
 //!
 //! Precompressed files (`.br`) are stored as they are and served with
 //! `Content-Encoding: br` to a client that accepts it, inflated once and kept
@@ -149,9 +146,8 @@ pub struct PlayConfig {
 /// The operator's site, fixed at build time from `DCL_SCENE_CLI_SITE` (an
 /// http(s) origin such as `https://example.org`). A build that names none
 /// has no default site: the embedded HUD's services then resolve against
-/// the page's own origin, and `--talk`, the account sign-in and the Creator
-/// Hub link need their own URL (`--player`, `DCL_SCENE_CLI_WEB_EXPLORER`,
-/// `DCL_SCENE_CLI_TARGET_SERVER`, `DCL_SCENE_CLI_CREATOR_HUB_URL`).
+/// the page's own origin, and the account sign-in needs its own URL
+/// (`DCL_SCENE_CLI_TARGET_SERVER`).
 pub const DEFAULT_SITE: Option<&str> = option_env!("DCL_SCENE_CLI_SITE");
 
 impl Default for PlayConfig {
@@ -353,8 +349,8 @@ pub fn find(path: &str) -> Option<&'static File> {
     FILES.iter().find(|f| f.path == path)
 }
 
-/// `http://127.0.0.1:{port}/play/`: the player `--talk` prefers, when the
-/// binary carries one. Loopback and not a LAN address on purpose: WebGPU and
+/// `http://127.0.0.1:{port}/play/`, when the binary carries a player.
+/// Loopback and not a LAN address on purpose: WebGPU and
 /// the microphone need a secure context, which plain http has only there.
 pub fn local_player(port: u16) -> Option<String> {
     present().then(|| format!("http://127.0.0.1:{port}/play/"))

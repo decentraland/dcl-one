@@ -75,14 +75,9 @@ pub fn compare_json(
     diffs
 }
 
-fn is_globally_ignored(path: &str) -> bool {
-    let leaf = path.rsplit('.').next().unwrap_or(path);
-    let leaf_clean = leaf.split('[').next().unwrap_or(leaf);
-    IGNORED_FIELDS.contains(&leaf_clean)
-}
-
 fn is_ignored_for_section(section: &str, path: &str, volatility: &Volatility) -> bool {
-    if is_globally_ignored(path) {
+    let leaf = path.rsplit('.').next().unwrap_or(path);
+    if volatility.ignores_field(leaf.split('[').next().unwrap_or(leaf)) {
         return true;
     }
     volatility.is_ignored(section, path)
@@ -208,6 +203,28 @@ fn truncate_value(val: &Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_ignored_keys_are_a_volatility_parameter() {
+        let (baseline, candidate) = (
+            json!({"data": {"id": "a", "url": "u"}}),
+            json!({"data": {"id": "b"}}),
+        );
+        let default = compare_json("s", "f", &baseline, &candidate, &Volatility::default());
+        assert!(default.is_empty(), "{default:?}");
+        let every = Volatility::default().with_ignored_fields(&[]);
+        let lines: Vec<String> = compare_json("s", "f", &baseline, &candidate, &every)
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                "f.data.id: baseline=\"a\" candidate=\"b\"",
+                "f.data.url: baseline=\"u\" candidate=missing"
+            ]
+        );
+    }
 
     #[test]
     fn additive_and_missing_keys_are_one_difference_each() {

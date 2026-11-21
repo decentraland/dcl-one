@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import '../test/setup'
 import { rejection } from '../test/rejection'
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
-import { BuilderServerError, isRefusedRequest, request } from './transport'
+import { describe, it, expect, afterEach, beforeEach, vi, type Mock } from 'vitest'
+import { BuilderServerError, baseUrl, isRefusedRequest, request } from './transport'
 
 vi.mock('../auth', () => ({
   signedFetch: vi.fn()
@@ -55,5 +55,29 @@ describe('isRefusedRequest', () => {
     expect(isRefusedRequest(new BuilderServerError('gone', 404))).toBe(true)
     expect(isRefusedRequest(new BuilderServerError('down', 503))).toBe(false)
     expect(isRefusedRequest(new Error('offline'))).toBe(false)
+  })
+})
+
+describe('baseUrl', () => {
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    afterEach(() => {
+      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
+    })
+
+    it("should be the builder-api of the node behind the page's origin", () => {
+      expect(baseUrl()).toBe(`${window.location.origin}/builder-api/v1`)
+      expect(baseUrl('dcl.example')).toBe(`${window.location.origin}/builder-api/v1`)
+    })
+
+    it('should be the builder-api of the public node base when the page names one', () => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
+      expect(baseUrl()).toBe('https://node.example/builder-api/v1')
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's builder-api", () => {
+      expect(baseUrl('decentraland.zone')).toBe('https://builder-api.decentraland.zone/v1')
+    })
   })
 })

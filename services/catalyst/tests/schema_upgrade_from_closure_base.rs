@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 32] = [
+const PREPARED_PENDING_STEPS: [&str; 47] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -44,6 +44,21 @@ const PREPARED_PENDING_STEPS: [&str; 32] = [
     "0051_explore_auth_identity_request_id",
     "0052_shop_committee_index",
     "0053_shop_bid_received_producer",
+    "0054_builder_scenes_retired",
+    "0055_shop_items_content_hash",
+    "0056_builder_collection_flags_retired",
+    "0057_builder_collection_listings",
+    "0058_builder_item_contents_order",
+    "0059_builder_item_contents_named_by",
+    "0060_builder_item_video_named_by",
+    "0061_builder_collection_lock",
+    "0062_builder_collection_forum",
+    "0063_builder_collection_forum_claim",
+    "0064_builder_linked_publications_retired",
+    "0065_builder_uploaded_video_size",
+    "0066_builder_validation_retry",
+    "0067_builder_slot_cheques_outlive_collections",
+    "0068_builder_uploaded_video_checked",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -1895,5 +1910,827 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
     release_statements(pool, &release)
         .await
         .expect("a second run notes the function is gone");
+    old.drop().await;
+}
+
+const BUILDER_SCENES_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/builder-scenes-retired.sql"
+));
+
+const BUILDER_SCENE_TABLES: [&str; 7] = [
+    "builder.projects",
+    "builder.project_manifests",
+    "builder.project_files",
+    "builder.asset_packs",
+    "builder.assets",
+    "builder.asset_contents",
+    "builder.asset_catalog",
+];
+
+#[tokio::test]
+async fn a_fresh_database_has_no_builder_scene_tables() {
+    let Some(fresh) = with_schema(catalyst::db::SCHEMA_SQL).await else {
+        return;
+    };
+    for table in BUILDER_SCENE_TABLES {
+        assert!(!has_relation(&fresh.pool, table).await, "{table}");
+    }
+    assert!(has_relation(&fresh.pool, "builder.uploaded_contents").await);
+    fresh.drop().await;
+}
+
+async fn uploads(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT hash FROM builder.uploaded_contents ORDER BY hash")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+const BUILDER_SCENES_STEP: &str = "0054_builder_scenes_retired";
+
+async fn assert_release_refused(pool: &PgPool, release: &str, why: &str) {
+    assert!(release_result(pool, release).await.is_err(), "{why}");
+    for table in BUILDER_SCENE_TABLES {
+        assert!(has_relation(pool, table).await, "{why}: {table} is kept");
+    }
+    assert_eq!(
+        uploads(pool).await.len(),
+        12,
+        "{why}: no upload is forgotten"
+    );
+}
+
+async fn age_scene_writes(pool: &PgPool) {
+    sqlx::raw_sql(
+        "UPDATE builder.projects SET updated_at = timezone('UTC', now()) - interval '1 hour'; \
+         UPDATE builder.asset_packs SET updated_at = timezone('UTC', now()) - interval '1 hour';",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn the_builder_scenes_release_waits_for_the_new_binary_and_a_quiet_editor_then_drops_the_scene_tables_and_their_uploads()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::db::bootstrap(pool)
+        .await
+        .expect("the binary without scenes serves beside the old tables");
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(BUILDER_SCENES_RETIRED.matches(stop_on_error).count(), 1);
+    let release = BUILDER_SCENES_RETIRED.replace(stop_on_error, "");
+    sqlx::raw_sql(
+        "INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) \
+           SELECT h, 1, '0x' || repeat('a', 40) FROM unnest(ARRAY['bafkreiitemfile', 'bafkreiitemthumbnail', \
+             'bafkreiitemvideo', 'bafkreiitemlocal', 'bafkreiitemcontent', 'bafkreiitemcatalyst', \
+             'bafkreiunnamed', 'bafkreiprojectfile', 'bafkreiprojectthumbnail', 'bafkreipackthumbnail', \
+             'bafkreiassetthumbnail', 'bafkreiassetfile']) h; \
+         INSERT INTO builder.items (id, eth_address, name, type, thumbnail, video, local_content_hash, \
+                                    content_hash, catalyst_content_hash) \
+           VALUES ('22222222-2222-4222-8222-222222222222', '0x' || repeat('a', 40), 'Hat', 'wearable', \
+                   'bafkreiitemthumbnail', 'bafkreiitemvideo', 'bafkreiitemlocal', 'bafkreiitemcontent', \
+                   'bafkreiitemcatalyst'); \
+         INSERT INTO builder.item_contents (item_id, file, hash, named_by) \
+           VALUES ('22222222-2222-4222-8222-222222222222', 'model.glb', 'bafkreiitemfile', '0x' || repeat('a', 40)); \
+         INSERT INTO builder.projects (id, eth_address, title, scene_id, cols, rows, thumbnail) \
+           VALUES ('33333333-3333-4333-8333-333333333333', '0x' || repeat('a', 40), 'Scene', \
+                   '44444444-4444-4444-8444-444444444444', 1, 1, 'bafkreiprojectthumbnail'); \
+         INSERT INTO builder.project_manifests (project_id, manifest) \
+           VALUES ('33333333-3333-4333-8333-333333333333', '{}'); \
+         INSERT INTO builder.project_files (project_id, path, hash, size) \
+           SELECT '33333333-3333-4333-8333-333333333333', 'files/' || h, h, 1 \
+           FROM unnest(ARRAY['bafkreiprojectfile', 'bafkreiitemfile', 'bafkreiitemthumbnail', \
+             'bafkreiitemvideo', 'bafkreiitemlocal', 'bafkreiitemcontent', 'bafkreiitemcatalyst']) h; \
+         INSERT INTO builder.asset_packs (id, project_id, title, thumbnail) \
+           VALUES ('55555555-5555-4555-8555-555555555555', '33333333-3333-4333-8333-333333333333', 'Pack', \
+                   'bafkreipackthumbnail'); \
+         INSERT INTO builder.assets (id, asset_pack_id, ordinal, name, model, category, thumbnail) \
+           VALUES ('66666666-6666-4666-8666-666666666666', '55555555-5555-4555-8555-555555555555', 0, 'Asset', \
+                   'a.glb', 'decorations', 'bafkreiassetthumbnail'); \
+         INSERT INTO builder.asset_contents (asset_id, file, hash) \
+           VALUES ('66666666-6666-4666-8666-666666666666', 'a.glb', 'bafkreiassetfile'); \
+         INSERT INTO builder.asset_catalog (id, packs, source, built_at) \
+           VALUES (1, '[]', 'test', timezone('UTC', now()));",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    age_scene_writes(pool).await;
+    sqlx::query("DELETE FROM meta.schema_steps WHERE step = $1")
+        .bind(BUILDER_SCENES_STEP)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_release_refused(
+        pool,
+        &release,
+        "the new binary's schema migrate has not recorded its step",
+    )
+    .await;
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE builder.projects SET updated_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_release_refused(
+        pool,
+        &release,
+        "a project written minutes ago means an old serve still edits scenes",
+    )
+    .await;
+    age_scene_writes(pool).await;
+    sqlx::query("UPDATE builder.asset_packs SET updated_at = timezone('UTC', now())")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_release_refused(
+        pool,
+        &release,
+        "an asset pack written minutes ago means an old serve still edits scenes",
+    )
+    .await;
+    age_scene_writes(pool).await;
+    release_result(pool, &release).await.unwrap();
+    for table in BUILDER_SCENE_TABLES {
+        assert!(!has_relation(pool, table).await, "{table} is dropped");
+    }
+    assert_eq!(
+        uploads(pool).await,
+        [
+            "bafkreiitemcatalyst",
+            "bafkreiitemcontent",
+            "bafkreiitemfile",
+            "bafkreiitemlocal",
+            "bafkreiitemthumbnail",
+            "bafkreiitemvideo",
+            "bafkreiunnamed",
+        ],
+        "an upload only a scene named is forgotten; one an item names or none names is kept"
+    );
+    let item_files: i64 = sqlx::query_scalar("SELECT count(*) FROM builder.item_contents")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(item_files, 1);
+    catalyst::db::bootstrap(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    for table in BUILDER_SCENE_TABLES {
+        assert!(!has_relation(pool, table).await, "{table} stays dropped");
+    }
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the tables are gone");
+    old.drop().await;
+}
+
+const BUILDER_COLLECTION_FLAGS_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/builder-collection-flags-retired.sql"
+));
+
+const BUILDER_COLLECTION_FLAGS_STEP: &str = "0056_builder_collection_flags_retired";
+
+/// The columns, constraints and indexes of `tables`, as the catalog shows
+/// them, in column order.
+async fn layout(pool: &PgPool, tables: &[&str]) -> serde_json::Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object( \
+           'columns', (SELECT jsonb_agg(jsonb_build_array(a.attrelid::regclass::text, a.attname, \
+                         format_type(a.atttypid, a.atttypmod), a.attnotnull, pg_get_expr(d.adbin, d.adrelid)) \
+                         ORDER BY a.attrelid::regclass::text, a.attnum) \
+                       FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+                       WHERE a.attrelid = ANY($1::regclass[]) AND a.attnum > 0 AND NOT a.attisdropped), \
+           'constraints', (SELECT jsonb_agg(jsonb_build_array(conrelid::regclass::text, conname, pg_get_constraintdef(oid)) \
+                             ORDER BY conrelid::regclass::text, conname) \
+                           FROM pg_constraint WHERE conrelid = ANY($1::regclass[])), \
+           'indexes', (SELECT jsonb_agg(indexdef ORDER BY indexdef) FROM pg_indexes \
+                       WHERE (schemaname || '.' || tablename) = ANY($2)))",
+    )
+    .bind(tables)
+    .bind(tables)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn collection_rows(pool: &PgPool) -> serde_json::Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object( \
+           'collections', (SELECT jsonb_agg(to_jsonb(c) - 'is_published' - 'is_approved' ORDER BY id) FROM builder.collections c), \
+           'items', (SELECT jsonb_agg(to_jsonb(i) ORDER BY id) FROM builder.items i))",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_builder_collection_flags_release_waits_for_its_step_then_drops_the_flags_and_keeps_every_other_value()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::db::bootstrap(pool)
+        .await
+        .expect("the binary that derives collection state serves beside the old flags");
+    sqlx::raw_sql(
+        "INSERT INTO builder.collections (id, name, eth_address, salt, contract_address, urn_suffix, is_published, is_approved, created_at, updated_at) VALUES \
+           ('11111111-1111-4111-8111-000000000001', 'Published', '0x' || repeat('a', 40), '0x01', '0x' || repeat('c', 40), \
+            'urn:decentraland:matic:collections-v2:0x' || repeat('c', 40), true, true, '2025-01-01', '2025-01-02'), \
+           ('11111111-1111-4111-8111-000000000002', 'Draft', '0x' || repeat('a', 40), '0x02', '0x' || repeat('d', 40), \
+            NULL, false, false, '2025-02-01', '2025-02-02'); \
+         INSERT INTO builder.collections (id, name, eth_address, urn_suffix, third_party_id, is_published, is_approved) VALUES \
+           ('11111111-1111-4111-8111-000000000003', 'Linked', '0x' || repeat('a', 40), \
+            'urn:decentraland:matic:collections-thirdparty:p:c', 'urn:decentraland:matic:collections-thirdparty:p', true, false); \
+         INSERT INTO builder.items (id, collection_id, eth_address, name, type, urn_suffix, blockchain_item_id, is_published, curation_status, is_approved, local_content_hash) VALUES \
+           ('22222222-2222-4222-8222-000000000001', '11111111-1111-4111-8111-000000000001', '0x' || repeat('a', 40), 'Hat', 'wearable', \
+            'urn:decentraland:matic:collections-v2:0x' || repeat('c', 40) || ':0', '0', true, 'approved', true, NULL), \
+           ('22222222-2222-4222-8222-000000000002', '11111111-1111-4111-8111-000000000003', '0x' || repeat('a', 40), 'Cap', 'wearable', \
+            'urn:decentraland:matic:collections-thirdparty:p:c:cap', 'cap', true, 'pending', false, repeat('ab', 32));",
+    )
+    .execute(pool)
+    .await
+    .expect("a draft holds its computed contract once the step dropped the check");
+    let before = collection_rows(pool).await;
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(
+        BUILDER_COLLECTION_FLAGS_RETIRED
+            .matches(stop_on_error)
+            .count(),
+        1
+    );
+    let release = BUILDER_COLLECTION_FLAGS_RETIRED.replace(stop_on_error, "");
+    let flags = async || -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'builder' \
+             AND table_name = 'collections' AND column_name IN ('is_published', 'is_approved')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+
+    sqlx::query("DELETE FROM meta.schema_steps WHERE step = $1")
+        .bind(BUILDER_COLLECTION_FLAGS_STEP)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "the new binary's schema migrate has not recorded its step"
+    );
+    assert_eq!(flags().await, 2);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "INSERT INTO builder.collections (id, name, eth_address, is_published) \
+         VALUES ('11111111-1111-4111-8111-000000000004', 'Unbacked', '0x' || repeat('a', 40), true)",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "a collection flagged published with nothing the node derives publication from"
+    );
+    assert_eq!(flags().await, 2);
+    sqlx::query(
+        "DELETE FROM builder.collections WHERE id = '11111111-1111-4111-8111-000000000004'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    release_result(pool, &release).await.unwrap();
+    assert_eq!(flags().await, 0);
+    assert_eq!(
+        collection_rows(pool).await,
+        before,
+        "every other column of every row is kept"
+    );
+    catalyst::db::bootstrap(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    assert_eq!(flags().await, 0, "a later migrate does not bring them back");
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the flags are gone");
+    release_result(pool, &scenes_release()).await.unwrap();
+    release_result(pool, &item_documents_release())
+        .await
+        .unwrap();
+    release_result(pool, &item_curation_release())
+        .await
+        .unwrap();
+
+    let Some(fresh) = with_schema(catalyst::db::SCHEMA_SQL).await else {
+        return;
+    };
+    let tables = ["builder.collections", "builder.items", "shop.items"];
+    assert_eq!(
+        layout(pool, &tables).await,
+        layout(&fresh.pool, &tables).await,
+        "an upgraded database matches a fresh one"
+    );
+    fresh.drop().await;
+    old.drop().await;
+}
+
+const BUILDER_ITEM_DOCUMENTS_AND_UPLOADERS: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/builder-item-documents-and-uploaders.sql"
+));
+
+const BUILDER_ITEM_CONTENTS_STEP: &str = "0058_builder_item_contents_order";
+
+fn scenes_release() -> String {
+    BUILDER_SCENES_RETIRED.replace("\\set ON_ERROR_STOP on\n", "")
+}
+
+fn item_documents_release() -> String {
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(
+        BUILDER_ITEM_DOCUMENTS_AND_UPLOADERS
+            .matches(stop_on_error)
+            .count(),
+        1
+    );
+    BUILDER_ITEM_DOCUMENTS_AND_UPLOADERS.replace(stop_on_error, "")
+}
+
+async fn document_types(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT data_type FROM information_schema.columns WHERE table_schema = 'builder' \
+         AND table_name = 'items' AND column_name IN ('data', 'metrics') ORDER BY column_name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn item_documents(pool: &PgPool) -> serde_json::Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_agg(jsonb_build_array(id, data::jsonb, metrics::jsonb, name, contents) ORDER BY id) \
+         FROM (SELECT i.*, (SELECT jsonb_agg(jsonb_build_array(file, hash, position) ORDER BY file) \
+               FROM builder.item_contents f WHERE f.item_id = i.id) AS contents FROM builder.items i) i",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_builder_item_documents_release_waits_for_its_step_then_retypes_them_keeping_every_value()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::db::bootstrap(pool)
+        .await
+        .expect("the binary that keeps documents in order serves before the release");
+    assert_eq!(document_types(pool).await, ["jsonb", "jsonb"]);
+    sqlx::raw_sql(
+        "INSERT INTO builder.collections (id, name, eth_address) VALUES \
+           ('11111111-1111-4111-8111-000000000001', 'Kept', '0x' || repeat('a', 40)); \
+         INSERT INTO builder.items (id, collection_id, eth_address, name, type, data, metrics) VALUES \
+           ('22222222-2222-4222-8222-000000000001', '11111111-1111-4111-8111-000000000001', '0x' || repeat('a', 40), \
+            'Hat', 'wearable', '{\"tags\": [\"a\"], \"category\": \"hat\"}', '{\"triangles\": 1}'), \
+           ('22222222-2222-4222-8222-000000000002', NULL, '0x' || repeat('a', 40), 'Cap', 'wearable', '{}', NULL); \
+         INSERT INTO builder.item_contents (item_id, file, hash, position, named_by) VALUES \
+           ('22222222-2222-4222-8222-000000000001', 'b.png', 'bafkb', 0, '0x' || repeat('a', 40)), \
+           ('22222222-2222-4222-8222-000000000001', 'a.glb', 'bafka', 1, '0x' || repeat('a', 40)); \
+         INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES \
+           ('bafka', 1, '0x' || repeat('a', 40));",
+    )
+    .execute(pool)
+    .await
+    .expect("an item names a hash no upload records once the step ran");
+    let before = item_documents(pool).await;
+    let release = item_documents_release();
+
+    sqlx::query("DELETE FROM meta.schema_steps WHERE step = $1")
+        .bind(BUILDER_ITEM_CONTENTS_STEP)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "the new binary's schema migrate has not recorded its step"
+    );
+    assert_eq!(document_types(pool).await, ["jsonb", "jsonb"]);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+
+    sqlx::raw_sql(
+        "ALTER TABLE builder.items DROP CONSTRAINT items_metrics_object_check; \
+         ALTER TABLE builder.items ALTER COLUMN metrics TYPE json USING metrics::json;",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "one document retyped by hand"
+    );
+    sqlx::raw_sql(
+        "ALTER TABLE builder.items ALTER COLUMN metrics TYPE jsonb USING metrics::jsonb; \
+         ALTER TABLE builder.items ADD CONSTRAINT items_metrics_object_check \
+           CHECK (metrics IS NULL OR jsonb_typeof(metrics) = 'object');",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "the scene tables still name an upload by key"
+    );
+    assert_eq!(document_types(pool).await, ["jsonb", "jsonb"]);
+    release_result(pool, &scenes_release()).await.unwrap();
+
+    release_result(pool, &release).await.unwrap();
+    assert_eq!(document_types(pool).await, ["json", "json"]);
+    assert_eq!(item_documents(pool).await, before, "every value is kept");
+    sqlx::query("INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES ('bafka', 1, '0x' || repeat('b', 40))")
+        .execute(pool)
+        .await
+        .expect("a second wallet's upload of the same bytes is recorded");
+    assert!(
+        sqlx::query("UPDATE builder.items SET data = '[]' WHERE name = 'Cap'")
+            .execute(pool)
+            .await
+            .is_err(),
+        "a document is still an object"
+    );
+    catalyst::db::bootstrap(pool).await.unwrap();
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the documents are json");
+    release_result(pool, &item_curation_release())
+        .await
+        .unwrap();
+
+    let Some(fresh) = with_schema(catalyst::db::SCHEMA_SQL).await else {
+        return;
+    };
+    let tables = [
+        "builder.items",
+        "builder.item_contents",
+        "builder.uploaded_contents",
+    ];
+    assert_eq!(
+        layout(pool, &tables).await,
+        layout(&fresh.pool, &tables).await,
+        "an upgraded database matches a fresh one"
+    );
+    fresh.drop().await;
+    old.drop().await;
+}
+
+const BUILDER_NAMED_BY_STEP: &str = "0059_builder_item_contents_named_by";
+
+#[tokio::test]
+async fn the_builder_named_by_step_attributes_each_name_to_the_writer_the_file_routes_counted() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    release_result(pool, &scenes_release()).await.unwrap();
+    release_result(pool, &item_documents_release())
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "ALTER TABLE builder.item_contents DROP CONSTRAINT item_contents_named_by_check; \
+         ALTER TABLE builder.item_contents DROP COLUMN named_by; \
+         DELETE FROM meta.schema_steps WHERE step = '0059_builder_item_contents_named_by'; \
+         INSERT INTO builder.collections (id, name, eth_address, contract_address) VALUES \
+           ('11111111-1111-4111-8111-000000000101', 'On chain', '0x' || repeat('0', 39) || '1', '0x' || repeat('c', 40)); \
+         INSERT INTO builder.collections (id, name, eth_address, third_party_id, urn_suffix) VALUES \
+           ('11111111-1111-4111-8111-000000000102', 'Linked', '0x' || repeat('0', 39) || '5', \
+            'urn:decentraland:matic:collections-thirdparty:tp', 'urn:decentraland:matic:collections-thirdparty:tp:hats'); \
+         INSERT INTO shop.collections (network, contract_address, chain_id, name, creator, owner, urn, is_completed, \
+           is_approved, is_editable, managers, minters, created_at, updated_at, reviewed_at, mirrored_at) VALUES \
+           ('matic', '0x' || repeat('c', 40), 137, 'On chain', '0x' || repeat('0', 39) || '3', '0x' || repeat('0', 39) || '3', \
+            'urn:c', true, false, true, ARRAY['0x' || repeat('0', 39) || '4'], '{}', 1, 1, 1, timezone('UTC', now())); \
+         INSERT INTO builder.items (id, collection_id, eth_address, name, type) VALUES \
+           ('22222222-2222-4222-8222-000000000101', '11111111-1111-4111-8111-000000000101', '0x' || repeat('0', 39) || '2', 'Hat', 'wearable'), \
+           ('22222222-2222-4222-8222-000000000102', '11111111-1111-4111-8111-000000000102', '0x' || repeat('0', 39) || '6', 'Cap', 'wearable'); \
+         INSERT INTO builder.item_contents (item_id, file, hash) VALUES \
+           ('22222222-2222-4222-8222-000000000101', 'owner.glb', 'bafkowner'), \
+           ('22222222-2222-4222-8222-000000000101', 'creator.glb', 'bafkcreator'), \
+           ('22222222-2222-4222-8222-000000000101', 'manager.glb', 'bafkmanager'), \
+           ('22222222-2222-4222-8222-000000000101', 'nobody.glb', 'bafknobody'), \
+           ('22222222-2222-4222-8222-000000000102', 'provider.glb', 'bafkprovider'); \
+         INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES \
+           ('bafkowner', 1, '0x' || repeat('0', 39) || '2'), ('bafkowner', 1, '0x' || repeat('0', 39) || '4'), \
+           ('bafkcreator', 1, '0x' || repeat('0', 39) || '3'), ('bafkmanager', 1, '0x' || repeat('0', 39) || '4'), \
+           ('bafkprovider', 1, '0x' || repeat('0', 39) || '5');",
+    )
+    .execute(pool)
+    .await
+    .expect("item contents without a writer, as the earlier steps left them");
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let writers: Vec<(String, String)> = sqlx::query_as(
+        "SELECT file, right(named_by, 1) FROM builder.item_contents \
+         WHERE item_id::text LIKE '22222222-2222-4222-8222-0000000001%' ORDER BY file",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        writers,
+        [
+            ("creator.glb", "3"),
+            ("manager.glb", "4"),
+            ("nobody.glb", "2"),
+            ("owner.glb", "2"),
+            ("provider.glb", "5")
+        ]
+        .map(|(f, w)| (f.to_string(), w.to_string())),
+        "the item's owner when it holds the bytes, else the first writer the file routes counted that does, else the owner"
+    );
+    let steps: Vec<String> =
+        sqlx::query_scalar("SELECT step FROM meta.schema_steps WHERE step = $1")
+            .bind(BUILDER_NAMED_BY_STEP)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(steps, [BUILDER_NAMED_BY_STEP]);
+}
+
+const BUILDER_VIDEO_NAMED_BY_STEP: &str = "0060_builder_item_video_named_by";
+
+#[tokio::test]
+async fn the_builder_video_named_by_step_attributes_each_kept_video_to_its_entrys_writer() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    release_result(pool, &scenes_release()).await.unwrap();
+    release_result(pool, &item_documents_release())
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "ALTER TABLE builder.items DROP CONSTRAINT items_video_named_by_check; \
+         DROP INDEX builder.items_video_idx; \
+         ALTER TABLE builder.items DROP COLUMN video_named_by; \
+         DELETE FROM meta.schema_steps WHERE step = '0060_builder_item_video_named_by'; \
+         INSERT INTO builder.items (id, eth_address, name, type, video) VALUES \
+           ('33333333-3333-4333-8333-000000000101', '0x' || repeat('0', 39) || '1', 'Named', 'wearable', 'bafkvideo'), \
+           ('33333333-3333-4333-8333-000000000102', '0x' || repeat('0', 39) || '1', 'Unnamed', 'wearable', 'bafkkept'), \
+           ('33333333-3333-4333-8333-000000000103', '0x' || repeat('0', 39) || '1', 'None', 'wearable', NULL); \
+         INSERT INTO builder.item_contents (item_id, file, hash, position, named_by) VALUES \
+           ('33333333-3333-4333-8333-000000000101', 'a.mp4', 'bafkvideo', 0, '0x' || repeat('0', 39) || '2'), \
+           ('33333333-3333-4333-8333-000000000101', 'video.mp4', 'bafkvideo', 1, '0x' || repeat('0', 39) || '3'); \
+         INSERT INTO builder.uploaded_contents (hash, size, uploaded_by) VALUES \
+           ('bafkvideo', 1, '0x' || repeat('0', 39) || '3'), ('bafkkept', 1, '0x' || repeat('0', 39) || '1');",
+    )
+    .execute(pool)
+    .await
+    .expect("items whose video has no writer, as the earlier steps left them");
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let writers: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT name, right(video_named_by, 1) FROM builder.items \
+         WHERE id::text LIKE '33333333-3333-4333-8333-0000000001%' ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        writers,
+        [("Named", Some("3")), ("None", None), ("Unnamed", None)]
+            .map(|(n, w)| (n.to_string(), w.map(str::to_string))),
+        "the writer of the item's own entry for the video, one holding the bytes first; no writer otherwise"
+    );
+    let index: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'builder' AND indexname = 'items_video_idx')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(index, "the object pass builds the video index");
+    let steps: Vec<String> =
+        sqlx::query_scalar("SELECT step FROM meta.schema_steps WHERE step = $1")
+            .bind(BUILDER_VIDEO_NAMED_BY_STEP)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(steps, [BUILDER_VIDEO_NAMED_BY_STEP]);
+}
+
+const BUILDER_ITEM_CURATION_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/builder-item-curation-retired.sql"
+));
+
+const BUILDER_COLLECTION_FORUM_STEP: &str = "0062_builder_collection_forum";
+
+fn item_curation_release() -> String {
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(
+        BUILDER_ITEM_CURATION_RETIRED.matches(stop_on_error).count(),
+        1
+    );
+    BUILDER_ITEM_CURATION_RETIRED.replace(stop_on_error, "")
+}
+
+async fn item_curation_columns(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'builder' \
+         AND table_name = 'items' AND column_name IN ('curation_status', 'is_approved')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn item_curation_rows(pool: &PgPool) -> serde_json::Value {
+    sqlx::query_scalar(
+        "SELECT jsonb_build_object( \
+           'items', (SELECT jsonb_agg(to_jsonb(i) - 'curation_status' - 'is_approved' ORDER BY id) FROM builder.items i), \
+           'curations', (SELECT COALESCE(jsonb_agg(jsonb_build_array(item_id, status, content_hash, created_at) \
+                          ORDER BY item_id, created_at), '[]') FROM builder.item_curations))",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn the_builder_item_curation_release_records_the_items_submitted_here_then_drops_the_stored_status()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::db::bootstrap(pool)
+        .await
+        .expect("the binary that keeps item curations serves beside the stored status");
+    let hash = "ab".repeat(32);
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO builder.collections (id, name, eth_address, urn_suffix, third_party_id) VALUES \
+           ('11111111-1111-4111-8111-000000000011', 'Linked', '0x' || repeat('a', 40), \
+            'urn:decentraland:matic:collections-thirdparty:p:c', 'urn:decentraland:matic:collections-thirdparty:p'); \
+         INSERT INTO builder.collections (id, name, eth_address) VALUES \
+           ('11111111-1111-4111-8111-000000000012', 'Standard', '0x' || repeat('a', 40)); \
+         INSERT INTO builder.items (id, collection_id, eth_address, name, type, urn_suffix, blockchain_item_id, \
+             is_published, curation_status, is_approved, local_content_hash, updated_at) VALUES \
+           ('22222222-2222-4222-8222-000000000011', '11111111-1111-4111-8111-000000000011', '0x' || repeat('a', 40), \
+            'Submitted here', 'wearable', 'urn:decentraland:matic:collections-thirdparty:p:c:one', 'one', true, 'approved', true, \
+            '{hash}', '2025-03-01 10:00:00'), \
+           ('22222222-2222-4222-8222-000000000012', '11111111-1111-4111-8111-000000000011', '0x' || repeat('a', 40), \
+            'Imported', 'wearable', 'urn:decentraland:matic:collections-thirdparty:p:c:two', NULL, false, 'approved', true, \
+            '{hash}', '2025-03-02 10:00:00'), \
+           ('22222222-2222-4222-8222-000000000013', '11111111-1111-4111-8111-000000000012', '0x' || repeat('a', 40), \
+            'Standard draft', 'wearable', NULL, NULL, false, 'rejected', false, NULL, '2025-03-03 10:00:00'); \
+         INSERT INTO builder.item_curations (id, item_id, status, content_hash, created_at, updated_at) VALUES \
+           (gen_random_uuid(), '22222222-2222-4222-8222-000000000012', 'approved', '{hash}', '2025-01-01', '2025-01-01');"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    let release = item_curation_release();
+
+    sqlx::query("DELETE FROM meta.schema_steps WHERE step = $1")
+        .bind(BUILDER_COLLECTION_FORUM_STEP)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "the new binary's schema migrate has not recorded its step"
+    );
+    assert_eq!(item_curation_columns(pool).await, 2);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "UPDATE builder.items SET local_content_hash = 'bafkreinotakeccakdigest' \
+         WHERE id = '22222222-2222-4222-8222-000000000011'",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(
+        release_result(pool, &release).await.is_err(),
+        "an item submitted here whose hash is no curation content hash"
+    );
+    assert_eq!(item_curation_columns(pool).await, 2);
+    sqlx::query("UPDATE builder.items SET local_content_hash = $1 WHERE id = '22222222-2222-4222-8222-000000000011'")
+        .bind(&hash)
+        .execute(pool)
+        .await
+        .unwrap();
+
+    let before = item_curation_rows(pool).await;
+    release_result(pool, &release).await.unwrap();
+    assert_eq!(item_curation_columns(pool).await, 0);
+    let after = item_curation_rows(pool).await;
+    assert_eq!(
+        after["items"], before["items"],
+        "every other column of every item is kept"
+    );
+    assert_eq!(
+        after["curations"],
+        serde_json::json!([
+            [
+                "22222222-2222-4222-8222-000000000011",
+                "approved",
+                hash,
+                "2025-03-01T10:00:00"
+            ],
+            [
+                "22222222-2222-4222-8222-000000000012",
+                "approved",
+                hash,
+                "2025-01-01T00:00:00"
+            ]
+        ]),
+        "an item submitted here gets the curation it recorded; an item with a curation and a draft keep what they have"
+    );
+    catalyst::db::bootstrap(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    assert_eq!(
+        item_curation_columns(pool).await,
+        0,
+        "a later migrate does not bring them back"
+    );
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the columns are gone");
+    release_result(
+        pool,
+        &BUILDER_COLLECTION_FLAGS_RETIRED.replace("\\set ON_ERROR_STOP on\n", ""),
+    )
+    .await
+    .unwrap();
+    release_result(pool, &scenes_release()).await.unwrap();
+    release_result(pool, &item_documents_release())
+        .await
+        .unwrap();
+
+    let Some(fresh) = with_schema(catalyst::db::SCHEMA_SQL).await else {
+        return;
+    };
+    let tables = [
+        "builder.collections",
+        "builder.items",
+        "builder.collection_curations",
+        "builder.item_curations",
+        "builder.collection_events",
+        "builder.slot_usage_cheques",
+    ];
+    assert_eq!(
+        layout(pool, &tables).await,
+        layout(&fresh.pool, &tables).await,
+        "an upgraded database matches a fresh one"
+    );
+    fresh.drop().await;
     old.drop().await;
 }

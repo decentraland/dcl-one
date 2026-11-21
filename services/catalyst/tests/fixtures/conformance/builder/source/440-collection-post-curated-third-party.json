@@ -1,0 +1,41 @@
+{
+  "description": "POST /collections/{id}/post signed by the provider's manager of a third-party collection with curated items. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000402/post",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x043b83d2010ee75cc3c0419348327eb9c6da7268\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_EPHEMERAL\",\"payload\":\"Decentraland Login\\nEphemeral address: 0xfd3efBfd7fF753cB02E909B91b8b62a673aA9D36\\nExpiration: 2026-01-01T01:00:00.000Z\",\"signature\":\"0xfe7da076b1510c181170fb16a988dc6081749e89ebf6f9da35827f4b7e87cfe6473713f3096a20c91f047746a979886b76e387be5450438373b7d488c05d52d01b\"}",
+      "x-identity-auth-chain-2": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/v1/collections/c011ec71-0000-4000-8000-000000000402/post:1767225600000:{}\",\"signature\":\"0x1b70cde34c8e1cd791ec75e5be061a03d830259dfe2b7ad35e734045d8af14fc045df662c816937a80d6a3713196b9f1c85b6904159a515e174f372a9eb534171c\"}",
+      "x-identity-metadata": "{}",
+      "x-identity-timestamp": "1767225600000"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": true,
+      "data": "https://forum.example.org/t/third-party-collection-curated-wearables-with-urn-urn-decentraland-matic-collections-thirdparty-curated/1004"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "forum": [
+    {
+      "method": "POST",
+      "path": "/posts.json",
+      "username": null,
+      "body": {
+        "title": "Third Party collection Curated wearables with URN: urn:decentraland:matic:collections-thirdparty:curated",
+        "raw": "# Curated wearables\n\n  [View entire collection](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000402&reviewing=true)\n\n  ## Wearables\n\n  **Curated cap**\n      - Category: hat\n      ![](https://builder-api.example.org/v1/storage/contents/)\n      [Link to editor](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000402&item=c011ec71-0000-4000-8000-0000000004a1&reviewing=true)\n\n**Curated helmet**\n      - Category: hat\n      ![](https://builder-api.example.org/v1/storage/contents/)\n      [Link to editor](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000402&item=c011ec71-0000-4000-8000-0000000004a2&reviewing=true)\n\n**Uncurated mask**\n      - Category: hat\n      ![](https://builder-api.example.org/v1/storage/contents/)\n      [Link to editor](https://creators.example.org/collections/editor?collection=c011ec71-0000-4000-8000-000000000402&item=c011ec71-0000-4000-8000-0000000004a3&reviewing=true)",
+        "category": "12"
+      }
+    }
+  ]
+}

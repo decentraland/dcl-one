@@ -192,7 +192,7 @@ export function fromShopApi(method: string, path: string): { service: Service; p
  * service path the production sites build reads (apps/sites/.env.production), and the gateway's /camera-reel
  * alias the profile gallery requests directly (apps/sites/src/data/lib/catalyst/social/photos.ts).
  */
-const NODE_MOUNTS: readonly string[] = ["cms", "lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "camera-reel-service", "report-user", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map", "telemetry", "places/api", "events/api", "social-api", "badges", "worlds-content-server", "comms-gatekeeper", "cdn-data", "feature-flags"];
+const NODE_MOUNTS: readonly string[] = ["cms", "lambdas", "content", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "camera-reel-service", "report-user", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map", "telemetry", "places/api", "events/api", "social-api", "badges", "worlds-content-server", "comms-gatekeeper", "cdn-data", "feature-flags"];
 
 /** Whether the sites preview relays this path to the replay rather than serving it from the sites app. */
 export function relaysToNode(path: string): boolean {

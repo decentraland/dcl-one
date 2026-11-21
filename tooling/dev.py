@@ -621,10 +621,6 @@ def runtime_env(config, refuse_exposed_relayer=True):
             'MARKETPLACE_INDEX_INTERVAL_SECS': '30',
             # The tag names development stacks in rpc.decentraland.org's request logs.
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet?project=dcl-one-dev',
-            'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
-            # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
-            # route redirects to; the builder pulls from it when the item bucket misses.
-            'BUILDER_ASSET_PACKS_BUCKET_URL': 'https://builder-api.decentraland.org/v1/storage',
             # Credit prices need a MANA spot; the map (Places, the HUD's map, estate images) its grid.
             'PRICE_POLL_ENABLED': 'true', 'COINGECKO_URL': 'https://api.coingecko.com/api/v3',
             'PRICE_FALLBACK_SOURCES': 'coinbase=https://api.coinbase.com,binance=https://api.binance.com,'
@@ -1052,19 +1048,6 @@ def seed_dev_flags(config):
                 "VALUES ('dapps', 'dapps-shop-marketplace-features', true) ON CONFLICT (app, name) DO NOTHING")
 
 
-# Creator Hub's asset catalogue, from the @dcl/asset-packs package Sites installs; the files it
-# names are pulled from BUILDER_CONTENT_BUCKET_URL (then BUILDER_ASSET_PACKS_BUCKET_URL) on first read.
-ASSET_PACKS_CATALOG = ROOT / 'apps/sites/node_modules/@dcl/asset-packs/catalog.json'
-
-
-def import_asset_catalog(config, binary):
-    if not ASSET_PACKS_CATALOG.exists():
-        return
-    if sql(config, 'SELECT count(*) FROM builder.asset_catalog') != '0':
-        return
-    run([binary, 'builder', 'catalog', ASSET_PACKS_CATALOG], env=runtime_env(config))
-
-
 # Long-running tasks and the signal that stops each one cleanly.
 SERVICES = {'postgres': signal.SIGINT, 'api': signal.SIGTERM, 'sites': signal.SIGTERM, 'index': signal.SIGTERM,
             'valkey': signal.SIGTERM, 'livekit': signal.SIGTERM, 'ingress': signal.SIGTERM,
@@ -1181,9 +1164,6 @@ def task(name):
             seed_trades(config)
             seed_dev_flags(config)
             return
-        print(f"foundation-dev task: {name} catalog begin", file=sys.stderr, flush=True)
-        import_asset_catalog(config, binary)
-        print(f"foundation-dev task: {name} catalog complete", file=sys.stderr, flush=True)
         print(f"foundation-dev task: {name} serve exec", file=sys.stderr, flush=True)
         os.execve(binary, [str(binary), 'serve'], {**runtime_env(config), **pulse_about_env(config)})
 

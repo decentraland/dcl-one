@@ -65,7 +65,6 @@ fn the_operator_database_urls_are_hidden() {
         for (sub, leaf) in [
             ("schema", "apply"),
             ("schema", "migrate"),
-            ("builder", "catalog"),
             ("storage", "gc"),
             ("camera-reel", "import"),
             ("shop", "notice-rewind"),
@@ -85,7 +84,7 @@ fn the_operator_database_urls_are_hidden() {
             );
             seen += 1;
         }
-        assert_eq!(seen, 6);
+        assert_eq!(seen, 5);
     });
 }
 

@@ -1,8 +1,9 @@
 //! Node integration tests that need no socket budget, one binary for several files so a
 //! build links few test executables. Each file stays a module named after it.
-// explore_parity needs it.
 #![recursion_limit = "256"]
 
+#[path = "builder_conformance.rs"]
+mod builder_conformance;
 #[path = "content_live.rs"]
 mod content_live;
 #[path = "explore_mirrors.rs"]
@@ -17,6 +18,8 @@ mod gatekeeper_policy;
 mod index_process;
 #[path = "notifier_parity.rs"]
 mod notifier_parity;
+#[path = "serve_routes_startup.rs"]
+mod serve_routes_startup;
 #[path = "social_live.rs"]
 mod social_live;
 #[path = "worlds_mirror.rs"]

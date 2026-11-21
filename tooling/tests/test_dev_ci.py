@@ -462,7 +462,7 @@ class FrontendSelectionTest(unittest.TestCase):
 
     def test_shared_frontend_config_manifests_and_unknown_files_keep_units(self):
         for name in ('apps/ui3/src/example.test.ts', 'apps/sites/package.json',
-                     'apps/ui3/editor-scene/src/index.ts', 'schemas/storage.sql',
+                     'apps/ui3/src/play/host.ts', 'schemas/storage.sql',
                      'library/catalyst-api/worlds/schema.ts', 'services/catalyst/shared/src/lib.rs',
                      'services/catalyst/config/src/worlds.rs', 'services/catalyst/worlds/Cargo.toml',
                      'services/catalyst/Cargo.lock', 'services/catalyst/build.rs',
@@ -576,7 +576,7 @@ class FrontendSelectionTest(unittest.TestCase):
     def test_helper_and_source_references_are_not_limited_to_test_filenames(self):
         for helper in ('apps/ui3/src/helpers/backend-source.ts',
                        'apps/sites/src/backend-source.mjs',
-                       'apps/ui3/editor-scene/test/source.cjs',
+                       'apps/ui3/src/play/test/setup.ts',
                        'library/catalyst-api/backend-source.ts',
                        'apps/sites/src/fixtures/backend-source.json'):
             with self.subTest(helper=helper):

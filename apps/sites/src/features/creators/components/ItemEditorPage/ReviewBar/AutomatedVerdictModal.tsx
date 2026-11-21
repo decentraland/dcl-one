@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { ItemFileImage } from '../../ItemThumbnail'
 import { useIntl } from '@/data/lib/creators/intl'
 import {
   CheckCircleOutlineIcon as PassedIcon,
@@ -9,7 +10,6 @@ import {
 import { useTranslation } from '@/data/lib/creators/intl'
 import { Modal } from '../../Modal'
 import { ItemValidationCard } from '../../ValidationBadge'
-import { getContentsStorageUrl } from '@/data/lib/creators/builder'
 import {
   countFailedItems,
   groupVerdictItems,
@@ -137,8 +137,8 @@ function ItemRow({ result, item, defaultOpen }: RowProps) {
   return (
     <details className={styles.item} open={defaultOpen || undefined} data-outcome={outcome} data-testid={testId}>
       <summary className={styles.itemSummary}>
-        {thumbnail ? (
-          <img className={styles.thumb} src={getContentsStorageUrl(thumbnail)} alt="" />
+        {item && thumbnail ? (
+          <ItemFileImage className={styles.thumb} item={item} hash={thumbnail} />
         ) : (
           <span className={styles.thumbPlaceholder} />
         )}

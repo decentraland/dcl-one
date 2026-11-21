@@ -1,6 +1,10 @@
-// Thin client for builder-server (the unchanged legacy back end). Requests are signed through the
-// lib/auth chokepoint; response bodies are the legacy `{ ok, data }` envelope.
+/**
+ * Client for the builder-api: the node serving the page, or the environment's on a Decentraland host.
+ * Requests are signed through the lib/auth chokepoint; response bodies are the `{ ok, data }` envelope.
+ */
+import { catalystUrl } from '../../catalyst/bases'
 import { config } from '../config'
+import { isDecentralandHost } from '../config/env'
 import { signedFetch } from '../auth'
 
 /** Carries the HTTP status so callers can tell "no access / gone" from a transient failure. */
@@ -25,11 +29,12 @@ export function isRefusedRequest(error: unknown): boolean {
   return error instanceof BuilderServerError && error.status >= 400 && error.status < 500
 }
 
-export const baseUrl = () => config.get('BUILDER_SERVER_URL')
+/** The builder-api: the environment's on a Decentraland host, else that of the node serving the page. */
+export const baseUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host) ? config.get('BUILDER_SERVER_URL') : `${catalystUrl()}/builder-api/v1`
 
 export const UNPUBLISHED_COLLECTION_STATUS = 409
 
-// builder-server statuses that make an item upload permanently un-retriable.
 export const COLLECTION_LOCKED_STATUS = 423
 export const ALREADY_PUBLISHED_STATUS = 409
 
@@ -39,12 +44,10 @@ export async function request<T>(
   path: string,
   query = '',
   body?: unknown,
-  // The file-upload endpoint answers { ok: true } with no data; every other one carries data.
   expectData = true
 ): Promise<T> {
   const init: RequestInit = { method }
   if (body instanceof FormData) {
-    // No Content-Type: the browser sets multipart/form-data with the boundary itself.
     init.body = body
   } else if (body !== undefined) {
     init.body = JSON.stringify(body)

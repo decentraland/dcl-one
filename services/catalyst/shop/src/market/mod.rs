@@ -448,6 +448,7 @@ impl Settings {
             matic_collections_subgraph_url: self.matic_collections_subgraph_url.clone(),
             marketplace_subgraph_url: self.marketplace_subgraph_url.clone(),
             land_subgraph_url: self.land_subgraph_url.clone(),
+            third_party_registry_subgraph_url: self.third_party_registry_subgraph_url.clone(),
             eth_network: self.eth_network.clone(),
         }
     }

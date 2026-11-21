@@ -486,8 +486,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('BASE_SHA: ${{ github.event.pull_request.base.sha }}', web)
         steps = re.split(r'^      - ', web, flags=re.M)[1:]
         selected = [step for step in steps if 'if: steps.web-coverage.outputs' in step]
-        self.assertEqual(len(selected), 4)
-        for app in ('ui3', 'sites', 'ui3/editor-scene'):
+        self.assertEqual(len(selected), 3)
+        for app in ('ui3', 'sites'):
             self.assertTrue(any(f'pnpm --dir apps/{app} test\n' in step for step in selected))
         self.assertTrue(any('pnpm --dir apps/ui3 test:browser\n' in step for step in selected))
         contracts = next(step for step in steps if 'name: Check web types' in step)

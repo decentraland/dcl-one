@@ -1,0 +1,44 @@
+{
+  "description": "POST /collections/{id}/validation-result signed five minutes and a millisecond before the node's clock. Recorded from github.com/decentraland/builder-server at 98897af by tooling/builder-server-capture.cjs.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/collections/c011ec71-0000-4000-8000-000000000302/validation-result",
+    "query": {},
+    "headers": {
+      "content-type": "application/json",
+      "x-wearable-validator-signature": "sha256=853f2547a5c83db69df4f235b64b1e418013f1d88f9c94fe975ac01fce4daa84",
+      "x-wearable-validator-timestamp": "1767225299999"
+    },
+    "body": {
+      "validationId": "c011ec71-0000-4000-8000-0000000005a1",
+      "collectionId": "c011ec71-0000-4000-8000-000000000302",
+      "verdict": "passed",
+      "rulesVersion": "1.4.0",
+      "items": [
+        {
+          "itemId": "c011ec71-0000-4000-8000-0000000003b1",
+          "contentHash": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
+          "passed": true,
+          "findings": []
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json; charset=utf-8"
+    },
+    "body_json": {
+      "ok": false,
+      "data": {},
+      "error": "Unauthorized"
+    }
+  },
+  "captured_from": "github.com/decentraland/builder-server@98897af692f26063a088aebb2ea5bb3f683168a2",
+  "captured_at": "2026-01-01T00:00:00.000Z",
+  "volatile_paths": [],
+  "validator_sign": {
+    "offset": -300001
+  }
+}

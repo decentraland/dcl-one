@@ -3,7 +3,7 @@
 // party's Merkle tree; its root goes on chain (consuming the creator's slots cheque), then each item's entity is
 // deployed with its proof and its curation approved. Every step is idempotent, so a failed run can be resumed.
 import type { ContractCall, TransactionSender, TransactionSettlement } from './auth'
-import type { LinkedApprovalData } from './builder'
+import { BuilderServerError, type LinkedApprovalData } from './builder'
 import {
   ApprovalError,
   INDEXER_TIMEOUT_MS,
@@ -240,8 +240,8 @@ export type LinkedDeployResult = { deployed: Item[]; failed: LinkedDeployFailure
 export type LinkedDeployDeps = Omit<DeployDeps, 'renderCatalystImage'> & {
   /** The item as the server holds it now, to catch an edit the creator saves while the approval runs. */
   fetchItem: (itemId: string) => Promise<Item>
-  /** Resolves with the curation as approved, whose hash tells which content got approved. */
-  approveItem: (itemId: string) => Promise<Pick<ItemCuration, 'contentHash'>>
+  /** Approves the item's `contentHash`; resolves with the curation as approved, whose hash tells which content got approved. */
+  approveItem: (itemId: string, contentHash: string) => Promise<Pick<ItemCuration, 'contentHash'>>
   /** Takes an approval back: content saved while it was being approved must not stay approved. */
   rejectItem: (itemId: string) => Promise<unknown>
   concurrency?: number
@@ -306,13 +306,10 @@ async function deployLinkedItem(
     await deps.deployEntity(buildDeploymentForm(entity, authChain, files))
   })
   await assertUnchanged()
-  const curation = await atStage('curation', () => deps.approveItem(item.id))
-  // builder-server approves the hash the item has at that moment: a save landing just before still gets through.
+  const curation = await deps.approveItem(item.id, proof.entityHash).catch((error: unknown) => {
+    throw new StageError(error instanceof BuilderServerError && error.status === 409 ? 'changed' : 'curation', error)
+  })
   if (curation.contentHash !== proof.entityHash) {
-    // The Catalyst got the reviewed content, but the approval recorded the new one: rejecting it takes that back, and
-    // the item goes back to the creator to submit again.
-    // If that fails it stays approved (the deployed-hash filter still keeps it out of any root): a curation failure,
-    // not an item sent back.
     await atStage('curation', () => deps.rejectItem(item.id))
     throw new StageError('changed', new Error(`Item ${item.id} was approved with content saved during the approval`))
   }

@@ -337,19 +337,48 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
 /// `pool` shares one throwaway database per test process for uuid-scoped
 /// fixtures; `isolated_pool` creates a fresh database per call for tests
 /// that read or rewrite whole tables; [`OwnedDatabase`] is a fresh database
-/// a test drops itself, blank or seeded. All use `catalyst_test_lib_<pid>_*`
-/// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, cloned from
-/// the schema's template (`catalyst_tpl_<hash>`) unless blank. The database
-/// in that URL is never touched, so a live node's rows are out of reach. A
-/// test that panics before its teardown leaves its database behind: the
-/// next test process drops every `catalyst_test_lib_<pid>_*` whose pid is
-/// gone.
+/// a test drops itself, blank or seeded. `CATALYST_TEST_RUN_ID` selects a
+/// `catalyst_<run>_<pid>_*` namespace; without it the prefix is
+/// `catalyst_test_lib_<pid>_*`. Databases live on the cluster
+/// `CATALYST_TEST_DATABASE_URL` names and are cloned from the schema's
+/// template (`catalyst_tpl_<hash>`, shared by every run) unless blank. The
+/// database in that URL is never touched. Cleanup selects only dead
+/// processes in the requested namespace. Processes sharing a namespace must
+/// also share one PID namespace.
 #[cfg(any(test, feature = "scratch"))]
 pub mod scratch {
     use super::*;
     use tokio::sync::OnceCell;
 
     static URL: OnceCell<Option<String>> = OnceCell::const_new();
+
+    pub(super) fn prefix_for_run(run: Option<&str>) -> Result<String, &'static str> {
+        match run {
+            None => Ok("catalyst_test_lib_".to_string()),
+            Some(run)
+                if (1..=8).contains(&run.len())
+                    && run.bytes().all(|c| c.is_ascii_alphanumeric()) =>
+            {
+                Ok(format!("catalyst_{run}_"))
+            }
+            Some(_) => Err("CATALYST_TEST_RUN_ID must contain 1 to 8 ASCII letters or digits"),
+        }
+    }
+
+    fn run_prefix() -> String {
+        let run = std::env::var("CATALYST_TEST_RUN_ID").ok();
+        prefix_for_run(run.as_deref()).expect("valid scratch database run ID")
+    }
+
+    pub(super) fn scoped_pid(name: &str, prefix: &str) -> Option<u32> {
+        if !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+        {
+            return None;
+        }
+        name.strip_prefix(prefix)?.split('_').next()?.parse().ok()
+    }
 
     /// The scratch database's URL; `None` (skip) without `CATALYST_TEST_DATABASE_URL`.
     pub async fn url() -> Option<String> {
@@ -399,7 +428,7 @@ pub mod scratch {
         Blank,
     }
 
-    /// A database of one test's own, `catalyst_test_lib_<pid>_<tag>_<rand>`,
+    /// A database of one test's own in its run's scratch namespace,
     /// for tests that rewrite whole tables, install their own schema or need
     /// fixtures no other test may see. [`OwnedDatabase::drop`] removes it; a
     /// test that panics first leaves it to the next process's sweep.
@@ -467,15 +496,16 @@ pub mod scratch {
         Some(url)
     }
 
-    /// Creates a `catalyst_test_lib_<pid>[_<tag>]_<rand>` database, empty or
-    /// cloned from the schema template, after sweeping dead processes' ones;
-    /// returns the admin pool (on the cluster's `postgres` database), its name
-    /// and its URL.
+    /// Creates a `<run prefix><pid>[_<tag>]_<rand>` database, empty or
+    /// cloned from the schema template, after sweeping its run's dead
+    /// processes' ones; returns the admin pool (on the cluster's `postgres`
+    /// database), its name and its URL.
     async fn create_database(
         tag: Option<&str>,
         schema: Schema,
     ) -> Option<(PgPool, String, String)> {
         let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
+        let prefix = run_prefix();
         let opts: PgConnectOptions = base
             .parse()
             .expect("CATALYST_TEST_DATABASE_URL must be a postgres DSN");
@@ -486,15 +516,13 @@ pub mod scratch {
             .unwrap_or_else(|e| {
                 panic!("connecting to the postgres database of the test cluster: {e}")
             });
-        sweep_dead(&admin).await;
+        sweep_dead(&admin, &prefix).await;
         let tag = tag.map(|t| format!("{t}_")).unwrap_or_default();
         let name = format!(
-            "catalyst_test_lib_{}_{tag}{}",
+            "{prefix}{}_{tag}{}",
             std::process::id(),
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
-        // PostgreSQL truncates longer identifiers, and the URL would then name
-        // a database that does not exist.
         assert!(name.len() <= 63, "test database name {name} is too long");
         match schema {
             Schema::Full => create_with_schema(&admin, &name).await,
@@ -692,12 +720,13 @@ pub mod scratch {
         .unwrap_or_else(|e| panic!("looking up {name}: {e}"))
     }
 
-    /// Applies schema.sql to a `catalyst_test_lib_<pid>_tplbuild_*` database,
-    /// swept like any scratch database if this process dies, then marks it a
-    /// template and renames it last.
+    /// Applies schema.sql to a `<run prefix><pid>_tplbuild_*` database,
+    /// swept like any scratch database of its run if this process dies, then
+    /// marks it a template and renames it last.
     async fn build_template(conn: &mut sqlx::PgConnection, opts: &PgConnectOptions, name: &str) {
         let building = format!(
-            "catalyst_test_lib_{}_tplbuild_{}",
+            "{}{}_tplbuild_{}",
+            run_prefix(),
             std::process::id(),
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
@@ -871,28 +900,20 @@ pub mod scratch {
         }
     }
 
-    /// Drops the scratch databases of test processes that no longer exist.
-    ///
-    /// Liveness is the pid embedded in the database name, probed locally. This
-    /// is only safe when every test process using the cluster shares this
-    /// process's pid namespace (as with `tooling/dev-test.sh`); a test run in
-    /// another container or host against the same cluster could have its
-    /// database dropped while it is still running.
-    async fn sweep_dead(admin: &PgPool) {
+    /// Drops dead-process scratch databases within the requested prefix.
+    pub(super) async fn sweep_dead(admin: &PgPool, prefix: &str) {
         let names: Vec<String> = sqlx::query_scalar(
-            "SELECT datname FROM pg_database WHERE datname LIKE 'catalyst_test_lib_%'",
+            "SELECT datname FROM pg_catalog.pg_database WHERE starts_with(datname::text, $1)",
         )
+        .bind(prefix)
         .fetch_all(admin)
         .await
         .unwrap_or_default();
         for name in names {
-            let pid = name
-                .trim_start_matches("catalyst_test_lib_")
-                .split('_')
-                .next()
-                .and_then(|p| p.parse::<u32>().ok());
-            let alive = pid.is_none_or(process_alive);
-            if alive {
+            let Some(pid) = scoped_pid(&name, prefix) else {
+                continue;
+            };
+            if process_alive(pid) {
                 continue;
             }
             let dropped = match admin.acquire().await {
@@ -910,6 +931,113 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scratch_runs_name_the_requested_scope() {
+        assert_eq!(
+            scratch::prefix_for_run(None),
+            Ok("catalyst_test_lib_".to_string())
+        );
+        assert_eq!(
+            scratch::prefix_for_run(Some("run42")),
+            Ok("catalyst_run42_".to_string())
+        );
+        assert_eq!(
+            scratch::prefix_for_run(Some("12345678")),
+            Ok("catalyst_12345678_".to_string())
+        );
+    }
+
+    #[test]
+    fn scratch_runs_reject_ids_that_cannot_name_a_database() {
+        for run in ["", "123456789", "run_42", "../run", "run%", "rún"] {
+            assert!(scratch::prefix_for_run(Some(run)).is_err(), "{run}");
+        }
+    }
+
+    #[test]
+    fn scratch_runs_select_only_their_own_process_ids() {
+        let prefix = "catalyst_run42_";
+        assert_eq!(
+            scratch::scoped_pid("catalyst_run42_4294967295_probe_abcd", prefix),
+            Some(u32::MAX)
+        );
+        for name in [
+            "catalyst_other_4294967295_probe_abcd",
+            "catalyst_test_lib_4294967295_probe_abcd",
+            "catalyst_run42_invalid_probe_abcd",
+            "catalyst_run42_4294967295_bad\"name",
+            "catalyst_run42_4294967295_bad name",
+        ] {
+            assert_eq!(scratch::scoped_pid(name, prefix), None, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn scratch_runs_reap_only_their_own_databases() {
+        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+            return;
+        };
+        let options: PgConnectOptions = base.parse().unwrap();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.database("postgres"))
+            .await
+            .unwrap();
+        let prefix = format!(
+            "catalyst_{}_",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        let other_prefix = format!(
+            "catalyst_{}_",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        let own = format!("{prefix}{}_{}", u32::MAX, uuid::Uuid::new_v4().simple());
+        let other = format!(
+            "{other_prefix}{}_{}",
+            u32::MAX,
+            uuid::Uuid::new_v4().simple()
+        );
+        let live = format!(
+            "{prefix}{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        );
+        for name in [&own, &other, &live] {
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+        scratch::sweep_dead(&admin, &prefix).await;
+        let remaining: Vec<String> =
+            sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname = ANY($1)")
+                .bind(vec![own.clone(), other.clone(), live.clone()])
+                .fetch_all(&admin)
+                .await
+                .unwrap();
+        for name in [&own, &other, &live] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE IF EXISTS \"{name}\""
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+        }
+        admin.close().await;
+        assert!(
+            !remaining.contains(&own),
+            "the requested run's stale fixture remains"
+        );
+        assert!(
+            remaining.contains(&other),
+            "the other run's fixture is retained"
+        );
+        assert!(
+            remaining.contains(&live),
+            "the live process fixture is retained"
+        );
+    }
 
     #[tokio::test]
     async fn isolated_pools_do_not_share_facts() {
@@ -941,7 +1069,10 @@ mod tests {
         let full = scratch::OwnedDatabase::new("probe", scratch::Schema::Full, 1)
             .await
             .unwrap();
-        let prefix = format!("catalyst_test_lib_{}_probe_", std::process::id());
+        let prefix = match std::env::var("CATALYST_TEST_RUN_ID") {
+            Ok(run) => format!("catalyst_{run}_{}_probe_", std::process::id()),
+            Err(_) => format!("catalyst_test_lib_{}_probe_", std::process::id()),
+        };
         assert!(blank.name().starts_with(&prefix), "{}", blank.name());
         let schema = |pool: PgPool| async move {
             sqlx::query_scalar::<_, bool>(
@@ -1101,30 +1232,24 @@ mod tests {
         assert!(!scratch::process_alive(u32::MAX));
     }
 
-    /// Once bootstrap verified a database, any connection opened to it
-    /// afterwards (a reconnect after the backends were killed, here a second
-    /// pool on the same URL) re-reads meta.schema and is refused when the
-    /// stamp moved: the shape of a database dropped and recreated underneath
-    /// a running node.
     #[tokio::test]
     async fn a_replaced_schema_stamp_refuses_new_connections() {
         let Some(url) = scratch::url().await else {
             return;
         };
-        // A database of its own: the stamp is per host:port/database and the
-        // shared scratch database must keep working for the other tests.
         let opts: PgConnectOptions = url.parse().unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)
             .connect_with(opts.clone().database("postgres"))
             .await
             .unwrap();
-        let name = format!("catalyst_test_lib_{}_stamp", std::process::id());
-        let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
-            "DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await;
+        let run = std::env::var("CATALYST_TEST_RUN_ID").ok();
+        let prefix = scratch::prefix_for_run(run.as_deref()).unwrap();
+        let name = format!(
+            "{prefix}{}_stamp_{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
             .execute(&admin)
             .await
@@ -1149,8 +1274,6 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // sqlx retries a failed after_connect until the acquire timeout, so
-        // the caller sees the timeout and the log the refusal.
         let quick = PoolSettings {
             acquire_timeout_secs: Some(2),
             ..settings

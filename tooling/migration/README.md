@@ -103,6 +103,10 @@ runs and incremental imports. `--step` cannot opt them back into `all`.
 `list`, `check` and `status` continue to include them. Explicitly naming a
 source is reserved for its separately planned service handover.
 
+The `builder-server` import's `collection` step also requires `FORUM_URL`,
+the forum origin builder-server is deployed with; see
+`sources/builder-server/MAPPING.md`.
+
 A configured `worlds-content-server` import also requires
 `--worlds-blocked-names blocked-names.json`: export its effective
 `BLOCKED_WORLD_NAMES` configuration as a JSON array. An explicit `[]` is
@@ -259,6 +263,7 @@ load = "place.load.sql"                           # SQL on the target, reads `st
 key = ["id"]                                      # unique, non-null in the extract
 watermark = "updated_at"                          # optional non-null timestamptz
 whole = false                                     # optional: true loads the full extract in one batch
+requires = "places"                               # optional: a source relation; without it the step reads nothing
 columns = [                                       # the extract's output, in order,
   { name = "id", type = "uuid" },                 # typed for the target
   { name = "updated_at", type = "timestamptz" },
