@@ -229,7 +229,8 @@ export function splitTerms(opts: {
 
 /**
  * The purchase stopped being its caller's (`RailContext.live`: its dialog closed, or its terms changed) before its sale was
- * kept or signed: nothing of the sale was sent. Its credit is released like any purchase that failed before it left.
+ * kept or sent: after its approval, or while its own signature was asked. Nothing of the sale was sent, and its credit is
+ * released like any purchase that failed before it left.
  */
 export class SaleCancelledError extends Error {
   constructor() {
@@ -238,8 +239,11 @@ export class SaleCancelledError extends Error {
   }
 }
 
-/** The call a split's sale makes: the CreditsManager it goes to, and the external call it runs there. */
-export type SplitDispatch = { manager: string; target: Hex; selector: Hex; callData: Hex };
+/**
+ * The call a split's sale makes: the CreditsManager it goes to, the external call it runs there, and the useCredits call
+ * itself, encoded (`useCredits`), exactly as either rail sends it (the relay inside its meta-transaction).
+ */
+export type SplitDispatch = { manager: string; target: Hex; selector: Hex; callData: Hex; useCredits: Hex };
 
 type GapOptions = {
   credits: SpendableCredit[];
@@ -280,13 +284,23 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   if (ctx.live?.() === false) throw new SaleCancelledError();
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const purchase: AnyPurchase = { ...purchaseFor(target, opts.credits, creditsValue.toString()), maxUncreditedValue: opts.manaGapWei.toString() };
-  // The call both rails send (the relay's meta-transaction wraps it; the wallet sends it as is), built as they build it.
+  // The call both rails send (the relay's meta-transaction wraps it; the wallet sends it as is), built once: what the caller
+  // keeps of it is what leaves, never a second build (its external call carries a salt of its own each time).
   const built = buildGroupUseCreditsArgs(groupPurchases([purchase])[0]!, ctx.buyer);
-  opts.onDispatch?.({ manager: built.manager.address, target: built.args.externalCall.target, selector: built.args.externalCall.selector, callData: built.args.externalCall.data });
+  const call = built.args.externalCall;
+  opts.onDispatch?.({ manager: built.manager.address, target: call.target, selector: call.selector, callData: call.data, useCredits: built.data });
   if (ctx.gasless ?? gaslessEnabled()) {
     let relayed: Hex | undefined;
     try {
-      relayed = await buyOneGasless(ctx, { purchase, onSignedCall: ({ data }) => opts.onEnvelope?.(data) });
+      relayed = await buyOneGasless(ctx, {
+        purchase,
+        built,
+        // Signed, not yet kept or sent: a purchase gone while its wallet prompt was open sends nothing (as its approval).
+        onSignedCall: ({ data }) => {
+          if (ctx.live?.() === false) throw new SaleCancelledError();
+          opts.onEnvelope?.(data);
+        },
+      });
       opts.onBroadcast?.({ txHash: relayed });
       await waitForSettlement(ctx.reader, chainId, relayed, ctx.wait);
       return relayed;
@@ -313,7 +327,10 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   try {
     return await buyOneWithCredits(ctx, {
       purchase,
+      built,
       onHandoff: (data) => {
+        // Right before the wallet is asked to send it: a purchase gone by now isn't handed over.
+        if (ctx.live?.() === false) throw new SaleCancelledError();
         opts.onEnvelope?.(data);
         handedOff = true;
       },

@@ -636,6 +636,27 @@ describe("an exact grant that may still land", () => {
     expect(signed()).toEqual(["0", "0"]);
   });
 
+  it("a replacement cancelled while the wallet signs it leaves the approve it was to replace recorded as it was, and sends nothing", async () => {
+    const { relay, wallet, ctx } = rail("fail-after-send");
+    await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: 100n })).rejects.toBeInstanceOf(AuthorizationPendingError);
+    const replaced = readPendingGrant(allowance, BOOK.buyer)!;
+    relay.state.mode = "ok";
+    let live = true;
+    const signer = signingLater(wallet);
+    const clock = later(PENDING_GRANT_HOLD_MS + 1);
+    try {
+      const pending = setAuthorization({ ...ctx, provider: signer.provider, live: () => live, auth: allowance, active: true, amount: 1n });
+      await vi.waitFor(() => expect(signer.asked()).toBe(1));
+      live = false;
+      signer.sign();
+      await expect(pending).rejects.toBeInstanceOf(GrantCancelledError);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(readPendingGrant(allowance, BOOK.buyer)).toEqual(replaced);
+    expect(relay.posts).toHaveLength(1);
+  });
+
   it("a cancelled purchase sends no recorded approve again, nor a replacement: the record stays as it was", async () => {
     const { relay, ctx } = rail("fail-after-send");
     await expect(setAuthorization({ ...ctx, auth: allowance, active: true, amount: GAP })).rejects.toBeInstanceOf(AuthorizationPendingError);

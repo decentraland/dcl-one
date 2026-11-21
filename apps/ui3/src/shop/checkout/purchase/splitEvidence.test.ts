@@ -4,7 +4,7 @@ import { OFFCHAIN_META_TX_ABI } from '@shop/checkout/chain/abi'
 import { BOOK, ITEM } from '@shop/payment/fixtures'
 import { encodeExecuteMetaTransaction } from '../chain/metatx'
 import { buildStoreBuyCalldata, buildStoreUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy } from './encoding'
-import { carriesSale, isSplitSale, splitEnvelope, splitExecution, type SplitSale } from './splitEvidence'
+import { carriesSale, isSplitSale, splitEnvelope, splitExecution, SPLIT_TX_RETRY_MS, type SplitSale } from './splitEvidence'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const MANAGER = '0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5'
@@ -59,17 +59,39 @@ describe('which transaction is an in-world split purchase', () => {
     expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('bought')
   })
 
+  /** This buyer's relayed useCredits spending this credit together with `with` in one call (a batch). */
+  function batched(withCredit: SpendableCredit): Hex {
+    const built = buildStoreUseCreditsArgs(STORE, [item], BUYER, [credit, withCredit], C.toString(), { maxUncreditedValue: G })
+    return encodeExecuteMetaTransaction('functionData', BUYER, encodeUseCredits(built), ('0x' + '11'.repeat(65)) as Hex)
+  }
+
   it.each([
     ['another call (another price)', relayed({ items: [{ ...item, priceWei: '1' }] })],
     ['the same credit spent on another call (another item)', relayed({ items: [{ ...item, itemId: '8' }] })],
-    ['another credit', relayed({ credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })],
     ['another gap', relayed({ gap: G + 1n })],
     ['crediting another share', relayed({ credited: C - 1n })],
-    ['another sender', relayed({ user: '0x' + 'cc'.repeat(20) })],
     ['the same arguments at another venue', relayed({ venue: BOOK.marketplace.contract })],
-    ['the same arguments for another function', relayed({ selector: '0x12345678' })]
-  ])('is not bought by %s, even successful', async (_, input) => {
+    ['the same arguments for another function', relayed({ selector: '0x12345678' })],
+    ['this credit in a batch with another', batched({ ...credit, id: '0x' + 'b2'.repeat(32) })]
+  ])('is not bought by the buyer spending this credit on %s: that is the credit gone elsewhere', async (_, input) => {
     expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('other')
+  })
+
+  it.each([
+    ['reverted', 'reverted' as const],
+    ['not mined yet', null]
+  ])('takes the buyer spending this credit on other terms as spent elsewhere only once it succeeded: %s, it is only not this sale', async (_, status) => {
+    const input = relayed({ items: [{ ...item, itemId: '8' }] })
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, status) as never, sale, '0xabc', { sleep: async () => {} })).toBe('foreign')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('other')
+  })
+
+  it.each([
+    ['another credit', relayed({ credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })],
+    ['another sender', relayed({ user: '0x' + 'cc'.repeat(20) })],
+    ['another sender spending another credit', relayed({ user: '0x' + 'cc'.repeat(20), credit: { ...credit, id: '0x' + 'b2'.repeat(32) } })]
+  ])('reads a useCredits that doesn\'t spend this credit for this buyer (%s) as foreign: not this sale, nor where its credit went', async (_, input) => {
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input }, 'success') as never, sale, '0xabc')).toBe('foreign')
   })
 
   it('says nothing of a transaction to another contract, or one it can\'t read: its destination alone isn\'t where the credit went', async () => {
@@ -88,13 +110,34 @@ describe('which transaction is an in-world split purchase', () => {
     // Its revert, in the call the wallet was handed: the envelope is that call's own.
     expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(direct) }, '0xabc')).toBe('reverted')
     expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(relayed()) }, '0xabc')).toBe('unknown')
-    expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('other')
+    // Sent by another account: it doesn't spend this buyer's credit.
+    expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('foreign')
     // A reader that doesn't give the sender can't tell whose it is.
     expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unknown')
   })
 
+  it('gives a transaction its receipt ran ahead of one more look, a moment later: a mined purchase reads as bought', async () => {
+    const mine = relayed()
+    let reads = 0
+    const evidence = {
+      transaction: async () => (reads++ === 0 ? null : { to: MANAGER, input: mine }),
+      receipt: async () => ({ transactionHash: '0x' + 'e'.repeat(64), status: 'success' as const, blockNumber: 1n })
+    }
+    const waits: number[] = []
+    const sleep = async (ms: number) => void waits.push(ms)
+    expect(await splitExecution(evidence as never, sale, '0xabc', { sleep })).toBe('bought')
+    expect(waits).toEqual([SPLIT_TX_RETRY_MS])
+    // Still missing after that one look: nothing said. With no receipt either, no look at all.
+    waits.length = 0
+    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc', { sleep })).toBe('unknown')
+    expect(waits).toHaveLength(1)
+    waits.length = 0
+    expect(await splitExecution(evidenceOf(null, null) as never, sale, '0xabc', { sleep })).toBe('unknown')
+    expect(waits).toHaveLength(0)
+  })
+
   it('says nothing yet without a transaction, without a receipt for its own, or when a read fails', async () => {
-    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc')).toBe('unknown')
+    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc', { sleep: async () => {} })).toBe('unknown')
     expect(await splitExecution(evidenceOf({ to: MANAGER, input: relayed() }, null) as never, sale, '0xabc')).toBe('unknown')
     const failing = { transaction: async () => Promise.reject(new Error('rpc down')), receipt: async () => null }
     expect(await splitExecution(failing as never, sale, '0xabc')).toBe('unknown')
@@ -105,6 +148,10 @@ describe('which transaction is an in-world split purchase', () => {
     expect(isSplitSale({ ...sale, gapWei: '-1' })).toBe(false)
     expect(isSplitSale({ ...sale, creditId: '' })).toBe(false)
     expect(isSplitSale({ ...sale, envelope: splitEnvelope(relayed()) })).toBe(true)
+    // The issued credit's expiry, kept with the sale: whole unix seconds, or none (a sale kept before it was).
+    expect(isSplitSale({ ...sale, creditExpiresAt: 1_700_000_000 })).toBe(true)
+    expect(isSplitSale({ ...sale, creditExpiresAt: 1.5 })).toBe(false)
+    expect(isSplitSale({ ...sale, creditExpiresAt: '1700000000' })).toBe(false)
     expect(isSplitSale({ ...sale, envelope: '0x1234' })).toBe(false)
     expect(isSplitSale({ ...sale, envelope: null })).toBe(false)
     expect(carriesSale({ to: MANAGER, input: relayed() }, sale)).toBe(true)

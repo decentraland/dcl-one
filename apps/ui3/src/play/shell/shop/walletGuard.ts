@@ -188,7 +188,7 @@ function manaOf(chainId: number): ContractInfo | null {
 const APPROVE_DATA_LENGTH = 2 + 8 + 64 * 2
 
 /** MANA's approve of exactly a split's gap to the trusted CreditsManager, only while the buyer authorizes it. */
-export function checkSplitApprove(data: unknown, intent: PurchaseIntent): void {
+function checkSplitApprove(data: unknown, intent: PurchaseIntent): void {
   const split = intent.split
   if (!split) refuse('The Shop only signs its own purchases.')
   if (split.phase !== 'approve') refuse('The Shop doesn’t approve MANA while it buys.')
@@ -273,7 +273,7 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Purch
 }
 
 /** The same call sent from the buyer's wallet: to the manager, with no value and no unknown fields. */
-export function checkTransaction(tx: unknown, intent: PurchaseIntent): 'sale' {
+export function checkTransaction(tx: unknown, intent: PurchaseIntent): void {
   if (tx == null || typeof tx !== 'object' || Array.isArray(tx) || Object.keys(tx).some((k) => !TX_FIELDS.has(k))) refuse('The Shop only sends its own purchases.')
   const t = tx as { from?: unknown; to?: unknown; data?: unknown; value?: unknown }
   const value = typeof t.value === 'string' || typeof t.value === 'number' || typeof t.value === 'bigint' ? BigInt(t.value) : 0n
@@ -282,7 +282,6 @@ export function checkTransaction(tx: unknown, intent: PurchaseIntent): 'sale' {
   if (intent.split) refuse('The Shop sends a purchase with Credits and MANA only through its fee-free relay.')
   if (lower(t.to) !== intent.manager.address) refuse('The Shop only sends its own purchases.')
   checkUseCredits(t.data, intent)
-  return 'sale'
 }
 
 /** The wallet's selected account, which must be the buyer's (a managed wallet names its own). */
