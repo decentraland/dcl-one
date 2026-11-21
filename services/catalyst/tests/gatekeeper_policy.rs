@@ -1446,10 +1446,16 @@ mod stream_access {
         .await
         .unwrap();
         assert_eq!(rows, 2, "the replaced credential is kept, inactive");
+        // The owner and both scene admins, once each.
+        let granted = Address::parse(&address_of(&granted_key)).unwrap();
+        let recipients =
+            std::collections::BTreeSet::from([land_owner.clone(), admin.clone(), granted.clone()]);
         {
             let notifications = directory.streaming_notifications.lock().unwrap();
-            assert_eq!(notifications.len(), 1);
-            assert_eq!(notifications[0].recipient, land_owner);
+            let told: std::collections::BTreeSet<_> =
+                notifications.iter().map(|n| n.recipient.clone()).collect();
+            assert_eq!(notifications.len(), 3);
+            assert_eq!(told, recipients);
         }
 
         let stranger = random_key();
@@ -1567,12 +1573,17 @@ mod stream_access {
         );
         {
             let notifications = directory.streaming_notifications.lock().unwrap();
-            assert_eq!(notifications.len(), 2);
-            assert!(
-                notifications
-                    .iter()
-                    .all(|event| event.recipient == land_owner)
-            );
+            assert_eq!(notifications.len(), 6);
+            for recipient in &recipients {
+                assert_eq!(
+                    notifications
+                        .iter()
+                        .filter(|event| &event.recipient == recipient)
+                        .count(),
+                    2,
+                    "{recipient} hears of the reset and the removal"
+                );
+            }
         }
         let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

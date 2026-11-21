@@ -148,6 +148,23 @@ impl Moderation {
             .collect())
     }
 
+    /// The admins of `place_id` who are active, or whose grant a place removal
+    /// at `revoked_at` ended (that cleanup stamps its `removed_at`).
+    pub async fn notice_admins(
+        &self,
+        place_id: &str,
+        revoked_at: Option<NaiveDateTime>,
+    ) -> Result<Vec<String>, ApiError> {
+        Ok(sqlx::query_scalar(
+            "SELECT admin_address FROM social.scene_admins \
+             WHERE place_id = $1 AND (active OR removed_at = $2)",
+        )
+        .bind(place_id)
+        .bind(revoked_at)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     /// Re-adding a removed admin flips the same row back to active.
     pub async fn add_admin(
         &self,
