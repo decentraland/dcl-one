@@ -591,6 +591,10 @@ difference not listed here is a gap, not a decision.
 - **`GET /collaborator` lists local scenes only.** Mirrored world scenes
   are left out, as their `logsPermissions` grant no storage access on this
   node; upstream lists every scene its deployment consumer indexed.
+- **Status checks.** `/health/live`, `/health/ready` and `/health/startup`
+  answer as upstream's status check component: live answers `alive`, ready
+  and startup a static pass of the `server` component
+  (`{"details":{"server":{"status":"pass"}},"status":"pass"}`).
 
 ### Quotas, export and configuration
 

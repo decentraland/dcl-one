@@ -909,10 +909,10 @@ async fn resolve_and_authorize(
     })
 }
 
-/// The old route table (`api_router` plus `/ping`), to nest under
-/// `/world-storage` (the old gateway location, which stripped the prefix and
-/// set `x-original-path`) with the content routes' CORS guard and the query
-/// half of their NUL guard.
+/// The old route table (`api_router`, `/ping` and the `/health/*` status
+/// checks), to nest under `/world-storage` (the old gateway location, which
+/// stripped the prefix and set `x-original-path`) with the content routes'
+/// CORS guard and the query half of their NUL guard.
 pub fn router(state: SharedState) -> Router {
     let largest_value = [
         state.settings.world_limits,
