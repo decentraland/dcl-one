@@ -240,6 +240,16 @@ pub async fn run_once(
             break;
         };
         let (done_block, done_log) = (last.block_number, last.log_index);
+        // A ready collection bid still owing a backfill passed its hold bound.
+        for r in ready.iter().filter(|r| r.collection && r.backfill_owed) {
+            tracing::warn!(
+                block = r.block_number,
+                log = r.log_index,
+                contract = %r.contract_address,
+                token = %r.token_id,
+                "bid_received: the contract's nft backfill outlasted the hold; the bid is not announced"
+            );
+        }
         let batch: Vec<NewNotification> = ready
             .iter()
             .filter_map(|r| {
