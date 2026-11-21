@@ -3095,8 +3095,8 @@ async fn a_redeploy_revokes_the_key_of_the_old_scene_room() {
 }
 
 /// `DELETE /scene-admin` revokes the key the removed admin generated, and
-/// tells the place's owner as any revocation does; the removal of another
-/// admin leaves the key alone.
+/// tells the place's owner and its remaining admins as any revocation does;
+/// the removal of another admin leaves the key alone.
 #[tokio::test]
 async fn removing_a_scene_admin_revokes_the_key_it_generated() {
     let Some(pool) = scratch().await else { return };
@@ -3114,8 +3114,8 @@ async fn removing_a_scene_admin_revokes_the_key_it_generated() {
         },
     )
     .await;
-    let (admin, other) = (random_key(), random_key());
-    for admin in [&admin, &other] {
+    let (admin, other, kept) = (random_key(), random_key(), random_key());
+    for admin in [&admin, &other, &kept] {
         scene_admin(&h, KEY, "POST", &metadata, admin).await;
     }
     let key = stream_link(&h, &admin, &metadata).await;
@@ -3129,9 +3129,15 @@ async fn removing_a_scene_admin_revokes_the_key_it_generated() {
     scene_admin(&h, KEY, "DELETE", &metadata, &admin).await;
     assert_revoked(&h, &key, &scene.room, &streamer).await;
     let told = social.streaming_notifications.lock().unwrap();
-    assert_eq!(told.len(), 1);
-    assert_eq!(told[0].kind, StreamingNotificationKind::KeyRevoke);
-    assert_eq!(told[0].recipient.as_str(), address_of(KEY));
+    assert!(
+        told.iter()
+            .all(|notice| notice.kind == StreamingNotificationKind::KeyRevoke)
+    );
+    let mut recipients: Vec<String> = told.iter().map(|n| n.recipient.as_str().into()).collect();
+    recipients.sort();
+    let mut expected = vec![address_of(KEY), address_of(&kept)];
+    expected.sort();
+    assert_eq!(recipients, expected);
 }
 
 /// LiveKit answers a delete only when the ingress worker stopped the push,
