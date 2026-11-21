@@ -572,7 +572,9 @@ describe("a split whose outcome is not known", () => {
     holdFromAnotherTab(line);
     await act(async () => fireEvent.click(approve));
     expect(await screen.findByText("A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.", {}, { timeout: 5000 })).toBeTruthy();
-    // Not even the approve went out: it would have set the allowance from under the other purchase.
+    // Not even the approve went out (it would have set the allowance from under the other purchase); found under the lock,
+    // before the wallet was asked.
+    expect(signatures(demo)).toBe(0);
     expect(demo.relay.posts).toHaveLength(0);
     expect(authorizations(demo)).toBe(0);
     expect(readSplitHold(BOOK.buyer, splitHoldLine(line.asset))?.creditId).toBe(OTHER);
@@ -707,7 +709,7 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(1);
   });
 
-  it("a finalized time read that hangs after the approve gives way before the sale takes a lock: the other split holds, no credit, the grant's lock free", async () => {
+  it("a finalized time read that hangs at the approve click gives way before the approval takes its lock: the other split holds, nothing signed or sent", async () => {
     const { demo, line, unmount, again } = setup();
     unmount();
     demo.services.finalizedTimeMs = 50;
@@ -719,23 +721,21 @@ describe("a split whose outcome is not known", () => {
       heldDuringRead = [...locks.held];
       return new Promise<number>(() => {});
     };
-    // Once the approve is relayed, another item's split shows up, its credit past its expiry on this browser's clock only.
-    const relayed = demo.services.fetchImpl!;
-    demo.services.fetchImpl = (async (...args: Parameters<typeof fetch>) => {
-      const answer = await relayed(...args);
-      if (relayedApproval(JSON.parse(String(args[1]?.body)))) anotherItemHeld(line, { creditExpiresAt: nowSeconds() - 60 });
-      return answer;
-    }) as typeof fetch;
     again();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
-    await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
+    const approve = await screen.findByTestId("authorize-step-action");
+    // While the approval is shown, another item's split shows up, its credit past its expiry on this browser's clock only.
+    anotherItemHeld(line, { creditExpiresAt: nowSeconds() - 60 });
+    await act(async () => fireEvent.click(approve));
     expect(await screen.findByText(IN_FLIGHT, {}, { timeout: 5000 })).toBeTruthy();
     expect(signal?.aborted).toBe(true);
     // No lock waited on the chain, and none is left held: another window can take the grant's lock and try.
     expect(heldDuringRead).toEqual([]);
     expect([...locks.held]).toEqual([]);
+    // Held back under the lock before the wallet was asked.
+    expect(signatures(demo)).toBe(0);
+    expect(demo.relay.posts).toHaveLength(0);
     expect(authorizations(demo)).toBe(0);
-    expect(demo.relay.posts).toHaveLength(1);
   });
 
   it("other items' credits are proven all at once: two hanging finalized time reads cost one deadline, not one each", async () => {
@@ -1340,26 +1340,33 @@ describe("a split whose outcome is not known", () => {
     expect(demo.relay.posts).toHaveLength(0);
   });
 
-  it("right after its own approval, the sale waits a moment for the grant's lock the approval let go, rather than calling it another window's", async () => {
+  it("the approval takes the grant's lock once, at the click, and lets it go only once its sale is sent: no other window's purchase starts between them", async () => {
     const { demo, unmount, again } = setup();
     unmount();
     const base = demo.services.locks as LockManager;
-    const auth = getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address);
-    const name = exactGrantLock(auth, BOOK.buyer);
-    // The approval takes the lock first; the browser frees it a little late, so the sale's next two asks find it taken.
-    let asked = 0;
+    const name = exactGrantLock(getManaSpendingAuthorization(CHAIN.POLYGON, requireContracts(CHAIN.POLYGON).creditsManager!.address), BOOK.buyer);
+    // Each time the grant's lock is taken and let go, with how many requests the relay had been sent by then.
+    const held: string[] = [];
     demo.services.locks = {
       query: base.query.bind(base),
-      request: ((n: string, options: LockOptions, callback: LockGrantedCallback<unknown>) => {
-        if (n === name && (++asked === 2 || asked === 3)) return Promise.resolve(callback(null));
-        return base.request(n, options, callback);
-      }) as LockManager["request"],
+      request: ((n: string, options: LockOptions, callback: LockGrantedCallback<unknown>) =>
+        base.request(n, options, async (lock) => {
+          if (n !== name || !lock) return callback(lock);
+          held.push(`taken after ${demo.relay.posts.length}`);
+          try {
+            return await callback(lock);
+          } finally {
+            held.push(`let go after ${demo.relay.posts.length}`);
+          }
+        })) as LockManager["request"],
     } as LockManager;
     again();
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     await act(async () => fireEvent.click(await screen.findByTestId("authorize-step-action")));
     expect(await screen.findByText(/Purchase complete/, {}, { timeout: 5000 })).toBeTruthy();
-    expect(asked).toBe(4);
+    // Taken before the approve went out, kept while it confirmed and through the sale, let go once both were sent.
+    expect(held).toEqual(["taken after 0", "let go after 2"]);
+    expect(demo.relay.posts).toHaveLength(2);
   });
 
   it("without Web Locks no approval is asked for: nothing is signed, authorized or sent", async () => {
