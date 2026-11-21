@@ -113,6 +113,14 @@ struct FakeChain {
     chain_id: std::sync::atomic::AtomicU64,
     /// Refuse every header read by number (a backend that does not answer).
     fail_headers: std::sync::atomic::AtomicBool,
+    /// Refuse every `eth_getLogs` whose first topics include all of these
+    /// (a union of two projections' topics), when there are any.
+    refuse_topics: Mutex<Vec<String>>,
+    /// The `eth_getLogs` refused for `refuse_topics` or `refuse_from`.
+    refused: AtomicUsize,
+    /// Refuse every `eth_getLogs` from this block on that asks for this
+    /// address.
+    refuse_from: Mutex<Option<(u64, String)>>,
 }
 
 impl FakeChain {
@@ -139,6 +147,9 @@ impl FakeChain {
             calls: Mutex::new(Vec::new()),
             chain_id: std::sync::atomic::AtomicU64::new(137),
             fail_headers: std::sync::atomic::AtomicBool::new(false),
+            refuse_topics: Mutex::new(Vec::new()),
+            refused: AtomicUsize::new(0),
+            refuse_from: Mutex::new(None),
         })
     }
 
@@ -289,14 +300,33 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
             if addresses.len() > chain.max_addresses {
                 return refuse("exceed max addresses or topics per search position".into());
             }
-            let topics: Vec<String> = f["topics"][0]
-                .as_array()
-                .map(|a| {
+            // The first topics, as `eth_getLogs` reads them: a string is one
+            // topic, a list any of them, none (or null) any topic at all.
+            let topics: Option<Vec<String>> = match &f["topics"][0] {
+                Value::String(t) => Some(vec![t.to_ascii_lowercase()]),
+                Value::Array(a) => Some(
                     a.iter()
                         .map(|t| t.as_str().unwrap().to_ascii_lowercase())
-                        .collect()
-                })
-                .unwrap_or_default();
+                        .collect(),
+                ),
+                _ => None,
+            };
+            if let Some((block, address)) = chain.refuse_from.lock().clone()
+                && from >= block
+                && addresses.contains(&address.to_ascii_lowercase())
+            {
+                chain.refused.fetch_add(1, Ordering::SeqCst);
+                return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "internal error: this address is refused by the test" } });
+            }
+            let refused = chain.refuse_topics.lock().clone();
+            if !refused.is_empty()
+                && topics
+                    .as_ref()
+                    .is_some_and(|t| refused.iter().all(|r| t.contains(&r.to_ascii_lowercase())))
+            {
+                chain.refused.fetch_add(1, Ordering::SeqCst);
+                return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "internal error: this filter is refused by the test" } });
+            }
             let logs = chain.logs.lock();
             let hits: Vec<Value> = logs
                 .iter()
@@ -305,8 +335,9 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     addresses.contains(&l["address"].as_str().unwrap().to_ascii_lowercase())
                 })
                 .filter(|l| {
-                    topics.is_empty()
-                        || topics.contains(&l["topics"][0].as_str().unwrap().to_ascii_lowercase())
+                    topics.as_ref().is_none_or(|t| {
+                        t.contains(&l["topics"][0].as_str().unwrap().to_ascii_lowercase())
+                    })
                 })
                 .cloned()
                 .collect();
@@ -4739,6 +4770,7 @@ async fn a_rebuilt_cursor_keeps_its_chain_against_a_switch_before_the_replay() {
 mod supervisor {
     use super::*;
     use crate::jobs::{JobState, Jobs, LeaseSettings, PeriodicCfg};
+    use crate::market::chain_group;
     use crate::market::chain_jobs::{self, MakeIndex, Projection, Supervisor};
     use std::time::Duration;
 
@@ -4753,6 +4785,23 @@ mod supervisor {
         dropped: Arc<AtomicUsize>,
         panics: Option<Arc<AtomicUsize>>,
         abandon_panics: bool,
+        /// While set, `write` waits for `write_gate` (counting the entries
+        /// in `write_entered`) and `groups` for `groups_gate`.
+        armed: Arc<std::sync::atomic::AtomicBool>,
+        write_gate: Option<Arc<tokio::sync::Semaphore>>,
+        write_entered: Arc<AtomicUsize>,
+        groups_gate: Option<Arc<tokio::sync::Semaphore>>,
+        /// The next writes that fail.
+        write_fails: Arc<AtomicUsize>,
+        /// While `armed`, `fold` waits for this gate.
+        armed_fold_gate: Option<Arc<tokio::sync::Semaphore>>,
+        /// The filters `groups` answers instead of the index's own.
+        groups_override: Option<Vec<chain_walk::LogGroup>>,
+        /// While `commit_armed`, each window's commit returns only once this
+        /// gate opens (the commit itself has landed), counting in
+        /// `write_entered`.
+        committed_gate: Option<Arc<tokio::sync::Semaphore>>,
+        commit_armed: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl Hooked {
@@ -4795,6 +4844,14 @@ mod supervisor {
                 panics.fetch_add(1, Ordering::SeqCst);
                 panic!("a hooked index panicked");
             }
+            if let Some(gate) = &self.groups_gate
+                && self.armed.load(Ordering::SeqCst)
+            {
+                gate.acquire().await.unwrap().forget();
+            }
+            if let Some(groups) = &self.groups_override {
+                return Ok(groups.clone());
+            }
             self.inner().groups(pool, from, to, anchor).await
         }
         async fn write(
@@ -4803,6 +4860,19 @@ mod supervisor {
             logs: &[crate::chain_index::rpc::RpcLog],
             times: &HashMap<i64, i64>,
         ) -> anyhow::Result<usize> {
+            if self
+                .write_fails
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok()
+            {
+                anyhow::bail!("a hooked write failed");
+            }
+            if let Some(gate) = &self.write_gate
+                && self.armed.load(Ordering::SeqCst)
+            {
+                self.write_entered.fetch_add(1, Ordering::SeqCst);
+                gate.acquire().await.unwrap().forget();
+            }
             self.inner().write(conn, logs, times).await
         }
         async fn rewind(&self, conn: &mut sqlx::PgConnection, to: i64) -> anyhow::Result<()> {
@@ -4824,11 +4894,31 @@ mod supervisor {
                 gate.acquire().await.unwrap().forget();
                 std::mem::forget(wait);
             }
+            if let Some(gate) = &self.armed_fold_gate
+                && self.armed.load(Ordering::SeqCst)
+            {
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                gate.acquire().await.unwrap().forget();
+            }
             self.inner().fold(pool, since, upto, owner).await
         }
         fn abandon(&self) {
             assert!(!self.abandon_panics, "a hooked index's cleanup panicked");
             self.inner().abandon()
+        }
+        fn begin_pass(&self) {
+            self.inner().begin_pass()
+        }
+        async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
+            self.inner().walks_alone(pool).await
+        }
+        async fn window_committed(&self) {
+            if let Some(gate) = &self.committed_gate
+                && self.commit_armed.load(Ordering::SeqCst)
+            {
+                self.write_entered.fetch_add(1, Ordering::SeqCst);
+                gate.acquire().await.unwrap().forget();
+            }
         }
     }
 
@@ -4848,6 +4938,8 @@ mod supervisor {
             http: st.http.clone(),
             settings: st.settings.market.indexes.clone(),
             projections,
+            member_deadline: Duration::from_secs(60),
+            stats: Arc::default(),
         }
     }
 
@@ -5245,6 +5337,1507 @@ mod supervisor {
         .await;
         gate.add_permits(100);
         held.release().await;
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// The rows of the projections' tables, without the columns a walk
+    /// stamps with the time it ran.
+    async fn table_rows(pool: &PgPool, table: &str) -> Vec<String> {
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT (to_jsonb(t) - 'updated_at' - 'created_at' - 'id' - 'indexed_at' - 'mirrored_at' - 'added_at')::text \
+             FROM {table} t ORDER BY 1"
+        )))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    const PROJECTION_TABLES: [&str; 6] = [
+        "shop.nft",
+        "shop.nft_event",
+        "shop.nft_contract",
+        "shop.nft_order",
+        "shop.nft_bid",
+        "shop.sale_event",
+    ];
+
+    /// The nft and sales walks standing at one checkpoint read their next
+    /// window once: the same rows as two walks alone, from fewer requests, in
+    /// the pinned order (the finalized header serves as the window's before).
+    #[tokio::test]
+    async fn two_projections_at_one_checkpoint_read_their_windows_once() {
+        let (Some(alone), Some(together)) = (ScratchDb::create().await, ScratchDb::create().await)
+        else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        for db in [&alone, &together] {
+            seed_collection(
+                &db.pool,
+                "matic",
+                c1,
+                s + 10,
+                "urn:decentraland:matic:collections-v2:0xc1",
+                "Pirates",
+            )
+            .await;
+        }
+        let (t1, t2) = (v2_token(0, 1), v2_token(0, 2));
+        let chain = FakeChain::new(
+            s + 500,
+            vec![
+                sales_index::tests::issue_log(
+                    c1,
+                    ALICE,
+                    t1,
+                    0,
+                    sales_index::STORE_MATIC,
+                    s + 100,
+                    0,
+                ),
+                transfer(c1, ZERO, ALICE, t1, s + 100, 1),
+            ],
+            1_000_000,
+            100,
+        );
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let settings = index_settings(100, 1_000_000);
+        let (st_alone, st_together) = (
+            state_over(alone.pool.clone(), &url, settings.clone(), false),
+            state_over(together.pool.clone(), &url, settings.clone(), false),
+        );
+        // Both walk alone to the head first, in both databases.
+        for st in [&st_alone, &st_together] {
+            assert!(
+                publish(st, &url, &NftIndex::new(ChainNet::Matic))
+                    .await
+                    .published
+            );
+            assert!(publish(st, &url, &SalesIndex).await.published);
+        }
+        // The next segment: CARL mints t2 and sells it to BOB.
+        {
+            let mut logs = chain.logs.lock();
+            for l in [
+                sales_index::tests::issue_log(c1, CARL, t2, 0, CARL, s + 700, 0),
+                transfer(c1, ZERO, CARL, t2, s + 700, 1),
+                transfer(c1, CARL, BOB, t2, s + 900, 0),
+            ] {
+                logs.push(log_json(&l));
+            }
+        }
+        *chain.head.lock() = s + 1_500;
+        let mark = chain.calls.lock().len();
+        let nft = NftIndex::new(ChainNet::Matic);
+        pass(&st_alone, &url, &nft).await;
+        pass(&st_alone, &url, &SalesIndex).await;
+        let alone_calls = chain.calls.lock()[mark..].to_vec();
+
+        let at = chain_group::Checkpoint::of(
+            &chain_walk::cursor(&together.pool, INDEXER_NFT, ChainNet::Matic)
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let mark = chain.calls.lock().len();
+        let members: Vec<chain_group::Member> = vec![
+            Arc::new(NftIndex::new(ChainNet::Matic)) as Arc<dyn ChainIndex>,
+            Arc::new(SalesIndex),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(slot, index)| chain_group::Member {
+            slot,
+            index,
+            holdings: Arc::new(chain_walk::Holdings::default()),
+            lease: None,
+            gate: None,
+        })
+        .collect();
+        let indexes: Vec<_> = members
+            .iter()
+            .map(|m| (m.index.clone(), m.holdings.clone()))
+            .collect();
+        let counted = AtomicUsize::new(0);
+        let ends = chain_group::walk_together(
+            &together.pool,
+            &st_together.http,
+            &url,
+            &settings,
+            members,
+            &at,
+            Duration::from_secs(60),
+            &counted,
+        )
+        .await;
+        let sent = counted.load(Ordering::SeqCst);
+        for (slot, end) in ends {
+            let chain_group::MemberEnd::Walked {
+                mut out,
+                close: Some(fold_since),
+                ..
+            } = end
+            else {
+                panic!("member {slot} did not walk to the target");
+            };
+            let (index, holdings) = &indexes[slot];
+            let owner = holdings
+                .owner(&together.pool, None, index.as_ref(), &settings)
+                .await
+                .unwrap();
+            let source = chain_walk::RpcSource::new(Rpc::at(&st_together.http, &url));
+            chain_walk::close(
+                &together.pool,
+                &source,
+                index.as_ref(),
+                &settings,
+                &owner,
+                fold_since,
+                &mut out,
+            )
+            .await
+            .unwrap();
+            assert!(out.published, "{out:?}");
+        }
+        let together_calls = chain.calls.lock()[mark..].to_vec();
+        let logs = format!("logs {}..{} x1", s + 499, s + 1_498);
+        let expected: Vec<String> = [
+            "chain id".to_string(),
+            // The checkpoint's header, once for both (the reorg check).
+            format!("header {}", s + 498),
+            "head".into(),
+            "finalized".into(),
+            // The window's before is the finalized header: one read for
+            // both, each address once.
+            logs.clone(),
+            logs.clone(),
+            logs,
+            format!("header {}", s + 1_498),
+            // Each close reads the heads again after its fold.
+            "head".into(),
+            "finalized".into(),
+            "head".into(),
+            "finalized".into(),
+        ]
+        .into();
+        assert_eq!(together_calls, expected, "{together_calls:#?}");
+        assert_eq!(sent, 8, "the shared walk's own requests");
+        assert_eq!(alone_calls.len(), 17, "{alone_calls:#?}");
+        for table in PROJECTION_TABLES {
+            assert_eq!(
+                table_rows(&together.pool, table).await,
+                table_rows(&alone.pool, table).await,
+                "{table}"
+            );
+        }
+        assert!(together_calls.len() < alone_calls.len());
+        alone.drop().await;
+        together.drop().await;
+    }
+
+    /// The nft and sales projections of `url` for a supervisor, ungated.
+    fn nft_and_sales(url: &str) -> Vec<Projection> {
+        vec![
+            projection(
+                "nft-index",
+                ChainNet::Matic,
+                url,
+                Arc::new(|| Arc::new(NftIndex::new(ChainNet::Matic))),
+            ),
+            projection(
+                "sales-index",
+                ChainNet::Matic,
+                url,
+                Arc::new(|| Arc::new(SalesIndex)),
+            ),
+        ]
+    }
+
+    async fn last_block(pool: &PgPool, indexer: &str) -> i64 {
+        cursor(pool, indexer, ChainNet::Matic)
+            .await
+            .map_or(-1, |c| c.last_block)
+    }
+
+    /// When the shared read always fails but each projection's own filters
+    /// work, every projection still advances, on a budget of one request a
+    /// pass: each falls back alone with what it had left, and a fallback
+    /// that has nothing left walks alone again on a whole budget.
+    #[tokio::test]
+    async fn a_shared_read_that_always_fails_still_lets_every_projection_advance() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(
+            s + 500,
+            vec![
+                sales_index::tests::issue_log(
+                    c1,
+                    ALICE,
+                    v2_token(0, 1),
+                    0,
+                    sales_index::STORE_MATIC,
+                    s + 100,
+                    0,
+                ),
+                transfer(c1, ZERO, ALICE, v2_token(0, 1), s + 100, 1),
+            ],
+            1_000_000,
+            100,
+        );
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        // The union of the two first topics on the collection is refused;
+        // each projection's own read is not.
+        *chain.refuse_topics.lock() = vec![
+            nft_index::TOPIC_TRANSFER.to_string(),
+            sales_index::TOPIC_ISSUE.to_string(),
+        ];
+        let url = serve(chain.clone()).await;
+        let settings = IndexSettings {
+            requests_per_pass: 1,
+            ..index_settings(100, 1_000_000)
+        };
+        let st = state_over(db.pool.clone(), &url, settings, false);
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, nft_and_sales(&url)));
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        for round in 1..=3u64 {
+            let block = s + 500 + round * 1_000;
+            {
+                let mut logs = chain.logs.lock();
+                let token = v2_token(0, round + 1);
+                for l in [
+                    sales_index::tests::issue_log(c1, CARL, token, 0, CARL, block - 300, 0),
+                    transfer(c1, ZERO, CARL, token, block - 300, 1),
+                ] {
+                    logs.push(log_json(&l));
+                }
+            }
+            *chain.head.lock() = block;
+            let target = (block - 2) as i64;
+            for indexer in [INDEXER_NFT, INDEXER_SALES] {
+                eventually("every cursor advances", || async {
+                    last_block(&db.pool, indexer).await >= target
+                })
+                .await;
+            }
+        }
+        assert!(
+            chain.refused.load(Ordering::SeqCst) > 0,
+            "the shared read was tried"
+        );
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// Leases taken from two processes' sessions: the names in `apart`
+    /// from the second, so one of them can be lost alone.
+    struct SplitLeases {
+        first: Arc<crate::jobs::Leases>,
+        second: Arc<crate::jobs::Leases>,
+        apart: Vec<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl chain_jobs::TakeLease for SplitLeases {
+        async fn try_acquire(&self, name: &str) -> sqlx::Result<Option<crate::jobs::LeaseGuard>> {
+            if self.apart.iter().any(|n| n == name) {
+                self.second.try_acquire(name).await
+            } else {
+                self.first.try_acquire(name).await
+            }
+        }
+        fn standby_wait(&self, name: &str) -> Duration {
+            self.first.settings().standby_wait(name)
+        }
+    }
+
+    /// Ends the session that holds the lease `name`.
+    async fn lose_lease(pool: &PgPool, name: &str) {
+        let ended: Vec<bool> = sqlx::query_scalar(
+            "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 2 \
+             AND objid::bigint = (hashtext($1)::bigint & 4294967295) \
+             AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .bind(name)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        assert_eq!(ended, vec![true], "one session held {name}");
+    }
+
+    async fn sale_events(pool: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM shop.sale_event")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A store sale of `token` to BOB at `block`: its Issue, its mint and
+    /// the store's Bought, in one transaction.
+    fn add_sale(chain: &FakeChain, c1: &str, token: U256, block: u64) {
+        let mut logs = chain.logs.lock();
+        for l in [
+            sales_index::tests::issue_log(c1, BOB, token, 0, sales_index::STORE_MATIC, block, 0),
+            transfer(c1, ZERO, BOB, token, block, 1),
+            sales_index::tests::bought_log(
+                &[(c1, 0, 1_000_000_000_000_000_000, BOB)],
+                &format!("0x{:064x}", block * 100),
+                block,
+                2,
+            ),
+        ] {
+            logs.push(log_json(&l));
+        }
+    }
+
+    fn add_mint(chain: &FakeChain, c1: &str, token: U256, block: u64) {
+        let mut logs = chain.logs.lock();
+        for l in [
+            sales_index::tests::issue_log(c1, CARL, token, 0, CARL, block, 0),
+            transfer(c1, ZERO, CARL, token, block, 1),
+        ] {
+            logs.push(log_json(&l));
+        }
+    }
+
+    fn hooked_sales(hooks: &Hooked) -> MakeIndex {
+        let (armed, gate, entered) = (
+            hooks.armed.clone(),
+            hooks.write_gate.clone(),
+            hooks.write_entered.clone(),
+        );
+        Arc::new(move || {
+            Arc::new(Hooked {
+                inner: Some(Arc::new(SalesIndex)),
+                armed: armed.clone(),
+                write_gate: gate.clone(),
+                write_entered: entered.clone(),
+                ..Hooked::default()
+            }) as Arc<dyn ChainIndex>
+        })
+    }
+
+    /// A shared walk loses sales' lease alone while sales waits in its
+    /// commit, after nft committed the window: the walk stops, nft keeps the
+    /// window it committed and sales its last one, and both go on from
+    /// there to the same rows.
+    #[tokio::test]
+    async fn a_lease_lost_between_two_commits_leaves_each_at_its_own_durable_point() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 1), s + 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let namespace = format!("shared-lease-loss-{}", std::process::id());
+        let first = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        )
+        .with_first_pass_now(true);
+        let second = Jobs::with_leases(
+            db.pool.clone(),
+            lease_settings(&namespace, Duration::from_millis(100)),
+        );
+        let hooks = Hooked {
+            write_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            ..Hooked::default()
+        };
+        let leases = Arc::new(SplitLeases {
+            first: first.leases().unwrap().clone(),
+            second: second.leases().unwrap().clone(),
+            apart: vec!["sales-index-matic".into()],
+        });
+        let mut projections = nft_and_sales(&url);
+        projections[1].make = hooked_sales(&hooks);
+        chain_jobs::spawn_with(
+            &first,
+            supervisor(&st, ChainNet::Matic, projections),
+            Some(leases),
+        );
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        let before = cursor(&db.pool, INDEXER_SALES, ChainNet::Matic)
+            .await
+            .unwrap()
+            .last_block;
+        let sales_before = sale_events(&db.pool).await;
+        hooks.armed.store(true, Ordering::SeqCst);
+        add_sale(&chain, c1, v2_token(0, 2), s + 700);
+        *chain.head.lock() = s + 1_500;
+        let target = (s + 1_498) as i64;
+        eventually("sales waits in its commit", || async {
+            hooks.write_entered.load(Ordering::SeqCst) >= 1
+        })
+        .await;
+        let progress = first
+            .report()
+            .into_iter()
+            .find(|j| j.name == "chain-walk-matic")
+            .and_then(|j| j.progress)
+            .unwrap_or_default();
+        assert!(progress.contains("walking together"), "{progress}");
+        assert_eq!(
+            last_block(&db.pool, INDEXER_NFT).await,
+            target,
+            "nft committed the window first"
+        );
+        lose_lease(&db.pool, "sales-index-matic").await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(
+            last_block(&db.pool, INDEXER_SALES).await,
+            before,
+            "sales' commit never landed"
+        );
+        assert_eq!(sale_events(&db.pool).await, sales_before);
+        hooks.armed.store(false, Ordering::SeqCst);
+        hooks.write_gate.as_ref().unwrap().add_permits(100);
+        eventually("sales goes on from its own checkpoint", || async {
+            last_block(&db.pool, INDEXER_SALES).await == target
+                && published(&db.pool, INDEXER_SALES, ChainNet::Matic).await
+        })
+        .await;
+        assert_eq!(
+            sale_events(&db.pool).await,
+            sales_before + 1,
+            "the window's sale, once"
+        );
+        assert!(first.shutdown(Duration::from_secs(5)).await.is_empty());
+        assert!(second.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A member stuck in its own filters leaves the shared walk at the
+    /// deadline, and the others go on: mana reaches two new heads while
+    /// trade events is stuck, and trade events catches up once released.
+    #[tokio::test]
+    async fn a_member_stuck_in_its_filters_holds_back_no_other() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let hooks = Hooked {
+            groups_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            ..Hooked::default()
+        };
+        let stuck: MakeIndex = {
+            let (armed, gate) = (hooks.armed.clone(), hooks.groups_gate.clone());
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(TradeEventsIndex {
+                        net: ChainNet::Matic,
+                        chain_id: 137,
+                    })),
+                    armed: armed.clone(),
+                    groups_gate: gate.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let mut sup = supervisor(
+            &st,
+            ChainNet::Matic,
+            vec![
+                projection(
+                    "mana-transfers-index",
+                    ChainNet::Matic,
+                    &url,
+                    mana(ChainNet::Matic),
+                ),
+                projection("trade-events-index", ChainNet::Matic, &url, stuck),
+            ],
+        );
+        sup.member_deadline = Duration::from_millis(300);
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, sup);
+        for indexer in [chain_walk::INDEXER_MANA, INDEXER_TRADE_EVENTS] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        hooks.armed.store(true, Ordering::SeqCst);
+        for head in [1_100u64, 2_100] {
+            *chain.head.lock() = head;
+            eventually("mana reaches the new head", || async {
+                last_block(&db.pool, chain_walk::INDEXER_MANA).await == (head - 2) as i64
+            })
+            .await;
+        }
+        assert_eq!(
+            last_block(&db.pool, INDEXER_TRADE_EVENTS).await,
+            98,
+            "trade events is stuck"
+        );
+        hooks.armed.store(false, Ordering::SeqCst);
+        hooks.groups_gate.as_ref().unwrap().add_permits(100);
+        eventually("trade events catches up", || async {
+            last_block(&db.pool, INDEXER_TRADE_EVENTS).await == 2_098
+        })
+        .await;
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A commit whose return overruns the member deadline leaves its outcome
+    /// unknown to the walk: the member leaves with a fresh index and reads its
+    /// cursor again. Whether the commit was lost (held before it, the cursor
+    /// at the window's start) or landed (its return held after it, the cursor
+    /// at the window's end), the next attempt converges to the same sale,
+    /// cursor and publication as a clean walk: the window's sale exactly once.
+    #[tokio::test]
+    async fn a_commit_past_the_deadline_recovers_from_wherever_the_cursor_is() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 1), s + 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let hooks = Hooked {
+            write_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            committed_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            ..Hooked::default()
+        };
+        let mut projections = nft_and_sales(&url);
+        projections[1].make = {
+            let (armed, commit_armed, write_gate, committed_gate, entered) = (
+                hooks.armed.clone(),
+                hooks.commit_armed.clone(),
+                hooks.write_gate.clone(),
+                hooks.committed_gate.clone(),
+                hooks.write_entered.clone(),
+            );
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(SalesIndex)),
+                    armed: armed.clone(),
+                    commit_armed: commit_armed.clone(),
+                    write_gate: write_gate.clone(),
+                    committed_gate: committed_gate.clone(),
+                    write_entered: entered.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let mut sup = supervisor(&st, ChainNet::Matic, projections);
+        sup.member_deadline = Duration::from_millis(300);
+        let stats = sup.stats.clone();
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, sup);
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        for (round, landed) in [(1u64, false), (2, true)] {
+            let start = last_block(&db.pool, INDEXER_SALES).await;
+            let sales = sale_events(&db.pool).await;
+            let entered = hooks.write_entered.load(Ordering::SeqCst);
+            let cut_short = stats.cut_short.load(Ordering::SeqCst);
+            let flag = if landed {
+                &hooks.commit_armed
+            } else {
+                &hooks.armed
+            };
+            flag.store(true, Ordering::SeqCst);
+            add_sale(
+                &chain,
+                c1,
+                v2_token(0, round + 1),
+                s + 500 + round * 1_000 - 300,
+            );
+            *chain.head.lock() = s + 500 + round * 1_000;
+            let target = (s + 498 + round * 1_000) as i64;
+            eventually("sales is held in its commit", || async {
+                hooks.write_entered.load(Ordering::SeqCst) > entered
+                    && last_block(&db.pool, INDEXER_NFT).await == target
+            })
+            .await;
+            eventually("the supervisor took sales' commit as cut short", || async {
+                stats.cut_short.load(Ordering::SeqCst) > cut_short
+            })
+            .await;
+            if landed {
+                assert_eq!(
+                    last_block(&db.pool, INDEXER_SALES).await,
+                    target,
+                    "the commit landed"
+                );
+                assert_eq!(sale_events(&db.pool).await, sales + 1);
+            } else {
+                assert_eq!(
+                    last_block(&db.pool, INDEXER_SALES).await,
+                    start,
+                    "the commit was lost"
+                );
+                assert_eq!(sale_events(&db.pool).await, sales);
+            }
+            flag.store(false, Ordering::SeqCst);
+            let gate = if landed {
+                &hooks.committed_gate
+            } else {
+                &hooks.write_gate
+            };
+            gate.as_ref().unwrap().add_permits(100);
+            eventually("sales converges at the target, published", || async {
+                last_block(&db.pool, INDEXER_SALES).await == target
+                    && published(&db.pool, INDEXER_SALES, ChainNet::Matic).await
+            })
+            .await;
+            assert_eq!(
+                sale_events(&db.pool).await,
+                sales + 1,
+                "the window's sale, once"
+            );
+            let gate = gate.as_ref().unwrap();
+            gate.forget_permits(gate.available_permits());
+        }
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A projection whose cursor moved under the checkpoint the supervisor
+    /// kept leaves the next shared walk once, from where it really stands,
+    /// and both advance without regrouping over and over.
+    #[tokio::test]
+    async fn a_checkpoint_moved_underneath_regroups_once_and_both_advance() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let every = |p: Projection| Projection {
+            cfg: PeriodicCfg::every(Duration::from_millis(200)),
+            ..p
+        };
+        let trade_events: MakeIndex = Arc::new(|| {
+            Arc::new(TradeEventsIndex {
+                net: ChainNet::Matic,
+                chain_id: 137,
+            })
+        });
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(
+            &jobs,
+            supervisor(
+                &st,
+                ChainNet::Matic,
+                vec![
+                    every(projection(
+                        "mana-transfers-index",
+                        ChainNet::Matic,
+                        &url,
+                        mana(ChainNet::Matic),
+                    )),
+                    every(projection(
+                        "trade-events-index",
+                        ChainNet::Matic,
+                        &url,
+                        trade_events,
+                    )),
+                ],
+            ),
+        );
+        for indexer in [chain_walk::INDEXER_MANA, INDEXER_TRADE_EVENTS] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        // Trade events' cursor goes back to block 50, a checkpoint the chain
+        // still proves, under the supervisor's cached 98.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET last_block = 50, last_block_hash = $1, last_block_time = NULL, \
+             fold_through = NULL, folded_block = NULL, folded_at = NULL \
+             WHERE indexer = 'trade_events' AND network = 'matic'",
+        )
+        .bind(chain.hash_of(50))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        *chain.head.lock() = 200;
+        let moved = std::time::Instant::now();
+        for indexer in [chain_walk::INDEXER_MANA, INDEXER_TRADE_EVENTS] {
+            eventually("both reach the new head", || async {
+                last_block(&db.pool, indexer).await == 198
+            })
+            .await;
+        }
+        assert!(
+            moved.elapsed() < Duration::from_millis(1_500),
+            "within a few dispatches: {:?}",
+            moved.elapsed()
+        );
+        let before = chain.requests.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let spent = chain.requests.load(Ordering::SeqCst) - before;
+        assert!(
+            spent < 300,
+            "no regroup loop: {spent} requests in ten intervals"
+        );
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A collection the mirror adds between two shared walks is taken in by
+    /// the next one: the same rows as the walks alone.
+    #[tokio::test]
+    async fn a_collection_added_between_shared_walks_is_taken_in() {
+        let (Some(alone), Some(together)) = (ScratchDb::create().await, ScratchDb::create().await)
+        else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let (c1, c2) = (
+            "0x00000000000000000000000000000000000000c1",
+            "0x00000000000000000000000000000000000000c2",
+        );
+        for db in [&alone, &together] {
+            seed_collection(
+                &db.pool,
+                "matic",
+                c1,
+                s + 10,
+                "urn:decentraland:matic:collections-v2:0xc1",
+                "Pirates",
+            )
+            .await;
+        }
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 1), s + 100);
+        let url = serve(chain.clone()).await;
+        let settings = index_settings(100, 1_000_000);
+        let (st_alone, st_together) = (
+            state_over(alone.pool.clone(), &url, settings.clone(), false),
+            state_over(together.pool.clone(), &url, settings.clone(), false),
+        );
+        let shared: Vec<(Arc<dyn ChainIndex>, Arc<chain_walk::Holdings>)> = vec![
+            (Arc::new(NftIndex::new(ChainNet::Matic)), Arc::default()),
+            (Arc::new(SalesIndex), Arc::default()),
+        ];
+        let solo_nft = NftIndex::new(ChainNet::Matic);
+        for st in [&st_alone, &st_together] {
+            assert!(publish(st, &url, &solo_nft).await.published);
+            assert!(publish(st, &url, &SalesIndex).await.published);
+        }
+        let walk_together = |head: u64| {
+            let (pool, http, settings, url, shared) = (
+                together.pool.clone(),
+                st_together.http.clone(),
+                settings.clone(),
+                url.clone(),
+                shared.clone(),
+            );
+            async move {
+                let at = chain_group::Checkpoint::of(
+                    &chain_walk::cursor(&pool, INDEXER_NFT, ChainNet::Matic)
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                )
+                .unwrap();
+                let members = shared
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, (index, holdings))| chain_group::Member {
+                        slot,
+                        index: index.clone(),
+                        holdings: holdings.clone(),
+                        lease: None,
+                        gate: None,
+                    })
+                    .collect();
+                let ends = chain_group::walk_together(
+                    &pool,
+                    &http,
+                    &url,
+                    &settings,
+                    members,
+                    &at,
+                    Duration::from_secs(60),
+                    &AtomicUsize::new(0),
+                )
+                .await;
+                for (slot, end) in ends {
+                    let chain_group::MemberEnd::Walked {
+                        mut out,
+                        close: Some(since),
+                        ..
+                    } = end
+                    else {
+                        panic!("member {slot} did not reach {head}");
+                    };
+                    let (index, holdings) = &shared[slot];
+                    let owner = holdings
+                        .owner(&pool, None, index.as_ref(), &settings)
+                        .await
+                        .unwrap();
+                    let source = chain_walk::RpcSource::new(Rpc::at(&http, &url));
+                    chain_walk::close(
+                        &pool,
+                        &source,
+                        index.as_ref(),
+                        &settings,
+                        &owner,
+                        since,
+                        &mut out,
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+        };
+        // A first shared walk, then the mirror adds c2 with a mint in the
+        // next segment, then a second shared walk. The walks alone cover the
+        // same windows: a pass at each head.
+        add_mint(&chain, c1, v2_token(0, 2), s + 700);
+        *chain.head.lock() = s + 1_500;
+        walk_together(s + 1_500).await;
+        pass(&st_alone, &url, &solo_nft).await;
+        pass(&st_alone, &url, &SalesIndex).await;
+        for db in [&alone, &together] {
+            seed_collection(
+                &db.pool,
+                "matic",
+                c2,
+                s + 1_600,
+                "urn:decentraland:matic:collections-v2:0xc2",
+                "Dances",
+            )
+            .await;
+        }
+        add_mint(&chain, c2, v2_token(0, 1), s + 1_700);
+        *chain.head.lock() = s + 2_500;
+        walk_together(s + 2_500).await;
+        pass(&st_alone, &url, &solo_nft).await;
+        pass(&st_alone, &url, &SalesIndex).await;
+        for table in PROJECTION_TABLES {
+            assert_eq!(
+                table_rows(&together.pool, table).await,
+                table_rows(&alone.pool, table).await,
+                "{table}"
+            );
+        }
+        let c2_events: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM shop.nft_event WHERE contract_address = $1")
+                .bind(c2)
+                .fetch_one(&together.pool)
+                .await
+                .unwrap();
+        assert!(c2_events > 0, "the second shared walk read c2");
+        alone.drop().await;
+        together.drop().await;
+    }
+
+    /// While nft fails, sales walks on and folds its bid with the seller
+    /// pending; once nft recovers, a later sales fold fills the seller with
+    /// no new sales event.
+    #[tokio::test]
+    async fn sales_fills_a_seller_once_nft_recovers() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let b = sales_index::BID_V2_MATIC_START_BLOCK + 100;
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 9), s + 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let fails = Arc::new(AtomicUsize::new(0));
+        let mut projections = nft_and_sales(&url);
+        projections[0].make = {
+            let fails = fails.clone();
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(NftIndex::new(ChainNet::Matic))),
+                    write_fails: fails.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, projections));
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        // ALICE gets t1; BOB bids on it. nft fails its writes meanwhile.
+        fails.store(usize::MAX, Ordering::SeqCst);
+        let t1 = v2_token(0, 1);
+        {
+            let mut logs = chain.logs.lock();
+            for l in [
+                sales_index::tests::issue_log(c1, ALICE, t1, 0, CARL, b - 10, 0),
+                transfer(c1, ZERO, ALICE, t1, b - 10, 1),
+                sales_index::tests::bid_created_log(c1, t1, BOB, 0x11, 7, 1_700_000_000, b, 0),
+            ] {
+                logs.push(log_json(&l));
+            }
+        }
+        *chain.head.lock() = b + 1_000;
+        eventually("sales folds the bid", || async {
+            bids_of(&db.pool).await.len() == 1
+        })
+        .await;
+        assert_eq!(
+            bids_of(&db.pool).await[0].3,
+            None,
+            "the seller waits for nft"
+        );
+        let events = sale_events(&db.pool).await;
+        fails.store(0, Ordering::SeqCst);
+        eventually("a later sales fold fills the seller", || async {
+            bids_of(&db.pool).await[0].3.as_deref() == Some(ALICE)
+        })
+        .await;
+        assert_eq!(sale_events(&db.pool).await, events, "no new sales event");
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// A slow close holds back only its own projection: nft walks two more
+    /// heads while sales' fold after a shared walk is held.
+    #[tokio::test]
+    async fn a_slow_close_holds_back_only_its_projection() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let c1 = "0x00000000000000000000000000000000000000c1";
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 1), s + 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let hooks = Hooked {
+            armed_fold_gate: Some(Arc::new(tokio::sync::Semaphore::new(0))),
+            ..Hooked::default()
+        };
+        let mut projections = nft_and_sales(&url);
+        projections[1].make = {
+            let (armed, gate, entered) = (
+                hooks.armed.clone(),
+                hooks.armed_fold_gate.clone(),
+                hooks.entered.clone(),
+            );
+            Arc::new(move || {
+                Arc::new(Hooked {
+                    inner: Some(Arc::new(SalesIndex)),
+                    armed: armed.clone(),
+                    armed_fold_gate: gate.clone(),
+                    entered: entered.clone(),
+                    ..Hooked::default()
+                }) as Arc<dyn ChainIndex>
+            })
+        };
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, projections));
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        hooks.armed.store(true, Ordering::SeqCst);
+        *chain.head.lock() = s + 1_500;
+        eventually("sales' close is held", || async {
+            hooks.entered.load(Ordering::SeqCst) >= 1
+        })
+        .await;
+        let held = cursor(&db.pool, INDEXER_SALES, ChainNet::Matic)
+            .await
+            .unwrap()
+            .folded_block;
+        for head in [s + 2_500, s + 3_500] {
+            *chain.head.lock() = head;
+            eventually("nft walks on", || async {
+                last_block(&db.pool, INDEXER_NFT).await == (head - 2) as i64
+                    && published(&db.pool, INDEXER_NFT, ChainNet::Matic).await
+            })
+            .await;
+        }
+        assert_eq!(
+            cursor(&db.pool, INDEXER_SALES, ChainNet::Matic)
+                .await
+                .unwrap()
+                .folded_block,
+            held,
+            "sales stays in its close"
+        );
+        hooks.armed.store(false, Ordering::SeqCst);
+        hooks.armed_fold_gate.as_ref().unwrap().add_permits(100);
+        eventually("sales closes and catches up", || async {
+            last_block(&db.pool, INDEXER_SALES).await == (s + 3_498) as i64
+                && published(&db.pool, INDEXER_SALES, ChainNet::Matic).await
+        })
+        .await;
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// An nft walk that owes a backfill walks alone, with its lanes, while
+    /// sales goes on.
+    #[tokio::test]
+    async fn an_nft_walk_owing_a_backfill_walks_alone_with_its_lanes() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let s = nft_index::start_block(ChainNet::Matic);
+        let (c1, late) = (
+            "0x00000000000000000000000000000000000000c1",
+            "0x00000000000000000000000000000000000000c9",
+        );
+        seed_collection(
+            &db.pool,
+            "matic",
+            c1,
+            s + 10,
+            "urn:decentraland:matic:collections-v2:0xc1",
+            "Pirates",
+        )
+        .await;
+        let chain = FakeChain::new(s + 500, vec![], 1_000_000, 100);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        add_mint(&chain, c1, v2_token(0, 1), s + 100);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, supervisor(&st, ChainNet::Matic, nft_and_sales(&url)));
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        // A contract the nft walk took in late owes its history before.
+        sqlx::query(
+            "INSERT INTO shop.nft_contract (network, contract_address, walked_from_block, backfill_from_block) \
+             VALUES ('matic', $1, $2, $3)",
+        )
+        .bind(late)
+        .bind((s + 400) as i64)
+        .bind((s + 10) as i64)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        *chain.head.lock() = s + 1_500;
+        eventually("the backfill ran", || async {
+            sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT backfilled_to_block FROM shop.nft_contract WHERE contract_address = $1",
+            )
+            .bind(late)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap()
+                == Some((s + 399) as i64)
+        })
+        .await;
+        for indexer in [INDEXER_NFT, INDEXER_SALES] {
+            eventually("both reach the head", || async {
+                last_block(&db.pool, indexer).await == (s + 1_498) as i64
+            })
+            .await;
+        }
+        assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
+        db.drop().await;
+    }
+
+    /// Two windows committed, then the third window's second request
+    /// refused: each member stays at the second window and falls back with
+    /// what its own filters left it, the walk's count is every request the
+    /// chain saw (the refused one too), and a fallback with nothing left
+    /// reads nothing, while one with something left walks on alone.
+    #[tokio::test]
+    async fn a_late_shared_read_failure_keeps_each_budget_and_the_count() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let (a1, a2, b1) = (
+            "0x00000000000000000000000000000000000000a1",
+            "0x00000000000000000000000000000000000000a2",
+            "0x00000000000000000000000000000000000000b1",
+        );
+        let chain = FakeChain::new(52, vec![], 1_000, 1_000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let settings = IndexSettings {
+            address_chunk: 1,
+            window_blocks: 10,
+            requests_per_pass: 6,
+            ..walk_settings()
+        };
+        let st = state_over(db.pool.clone(), &url, settings.clone(), false);
+        // A reads two addresses (two requests a window at chunk 1), B one.
+        let a: Arc<dyn ChainIndex> = Arc::new(Hooked {
+            inner: Some(Arc::new(super::super::mana_transfers::ManaTransfersIndex {
+                net: ChainNet::Matic,
+            })),
+            groups_override: Some(vec![chain_walk::LogGroup {
+                addresses: vec![a1.into(), a2.into()],
+                topics: json!([[super::super::mana_transfers::TRANSFER]]),
+            }]),
+            ..Hooked::default()
+        });
+        let b: Arc<dyn ChainIndex> = Arc::new(Hooked {
+            inner: Some(Arc::new(TradeEventsIndex {
+                net: ChainNet::Matic,
+                chain_id: 137,
+            })),
+            groups_override: Some(vec![chain_walk::LogGroup {
+                addresses: vec![b1.into()],
+                topics: json!([[
+                    "0x00000000000000000000000000000000000000000000000000000000000000b1"
+                ]]),
+            }]),
+            ..Hooked::default()
+        });
+        for ix in [&a, &b] {
+            assert!(publish(&st, &url, ix.as_ref()).await.published);
+        }
+        assert_eq!(last_block(&db.pool, chain_walk::INDEXER_MANA).await, 50);
+        *chain.head.lock() = 100;
+        *chain.refuse_from.lock() = Some((71, a2.into()));
+        let at = chain_group::Checkpoint::of(
+            &chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let holdings: Vec<Arc<chain_walk::Holdings>> = vec![Arc::default(), Arc::default()];
+        let members = [&a, &b]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, index)| chain_group::Member {
+                slot,
+                index: index.clone(),
+                holdings: holdings[slot].clone(),
+                lease: None,
+                gate: None,
+            })
+            .collect();
+        let seen = chain.requests.load(Ordering::SeqCst);
+        let counted = AtomicUsize::new(0);
+        let ends = chain_group::walk_together(
+            &db.pool,
+            &st.http,
+            &url,
+            &settings,
+            members,
+            &at,
+            Duration::from_secs(60),
+            &counted,
+        )
+        .await;
+        assert_eq!(
+            counted.load(Ordering::SeqCst),
+            chain.requests.load(Ordering::SeqCst) - seen,
+            "the walk counts every request the chain saw"
+        );
+        // The client tries a refused read again a few times; the count above
+        // holds every attempt.
+        assert!(chain.refused.load(Ordering::SeqCst) >= 1);
+        let budgets: Vec<_> = ends
+            .iter()
+            .map(|(slot, end)| match end {
+                chain_group::MemberEnd::Fallback { budget } => (*slot, *budget),
+                _ => panic!("member {slot} did not fall back"),
+            })
+            .collect();
+        assert_eq!(
+            budgets,
+            vec![
+                (
+                    0,
+                    chain_walk::Budget {
+                        remaining: 0,
+                        first_window_used: true
+                    }
+                ),
+                (
+                    1,
+                    chain_walk::Budget {
+                        remaining: 3,
+                        first_window_used: true
+                    }
+                ),
+            ],
+            "three windows paid at two and one requests each"
+        );
+        for indexer in [chain_walk::INDEXER_MANA, INDEXER_TRADE_EVENTS] {
+            assert_eq!(
+                last_block(&db.pool, indexer).await,
+                70,
+                "the second window, committed"
+            );
+        }
+        // A falls back with nothing left: it reads no logs at all.
+        let source = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
+        let logs = chain.get_logs.load(Ordering::SeqCst);
+        let out = chain_walk::job_pass_with(
+            &db.pool,
+            &source,
+            a.as_ref(),
+            &settings,
+            &holdings[0],
+            None,
+            chain_walk::Budget {
+                remaining: 0,
+                first_window_used: true,
+            },
+            None,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        assert!(out.paused, "{out:?}");
+        assert_eq!(
+            chain.get_logs.load(Ordering::SeqCst),
+            logs,
+            "no eth_getLogs on an empty budget"
+        );
+        assert_eq!(last_block(&db.pool, chain_walk::INDEXER_MANA).await, 70);
+        // Nothing left is nothing, even for a window that costs one request.
+        let out = chain_walk::job_pass_with(
+            &db.pool,
+            &source,
+            b.as_ref(),
+            &settings,
+            &holdings[1],
+            None,
+            chain_walk::Budget {
+                remaining: 0,
+                first_window_used: true,
+            },
+            None,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        assert!(out.paused, "{out:?}");
+        assert_eq!(
+            chain.get_logs.load(Ordering::SeqCst),
+            logs,
+            "no eth_getLogs on an empty budget"
+        );
+        // B falls back with three: its own reads are not refused.
+        let out = chain_walk::job_pass_with(
+            &db.pool,
+            &source,
+            b.as_ref(),
+            &settings,
+            &holdings[1],
+            None,
+            chain_walk::Budget {
+                remaining: 3,
+                first_window_used: true,
+            },
+            None,
+            &|_| {},
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.indexed_to, 98, "{out:?}");
+        db.drop().await;
+    }
+
+    /// The members' own steps run side by side: two gates held up cost the
+    /// healthy member one deadline, not two, and a gate that panics as it is
+    /// called fails its member alone.
+    #[tokio::test]
+    async fn held_and_panicking_gates_cost_the_others_one_deadline() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = FakeChain::new(100, vec![], 1000, 1000);
+        chain.finalized_lag.store(2, Ordering::SeqCst);
+        let url = serve(chain.clone()).await;
+        let st = state_over(db.pool.clone(), &url, walk_settings(), false);
+        let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let held: chain_jobs::Gate = {
+            let armed = armed.clone();
+            Arc::new(move || {
+                let armed = armed.clone();
+                Box::pin(async move {
+                    if armed.load(Ordering::SeqCst) {
+                        std::future::pending::<()>().await;
+                    }
+                    Ok(None)
+                })
+            })
+        };
+        let panicking: chain_jobs::Gate = {
+            let armed = armed.clone();
+            Arc::new(move || {
+                assert!(
+                    !armed.load(Ordering::SeqCst),
+                    "a gate panicked as it was called"
+                );
+                Box::pin(async { Ok(None) })
+            })
+        };
+        let with_gate = |p: Projection, gate: &chain_jobs::Gate| Projection {
+            gate: Some(gate.clone()),
+            ..p
+        };
+        let mut sup = supervisor(
+            &st,
+            ChainNet::Matic,
+            vec![
+                projection(
+                    "mana-transfers-index",
+                    ChainNet::Matic,
+                    &url,
+                    mana(ChainNet::Matic),
+                ),
+                with_gate(
+                    projection(
+                        "trade-events-index",
+                        ChainNet::Matic,
+                        &url,
+                        Arc::new(|| {
+                            Arc::new(TradeEventsIndex {
+                                net: ChainNet::Matic,
+                                chain_id: 137,
+                            })
+                        }),
+                    ),
+                    &held,
+                ),
+                with_gate(
+                    projection(
+                        "committee-index",
+                        ChainNet::Matic,
+                        &url,
+                        Arc::new(|| Arc::new(super::super::committee_index::CommitteeIndex)),
+                    ),
+                    &held,
+                ),
+                with_gate(
+                    projection(
+                        "sales-index",
+                        ChainNet::Matic,
+                        &url,
+                        Arc::new(|| Arc::new(SalesIndex)),
+                    ),
+                    &panicking,
+                ),
+            ],
+        );
+        sup.member_deadline = Duration::from_secs(1);
+        let jobs = Jobs::new().with_first_pass_now(true);
+        chain_jobs::spawn(&jobs, sup);
+        for indexer in [
+            chain_walk::INDEXER_MANA,
+            INDEXER_TRADE_EVENTS,
+            chain_walk::INDEXER_COMMITTEE,
+            INDEXER_SALES,
+        ] {
+            eventually("each walked alone to the head", || async {
+                published(&db.pool, indexer, ChainNet::Matic).await
+            })
+            .await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        armed.store(true, Ordering::SeqCst);
+        *chain.head.lock() = 1_100;
+        let moved = std::time::Instant::now();
+        eventually("mana reaches the new head", || async {
+            last_block(&db.pool, chain_walk::INDEXER_MANA).await == 1_098
+        })
+        .await;
+        assert!(
+            moved.elapsed() < Duration::from_millis(1_700),
+            "one deadline for both held gates: {:?}",
+            moved.elapsed()
+        );
+        let report = jobs.report();
+        let job = report
+            .iter()
+            .find(|j| j.name == "chain-walk-matic")
+            .unwrap();
+        assert!(!matches!(job.state, JobState::Finished | JobState::Failed));
+        armed.store(false, Ordering::SeqCst);
         assert!(jobs.shutdown(Duration::from_secs(5)).await.is_empty());
         db.drop().await;
     }

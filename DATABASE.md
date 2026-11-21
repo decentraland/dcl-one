@@ -2095,6 +2095,14 @@ processes with different projections enabled share a network. Each
 projection keeps its own cadence and backoff. A process that runs no fleet
 jobs (`FLEET_JOBS_ENABLED=false`) takes no lease and walks nothing.
 
+The projections a supervisor holds that read the same endpoint and stand at
+the same checkpoint (block, hash, whole history) walk their windows
+together: each window is read once for all of them, and each projection
+takes the logs its own filters take and commits them with its own cursor
+advance, in its own fenced transaction, nft before sales. Each closes (folds
+and publishes) on its own. A read they share that fails sends each back to
+its own checkpoint, alone, with what is left of its budget.
+
 The supervisor claims a projection on the session that holds its lease. The
 claim raises `owner_generation` in one bounded transaction
 (`statement_timeout` 2 s, `lock_timeout` 1.5 s) and creates the row when

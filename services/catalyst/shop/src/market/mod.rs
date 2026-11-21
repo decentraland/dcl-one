@@ -58,6 +58,7 @@ pub mod admin;
 pub mod base_wearables;
 pub mod bids;
 pub mod catalog;
+pub mod chain_group;
 pub mod chain_jobs;
 pub mod chain_walk;
 pub mod collections;
