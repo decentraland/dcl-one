@@ -546,12 +546,26 @@ mod tests {
         // the rents since block 10 are read again, and only the ones never
         // announced (token 7's end; the rents at 10 to 12) are stored.
         use notice_cursor::{RewindFrom, rewind};
-        rewind(&pool, KIND_ENDED, RewindFrom::Time(t0), "t", false)
-            .await
-            .unwrap();
-        rewind(&pool, KIND_STARTED, RewindFrom::Block(10), "t", false)
-            .await
-            .unwrap();
+        rewind(
+            &pool,
+            KIND_ENDED,
+            RewindFrom::Time(t0),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
+        rewind(
+            &pool,
+            KIND_STARTED,
+            RewindFrom::Block(10),
+            (1, 137),
+            "t",
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(1));
         assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(3));
         let ended: Vec<Uuid> = sqlx::query_scalar(

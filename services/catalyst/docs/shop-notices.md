@@ -12,7 +12,8 @@ published head, so on its own it announces nothing mined before that pass.
 
 ```sh
 catalyst shop notice-rewind --database-url "$DATABASE_URL" --producer <name> \
-  (--since <time> | --from-block <block>) [--dry-run] [--actor <name>]
+  (--since <time> | --from-block <block>) [--dry-run] [--actor <name>] \
+  [--marketplace-index-chain-id-ethereum <id>] [--marketplace-index-chain-id-matic <id>]
 ```
 
 - `--producer` is one of `PRODUCERS` (`catalyst shop notice-rewind --help` lists them).
@@ -23,8 +24,14 @@ catalyst shop notice-rewind --database-url "$DATABASE_URL" --producer <name> \
   the unit a legacy producer cursor stores. A bare number below 10^12, a time without
   its zone and a time at or before 1970-01-01T00:00:00Z are refused (block 0 or the epoch
   would announce every indexed log again). Each index the producer reads needs a
-  `shop.chain_cursor` row for `--since`; `--from-block` needs none and only reports the
-  ones that exist.
+  `shop.chain_cursor` row for `--since`, with a history proven on the chain the producer
+  reads it on: bound to that chain (`chain_id`) and not quarantined. The trade_events
+  index counts on the chain the node's trade walk reads (`MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM`
+  and `_MATIC`, which the command reads too, or the matching flags), except for
+  `transfer_received`, which reads Polygon mainnet only; every other index counts on its
+  network's mainnet. An unbound, quarantined or other-chain history is refused, since its
+  blocks would place the cursor and its seed: revalidate the index (`DATABASE.md`) or give a
+  block. `--from-block` needs no index and only reports the ones that exist.
   T resolves through the logs of the indexes the producer reads
   (`shop.nft_event`, `shop.trade_event`, `shop.sale_event`, `shop.rental_event`): the cursor
   goes after the last block mined before T on any of them. The command refuses while one of
@@ -43,7 +50,7 @@ It runs in one transaction holding the producer's row, so a running pass finishe
 first and the next page starts from the new cursor. It prints one JSON object: the
 `producer`, its `network`, the resolved `target_*`, the row `before` (absent when no pass
 had seeded it) and `after`, `changed`, `dry_run` and `indexes` (each index's `start_block`,
-`full_history`, `last_block` and `last_block_time`; on a dry run also `logs_after`, the
+`full_history`, `last_block`, `last_block_time`, `chain_id` and `quarantined`; on a dry run also `logs_after`, the
 count of its logs after the resulting cursor (`after`) up to `last_block`, an upper bound on what the
 next passes read since each producer reads only some kinds of log; `rental_ended`, which
 reads rental periods by end time, has none). An index that is not `full_history`
@@ -53,8 +60,9 @@ command needs only database access; whether anything is emitted is still up to t
 producers' own jobs and switches.
 
 Cost: for `--since`, one backward walk of each index's log by its primary key from the
-head down to T, so a date far back reads every log since then once; the command allows each
-statement 15 minutes. If a walk still times out, give the block with `--from-block`. Any
+head down to T, so a date far back reads every log since then once. The walks and the
+coverage they are checked against run as one statement, so they read one snapshot; the
+command allows it 15 minutes. If a walk still times out, give the block with `--from-block`. Any
 dry run, with `--since` or `--from-block`, also counts each index's logs from the resulting
 cursor (`after`) up to its head, after releasing the producer's row; a run without
 `--dry-run` skips that count. The passes that follow re-read the same range a page at a time.
