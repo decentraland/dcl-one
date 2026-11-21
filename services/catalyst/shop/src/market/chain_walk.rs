@@ -155,6 +155,11 @@ pub struct IndexSettings {
     /// `MARKETPLACE_INDEX_STOP_BLOCK_{ETHEREUM,MATIC}`: index no further (never published).
     pub stop_block_ethereum: Option<u64>,
     pub stop_block_matic: Option<u64>,
+    /// `MARKETPLACE_BID_NOTICES_FROM_BLOCK`: the first Polygon block whose
+    /// ERC721BidV2 bids the `bid_received` producer announces. Read only
+    /// when its cursor is first seeded; unset, it starts at the sales
+    /// index's published block.
+    pub bid_notices_from_block: Option<u64>,
     /// `MARKETPLACE_NEIGHBOURS_INTERVAL_SECS` (21,600): between two rebuilds of the item neighbours.
     pub neighbours_interval: Duration,
     /// `MARKETPLACE_COUPON_REFRESH_INTERVAL_SECS` (300): between two coupon state reads.
@@ -182,6 +187,7 @@ impl Default for IndexSettings {
             start_block_matic: None,
             stop_block_ethereum: None,
             stop_block_matic: None,
+            bid_notices_from_block: None,
             neighbours_interval: Duration::from_secs(6 * 3600),
             coupon_refresh_interval: Duration::from_secs(300),
             chain_id_ethereum: ChainNet::Ethereum.chain_id(),

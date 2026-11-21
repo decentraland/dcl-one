@@ -25,6 +25,7 @@ pub const SALES_ORDER_SUCCESSFUL_MATIC: &str = "sales:order_successful:matic";
 pub const SALES_MINT_MATIC: &str = "sales:mint:matic";
 pub const SALES_BID_ACCEPTED_MATIC: &str = "sales:bid_accepted:matic";
 pub const ROYALTIES_BID_ACCEPTED_MATIC: &str = "royalties:bid_accepted:matic";
+pub const BID_RECEIVED: &str = "bid_received";
 
 /// Every producer; no other name is ever written to `shop.notification_cursor`
 /// (its CHECK lists exactly these).
@@ -39,6 +40,7 @@ pub const PRODUCERS: &[&str] = &[
     SALES_MINT_MATIC,
     SALES_BID_ACCEPTED_MATIC,
     ROYALTIES_BID_ACCEPTED_MATIC,
+    BID_RECEIVED,
 ];
 
 /// How far below an index's head a replay moves the cursors back: deeper
@@ -49,6 +51,7 @@ pub const REPLAY_BLOCKS: i64 = 1_000;
 fn reads(producer: &str) -> Option<(ChainNet, &'static [&'static str])> {
     Some(match producer {
         TRANSFER_RECEIVED => (ChainNet::Matic, &[INDEXER_NFT, INDEXER_TRADE_EVENTS]),
+        BID_RECEIVED => (ChainNet::Matic, &[INDEXER_SALES, INDEXER_NFT]),
         ROYALTIES_EARNED | SALES_ORDER_SUCCESSFUL_MATIC => (ChainNet::Matic, &[INDEXER_NFT]),
         SALES_TRADED_MATIC => (ChainNet::Matic, &[INDEXER_TRADE_EVENTS]),
         SALES_MINT_MATIC | SALES_BID_ACCEPTED_MATIC | ROYALTIES_BID_ACCEPTED_MATIC => {
@@ -301,7 +304,8 @@ mod tests {
             [
                 SALES_MINT_MATIC,
                 SALES_BID_ACCEPTED_MATIC,
-                ROYALTIES_BID_ACCEPTED_MATIC
+                ROYALTIES_BID_ACCEPTED_MATIC,
+                BID_RECEIVED
             ]
         );
         assert!(producers_of(INDEXER_SALES, ChainNet::Ethereum).is_empty());
