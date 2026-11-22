@@ -44,26 +44,33 @@ struct Node {
     pool: PgPool,
     deployer: Arc<LiveSyncDeployer>,
     store: Arc<LiveFailedDeploymentsStore>,
+    storage: Arc<catalyst_storage::Storage>,
     tmp: std::path::PathBuf,
 }
 
 impl Node {
     async fn new() -> Option<Self> {
         let pool = catalyst_db::scratch::isolated_pool(4).await?;
+        let tmp = temp_dir("retry-overtaken");
+        let storage = Arc::new(catalyst_storage::Storage::from_config(&tmp).await.unwrap());
         Some(Self {
             deployer: Arc::new(LiveSyncDeployer::new(
                 pool.clone(),
+                storage.clone(),
                 1,
                 SyncValidation::AuthChainOnly,
             )),
             store: Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
-            tmp: temp_dir("retry-overtaken"),
+            storage,
+            tmp,
             pool,
         })
     }
 
     /// Deploys `body` the way sync does: the newer entities the failures meet.
+    /// Stores the entity file first: the flush keeps only entities whose files the store holds.
     async fn deploy(&self, (body, id): &(Vec<u8>, String)) {
+        self.storage.store(id, body.clone().into()).await.unwrap();
         self.deployer
             .deploy_entity(
                 body,

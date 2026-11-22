@@ -3018,7 +3018,7 @@ async fn a_deploy_stalled_before_validation_holds_no_pointer_and_releases_its_bu
 #[tokio::test]
 async fn a_replay_proves_what_a_fresh_deploy_proves_first() {
     require_test_db!(Some(db) = OwnDb::create().await);
-    let (owner, stranger) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (owner, stranger) = (key(ENTITY_KEY), key(STRANGER_KEY));
     let (x, y) = (41, -13);
     let parcel = format!("{x},{y}");
     index_land(&db.pool, &address(&owner), &[(x, y)]).await;
@@ -3254,7 +3254,7 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
     node.state.sync.set_state(SyncState::Syncing);
     let router = node.router();
     let (entity_bytes, entity_id, owner_chain) =
-        signed_entity(&key(OWNER_KEY), scene(&["7,7"], &[])).await;
+        signed_entity(&key(ENTITY_KEY), scene(&["7,7"], &[])).await;
     seed_local_scene(&db.pool, &entity_id, "7,7").await;
     let chain = serde_json::to_value(
         crate::sync_test_support::signed_chain_behind_contract(
@@ -3315,7 +3315,7 @@ async fn a_replay_whose_contract_wallet_cannot_be_checked_is_503_and_counted() {
 #[tokio::test]
 async fn many_small_parts_outweighing_the_memory_budget_deploy_through_the_spool() {
     require_test_db!(Some(db) = OwnDb::create().await);
-    let owner = key(OWNER_KEY);
+    let owner = key(ENTITY_KEY);
     let parcels = [(43, -13), (44, -13), (45, -13)];
     let pointers: Vec<String> = parcels.iter().map(|(x, y)| format!("{x},{y}")).collect();
     index_land(&db.pool, &address(&owner), &parcels).await;
