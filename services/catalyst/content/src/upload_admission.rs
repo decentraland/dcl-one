@@ -397,6 +397,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn budgets_report_their_shares_and_every_refusal() {
+        use crate::series::{
+            UPLOAD_BUDGET_ACTIVE, UPLOAD_BUDGET_CAPACITY, UPLOAD_BUDGET_REJECTIONS,
+            UPLOAD_BUDGET_RESERVED, test_support::sample,
+        };
+        let recorder = crate::series::test_support::recorder();
+        metrics::with_local_recorder(&recorder, || {
+            let disk = UploadBudget::new("disk", 100);
+            let mut held = disk.try_admit(60, 10).unwrap();
+            assert!(disk.try_admit(91, 0).is_none());
+            assert!(!held.grow(101));
+            assert!(held.grow(40));
+            let rendered = recorder.handle().render();
+            let disk_label = [("budget", "disk")];
+            assert_eq!(
+                sample(&rendered, UPLOAD_BUDGET_CAPACITY, &disk_label),
+                Some(100.0)
+            );
+            assert_eq!(
+                sample(&rendered, UPLOAD_BUDGET_RESERVED, &disk_label),
+                Some(40.0)
+            );
+            assert_eq!(
+                sample(&rendered, UPLOAD_BUDGET_ACTIVE, &disk_label),
+                Some(1.0)
+            );
+            drop(held);
+            let sources = SourceUploads::new(1, 10);
+            let mut lease = sources.try_acquire("203.0.113.9", 5).unwrap().unwrap();
+            assert!(sources.try_acquire("203.0.113.9", 1).is_err());
+            assert!(!lease.grow(11));
+        });
+        let rendered = recorder.handle().render();
+        let disk_label = [("budget", "disk")];
+        assert_eq!(
+            sample(&rendered, UPLOAD_BUDGET_ACTIVE, &disk_label),
+            Some(0.0)
+        );
+        assert_eq!(
+            sample(&rendered, UPLOAD_BUDGET_RESERVED, &disk_label),
+            Some(0.0)
+        );
+        for (labels, n) in [
+            ([("budget", "disk"), ("reason", "bytes")], 2.0),
+            (
+                [("budget", "source"), ("reason", "source_concurrency")],
+                1.0,
+            ),
+            ([("budget", "source"), ("reason", "source_bytes")], 1.0),
+        ] {
+            assert_eq!(
+                sample(&rendered, UPLOAD_BUDGET_REJECTIONS, &labels),
+                Some(n),
+                "{labels:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_source_holds_at_most_its_uploads_and_bytes_in_flight() {
         let limits = SourceUploads::new(2, 100);
         let mut first = limits.try_acquire("203.0.113.1", 100).unwrap().unwrap();

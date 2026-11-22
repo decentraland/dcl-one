@@ -616,6 +616,8 @@ mod tests {
         assert_eq!(rows, 7);
 
         let grace = Duration::from_secs(86_400);
+        let recorder = crate::series::test_support::recorder();
+        let metrics_guard = metrics::set_default_local_recorder(&recorder);
         let off = run_once(
             &pool,
             &storage,
@@ -649,6 +651,21 @@ mod tests {
             (4, 1, 0),
             "{report:?}"
         );
+        drop(metrics_guard);
+        {
+            use crate::series::{GC_ITEMS, GC_RUNS, GC_TIME, test_support::sample};
+            let rendered = recorder.handle().render();
+            assert_eq!(sample(&rendered, GC_ITEMS, &[]), Some(4.0), "{rendered}");
+            assert_eq!(
+                sample(&rendered, GC_RUNS, &[("outcome", "success")]),
+                Some(1.0),
+                "the refused pass is not a run"
+            );
+            assert_eq!(
+                sample(&rendered, &format!("{GC_TIME}_count"), &[]),
+                Some(1.0)
+            );
+        }
         let freed = [&exclusive, &orphan_file, &superseded_entity, &orphan_entity];
         let expected_bytes: u64 = [
             format!("exclusive {tag}").len(),
