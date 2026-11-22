@@ -2021,7 +2021,7 @@ async fn the_upload_limits_follow_their_configuration() {
         },
     )
     .await;
-    let footprint = 64 * mib as u64 + 3000 * super::create_entity::SPOOL_FILE_OVERHEAD_BYTES;
+    let footprint = 64 * mib as u64 + 3001 * super::create_entity::SPOOL_FILE_OVERHEAD_BYTES;
     let one = floored.state.spool_budget.try_reserve(footprint);
     assert!(one.is_some(), "the spool fits one maximal form");
     drop(one);
@@ -2450,8 +2450,8 @@ async fn an_entity_named_by_its_cid_v0_is_found_through_the_spool() {
     );
 }
 
-/// A chunked body (no `Content-Length`) reserves only the minimum of the
-/// spool budget and grows it with what it spools: it is admitted beside
+/// A chunked body (no `Content-Length`) holds only its directory's charge of
+/// the spool budget and grows it with what it spools: it is admitted beside
 /// uploads that leave little room, and refused with 503 once it outgrows it,
 /// the bytes it had sent recorded (a declared body refused unread is not).
 #[tokio::test]
@@ -2553,13 +2553,12 @@ async fn spool_is_empty(state: &SharedState) -> bool {
 }
 
 /// A slow sender declaring the largest form holds only what it has sent:
-/// its spool reservation stays at the minimum and its source lease at the
-/// bytes received, so another deploy from the same source or another one
+/// its spool reservation is its bytes spooled and their charges, and its
+/// source lease the bytes received, so another deploy from the same source or another one
 /// is admitted beside it, as upstream admits on the declared size and grows
 /// with the bytes spooled.
 #[tokio::test]
 async fn a_slow_sender_holds_only_what_it_sent() {
-    let min = super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES;
     let total = 64 * 1024 * 1024;
     let settings = Settings {
         max_upload_total_bytes: total,
@@ -2572,10 +2571,6 @@ async fn a_slow_sender_holds_only_what_it_sent() {
     let router = node.router();
     let spool = &node.state.spool_budget;
     let declared = super::create_entity::max_deployment_body_bytes(&node.state.settings);
-    assert!(
-        spool.capacity() < min + total as u64,
-        "holding its declared payload, the slow sender would leave no room"
-    );
 
     let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
     let boundary = "catalyst-admission-boundary";
@@ -2606,10 +2601,12 @@ async fn a_slow_sender_holds_only_what_it_sent() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    assert_eq!(
-        spool.reserved(),
-        min,
-        "the undelivered bytes of the declared body are not held"
+    // The fields count towards the spooled total too.
+    let most = sent as u64 + 4096 + 2 * super::create_entity::SPOOL_FILE_OVERHEAD_BYTES;
+    assert!(
+        (super::create_entity::SPOOL_FILE_OVERHEAD_BYTES..=most).contains(&spool.reserved()),
+        "the undelivered bytes of the declared body are not held: {}",
+        spool.reserved()
     );
     assert_eq!(
         node.state.upload_budget.reserved(),
@@ -2642,6 +2639,77 @@ async fn a_slow_sender_holds_only_what_it_sent() {
     pending.abort();
     let _ = pending.await;
     drop(tx);
+    assert_eq!(spool.reserved(), 0);
+    assert!(spool_is_empty(&node.state).await);
+}
+
+/// Bodies that send nothing hold only their directory's charge of the spool
+/// budget, so idle chunked requests, here more than one maximal form's
+/// worth of upstream's 16 MiB minimum, do not turn a real deploy away.
+#[tokio::test]
+async fn idle_bodies_do_not_fill_the_spool_budget() {
+    let settings = Settings {
+        max_upload_total_bytes: 64 * 1024 * 1024,
+        max_upload_file_count: 4,
+        max_in_flight_upload_bytes: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("idle-bodies", settings).await;
+    let router = node.router();
+    let spool = &node.state.spool_budget;
+    let idle = 8;
+    assert!(
+        idle * super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES > spool.capacity(),
+        "a 16 MiB minimum each would fill the budget"
+    );
+
+    let mut senders = Vec::new();
+    let mut pending = Vec::new();
+    for i in 0..idle {
+        let (tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+        let req = Request::post("/content/entities")
+            .header(
+                header::CONTENT_TYPE,
+                "multipart/form-data; boundary=catalyst-idle-boundary",
+            )
+            .header("x-real-ip", format!("203.0.113.{}", 60 + i))
+            .body(Body::from_stream(rx))
+            .unwrap();
+        senders.push(tx);
+        pending.push(tokio::spawn(router.clone().oneshot(req)));
+    }
+    let idle_dirs = || {
+        std::fs::read_dir(&node.state.spool_root)
+            .map(|entries| entries.count() as u64)
+            .unwrap_or(0)
+    };
+    let mut waited = 0;
+    while idle_dirs() < idle {
+        assert!(waited < 500, "the idle bodies were never admitted");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        spool.reserved(),
+        idle * super::create_entity::SPOOL_FILE_OVERHEAD_BYTES,
+        "each holds its directory's charge only"
+    );
+
+    let (status, _, body) = call(&router, form_request("203.0.113.59", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["Failed to find the entity file."]})
+        ),
+        "a deploy beside the idle bodies is admitted"
+    );
+
+    for request in pending {
+        request.abort();
+        let _ = request.await;
+    }
+    drop(senders);
     assert_eq!(spool.reserved(), 0);
     assert!(spool_is_empty(&node.state).await);
 }

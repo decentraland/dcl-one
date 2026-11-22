@@ -33,10 +33,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-/// The fixed share of a request: its fields and per-request overhead. The
-/// spool budget holds it for every admitted request from admission, so that
-/// budget also bounds how many deploys run at once; the memory budget holds
-/// nothing until the form is read, then this share and the real sizes.
+/// A request's fixed share of the memory budget: its fields and parsing.
+/// It must fit at admission and is held, beside the real sizes, once the
+/// form is read; the spool budget never holds it.
 pub const MIN_UPLOAD_RESERVATION_BYTES: u64 = 16 * 1024 * 1024;
 
 pub const BUDGET_EXHAUSTED_MESSAGE: &str =
@@ -83,23 +82,12 @@ impl UploadBudget {
         })
     }
 
-    /// Admits a body declaring `declared` bytes when they would fit beside
-    /// what is reserved now, as upstream's `acquire(0, declaredPayload)`,
-    /// but reserves only [`MIN_UPLOAD_RESERVATION_BYTES`]: the reservation
-    /// grows with what arrives ([`Reservation::grow`]), so a body declaring
+    /// Admits a request when `fits` bytes (a declared payload, a fixed
+    /// share) would fit beside what is reserved now, as upstream's
+    /// `acquire(0, declaredPayload)`, but holds only `hold`: the reservation
+    /// grows with what is real ([`Reservation::grow`]), so a body declaring
     /// more than it sends never holds the bytes it does not send.
-    pub fn try_admit(&self, declared: u64) -> Option<Reservation<'_>> {
-        self.admit(declared, MIN_UPLOAD_RESERVATION_BYTES)
-    }
-
-    /// Admits a request whose first need, `needed`, would fit beside what
-    /// is reserved now, holding nothing until it [`Reservation::grow`]s to
-    /// the real sizes, as upstream's memory admission only checks `fits`.
-    pub fn try_admit_empty(&self, needed: u64) -> Option<Reservation<'_>> {
-        self.admit(needed, 0)
-    }
-
-    fn admit(&self, fits: u64, hold: u64) -> Option<Reservation<'_>> {
+    pub fn try_admit(&self, fits: u64, hold: u64) -> Option<Reservation<'_>> {
         let mut reserved = self.reserved.lock();
         if reserved.saturating_add(fits.max(hold)) > self.capacity {
             return None;
@@ -428,35 +416,32 @@ mod tests {
     }
 
     #[test]
-    fn admission_checks_the_declared_size_but_reserves_the_minimum() {
+    fn admission_checks_the_declared_size_but_holds_only_what_it_is_given() {
         let min = MIN_UPLOAD_RESERVATION_BYTES;
         let budget = UploadBudget::new(4 * min);
-        let mut slow = budget.try_admit(4 * min).expect("fits an empty budget");
-        assert_eq!(budget.reserved(), min, "only the minimum is held");
+        let mut slow = budget.try_admit(4 * min, 1).expect("fits an empty budget");
+        assert_eq!(budget.reserved(), 1, "only the hold is held");
         assert!(slow.grow(2 * min), "grows with what arrives");
         assert!(
-            budget.try_admit(3 * min).is_none(),
+            budget.try_admit(3 * min, 1).is_none(),
             "does not fit beside it"
         );
         let other = budget
-            .try_admit(2 * min)
+            .try_admit(2 * min, 1)
             .expect("fits beside what it holds");
         assert!(!slow.grow(4 * min), "the rest is taken");
         drop((slow, other));
         assert_eq!(budget.reserved(), 0);
 
         let memory = UploadBudget::new(2 * min);
-        let mut reading = memory.try_admit_empty(min).expect("its share fits");
+        let mut reading = memory.try_admit(min, 0).expect("its share fits");
         assert_eq!(
             memory.reserved(),
             0,
             "nothing is held while the body arrives"
         );
         let busy = memory.try_reserve(2 * min).unwrap();
-        assert!(
-            memory.try_admit_empty(min).is_none(),
-            "no room for its share"
-        );
+        assert!(memory.try_admit(min, 0).is_none(), "no room for its share");
         assert!(
             !reading.grow(min),
             "real sizes are reserved once known, if they fit"

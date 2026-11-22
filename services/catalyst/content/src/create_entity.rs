@@ -42,8 +42,12 @@
 //! a request before its body, as upstream's: the spool budget
 //! (`MAX_IN_FLIGHT_UPLOAD_BYTES`, never below one maximal form) admits it
 //! when its declared payload (none for a chunked body) fits beside what is
-//! reserved, reserves 16 MiB and grows with what it writes, so a slow or
-//! short body never holds bytes it has not sent; the memory budget
+//! reserved, holds its directory's [`SPOOL_FILE_OVERHEAD_BYTES`] and grows
+//! with what it writes, so a slow or short body never holds bytes it has
+//! not sent. That 16 KiB is what bounds the bodies in flight, beside each
+//! source's slots (`MAX_CONCURRENT_UPLOADS_PER_SOURCE`) and the upload
+//! timeout: the default 4 GiB holds 262,144 idle bodies, 65,536 sources at
+//! 4 each, where upstream's 16 MiB minimum fills with 256. The memory budget
 //! (`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, never below [`max_heap_share`]) admits
 //! it when a fixed 16 MiB for its fields and parsing fits, holding nothing
 //! while the body arrives, and once the form is read reserves that share,
@@ -105,6 +109,8 @@ use crate::storage::upload_spool::{SpooledFile, UploadSpool};
 
 /// What each spooled file is charged on the spool budget beside its bytes
 /// (upstream `SPOOL_FILE_OVERHEAD_BYTES`), so the budget bounds inodes too.
+/// A request's directory is charged the same from admission, all it holds
+/// before its first bytes arrive.
 pub const SPOOL_FILE_OVERHEAD_BYTES: u64 = 16 * 1024;
 
 /// Upstream's answer when the spool cannot be written (full or failing disk).
@@ -120,11 +126,11 @@ pub fn default_spool_root(storage: &crate::storage::Storage) -> std::path::PathB
     storage.scratch_dir().join("content-uploads")
 }
 
-/// The spool bytes one maximal form takes: every value plus each file's
-/// charge; the spool budget never sits below it.
+/// The spool bytes one maximal form takes: every value plus the charge of
+/// each file and of its directory; the spool budget never sits below it.
 pub fn max_spool_footprint(settings: &Settings) -> u64 {
     (settings.max_upload_total_bytes as u64).saturating_add(
-        (settings.max_upload_file_count as u64).saturating_mul(SPOOL_FILE_OVERHEAD_BYTES),
+        (settings.max_upload_file_count as u64 + 1).saturating_mul(SPOOL_FILE_OVERHEAD_BYTES),
     )
 }
 
@@ -368,7 +374,7 @@ struct Spooling<'a, 'b, 'c> {
 /// `MAX_UPLOAD_FILE_COUNT` of them, all values together up to
 /// `MAX_UPLOAD_TOTAL_SIZE`; a limit passed is a 413 as the bytes arrive, a
 /// name sent twice a 400. The request's spool reservation grows with what
-/// it wrote (each file charged [`SPOOL_FILE_OVERHEAD_BYTES`] more); past the
+/// it wrote (each file and the directory charged [`SPOOL_FILE_OVERHEAD_BYTES`] more); past the
 /// budget, or on a write the disk refuses (full, failing), the form is
 /// refused with a 503 and `Retry-After`. `before_files` sees the fields read
 /// before the first file part (the clients send theirs first) and may
@@ -432,7 +438,8 @@ async fn read_form(
                 Ok(part) => part,
                 Err(e) => return Ok(Form::Refused(spool_unavailable(&e))),
             };
-            let charged = (files.len() as u64 + 1) * SPOOL_FILE_OVERHEAD_BYTES;
+            // The files before it, this one and the request's directory.
+            let charged = (files.len() as u64 + 2) * SPOOL_FILE_OVERHEAD_BYTES;
             while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, settings))? {
                 if part.len().saturating_add(chunk.len()) > max_file_bytes {
                     return Err(too_large(format!(
@@ -851,24 +858,28 @@ pub async fn create_entity(
         return Ok(quota_exceeded_response(retry_after));
     }
 
-    // Admission checks fit and reserves only a minimum; each reservation
-    // grows with what is real, so a slow or short body holds only what it
-    // sent. Memory: its fixed share (fields, parsing) must fit; it is
-    // reserved with the real sizes once the form is read ([`uploads_of`]),
-    // as upstream's memory admission only checks `fits`. Disk: the
-    // declared payload must fit (none for a chunked body); the reservation
-    // grows with what the spool holds. Source: the declared body must fit its
+    // Admission checks fit and holds at most a directory's charge; each
+    // reservation grows with what is real, so a slow or short body holds
+    // only what it sent. Memory: its fixed share (fields, parsing) must fit;
+    // it is reserved with the real sizes once the form is read
+    // ([`uploads_of`]), as upstream's memory admission only checks `fits`.
+    // Disk: the declared payload must fit (none for a chunked body); the
+    // reservation holds the request directory's charge and grows with what
+    // the spool holds. Source: the declared body must fit its
     // share; the lease grows with the bytes received.
     let Some(mut memory) = state
         .upload_budget
-        .try_admit_empty(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES)
+        .try_admit(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES, 0)
     else {
         return Ok(budget_exhausted());
     };
     let declared_payload = declared_length(&headers)
         .unwrap_or(0)
         .min(state.settings.max_upload_total_bytes as u64);
-    let Some(mut disk) = state.spool_budget.try_admit(declared_payload) else {
+    let Some(mut disk) = state
+        .spool_budget
+        .try_admit(declared_payload, SPOOL_FILE_OVERHEAD_BYTES)
+    else {
         return Ok(budget_exhausted());
     };
     let body_bytes = declared_body_bytes(&headers, &state.settings);

@@ -1217,8 +1217,8 @@ impl WriteDeployer {
     /// (so an ephemeral key that expired since still signed it). The pointer,
     /// TTL, rate-limit and validator checks are not run again: the entity was
     /// accepted, and its timestamp may be past the request TTL. `named` is
-    /// the upload the form named by the id; only when it is not the entity
-    /// file are the other `files` hashed.
+    /// the entity file the form carries, already read; without it the
+    /// `files` are hashed to find it.
     pub(crate) async fn verify_replay(
         &self,
         named: Option<&Bytes>,
@@ -1226,20 +1226,13 @@ impl WriteDeployer {
         entity_id: &str,
         auth_chain: &Value,
     ) -> Result<(), DeployFailure> {
-        let mut uploads = match named {
-            Some(bytes) => hash_uploads(vec![Upload::Bytes(bytes.clone())])
-                .await
-                .map_err(|e| deploy_error(entity_id, &e))?,
-            None => Vec::new(),
+        let uploads = match named {
+            Some(bytes) => vec![Upload::Bytes(bytes.clone())],
+            None => files.to_vec(),
         };
-        if !uploads.iter().any(|upload| upload.names(entity_id)) {
-            let others = files
-                .iter()
-                .filter(|upload| !matches!(upload, Upload::Bytes(bytes) if Some(bytes) == named));
-            uploads = hash_uploads(others.cloned().collect())
-                .await
-                .map_err(|e| deploy_error(entity_id, &e))?;
-        }
+        let uploads = hash_uploads(uploads)
+            .await
+            .map_err(|e| deploy_error(entity_id, &e))?;
         let (entity, _) = entity_of(&uploads, entity_id)?;
         self.refuse_denylisted(&entity)?;
         let auth_chain = auth_chain_of(auth_chain.clone())?;

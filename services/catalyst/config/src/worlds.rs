@@ -156,7 +156,7 @@ pub struct WorldsConfig {
     /// Deploy payload bytes spooled at once across every upload: the worlds
     /// deploys' budget (>= one 350 MiB deploy) and, separately, the content
     /// `POST /entities` spool's (never below one `MAX_UPLOAD_TOTAL_SIZE` form
-    /// with 16 KiB per file). Both spools are on the storage filesystem by
+    /// with 16 KiB per file and per request). Both spools are on the storage filesystem by
     /// default (`<STORAGE_ROOT_FOLDER>/tmp`), so in-flight deploys may take
     /// twice this there at once (8 GiB at the defaults) on top of the stored
     /// content. A deployed file is hard-linked from its spool, taking no

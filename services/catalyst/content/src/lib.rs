@@ -595,8 +595,8 @@ pub struct ContentState {
     /// largest file its validation reads.
     pub upload_budget: upload_admission::UploadBudget,
     /// The disk the `POST /entities` spool may take at once: each request
-    /// admitted when its declared payload fits, holding a minimum grown to
-    /// its spooled bytes (plus a per-file charge).
+    /// admitted when its declared payload fits, holding its directory's
+    /// charge grown with its spooled bytes (plus a per-file charge).
     pub spool_budget: upload_admission::UploadBudget,
     /// Where each `POST /entities` request spools its files
     /// ([`Settings::upload_spool_folder`]).
