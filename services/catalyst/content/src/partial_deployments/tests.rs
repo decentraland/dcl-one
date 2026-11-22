@@ -941,6 +941,30 @@ async fn uploads_that_wrote_nothing_go_without_the_store_lock() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A superseded upload that staged no blob goes within its request.
+#[tokio::test]
+async fn a_released_upload_that_staged_no_blob_is_deleted_at_once() {
+    require_test_db!(Some(node) = Node::new("release-unstaged", Limits::default()).await);
+    let pool = &node.state.pool;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"release-unstaged-a"], "scene").await;
+    let (status, _, _) = send(
+        &node.router(),
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    sqlx::query("UPDATE content.pending_deployment_files SET written = false WHERE entity_id = $1")
+        .bind(&scene.id)
+        .execute(pool)
+        .await
+        .unwrap();
+    release_upload(pool, &scene.id).await;
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+}
+
 /// A superseded upload that staged blobs is left to the cleanup job: its
 /// request never asks for the store lock, even while a deploy holds the
 /// shared side, and marks the upload expired; a retry is refused as
