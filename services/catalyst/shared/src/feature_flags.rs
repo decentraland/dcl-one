@@ -52,15 +52,14 @@ impl Snapshot {
         }
     }
 
-    /// Replaces the held document, keeping whether it is sourced: a reader that
-    /// keeps its own copy of an application's flags.
-    pub fn replace(&self, doc: Value) {
-        self.held.write().0 = Arc::new(doc);
-    }
-
     /// Replaces the held document and whether it came from the flags service, together.
     pub fn replace_sourced(&self, doc: Value, sourced: bool) {
         *self.held.write() = (Arc::new(doc), sourced);
+    }
+
+    /// The held document and whether it came from the flags service, read together.
+    pub fn held(&self) -> (Arc<Value>, bool) {
+        self.held.read().clone()
     }
 
     /// False until a document from the flags service is held: readers with a local fallback use it.
@@ -85,12 +84,12 @@ impl Snapshot {
     pub fn variant_values(&self, app: &str, feature: &str) -> Option<Vec<String>> {
         variant_values_in(&self.document(), app, feature, false)
     }
+}
 
-    /// [`Self::variant_values`], also requiring the variant's own `enabled` to be true,
-    /// as `@dcl/features-component` callers that check `variant.enabled` do.
-    pub fn enabled_variant_values(&self, app: &str, feature: &str) -> Option<Vec<String>> {
-        variant_values_in(&self.document(), app, feature, true)
-    }
+/// [`Snapshot::variant_values`] of `doc`, also requiring the variant's own `enabled`
+/// to be true, as `@dcl/features-component` callers that check `variant.enabled` do.
+pub fn enabled_variant_values(doc: &Value, app: &str, feature: &str) -> Option<Vec<String>> {
+    variant_values_in(doc, app, feature, true)
 }
 
 fn variant_values_in(
@@ -217,26 +216,32 @@ mod application_tests {
     fn sdk_app_keys_and_enabled_variants_are_independent() {
         let snapshot = Snapshot::empty();
         assert!(!snapshot.enabled("dapps", "communities_ai_compliance"));
-        snapshot.replace(json!({
-            "flags": {
-                "communities_ai_compliance": true,
-                "explorer-communities_ai_compliance": true,
-                "dapps-communities_ai_compliance": false,
-                "dapps-communities_global_moderators": true
-            },
-            "variants": {"dapps-communities_global_moderators": {
-                "payload": {"value": " 0xAbC,\r\n0xDeF, ,"}
-            }}
-        }));
+        snapshot.replace_sourced(
+            json!({
+                "flags": {
+                    "communities_ai_compliance": true,
+                    "explorer-communities_ai_compliance": true,
+                    "dapps-communities_ai_compliance": false,
+                    "dapps-communities_global_moderators": true
+                },
+                "variants": {"dapps-communities_global_moderators": {
+                    "payload": {"value": " 0xAbC,\r\n0xDeF, ,"}
+                }}
+            }),
+            false,
+        );
         assert!(!snapshot.enabled("dapps", "communities_ai_compliance"));
         assert_eq!(
             snapshot.variant_values("dapps", "communities_global_moderators"),
             Some(vec!["0xabc".into(), "0xdef".into(), "".into(), "".into()])
         );
         assert!(
-            snapshot
-                .enabled_variant_values("dapps", "communities_global_moderators")
-                .is_none(),
+            enabled_variant_values(
+                &snapshot.document(),
+                "dapps",
+                "communities_global_moderators"
+            )
+            .is_none(),
             "a variant without `enabled: true` lists nothing"
         );
         assert!(!snapshot.is_sourced());
@@ -247,9 +252,12 @@ mod application_tests {
                 .variant_values("explorer", "communities_global_moderators")
                 .is_none()
         );
-        snapshot.replace(json!({"flags": {}, "variants": {
-            "dapps-communities_global_moderators": {"payload": {"value": "0xabc"}}
-        }}));
+        snapshot.replace_sourced(
+            json!({"flags": {}, "variants": {
+                "dapps-communities_global_moderators": {"payload": {"value": "0xabc"}}
+            }}),
+            false,
+        );
         assert!(
             snapshot
                 .variant_values("dapps", "communities_global_moderators")

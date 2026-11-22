@@ -106,7 +106,7 @@ impl DappsFlags {
     pub fn for_tests(flags: &[(&str, bool)]) -> Arc<Self> {
         let held = Self::new();
         held.snapshot
-            .replace(json!({ "flags": {}, "variants": {} }));
+            .replace_sourced(json!({ "flags": {}, "variants": {} }), false);
         for (feature, on) in flags {
             held.set_for_tests(feature, *on);
         }
@@ -115,9 +115,10 @@ impl DappsFlags {
 
     /// Turns one `dapps` flag (`shop-x`) on or off, keeping the rest of the document.
     pub fn set_for_tests(&self, feature: &str, on: bool) {
-        let mut doc = (*self.snapshot.document()).clone();
+        let (doc, sourced) = self.snapshot.held();
+        let mut doc = (*doc).clone();
         doc["flags"][format!("{APP}-{feature}")] = json!(on);
-        self.snapshot.replace(doc);
+        self.snapshot.replace_sourced(doc, sourced);
     }
 }
 
@@ -203,13 +204,14 @@ impl MarketplaceState {
                 }
             }
         }
-        let base = self
+        let fetched = self
             .dapps_flags
             .fetched
             .lock()
             .as_ref()
-            .map(|(doc, _)| doc.clone())
-            .unwrap_or_else(|| document(false));
+            .map(|(doc, _)| doc.clone());
+        let sourced = fetched.is_some();
+        let base = fetched.unwrap_or_else(|| document(false));
         let read = feature_flags::local_overrides(&self.pool, APP).await;
         let overrides = match &read {
             Ok(overrides) => {
@@ -218,11 +220,14 @@ impl MarketplaceState {
             }
             Err(_) => self.dapps_flags.overrides.lock().clone(),
         };
-        let doc = match overrides {
-            Some(overrides) => feature_flags::apply_local_overrides(base, &overrides),
-            None => document(false),
+        let (doc, sourced) = match overrides {
+            Some(overrides) => (
+                feature_flags::apply_local_overrides(base, &overrides),
+                sourced,
+            ),
+            None => (document(false), false),
         };
-        self.dapps_flags.snapshot.replace(doc);
+        self.dapps_flags.snapshot.replace_sourced(doc, sourced);
         read.map(drop)
             .context("reading the dapps feature flag overrides")
     }
@@ -245,11 +250,13 @@ impl MarketplaceState {
 #[cfg(any(test, feature = "test-support"))]
 impl MarketplaceState {
     pub fn set_marketplace_features(&self, on: bool) {
-        self.dapps_flags.snapshot.replace(document(on));
+        self.dapps_flags
+            .snapshot
+            .replace_sourced(document(on), false);
     }
 
     pub fn set_dapps_document(&self, doc: Value) {
-        self.dapps_flags.snapshot.replace(doc);
+        self.dapps_flags.snapshot.replace_sourced(doc, false);
     }
 }
 
@@ -299,9 +306,10 @@ mod tests {
         assert!(!DappsFlags::new().credits_mana_split());
         let flags = DappsFlags::for_tests(&[]);
         assert!(!flags.credits_mana_split());
-        flags
-            .snapshot
-            .replace(json!({ "flags": { "dapps-shop-credits-mana-split": "true" } }));
+        flags.snapshot.replace_sourced(
+            json!({ "flags": { "dapps-shop-credits-mana-split": "true" } }),
+            false,
+        );
         assert!(!flags.credits_mana_split(), "only `true` turns it on");
         flags.set_for_tests(CREDITS_MANA_SPLIT, true);
         assert!(flags.credits_mana_split());

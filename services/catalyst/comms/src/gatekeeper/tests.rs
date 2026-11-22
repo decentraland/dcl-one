@@ -2093,25 +2093,51 @@ async fn a_revoked_platform_moderator_is_refused_without_a_restart() {
     );
     assert!(admitted(&state).await, "listed in the flag");
 
-    snapshot.replace(flags(true, true, &other));
+    snapshot.replace_sourced(flags(true, true, &other), true);
     assert!(
         !admitted(&state).await,
         "revoked in the flag, though still in the env list"
     );
 
-    snapshot.replace(flags(false, true, &wallet));
+    snapshot.replace_sourced(flags(false, true, &wallet), true);
     assert!(
         !admitted(&state).await,
         "a disabled flag lists no moderator"
     );
 
-    snapshot.replace(flags(true, false, &wallet));
+    snapshot.replace_sourced(flags(true, false, &wallet), true);
     assert!(
         !admitted(&state).await,
         "a disabled variant lists no moderator"
     );
 
-    snapshot.replace(flags(true, true, &wallet));
+    let key = "dapps-platform_user_moderators";
+    for (variant, case) in [
+        (
+            serde_json::Value::Null,
+            "a missing variant lists no moderator",
+        ),
+        (
+            serde_json::json!({ "enabled": true, "payload": { "value": ["0x"] } }),
+            "a non-string payload lists no moderator",
+        ),
+        (
+            serde_json::json!({ "payload": { "value": wallet.clone() } }),
+            "a variant without `enabled` lists no moderator",
+        ),
+    ] {
+        let mut doc = flags(true, true, &wallet);
+        let variants = doc["variants"].as_object_mut().unwrap();
+        if variant.is_null() {
+            variants.remove(key);
+        } else {
+            variants.insert(key.to_string(), variant);
+        }
+        snapshot.replace_sourced(doc, true);
+        assert!(!admitted(&state).await, "{case}");
+    }
+
+    snapshot.replace_sourced(flags(true, true, &wallet), true);
     assert!(admitted(&state).await, "granted again without a restart");
 }
 

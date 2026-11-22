@@ -539,19 +539,28 @@ impl CommsState {
     /// while the flag or its variant is off), `PLATFORM_USER_MODERATORS`
     /// before that (`FF_URL` unset, or never fetched and none stored).
     /// A failed refresh keeps the last document with no age limit, so a
-    /// revocation waits for the next successful refresh; social's
-    /// `social_dapps_flags_last_refresh_timestamp_seconds` shows its age.
+    /// revocation waits for the next successful refresh. Social's
+    /// `social_dapps_flags_last_refresh_timestamp_seconds` shows its age; it
+    /// exists only after a process's first successful refresh, so a staleness
+    /// alert must also fire while it is absent.
     pub fn platform_moderators(&self) -> std::borrow::Cow<'_, [Address]> {
-        match self.platform_moderator_flags.get() {
-            Some(flags) if flags.is_sourced() => flags
-                .enabled_variant_values("dapps", PLATFORM_USER_MODERATORS_FLAG)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|value| Address::parse(value).ok())
-                .collect::<Vec<_>>()
-                .into(),
-            _ => std::borrow::Cow::Borrowed(&self.settings.moderator_addresses),
-        }
+        let held = self
+            .platform_moderator_flags
+            .get()
+            .map(|flags| flags.held());
+        let Some((doc, true)) = held else {
+            return std::borrow::Cow::Borrowed(&self.settings.moderator_addresses);
+        };
+        crate::shared::feature_flags::enabled_variant_values(
+            &doc,
+            "dapps",
+            PLATFORM_USER_MODERATORS_FLAG,
+        )
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|value| Address::parse(value).ok())
+        .collect::<Vec<_>>()
+        .into()
     }
 
     pub fn with_ban_status(mut self, bans: Arc<dyn moderation::BanStatus>) -> Self {

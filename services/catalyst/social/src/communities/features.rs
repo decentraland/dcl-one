@@ -100,7 +100,9 @@ impl super::State {
     }
 
     /// One refresh. On success it sets `social_dapps_flags_last_refresh_timestamp_seconds`;
-    /// a failure keeps the held document, so that gauge shows how stale it is.
+    /// a failure keeps the held document, so that gauge shows how stale it is. The gauge
+    /// exists only after this process's first successful refresh: a staleness alert must
+    /// also fire while it is absent.
     pub async fn refresh_flags(&self, api: &crate::explore::api::Shared) -> anyhow::Result<()> {
         if !self.flags_configured() {
             return Ok(());
