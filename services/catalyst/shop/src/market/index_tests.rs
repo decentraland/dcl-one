@@ -6506,6 +6506,16 @@ mod supervisor {
                 }) as Arc<dyn ChainIndex>
             })
         };
+        // Only a shared walk holds a member to its deadline: sales walking
+        // the window alone would wait in its commit for good. On a short
+        // cadence, one projection's close can outlast the other's interval
+        // on a slow machine, and the other then walks alone. On this one,
+        // each stands idle when the other comes due, and the two walk each
+        // window together.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
         let mut sup = supervisor(&st, ChainNet::Matic, projections);
         sup.member_deadline = Duration::from_millis(300);
         let stats = sup.stats.clone();
@@ -6518,6 +6528,11 @@ mod supervisor {
             .await;
         }
         for (round, landed) in [(1u64, false), (2, true)] {
+            let walks = stats.walks.load(Ordering::SeqCst);
+            eventually("nft and sales walk together again", || async {
+                stats.walks.load(Ordering::SeqCst) > walks
+            })
+            .await;
             let start = last_block(&db.pool, INDEXER_SALES).await;
             let sales = sale_events(&db.pool).await;
             let entered = hooks.write_entered.load(Ordering::SeqCst);

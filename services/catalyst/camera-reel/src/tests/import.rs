@@ -16,7 +16,7 @@ use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use uuid::Uuid;
 
-use super::{API_URL, PREFIX, Scratch, png, random_address, scratch, send};
+use super::{API_URL, PREFIX, Scratch, isolated_scratch, png, random_address, scratch, send};
 use crate::auth::hash_bytes_v1;
 use crate::import::{ImportOptions, ImportReport, run};
 use crate::{Settings, State, router};
@@ -640,4 +640,67 @@ async fn the_import_copies_the_old_service_and_keeps_its_urls() {
     }
     source.drop().await;
     s.done().await;
+}
+
+/// An imported image found stored is not unlinked before its row commits:
+/// the row's transaction waits while an unlink batch holds the exclusive
+/// store lock, then stores again what the batch removed.
+#[tokio::test]
+async fn an_import_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    // A database of its own: another test's `--prune` run would take this row.
+    let Some(mut s) = isolated_scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let source = source_database().await.unwrap();
+    let bucket = Bucket::default();
+    let bucket_url = serve_bucket(bucket.clone()).await;
+    let owner = s.owner(&random_address());
+    let id = Uuid::new_v4();
+    let (image, thumbnail) = (png(40, 30, 7), png(20, 15, 8));
+    for (key, bytes) in [
+        (format!("{id}-race.png"), &image),
+        (format!("{id}-thumbnail-race.png"), &thumbnail),
+    ] {
+        bucket.objects.lock().unwrap().insert(key, bytes.to_vec());
+    }
+    source
+        .insert(
+            id,
+            &owner,
+            &format!("{OLD_API}/{id}-race.png"),
+            &format!("{OLD_API}/{id}-thumbnail-race.png"),
+            &document(&owner, &Uuid::new_v4().to_string()),
+            Some("2024-01-01 10:00:00"),
+            true,
+        )
+        .await;
+    let image_hash = hash_bytes_v1(&image);
+    s.state
+        .storage
+        .store(&image_hash, image.clone().into())
+        .await
+        .unwrap();
+
+    let batch = catalyst_storage::gc::lock_store_exclusive(s.db().pool())
+        .await
+        .unwrap();
+    {
+        let imported = import(&source, &s, &bucket_url, false, false);
+        tokio::pin!(imported);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(500), &mut imported)
+                .await
+                .is_err(),
+            "the row waits for the unlink batch"
+        );
+        s.state.storage.delete_strict(&image_hash).await.unwrap();
+        batch.commit().await.unwrap();
+        imported.await;
+    }
+    assert_eq!(row(s.db().pool(), id).await.unwrap().image_hash, image_hash);
+    assert!(
+        s.state.storage.exist(&image_hash).await.unwrap(),
+        "stored again"
+    );
+    source.drop().await;
 }

@@ -7,6 +7,7 @@ use super::*;
 use crate::auth::AuthLinkType;
 use crate::storage::hex_prefix;
 use async_trait::async_trait;
+use catalyst_shared::test_keys::{ENTITY_KEY, address_of, signed_chain, wallet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -62,11 +63,18 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     let first = Bytes::from_static(b"first content");
     let second = Bytes::from(vec![42; 300_000]);
     let unreferenced = Bytes::from_static(b"unreferenced");
+    let spooled = std::path::PathBuf::from("/spool/1");
     let uploads = hash_uploads(vec![
-        entity_bytes.clone(),
-        first.clone(),
-        second.clone(),
-        unreferenced,
+        entity_bytes.clone().into(),
+        first.clone().into(),
+        Upload::Spooled(SpooledFile {
+            name: "second".to_string(),
+            hash: hash_bytes_v1(&second),
+            hash_v0: Some(hash_bytes(&second)),
+            len: second.len(),
+            path: spooled.clone(),
+        }),
+        unreferenced.into(),
     ])
     .await
     .unwrap();
@@ -87,9 +95,19 @@ async fn deployment_files_reuse_both_cid_versions_and_deduplicate_references() {
     .unwrap();
     let files = deployment_files(&entity, &entity_bytes, &uploads);
     assert_eq!(files.len(), 3);
-    assert_eq!(files[&entity.id], entity_bytes);
-    assert_eq!(files[&uploads[1].v0], first);
-    assert_eq!(files[&uploads[2].v1], second);
+    assert_eq!(files[&entity.id], UploadedFile::Bytes(entity_bytes));
+    assert_eq!(
+        files[uploads[1].v0.as_deref().unwrap()],
+        UploadedFile::Bytes(first)
+    );
+    assert_eq!(
+        files[&uploads[2].v1],
+        UploadedFile::Spooled {
+            len: second.len() as u64,
+            path: spooled
+        },
+        "a spooled file is stored from its spool file, never read"
+    );
     assert!(!files.contains_key(&missing));
     assert!(!files.contains_key(&uploads[3].v1));
 }
@@ -112,6 +130,10 @@ async fn deployment_storage_drains_writes_and_preserves_atomic_files_on_failure(
         })
         .collect();
     files.extend(expected.iter().cloned());
+    let files = files
+        .into_iter()
+        .map(|(hash, bytes)| (hash, UploadedFile::Bytes(bytes)))
+        .collect();
     let error = store_deployment_files(&deployer.storage, files)
         .await
         .unwrap_err();
@@ -318,8 +340,6 @@ fn a_reservation_holds_its_pointers_until_released() {
     );
 }
 
-const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
 /// A signed scene entity with no content files: its bytes, id and auth chain.
 async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Value) {
     signed_entity_of(serde_json::json!({
@@ -334,15 +354,9 @@ async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Va
 }
 
 async fn signed_entity_of(entity: Value) -> (Bytes, String, Value) {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
     let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
     let id = hash_bytes_v1(&bytes);
-    let key: PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
-    let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
-    let chain = serde_json::json!([
-        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
-        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
-    ]);
+    let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &id).await).unwrap();
     (bytes, id, chain)
 }
 
@@ -400,6 +414,35 @@ async fn a_copy_answered_from_the_in_process_memo_proves_the_replay() {
         42
     );
     drop(held);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The deployer reads the entity file only from memory: a spooled part
+/// hashing to the id, even a readable one, is not taken as the entity file,
+/// so no entity file reaches the heap outside `POST /entities`' memory budget.
+#[tokio::test]
+async fn a_spooled_part_is_never_read_as_the_entity_file() {
+    let (deployer, tmp) = deployer_over_temp_storage("spooled-entity").await;
+    let (bytes, id, chain) =
+        signed_scene(&["5,5".to_string()], chrono::Utc::now().timestamp_millis()).await;
+    let path = tmp.join("spooled-entity-part");
+    std::fs::write(&path, &bytes).unwrap();
+    let spooled = Upload::Spooled(SpooledFile {
+        name: id.clone(),
+        hash: id.clone(),
+        hash_v0: Some(hash_bytes(&bytes)),
+        len: bytes.len(),
+        path,
+    });
+    match deployer
+        .deploy_entity_anchored(vec![spooled], &id, chain, "LOCAL", None)
+        .await
+    {
+        Err(DeployFailure::Rejected(_, errors)) => {
+            assert_eq!(errors, ["Failed to find the entity file.".to_string()])
+        }
+        other => panic!("a spooled entity part must not be read, got {other:?}"),
+    }
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -1302,8 +1345,6 @@ async fn deploy_function_matches_the_statement() {
 /// verified against the entity timestamp, files stored, one function call, provenance row.
 #[tokio::test]
 async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
-
     let Some(pool) = test_pool(2).await else {
         return;
     };
@@ -1334,18 +1375,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
     let entity_bytes = Bytes::from(serde_json::to_vec(&entity_json).unwrap());
     let entity_id = hash_bytes_v1(&entity_bytes);
 
-    let key: PrivateKeySigner = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        .parse()
-        .unwrap();
-    let signature = key
-        .sign_message(entity_id.as_bytes())
-        .await
-        .unwrap()
-        .to_string();
-    let chain = serde_json::json!([
-        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
-        {"type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": signature}
-    ]);
+    let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &entity_id).await).unwrap();
 
     let missing = fresh()
         .deploy_entity(
@@ -1415,7 +1445,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, format!("{:#x}", key.address()));
+    assert_eq!(row.0, address_of(ENTITY_KEY));
     assert_eq!(row.1, "scene");
     assert_eq!(row.2, pointers, "pointers are stored lowercase");
     assert_eq!(row.3, Some(serde_json::json!({"v": {"name": "e2e"}})));
@@ -1440,7 +1470,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
             .fetch_optional(&pool)
             .await
             .unwrap();
-    assert_eq!(signer, Some(format!("{:#x}", key.address())));
+    assert_eq!(signer, Some(address_of(ENTITY_KEY)));
     assert_eq!(
         storage.retrieve(&entity_id).await.unwrap(),
         Some(entity_bytes)
@@ -1590,7 +1620,7 @@ async fn binding_sql_supersession_has_a_typed_rejection() {
     let mut entity: Entity = serde_json::from_slice(&bytes).unwrap();
     entity.id = id;
     let chain = serde_json::from_value(chain).unwrap();
-    let uploads = hash_uploads(vec![bytes.clone()]).await.unwrap();
+    let uploads = hash_uploads(vec![bytes.clone().into()]).await.unwrap();
     // Call publication directly to exercise the binding SQL decision after preflight.
     let failure = deployer
         .persist(&entity, &bytes, &uploads, &chain, "LOCAL")
@@ -1659,8 +1689,7 @@ fn block_minutes_ago(minutes_ago: i64) -> u64 {
 }
 
 fn deployer_address() -> alloy_primitives::Address {
-    let key: alloy::signers::local::PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
-    key.address()
+    wallet(ENTITY_KEY).address()
 }
 
 /// A chain where the deployer held every parcel until `sold_block`.

@@ -52,8 +52,13 @@ pub mod settings;
 pub mod settings_policy;
 pub mod store;
 pub mod upload_limits;
-pub mod upload_spool;
 pub mod wallet;
+
+/// Where every worlds upload request's spool directory lives: beside the blob
+/// store, so storing a part is a hard link.
+pub fn spool_root(storage: &catalyst_storage::Storage) -> std::path::PathBuf {
+    storage.scratch_dir().join("worlds-uploads")
+}
 
 #[cfg(test)]
 mod tests;
@@ -586,14 +591,14 @@ impl CoreState {
         );
         let limits = &self.settings.upload_limits;
         metrics::upload_capacity(limits);
-        let spool_root = upload_spool::spool_root(&self.storage);
+        let spool_root = spool_root(&self.storage);
         // Older than any live upload: left by a process that died mid-request.
         let stale_after = catalyst_storage::gc::orphan_age_floor(
             limits.multipart_upload_timeout_ms,
             limits.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            upload_spool::sweep_stale(&spool_root, stale_after).await;
+            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
         });
         let Some(mut rx) = self.access_log_rx.lock().take() else {
             return;

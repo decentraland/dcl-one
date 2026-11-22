@@ -448,6 +448,10 @@ pub struct RemoteDeployment<'a> {
     pub context: DeploymentContext,
     pub report: Option<&'a Arc<DeploymentReport>>,
     pub retry_state: Option<(u32, u64)>,
+    /// Refuse with [`SyncError::Overtaken`], before content is fetched or validated, an entity
+    /// whose file hashes to its id and that a newer active entity overtook
+    /// ([`LiveSyncDeployer::is_overtaken`]).
+    pub discard_overtaken: bool,
 }
 
 pub async fn deploy_entity_streaming(
@@ -467,6 +471,7 @@ pub async fn deploy_entity_streaming(
         context,
         report,
         retry_state,
+        discard_overtaken,
     } = target;
     // The read-through never removes a file held here until the flush takes the entity.
     let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
@@ -511,6 +516,16 @@ pub async fn deploy_entity_streaming(
     let files =
         entity_files(&entity_data).map_err(|e| entity_parse_error(entity_id, verification, e))?;
     let snapshot_hashes: HashSet<&str> = files.snapshots.iter().map(|(_, h)| h.as_str()).collect();
+
+    // Only a file proven to hash to its id may discard: any other file is left to validation.
+    if discard_overtaken
+        && verification == CachedEntityVerification::Match
+        && deployer.is_overtaken(&entity_data, entity_id).await?
+    {
+        return Err(SyncError::Overtaken {
+            entity_id: entity_id.to_string(),
+        });
+    }
 
     let mut tasks: tokio::task::JoinSet<Result<(), SyncError>> = tokio::task::JoinSet::new();
 
@@ -1057,7 +1072,7 @@ mod tests {
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let (storage, tmp) = temp_storage("in-flight").await;
-        let deployer = LiveSyncDeployer::new(
+        let deployer = LiveSyncDeployer::without_store(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
@@ -1082,6 +1097,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         );
         let observe = async {
@@ -1163,6 +1179,7 @@ mod tests {
             .unwrap();
         let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         );
@@ -1185,6 +1202,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await
@@ -1251,6 +1269,7 @@ mod tests {
     ) -> Result<(), SyncError> {
         let deployer = LiveSyncDeployer::new(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         );
@@ -1269,6 +1288,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await

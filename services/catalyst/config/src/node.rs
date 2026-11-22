@@ -231,6 +231,14 @@ pub struct WritesConfig {
     #[arg(long, env = "CONTENT_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_writes_enabled: bool,
 
+    /// The old content server's `READ_ONLY`: `true` turns the content write
+    /// path off as `CONTENT_WRITES_ENABLED=false` does, whatever that says
+    /// (the refusal wins), and `POST /entities` and `DELETE /scenes/{coord}`
+    /// answer the router's not-found, as the old server, which did not
+    /// register the route. The console's read-only toggle cannot lift it.
+    #[arg(long, env = "READ_ONLY", default_value_t = false, action = clap::ArgAction::Set)]
+    pub read_only: bool,
+
     /// A catalyst base URL every local deploy is sent on to, unchanged, at
     /// `<url>/content/entities` once it committed here (src/content/forward.rs;
     /// local authority is unchanged). Unset forwards nothing. A public http(s)
@@ -265,6 +273,14 @@ pub struct WritesConfig {
     // they sit behind the social switch's twin (`marketplace::DataWrites`).
     #[arg(long, env = "DATA_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub data_writes_enabled: bool,
+}
+
+impl WritesConfig {
+    /// Whether the content write path is on: `CONTENT_WRITES_ENABLED` and
+    /// not `READ_ONLY`.
+    pub fn content_writes(&self) -> bool {
+        self.content_writes_enabled && !self.read_only
+    }
 }
 
 #[cfg(test)]
@@ -372,6 +388,7 @@ mod tests {
         let c = cli;
         assert!(!c.writes.social_writes_enabled, "social writes are opt-in");
         assert!(!c.writes.content_writes_enabled, "local deploys are opt-in");
+        assert!(!c.writes.read_only && !c.writes.content_writes());
         assert!(
             c.writes.content_forward_upstream_url.is_none()
                 && c.writes.catalyrst_content_admin_token.is_none(),
@@ -387,6 +404,39 @@ mod tests {
         assert!(
             !c.writes.data_writes_enabled,
             "data-plane writes are opt-in, the social switch's twin"
+        );
+    }
+
+    #[test]
+    fn read_only_turns_content_writes_off_whatever_the_switch_says() {
+        let writes = |extra: &[&str]| {
+            let args = [&["x", "--database-url", "postgres:///catalyst"][..], extra].concat();
+            parse(&args).unwrap().writes.content_writes()
+        };
+        assert!(writes(&["--content-writes-enabled", "true"]));
+        assert!(!writes(&[
+            "--content-writes-enabled",
+            "true",
+            "--read-only",
+            "true"
+        ]));
+        assert!(!writes(&[
+            "--content-writes-enabled",
+            "false",
+            "--read-only",
+            "false"
+        ]));
+        assert!(!writes(&["--read-only", "true"]));
+        assert!(
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--read-only",
+                "yes"
+            ])
+            .is_err(),
+            "only true or false"
         );
     }
 }

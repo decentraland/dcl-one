@@ -25,6 +25,7 @@ mod content;
 mod denylist;
 mod file_ids;
 pub mod gc;
+pub mod upload_spool;
 
 pub use content::{FileInfo, OpenedContent, Storage, store_file_copy_fallbacks};
 pub use denylist::Denylist;
