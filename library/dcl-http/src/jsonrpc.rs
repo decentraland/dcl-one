@@ -90,12 +90,12 @@ impl<'a> Rpc<'a> {
         hex_of(self.call(method, params).await?)
     }
 
-    /// One block's number and timestamp; a block the node does not have is malformed.
-    pub async fn block(&self, tag: BlockTag) -> Result<BlockInfo, RpcError> {
+    /// One block's number and timestamp.
+    pub async fn block(&self, tag: BlockTag) -> Result<BlockInfo, BlockError> {
         let result = self
             .call("eth_getBlockByNumber", get_block_params(tag))
             .await?;
-        block_info(&result)?.ok_or_else(|| RpcError::Malformed(format!("no block {}", tag.param())))
+        block_info(&result, tag)
     }
 
     /// One HTTP request carrying `requests` (each a [`request`]); the

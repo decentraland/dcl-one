@@ -7,7 +7,8 @@
 //! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
 //! profile is still found). A content file is stored once it hashes to its name, a profile's
-//! avatar renders included; a `/contents/{hash}` miss is filled the same way, so a file this
+//! avatar renders included (those its metadata names outside `content[]` when a source has
+//! them, as sync stores them); a `/contents/{hash}` miss is filled the same way, so a file this
 //! node lists but lost (or synced before it stored renders) is fetched on its first read.
 //!
 //! [`Fills`] bounds it: one fill per key at a time (a second reader waits on the first), a

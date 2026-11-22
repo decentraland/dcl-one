@@ -34,6 +34,11 @@
 //! A process that runs no fleet jobs (`FLEET_JOBS_ENABLED=false`) takes no
 //! lease, reads no chain and claims nothing. Without leases (one process),
 //! every projection is walked and claimed on the pool.
+//!
+//! With `CHAIN_LOGS_SOURCE=shadow`, each network also runs a shadow worker
+//! (`chain-logs-shadow-<network>`): the windows its walks accept are compared
+//! with a portal in the background ([`crate::chain_index::portal::shadow`]).
+//! The walks read and commit RPC data only, as without it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,7 +55,85 @@ use tokio_util::sync::CancellationToken;
 use super::MarketplaceState;
 use super::chain_group::{self, Checkpoint, Member, MemberEnd};
 use super::chain_walk::{self, Budget, ChainIndex, ChainNet, Holdings, IndexSettings, PassOutcome};
+use crate::chain_index::portal::shadow::{self, Shadow, Shadowed};
+use crate::chain_index::portal::{AddressHistory, PortalReader, Secret};
 use crate::jobs::{JobContext, JobState, Jobs, LeaseGuard, Leases, PeriodicCfg};
+
+/// `CHAIN_LOGS_SOURCE=shadow`: the portal the accepted windows are compared
+/// with. `None` (`rpc`) compares nothing.
+#[derive(Clone, Debug)]
+pub struct ShadowSettings {
+    pub origin: String,
+    pub dataset_ethereum: String,
+    pub dataset_matic: String,
+    pub key: Option<Secret>,
+    pub max_rps: f64,
+    pub history: AddressHistory,
+}
+
+impl ShadowSettings {
+    /// The settings as the environment spells them: `None` for `rpc`; for
+    /// `shadow`, a portal origin and two known datasets, refused at startup
+    /// otherwise.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one argument per environment variable it validates"
+    )]
+    pub fn parse(
+        source: &str,
+        origin: Option<&str>,
+        dataset_ethereum: &str,
+        dataset_matic: &str,
+        key: Option<String>,
+        max_rps: f64,
+        assert_full_history: bool,
+    ) -> anyhow::Result<Option<Self>> {
+        match source {
+            "rpc" => return Ok(None),
+            "shadow" => {}
+            other => anyhow::bail!("CHAIN_LOGS_SOURCE={other}: rpc or shadow"),
+        }
+        let Some(origin) = origin.map(str::trim).filter(|o| !o.is_empty()) else {
+            anyhow::bail!("CHAIN_LOGS_SOURCE=shadow needs CHAIN_LOGS_PORTAL_URL");
+        };
+        anyhow::ensure!(
+            max_rps.is_finite() && max_rps > 0.0,
+            "CHAIN_LOGS_PORTAL_MAX_RPS must be above 0"
+        );
+        let settings = Self {
+            origin: origin.to_string(),
+            dataset_ethereum: dataset_ethereum.trim().to_string(),
+            dataset_matic: dataset_matic.trim().to_string(),
+            key: key.and_then(Secret::new),
+            max_rps,
+            history: if assert_full_history {
+                AddressHistory::AssertedByOperator
+            } else {
+                AddressHistory::Unknown
+            },
+        };
+        for net in ChainNet::ALL {
+            let reader = settings.reader(net).map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                reader.chain() == chain_walk::mainnet_chain(net) as u64,
+                "the {} portal dataset {:?} is not {} mainnet",
+                net.db_name(),
+                reader.dataset(),
+                net.db_name()
+            );
+        }
+        Ok(Some(settings))
+    }
+
+    /// The reader of `net`'s dataset.
+    pub fn reader(&self, net: ChainNet) -> Result<PortalReader, String> {
+        let dataset = match net {
+            ChainNet::Ethereum => &self.dataset_ethereum,
+            ChainNet::Matic => &self.dataset_matic,
+        };
+        PortalReader::new(&self.origin, dataset, self.key.clone(), self.max_rps)
+    }
+}
 
 /// Decides whether an attempt walks now: `Ok(None)` walks, `Ok(Some(why))`
 /// waits for the next interval, an error fails the attempt.
@@ -85,6 +168,8 @@ pub struct Supervisor {
     pub member_deadline: Duration,
     /// What the shared walks cost, summed.
     pub stats: Arc<SharedStats>,
+    /// Where accepted windows are compared (`CHAIN_LOGS_SOURCE=shadow`).
+    pub shadow: Option<Arc<Shadow>>,
 }
 
 /// The shared walks of a supervisor, summed: how many ran, the requests they
@@ -555,6 +640,7 @@ fn dispatch_group(
             &at,
             sup.member_deadline,
             &counted,
+            sup.shadow.as_deref(),
         );
         tokio::select! {
             biased;
@@ -1217,10 +1303,13 @@ async fn attempt(
                 Err(err) => return (Attempt::Ran(Err(err)), None, false),
             }
         }
-        let source = chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
-            &supervisor.http,
-            &projection.url,
-        ));
+        let source = Shadowed::new(
+            chain_walk::RpcSource::new(crate::chain_index::rpc::Rpc::at(
+                &supervisor.http,
+                &projection.url,
+            )),
+            supervisor.shadow.as_deref(),
+        );
         let progress = |m: String| ctx.progress(format!("{}: {m}", projection.lease));
         let outcome = chain_walk::job_pass_with(
             &supervisor.pool,
@@ -1413,6 +1502,12 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
             leases = ?projections.iter().map(|p| p.lease.as_str()).collect::<Vec<_>>(),
             "marketplace chain index supervisor"
         );
+        let shadow = state
+            .settings
+            .market
+            .shadow
+            .as_ref()
+            .and_then(|s| spawn_shadow(jobs, s, net));
         spawn(
             jobs,
             Supervisor {
@@ -1423,9 +1518,37 @@ pub fn spawn_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs, rentals: Option<bo
                 projections,
                 member_deadline: Duration::from_secs(60),
                 stats: Arc::default(),
+                shadow,
             },
         );
     }
+}
+
+/// `net`'s shadow worker, as a job of its own that ends with the process;
+/// `None` when its reader cannot be built (startup already checked it).
+fn spawn_shadow(jobs: &Jobs, settings: &ShadowSettings, net: ChainNet) -> Option<Arc<Shadow>> {
+    let reader = match settings.reader(net) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(network = net.db_name(), error = %e, "chain logs shadow off for this network");
+            return None;
+        }
+    };
+    tracing::info!(
+        network = net.db_name(),
+        dataset = reader.dataset(),
+        address_history = ?settings.history,
+        "chain logs shadow: accepted windows are compared with a portal"
+    );
+    let (handle, worker) = shadow::channel(reader, net.db_name(), settings.history);
+    jobs.spawn(
+        format!("chain-logs-shadow-{}", net.db_name()),
+        move |ctx| async move {
+            worker.run(ctx.cancel.cancelled_owned()).await;
+            Ok(())
+        },
+    );
+    Some(handle)
 }
 
 /// Logs each index switch that is off, or on with no endpoint to read.
@@ -1550,6 +1673,7 @@ mod tests {
             projections,
             member_deadline: Duration::from_secs(60),
             stats: Arc::default(),
+            shadow: None,
         }
     }
 

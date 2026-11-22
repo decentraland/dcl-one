@@ -418,15 +418,17 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// Entities whose active pointer starts with `prefix` (a collection URN);
-/// `total` counts matching pointers, the page walks them in pointer order.
+/// Entities whose active pointer starts with `prefix` (a collection URN) in
+/// any letter case; `total` counts matching pointers, the page walks them in
+/// pointer order. Pointers are stored lowercased, so lowercasing the prefix
+/// compares case-insensitively and keeps `active_pointers_pointer_ops_idx`.
 pub async fn active_entity_docs_by_prefix(
     pool: &PgPool,
     prefix: &str,
     offset: i64,
     limit: i64,
 ) -> Result<PrefixDocsResult, sqlx::Error> {
-    let pattern = format!("{}%", escape_like(prefix));
+    let pattern = format!("{}%", escape_like(&prefix.to_lowercase()));
     let projection = active_entity_projection(MetadataProjection::Json);
     let total: i64 = sqlx::query_scalar(
         r"SELECT count(*) FROM content.active_pointers p WHERE p.pointer LIKE $1 ESCAPE '\'",

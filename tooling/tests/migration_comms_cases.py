@@ -1,4 +1,4 @@
-"""Comms moderation imports use the runtime keys: the place for admins, the scene or world base for bans."""
+"""Comms moderation imports use the runtime keys: the place for admins and Genesis bans, the world base for world bans."""
 
 
 class CommsMigrationCases:
@@ -36,10 +36,10 @@ class CommsMigrationCases:
         for step in ('scene_admin','scene_ban'):
             self.sql(db, 'BEGIN;\n' + self.comms_stage(step) + self.comms_load(step) + '\nCOMMIT;')
         self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_admins ORDER BY place_id;').strip(), '0,0\n22222222-2222-4222-8222-222222222222')
-        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), 'genesis-entity\ntest.eth:10,0')
+        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), '0,0\ntest.eth:10,0')
         self.sql(db, "DELETE FROM social.scene_bans; UPDATE worlds.world_scenes SET entity='{}';")
         self.sql(db, 'BEGIN;\n' + self.comms_stage('scene_ban') + self.comms_load('scene_ban') + '\nCOMMIT;')
-        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), 'genesis-entity\ntest.eth:2,0')
+        self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), '0,0\ntest.eth:2,0')
 
     def test_comms_moderation_aborts_on_unresolved_or_ambiguous_identity(self):
         from tooling.tests import migration_harness as harness
@@ -100,7 +100,7 @@ class CommsMigrationCases:
         self.assertEqual(self.sql(db, 'SELECT place_id, active, added_by FROM social.scene_admins;').strip(),
                          '0,0\tt\tactive')
         self.assertEqual(self.sql(db, 'SELECT place_id, banned_by FROM social.scene_bans;').strip(),
-                         'genesis-entity\tearliest')
+                         '0,0\tlater')
 
     # ── re-runs keep moderation and credential changes made on the node ──
 

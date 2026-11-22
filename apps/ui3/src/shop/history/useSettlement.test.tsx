@@ -1,6 +1,6 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createDemo, DemoShell } from "../checkout/demo";
 import { useSettlement } from "./useSettlement";
@@ -49,29 +49,28 @@ describe("useSettlement", () => {
     const demo = createDemo({ session: "web3" });
     const tx = { hash: `0x${"9".repeat(64)}`, chainId: 137 };
     demo.chain.receipts.set(tx.hash, "success");
-    // The real wait between ownership reads, not the demo's instant one.
-    demo.services.wait = {};
+    // The wait between ownership reads, watched: a loop that went on after the unmount would wait before a next read.
+    // It ends at once, so such a loop would also make that next read.
+    const sleep = vi.fn(async (_ms: number) => {});
+    demo.services.wait = { sleep };
     const wrapper = ({ children }: { children: ReactNode }) => (
       <DemoShell demo={demo} path="/shop/history">
         {children}
       </DemoShell>
     );
     const own = { owner: `0x${"2".repeat(40)}`, contractAddress: `0x${"3".repeat(40)}`, itemId: "7" };
-    // Faked timers, so a wait the loop starts after the unmount shows up as a pending timer.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    onTestFinished(() => void vi.useRealTimers());
     const view = renderHook(() => useSettlement([tx], { ownership: own }), { wrapper });
-    await vi.waitFor(() => expect(view.result.current).toBe("indexing"));
-    await vi.waitFor(() => expect(ownership.signals).toHaveLength(1));
+    await waitFor(() => expect(view.result.current).toBe("indexing"));
+    await waitFor(() => expect(ownership.signals).toHaveLength(1));
     expect(ownership.signals[0]!.aborted).toBe(false);
-    const timersBefore = vi.getTimerCount();
+    const waitsBefore = sleep.mock.calls.length;
 
     // The read in flight is cancelled and answers; the loop stops there: no wait for a next read, and no next read.
     view.unmount();
     expect(ownership.signals[0]!.aborted).toBe(true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(vi.getTimerCount()).toBe(timersBefore);
-    await vi.advanceTimersByTimeAsync(10_000);
+    // What follows the abort settles in microtasks: a macrotask runs after all of them.
+    await new Promise((settled) => setTimeout(settled, 0));
+    expect(sleep.mock.calls.length).toBe(waitsBefore);
     expect(ownership.signals).toHaveLength(1);
   });
 });

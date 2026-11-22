@@ -1,5 +1,5 @@
 //! Helpers shared by the write-path tests: a signed auth chain, a throwaway
-//! storage tree, a one-route content server and the optional test database.
+//! storage tree, one-route content servers and the optional test database.
 
 use std::sync::Arc;
 
@@ -89,6 +89,15 @@ pub(crate) async fn temp_storage(tag: &str) -> (Arc<Storage>, std::path::PathBuf
     (Arc::new(storage), tmp)
 }
 
+/// Removes a test's directory when dropped, so a test that panics leaves no tree behind.
+pub(crate) struct RemoveOnDrop(pub std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub(crate) async fn spawn_content_server(
     body: Vec<u8>,
     encoding: Option<&'static str>,
@@ -140,4 +149,29 @@ pub(crate) async fn redirecting_peer(
         );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (port, hits)
+}
+
+/// A loopback peer whose `/contents/{hash}` answers `blobs[hash]`, 404 otherwise.
+pub(crate) async fn blob_peer(
+    blobs: std::collections::HashMap<String, Vec<u8>>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use axum::extract::Path;
+    use axum::response::IntoResponse;
+    let blobs = Arc::new(blobs);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/contents/{hash}",
+        axum::routing::get(move |Path(hash): Path<String>| {
+            let blobs = blobs.clone();
+            async move {
+                match blobs.get(&hash) {
+                    Some(bytes) => bytes.clone().into_response(),
+                    None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                }
+            }
+        }),
+    );
+    let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), handle)
 }

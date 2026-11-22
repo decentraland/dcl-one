@@ -100,6 +100,14 @@ pub trait LogSource: Send + Sync {
     ) -> Result<Window, RpcError>;
     /// The block time of every log's block.
     async fn block_times(&self, logs: &[RpcLog]) -> Result<Read<HashMap<i64, i64>>, RpcError>;
+    /// A window the walk accepted: its bracket and predecessor check
+    /// passed, its commit may still fail. A comparing source hands it off
+    /// ([`crate::portal::shadow`]); it never waits, reads nothing and changes
+    /// no outcome. The default does nothing.
+    fn accepted(&self, _read: &crate::portal::compare::AcceptedView<'_>) {}
+    /// A backfill lane window read below the cursor: never compared, only
+    /// counted by a comparing source. The default does nothing.
+    fn lane_read(&self) {}
 }
 
 /// The source over one Ethereum JSON-RPC endpoint: one request per header,

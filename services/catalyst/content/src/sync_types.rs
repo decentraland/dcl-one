@@ -120,6 +120,10 @@ pub enum SyncError {
     #[error("Sync stopped")]
     Stopped,
 
+    /// A peer answered 404 for a content file.
+    #[error("{0}")]
+    NotFound(String),
+
     #[error("{0}")]
     Other(String),
 }

@@ -181,11 +181,13 @@ pub(crate) async fn resolve_adapter_room(
 /// `worlds::rooms::genesis_scene`); whether it still holds a pointer in
 /// `content.active_pointers` is not checked. An unknown or denylisted id is
 /// 404 and an unreadable catalogue 503, never a mint. With
-/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked.
+/// `ALLOW_LOCAL_PREVIEW`, a local preview scene is accepted unchecked and
+/// answers `None`; else the room found, with the deployment whose place keys
+/// its bans.
 pub(crate) async fn require_genesis_deployment(
     state: &CommsState,
     resolved: &ResolvedRoom,
-) -> Result<(), ApiError> {
+) -> Result<Option<ResolvedRoom>, ApiError> {
     let scene = resolved
         .scene_id
         .as_ref()
@@ -193,7 +195,7 @@ pub(crate) async fn require_genesis_deployment(
     if state.settings.allow_local_preview
         && is_local_preview(resolved.realm.as_str(), scene.as_str())
     {
-        return Ok(());
+        return Ok(None);
     }
     let not_found = || ApiError::not_found(format!("No scene entity found for scene ID {scene}"));
     if state.content_denylist.contains(scene.as_str()) {
@@ -207,7 +209,7 @@ pub(crate) async fn require_genesis_deployment(
         })
         .await
     {
-        Ok(found) if found.deployment.is_some() => Ok(()),
+        Ok(found) if found.deployment.is_some() => Ok(Some(found)),
         Ok(_) | Err(ResolveError::NoParcels { .. }) => Err(not_found()),
         Err(error) => {
             tracing::error!(%error, scene = %scene, "genesis scene lookup failed");
@@ -219,12 +221,7 @@ pub(crate) async fn require_genesis_deployment(
     }
 }
 
-/// A local preview scene: a `b64-` scene id or a `preview`/`localpreview` realm.
-fn is_local_preview(realm_name: &str, scene_id: &str) -> bool {
-    scene_id.starts_with("b64-")
-        || realm_name.eq_ignore_ascii_case("preview")
-        || realm_name.eq_ignore_ascii_case("localpreview")
-}
+use crate::rooms::is_local_preview;
 
 /// The scene-bans listing key: an explicit `place_id`, else the metadata's,
 /// with a world name resolved to its active scene.
