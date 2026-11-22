@@ -17,6 +17,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, header};
 use bytes::Bytes;
+use catalyst_shared::test_keys::ENTITY_KEY;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -34,8 +35,7 @@ use crate::shared::signed_fetch::{
 use crate::storage::Storage;
 use crate::validator::fake_chain::{self, FakeChain, Query, Reply};
 
-/// Hardhat accounts #0 and #1: the LAND owner and a stranger.
-const OWNER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+/// Hardhat account #1, a stranger to the LAND that `ENTITY_KEY` (account #0) owns.
 const STRANGER_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
 fn key(hex: &str) -> PrivateKeySigner {
@@ -711,7 +711,7 @@ async fn a_signed_positional_scene_keeps_metadata_and_immutable_bytes() {
 
 async fn signed_scene_roundtrip(positional: bool) {
     require_test_db!(Some(db) = OwnDb::create().await);
-    let (owner, stranger) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (owner, stranger) = (key(ENTITY_KEY), key(STRANGER_KEY));
     let (x, y) = (37, -11);
     let parcel = format!("{x},{y}");
     index_land(&db.pool, &address(&owner), &[(x, y), (x + 1, y)]).await;
@@ -1042,7 +1042,7 @@ async fn signed_scene_roundtrip(positional: bool) {
 #[tokio::test]
 async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
     require_test_db!(Some(db) = OwnDb::create().await);
-    let (owner, neighbour) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (owner, neighbour) = (key(ENTITY_KEY), key(STRANGER_KEY));
     let (x, y) = (41, -13);
     let (a, b) = (format!("{x},{y}"), format!("{},{y}", x + 1));
     // The owner holds (x, y) and operates (x + 1, y), which the neighbour owns.
@@ -1282,7 +1282,7 @@ async fn seed_local_scene(pool: &PgPool, entity_id: &str, pointer: &str) {
 #[tokio::test]
 async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
     require_test_db!(Some(db) = OwnDb::create().await);
-    let owner = key(OWNER_KEY);
+    let owner = key(ENTITY_KEY);
     let race = Arc::new(parking_lot::Mutex::new(None));
     let subgraph = serve_racing_land_subgraph(db.pool.clone(), address(&owner), race.clone()).await;
     let market = Arc::new(crate::chain_index::ChainIndex::new(
@@ -2495,7 +2495,7 @@ async fn a_deploy_stalled_before_validation_holds_no_pointer_and_releases_its_bu
     node.state.sync.set_state(SyncState::Syncing);
     let router = node.router();
     let parcel = "71,-71";
-    let (bytes, id, chain) = signed_entity(&key(OWNER_KEY), scene(&[parcel], &[])).await;
+    let (bytes, id, chain) = signed_entity(&key(ENTITY_KEY), scene(&[parcel], &[])).await;
     let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]);
     req.headers_mut()
         .insert("x-real-ip", HeaderValue::from_static("203.0.113.41"));

@@ -7,6 +7,7 @@ use super::*;
 use crate::auth::AuthLinkType;
 use crate::storage::hex_prefix;
 use async_trait::async_trait;
+use catalyst_shared::test_keys::{ENTITY_KEY, address_of, signed_chain, wallet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -318,8 +319,6 @@ fn a_reservation_holds_its_pointers_until_released() {
     );
 }
 
-const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-
 /// A signed scene entity with no content files: its bytes, id and auth chain.
 async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Value) {
     signed_entity_of(serde_json::json!({
@@ -334,15 +333,9 @@ async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Va
 }
 
 async fn signed_entity_of(entity: Value) -> (Bytes, String, Value) {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
     let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
     let id = hash_bytes_v1(&bytes);
-    let key: PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
-    let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
-    let chain = serde_json::json!([
-        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
-        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
-    ]);
+    let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &id).await).unwrap();
     (bytes, id, chain)
 }
 
@@ -1179,8 +1172,6 @@ async fn deploy_function_matches_the_statement() {
 /// verified against the entity timestamp, files stored, one function call, provenance row.
 #[tokio::test]
 async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
-
     let Some(pool) = test_pool(2).await else {
         return;
     };
@@ -1211,18 +1202,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
     let entity_bytes = Bytes::from(serde_json::to_vec(&entity_json).unwrap());
     let entity_id = hash_bytes_v1(&entity_bytes);
 
-    let key: PrivateKeySigner = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        .parse()
-        .unwrap();
-    let signature = key
-        .sign_message(entity_id.as_bytes())
-        .await
-        .unwrap()
-        .to_string();
-    let chain = serde_json::json!([
-        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
-        {"type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": signature}
-    ]);
+    let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &entity_id).await).unwrap();
 
     let missing = fresh()
         .deploy_entity(
@@ -1292,7 +1272,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(row.0, format!("{:#x}", key.address()));
+    assert_eq!(row.0, address_of(ENTITY_KEY));
     assert_eq!(row.1, "scene");
     assert_eq!(row.2, pointers, "pointers are stored lowercase");
     assert_eq!(row.3, Some(serde_json::json!({"v": {"name": "e2e"}})));
@@ -1317,7 +1297,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
             .fetch_optional(&pool)
             .await
             .unwrap();
-    assert_eq!(signer, Some(format!("{:#x}", key.address())));
+    assert_eq!(signer, Some(address_of(ENTITY_KEY)));
     assert_eq!(
         storage.retrieve(&entity_id).await.unwrap(),
         Some(entity_bytes)
@@ -1536,8 +1516,7 @@ fn block_minutes_ago(minutes_ago: i64) -> u64 {
 }
 
 fn deployer_address() -> alloy_primitives::Address {
-    let key: alloy::signers::local::PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
-    key.address()
+    wallet(ENTITY_KEY).address()
 }
 
 /// A chain where the deployer held every parcel until `sold_block`.
