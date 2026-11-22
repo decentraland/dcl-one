@@ -949,8 +949,9 @@ async fn deploy_regular(
 /// a batch refused with a 400 before joining its upload (a missing
 /// `entityId` or a bad chain included), and a replay of a deployed entity
 /// that is not answered its timestamp or that asked a contract wallet; its
-/// other 429s and 503s, its resumes and its other replays are not counted. A spent source may only resume
-/// the signer's own upload or replay a deployed entity.
+/// other 429s and 503s, its resumes and its other replays are not counted.
+/// A spent source may only resume the signer's own upload or replay a
+/// deployed entity not signed by a contract wallet.
 async fn partial_batch(
     state: &SharedState,
     deployer: &super::write_deployer::WriteDeployer,
