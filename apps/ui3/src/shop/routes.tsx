@@ -3,9 +3,10 @@ import { lazy, Suspense, useMemo, type ComponentType, type ReactNode } from "rea
 import { Navigate, useLocation, useParams, useRoutes, type RouteObject } from "react-router";
 
 import Spinner from "../atoms/Spinner";
-import { ESTATE_CONTRACT, LAND_CONTRACT, landTokenId } from "../data/catalyst/landListing";
+import { SHOP_ALIASES, SHOP_BASE, resolveShopAliasTarget, type ShopAlias } from "@shop/route-aliases";
 
-export const SHOP_BASE = "/shop";
+export { SHOP_ALIASES, SHOP_BASE, aliasTarget, renamedTarget, resolveShopAlias } from "@shop/route-aliases";
+export type { ShopAlias } from "@shop/route-aliases";
 
 export type ShopPageId =
   | "overview"
@@ -100,96 +101,11 @@ export const SHOP_PAGES: readonly ShopPage[] = [
   page("notFound", "*", "./pages/NotFound.tsx", "Page Not Found"),
 ];
 
-export type ShopAlias = {
-  from: string;
-  kind: "alias" | "renamed" | "resolver";
-  to: string;
-};
-
-export const SHOP_ALIASES: readonly ShopAlias[] = [
-  { from: "", kind: "alias", to: "/shop/overview" },
-  { from: "market", kind: "alias", to: "/shop/items" },
-  { from: "my-purchases", kind: "alias", to: "/shop/activity" },
-  { from: "import", kind: "alias", to: "/shop/activity?section=listings" },
-  { from: "authorizations", kind: "alias", to: "/shop/settings" },
-  { from: "assets", kind: "renamed", to: "/shop/items" },
-  { from: "assets/*", kind: "renamed", to: "/shop/items" },
-  { from: "my-assets", kind: "renamed", to: "/shop/my-items" },
-  { from: "browse", kind: "resolver", to: "/shop/items" },
-  { from: "parcels/:x/:y", kind: "resolver", to: "/shop/token/{land}/{tokenId}" },
-  { from: "parcels/:x/:y/detail", kind: "resolver", to: "/shop/token/{land}/{tokenId}" },
-  { from: "estates/:estateId", kind: "resolver", to: "/shop/token/{estate}/{estateId}" },
-  { from: "estates/:estateId/detail", kind: "resolver", to: "/shop/token/{estate}/{estateId}" },
-];
-
 export type ShopRouteOptions = {
   contracts?: { land: string; estate: string };
   iapMode?: () => boolean;
   fallback?: ReactNode;
 };
-
-export function aliasTarget(to: string, search: string, hash: string): string {
-  const mark = to.indexOf("?");
-  const path = mark === -1 ? to : to.slice(0, mark);
-  const params = new URLSearchParams(search);
-  for (const [key, value] of new URLSearchParams(mark === -1 ? "" : to.slice(mark + 1))) params.set(key, value);
-  const query = params.toString();
-  return `${path}${query ? `?${query}` : ""}${hash}`;
-}
-
-export function renamedTarget(to: string, rest: string | undefined, search: string, hash: string): string {
-  return `${to}${rest ? `/${rest}` : ""}${search}${hash}`;
-}
-
-function browseTarget(search: string, hash: string): string {
-  const section = new URLSearchParams(search).get("section");
-  if (section === "land" || section === "lands") return `/shop/lands${hash}`;
-  if (section === "ens" || section === "names") return `/shop/names${hash}`;
-  return `/shop/items${search}${hash}`;
-}
-
-function matchPath(pattern: string, path: string): Record<string, string> | null {
-  const want = pattern.split("/").filter(Boolean);
-  const got = path.split("/").filter(Boolean);
-  const params: Record<string, string> = {};
-  for (let i = 0; i < want.length; i++) {
-    const seg = want[i]!;
-    if (seg === "*") {
-      params["*"] = got.slice(i).join("/");
-      return params;
-    }
-    const value = got[i];
-    if (value === undefined) return null;
-    if (seg.startsWith(":")) params[seg.slice(1)] = decodeURIComponent(value);
-    else if (seg !== value) return null;
-  }
-  return got.length === want.length ? params : null;
-}
-
-function resolveTarget(alias: ShopAlias, params: Record<string, string>, search: string, hash: string, opts: ShopRouteOptions): string | null {
-  if (alias.kind === "alias") return aliasTarget(alias.to, search, hash);
-  if (alias.kind === "renamed") return renamedTarget(alias.to, alias.from.endsWith("/*") ? params["*"] : undefined, search, hash);
-  if (alias.from === "browse") return browseTarget(search, hash);
-  const contracts = opts.contracts ?? { land: LAND_CONTRACT, estate: ESTATE_CONTRACT };
-  if (alias.from.startsWith("parcels")) {
-    const x = Number(params.x);
-    const y = Number(params.y);
-    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) return null;
-    return `/shop/token/${contracts.land.toLowerCase()}/${landTokenId(x, y)}${search}${hash}`;
-  }
-  if (!/^[0-9]+$/.test(params.estateId ?? "")) return null;
-  return `/shop/token/${contracts.estate.toLowerCase()}/${params.estateId}${search}${hash}`;
-}
-
-export function resolveShopAlias(pathname: string, search = "", hash = "", opts: ShopRouteOptions = {}): string | null {
-  if (pathname !== SHOP_BASE && !pathname.startsWith(`${SHOP_BASE}/`)) return null;
-  const rest = pathname.slice(SHOP_BASE.length).replace(/^\/+|\/+$/g, "");
-  for (const alias of SHOP_ALIASES) {
-    const params = matchPath(alias.from, rest);
-    if (params) return resolveTarget(alias, params, search, hash, opts);
-  }
-  return null;
-}
 
 export function shopPath(id: Exclude<ShopPageId, "notFound">, params: Record<string, string | number> = {}): string {
   const found = SHOP_PAGES.find((p) => p.id === id)!;
@@ -241,7 +157,7 @@ export function shopPageComponent(page: ShopPage, modules: Record<string, () => 
 function AliasRoute({ alias, opts }: { alias: ShopAlias; opts: ShopRouteOptions }) {
   const params = useParams();
   const { search, hash } = useLocation();
-  const target = resolveTarget(alias, params as Record<string, string>, search, hash, opts);
+  const target = resolveShopAliasTarget(alias, params as Record<string, string>, search, hash, opts);
   return target ? <Navigate to={target} replace /> : <ShopPlaceholder title="Not found" />;
 }
 

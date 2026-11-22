@@ -43,9 +43,11 @@ use bevy_atmosphere::{
     prelude::AtmosphereCamera,
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{AppConfig, SkyReflectionSetting};
+use common::{
+    sky_preset::LIGHT_UNIT_LUX,
+    structs::{AppConfig, SkyReflectionSetting},
+};
 use console::DoAddConsoleCommand;
-use scene_runner::update_world::lights::LIGHT_UNIT_LUX;
 use std::f32::consts::PI;
 
 const SKY_ENVMAP_SHADER_HANDLE: Handle<Shader> =

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { renderHook } from "@testing-library/react";
+import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
@@ -21,6 +21,7 @@ const ON = { "dapps-shop-marketplace-features": true };
 const LATER = new Date(Date.now() + 86_400_000).toISOString();
 
 afterEach(() => {
+  cleanup();
   facts.identity = null;
   facts.kind = null;
   facts.usable = true;
@@ -61,6 +62,17 @@ describe("the Marketplace on sites' own pages", () => {
     facts.identity = { signer: ACCOUNT, expiration: LATER };
     renderHook(() => useMarketplaceHere(ACCOUNT));
     expect(primed.calls).toBe(1);
+  });
+
+  it("uses only the Sites flag reader on mount and focus before the first answer", () => {
+    const external = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    facts.identity = { signer: ACCOUNT, expiration: LATER };
+    facts.kind = "web3";
+    const { result } = renderHook(() => useMarketplaceHere(ACCOUNT));
+    window.dispatchEvent(new Event("focus"));
+    expect(primed.calls).toBe(2);
+    expect(result.current).toBe(false);
+    expect(external).not.toHaveBeenCalled();
   });
 
   it("skips both flag reads and focus refreshes for a signed-out visitor", () => {

@@ -231,9 +231,11 @@ pub(super) fn build_routes(
         .nest(
             "/cast-presenter-service",
             comms::cast_presenter::router(comms::cast_presenter::presenter(
+                gatekeeper.clone(),
                 config.social.cast_bot_bin.clone(),
                 comms::cast_presenter::LiveKitTarget::from_livekit(&gatekeeper.livekit),
                 config.social.max_concurrent_presentations,
+                Config::non_empty(&config.social.cast_presenter_public_url),
             )),
         )
         // The player report intake (`gatekeeper::reports`). Reports and their

@@ -106,7 +106,7 @@ class ConfigurationTest(unittest.TestCase):
         ]), ["/_x", "/a$b", "/api/marketplace-screen", "/api/screens", "/download", "/download_success",
              "/internal", "/places", "/play", "/profile", "/robots.txt"])
 
-    def test_sites_route_files_claim_no_landings_prefix(self):
+    def test_sites_route_files_cover_public_pages_without_claiming_landings(self):
         # The same file list package.nix hands the gateway.
         routes = Path(__file__).parents[3] / "apps" / "sites" / "src" / "routes" / "routes"
         files = [path.name for path in routes.iterdir() if path.is_file()
@@ -114,6 +114,13 @@ class ConfigurationTest(unittest.TestCase):
         prefixes = gateway.site_prefixes(files)
         self.assertNotIn("/landings", prefixes)
         self.assertIn("/communities", prefixes)
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": files, "internal": [], "node": [], "deploy": [], "aliases": []}
+        text = gateway.render(table, cfg, "/mime.types")
+        for location in ("= /press", "/press/"):
+            with self.subTest(location=location):
+                self.assertTrue(f"location {location} {{\nproxy_pass http://sites;" in text)
+        self.assertNotIn("location /press {", text)
 
     def test_sites_cannot_claim_internal_api_paths(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
@@ -614,6 +621,22 @@ class ConfigurationTest(unittest.TestCase):
                     (kind, prefix) for kind, prefix in sites_locations
                     if (path == prefix if kind == "= " else path.startswith(prefix)) and prefix != "/"
                 ])
+
+    def test_ui_gallery_routes_to_sites_before_any_regex(self):
+        # Static files with no route file: `^~` keeps every gallery path on Sites ahead of the
+        # regex locations, and the exact form lets Sites redirect /ui-gallery to /ui-gallery/.
+        root = Path(__file__).parents[3]
+        sites = sorted(path.name for path in (root / "apps/sites/src/routes/routes").iterdir())
+        self.assertNotIn("/ui-gallery", gateway.site_prefixes(sites))
+        table = {"sites": sites, "internal": [], "aliases": [], "node": [], "deploy": []}
+        config = gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
+        self.assertIn("location = /ui-gallery {\nproxy_pass http://sites;", config)
+        self.assertIn("location ^~ /ui-gallery/ {\nproxy_pass http://sites;", config)
+
+    def test_a_sites_route_cannot_claim_the_ui_gallery(self):
+        table = {"sites": ["ui-gallery.tsx"], "internal": [], "aliases": [], "node": [], "deploy": []}
+        with self.assertRaisesRegex(ValueError, "Two locations have the name = /ui-gallery"):
+            gateway.render(table, gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"}), "/mime.types")
 
     def test_robots_txt_routes_to_sites(self):
         root = Path(__file__).parents[3]

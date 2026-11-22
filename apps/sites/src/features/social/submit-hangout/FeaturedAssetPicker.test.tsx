@@ -64,6 +64,7 @@ describe("when searching featured assets", () => {
     });
     it("should retry the same query and show the recovered result", async () => {
       expect(screen.getByRole("alert").textContent).toContain("Catalogue unavailable");
+      expect(screen.getByRole("alert").dataset.tone).toBe("error");
       await user.click(screen.getByRole("button", { name: "Retry asset search" }));
       await screen.findByRole("button", { name: /Music wearable\s*Item/ });
       expect(searchFeaturedAssets).toHaveBeenCalledTimes(2);

@@ -22,6 +22,7 @@ pub mod health;
 pub mod http_util;
 pub mod identity;
 pub mod js;
+pub mod json_number;
 pub mod limits;
 pub mod livekit;
 pub mod markup;

@@ -126,6 +126,7 @@ pub(super) fn comms_settings(config: &Config) -> anyhow::Result<comms::gatekeepe
         cast2_url: config.social.cast2_url.clone(),
         commit_hash: config.node.commit_hash.clone(),
         allow_local_preview: config.social.allow_local_preview,
+        realm_name: non_empty(&config.node.realm_name),
     })
     .context("LIVEKIT_* / COMMS_* configuration")
 }

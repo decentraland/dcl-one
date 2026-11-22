@@ -29,6 +29,7 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+rand.workspace = true
 ipnet.workspace = true
 tokio-util.workspace = true
 parking_lot.workspace = true

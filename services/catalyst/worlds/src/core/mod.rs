@@ -121,6 +121,8 @@ pub struct Settings {
     pub owner_reconcile_interval: std::time::Duration,
     /// `ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`: the access allow-list caps.
     pub access_caps: store::AccessCaps,
+    /// `REALM_NAME`: this node's Genesis City realm (default `main`).
+    pub realm_name: String,
 }
 
 impl std::fmt::Debug for Settings {
@@ -149,6 +151,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         })
     }
 
@@ -181,6 +184,11 @@ impl Settings {
         self
     }
 
+    pub fn with_realm_name(mut self, realm_name: String) -> Self {
+        self.realm_name = realm_name;
+        self
+    }
+
     pub fn with_max_file_count(mut self, max_file_count: u32) -> Self {
         self.max_file_count = max_file_count as usize;
         self
@@ -204,6 +212,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }
 }

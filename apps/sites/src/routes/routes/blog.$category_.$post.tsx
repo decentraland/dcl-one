@@ -1,9 +1,10 @@
-import { BlogPostView } from "@/features/blog/BlogPostView";
+import { BlogPostView } from "@/pages/blog/BlogPostView";
 import { loadBlogPost } from "@/data/lib/blog/pages";
 import "@dcl/one-ui/foundations/foundations.css";
 
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
-import { blogHeaders, blogResponse } from "../lib/blog";
+import { blogHeaders, blogPostMeta, blogResponse } from "../lib/blog";
+import { publicBase } from "../lib/social-meta";
 
 import type { Route } from "./+types/blog.$category_.$post";
 
@@ -15,13 +16,8 @@ export function loader({ request, context, params }: Route.LoaderArgs) {
   return blogResponse(request, context, loadBlogPost(request, params.category, params.post));
 }
 
-export function meta({ loaderData }: Route.MetaArgs) {
-  if (loaderData?.state !== "ok") {
-    const title = loaderData?.state === "not-found" ? "Post not found" : "Blog unavailable";
-    return [{ title: `${title} | Decentraland Blog` }];
-  }
-  const { post } = loaderData;
-  return [{ title: `${post.title} | Decentraland Blog` }, ...(post.description ? [{ name: "description", content: post.description }] : [])];
+export function meta({ loaderData, matches, location }: Route.MetaArgs) {
+  return blogPostMeta(loaderData, publicBase(matches), location.pathname);
 }
 
 export default function BlogPostRoute({ loaderData }: Route.ComponentProps) {

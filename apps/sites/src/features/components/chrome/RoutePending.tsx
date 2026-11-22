@@ -1,5 +1,5 @@
 import { useNavigation, useRevalidator } from "react-router";
-import Spinner from "@ui/atoms/Spinner";
+import { Spinner } from "@dcl/one-ui";
 import "./routepending.css";
 
 /**
@@ -31,7 +31,7 @@ export default function RoutePending() {
   return <>
     <div className="nav-progress" aria-hidden />
     <div className="route-pending" role="status" aria-live="polite">
-      <Spinner size={20} aria-hidden />
+      <Spinner variant="light" aria-hidden />
       <span>{label}</span>
     </div>
   </>;

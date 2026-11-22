@@ -393,8 +393,8 @@ pub async fn names_for(
 }
 
 /// An explicit active `scene_admins` row, else ownership of the place: the
-/// world's NAME (personal rule, the stored owner, then the name authority)
-/// for a world, the LAND (a parcel directly or through its estate) for a
+/// world's NAME (personal rule, then the name authority; never the stored
+/// owner) for a world, the LAND (a parcel directly or through its estate) for a
 /// Genesis place, all through `Policy::is_admin`. Without a marketplace
 /// reader a non-admin caller is refused (the old crate's "only explicit
 /// scene admins can moderate" degrade); a reader that cannot be asked is
@@ -405,9 +405,6 @@ pub async fn scene_owner_or_admin_decision(
     signer: &Address,
 ) -> PermissionDecision {
     let place_id = place.place_id();
-    let Ok(scene) = SceneId::parse(place_id) else {
-        return PermissionDecision::refused(NOT_OWNER_OR_ADMIN_MSG);
-    };
     let place_row = match place.get().await {
         Ok(row) => row,
         Err(error) => {
@@ -433,10 +430,10 @@ pub async fn scene_owner_or_admin_decision(
     let scene_ref = match world.as_ref() {
         Some(world) => SceneRef::World {
             world,
-            scene: &scene,
+            place: place.admin_key(),
         },
         None => SceneRef::Genesis {
-            scene: &scene,
+            place: place.admin_key(),
             parcels: &parcels,
         },
     };

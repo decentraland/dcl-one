@@ -8,7 +8,7 @@ import { Link, useLocation, useNavigate } from "react-router";
 import Button from "../../atoms/Button";
 import Icon from "../discovery/components/Icon";
 import Rail from "../discovery/components/Rail";
-import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
+import SuggestedForYouRow, { RAIL_SIZE as CART_RAIL_SIZE, useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { fetchCatalogByIds, fetchListings } from "@shop/discovery/api";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
@@ -54,8 +54,6 @@ function guidanceRevalidation(co: CheckoutView): GuidanceRevalidation | null {
       return null;
   }
 }
-
-const CART_RAIL_SIZE = 12;
 
 function lineItemKey(line: { asset: { contract: string; token: { kind: string; itemId?: string } } }): string | null {
   return line.asset.token.kind === "item" && line.asset.token.itemId ? `${line.asset.contract.toLowerCase()}-${line.asset.token.itemId}` : null;

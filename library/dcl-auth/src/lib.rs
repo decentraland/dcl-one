@@ -7,8 +7,11 @@
 //! wire primitives shared with them. `rpc_validator`/`validation_cache` are the
 //! write-path EIP-1654 contract-wallet check (JSON-RPC `isValidSignature` behind
 //! a positive-result cache) that the write deployer plugs into `verify`.
-//! `signed_fetch` verifies the `x-identity-*` header bag for every surface that
-//! takes one: the node's routes and sockets and dcl-scene-cli's preview server.
+//! `request` is the signed-request verifier (`x-identity-*`) every surface moves
+//! onto: HTTP routes, socket auth frames and the Pulse handshake;
+//! `signed_fetch` keeps the steps the surfaces not yet on it assemble.
+//! `scoped_login` is the scoped delegation (ADR-162) and `js_date` the
+//! `Date.parse` its expirations are read with.
 
 pub mod admin_bearer;
 pub mod auth_chain;
@@ -19,9 +22,12 @@ pub mod error;
 pub mod eth_address;
 pub mod hash;
 pub mod hex0x;
+pub mod js_date;
 pub mod pointer;
 pub mod recover;
+pub mod request;
 pub mod rpc_validator;
+pub mod scoped_login;
 pub mod signed_fetch;
 mod unixfs;
 pub mod validation_cache;
@@ -42,10 +48,10 @@ pub use hash::{
 pub use hex0x::{HexDecodeError, decode_hex_0x};
 pub use pointer::{canonicalize_pointer, is_canonical_pointer, parse_pointer};
 pub use recover::{recover_address, recover_address_from_digest};
-pub use rpc_validator::RpcEip1654Validator;
+pub use rpc_validator::{RpcEip1654Validator, rpc_client};
 pub use validation_cache::{ValidationCache, cached_rpc_validator};
 pub use verify::{
     LOGIN_PURPOSE, verify_auth_chain, verify_auth_chain_async, verify_login_chain,
     verify_login_chain_async,
 };
-pub use wallet::{SignError, Wallet, create_simple_auth_chain};
+pub use wallet::{SignError, Wallet, create_scoped_auth_chain, create_simple_auth_chain};

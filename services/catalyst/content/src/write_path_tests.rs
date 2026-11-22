@@ -559,6 +559,58 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
     );
 }
 
+/// A synced node takes a deploy of a type once that type bootstrapped: a
+/// partially synced node (`PHASED_SYNC`, profiles still bootstrapping) takes a
+/// scene and refuses a profile, and a `Failed` sync refuses both.
+#[tokio::test]
+async fn a_deploy_waits_until_its_type_bootstrapped() {
+    let node = TestNode::without_db("deploy-type-gate").await;
+    attach(&node.state, true, None, None);
+    let entity = |kind: &str| {
+        Bytes::from(
+            json!({"version": "v3", "type": kind, "pointers": ["0x00000000000000000000000000000000000000aa"],
+                   "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+            .to_string(),
+        )
+    };
+    let partial = SyncState::PartiallySynced {
+        ready_types: vec!["scene".into()],
+    };
+    for (state, kind, taken) in [
+        (partial.clone(), "scene", true),
+        (partial, "profile", false),
+        (SyncState::Failed, "scene", false),
+        (SyncState::Syncing, "profile", true),
+    ] {
+        node.state.sync.set_state(state.clone());
+        let file = entity(kind);
+        let id = crate::auth::hash_bytes_v1(&file);
+        let (status, _, body) = call(
+            &node.router(),
+            deploy_request(
+                "/content/entities",
+                &id,
+                &unsigned_chain(&id),
+                &[(&id, &file)],
+            ),
+        )
+        .await;
+        let refused = (status, json_of(&body))
+            == (
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({"error": writes::BOOTSTRAPPING_MESSAGE}),
+            );
+        assert_eq!(!refused, taken, "{state:?} {kind}: {status} {body:?}");
+        if taken {
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "{state:?} {kind}: passed the gate to validation: {body:?}"
+            );
+        }
+    }
+}
+
 /// Pointers are lowercased as the entity file is read, so two that differ
 /// only by case are the same pointer twice.
 #[tokio::test]

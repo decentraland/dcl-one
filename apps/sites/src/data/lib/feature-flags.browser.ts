@@ -3,7 +3,7 @@
 // every flag is off, so they come from this server's reading (/internal/feature-flags). Read once per document: a page
 // the server rendered, or an earlier navigation, has already primed them.
 
-import { primeRemoteFlags, remoteFlagsPrimed } from "@ui/shop/discovery/lib/remoteFlags";
+import { primeRemoteFlags, remoteFlagsPrimed } from "@dcl/one-ui/apps/shop/remote-flags";
 
 const TIMEOUT_MS = 1_500;
 
@@ -17,6 +17,8 @@ export async function primeDappsFlags(): Promise<void> {
       return;
     }
     const body = (await res.json()) as { flags?: Record<string, boolean>; variants?: Record<string, string> } | Record<string, boolean>;
+    // Shop may have hydrated with its loader answer while this request was pending.
+    if (remoteFlagsPrimed()) return;
     // `{ flags, variants }`; a bare flags map is what a server from before the variants answers.
     if (body && typeof body.flags === "object" && body.flags !== null) {
       const answer = body as { flags: Record<string, boolean>; variants?: Record<string, string> };

@@ -63,15 +63,21 @@ pub enum WorldAdmission {
     Open(AccessType),
 }
 
-/// The `social.scene_bans.place_id` a scene's bans live under: a world scene
-/// by world and base parcel, so a ban survives redeploys (the old
-/// worlds-content-server's key), a Genesis scene by its entity id.
+/// The `social.scene_bans.place_id` a scene's bans live under, stable across
+/// redeploys: a world scene by world and base parcel (the old
+/// worlds-content-server's key), a Genesis scene by its place, the key its
+/// admins share (`rooms::ActiveDeployment::place_key`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SceneBanKey(String);
 
 impl SceneBanKey {
     pub fn world(world: &WorldName, base: Parcel) -> Self {
         Self(format!("{}:{base}", world.key()))
+    }
+
+    /// A Genesis deployment's key: its place.
+    pub fn genesis(deployment: &crate::rooms::ActiveDeployment) -> Self {
+        Self(deployment.place_key())
     }
 
     pub fn scene(scene: &SceneId) -> Self {
@@ -118,23 +124,24 @@ pub enum Access {
     NotAllowed,
 }
 
-/// Which scene a moderation question is about.
+/// Which scene a moderation question is about. `place` is where its explicit
+/// admins are granted (`rooms::ActiveDeployment::place_key`).
 #[derive(Debug, Clone)]
 pub enum SceneRef<'a> {
     World {
         world: &'a WorldName,
-        scene: &'a SceneId,
+        place: &'a str,
     },
     Genesis {
-        scene: &'a SceneId,
+        place: &'a str,
         parcels: &'a ParcelSet,
     },
 }
 
 impl SceneRef<'_> {
-    pub fn scene_id(&self) -> &SceneId {
+    pub fn place(&self) -> &str {
         match self {
-            Self::World { scene, .. } | Self::Genesis { scene, .. } => scene,
+            Self::World { place, .. } | Self::Genesis { place, .. } => place,
         }
     }
 }

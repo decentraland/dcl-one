@@ -199,6 +199,278 @@ async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_cal
     db.drop().await;
 }
 
+/// `data` as the ABI encodes the one `string` of a data log.
+fn abi_string(document: &str) -> String {
+    let bytes = document.as_bytes();
+    let mut padded = bytes.to_vec();
+    padded.resize(bytes.len().div_ceil(32) * 32, 0);
+    let body: String = padded.iter().map(|b| format!("{b:02x}")).collect();
+    format!("0x{:064x}{:064x}{body}", 32, bytes.len())
+}
+
+fn create_estate(block: u64, index: u32, owner: &str, estate: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address: ESTATE,
+        topics: vec![
+            TOPIC_CREATE_ESTATE.into(),
+            topic_addr(owner),
+            topic_uint(estate),
+        ],
+        data: abi_string(document),
+    }
+}
+
+fn data_update(block: u64, index: u32, address: &'static str, asset: &str, document: &str) -> Log {
+    Log {
+        block,
+        index,
+        address,
+        topics: vec![
+            TOPIC_UPDATE.into(),
+            topic_token(asset),
+            topic_addr(ALICE),
+            topic_addr(ALICE),
+        ],
+        data: abi_string(document),
+    }
+}
+
+async fn estate_data_rows(pool: &PgPool) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT estate_id::text, name FROM land_authz.estate_data_event ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The indexer keeps the Estate registry's version-0 data documents (and
+/// not the LAND registry's, which share the `Update` topic, nor one that
+/// does not parse); a minted estate holding no LAND answers its latest
+/// document's name and description, or empty strings without one.
+#[tokio::test]
+async fn a_dissolved_estate_answers_its_latest_data_document() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            create_estate(s + 10, 1, ALICE, "501", "0,\"First\",\"first words\""),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            transfer(s + 12, 0, ESTATE, ZERO_ADDR, ALICE, "500"),
+            add_land(s + 12, 1, "500", TOKEN_37_55),
+            data_update(
+                s + 20,
+                0,
+                ESTATE,
+                "501",
+                "0,\"Dissolved\",\"Once an estate\"",
+            ),
+            data_update(s + 21, 0, ESTATE, "501", "not a document"),
+            data_update(s + 22, 0, LAND, TOKEN_37_55, "0,\"A parcel\",\"\""),
+            data_update(s + 23, 0, ESTATE, "500", "0,\"Kept\","),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let url = serve(chain.clone()).await;
+    let state = state_over(
+        db.pool.clone(),
+        Settings {
+            rpc_url: Some(url),
+            index_enabled: true,
+            ..Settings::for_tests()
+        },
+        None,
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "unready"
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![
+            ("501".into(), Some("First".into())),
+            ("501".into(), Some("Dissolved".into())),
+            ("500".into(), Some("Kept".into())),
+        ],
+        "the estates' version-0 documents only"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "Dissolved".into(),
+            description: "Once an estate".into(),
+        })
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        DissolvedEstate::Dissolved(EstateData::default()),
+        "no document: empty strings"
+    );
+    assert_eq!(
+        state.dissolved_estate("500").await,
+        DissolvedEstate::NotDissolved,
+        "holds LAND"
+    );
+    assert_eq!(
+        state.dissolved_estate("999").await,
+        DissolvedEstate::NotDissolved,
+        "never minted"
+    );
+
+    // A reorg past the documents drops them with the log.
+    reorg_from(&chain, s + 20, vec![]);
+    chain.head.store(s + 55, Ordering::SeqCst);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.reorg_rewound_to.is_some(), "{out:?}");
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert_eq!(
+        estate_data_rows(&db.pool).await,
+        vec![("501".into(), Some("First".into()))]
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "First".into(),
+            description: "first words".into(),
+        })
+    );
+    db.drop().await;
+}
+
+/// A registry switch keeps the old registry's documents and never reads
+/// them: an estate id the configured registry minted without a document
+/// answers empty strings, not the name the old registry's estate of that id
+/// carried.
+#[tokio::test]
+async fn a_registry_switch_leaves_the_old_registrys_documents_unread() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let s = START;
+    let chain = FakeChain::new(
+        s + 50,
+        vec![
+            transfer(s + 10, 0, ESTATE, ZERO_ADDR, ALICE, "501"),
+            transfer(s + 11, 0, ESTATE, ZERO_ADDR, ALICE, "502"),
+            create_estate(s + 11, 1, ALICE, "502", "0,\"New\",\"new words\""),
+        ],
+        1_000,
+        1_000_000,
+    );
+    let configured = Settings {
+        rpc_url: Some(serve(chain).await),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    // A published index of other registries, whose estates 501 and 502 are
+    // dissolved and named.
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: OLD_ESTATE.into(),
+        replay_from_block: None,
+        ..configured.clone()
+    };
+    let old_last = (s + 40) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true, \
+         full_replay_started = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.token_right (token_address, token_id, updated_block, updated_log) \
+         VALUES ($1, 501, $2, 0), ($1, 502, $2, 1)",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 2)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_data_event \
+             (block_number, log_index, token_address, estate_id, name, description) \
+         VALUES ($2, 0, $1, 501, 'Old 501', 'old words'), ($2, 1, $1, 502, 'Old 502', 'old words')",
+    )
+    .bind(OLD_ESTATE)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    let old_state = state_over(pool.clone(), old, None);
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "Old 501".into(),
+            description: "old words".into(),
+        }),
+        "the old registries' reader answers its own document"
+    );
+
+    let state = state_over(pool.clone(), configured, None);
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown,
+        "not its cursor"
+    );
+    let (_jobs, ctx) = job_ctx().await;
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    let kept: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT token_address, estate_id::text, name FROM land_authz.estate_data_event \
+         ORDER BY block_number, log_index",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            (ESTATE.into(), "502".into(), Some("New".into())),
+            (OLD_ESTATE.into(), "501".into(), Some("Old 501".into())),
+            (OLD_ESTATE.into(), "502".into(), Some("Old 502".into())),
+        ],
+        "the old registry's rows stay"
+    );
+    assert_eq!(
+        state.dissolved_estate("501").await,
+        DissolvedEstate::Dissolved(EstateData::default()),
+        "the old registry's later document names no estate of this one"
+    );
+    assert_eq!(
+        state.dissolved_estate("502").await,
+        DissolvedEstate::Dissolved(EstateData {
+            name: "New".into(),
+            description: "new words".into(),
+        }),
+        "its own document, though the old registry's is later"
+    );
+    assert_eq!(
+        old_state.dissolved_estate("501").await,
+        DissolvedEstate::Unknown
+    );
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -3504,10 +3776,18 @@ async fn live_rpc_reads_and_decodes_the_first_land_logs() {
         logs.len(),
         events.len()
     );
+    let rights_logs = logs
+        .iter()
+        .filter(|log| {
+            !log.topics
+                .first()
+                .is_some_and(|t| crate::events::is_data_topic(t))
+        })
+        .count();
     assert_eq!(
         events.len(),
-        logs.len(),
-        "every log of the seven topics decodes"
+        rights_logs,
+        "every log of the rights topics decodes"
     );
 }
 

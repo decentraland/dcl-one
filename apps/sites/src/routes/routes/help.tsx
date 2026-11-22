@@ -1,23 +1,21 @@
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { useEffect, useRef } from "react";
 
 import { pageLoader, type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import { helpConfig } from "@/data/lib/help/config.server";
-import { HELP_COPY } from "@/features/help/content";
 import { HelpView } from "@/features/help/HelpView";
 
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/help";
 
 const STORY: StoryId = "landings/help";
 const FALLBACK: PageDefaults = { variant: "config_driven" };
 
-export function meta() {
-  return [
-    { title: HELP_COPY.pageTitle },
-    { name: "description", content: HELP_COPY.description },
-  ];
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/help", publicBase(matches));
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
@@ -38,13 +36,13 @@ export default function Help({ loaderData }: Route.ComponentProps) {
 
   return (
     // No top-bar entry is highlighted on the help center, as on decentraland.org.
-    <SitesChrome active="play">
+    <SitesLayout active="play">
       <HelpView
         services={services}
         statusPageUrl={statusPageUrl}
         intercomAppId={intercomAppId}
         onCreatorFundClick={(button) => track("lp_help_creator_fund_clicked", { button }, context)}
       />
-    </SitesChrome>
+    </SitesLayout>
   );
 }

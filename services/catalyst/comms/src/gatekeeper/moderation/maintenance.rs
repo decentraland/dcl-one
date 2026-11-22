@@ -1,7 +1,7 @@
 //! Periodic removal cleanup and room metadata reconciliation.
 use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlace, RemovedPlaces};
 use crate::gatekeeper::streaming::notifications::{notification, owner};
-use crate::gatekeeper::{CommsState, admission::scene, errors::ApiError};
+use crate::gatekeeper::{CommsState, SharedState, admission::scene, errors::ApiError, streaming};
 use crate::interfaces::StreamingNotificationKind;
 use serde_json::{Value, json};
 
@@ -33,7 +33,7 @@ fn info(context: &PlaceContext) -> scene::PlaceInfo {
     }
 }
 async fn cleanup(
-    state: &CommsState,
+    state: &SharedState,
     feed: &RemovedPlaces,
     event: &RemovedPlace,
 ) -> Result<(), ApiError> {
@@ -50,36 +50,72 @@ async fn cleanup(
         feed.save_owner(event.event_id, recipient.as_str()).await?;
     }
     if event.cleaned_at.is_none() {
-        let accesses: Vec<(uuid::Uuid, Option<String>)> = sqlx::query_as(
-            "SELECT id, ingress_id FROM social.scene_stream_access WHERE place_id = $1 AND active",
+        let ingress: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id = $1 AND active AND ingress_id <> '')",
         )
         .bind(&event.place_id)
-        .fetch_all(&state.pool)
+        .fetch_one(&state.pool)
         .await?;
-        let ingresses: Vec<&str> = accesses
-            .iter()
-            .filter_map(|(_, ingress)| ingress.as_deref().filter(|id| !id.is_empty()))
-            .collect();
-        if !ingresses.is_empty() && !state.livekit.configured {
+        if ingress && !state.livekit.configured {
             return Err(ApiError::http(503, "LiveKit ingress unavailable"));
         }
-        for ingress in ingresses {
-            state
-                .ingress()
-                .delete_ingress(ingress)
-                .await
-                .map_err(|_| ApiError::http(503, "LiveKit ingress revocation failed"))?;
-        }
-        let access_ids: Vec<uuid::Uuid> = accesses.iter().map(|(id, _)| *id).collect();
         let mut tx = state.pool.begin().await?;
-        sqlx::query("DELETE FROM social.scene_bans WHERE place_id = $1")
-            .bind(&event.place_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE social.scene_admins SET active = false, removed_at = $2 WHERE place_id = $1 AND active").bind(&event.place_id).bind(event.removed_at).execute(&mut *tx).await?;
-        sqlx::query("UPDATE social.scene_stream_access SET active = false, streaming = false WHERE id = ANY($1) AND active").bind(&access_ids).execute(&mut *tx).await?;
+        // Bans are on the `<world>:<base>` keys of a world's scenes, or on a
+        // Genesis base parcel, where they end with the last enabled place
+        // based there. A ban made after the removal stays.
+        let (bans, key) = if event.world {
+            (
+                "left(place_id, length($2) + 1) = $2 || ':' \
+                 AND strpos(substr(place_id, length($2) + 2), ':') = 0",
+                event
+                    .world_name
+                    .as_deref()
+                    .unwrap_or(&event.place_id)
+                    .to_lowercase(),
+            )
+        } else {
+            (
+                "place_id = $2 AND NOT EXISTS (SELECT 1 FROM explore.place WHERE disabled IS FALSE AND world IS FALSE AND base_position = $2)",
+                event.base_position.clone(),
+            )
+        };
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM social.scene_bans WHERE banned_at <= $3 AND (place_id = $1 OR ({bans}))"
+        )))
+        .bind(&event.place_id)
+        .bind(key)
+        .bind(event.removed_at)
+        .execute(&mut *tx)
+        .await?;
+        // Grants are on the places of a world's scenes, or on a Genesis base
+        // parcel, where they end with the last enabled place based there. A
+        // grant made after the removal stays: this cleanup can run late.
+        let (grants, key) = if event.world {
+            (
+                "IN (SELECT identity::text FROM explore.world_scene_place WHERE world_name = lower($1) AND active)",
+                event.world_name.as_ref().unwrap_or(&event.place_id),
+            )
+        } else {
+            (
+                "= $1 AND NOT EXISTS (SELECT 1 FROM explore.place WHERE disabled IS FALSE AND world IS FALSE AND base_position = $1)",
+                &event.base_position,
+            )
+        };
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE social.scene_admins SET active = false, removed_at = $2 \
+             WHERE active AND added_at <= $2 AND place_id {grants}"
+        )))
+        .bind(key)
+        .bind(event.removed_at)
+        .execute(&mut *tx)
+        .await?;
+        let ended =
+            streaming::end_removed_place(&mut tx, &event.place_id, event.removed_at).await?;
         RemovedPlaces::mark_cleaned(&mut tx, event.event_id).await?;
         tx.commit().await?;
+        if let Some(id) = ended {
+            streaming::settle_cleanup(state, id, &event.place_id);
+        }
     }
     let recipient = recipient?;
     let key = format!("place-removed-{}", event.event_id);
@@ -114,10 +150,12 @@ fn metadata_batch(mut rooms: Vec<String>, after: Option<&str>) -> (Vec<String>, 
     (batch, next)
 }
 
+/// The scene behind `room`, with the key its explicit admins are granted on
+/// and the key its bans live under.
 async fn metadata_scene_context(
     state: &CommsState,
     room: &str,
-) -> Result<Option<PlaceContext>, ApiError> {
+) -> Result<Option<(PlaceContext, String, crate::access::SceneBanKey)>, ApiError> {
     use crate::rooms::{ParsedRoom, parse_room, resolve_room_name};
     let resolved = match parse_room(room) {
         Some(ParsedRoom::WorldScene(_)) => resolve_room_name(state.scenes.as_ref(), room)
@@ -194,7 +232,7 @@ async fn metadata_scene_context(
     if &deployment.scene_id != scene {
         return Ok(None);
     }
-    Ok(Some(PlaceContext {
+    let context = PlaceContext {
         place_id: scene.as_str().to_owned(),
         // Current policy is authoritative for the owner. A Places snapshot
         // cannot replace scene-keyed rows, owner or active parcel authority.
@@ -203,14 +241,18 @@ async fn metadata_scene_context(
         world_name: resolved.realm.world().map(|world| world.key().to_owned()),
         base_position: deployment.base.canonical(),
         positions: json!(deployment.parcels.canonical()),
-    }))
+    };
+    let Some(ban_key) = resolved.ban_key() else {
+        return Ok(None);
+    };
+    Ok(Some((context, deployment.place_key(), ban_key)))
 }
 
 async fn room_metadata_fields(
     state: &CommsState,
     room: &str,
 ) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
-    let Some(context) = metadata_scene_context(state, room).await? else {
+    let Some((context, admin_key, ban_key)) = metadata_scene_context(state, room).await? else {
         return Ok(None);
     };
     let mut admins = scene::try_get_extra_addresses(state, &info(&context)).await?;
@@ -222,19 +264,15 @@ async fn room_metadata_fields(
     }
     for admin in state
         .moderation
-        .list_active_admins(&context.place_id, None)
+        .list_active_admins(&admin_key, None)
         .await?
     {
         admins.insert(admin.admin);
     }
-    let ban_key = match (&context.world_name, context.world) {
-        (Some(world), true) => format!("{}:{}", world, context.base_position),
-        _ => context.place_id.clone(),
-    };
     let bans: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
     )
-    .bind([ban_key, context.place_id.clone()].as_slice())
+    .bind([ban_key.as_str().to_owned(), context.place_id.clone()].as_slice())
     .fetch_all(&state.pool)
     .await?;
     Ok(Some(
@@ -337,7 +375,7 @@ async fn refresh(state: &CommsState) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
+pub async fn run_once(state: &SharedState) -> anyhow::Result<()> {
     if let Err(error) = crate::gatekeeper::revocation::sweep(state).await {
         tracing::warn!(%error, "world access revocation sweep retained for retry");
     }
@@ -609,7 +647,9 @@ mod tests {
     async fn failed_revocation_sweep_does_not_block_cleanup_or_metadata_inventory() {
         use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
         use std::sync::atomic::AtomicUsize;
-        let Some(pool) = crate::db::scratch::pool(4).await else {
+        // A database of its own: `run_once` takes every pending removal, and
+        // would clean those of the tests that share the scratch database.
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
             return;
         };
         let (mut state, _, event) = setup(pool.clone()).await;
@@ -627,7 +667,7 @@ mod tests {
         state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
         state.livekit.configured = true;
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        run_once(&state).await.unwrap();
+        run_once(&Arc::new(state)).await.unwrap();
         server.abort();
         assert_eq!(
             calls.load(Ordering::SeqCst),
@@ -718,14 +758,14 @@ mod tests {
                 }),
                 ..Default::default()
             });
-            let context = metadata_scene_context(&state, &room)
+            let (context, _, _) = metadata_scene_context(&state, &room)
                 .await
                 .unwrap()
                 .unwrap();
             assert_eq!(
                 context.place_id,
                 scene.as_str(),
-                "explicit admins/bans use original scene ID, never a Places UUID/world key"
+                "Genesis bans use original scene ID, never a Places UUID/world key"
             );
             assert_eq!(
                 context.owner_address, None,
@@ -1130,7 +1170,7 @@ mod tests {
         let wallet = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)").bind(&event.place_id).bind(wallet).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         directory.fail.store(true, Ordering::SeqCst);
-        let feed = RemovedPlaces::new(pool.clone());
+        let (feed, state) = (RemovedPlaces::new(pool.clone()), Arc::new(state));
         assert_eq!(
             cleanup(&state, &feed, &event).await.unwrap_err().code,
             500,
@@ -1177,9 +1217,9 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')").bind(&event.place_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $2)").bind(&event.place_id).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         assert_eq!(
-            cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
+            cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
                 .await
                 .unwrap_err()
                 .code,
@@ -1210,6 +1250,78 @@ mod tests {
         );
     }
 
+    /// The place of a world published here has the world name as its id; the
+    /// admins are granted on the places of the world's scenes.
+    #[tokio::test]
+    async fn a_removed_local_world_place_revokes_the_admins_of_its_scenes() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let state = Arc::new(setup(pool.clone()).await.0);
+        let world = format!("removed-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let identity = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) VALUES ($1, $2, 'bafy', '{\"0,0\"}')")
+            .bind(&world).bind(identity).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.place_world_local (id, base_position, raw, world_name, world) VALUES ($1, '0,0', '{}', $1, true)")
+            .bind(&world).execute(&pool).await.unwrap();
+        let admin = Address::parse("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let grant = identity.to_string();
+        state
+            .moderation
+            .add_admin(&grant, &admin, &admin)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.place_world_local WHERE id = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let event: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE place_id = $1").bind(&world).fetch_one(&pool).await.unwrap();
+        assert!(event.world);
+        // Bans of the world's scenes end; a later ban and another world's stay.
+        for (key, at) in [
+            (
+                format!("{world}:0,0"),
+                event.removed_at - chrono::Duration::seconds(1),
+            ),
+            (
+                format!("{world}:1,1"),
+                event.removed_at + chrono::Duration::seconds(1),
+            ),
+            (
+                format!("{world}x:0,0"),
+                event.removed_at - chrono::Duration::seconds(1),
+            ),
+        ] {
+            sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)")
+                .bind(key).bind(admin.as_str()).bind(at).execute(&pool).await.unwrap();
+        }
+        // A grant made after the removal, before a late cleanup: it stays.
+        let later = Address::parse("0xcccccccccccccccccccccccccccccccccccccccc").unwrap();
+        state
+            .moderation
+            .add_admin(&grant, &later, &admin)
+            .await
+            .unwrap();
+        // The owner is unknown to the stub: the cleanup commits, the notice waits.
+        let _ = cleanup(&state, &RemovedPlaces::new(pool.clone()), &event).await;
+        let active =
+            "SELECT active FROM social.scene_admins WHERE place_id = $1 ORDER BY admin_address";
+        let active: Vec<bool> = sqlx::query_scalar(active)
+            .bind(&grant)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(active, [false, true]);
+        let bans: Vec<String> =
+            sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE place_id LIKE $1 || '%' ORDER BY place_id")
+                .bind(&world)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bans, [format!("{world}:1,1"), format!("{world}x:0,0")]);
+    }
+
     #[tokio::test]
     async fn ingress_unavailability_retains_uncleaned_removal_and_sends_no_notification() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -1219,7 +1331,7 @@ mod tests {
         state.livekit.configured = false;
         sqlx::query("INSERT INTO social.scene_stream_access (place_id, streaming_url, streaming_key, ingress_id, generated_by, created_at) VALUES ($1, 'rtmp://example.invalid/live', 'test-key', 'test-ingress', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $2)").bind(&event.place_id).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         assert_eq!(
-            cleanup(&state, &RemovedPlaces::new(pool.clone()), &event)
+            cleanup(&Arc::new(state), &RemovedPlaces::new(pool.clone()), &event)
                 .await
                 .unwrap_err()
                 .code,

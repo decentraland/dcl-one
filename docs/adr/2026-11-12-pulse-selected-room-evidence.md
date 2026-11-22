@@ -108,6 +108,9 @@ after rechecking the desired generation, selected identity, exact map entry and
 absence of outstanding leases or operations. A delayed reply cannot delete a newer
 hint or owner. Retirement changes no realm row and issues no credential: settled owned
 facts cease renewal while the finite lease remains; foreign rows are untouched.
+The removed slot's exact owned fact stays inside the selected bound, so the wallet's
+next selection replaces that known predecessor without waiting for the lease; a new
+slot at the bound drops one such fact.
 This reclaims the bounded selected capacity across departures under one continuing
 Pulse incarnation. A restarted source cannot prove an old source's departure;
 cross-incarnation retirement and reconstruction of lost unchanged native hints

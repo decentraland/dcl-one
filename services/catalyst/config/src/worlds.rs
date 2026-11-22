@@ -83,6 +83,10 @@ pub struct WorldsConfig {
     // peer sync does not back up, so every worlds write answers 503 until it
     // is turned on; back up first (DATABASE.md, "Bootstrap, schema versions
     // and local writes"); the reads, the admission mints and the sockets serve.
+    /// Accept world publishes, permission and settings edits and storage
+    /// writes. Needs `MARKETPLACE_SUBGRAPH_URL` (the DCL NAME owner reader)
+    /// unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true`, where only personal
+    /// worlds take owner writes.
     #[arg(long, env = "WORLDS_WRITES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub worlds_writes_enabled: bool,
 

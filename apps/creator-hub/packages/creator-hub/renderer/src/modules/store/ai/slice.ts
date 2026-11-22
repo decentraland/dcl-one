@@ -1,12 +1,15 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-import { ai, aiSharing } from '#preload';
+import { ai, aiSharing, recording as recordingPreload } from '#preload';
 import type {
   AiAssetMention,
   AiAttachment,
   AiAttachmentMeta,
   AiEvent,
+  AiPendingRecording,
+  AiRecordingSession,
   AiProvider,
+  AiRecorderState,
 } from '/shared/types/ai';
 import { assetMentionKey } from '/shared/types/ai';
 import type { AiRevertResult } from '/shared/types/ipc';
@@ -24,7 +27,14 @@ import {
   writeSessionIndex,
   writeSessionMessages,
 } from './persistence';
-import type { AiMessage, AiPromptData, AiRating, AiSessionMeta, AiState } from './types';
+import type {
+  AiMessage,
+  AiPromptData,
+  AiRating,
+  AiSessionMeta,
+  AiState,
+  DraftPromptMode,
+} from './types';
 
 const initialState: AiState = {
   providers: [],
@@ -36,11 +46,22 @@ const initialState: AiState = {
   detecting: false,
   selection: [],
   assetMentions: [],
+  recording: null,
+  recorder: {
+    status: 'idle',
+    startedAt: null,
+    stoppedAt: null,
+    micLabel: '',
+    tools: null,
+    actionCount: 0,
+    endedWith: null,
+  },
   chatVisible: false,
   billingDismissed: false,
   sessions: [],
   currentSessionId: '',
   draftPrompt: null,
+  draftNonce: 0,
 };
 
 // A session's title is its first user prompt (trimmed/clipped); empty until it has one, so
@@ -78,53 +99,55 @@ export const recheckAfterTurn = createAsyncThunk(
 // state; the assistant bubble is created when the `started` event arrives on the stream
 // (the panel subscribes to it). The turn streams asynchronously — this resolves as soon
 // as main has spawned the child.
-export const send = createAsyncThunk<void, { text: string; attachments?: AiAttachment[] }>(
-  'ai/send',
-  async ({ text, attachments }, { getState, dispatch }) => {
-    const state = getState();
-    const path = state.editor.project?.path;
-    if (path === undefined || path === '')
-      throw new Error('Open a scene before using the assistant.');
-    const { provider, model, busy, selection, assetMentions } = state.ai;
-    if (busy) return;
-    const trimmed = text.trim();
-    const files = attachments ?? [];
-    if (trimmed === '' && files.length === 0) return;
-    dispatch(actions.setBusy(true));
-    if (await ai.isBusy()) {
-      dispatch(actions.setDraftPrompt(trimmed));
-      return;
-    }
-    // Every turn belongs to a session (its transcript + the CLI resume id are keyed by it).
-    // One should already exist from loadConversation; create one defensively if not.
-    let sessionId = state.ai.currentSessionId;
-    if (sessionId === '') {
-      sessionId = crypto.randomUUID();
-      dispatch(
-        actions.setSessionState({
-          sessions: [{ id: sessionId, title: '', updatedAt: Date.now() }],
-          currentSessionId: sessionId,
-          messages: [],
-        }),
-      );
-    }
-    const attachmentMeta: AiAttachmentMeta[] = files.map(f => ({ name: f.name, kind: f.kind }));
-    dispatch(actions.pushUserMessage({ text: trimmed, attachments: attachmentMeta }));
-    // Attach the current editor selection and mentioned assets as context so the assistant can
-    // resolve "this" without the user spelling out ids or paths. Not shown in the chat bubble
-    // (main prepends it). Mentions belong to this prompt only; the selection is live state.
-    const context = editorContext(selection, assetMentions);
-    dispatch(actions.clearAssetMentions());
-    const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
-    const shareWallet = await shareThisTurn(getState());
-    const share = shareWallet
-      ? {
-          wallet: shareWallet,
-          turnIndex: state.ai.messages.filter(m => m.role === 'user').length,
-          selectedEntityCount: selection.length,
-          mentionedAssetCount: assetMentions.length,
-        }
-      : undefined;
+export const send = createAsyncThunk<
+  void,
+  { text: string; attachments?: AiAttachment[]; recordingLabel?: string }
+>('ai/send', async ({ text, attachments, recordingLabel }, { getState, dispatch }) => {
+  const state = getState();
+  const path = state.editor.project?.path;
+  if (path === undefined || path === '')
+    throw new Error('Open a scene before using the assistant.');
+  const { provider, model, busy, selection, assetMentions, recording } = state.ai;
+  if (busy) return;
+  const trimmed = text.trim();
+  const files = attachments ?? [];
+  if (trimmed === '' && files.length === 0 && recording === null) return;
+  dispatch(actions.setBusy(true));
+  if (await ai.isBusy()) {
+    dispatch(actions.setDraftPrompt({ text: trimmed, mode: 'replace' }));
+    return;
+  }
+  let sessionId = state.ai.currentSessionId;
+  if (sessionId === '') {
+    sessionId = crypto.randomUUID();
+    dispatch(
+      actions.setSessionState({
+        sessions: [{ id: sessionId, title: '', updatedAt: Date.now() }],
+        currentSessionId: sessionId,
+        messages: [],
+      }),
+    );
+  }
+  const timelines = await recordingTimelines(recording);
+  const attachmentMeta: AiAttachmentMeta[] = files.map(f => ({ name: f.name, kind: f.kind }));
+  if (recording && recordingLabel !== undefined) {
+    attachmentMeta.unshift({ name: recordingLabel, kind: 'audio' });
+  }
+  dispatch(actions.pushUserMessage({ text: trimmed, attachments: attachmentMeta }));
+  const context = editorContext(selection, assetMentions, timelines);
+  dispatch(actions.clearAssetMentions());
+  dispatch(actions.setRecording(null));
+  const apiKeyFromEnv = state.workspace.settings?.useApiKeyFromEnv ?? false;
+  const shareWallet = await shareThisTurn(getState());
+  const share = shareWallet
+    ? {
+        wallet: shareWallet,
+        turnIndex: state.ai.messages.filter(m => m.role === 'user').length,
+        selectedEntityCount: selection.length,
+        mentionedAssetCount: assetMentions.length,
+      }
+    : undefined;
+  try {
     await ai.send(path, {
       provider,
       model,
@@ -135,8 +158,38 @@ export const send = createAsyncThunk<void, { text: string; attachments?: AiAttac
       sessionId,
       share,
     });
-  },
-);
+  } catch (error) {
+    if (recording !== null) {
+      const arrivedMeanwhile = getState().ai.recording?.sessions ?? [];
+      dispatch(actions.setRecording(null));
+      for (const one of [...recording.sessions, ...arrivedMeanwhile]) {
+        dispatch(actions.addRecording(one));
+      }
+    }
+    if (trimmed !== '') dispatch(actions.setDraftPrompt({ text: trimmed, mode: 'append' }));
+    throw error;
+  }
+});
+
+/**
+ * The timelines of the recordings going out with this message.
+ *
+ * @returns one block per session, or the single block main rebuilt for all of them inside the
+ * context budget; concatenation is the fallback when main cannot answer.
+ */
+async function recordingTimelines(recording: AiPendingRecording | null): Promise<string[]> {
+  const own = recording?.sessions.map(one => one.context) ?? [];
+  if (own.length < 2) return own;
+  try {
+    const combined = await recordingPreload.combinedContext(
+      recording?.sessions.map(one => one.dir) ?? [],
+    );
+    return typeof combined === 'string' && combined !== '' ? [combined] : own;
+  } catch (error) {
+    console.warn('[Recording] could not combine the timelines; sending each of them:', error);
+    return own;
+  }
+}
 
 // The wallet to share this turn for, or null. Loaded on use: the sharing slice imports the app
 // config module, which initialises from the preload `env` when imported, and this slice's tests
@@ -180,12 +233,32 @@ export function assetMentionsContext(assetMentions: AiState['assetMentions']): s
 function editorContext(
   selection: AiState['selection'],
   assetMentions: AiState['assetMentions'],
+  timelines: string[],
 ): string | undefined {
   const lines = [selectionContext(selection), assetMentionsContext(assetMentions)].filter(
     (line): line is string => line !== undefined,
   );
-  return lines.length > 0 ? lines.join('\n') : undefined;
+  const blocks = [lines.length > 0 ? lines.join('\n') : undefined, ...timelines].filter(
+    (block): block is string => block !== undefined,
+  );
+  return blocks.length > 0 ? blocks.join('\n\n') : undefined;
 }
+
+export const discardRecording = createAsyncThunk(
+  'ai/discardRecording',
+  async (_: void, { getState, dispatch }) => {
+    const pending = getState().ai.recording;
+    if (pending === null) return;
+    dispatch(actions.setRecording(null));
+    for (const one of pending.sessions) {
+      try {
+        await recordingPreload.discard(one.dir);
+      } catch (error) {
+        console.warn('[Recording] could not delete the discarded recording:', error);
+      }
+    }
+  },
+);
 
 // Kill the in-flight turn. Main ends it with a `done` event marked `cancelled`; `stopped` also
 // finalizes the bubble here, so the UI settles even if that event is missed (the editor was
@@ -448,11 +521,38 @@ const slice = createSlice({
     clearAssetMentions: state => {
       state.assetMentions = [];
     },
+    setRecording: (state, { payload }: PayloadAction<AiPendingRecording | null>) => {
+      state.recording = payload;
+    },
+    addRecording: (state, { payload }: PayloadAction<AiRecordingSession>) => {
+      const sessions = [...(state.recording?.sessions ?? []), payload];
+      state.recording = {
+        sessions,
+        durationMs: sessions.reduce((total, one) => total + one.durationMs, 0),
+        actionCount: sessions.reduce((total, one) => total + one.actionCount, 0),
+        ...(sessions.some(one => one.transcriptionError !== undefined) && {
+          transcriptionError: sessions.find(one => one.transcriptionError !== undefined)
+            ?.transcriptionError,
+        }),
+      };
+    },
+    setRecorderState: (state, { payload }: PayloadAction<AiRecorderState>) => {
+      state.recorder = payload;
+    },
     // Seed the composer from elsewhere in the editor (the Trigger Area "describe a reaction"
     // buttons). Bumps a nonce so clicking the same button twice re-seeds. EditorPage opens the
     // panel on this; ChatView copies `text` into the composer and calls consumeDraftPrompt.
-    setDraftPrompt: (state, { payload }: PayloadAction<string>) => {
-      state.draftPrompt = { text: payload, nonce: (state.draftPrompt?.nonce ?? 0) + 1 };
+    setDraftPrompt: (
+      state,
+      { payload }: PayloadAction<{ text: string; mode: DraftPromptMode; send?: boolean }>,
+    ) => {
+      state.draftNonce += 1;
+      state.draftPrompt = {
+        text: payload.text,
+        mode: payload.mode,
+        nonce: state.draftNonce,
+        ...(payload.send && { send: true }),
+      };
     },
     consumeDraftPrompt: state => {
       state.draftPrompt = null;
@@ -699,6 +799,7 @@ export const actions = {
   recheckAfterTurn,
   send,
   stop,
+  discardRecording,
   answerPrompt,
   newChat,
   revertTurn,

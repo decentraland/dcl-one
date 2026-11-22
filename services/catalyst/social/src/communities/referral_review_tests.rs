@@ -1243,3 +1243,473 @@ async fn earlier_native_receipts_upgrade_preserves_retries_and_server_quota() {
     drop(referral);
     database.drop().await;
 }
+
+/// A confirmed empty supply releases the claim and the tier is asked again
+/// once its delay passes; a reply without a usable reward stays quarantined.
+#[tokio::test]
+async fn an_empty_reward_supply_is_retried_after_its_delay() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let rewards = Arc::new(AtomicUsize::new(0));
+    let observed = rewards.clone();
+    let app = axum::Router::new().route(
+        "/api/rewards",
+        axum::routing::post(move || {
+            let calls = observed.clone();
+            async move {
+                match calls.fetch_add(1, Ordering::SeqCst) {
+                    0 => Json(json!({"ok": true, "data": []})),
+                    2 => Json(json!({"ok": true, "data": [{"rarity": "rare"}]})),
+                    _ => Json(
+                        json!({"ok": true, "data": [{"image": "https://reward.example.org/tier.png"}]}),
+                    ),
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let settings = Settings {
+        reward_server_url: Some(url),
+        ..Settings::for_tests()
+    };
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+    let state = |invited: Address| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<i32>, bool, bool, bool)>(
+                "SELECT reward_tier, reward_requested_at IS NOT NULL, reward_response IS NOT NULL, \
+                        COALESCE(reward_retry_at > timezone('UTC', now()) + interval '50 minutes', FALSE) \
+                 FROM social.referral_progress WHERE invited_user = $1",
+            )
+            .bind(&invited)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let grant = |referrer: &Address, invited: &Address| {
+        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier) VALUES($1,$2,'tier_granted',true,5)")
+            .bind(referrer.clone()).bind(invited.clone()).execute(&pool)
+    };
+
+    let (referrer, invited) = (wallet(), wallet());
+    grant(&referrer, &invited).await.unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    assert_eq!(state(invited.clone()).await, (Some(5), false, false, true));
+
+    // Five minutes later the one-minute claim delay would be due; the empty
+    // supply delay is not.
+    sqlx::query("UPDATE social.referral_progress SET reward_retry_at = reward_retry_at - interval '5 minutes' WHERE invited_user = $1")
+        .bind(&invited)
+        .execute(&pool)
+        .await
+        .unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(
+        rewards.load(Ordering::SeqCst),
+        1,
+        "nothing is asked before the empty supply delay passes"
+    );
+
+    sqlx::query("UPDATE social.referral_progress SET reward_retry_at = timezone('UTC', now()) WHERE invited_user = $1")
+        .bind(&invited)
+        .execute(&pool)
+        .await
+        .unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 2);
+    assert_eq!(state(invited.clone()).await.0, None, "the tier is paid");
+    let images: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_reward_images WHERE referrer = $1 AND tier = 5",
+    )
+    .bind(&referrer)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(images, 1);
+
+    let (referrer, invited) = (wallet(), wallet());
+    grant(&referrer, &invited).await.unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        state(invited.clone()).await,
+        (Some(5), true, false, false),
+        "a reply without a usable reward stays quarantined"
+    );
+    sqlx::query(
+        "UPDATE social.referral_progress SET reward_retry_at = NULL WHERE invited_user = $1",
+    )
+    .bind(&invited)
+    .execute(&pool)
+    .await
+    .unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(
+        rewards.load(Ordering::SeqCst),
+        3,
+        "the due query skips a quarantined row"
+    );
+    assert_eq!(
+        referral
+            .reward(referrer.as_str(), invited.as_str(), 5)
+            .await
+            .unwrap(),
+        RewardAttempt::Settled
+    );
+    assert_eq!(
+        rewards.load(Ordering::SeqCst),
+        3,
+        "a direct attempt does not ask again for a quarantined row"
+    );
+    server.abort();
+    database.drop().await;
+}
+
+async fn reward_stub(reply: Value) -> (Arc<AtomicUsize>, String, tokio::task::JoinHandle<()>) {
+    let rewards = Arc::new(AtomicUsize::new(0));
+    let observed = rewards.clone();
+    let app = axum::Router::new().route(
+        "/api/rewards",
+        axum::routing::post(move || {
+            let calls = observed.clone();
+            let reply = reply.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Json(reply)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (rewards, url, server)
+}
+
+/// A referral whose rewards backend always gives `reply`, and its request count.
+async fn stub_referral(
+    pool: &sqlx::PgPool,
+    reply: Value,
+) -> (Referral, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let (rewards, url, server) = reward_stub(reply).await;
+    let settings = Settings {
+        reward_server_url: Some(url),
+        ..Settings::for_tests()
+    };
+    (
+        Referral::new(pool.clone(), Outbound::for_tests(), settings),
+        rewards,
+        server,
+    )
+}
+
+/// A referral whose rewards backend always reports an empty supply, and the
+/// beneficiaries it was asked for, in order.
+async fn recording_stub(
+    pool: &sqlx::PgPool,
+) -> (
+    Referral,
+    Arc<std::sync::Mutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let asked = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let observed = asked.clone();
+    let app = axum::Router::new().route(
+        "/api/rewards",
+        axum::routing::post(move |Json(body): Json<Value>| {
+            let asked = observed.clone();
+            async move {
+                asked
+                    .lock()
+                    .unwrap()
+                    .push(body["beneficiary"].as_str().unwrap().to_string());
+                Json(json!({"ok": true, "data": []}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let settings = Settings {
+        reward_server_url: Some(url),
+        ..Settings::for_tests()
+    };
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+    (referral, asked, server)
+}
+
+/// Insert an unclaimed grant of `tier`, due after `wait` (an interval from
+/// now) or new when `wait` is `None`, and return its invited wallet.
+async fn grant_reward(pool: &sqlx::PgPool, tier: i32, wait: Option<&str>) -> Address {
+    let invited = wallet();
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_retry_at) VALUES($1,$2,'tier_granted',true,$3,timezone('UTC', now()) + $4::interval)")
+        .bind(wallet()).bind(&invited).bind(tier).bind(wait).execute(pool).await.unwrap();
+    invited
+}
+
+/// Move every row's waits back by `interval`, as if that much time passed.
+async fn pass_time(pool: &sqlx::PgPool, interval: &str) {
+    sqlx::query(
+        "UPDATE social.referral_progress SET reward_retry_at = reward_retry_at - $1::interval",
+    )
+    .bind(interval)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// An empty list without `ok: true` does not confirm an empty supply.
+#[tokio::test]
+async fn an_empty_reward_list_without_ok_stays_quarantined() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, rewards, server) = stub_referral(&pool, json!({"ok": false, "data": []})).await;
+    let invited = grant_reward(&pool, 5, None).await;
+
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    let claimed: bool = sqlx::query_scalar(
+        "SELECT reward_requested_at IS NOT NULL FROM social.referral_progress WHERE invited_user = $1",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(claimed, "the claim is kept for reconciliation");
+    sqlx::query(
+        "UPDATE social.referral_progress SET reward_retry_at = NULL WHERE invited_user = $1",
+    )
+    .bind(&invited)
+    .execute(&pool)
+    .await
+    .unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    server.abort();
+    database.drop().await;
+}
+
+/// One empty reply defers every unclaimed row of its tier, so a drain asks
+/// once per empty tier rather than once per row.
+#[tokio::test]
+async fn an_empty_reward_supply_defers_its_whole_tier() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, rewards, server) = stub_referral(&pool, json!({"ok": true, "data": []})).await;
+    let mut invited = Vec::new();
+    for tier in [5, 5, 5, 10] {
+        invited.push(grant_reward(&pool, tier, None).await);
+    }
+    // A stored response completes locally even when its tier is empty.
+    let (stored_referrer, stored) = (wallet(), wallet());
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_response,reward_retry_at) VALUES($1,$2,'tier_granted',true,5,$3,timezone('UTC', now()) - interval '1 minute')")
+        .bind(&stored_referrer)
+        .bind(&stored)
+        .bind(json!({"image": "https://reward.example.org/tier.png"}))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(
+        rewards.load(Ordering::SeqCst),
+        2,
+        "one request per empty tier"
+    );
+    let deferred: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_progress \
+         WHERE invited_user = ANY($1) AND reward_requested_at IS NULL \
+           AND reward_retry_at > timezone('UTC', now()) + interval '50 minutes'",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(deferred, 4, "every row of both tiers waits unclaimed");
+    let completed: Option<i32> = sqlx::query_scalar(
+        "SELECT reward_tier FROM social.referral_progress WHERE invited_user = $1",
+    )
+    .bind(&stored)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(completed, None, "the stored response is delivered");
+    server.abort();
+    database.drop().await;
+}
+
+/// Each empty reply moves its row behind the rest of the tier, so the next
+/// hour asks another row rather than the same one.
+#[tokio::test]
+async fn an_empty_reward_supply_rotates_the_row_it_asks() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, asked, server) = recording_stub(&pool).await;
+    for _ in 0..3 {
+        grant_reward(&pool, 5, None).await;
+    }
+
+    for _ in 0..3 {
+        referral.drain_pending_rewards().await.unwrap();
+        pass_time(&pool, "61 minutes").await;
+    }
+    let asked = asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 3, "one request per hour");
+    let distinct: std::collections::HashSet<_> = asked.iter().collect();
+    assert_eq!(distinct.len(), 3, "every row of the tier is asked in turn");
+    server.abort();
+    database.drop().await;
+}
+
+/// A waiting row's empty reply gathers the rows due within the delay but
+/// leaves a row of the tier that waits longer.
+#[tokio::test]
+async fn an_empty_reward_supply_keeps_a_longer_wait() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, rewards, server) = stub_referral(&pool, json!({"ok": true, "data": []})).await;
+    grant_reward(&pool, 5, Some("-1 minute")).await;
+    let soon = grant_reward(&pool, 5, Some("30 minutes")).await;
+    let later = grant_reward(&pool, 5, Some("2 hours")).await;
+
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    let waits: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT invited_user, reward_retry_at > timezone('UTC', now()) + interval '110 minutes' \
+         FROM social.referral_progress WHERE invited_user = ANY($1) ORDER BY reward_retry_at",
+    )
+    .bind(vec![soon.clone(), later.clone()])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        waits,
+        vec![
+            (soon.as_str().to_string(), false),
+            (later.as_str().to_string(), true)
+        ],
+        "the row due within the delay joins the next request; the longer wait is kept"
+    );
+    let gathered: bool = sqlx::query_scalar(
+        "SELECT reward_retry_at > timezone('UTC', now()) + interval '50 minutes' \
+         FROM social.referral_progress WHERE invited_user = $1",
+    )
+    .bind(&soon)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(gathered, "the sooner row moves to the next request");
+    server.abort();
+    database.drop().await;
+}
+
+/// A new grant's empty reply does not push back a row of its tier that is
+/// already waiting, so a steady inflow of grants cannot starve older rows.
+#[tokio::test]
+async fn an_empty_reward_supply_for_a_new_grant_keeps_older_rows_due() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, rewards, server) = stub_referral(&pool, json!({"ok": true, "data": []})).await;
+    let older = grant_reward(&pool, 5, Some("30 minutes")).await;
+    grant_reward(&pool, 5, None).await;
+
+    referral.drain_pending_rewards().await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1, "the new grant is asked");
+    let kept: bool = sqlx::query_scalar(
+        "SELECT reward_retry_at < timezone('UTC', now()) + interval '31 minutes' \
+         FROM social.referral_progress WHERE invited_user = $1",
+    )
+    .bind(&older)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(kept, "the older row keeps its time");
+    server.abort();
+    database.drop().await;
+}
+
+/// Rows of an empty tier that were due at different times share one hourly
+/// request instead of each keeping its own.
+#[tokio::test]
+async fn an_empty_reward_supply_asks_once_an_hour_for_rows_due_apart() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, rewards, server) = stub_referral(&pool, json!({"ok": true, "data": []})).await;
+    grant_reward(&pool, 5, Some("30 minutes")).await;
+    grant_reward(&pool, 5, None).await;
+
+    // Ten-minute steps over four hours.
+    let mut asked_at = Vec::new();
+    for step in 0..24 {
+        let before = rewards.load(Ordering::SeqCst);
+        referral.drain_pending_rewards().await.unwrap();
+        if rewards.load(Ordering::SeqCst) > before {
+            asked_at.push(step * 10);
+        }
+        pass_time(&pool, "10 minutes").await;
+    }
+    assert_eq!(
+        asked_at,
+        vec![0, 30, 90, 150, 210],
+        "the new grant on arrival, then one request an hour"
+    );
+    server.abort();
+    database.drop().await;
+}
+
+/// While new grants keep arriving in an empty tier, an older row is still asked
+/// and the tier costs one request an hour beyond one per new grant.
+#[tokio::test]
+async fn an_empty_reward_supply_still_asks_older_rows_while_grants_arrive() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referral, asked, server) = recording_stub(&pool).await;
+    // The provider is asked for the referrer, so record that wallet.
+    let older_referrer = wallet();
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_retry_at) VALUES($1,$2,'tier_granted',true,5,timezone('UTC', now()) + interval '30 minutes')")
+        .bind(&older_referrer).bind(wallet()).execute(&pool).await.unwrap();
+
+    // A new grant every twenty minutes for three hours, in ten-minute steps.
+    let mut grants = 0;
+    for step in 0..18 {
+        if step % 2 == 0 {
+            grant_reward(&pool, 5, None).await;
+            grants += 1;
+        }
+        referral.drain_pending_rewards().await.unwrap();
+        pass_time(&pool, "10 minutes").await;
+    }
+    let asked = asked.lock().unwrap().clone();
+    assert!(
+        asked
+            .iter()
+            .any(|beneficiary| beneficiary == older_referrer.as_str()),
+        "the older row is asked"
+    );
+    assert_eq!(
+        asked.len(),
+        grants + 3,
+        "one request per new grant plus one an hour"
+    );
+    server.abort();
+    database.drop().await;
+}
