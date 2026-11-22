@@ -1163,6 +1163,7 @@ mod tests {
             .unwrap();
         let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         );
@@ -1251,6 +1252,7 @@ mod tests {
     ) -> Result<(), SyncError> {
         let deployer = LiveSyncDeployer::new(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         );
