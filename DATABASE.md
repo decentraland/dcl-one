@@ -2026,14 +2026,36 @@ storage order (a local deploy may be signed up to 15 minutes ahead, a synced
 one long before), and a cursor on it would skip every profile stored after
 one signed later and every tie past a page edge. Its first pass starts at the
 head. A batch seeds baselines and claims first wears (`social.worn_history`)
-in the transaction that advances the cursor, and notifies after it commits,
-so a restart never re-notifies a claim. Its batch is
+and stores their notification obligations in `social.first_wear_outbox`
+in the transaction that advances the cursor. The queue retains the wearer
+name and URN independently of deployment retention. Its batch is
 `BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
 (600 s), and it publishes the same lag and gap gauges under its source. A profile the
 node stored more than 24 hours after its entity timestamp is history a
 syncing node caught up on and is passed without effect; the lag is measured
 at storage, so a stalled producer still works through its backlog.
 `social.first_wear_cursor` is no longer read.
+
+The first-wear outbox drains up to 50 batches of the configured size per pass,
+oldest attempt first. A database-time cutoff excludes already-attempted work
+from the remainder of that pass, so a failed item is retried on a later pass.
+Enqueue and retry timestamps share that order, so continuous arrivals cannot
+starve a failed lookup. A pass stops source intake once the
+queue reaches 5,000 rows (one source batch may exceed that threshold), while
+retries keep draining. Marketplace calls run before any completion transaction.
+Completion deletes the obligation and inserts notifications and delivery intents
+atomically; an error retains the obligation, and replay after completion cannot
+emit again. A short transaction advisory lock serializes the final recipient
+rate-gate recheck. Missing market readers, unknown/unbuyable items and suppressed
+recipients remain terminal outcomes. The queue references the owning history key
+with cascading deletion and has no dependency on source deployments. The schema
+object pass creates the new table and attempt-order index on existing databases.
+Existing cursors, gaps, history and baselines are preserved without replay.
+
+Stop the old first-wear producer before enabling this implementation: the old
+producer claims wears without queuing obligations. Previously lost notifications
+cannot be reconstructed from those claims. Reverting to that producer leaves the
+new outbox undrained; preserve it for a subsequent compatible producer.
 
 ### Presence badges flow
 

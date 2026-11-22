@@ -1550,6 +1550,20 @@ CREATE TABLE social.worn_history (
     CONSTRAINT worn_history_pkey PRIMARY KEY (address, urn)
 );
 
+-- Notification preparation can fail after the wear is claimed. The claim and
+-- obligation commit together; completion deletes this row with its notices.
+CREATE TABLE social.first_wear_outbox (
+    address text NOT NULL,
+    urn text NOT NULL,
+    wearer text,
+    attempted_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    CONSTRAINT first_wear_outbox_pkey PRIMARY KEY (address, urn),
+    CONSTRAINT first_wear_outbox_history_fkey FOREIGN KEY (address, urn)
+        REFERENCES social.worn_history (address, urn) ON DELETE CASCADE
+);
+CREATE INDEX first_wear_outbox_attempt_idx
+    ON social.first_wear_outbox (attempted_at, address, urn);
+
 -- A wallet with a row is eligible; its first profile seen seeds worn_history
 -- silently (an empty outfit still gets a row, or its real first wear would be
 -- swallowed by the seed path).
