@@ -388,10 +388,11 @@ impl ResolvedRoom {
     /// does not carry, so the key is the scene's place. A Genesis scene this
     /// node does not hold (an overwritten deployment) is
     /// [`ResolveError::UnresolvedRoom`], never its entity id; a local preview
-    /// keeps its entity id.
+    /// keeps its entity id only with `ALLOW_LOCAL_PREVIEW` (`allow_preview`).
     pub async fn resolve_ban_key(
         &self,
         scenes: &dyn crate::interfaces::SceneIdentity,
+        allow_preview: bool,
     ) -> Result<Option<crate::access::SceneBanKey>, ResolveError> {
         if self.deployment.is_none()
             && !self.realm.is_world()
@@ -401,7 +402,7 @@ impl ResolvedRoom {
                 realm: &self.realm,
                 scene,
             };
-            if is_local_preview(self.realm.as_str(), scene.as_str()) {
+            if allow_preview && is_local_preview(self.realm.as_str(), scene.as_str()) {
                 return Ok(self.ban_key());
             }
             return match scenes.resolve(request).await {
@@ -868,7 +869,7 @@ mod ban_key_tests {
                     ..Default::default()
                 };
                 named
-                    .resolve_ban_key(&scenes)
+                    .resolve_ban_key(&scenes, false)
                     .await
                     .map(|key| key.map(|key| key.as_str().to_owned()))
             }
@@ -893,8 +894,17 @@ mod ban_key_tests {
             panic!("preview")
         };
         let scenes = StubScenes::default();
-        let preview_key = preview.resolve_ban_key(&scenes).await.unwrap().unwrap();
+        let preview_key = preview
+            .resolve_ban_key(&scenes, true)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(preview_key.as_str(), "bafyP");
+        // Without `ALLOW_LOCAL_PREVIEW` a preview room is refused like any other.
+        assert!(matches!(
+            preview.resolve_ban_key(&scenes, false).await,
+            Err(ResolveError::UnresolvedRoom(_))
+        ));
         assert!(
             key(Err(ResolveError::Db(sqlx::Error::PoolClosed)))
                 .await

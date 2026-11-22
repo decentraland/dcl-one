@@ -267,7 +267,10 @@ async fn legacy_ban_key(
             _ => None,
         });
     if let Some(local) = genesis {
-        return match local.resolve_ban_key(state.scenes.as_ref()).await {
+        return match local
+            .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+            .await
+        {
             Ok(key) => Ok(key),
             Err(crate::rooms::ResolveError::Db(error)) => {
                 Err(anyhow!("scene identity unavailable: {error:?}"))

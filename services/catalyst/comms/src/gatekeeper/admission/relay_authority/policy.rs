@@ -35,6 +35,7 @@ pub struct CurrentRoomPolicy {
     bans: Arc<dyn BanStatus>,
     authoritative_server_address: Option<Address>,
     assignments: Option<Arc<dyn RealmAssignmentReader>>,
+    allow_local_preview: bool,
 }
 
 impl CurrentRoomPolicy {
@@ -50,7 +51,14 @@ impl CurrentRoomPolicy {
             bans,
             authoritative_server_address,
             assignments: None,
+            allow_local_preview: false,
         }
+    }
+
+    /// `ALLOW_LOCAL_PREVIEW`: a local preview room keeps its entity-id bans.
+    pub fn with_local_preview(mut self, allow: bool) -> Self {
+        self.allow_local_preview = allow;
+        self
     }
 
     /// The realm-lane fence island rooms are decided by.
@@ -205,7 +213,7 @@ impl RelayPolicy for CurrentRoomPolicy {
                     }
                     None => {
                         let key = resolved
-                            .resolve_ban_key(self.scenes.as_ref())
+                            .resolve_ban_key(self.scenes.as_ref(), self.allow_local_preview)
                             .await
                             .map_err(|error| match error {
                                 crate::rooms::ResolveError::Db(_) => DenialReason::Unavailable,

@@ -2623,10 +2623,18 @@ Invariants:
   to the base parcel (`social.scene_base_parcel`), keeping the newest ban of a
   wallet when two entities name one place, also against a row the place has.
   The cutover import keeps the newest ban of aliases too. Stop all old
-  API replicas before `catalyst schema migrate`, apply the script with the
-  administrative database role, then start the updated binaries. `catalyst
-  serve` refuses startup while a ban of an active Genesis deployment has the
-  entity key (`ensure_genesis_scene_ban_release`). A binary-only rollback is
+  API replicas before `catalyst schema migrate`, then, with the
+  administrative database role, re-run
+  `schemas/releases/scene-admin-place-keys.sql` (idempotent: it moves only
+  the entity rows left and keeps the newest change of a wallet) and apply
+  `genesis-scene-ban-keys.sql`, then start the updated binaries. The re-run
+  is needed on a database that ran the admin release before it counted
+  unpublished deployments: `ensure_scene_admin_place_release` now refuses
+  their entity-keyed grants. `catalyst serve` refuses startup while a ban of
+  an active Genesis deployment has the entity key
+  (`ensure_genesis_scene_ban_release`). An unpublished deployment's grants
+  and bans move to its base parcel, so they apply to whichever scene later
+  stands on that parcel. A binary-only rollback is
   not supported after the move; restore the matching backup. A row of an
   entity that is not deployed, or has no parcel that parses, keeps its key,
   and no request reads it. A local preview scene, which has no deployment,

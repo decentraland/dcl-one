@@ -648,7 +648,10 @@ enum RoomBans {
 }
 
 async fn scene_ban_key(state: &CommsState, scene: &ResolvedRoom) -> Result<RoomBans, ApiError> {
-    match scene.resolve_ban_key(state.scenes.as_ref()).await {
+    match scene
+        .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+        .await
+    {
         Ok(Some(key)) => Ok(RoomBans::Key(key)),
         Ok(None) => Ok(RoomBans::Lobby),
         Err(ResolveError::Db(error)) => {

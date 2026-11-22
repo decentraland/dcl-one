@@ -709,7 +709,8 @@ impl CommsState {
                 self.bans.clone(),
                 self.settings.authoritative_server_address.clone(),
             )
-            .with_assignments(self.assignment_reader()),
+            .with_assignments(self.assignment_reader())
+            .with_local_preview(self.settings.allow_local_preview),
         );
         let authority = if generation_required {
             let audience = self.cluster.control_v4_audience.clone().ok_or_else(|| {
