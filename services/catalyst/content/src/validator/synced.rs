@@ -950,4 +950,49 @@ mod tests {
         assert_eq!(verdict.failing, Some(urns));
         let _ = std::fs::remove_dir_all(tmp);
     }
+
+    #[tokio::test]
+    async fn a_synced_profile_is_not_asked_about_items_the_reference_skips() {
+        use super::super::fake_chain;
+        const OWNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-skips").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: Some(chain.url.clone()),
+                l2_rpc_url: Some(chain.url.clone()),
+                ..Default::default()
+            },
+        );
+        let synced = Synced {
+            sources: &sources,
+            content: SyncedContent::Fetched,
+            trusted_expirations: Mutex::new(Vec::new()),
+        };
+        let contract = "0x0002000000000000000000000000000000000001";
+        let urns = vec![
+            format!("urn:decentraland:ethereum:collections-v2:{contract}:0:5"),
+            format!("urn:decentraland:matic:collections-v1:{contract}:hat:3"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:ethereum:{contract}:5"),
+        ];
+
+        let verdict = synced
+            .check_items_ownership(OWNER, &urns, 1_700_000_000_000)
+            .await
+            .unwrap();
+        assert!(verdict.result, "{verdict:?}");
+        let local = sources
+            .check_items_ownership(OWNER, &urns, 1_700_000_000_000)
+            .await;
+        assert!(
+            !matches!(&local, Ok(r) if r.result),
+            "a local deploy still asks: {local:?}"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
 }
