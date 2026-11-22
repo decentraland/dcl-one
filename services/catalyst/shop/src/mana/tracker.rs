@@ -281,10 +281,13 @@ pub async fn index_confirms(
                 "claim_rental" => "claimed",
                 _ => "asset_index_updated",
             };
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM shop.rental_event WHERE network = $1 AND tx_hash = $2 AND kind = $3)")
+            // The receipt identifies the exact block of these logs. Bound the
+            // lookup by the event primary key instead of scanning its history.
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM shop.rental_event WHERE network = $1 AND tx_hash = $2 AND kind = $3 AND block_number = $4)")
                 .bind(net.db_name())
                 .bind(&row.tx_hash)
                 .bind(kind)
+                .bind(block)
                 .fetch_one(pool)
                 .await?
         }
@@ -940,6 +943,98 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[tokio::test]
+    async fn rental_confirmation_uses_receipt_block_hash_kind_and_published_chain() {
+        let Some(db) = crate::test_db::OwnDatabase::create("rental_receipt").await else {
+            return;
+        };
+        let book = super::super::venues::Book::production(|_| None);
+        let chain = book.chain(crate::types::ChainId(1)).unwrap();
+        let mut execution = row("claim_rental", None);
+        execution.chain_id = 1;
+        let receipt_block = 100_i64;
+        sqlx::query("INSERT INTO shop.rental_event (network, block_number, log_index, block_time, rentals_address, kind, contract_address, token_id, tx_hash) VALUES ('ethereum', $1, 0, 1, $2, 'claimed', $3, 7, $4)")
+            .bind(receipt_block).bind(&execution.venue).bind(&execution.contract_address).bind(&execution.tx_hash)
+            .execute(&db.pool).await.unwrap();
+        assert_eq!(
+            index_confirms(&db.pool, chain, &execution, receipt_block)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) VALUES ('rentals', 'ethereum', 0, 200, 200, timezone('UTC', now()), true, 1)")
+            .execute(&db.pool).await.unwrap();
+        assert_eq!(
+            index_confirms(&db.pool, chain, &execution, receipt_block)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        // A receipt re-mined at another height cannot use the old indexed logs.
+        assert_eq!(
+            index_confirms(&db.pool, chain, &execution, receipt_block + 1)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        let wrong_hash = ExecutionRow {
+            tx_hash: "0xmissing".into(),
+            ..execution.clone()
+        };
+        assert_eq!(
+            index_confirms(&db.pool, chain, &wrong_hash, receipt_block)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        for (action, event_kind) in [
+            ("accept_rental", "rented"),
+            ("cancel_rental", "asset_index_updated"),
+        ] {
+            execution.kind = action.into();
+            assert_eq!(
+                index_confirms(&db.pool, chain, &execution, receipt_block)
+                    .await
+                    .unwrap(),
+                Some(false)
+            );
+            sqlx::query("UPDATE shop.rental_event SET kind = $1, signature = CASE WHEN $1 = 'rented' THEN '0xsignature' END, tenant = CASE WHEN $1 = 'rented' THEN rentals_address END, rental_days = CASE WHEN $1 = 'rented' THEN 1 END, price_per_day = CASE WHEN $1 = 'rented' THEN 1 END, new_index = CASE WHEN $1 = 'asset_index_updated' THEN 1 END")
+                .bind(event_kind).execute(&db.pool).await.unwrap();
+            assert_eq!(
+                index_confirms(&db.pool, chain, &execution, receipt_block)
+                    .await
+                    .unwrap(),
+                Some(true)
+            );
+        }
+        for (chain_id, folded_block, stale, quarantine) in [
+            (137_i64, 200_i64, false, false),
+            (1, 99, false, false),
+            (1, 200, true, false),
+            (1, 200, false, true),
+        ] {
+            sqlx::query("UPDATE shop.chain_cursor SET chain_id = $1, last_block = $2, folded_block = $2, folded_at = timezone('UTC', now()) - CASE WHEN $3 THEN interval '1 hour' ELSE interval '0' END, quarantined_at = CASE WHEN $4 THEN timezone('UTC', now()) END, quarantine_reason = CASE WHEN $4 THEN 'test' END WHERE indexer = 'rentals'")
+                .bind(chain_id).bind(folded_block).bind(stale).bind(quarantine).execute(&db.pool).await.unwrap();
+            assert_eq!(
+                index_confirms(&db.pool, chain, &execution, receipt_block)
+                    .await
+                    .unwrap(),
+                Some(false)
+            );
+        }
+        sqlx::query("INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) VALUES ('rentals', 'matic', 0, 200, 200, timezone('UTC', now()), true, 1)")
+            .execute(&db.pool).await.unwrap();
+        let mut other_network = chain.clone();
+        other_network.net = Some(ChainNet::Matic);
+        assert_eq!(
+            index_confirms(&db.pool, &other_network, &execution, receipt_block)
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        db.drop().await;
     }
 
     #[test]
