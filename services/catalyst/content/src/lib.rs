@@ -474,6 +474,7 @@ impl SyncStatus {
     }
 
     pub fn set_state(&self, state: SyncState) {
+        sync::metrics::sync_state(&state);
         *self.state.write() = state;
     }
 

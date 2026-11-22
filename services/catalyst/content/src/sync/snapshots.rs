@@ -15,6 +15,7 @@ use sha2::Digest;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
+use super::metrics;
 use super::pointer_changes::is_usable_timestamp;
 use super::{SnapshotMetadata, SyncDeployment, SyncError, TimeRange, Timestamp};
 use crate::auth::{HashV1Writer, is_canonical_cid};
@@ -652,7 +653,10 @@ async fn schedule_records(
 ) -> ScheduleOutcome {
     let mut records = records;
     let offered = records.len() as u64;
-    let probed = match deployer.retain_undeployed(&mut records).await {
+    for record in &records {
+        report.record_streamed(&record.entity_type);
+    }
+    let probed = match deployer.retain_undeployed(&mut records, Some(report)).await {
         Ok(()) => true,
         Err(e) => {
             warn!(snapshot_hash, error = %e, "Batched already-deployed probe failed; probing per record");
@@ -831,6 +835,10 @@ pub async fn deploy_entities_from_snapshot(
     } = stats;
     let num_scheduled = outcome.scheduled;
     let num_schedule_errors = outcome.errors;
+    metrics::snapshots_processed("stream_end", 1);
+    if num_parse_errors > 0 {
+        metrics::snapshots_processed("incomplete", 1);
+    }
 
     info!(
         snapshot_hash,
@@ -949,10 +957,13 @@ async fn download_snapshot_file(
         return Err(SyncError::NoServers);
     }
 
+    metrics::download_job_started(server_list.len());
     let mut last_error = None;
     for retry in 0..max_retries {
         let server = server_list[retry as usize % server_list.len()];
         let url = format!("{}/contents/{}", server, snapshot_hash);
+        let remote_server = metrics::remote_server(server);
+        let started = std::time::Instant::now();
 
         match crate::http::get_following_checked_redirects(
             client,
@@ -966,8 +977,15 @@ async fn download_snapshot_file(
                     let expected_len = resp.content_length();
                     match spool_snapshot(storage, snapshot_hash, resp).await {
                         Ok(spooled) => {
+                            let whole =
+                                expected_len.is_none_or(|len| spooled.stats.wire_len >= len);
+                            metrics::download_finished(
+                                &remote_server,
+                                started.elapsed(),
+                                whole.then_some(spooled.stats.decoded_len),
+                            );
                             if let Some(len) = expected_len
-                                && spooled.stats.wire_len < len
+                                && !whole
                             {
                                 warn!(
                                     snapshot_hash,
@@ -982,6 +1000,7 @@ async fn download_snapshot_file(
                                     snapshot_hash, server, spooled.stats.wire_len, len
                                 )));
                             } else if spooled.digest != snapshot_hash {
+                                metrics::download_hash_error(&remote_server);
                                 warn!(
                                     snapshot_hash,
                                     %server,
@@ -996,11 +1015,13 @@ async fn download_snapshot_file(
                             } else {
                                 let bytes = spooled.stats.decoded_len;
                                 spooled.commit().await?;
+                                metrics::download_job_succeeded(retry + 1);
                                 info!(snapshot_hash, bytes, "Snapshot downloaded");
                                 return Ok(());
                             }
                         }
                         Err(reason) => {
+                            metrics::download_finished(&remote_server, started.elapsed(), None);
                             warn!(
                                 snapshot_hash,
                                 %server,
@@ -1016,6 +1037,7 @@ async fn download_snapshot_file(
                     }
                 } else {
                     let status = resp.status();
+                    metrics::download_finished(&remote_server, started.elapsed(), None);
                     warn!(snapshot_hash, %server, %status, retry, "Snapshot download failed");
                     last_error = Some(SyncError::Other(format!(
                         "HTTP {} downloading snapshot {} from {}",
@@ -1024,6 +1046,7 @@ async fn download_snapshot_file(
                 }
             }
             Err(e) => {
+                metrics::download_finished(&remote_server, started.elapsed(), None);
                 warn!(snapshot_hash, %server, error = %e, retry, "Snapshot download request failed");
                 last_error = Some(SyncError::from(e));
             }
@@ -1205,7 +1228,9 @@ mod tests {
         let wire = gzip(PAYLOAD);
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("snap-gzip").await;
+        let origin = metrics::remote_server(&base);
         let servers: HashSet<String> = [base].into_iter().collect();
+        let (_metrics, recorded) = metrics::local_recorder();
 
         download_snapshot_file(
             &crate::sync::test_sync_client(Client::new()),
@@ -1224,6 +1249,18 @@ mod tests {
             PAYLOAD,
             "the stored bytes must be the decoded representation"
         );
+        let rendered = recorded.render();
+        for (series, value) in [
+            (
+                format!("dcl_content_download_bytes_total{{remote_server=\"{origin}\"}}"),
+                PAYLOAD.len() as f64,
+            ),
+            ("dcl_available_servers_histogram_sum".into(), 1.0),
+            ("dcl_content_download_job_succeed_retries_sum".into(), 1.0),
+        ] {
+            let got = metrics::sample(&rendered, &series);
+            assert_eq!(got, Some(value), "{series}:\n{rendered}");
+        }
 
         server.abort();
         let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -1237,7 +1274,9 @@ mod tests {
         let wire = gzip(OTHER);
         let (base, server) = spawn_content_server(wire, Some("gzip")).await;
         let (storage, tmp) = temp_storage("snap-corrupt").await;
+        let origin = metrics::remote_server(&base);
         let servers: HashSet<String> = [base].into_iter().collect();
+        let (_metrics, recorded) = metrics::local_recorder();
 
         let err = download_snapshot_file(
             &crate::sync::test_sync_client(Client::new()),
@@ -1250,6 +1289,9 @@ mod tests {
         .await
         .expect_err("decoded bytes that mismatch the CID must still be rejected");
         assert!(err.to_string().contains("snapshot hash mismatch"), "{err}");
+        let hash_errors =
+            format!("dcl_content_download_hash_errors_total{{remote_server=\"{origin}\"}}");
+        assert_eq!(metrics::sample(&recorded.render(), &hash_errors), Some(1.0));
         assert!(!storage.exist(&cid).await.unwrap());
 
         server.abort();

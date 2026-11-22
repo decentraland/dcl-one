@@ -835,6 +835,7 @@ impl Upstream {
             &self.deployer,
             RemoteDeployment {
                 entity_id: id,
+                entity_type: &entity_type,
                 auth_chain: &chain,
                 context: DeploymentContext::Synced,
                 report: None,

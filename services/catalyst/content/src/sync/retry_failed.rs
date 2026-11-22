@@ -240,6 +240,10 @@ impl RetryFailedDeployments {
             Ok(undecided) => metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
             Err(e) => warn!(error = %e, "Failed to count undecided failed deployments"),
         }
+        match self.failed_store.count_all().await {
+            Ok(rows) => crate::sync::metrics::failed_deployments(rows),
+            Err(e) => warn!(error = %e, "Failed to count failed deployments"),
+        }
         let waiting = self.failed_store.count_waiting(now_ms).await?;
 
         let retry_concurrency = self.config.retry_concurrency.max(1);
@@ -325,6 +329,7 @@ impl RetryFailedDeployments {
                             self.deployer.as_ref(),
                             RemoteDeployment {
                                 entity_id: &failure.entity_id,
+                                entity_type: &failure.entity_type,
                                 auth_chain: &failure.auth_chain,
                                 context: DeploymentContext::SyncedFix,
                                 report: None,

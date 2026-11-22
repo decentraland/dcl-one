@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use super::metrics;
 use super::pointer_changes::{self, PeerUrls, PointerChangesOptions, ScheduleTarget};
 use super::repository::{LiveDeploymentRepository, LiveProcessedSnapshotStore};
 use super::snapshots::{self, SnapshotScheduling};
@@ -232,6 +233,7 @@ impl SyncOrchestrator {
                 }
                 false
             });
+            report_phases(&servers);
             let mut urls: Vec<String> = servers.keys().cloned().collect();
             urls.sort();
             *self.inner.peer_urls.write().unwrap() = Arc::from(urls);
@@ -272,6 +274,7 @@ impl SyncOrchestrator {
                 info!(server = %url, "Aborted sync task");
             }
         }
+        metrics::server_phases(0, 0, 0);
     }
 
     pub fn state(&self) -> SyncState {
@@ -703,10 +706,14 @@ impl SyncOrchestratorRefs {
         )
         .await;
 
-        for state in self.servers.lock().await.values_mut() {
-            if state.sync_task.is_none() {
-                state.phase = ServerPhase::BootstrappingSnapshots;
+        {
+            let mut servers = self.servers.lock().await;
+            for state in servers.values_mut() {
+                if state.sync_task.is_none() {
+                    state.phase = ServerPhase::BootstrappingSnapshots;
+                }
             }
+            report_phases(&servers);
         }
 
         info!("Phase 4: Bootstrap profiles from snapshots");
@@ -890,7 +897,10 @@ impl SyncOrchestratorRefs {
 
         let pass: Vec<(String, HashSet<String>, Arc<DeploymentReport>)> = snapshots_to_process
             .into_iter()
-            .map(|(hash, servers)| (hash, servers, Arc::new(DeploymentReport::default())))
+            .map(|(hash, servers)| {
+                let report = DeploymentReport::new(metrics::SyncSource::snapshots());
+                (hash, servers, Arc::new(report))
+            })
             .collect();
         let failed_hashes = StdMutex::new(HashSet::<String>::new());
 
@@ -994,8 +1004,11 @@ impl SyncOrchestratorRefs {
             (held, to_mark)
         };
 
-        if let Err(e) = self.processed_store.mark_processed_many(&to_mark).await {
-            warn!(snapshots = to_mark.len(), error = %e, "Failed to mark snapshots as processed");
+        match self.processed_store.mark_processed_many(&to_mark).await {
+            Ok(()) => metrics::snapshots_processed("saved", to_mark.len() as u64),
+            Err(e) => {
+                warn!(snapshots = to_mark.len(), error = %e, "Failed to mark snapshots as processed");
+            }
         }
 
         let mut advanced = Vec::new();
@@ -1016,6 +1029,7 @@ impl SyncOrchestratorRefs {
                     advanced.push((url.clone(), state.last_snapshot_timestamp));
                 }
             }
+            report_phases(&servers);
         }
 
         if mark_processed {
@@ -1074,7 +1088,9 @@ impl SyncOrchestratorRefs {
                     entity_type_filter: filter.as_deref(),
                 };
                 let progress = AtomicI64::new(from_timestamp);
-                let report = Arc::new(DeploymentReport::default());
+                let report = Arc::new(DeploymentReport::new(metrics::SyncSource::pointer_changes(
+                    &server,
+                )));
                 let outcome = pointer_changes::deploy_entities_from_pointer_changes(
                     &refs.http_client,
                     &server,
@@ -1098,7 +1114,8 @@ impl SyncOrchestratorRefs {
                         (reached, true)
                     }
                 };
-                if let Some(state) = refs.servers.lock().await.get_mut(&server) {
+                let mut servers = refs.servers.lock().await;
+                if let Some(state) = servers.get_mut(&server) {
                     // A finished pass delivered every row before its settled cursor, while the
                     // snapshot's end can sit above rows the pass read before they committed:
                     // the stream resumes from the pass.
@@ -1111,6 +1128,7 @@ impl SyncOrchestratorRefs {
                         state.phase = ServerPhase::Syncing;
                     }
                 }
+                report_phases(&servers);
             });
         }
 
@@ -1146,9 +1164,12 @@ impl SyncOrchestratorRefs {
                         entity_type_filter: cfg.entity_types.as_ref(),
                     };
                     let progress = AtomicI64::new(from_timestamp);
-                    let report = Arc::new(DeploymentReport::default());
+                    let report = Arc::new(DeploymentReport::new(
+                        metrics::SyncSource::pointer_changes(&server),
+                    ));
                     let settled_polls = AtomicU64::new(0);
                     let run_started = tokio::time::Instant::now();
+                    metrics::stream_connected(&server);
                     let outcome = pointer_changes::deploy_entities_from_pointer_changes(
                         &refs.http_client,
                         &server,
@@ -1174,6 +1195,7 @@ impl SyncOrchestratorRefs {
                         }
                         Err(e) => {
                             error!(server = %server, error = %e, "Sync stream failed");
+                            metrics::stream_failed(&server);
                             true
                         }
                     };
@@ -1251,6 +1273,16 @@ impl BootstrapSignal {
             notified.await;
         }
     }
+}
+
+/// The peers in each phase, for the `dcl_bootstrapping_servers` and `dcl_syncing_servers` gauges.
+fn report_phases(servers: &HashMap<String, ServerState>) {
+    let count = |phase| servers.values().filter(|s| s.phase == phase).count();
+    metrics::server_phases(
+        count(ServerPhase::BootstrappingSnapshots),
+        count(ServerPhase::BootstrappingPointerChanges),
+        count(ServerPhase::Syncing),
+    );
 }
 
 /// The server's resume point is max(endTimestamp) over the entries that VALIDATED -- recorded

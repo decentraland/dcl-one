@@ -61,7 +61,10 @@ const WORLDS_BUCKETS: [(&str, &[f64]); 7] = [
 /// Preserve aggregatable Pulse and social histograms in every recorder, including tests.
 pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
     let mut builder = PrometheusBuilder::new();
-    for (name, buckets) in WORLDS_BUCKETS {
+    for (name, buckets) in WORLDS_BUCKETS
+        .into_iter()
+        .chain(crate::content::sync::metrics::HISTOGRAM_BUCKETS)
+    {
         builder = builder.set_buckets_for_metric(Matcher::Full(name.into()), buckets)?;
     }
     for name in [
@@ -256,5 +259,43 @@ mod tests {
     async fn occupied_exporter_port_is_a_startup_error() {
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         assert!(install_prometheus_exporter(occupied.local_addr().unwrap()).is_err());
+    }
+
+    /// The sync histograms render with the legacy buckets through the exporter serve installs.
+    #[test]
+    fn sync_histograms_keep_their_legacy_buckets() {
+        use crate::content::sync::metrics as sync;
+        let recorder = prometheus_builder().unwrap().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            sync::download_finished(
+                "https://peer.example",
+                std::time::Duration::from_millis(20),
+                Some(10),
+            );
+            sync::pointer_changes_page(
+                "https://peer.example/content/pointer-changes",
+                std::time::Duration::from_millis(20),
+            );
+            sync::download_job_started(3);
+            sync::download_job_succeeded(2);
+            sync::entity_deployed("scene", std::time::Duration::from_millis(1), true);
+        });
+        let rendered = handle.render();
+        for (name, buckets) in sync::HISTOGRAM_BUCKETS {
+            assert!(
+                rendered.contains(&format!("# TYPE {name} histogram")),
+                "{name}: {rendered}"
+            );
+            for le in buckets {
+                assert!(
+                    rendered
+                        .lines()
+                        .any(|l| l.starts_with(&format!("{name}_bucket{{"))
+                            && l.contains(&format!("le=\"{le}\""))),
+                    "{name} le={le}: {rendered}"
+                );
+            }
+        }
     }
 }

@@ -13,6 +13,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, warn};
 
 use super::batch_deployer::DeploymentReport;
+use super::sync::metrics;
 use super::sync_deployer::LiveSyncDeployer;
 use super::sync_types::{AuthChain, DeploymentContext, SyncError};
 use crate::auth::{is_canonical_cid, verify_hash};
@@ -430,7 +431,10 @@ async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) ->
     }
 
     match storage.delete_strict(entity_id).await {
-        Ok(()) => "removed the corrupt local copy so it can be re-downloaded",
+        Ok(()) => {
+            crate::sync::metrics::corrupt_entity_file_evicted();
+            "removed the corrupt local copy so it can be re-downloaded"
+        }
         Err(_) => "could not remove the corrupt local copy; a later retry will attempt it again",
     }
 }
@@ -444,6 +448,8 @@ pub struct ContentSource<'a> {
 
 pub struct RemoteDeployment<'a> {
     pub entity_id: &'a str,
+    /// The type the entity was announced with, for the metric labels.
+    pub entity_type: &'a str,
     pub auth_chain: &'a AuthChain,
     pub context: DeploymentContext,
     pub report: Option<&'a Arc<DeploymentReport>>,
@@ -459,14 +465,9 @@ pub async fn deploy_entity_streaming(
     deployer: &LiveSyncDeployer,
     target: RemoteDeployment<'_>,
 ) -> Result<(), SyncError> {
-    let ContentSource {
-        client,
-        storage,
-        servers,
-        content_semaphore,
-    } = source;
     let RemoteDeployment {
         entity_id,
+        entity_type,
         auth_chain,
         context,
         report,
@@ -475,6 +476,46 @@ pub async fn deploy_entity_streaming(
     } = target;
     // The read-through never removes a file held here until the flush takes the entity.
     let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
+    let downloaded = {
+        let _pending = metrics::InFlight::download(entity_type);
+        download_entity(&source, deployer, entity_id, discard_overtaken).await
+    };
+    match &downloaded {
+        Err(SyncError::Overtaken { .. } | SyncError::Stopped) => {}
+        outcome => metrics::entity_downloaded(entity_type, outcome.is_ok()),
+    }
+    let (entity_data, files) = downloaded?;
+
+    let started = std::time::Instant::now();
+    let deployed = deployer
+        .deploy_entity_with_files(
+            &entity_data,
+            entity_id,
+            auth_chain,
+            context,
+            report,
+            retry_state,
+            Some((source.storage.as_ref(), files.snapshots)),
+        )
+        .await;
+    metrics::entity_deployed(entity_type, started.elapsed(), deployed.is_ok());
+    deployed
+}
+
+/// The entity file and every content file it needs, stored and verified; the entity's bytes
+/// and the files it names.
+async fn download_entity(
+    source: &ContentSource<'_>,
+    deployer: &LiveSyncDeployer,
+    entity_id: &str,
+    discard_overtaken: bool,
+) -> Result<(bytes::Bytes, EntityFiles), SyncError> {
+    let ContentSource {
+        client,
+        storage,
+        servers,
+        content_semaphore,
+    } = source;
     let budget = deployer.inflight_bytes();
     download_file(
         client,
@@ -541,7 +582,7 @@ pub async fn deploy_entity_streaming(
             continue;
         }
 
-        let client = client.clone();
+        let client = (*client).clone();
         let storage = storage.clone();
         let servers = servers.to_vec();
         let sem = content_semaphore.clone();
@@ -582,19 +623,7 @@ pub async fn deploy_entity_streaming(
         return Err(e);
     }
 
-    deployer
-        .deploy_entity_with_files(
-            &entity_data,
-            entity_id,
-            auth_chain,
-            context,
-            report,
-            retry_state,
-            Some((storage.as_ref(), files.snapshots)),
-        )
-        .await?;
-
-    Ok(())
+    Ok((entity_data, files))
 }
 
 /// The renders of `entity_id` the store holds, each touched first: a render already stored may
@@ -730,6 +759,7 @@ pub async fn download_file(
         servers.len().min(MAX_DOWNLOAD_RETRIES as usize) as u32
     };
 
+    metrics::download_job_started(servers.len());
     let mut failure = None;
     let start = (uuid::Uuid::new_v4().as_u128() % servers.len() as u128) as usize;
     for attempt in 0..attempts {
@@ -738,6 +768,7 @@ pub async fn download_file(
             Ok((bytes, reservation)) => {
                 storage.store(hash, bytes.into()).await?;
                 drop(reservation);
+                metrics::download_job_succeeded(attempt + 1);
                 debug!(hash, "Downloaded content file");
                 return Ok(true);
             }
@@ -770,6 +801,39 @@ pub async fn download_file(
 /// One `GET {server}/contents/{hash}`: the decoded body, only when it hashes to `hash`, and
 /// the budget hold that covers it until the caller has stored it.
 pub(crate) async fn fetch_verified(
+    client: &CheckedRedirectClient,
+    hash: &str,
+    server: &str,
+    attempt: u32,
+    budget: Option<&ByteBudget>,
+) -> Result<(Vec<u8>, Option<ByteReservation>), SyncError> {
+    let remote_server = metrics::remote_server(server);
+    let started = std::time::Instant::now();
+    let fetched = fetch_body(client, hash, server, attempt, budget).await;
+    metrics::download_finished(
+        &remote_server,
+        started.elapsed(),
+        fetched.as_ref().ok().map(|(bytes, _)| bytes.len() as u64),
+    );
+    let (bytes, reservation) = fetched?;
+    if !verify_hash(&bytes, hash) {
+        metrics::download_hash_error(&remote_server);
+        warn!(
+            hash,
+            %server,
+            attempt,
+            "Downloaded content failed hash verification"
+        );
+        return Err(SyncError::Other(format!(
+            "content hash mismatch for {} from {}",
+            hash, server
+        )));
+    }
+    Ok((bytes, reservation))
+}
+
+/// The body of one `GET {server}/contents/{hash}`, whole and decoded, not yet verified.
+async fn fetch_body(
     client: &CheckedRedirectClient,
     hash: &str,
     server: &str,
@@ -827,20 +891,7 @@ pub(crate) async fn fetch_verified(
             hash, server, stats.wire_len, len
         )));
     }
-    let (bytes, reservation) = sink.into_parts();
-    if !verify_hash(&bytes, hash) {
-        warn!(
-            hash,
-            %server,
-            attempt,
-            "Downloaded content failed hash verification"
-        );
-        return Err(SyncError::Other(format!(
-            "content hash mismatch for {} from {}",
-            hash, server
-        )));
-    }
-    Ok((bytes, reservation))
+    Ok(sink.into_parts())
 }
 
 #[cfg(test)]
@@ -1093,6 +1144,7 @@ mod tests {
             &deployer,
             RemoteDeployment {
                 entity_id: &id,
+                entity_type: "scene",
                 auth_chain: &chain,
                 context: DeploymentContext::Synced,
                 report: None,
@@ -1198,6 +1250,7 @@ mod tests {
             &deployer,
             RemoteDeployment {
                 entity_id: &id,
+                entity_type: "scene",
                 auth_chain: &chain,
                 context: DeploymentContext::Synced,
                 report: None,
@@ -1284,6 +1337,7 @@ mod tests {
             &deployer,
             RemoteDeployment {
                 entity_id: id,
+                entity_type: "scene",
                 auth_chain: &Vec::new(),
                 context: DeploymentContext::Synced,
                 report: None,
@@ -1459,6 +1513,62 @@ mod tests {
         .await;
         assert!(matches!(required, Err(SyncError::Other(_))), "{required:?}");
         server.abort();
+    }
+
+    /// Every request records its peer's origin, time and bytes or error; a body that does not
+    /// hash to its name is a hash error; the job records its candidate peers and its attempts.
+    #[tokio::test]
+    async fn downloads_report_the_legacy_download_series() {
+        let body = b"a file a peer serves".to_vec();
+        let hash = hash_bytes_v1(&body);
+        let (good, good_server) = spawn_content_server(body.clone(), None).await;
+        let (bad, bad_server) = spawn_content_server(b"other bytes".to_vec(), None).await;
+        let (storage, tmp) = temp_storage("download-metrics").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let client = crate::sync::test_sync_client(reqwest::Client::new());
+        let (_metrics, handle) = metrics::local_recorder();
+
+        assert!(fetch_verified(&client, &hash, &bad, 0, None).await.is_err());
+        let servers = [good.clone()];
+        assert!(
+            download_file(
+                &client,
+                &storage,
+                &hash,
+                &servers,
+                None,
+                DownloadPolicy::Required
+            )
+            .await
+            .unwrap()
+        );
+
+        let rendered = handle.render();
+        let (good, bad) = (metrics::remote_server(&good), metrics::remote_server(&bad));
+        for (series, value) in [
+            (
+                format!("dcl_content_download_hash_errors_total{{remote_server=\"{bad}\"}}"),
+                1.0,
+            ),
+            (
+                format!("dcl_content_download_bytes_total{{remote_server=\"{good}\"}}"),
+                body.len() as f64,
+            ),
+            (
+                format!("dcl_content_download_duration_seconds_count{{remote_server=\"{good}\"}}"),
+                1.0,
+            ),
+            ("dcl_available_servers_histogram_sum".into(), 1.0),
+            ("dcl_content_download_job_succeed_retries_sum".into(), 1.0),
+        ] {
+            assert_eq!(
+                metrics::sample(&rendered, &series),
+                Some(value),
+                "{series}:\n{rendered}"
+            );
+        }
+        good_server.abort();
+        bad_server.abort();
     }
 
     /// A render no peer serves costs one request to each peer, with no backoff between them.
