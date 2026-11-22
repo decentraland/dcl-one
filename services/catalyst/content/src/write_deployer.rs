@@ -93,10 +93,28 @@ impl From<Vec<String>> for DeployFailure {
     }
 }
 
+/// A deployed entity as a partial replay checks it
+/// ([`WriteDeployer::deployed_entity`]).
+#[derive(sqlx::FromRow)]
+pub(crate) struct StoredEntity {
+    /// The stored `local_timestamp` (ms) a replay is answered.
+    pub local_ms: i64,
+    /// The entity timestamp (ms) its chain signed.
+    pub entity_ms: i64,
+    pub pointers: Vec<String>,
+    pub content_hashes: Vec<String>,
+}
+
 struct HashedUpload {
     v0: String,
     v1: String,
     bytes: Bytes,
+}
+
+impl HashedUpload {
+    fn names(&self, hash: &str) -> bool {
+        self.v1 == hash || self.v0 == hash
+    }
 }
 
 pub(crate) static UPLOAD_HASH_JOBS: LazyLock<Arc<Semaphore>> =
@@ -133,6 +151,33 @@ async fn hash_uploads(files: Vec<Bytes>) -> Result<Vec<HashedUpload>, String> {
             .collect()
     })
     .await
+}
+
+/// The entity file among `uploads` (the one hashing to `entity_id`),
+/// parsed, with its pointers lowercased and the request's id.
+fn entity_of(uploads: &[HashedUpload], entity_id: &str) -> Result<(Entity, Bytes), DeployFailure> {
+    let entity_bytes = uploads
+        .iter()
+        .find(|upload| upload.names(entity_id))
+        .map(|upload| upload.bytes.clone())
+        .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
+
+    // Upstream answers the bare sentence; the parser's text is logged.
+    let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
+        info!(entity_id, error = %e, "deployment refused: unparsable entity file");
+        vec!["There was a problem parsing the entity".to_string()]
+    })?;
+    for pointer in &mut entity.pointers {
+        *pointer = pointer.to_lowercase();
+    }
+    // The id is the request's, as upstream's parser takes it: the file
+    // hashes to it, whatever `id` field it carries.
+    entity.id = entity_id.to_string();
+    Ok((entity, entity_bytes))
+}
+
+fn auth_chain_of(auth_chain: Value) -> Result<AuthChain, DeployFailure> {
+    serde_json::from_value(auth_chain).map_err(|e| vec![format!("invalid auth chain: {e}")].into())
 }
 
 fn deployment_files(
@@ -693,6 +738,27 @@ impl WriteDeployer {
         .await
     }
 
+    /// What a partial replay is checked against: a deployed entity's stored
+    /// `local_timestamp` and entity timestamp (ms), which its chain signed,
+    /// with its pointers and content hashes.
+    pub(crate) async fn deployed_entity(
+        &self,
+        entity_id: &str,
+    ) -> sqlx::Result<Option<StoredEntity>> {
+        sqlx::query_as(concat!(
+            "SELECT ",
+            local_ms_sql!("d.local_timestamp"),
+            " AS local_ms, round(date_part('epoch', d.entity_timestamp) * 1000)::bigint AS entity_ms",
+            ", d.entity_pointers AS pointers",
+            ", ARRAY(SELECT f.content_hash FROM content.content_files f WHERE f.deployment = d.id)",
+            " AS content_hashes",
+            " FROM content.deployments d WHERE d.entity_id = $1"
+        ))
+        .bind(entity_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// The deploy statement's newer-entity test, ahead of it: a deployment
     /// of the same type on any of the pointers that happened after `entity`.
     pub(crate) async fn has_newer_deployment(&self, entity: &Entity) -> sqlx::Result<bool> {
@@ -1065,6 +1131,11 @@ impl WriteDeployer {
     ) -> Result<i64, DeployFailure> {
         let mut deployed = self.deploying.lock(entity_id).await;
         if let Some(creation_ts) = *deployed {
+            // Verified unlocked: the check can hash the whole form and ask a
+            // contract wallet's RPC, and other copies of the id would queue.
+            drop(deployed);
+            self.verify_replay(None, &files, entity_id, &auth_chain)
+                .await?;
             return Ok(creation_ts);
         }
         let result = self
@@ -1074,6 +1145,80 @@ impl WriteDeployer {
             *deployed = Some(creation_ts);
         }
         result
+    }
+
+    /// What a re-post of a deployed entity must prove before it is answered
+    /// the stored timestamp, checked in the order a fresh deploy checks it:
+    /// the uploads carry the entity file, the file parses, nothing it names
+    /// is denylisted, and the chain signs the id at the entity's timestamp
+    /// (so an ephemeral key that expired since still signed it). The pointer,
+    /// TTL, rate-limit and validator checks are not run again: the entity was
+    /// accepted, and its timestamp may be past the request TTL. `named` is
+    /// the upload the form named by the id; only when it is not the entity
+    /// file are the other `files` hashed.
+    pub(crate) async fn verify_replay(
+        &self,
+        named: Option<&Bytes>,
+        files: &[Bytes],
+        entity_id: &str,
+        auth_chain: &Value,
+    ) -> Result<(), DeployFailure> {
+        let mut uploads = match named {
+            Some(bytes) => hash_uploads(vec![bytes.clone()])
+                .await
+                .map_err(|e| deploy_error(entity_id, &e))?,
+            None => Vec::new(),
+        };
+        if !uploads.iter().any(|upload| upload.names(entity_id)) {
+            let others = files.iter().filter(|bytes| Some(*bytes) != named);
+            uploads = hash_uploads(others.cloned().collect())
+                .await
+                .map_err(|e| deploy_error(entity_id, &e))?;
+        }
+        let (entity, _) = entity_of(&uploads, entity_id)?;
+        self.refuse_denylisted(&entity)?;
+        let auth_chain = auth_chain_of(auth_chain.clone())?;
+        self.check_signature(entity_id, &auth_chain, entity.timestamp)
+            .await
+    }
+
+    /// A dcl-one refusal upstream does not make: the operator denylist keeps
+    /// a listed id, hash or pointer off this node.
+    fn refuse_denylisted(&self, entity: &Entity) -> Result<(), DeployFailure> {
+        match self
+            .denylist
+            .as_deref()
+            .and_then(|d| super::denylist::refusal(entity, d))
+        {
+            Some(errors) => {
+                warn!(entity_id = %entity.id, ?errors, "deployment refused: denylisted");
+                Err(DeployFailure::Rejected(RejectionKind::Validation, errors))
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// [`Self::refuse_denylisted`] for a stored entity: a partial replay,
+    /// which may carry no entity file.
+    pub(crate) fn refuse_denylisted_stored(
+        &self,
+        entity_id: &str,
+        stored: &StoredEntity,
+    ) -> Result<(), DeployFailure> {
+        match self.denylist.as_deref().and_then(|d| {
+            super::denylist::refusal_of(
+                entity_id,
+                stored.content_hashes.iter().map(String::as_str),
+                &stored.pointers,
+                d,
+            )
+        }) {
+            Some(errors) => {
+                warn!(entity_id, ?errors, "deployment refused: denylisted");
+                Err(DeployFailure::Rejected(RejectionKind::Validation, errors))
+            }
+            None => Ok(()),
+        }
     }
 
     async fn deploy_entity_unlocked(
@@ -1089,37 +1234,11 @@ impl WriteDeployer {
             .await
             .map_err(|e| deploy_error(entity_id, &e))?;
         let hash_us = started.elapsed().as_micros() as u64;
-        let entity_bytes = uploads
-            .iter()
-            .find(|upload| upload.v1 == entity_id || upload.v0 == entity_id)
-            .map(|upload| upload.bytes.clone())
-            .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
+        let (entity, entity_bytes) = entity_of(&uploads, entity_id)?;
 
-        // Upstream answers the bare sentence; the parser's text is logged.
-        let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
-            info!(entity_id, error = %e, "deployment refused: unparsable entity file");
-            vec!["There was a problem parsing the entity".to_string()]
-        })?;
-        for pointer in &mut entity.pointers {
-            *pointer = pointer.to_lowercase();
-        }
-        // The id is the request's, as upstream's parser takes it: the file
-        // hashes to it, whatever `id` field it carries.
-        entity.id = entity_id.to_string();
+        self.refuse_denylisted(&entity)?;
 
-        // A dcl-one refusal upstream does not make: the operator denylist
-        // keeps a listed id, hash or pointer off this node.
-        if let Some(errors) = self
-            .denylist
-            .as_deref()
-            .and_then(|d| super::denylist::refusal(&entity, d))
-        {
-            warn!(entity_id, ?errors, "deployment refused: denylisted");
-            return Err(DeployFailure::Rejected(RejectionKind::Validation, errors));
-        }
-
-        let auth_chain: AuthChain = serde_json::from_value(auth_chain)
-            .map_err(|e| vec![format!("invalid auth chain: {e}")])?;
+        let auth_chain = auth_chain_of(auth_chain)?;
         // The signature at the entity's timestamp, the pointers and the
         // server checks (newer entity, rate limit, request TTLs), then the
         // validator; the in-flight claim follows validation.

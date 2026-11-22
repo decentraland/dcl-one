@@ -11,8 +11,12 @@
 //! for a local scene.
 //!
 //! Answers: 200 `{creationTimestamp}`, the stored `local_timestamp`; an
-//! entity already deployed answers its stored one before any signature,
-//! TTL or rate-limit check, as upstream's idempotent deploy does. 400
+//! entity already deployed answers its stored one once the form carries its
+//! entity file, which names nothing denylisted, and a chain that signs the id
+//! at the entity's timestamp, and otherwise the error a fresh deploy of it
+//! gets, before any TTL, rate-limit or access check. Upstream answers a
+//! replay right after the chain's shape check, unsigned and without the
+//! entity file; this node does not. 400
 //! `{errors}` for a refused deployment and `{error}` for a malformed form,
 //! 413 `{error}` for one past a form limit (upstream's multipart limits and
 //! texts, the total capped at [`MAX_DEPLOYMENT_BYTES`]), 408 `{error}` for a
@@ -45,8 +49,8 @@
 //! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
 //! complete, then 200. `?partial=true` declares it before the body, so the
 //! quota is not checked on admission but once the form is read (the upload
-//! counted once, when created, and a batch refused with a 400 before joining
-//! it); the query flag on a form without the field is a 400. Once the fields
+//! counted once, when created, a 400 before joining it, and a replay refused
+//! or asking a contract wallet); the bare query flag is a 400. Once the fields
 //! before the first file are read, a batch from a source that spent its
 //! quota and not resuming its signer's own upload, or from an account over
 //! its byte rate, is turned away (429) before any file is buffered.
@@ -848,12 +852,38 @@ async fn deploy_regular(
         .ok_or_else(|| invalid(MISSING_ENTITY_ID_MESSAGE))?
         .clone();
     let auth_chain = auth_chain_of(&fields)?;
-    // Deploys are idempotent: a replay answers the stored timestamp with no
-    // signature, TTL or rate-limit check (its chain may have expired since).
+    let named = files
+        .iter()
+        .find(|(name, _)| *name == entity_id)
+        .map(|(_, bytes)| bytes.clone());
+    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
+    let failed = |failure: DeployFailure, refundable: bool| {
+        tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
+        let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
+        let response = deployment_failure_response(failure);
+        if undecided {
+            Answer::Undecided(response)
+        } else {
+            Answer::Decided(response)
+        }
+    };
+    // Deploys are idempotent: a replay answers the stored timestamp once it
+    // carries the entity file, names nothing denylisted and carries a chain
+    // that signs the id at the entity's timestamp, with the errors a fresh
+    // deploy gets; the TTL, rate-limit and access checks are not run again.
     // A failed lookup goes on to the deploy, whose write answers a deployed
     // entity the same way.
     match deployer.deployed_timestamp(&entity_id).await {
         Ok(Some(creation_timestamp)) => {
+            if let Err(failure) = deployer
+                .verify_replay(named.as_ref(), &files, &entity_id, &auth_chain)
+                .await
+            {
+                // Only a 503 is refundable; the check parses the form again.
+                let refundable = matches!(failure, DeployFailure::Unavailable(_))
+                    && is_refundable(&files, &entity_id);
+                return Ok(failed(failure, refundable));
+            }
             tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
             return Ok(Answer::Decided(created_response(creation_timestamp)));
         }
@@ -862,7 +892,6 @@ async fn deploy_regular(
             tracing::warn!(entity_id = %entity_id, error = %e, "POST /entities - replay lookup failed");
         }
     }
-    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
     if !state.sync.takes_deploys() {
         let Some(entity_type) = entity_type_of(&files, &entity_id) else {
             return Ok(Answer::Decided(deployment_failure_response(
@@ -911,24 +940,18 @@ async fn deploy_regular(
             );
             Ok(Answer::Decided(created_response(creation_timestamp)))
         }
-        Err(failure) => {
-            tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            let undecided = refundable && matches!(failure, DeployFailure::Unavailable(_));
-            let response = deployment_failure_response(failure);
-            Ok(if undecided {
-                Answer::Undecided(response)
-            } else {
-                Answer::Decided(response)
-            })
-        }
+        Err(failure) => Ok(failed(failure, refundable)),
     }
 }
 
 /// A batch of a partial upload. As upstream's `withDeploymentQuota`, the
 /// daily quota counts the upload once, when its first batch creates it, and
 /// a batch refused with a 400 before joining its upload (a missing
-/// `entityId` or a bad chain included); its 429s, 503s and replays are not
-/// counted. A spent source may only resume the signer's own upload.
+/// `entityId` or a bad chain included), and a replay of a deployed entity
+/// that is not answered its timestamp or that asked a contract wallet; its
+/// other 429s and 503s, its resumes and its other replays are not counted.
+/// A spent source may only resume the signer's own upload or replay a
+/// deployed entity not signed by a contract wallet.
 async fn partial_batch(
     state: &SharedState,
     deployer: &super::write_deployer::WriteDeployer,
@@ -980,7 +1003,10 @@ async fn partial_batch(
     )
     .await
     .unwrap_or_else(|_| processing_timed_out(timeout));
-    if admission.created || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted) {
+    if admission.created
+        || admission.counted_replay
+        || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted)
+    {
         count();
     }
     if response.status() == StatusCode::OK {

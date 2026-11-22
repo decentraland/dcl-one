@@ -17,7 +17,8 @@
 //! completes the upload publishes it through the write deployer, which
 //! validates it in full (content already in the store), and answers
 //! `200 {"creationTimestamp"}`. A batch for an entity already deployed answers
-//! 200 with the stored `local_timestamp`.
+//! 200 with the stored `local_timestamp` once the stored entity names nothing
+//! denylisted and the batch's chain signs the id at the entity's timestamp.
 //!
 //! Quotas, with upstream's messages and `Retry-After` on each 429: uploads
 //! per account, live uploads per parcel (and per account on a parcel), staged
@@ -86,7 +87,7 @@ use super::write_deployer::{
     DeployFailure, REQUEST_TTL_FORWARDS_MS, RejectionKind, UPLOAD_HASH_JOBS, WriteDeployer,
     bounded_upload_hash,
 };
-use crate::auth::{AuthChain, hash_bytes_v1};
+use crate::auth::{AuthChain, AuthLinkType, hash_bytes_v1};
 use crate::config::Config;
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::storage::{Storage, gc};
@@ -189,7 +190,8 @@ pub fn is_declared(query: Option<&str>) -> bool {
 /// claim (the chain is checked later, and a false claim only refuses the
 /// claimer's own request): with `quota_exhausted` set, only a replay of a
 /// published entity or a resume of the claimed signer's own live upload
-/// goes on (upstream's message, checked there after authentication); an
+/// goes on (upstream's message, checked there after authentication; a
+/// replay signed by a contract wallet is refused there too); an
 /// account whose byte-rate window is already over its limit waits for the
 /// window's end. Counts nothing: neither 429 is counted upstream either.
 /// A lookup that fails lets the batch on to the full checks.
@@ -262,10 +264,13 @@ pub struct Batch {
 /// What the daily quota needs to know about a settled batch (upstream
 /// `PartialQuotaState`): an upload counts once, when its first batch creates
 /// it, and a batch refused with a 400 before joining its upload counts too.
+/// So does a replay of a deployed entity that is not answered its timestamp
+/// or that asked a contract wallet's RPC.
 #[derive(Default, Debug)]
 pub struct Admission {
     pub admitted: bool,
     pub created: bool,
+    pub counted_replay: bool,
 }
 
 /// A batch's refusal: 400 (`retry_after` unset) or 429 `{errors}`, 503
@@ -594,7 +599,8 @@ impl Drop for EntityLock {
 /// The partial-upload path of `POST /entities` for an admitted, parsed
 /// batch. `quota_exhausted` is the daily quota's Retry-After when the
 /// client's source has spent it: only a resume of the signer's own live
-/// upload may then proceed. `admission` tells the caller what to count.
+/// upload, or a replay of a deployed entity not signed by a contract wallet,
+/// may then proceed. `admission` tells the caller what to count.
 pub async fn handle(
     deployer: &WriteDeployer,
     limits: &Limits,
@@ -632,13 +638,43 @@ async fn stage(
 ) -> Result<Outcome, Refusal> {
     let pool = deployer.pool();
     let entity_id = batch.entity_id.as_str();
-    // Deployments are idempotent: a replay gets the original timestamp
-    // without re-authentication (its chain may have expired since).
-    if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
-        return Ok(Outcome::Published(ts));
-    }
     let auth_chain: AuthChain = serde_json::from_value(batch.auth_chain.clone())
         .map_err(|e| Refusal::invalid(format!("invalid auth chain: {e}")))?;
+    // Deployments are idempotent: a replay of a stored entity whose id,
+    // content hashes and pointers are not denylisted, and whose chain signs
+    // the id, gets the original timestamp. The chain is checked at the stored
+    // entity's timestamp (a resume may carry no entity file, and an ephemeral
+    // key that expired since still signed it); nothing after the signature
+    // is. A replay is counted, as a regular one is, when it is refused or cut
+    // off by the processing timeout (`counted_replay` is set until it passes)
+    // or asked a contract wallet's RPC; a spent source's contract-wallet
+    // replay is refused before that RPC.
+    if let Some(stored) = deployer.deployed_entity(entity_id).await? {
+        admission.counted_replay = true;
+        deployer
+            .refuse_denylisted_stored(entity_id, &stored)
+            .map_err(Refusal::from_deploy)?;
+        let contract_wallet = auth_chain.iter().any(|link| {
+            matches!(
+                link.link_type,
+                AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity
+            )
+        });
+        if let Some(retry_after) = quota_exhausted
+            && contract_wallet
+        {
+            return Err(Refusal::throttled(
+                "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota.",
+                retry_after,
+            ));
+        }
+        deployer
+            .check_signature(entity_id, &auth_chain, stored.entity_ms)
+            .await
+            .map_err(Refusal::from_deploy)?;
+        admission.counted_replay = contract_wallet;
+        return Ok(Outcome::Published(stored.local_ms));
+    }
     let deployer_address = auth_chain
         .first()
         .map(|link| link.payload.to_lowercase())
@@ -687,6 +723,7 @@ async fn stage(
     .await?;
     let Some(lock) = EntityLock::acquire(pool, entity_id).await? else {
         // A concurrent batch may have held it while publishing the entity.
+        // This batch's chain was checked against the id above.
         if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
             return Ok(Outcome::Published(ts));
         }
@@ -1002,7 +1039,8 @@ async fn commit(
         overtaken,
     } = prepared;
     let entity_id = entity.id.as_str();
-    // Another batch may have published the entity meanwhile.
+    // Another batch may have published the entity meanwhile. `stage`
+    // checked this batch's chain against the id before preparing it.
     if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
         return Ok(Outcome::Published(ts));
     }

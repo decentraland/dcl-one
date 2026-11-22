@@ -49,6 +49,16 @@ impl Node {
     }
 
     async fn with_settings(tag: &str, settings: Settings) -> Option<Self> {
+        Self::with_contract_wallets(tag, settings, None).await
+    }
+
+    /// [`Self::with_settings`] whose deployer asks `eip1654` about contract
+    /// wallets.
+    async fn with_contract_wallets(
+        tag: &str,
+        settings: Settings,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Option<Self> {
         let pool = crate::db::scratch::pool(6).await?;
         Some(Self::on(pool, tag, settings).await)
     }
@@ -62,7 +72,7 @@ impl Node {
         let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
         let state = Arc::new(ContentState::new(pool.clone(), settings, storage.clone()));
         state.sync.set_state(SyncState::Syncing);
-        let deployer = WriteDeployer::with_partial_validation_for_tests(pool, storage, None)
+        let deployer = WriteDeployer::with_partial_validation_for_tests(pool, storage, eip1654)
             .with_denylist(state.denylist.clone());
         assert!(state.attach_writes(true, Arc::new(deployer)));
         Self { state, tmp }
@@ -355,6 +365,139 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
     assert_eq!(
         body["creationTimestamp"], created,
         "a replay answers the stored timestamp"
+    );
+}
+
+/// A replay batch, which may carry no entity file, is answered the stored
+/// timestamp only once its chain signs the id; otherwise it gets the
+/// signature error a fresh batch gets.
+#[tokio::test]
+async fn a_replay_batch_needs_a_chain_that_signs_the_id() {
+    require_test_db!(Some(node) = Node::new("replay", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"partial-replay"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+    let stranger = PrivateKeySigner::random();
+    for chain in [
+        chain_for(&stranger, "bafkreiotherentity").await,
+        json!([{"type": "SIGNER", "payload": format!("{:#x}", stranger.address()), "signature": ""}]),
+    ] {
+        let (status, _, body) = send(&router, &scene, &chain, vec![]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["errors"][0]
+                .as_str()
+                .is_some_and(|e| e.starts_with("The signature is invalid.")),
+            "{body}"
+        );
+    }
+}
+
+/// An id, content hash or pointer denylisted after the deploy gets the
+/// regular path's denylist 400 on a replay batch, which may carry no entity
+/// file: the stored entity's hashes and pointers are checked.
+#[tokio::test]
+async fn a_replay_batch_of_a_denylisted_entity_is_refused() {
+    require_test_db!(Some(node) = Node::new("replay-denylisted", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"partial-replay-denylisted"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let hash = &scene.files[0].0;
+    let pointer = &scene.pointers[0];
+    for (listed, error) in [
+        (
+            &scene.id,
+            format!("The entity {} is denylisted on this node.", scene.id),
+        ),
+        (
+            hash,
+            format!("These content files are denylisted on this node: {hash}"),
+        ),
+        (
+            pointer,
+            format!("These pointers are denylisted on this node: {pointer}"),
+        ),
+    ] {
+        node.state.denylist.operator_insert(listed);
+        let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+        node.state.denylist.operator_remove(listed);
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_REQUEST, json!({"errors": [error]}))
+        );
+    }
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+}
+
+/// A replay batch is checked at the stored entity's timestamp: a chain whose
+/// ephemeral key expired after the entity was signed still replays.
+#[tokio::test]
+async fn a_replay_batch_is_checked_at_the_stored_entity_timestamp() {
+    require_test_db!(Some(node) = Node::new("replay-expired", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let mut scene = make_scene(&signer, &[b"partial-replay-expired"], "scene").await;
+    let signed_at = now_ms() - 120_000;
+    let mut entity: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    entity["timestamp"] = json!(signed_at);
+    scene.bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(&signer, &scene.id).await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+
+    let ephemeral = PrivateKeySigner::random();
+    let expiration = chrono::DateTime::from_timestamp_millis(signed_at + 60_000)
+        .unwrap()
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let ephemeral_payload = format!(
+        "Decentraland Login\nEphemeral address: {:#x}\nExpiration: {expiration}",
+        ephemeral.address()
+    );
+    let expired = json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", signer.address()), "signature": ""},
+        {"type": "ECDSA_EPHEMERAL", "payload": ephemeral_payload,
+         "signature": signer.sign_message(ephemeral_payload.as_bytes()).await.unwrap().to_string()},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": scene.id,
+         "signature": ephemeral.sign_message(scene.id.as_bytes()).await.unwrap().to_string()},
+    ]);
+    let deployer = node.state.deployer().unwrap();
+    let parsed: AuthChain = serde_json::from_value(expired.clone()).unwrap();
+    assert!(
+        deployer
+            .check_signature(&scene.id, &parsed, now_ms())
+            .await
+            .is_err(),
+        "the ephemeral key has expired by now"
+    );
+    let (status, _, body) = send(&router, &scene, &expired, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
     );
 }
 
@@ -1477,6 +1620,109 @@ async fn the_daily_quota_counts_partial_batches_as_upstream() {
         quota.counted_for(ip),
         3,
         "resumes, 429s and replays are not counted"
+    );
+}
+
+/// A contract wallet that accepts every signature while `up`, and cannot be
+/// asked otherwise; `calls` counts the questions.
+#[derive(Default)]
+struct Wallets {
+    up: std::sync::atomic::AtomicBool,
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::auth::Eip1654Validator for Wallets {
+    async fn validate_signature(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        if self.up.load(Ordering::Relaxed) {
+            Ok(true)
+        } else {
+            Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                "rpc down".into(),
+            ))
+        }
+    }
+}
+
+/// A replay batch counts, as a regular replay does, when it asked a contract
+/// wallet or is not answered its timestamp. A spent source's contract-wallet
+/// replay is refused before the contract is asked; its own chain still
+/// replays.
+#[tokio::test]
+async fn a_replay_batch_that_asks_a_contract_wallet_counts() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 3,
+        ..Settings::for_tests()
+    };
+    let wallets = Arc::new(Wallets::default());
+    wallets.up.store(true, Ordering::Relaxed);
+    require_test_db!(
+        Some(node) =
+            Node::with_contract_wallets("replay-quota", settings, Some(wallets.clone())).await
+    );
+    let router = node.router();
+    let ip = "203.0.113.7";
+    let quota = &node.state.deploy_quota;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"replay-quota"], "scene").await;
+    let mut files = vec![entity_file(&scene)];
+    files.extend(scene.files.iter().cloned());
+    let (status, _, body) = send(&router, &scene, &scene.chain, files).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let created = body["creationTimestamp"].clone();
+    assert_eq!(quota.counted_for(ip), 1);
+
+    let contract = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &scene.id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+    let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
+    );
+    assert_eq!(
+        quota.counted_for(ip),
+        2,
+        "an answered contract-wallet replay counts"
+    );
+
+    wallets.up.store(false, Ordering::Relaxed);
+    let (status, _, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(quota.counted_for(ip), 3, "a refused replay counts");
+
+    let asked = wallets.calls.load(Ordering::Relaxed);
+    let (status, headers, body) = send(&router, &scene, &contract, vec![]).await;
+    assert_eq!(
+        (status, &body["errors"][0]),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            &json!(
+                "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota."
+            )
+        )
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(
+        wallets.calls.load(Ordering::Relaxed),
+        asked,
+        "a spent source's contract-wallet replay asks no contract"
+    );
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(
+        (status, &body["creationTimestamp"]),
+        (StatusCode::OK, &created)
     );
 }
 
