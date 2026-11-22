@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CatalystError, envelopeMessage, sendJSON } from "./client";
+import { CatalystError, envelopeMessage, forwardFailure, sendJSON } from "./client";
 
 const BASE = "https://node.example";
 
@@ -46,5 +46,22 @@ describe("sendJSON", () => {
       message: "Catalyst returned 503 Service Unavailable",
       status: 503,
     });
+  });
+});
+
+describe("forwardFailure", () => {
+  it("carries the status, the body's retryAfter and its code", () => {
+    const coded = forwardFailure("u", 503, JSON.stringify({ error: "Tip confirmation is unavailable on this node", code: "tip-index-unavailable" }));
+    expect(coded).toBeInstanceOf(CatalystError);
+    expect(coded).toMatchObject({ status: 503, code: "tip-index-unavailable", message: "Tip confirmation is unavailable on this node" });
+    expect(coded.retryAfterSecs).toBeUndefined();
+    const lagging = forwardFailure("u", 503, JSON.stringify({ error: "behind", retryAfter: 60 }));
+    expect(lagging).toMatchObject({ status: 503, retryAfterSecs: 60 });
+    expect(lagging.code).toBeUndefined();
+  });
+
+  it("keeps a body that is not JSON as the message, and names the status without one", () => {
+    expect(forwardFailure("u", 502, "Bad Gateway")).toMatchObject({ status: 502, message: "Bad Gateway" });
+    expect(forwardFailure("u", 503, "")).toMatchObject({ status: 503, message: "Catalyst returned 503" });
   });
 });

@@ -225,6 +225,7 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.disputes.trade_hash", "an order digest"),
     ("shop.admin_audit.target_hash", "an order digest"),
     ("shop.chain_cursor.last_block_hash", "a block hash"),
+    ("shop.chain_checkpoint.block_hash", "a block hash"),
     ("land_authz.index_cursor.last_block_hash", "a block hash"),
     ("land_authz.index_cursor.checkpoint_hash", "a block hash"),
     ("shop.trade_event.hashed_signature", "an order digest"),

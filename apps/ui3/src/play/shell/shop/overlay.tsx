@@ -10,7 +10,7 @@ import type { ShellPurchaseItem, ShellPurchaseView, ShellShopUi } from './purcha
 
 function withIcon(item: ShellPurchaseItem): ShopPurchaseItem {
   const { category, ...rest } = item
-  const categoryIcon = category === 'emote' ? <MaskIcon src={emotesIcon} size={20} /> : category ? <CategoryIcon category={category} size={20} /> : undefined
+  const categoryIcon = category === 'emote' ? <MaskIcon src={emotesIcon} size={16} /> : category ? <CategoryIcon category={category} size={16} /> : undefined
   return { ...rest, categoryIcon }
 }
 

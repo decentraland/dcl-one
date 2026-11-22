@@ -1784,9 +1784,11 @@ name = "catalyst-chain-index"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "catalyst-shared",
  "dcl-http",
+ "metrics",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -1913,6 +1915,7 @@ dependencies = [
  "libc",
  "metrics",
  "parking_lot",
+ "rand 0.10.3",
  "regex",
  "reqwest 0.13.5",
  "serde",
@@ -1955,6 +1958,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "anyhow",
+ "async-trait",
  "axum",
  "base64 0.23.1",
  "bytes",

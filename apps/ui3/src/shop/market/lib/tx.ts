@@ -34,6 +34,9 @@ export function isTxPending(e: unknown): e is TxPendingError {
   return (e as { name?: string } | null)?.name === "TxPendingError";
 }
 
+/** A buy dialog's answer when the wait that ran out was the MANA approval's: the sale itself was never sent. */
+export const APPROVAL_STILL_PENDING = "Your MANA approval is still confirming, so nothing was bought yet. Close this and buy again once it confirms.";
+
 export function isTxReverted(e: unknown): e is TxRevertedError {
   return (e as { name?: string } | null)?.name === "TxRevertedError";
 }
@@ -42,6 +45,21 @@ export function isTxReverted(e: unknown): e is TxRevertedError {
 export function declined(e: unknown): boolean {
   if (isUserRejection(e)) return true;
   return /user (rejected|denied)/i.test((e as { message?: string } | null)?.message ?? "");
+}
+
+/**
+ * How a MANA buy (approve, then the sale) that threw ended, for its dialog. `sent` is the sale's hash once its
+ * `onSubmitted` had it: only that says the sale went out. A wait that ran out before it was the MANA approval's,
+ * and a second Buy then would send a second approval, so that answer offers none.
+ */
+export type PurchaseFailure = { kind: "pending"; txHash: string } | { kind: "approval-pending" } | { kind: "error"; message: string };
+
+export function purchaseFailure(e: unknown, sent: string | null): PurchaseFailure {
+  if (isTxPending(e)) return sent ? { kind: "pending", txHash: sent } : { kind: "approval-pending" };
+  if (declined(e)) return { kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." };
+  if (isTxReverted(e)) return { kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." };
+  if (sent) return { kind: "pending", txHash: sent };
+  return { kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." };
 }
 
 export async function walletAccount(provider: Eip1193Provider): Promise<string> {

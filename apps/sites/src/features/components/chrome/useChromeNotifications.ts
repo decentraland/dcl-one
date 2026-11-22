@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { parseNotificationsLoose } from "@ui/data/catalyst/notificationsView";
+import { parseNotificationsLoose } from "@web-core/notifications/notificationsView";
 import {
   chromeNotificationsQuery,
   type ChromeNotificationsFetcher,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { configSchema, type FigmaConfig } from '../config.js'
 import type { RawComponentPage } from '../ir/raw-components.js'
 import type { FigmaSource } from '../sources/types.js'
@@ -52,38 +52,89 @@ describe('when indexing configured component pages for mapping verification', ()
       getComponentPageById: vi.fn(async (id) => capture(id, id === '1:1' ? '2:1' : '2:2'))
     }
   })
-  it('should iterate by stable IDs despite duplicate display names and renamed captures', async () => {
-    const result = await buildFigmaIndex(source, config)
-    expect(source.getComponentPageById).toHaveBeenNthCalledWith(1, '1:1', 'Shared name')
-    expect(source.getComponentPageById).toHaveBeenNthCalledWith(2, '1:2', 'Shared name')
-    expect(source.getComponentPageById).toHaveBeenCalledTimes(2)
-    expect(source.getComponentPage).not.toHaveBeenCalled()
-    expect(result.map((entry) => entry.setId)).toEqual(['2:1', '2:2'])
-    expect(result[0]).toMatchObject({
-      page: 'Shared name',
-      name: 'Button',
-      kind: 'set',
-      properties: { Kind: { type: 'VARIANT', options: ['Primary', 'Secondary'] } },
-      variants: [
-        { id: '2:1:base', name: 'Primary', props: { Kind: 'Primary' } },
-        { id: '2:1:other', name: 'Secondary', props: { Kind: 'Secondary' } }
-      ]
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
+  describe('and the pages share a display name and the captures were renamed', () => {
+    let result: Awaited<ReturnType<typeof buildFigmaIndex>>
+    beforeEach(async () => {
+      result = await buildFigmaIndex(source, config)
+    })
+
+    it('should read each component page by its stable ID in configured order', () => {
+      expect(source.getComponentPageById).toHaveBeenNthCalledWith(1, '1:1', 'Shared name')
+      expect(source.getComponentPageById).toHaveBeenNthCalledWith(2, '1:2', 'Shared name')
+      expect(source.getComponentPageById).toHaveBeenCalledTimes(2)
+    })
+
+    it('should not fall back to name-based lookup', () => {
+      expect(source.getComponentPage).not.toHaveBeenCalled()
+    })
+
+    it('should index one set per configured component page', () => {
+      expect(result.map((entry) => entry.setId)).toEqual(['2:1', '2:2'])
+    })
+
+    it('should index the configured page name, properties and variants of each set', () => {
+      expect(result[0]).toMatchObject({
+        page: 'Shared name',
+        name: 'Button',
+        kind: 'set',
+        properties: { Kind: { type: 'VARIANT', options: ['Primary', 'Secondary'] } },
+        variants: [
+          { id: '2:1:base', name: 'Primary', props: { Kind: 'Primary' } },
+          { id: '2:1:other', name: 'Secondary', props: { Kind: 'Secondary' } }
+        ]
+      })
     })
   })
-  it('should reject a replacement identity returned for the configured ID', async () => {
-    vi.mocked(source.getComponentPageById!).mockResolvedValueOnce(capture('9:9', '2:1'))
-    await expect(buildFigmaIndex(source, config)).rejects.toThrow('Snapshot page identity changed')
+
+  describe('and the capture returns a replacement identity for the configured ID', () => {
+    beforeEach(() => {
+      vi.mocked(source.getComponentPageById!).mockResolvedValueOnce(capture('9:9', '2:1'))
+    })
+
+    it('should reject with a changed page identity error', async () => {
+      await expect(buildFigmaIndex(source, config)).rejects.toThrow(
+        'Snapshot page identity changed'
+      )
+    })
   })
-  it('should reject duplicate configured IDs before reading captures', async () => {
-    config.pages['1:2']!.id = '1:1'
-    await expect(buildFigmaIndex(source, config)).rejects.toThrow('Ambiguous configured page ID')
-    expect(source.getComponentPageById).not.toHaveBeenCalled()
+
+  describe('and two configured pages share the same ID', () => {
+    beforeEach(() => {
+      config.pages['1:2']!.id = '1:1'
+    })
+
+    it('should reject with an ambiguous configured page ID error', async () => {
+      await expect(buildFigmaIndex(source, config)).rejects.toThrow('Ambiguous configured page ID')
+    })
+
+    it('should not read any capture', async () => {
+      await buildFigmaIndex(source, config).catch(() => undefined)
+      expect(source.getComponentPageById).not.toHaveBeenCalled()
+    })
   })
-  it('should retain name-based lookup only for an unresolved legacy entry', async () => {
-    config.pages = { Legacy: { id: null, name: 'Legacy', kind: 'components' } }
-    vi.mocked(source.getComponentPage).mockResolvedValueOnce(capture('7:7', '2:7'))
-    expect((await buildFigmaIndex(source, config)).map((entry) => entry.setId)).toEqual(['2:7'])
-    expect(source.getComponentPage).toHaveBeenCalledWith('Legacy')
-    expect(source.getComponentPageById).not.toHaveBeenCalled()
+
+  describe('and the only entry is an unresolved legacy entry', () => {
+    let result: Awaited<ReturnType<typeof buildFigmaIndex>>
+    beforeEach(async () => {
+      config.pages = { Legacy: { id: null, name: 'Legacy', kind: 'components' } }
+      vi.mocked(source.getComponentPage).mockResolvedValueOnce(capture('7:7', '2:7'))
+      result = await buildFigmaIndex(source, config)
+    })
+
+    it('should index the set found by name', () => {
+      expect(result.map((entry) => entry.setId)).toEqual(['2:7'])
+    })
+
+    it('should look the page up by its configured name', () => {
+      expect(source.getComponentPage).toHaveBeenCalledWith('Legacy')
+    })
+
+    it('should not look the page up by ID', () => {
+      expect(source.getComponentPageById).not.toHaveBeenCalled()
+    })
   })
 })

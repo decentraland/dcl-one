@@ -52,6 +52,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
+            op_get_satellite_tile(),
             op_get_world_access(),
             op_get_system_action_stream(),
             op_read_system_action_stream(),
@@ -336,6 +337,15 @@ pub async fn op_get_world_access(
     #[string] world: String,
 ) -> Result<WorldAccessVerdict, anyhow::Error> {
     dcl_js::system_api::op_get_world_access(state, world).await
+}
+
+#[op2(async)]
+#[string]
+pub async fn op_get_satellite_tile(
+    state: Rc<RefCell<OpState>>,
+    #[string] path: String,
+) -> Result<String, anyhow::Error> {
+    dcl_js::system_api::op_get_satellite_tile(state, path).await
 }
 
 #[op2(async)]

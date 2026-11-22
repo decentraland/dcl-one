@@ -19,7 +19,7 @@ vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   fetchCommunity: net.fetchCommunity,
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: null }) }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("../../components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../../events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
 vi.mock("../../events/useEventReminders", () => ({
   useEventReminders: () => ({ get: () => ({ active: false, pending: false, toggle: () => {} }) }),
@@ -53,87 +53,134 @@ function show(loader?: () => unknown, element: ReactNode = <CommunityPage id={ID
 }
 
 beforeEach(() => net.fetchCommunity.mockReset());
-afterEach(() => cleanup());
-
-const community = {
-  id: ID,
-  name: "Decentraland Foundation",
-  description: null,
-  ownerAddress: "0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda",
-  ownerName: null,
-  privacy: "private" as const,
-  membersCount: 1,
-  thumbnailUrl: null,
-  role: null,
-};
+afterEach(() => {
+  cleanup();
+  vi.resetAllMocks();
+  vi.restoreAllMocks();
+});
 
 describe("CommunityErrorView", () => {
-  it("renders a document request's 404 as not found, with no retry", async () => {
-    show(() => {
-      throw data({ reason: "not-found" }, { status: 404 });
+  describe("when a document request's loader throws a 404", () => {
+    beforeEach(() => {
+      show(() => {
+        throw data({ reason: "not-found" }, { status: 404 });
+      });
     });
 
-    expect(await screen.findByRole("heading", { name: "Community not found" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-  });
-
-  it("renders a document request's 503 as unavailable, with a retry", async () => {
-    show(() => {
-      throw data({ reason: "unavailable" }, { status: 503 });
+    it("should render the community as not found", async () => {
+      expect(await screen.findByRole("heading", { name: "Community not found" })).toBeTruthy();
     });
 
-    expect(await screen.findByRole("heading", { name: "Community unavailable" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    it("should offer no retry", async () => {
+      await screen.findByRole("heading", { name: "Community not found" });
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    });
   });
 
-  it("renders a client navigation's unknown community as not found", async () => {
-    net.fetchCommunity.mockRejectedValueOnce(new CommunityNotFoundError(ID));
-    show();
+  describe("when a document request's loader throws a 503", () => {
+    beforeEach(() => {
+      show(() => {
+        throw data({ reason: "unavailable" }, { status: 503 });
+      });
+    });
 
-    expect(await screen.findByRole("heading", { name: "Community not found" })).toBeTruthy();
+    it("should render the community as unavailable", async () => {
+      expect(await screen.findByRole("heading", { name: "Community unavailable" })).toBeTruthy();
+    });
+
+    it("should offer a retry", async () => {
+      await screen.findByRole("heading", { name: "Community unavailable" });
+      expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    });
   });
 
-  it("retries a client navigation's failed read and renders the community", async () => {
-    net.fetchCommunity.mockRejectedValueOnce(new CatalystError("502", "/v1/communities", 502)).mockResolvedValue(community);
-    show();
+  describe("when a client navigation reads an unknown community", () => {
+    beforeEach(() => {
+      net.fetchCommunity.mockRejectedValueOnce(new CommunityNotFoundError(ID));
+      show();
+    });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Try again" }));
-
-    expect(await screen.findByRole("heading", { level: 1, name: "Decentraland Foundation" })).toBeTruthy();
+    it("should render the community as not found", async () => {
+      expect(await screen.findByRole("heading", { name: "Community not found" })).toBeTruthy();
+    });
   });
 
-  it("releases the failed read when the visitor leaves", async () => {
-    net.fetchCommunity.mockRejectedValueOnce(new CatalystError("502", "/v1/communities", 502));
-    const router = show();
-    await screen.findByRole("heading", { name: "Community unavailable" });
+  describe("when a client navigation's read fails", () => {
+    describe("and the visitor retries", () => {
+      let community: {
+        id: string;
+        name: string;
+        description: null;
+        ownerAddress: string;
+        ownerName: null;
+        privacy: "private";
+        membersCount: number;
+        thumbnailUrl: null;
+        role: null;
+      };
 
-    await router.navigate("/elsewhere");
+      beforeEach(async () => {
+        community = {
+          id: ID,
+          name: "Decentraland Foundation",
+          description: null,
+          ownerAddress: "0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda",
+          ownerName: null,
+          privacy: "private",
+          membersCount: 1,
+          thumbnailUrl: null,
+          role: null,
+        };
+        net.fetchCommunity.mockRejectedValueOnce(new CatalystError("502", "/v1/communities", 502)).mockResolvedValueOnce(community);
+        show();
+        await userEvent.click(await screen.findByRole("button", { name: "Try again" }));
+      });
 
-    await waitFor(() => expect(client.getQueryState(communityKeys.detail(ID))?.status).toBe("pending"));
+      it("should render the community", async () => {
+        expect(await screen.findByRole("heading", { level: 1, name: "Decentraland Foundation" })).toBeTruthy();
+      });
+    });
+
+    describe("and the visitor leaves", () => {
+      beforeEach(async () => {
+        net.fetchCommunity.mockRejectedValueOnce(new CatalystError("502", "/v1/communities", 502));
+        const router = show();
+        await screen.findByRole("heading", { name: "Community unavailable" });
+        await router.navigate("/elsewhere");
+      });
+
+      it("should release the failed read", async () => {
+        await waitFor(() => expect(client.getQueryState(communityKeys.detail(ID))?.status).toBe("pending"));
+      });
+    });
   });
 
-  it("passes any other error up to the root boundary", async () => {
-    const Root = () => {
-      throw new Error("bug");
-    };
-    client = new QueryClient();
-    const router = createMemoryRouter(
-      [
-        {
-          path: "/",
-          ErrorBoundary: () => <p>Root boundary</p>,
-          children: [{ path: "social/communities/:id", element: <Root />, ErrorBoundary: CommunityErrorView }],
-        },
-      ],
-      { initialEntries: [`/social/communities/${ID}`] },
-    );
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    render(
-      <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
-    );
+  describe("when the page throws any other error", () => {
+    beforeEach(() => {
+      const Root = () => {
+        throw new Error("bug");
+      };
+      client = new QueryClient();
+      const router = createMemoryRouter(
+        [
+          {
+            path: "/",
+            ErrorBoundary: () => <p>Root boundary</p>,
+            children: [{ path: "social/communities/:id", element: <Root />, ErrorBoundary: CommunityErrorView }],
+          },
+        ],
+        { initialEntries: [`/social/communities/${ID}`] },
+      );
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      render(
+        <QueryClientProvider client={client}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      );
+    });
 
-    expect(await screen.findByText("Root boundary")).toBeTruthy();
+    it("should pass it up to the root boundary", async () => {
+      expect(await screen.findByText("Root boundary")).toBeTruthy();
+    });
   });
 });

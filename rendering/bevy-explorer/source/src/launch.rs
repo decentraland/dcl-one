@@ -95,7 +95,13 @@ pub fn apply_client(
         // the app assembly (lib.rs) inserts `common::autopilot::Autopilot`: only it knows the
         // CSV destination, a native flag or a web page param
         autopilot: _,
+        ff,
     } = client;
+
+    // the flags the engine reads from the feature-flags service, under this option's overrides
+    app.add_plugins(common::feature_flags::FeatureFlagsPlugin {
+        overrides: ff.clone(),
+    });
 
     app.insert_resource(EditorMode(*editor));
 

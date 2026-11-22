@@ -1,13 +1,36 @@
 import { useEffect, useId, useRef, type ComponentType } from 'react'
-import { Button } from '../../../components/Button/Button'
+import {
+  NotificationsFriend,
+  NotificationsDefault,
+  NotificationsCommunity,
+  NotificationsGift,
+  NotificationsReward,
+  NotificationsItemAirdropped
+} from '../../../foundations/icons/notifications'
 import type { NavBarLinkProps } from '../../../components/NavBar/NavBar'
 import styles from './SitesNotificationsDialog.module.css'
 
+import emptyBell from '../assets/notifications-empty.webp'
+import defaultThumbnail from '../assets/dcl-logo.svg'
+
+export { notificationMedia } from './notification-media'
+
+const badges: Record<string, typeof NotificationsDefault> = {
+  friends: NotificationsFriend,
+  community: NotificationsCommunity,
+  gift: NotificationsGift,
+  badge: NotificationsReward,
+  marketplace: NotificationsItemAirdropped
+}
 type Row = {
+  category?: string
   id: string
   title: string
   description: string
   href?: string | undefined
+  image?: string | undefined
+  badge?: string | undefined
+  standalone?: boolean
   time: string
   unread: boolean
 }
@@ -96,14 +119,17 @@ export default function SitesNotificationsDialog({
     >
       <div className={styles.heading}>
         <h2 id={titleId}>Notifications</h2>
-        <Button
+        <button
+          type="button"
+          className={styles.close}
+          aria-label="Close"
           onClick={() => {
             if (isPopover && openerRef.current?.isConnected) openerRef.current.focus()
             onClose()
           }}
         >
-          Close
-        </Button>
+          <span aria-hidden="true">×</span>
+        </button>
       </div>
       {state === 'loading' ? <p role="status">Loading notifications…</p> : null}
       {state === 'error' ? (
@@ -113,15 +139,48 @@ export default function SitesNotificationsDialog({
             : 'Couldn’t load notifications.'}
         </p>
       ) : null}
-      {state === 'ready' && rows.length === 0 ? <p>No notifications yet</p> : null}
+      {state === 'ready' && rows.length === 0 ? (
+        <div className={styles.empty}>
+          <img src={emptyBell} width={120} height={120} alt="" />
+          <h3>No Notifications Yet</h3>
+          <p>
+            Say hi 👋, join the{' '}
+            <Link href="/social/communities/e99471aa-31c4-4952-abf6-99905445f43b" onClick={onClose}>
+              Decentraland Foundation Community
+            </Link>
+            , or drop into an event—this space will come to life.
+          </p>
+        </div>
+      ) : null}
       {state !== 'loading' && rows.length > 0 ? (
         <ul className={styles.list}>
           {rows.map((row) => {
+            const Badge = badges[row.category ?? ''] ?? NotificationsDefault
             const body = (
               <>
-                <strong>{row.title}</strong>
-                {row.description ? <span>{row.description}</span> : null}
-                <small>{row.time}</small>
+                <span className={styles.media} aria-hidden="true">
+                  <img
+                    className={styles.thumbnail}
+                    src={row.image || defaultThumbnail}
+                    referrerPolicy="no-referrer"
+                    loading="lazy"
+                    alt=""
+                    onError={(event) => {
+                      if (event.currentTarget.getAttribute('src') !== defaultThumbnail)
+                        event.currentTarget.src = defaultThumbnail
+                    }}
+                  />
+                  {row.badge ? (
+                    <img className={styles.badge} src={row.badge} alt="" />
+                  ) : row.standalone ? null : (
+                    <Badge size={22} />
+                  )}
+                </span>
+                <span className={styles.copy}>
+                  <strong>{row.title}</strong>
+                  {row.description ? <span>{row.description}</span> : null}
+                  <small>{row.time}</small>
+                </span>
               </>
             )
             return (

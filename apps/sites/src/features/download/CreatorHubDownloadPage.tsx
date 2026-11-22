@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
-import { asset } from "@ui/asset";
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import banner from "@dcl/one-ui/apps/sites/assets/creator-hub-banner.png";
+import logo from "./creator-hub-download-logo.svg?url";
+import SitesLayout from "../components/chrome/SitesLayout";
 
 import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
@@ -63,7 +63,7 @@ export default function CreatorHubDownloadPage({
 
   const main = offered.primary;
   return (
-    <SitesChrome active="create">
+    <SitesLayout active="create">
       <SubNav />
       <main className={styles.root} data-os={main?.osKey} data-arch={main?.arch} data-version={version}>
         <div className={styles.card}>
@@ -82,7 +82,7 @@ export default function CreatorHubDownloadPage({
 
           <img
             className={styles.banner}
-            src={asset("assets/creator-hub-banner.png")}
+            src={banner}
             width={752}
             height={500}
             alt="Decentraland Creator Hub"
@@ -94,6 +94,6 @@ export default function CreatorHubDownloadPage({
           </noscript>
         )}
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

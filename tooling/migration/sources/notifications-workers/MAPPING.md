@@ -104,13 +104,21 @@ the final pass is still emailed by each.
 ### Node producers
 
 An event that upstream's processor and a node producer both turn into a
-notification is stored twice if both run. The import cannot give the
-upstream row the node producer's id, because the keys do not line up:
-community events key on the producer's own `Date.now()` and upstream
-batches suffix `-batch-N`; event notices key on the node's intent ids,
-moderation notices on the node's ban ids, world permission notices on the
-node's change time, quota notices on the block's creation time in
-microseconds; LAND transfers are a type upstream did not emit.
+notification is stored twice if both run. The import keeps upstream IDs for
+these types; it does not assign the node producer's identity. Community
+events key on the producer's own `Date.now()` and upstream batches suffix
+`-batch-N`; event notices key on the node's intent ids, moderation notices on
+the node's ban ids, world permission notices on the node's change time, and
+quota notices on wallet, kind and the UTC date of block creation. LAND
+transfers are a type upstream did not emit.
+
+The quota writer can link exact existing native IDs when a block's full
+creation timestamp is available; imported IDs remain unlinked. Unlinked
+history may coexist with the first daily notice, without historical cleanup
+or a second delivery for later daily repeats. Retire quota writers that do
+not set daily keys before relying on daily uniqueness. The
+[quota identity decision](../../../../docs/adr/2026-11-21-world-quota-notice-identity.md)
+states the coverage and cutover boundary.
 
 So the rule is a cutover order:
 
@@ -121,7 +129,8 @@ So the rule is a cutover order:
    nothing more.
 3. `run notifications-workers --since last` (the final pass, reconciles
    included), then `run notifications-workers --step broadcast --restart`.
-4. Enable the node's producers.
+4. Enable the node's producers. Seed the Shop chain notice producers from
+   events-notifier's cursors first ([runbook](../../../../services/catalyst/docs/shop-notices.md#cutover-from-events-notifier)).
 
 Types that collide if 4 happens before 2 (step 4 does not cover the
 external producers above): the community, moderation

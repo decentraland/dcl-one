@@ -557,7 +557,23 @@ no snapshot in either tree:
 ### Data dependency
 
 - `content.snapshots` and the blob store, both filled by dcl-one's generator (`snapshot_gen.rs`).
-- Generation waits until sync reaches `Syncing`.
+- Generation waits until sync reaches `Syncing` (`snapshot_gen.rs` `ready`), which a node reaches
+  once a bootstrap pass over every peer ended; a peer that did not finish it is retried in the
+  background and does not hold generation. A window can be written without that peer's entities.
+- An entity that lands after its window was written gets a new `local_timestamp`
+  (`sync_deployer.rs`, the insert's `now()`):
+  - peers streaming this node's `/pointer-changes` receive it there;
+  - the first pass after it landed regenerates the window while the entity is active
+    (`snapshot_is_outdated`), up to `SNAPSHOT_GENERATION_INTERVAL_HOURS` later, and lists the
+    earlier hash in `replacedSnapshotHashes`; a peer that never processed the earlier file deploys
+    the new one;
+  - a peer running dcl-one's sync client that marked the earlier file processed and bootstraps
+    again once the new file is listed skips the new file
+    (`sync/snapshots.rs` `decide_snapshot_deployment_from_processed_set`) and starts its pointer
+    changes 20 minutes before the later of its own cursor and the newest listed `endTimestamp`
+    (`sync/orchestrator.rs` `bootstrap_from_snapshots`, `bootstrap_from_pointer_changes`). An entity
+    that landed before that is not delivered to it by this node; it has it only from another peer
+    it syncs from.
 
 ---
 
@@ -595,6 +611,15 @@ no snapshot in either tree:
 Rollout: `/content/status` answers 200 whatever the sync state, as upstream does at this revision, so a
 monitor that alerted on a non-200 status loses the failed-sync signal; read `synchronizationState`
 (`"Failed"`) instead. Nothing in the repository probes it; the gateway checks `/_gateway/healthz`.
+
+`Failed` is set when the sync orchestrator cannot start or its bootstrap task dies
+(`sync/orchestrator.rs` `run_sync_job`), with an error log. In that state `/about` answers 503 with
+`healthy: false` and `content.synchronizationStatus: "Failed"` (`about.rs` `content_is_healthy`;
+only `"Syncing"` is healthy), and every deploy answers the bootstrapping 503 (content-writes, 2a).
+With job leases on (`JOB_LEASES_ENABLED`, the default) the failed sync job releases its lease, is
+retried after a backoff of at most 10 minutes and starts again from `Bootstrapping`
+(`jobs/src/lib.rs` `spawn_leased`, `sync/worker.rs` `Leader::run`). With leases off the job runs
+once, so the node stays `Failed` until the process restarts.
 
 ### Data dependency
 
@@ -1025,9 +1050,12 @@ catalyst list and its `/about` is healthy.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
       `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
       applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
-      (which restarts from the persisted cursors), so a registry catalyst that never answers stops
-      holding the node in `Bootstrapping` once the registry drops it. While it is listed, it holds the
-      node there, as any `SYNC_SOURCE` peer does.
+      (which restarts from the persisted cursors). As upstream
+      (`decentraland/catalyst:src/logic/sync-orchestrator/component.ts:45-60`,
+      `decentraland/snapshots-fetcher@53e9c07a:src/synchronizer.ts:708-740`), a peer that never answers does not
+      hold the node in `Bootstrapping`: the node leaves it once a bootstrap pass over every listed
+      peer ended, whatever each peer's outcome, and the peers that did not finish are retried in
+      the background. A node whose peers all failed that pass therefore becomes `Syncing` too.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

@@ -127,7 +127,7 @@ describe("deliverTip", () => {
   const hash = `0x${"cd".repeat(32)}`;
 
   // A wallet whose receipt reads return `receipts` in turn (the last repeats), on a fake clock.
-  function harness(receipts: unknown[], outcomes: (number | null | { status: number; retryAfter: number })[]) {
+  function harness(receipts: unknown[], outcomes: (number | null | { status: number; retryAfter?: number; code?: string })[]) {
     let clock = 0;
     const slept: number[] = [];
     const methods: string[] = [];
@@ -148,7 +148,10 @@ describe("deliverTip", () => {
       if (outcome == null) return;
       const status = typeof outcome === "number" ? outcome : outcome.status;
       const err = new CatalystError(`Catalyst returned ${status}`, "url", status);
-      if (typeof outcome !== "number") err.retryAfterSecs = outcome.retryAfter;
+      if (typeof outcome !== "number") {
+        err.retryAfterSecs = outcome.retryAfter;
+        err.code = outcome.code;
+      }
       throw err;
     };
     const opts = {
@@ -176,14 +179,14 @@ describe("deliverTip", () => {
   });
 
   it("retries 429, 5xx and network failures with growing backoff and stops at the first answer", async () => {
-    const h = harness([{ status: "0x1" }], [429, 503, 0, null]);
+    const h = harness([{ status: "0x1" }], [429, 502, 0, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
     expect(h.forwards).toHaveLength(4);
     expect(h.slept).toEqual([5_000, 10_000, 20_000]);
   });
 
   it("waits at least the server's Retry-After, bounded by the longest backoff", async () => {
-    const h = harness([{ status: "0x1" }], [{ status: 429, retryAfter: 2 }, { status: 429, retryAfter: 60 }, { status: 503, retryAfter: 600 }, null]);
+    const h = harness([{ status: "0x1" }], [{ status: 429, retryAfter: 2 }, { status: 429, retryAfter: 60 }, { status: 502, retryAfter: 600 }, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
     expect(h.slept).toEqual([5_000, 60_000, 120_000]);
   });
@@ -191,6 +194,12 @@ describe("deliverTip", () => {
   it("stops without retrying when the server refuses the tip", async () => {
     const h = harness([{ status: "0x1" }], [400, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("refused");
+    expect(h.forwards).toHaveLength(1);
+  });
+
+  it("stops without retrying when the server has no tip index to confirm it", async () => {
+    const h = harness([{ status: "0x1" }], [{ status: 503, code: "tip-index-unavailable" }, null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("unavailable");
     expect(h.forwards).toHaveLength(1);
   });
 
@@ -224,5 +233,45 @@ describe("forwardTip", () => {
       },
     };
     await expect(forwardTip(`0x${"ab".repeat(32)}`)).rejects.toMatchObject({ status: 429, retryAfterSecs: 7 });
+  });
+
+  // The bridge answers each signed forward with the next of `answers` (status, body).
+  function bridge(answers: [number, string][]) {
+    const listeners = new Set<(push: unknown) => void>();
+    let n = 0;
+    (window as unknown as { dclBridge: unknown }).dclBridge = {
+      send: (_action: string, payload: { id: string }) =>
+        queueMicrotask(() => {
+          const [status, body] = answers[Math.min(n++, answers.length - 1)]!;
+          for (const cb of listeners) cb({ kind: "signedFetchResult", id: payload.id, status, body });
+        }),
+      onState: (cb: (push: unknown) => void) => {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    };
+    return () => n;
+  }
+
+  const mined = { request: async () => ({ status: "0x1" }) };
+  const fakeClock = () => {
+    let t = 0;
+    return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+  };
+
+  it("delivers a 503 for a node without a tip index as unavailable, asking once", async () => {
+    const sent = bridge([[503, JSON.stringify({ error: "Tip confirmation is unavailable on this node", code: "tip-index-unavailable" })]]);
+    expect(await deliverTip(mined, `0x${"ab".repeat(32)}`, fakeClock())).toBe("unavailable");
+    expect(sent()).toBe(1);
+  });
+
+  it("asks again after a 503 for a lagging index, or one with no body, until the forward is taken", async () => {
+    const sent = bridge([
+      [503, JSON.stringify({ error: "Tip confirmation is behind on this node, retry later", retryAfter: 60 })],
+      [503, ""],
+      [202, "{}"],
+    ]);
+    expect(await deliverTip(mined, `0x${"ab".repeat(32)}`, fakeClock())).toBe("notified");
+    expect(sent()).toBe(3);
   });
 });

@@ -43,23 +43,52 @@ pub fn get_block_params(tag: BlockTag) -> Value {
     json!([tag.param(), false])
 }
 
-/// The `eth_getBlockByNumber` result: `None` for a block the node does not have.
-pub fn block_info(result: &Value) -> Result<Option<BlockInfo>, RpcError> {
+/// Why one block could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockError {
+    /// The call failed.
+    Rpc(RpcError),
+    /// The node answered `null`: it does not have the block (yet).
+    Missing(BlockTag),
+    /// The node answered a block without a usable number or timestamp.
+    Shape(String),
+}
+
+impl std::fmt::Display for BlockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockError::Rpc(e) => e.fmt(f),
+            BlockError::Missing(tag) => write!(f, "no block {}", tag.param()),
+            BlockError::Shape(m) => f.write_str(m),
+        }
+    }
+}
+
+impl std::error::Error for BlockError {}
+
+impl From<RpcError> for BlockError {
+    fn from(e: RpcError) -> Self {
+        BlockError::Rpc(e)
+    }
+}
+
+/// The block in the `eth_getBlockByNumber` result for `tag`.
+pub fn block_info(result: &Value, tag: BlockTag) -> Result<BlockInfo, BlockError> {
     if result.is_null() {
-        return Ok(None);
+        return Err(BlockError::Missing(tag));
     }
     let quantity = |key: &str| {
         result
             .get(key)
             .and_then(Value::as_str)
             .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
-            .ok_or_else(|| RpcError::Malformed(format!("block without a hex {key}")))
+            .ok_or_else(|| BlockError::Shape(format!("block without a hex {key}")))
     };
-    Ok(Some(BlockInfo {
+    Ok(BlockInfo {
         number: quantity("number")?,
         timestamp: i64::try_from(quantity("timestamp")?)
-            .map_err(|_| RpcError::Malformed("block timestamp out of range".into()))?,
-    }))
+            .map_err(|_| BlockError::Shape("block timestamp out of range".into()))?,
+    })
 }
 
 /// The search and the blocks it has read (timestamp to the highest block seen at it).
@@ -253,18 +282,32 @@ mod tests {
 
     #[test]
     fn the_block_answer_is_parsed() {
+        let tag = BlockTag::Number(255);
         assert_eq!(
-            block_info(&json!({ "number": "0x10", "timestamp": "0x5f5e100" })).unwrap(),
-            Some(BlockInfo {
+            block_info(&json!({ "number": "0x10", "timestamp": "0x5f5e100" }), tag).unwrap(),
+            BlockInfo {
                 number: 16,
                 timestamp: 100_000_000
-            })
+            }
         );
-        assert_eq!(block_info(&Value::Null).unwrap(), None);
-        assert!(block_info(&json!({ "number": "0x1" })).is_err());
+        assert_eq!(block_info(&Value::Null, tag), Err(BlockError::Missing(tag)));
+        for bad in [
+            json!({ "number": "0x1" }),
+            json!({ "timestamp": "0x1" }),
+            json!({ "number": "0x1", "timestamp": "soon" }),
+            json!({ "number": "0x1", "timestamp": 1 }),
+            json!({ "number": "0x1", "timestamp": "0xffffffffffffffff" }),
+        ] {
+            assert!(
+                matches!(block_info(&bad, tag), Err(BlockError::Shape(_))),
+                "{bad}"
+            );
+        }
+        assert_eq!(BlockError::Missing(tag).to_string(), "no block 0xff");
         assert_eq!(
-            get_block_params(BlockTag::Number(255)),
-            json!(["0xff", false])
+            BlockError::from(RpcError::Status(502)),
+            BlockError::Rpc(RpcError::Status(502))
         );
+        assert_eq!(get_block_params(tag), json!(["0xff", false]));
     }
 }

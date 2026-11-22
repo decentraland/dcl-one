@@ -14,7 +14,7 @@ use common::{
     sets::SceneSets,
     sky_preset::{
         day_fraction, sample_keys, sample_ramp, time_to_phase, DIRECTIONAL_COLOR_RAMP,
-        LIGHT_INTENSITY_BY_TIME,
+        LIGHT_INTENSITY_BY_TIME, LIGHT_UNIT_LUX,
     },
     structs::{
         AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
@@ -271,11 +271,6 @@ impl From<PbGlobalLight> for GlobalLight {
     }
 }
 
-/// One light unit of the sky preset and of scene light intensities: the directional light that
-/// lights a facing white surface to 1. bevy divides illuminance by pi and multiplies by the view
-/// exposure, so the lux that land at 1 are `pi / exposure`; the explorer leaves every camera on
-/// bevy's default exposure (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
-pub const LIGHT_UNIT_LUX: f32 = PI * 1.2 * 831.7465;
 /// The sun at noon, lux: the light intensity curve (`common::sky_preset`) peaks at 1.2 there.
 pub const NOON_ILLUMINANCE: f32 = 1.2 * LIGHT_UNIT_LUX;
 /// The sky's own sun at noon, in the atmosphere's units (`dir_light_intensity`).

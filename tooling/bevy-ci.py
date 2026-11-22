@@ -96,6 +96,8 @@ IMAGES_PACKAGING = (
     'services/catalyst/cast-bot/Cargo.lock', 'rendering/bevy-explorer/patches/client-sdk-rust/**',
     'tooling/patched-sources.py',
     'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc',
+    # The UI gallery Sites serves (infra/packages/ui-gallery.nix) pins library/ui's dependency set.
+    'library/ui/package.json', 'library/ui/pnpm-lock.yaml', 'library/ui/pnpm-workspace.yaml',
     'tooling/image-*', 'tooling/ci-publication.py', 'tooling/ci_paths.py', 'tooling/bevy-ci.py',
     'tooling/fetch-play.py', 'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
     'tooling/tests/check_hud_manifest_nix.py',

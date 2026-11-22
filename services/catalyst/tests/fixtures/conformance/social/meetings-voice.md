@@ -24,7 +24,7 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
 | Community voice (stage, raise hand, promote, kick, end) | Server at parity. Client lacks moderator mute (MV-6, MV-7). |
 | OBS/RTMP stream onto a scene screen | Served: `/scene-stream-access` and LiveKit Ingress into the scene room. The local stack runs the ingress (`tooling/dev.py`); an RTMP push to a key created with the request the API makes reaches the room as H264 and Opus. Not run end to end through the API and a client. |
 | Share a screen or camera from a browser (Decentraland Cast) | Served: every `/cast/*` route, and the `apps/sites` streamer and watcher pages. `pnpm drive:cast` (`apps/sites/scripts/drive/cast.mts`) runs them headless against a real node: a world owner's scene-signed stream link, then stream-info, streamer, watcher and presenters answers from `catalyst serve` and a local LiveKit. No multi-client run in the explorer. |
-| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). `pnpm drive:cast` presents a PDF through the node, moves it with `navigate` from a presenter and stops it, and the watcher page shows each slide. No PPTX, embedded video or client composition. |
+| Presentations (slides) and presenters | Presenters routes and the presentation-bot token served; `POST /cast-presenter-service/presentations` presents PDF slides through a `cast-bot` process (MV-5). `pnpm drive:cast` presents a PDF through the node, moves it with `navigate` from a presenter and stops it, and the watcher page shows each slide. Client composition (`slide`, the slide pictures route, `presenterIdentity`, `presenter:claim`) is served with `CAST_PRESENTER_PUBLIC_URL`. No PPTX or embedded video. |
 
 ## How upstream Cast works
 
@@ -70,8 +70,8 @@ Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
   `/cast/generate-stream-link` admit there its owner, an admin of the world place, a deployment or
   streaming grantee without a parcel restriction, and an admin granted through `/scene-admin` on the
   scene the request is signed from, while the wallet that granted it still holds one of those
-  world-wide authorities (the grant is keyed on the scene's entity id, as upstream keys it on the
-  world's place). A grantee of some parcels, an admin it or another scene admin granted, and an
+  world-wide authorities (the grant is keyed on the scene's place, its world-scene identity, kept
+  across a redeploy; upstream keys it on the world's place). A grantee of some parcels, an admin it or another scene admin granted, and an
   admin of a scene that is not the world's current deployment are refused (403); on a Genesis place
   a parcel grantee is admitted. So in a multi-scene world an admin the owner adds on one scene can
   read, reset and revoke the stream of every scene. Pinned by
@@ -168,6 +168,14 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
      `component.ts:62`, `208-211`).
    - Track and lifetime: one SCREENSHARE VP8 track `presentation`, the last frame repeated every
      500 ms; a session with no remote participant for 5 minutes stops.
+   - Client composition, with `CAST_PRESENTER_PUBLIC_URL` (upstream: `PUBLIC_BASE_URL` and the
+     `cast-client-composition` flag): after `overlay`, `slide {url, width, height}`,
+     `presenterIdentity` (the request's, then a presenter's last `presentation:presenter:claim`) and
+     the `null` video position fields (`component.ts:1450-1476`); `GET
+     /presentations/:id/slides/:hash.png` answers a session's last 8 slides as `image/png`,
+     `Cache-Control: private, max-age=31536000, immutable`, else 404 (`slide-image-handler.ts`). The
+     Unity Explorer composes from these and fetches only from
+     `https://cast-presenter-service.<its base domain>`.
    - Tests: `comms::cast_presenter::tests`, `C/cast-bot/tests/livekit.rs` against a local
      `livekit-server`, and `pnpm drive:cast` in `apps/sites` through the node (above).
    Divergences:
@@ -175,18 +183,33 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
      LiveKit key, the expiry, a `presentation-bot:` identity of the granted room and a grant that can
      publish a screen share, before a slot or a bot. Any other token answers 401 on both paths.
    - Multipart uploads are read at most `MAX_CONCURRENT_PRESENTATIONS` at once (429 past that).
+   - The idle count leaves out presentation bots and the RTMP ingress. Upstream counts every remote
+     participant, so two bots in one room keep each other alive.
+   - A bot token runs one presentation: the same token again answers 409 `This token already has a
+     presentation` until the first stops. Upstream starts it, and LiveKit drops the first bot. With a
+     token each, a room holds several presentations, as upstream.
+   - A bot whose process ends without leaving is removed from its room at once, after the node sends
+     `presentation:stopped` through the room service. Upstream leaves it to LiveKit, which keeps the
+     participant and its last slide about 20 s.
    - PDFs render with hayro, not pdfjs: pixels differ, and annotation appearance streams are not drawn.
    - `ws://` LiveKit URLs are accepted on loopback hosts.
    - The SSRF resolver reads the hosts file.
+   - A composing session keeps the `presentation` track, which upstream drops, for the clients that
+     show it ([ADR](../../../../../../docs/adr/2026-11-20-cast-client-composition.md)), and encodes
+     a slide's picture before it pushes the frame.
+   - Streamer identities (`stream:<place>:<access id>:<uuid>`) are longer than upstream's
+     (`stream:<place>:<uuid>`): with a place name over 47 characters they pass neither the
+     `presenterIdentity` pattern nor the Unity Explorer's 128-character limit, and that client draws
+     the slide without the camera.
    Not served:
    - PPTX (422 `Unable to render the presentation`).
    - Embedded video: `video:play` is answered with a `presentation:error` event
      (`video-playback-failed`); the other `video:*` commands are ignored and `videoState` stays
-     `idle`.
-   - Client composition: no `slide` field, no `/presentations/:id/slides/:file`, `presenter:claim`
-     ignored.
+     `idle`. With client composition there is no `presentation-video` or `presentation-audio`
+     track and no `slideVideos[i].source`.
    - `/api/drive-video` and `/ping`.
-   Not run: a scene client presenting through the Admin Toolkit. The APIs image carries `cast-bot` and
+   Not run: a scene client presenting through the Admin Toolkit; the Unity Explorer composing a
+   presentation of this node. No client of this tree sends `presenterIdentity` or the claim. The APIs image carries `cast-bot` and
    sets `CAST_BOT_BIN` (`infra/containers/README.md`).
 6. **MV-6: The Bevy client ignores a moderator mute.** P1, S. `sync_local`
    (`B/crates/comms/src/voice_chat/state.rs:738-754`) reads role and speaker but not `muted`; a speaker

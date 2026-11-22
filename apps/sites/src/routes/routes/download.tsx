@@ -5,10 +5,12 @@ import { downloadOptions } from "@/data/lib/download/installers";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import DownloadPage from "@/features/download/DownloadPage";
 
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/download";
 
-export function meta() {
-  return [{ title: "Download Decentraland" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/download", publicBase(matches));
 }
 
 // A deep link (`?position=` or `?realm=`) opens that place in the web Explorer at /play; without one, the page

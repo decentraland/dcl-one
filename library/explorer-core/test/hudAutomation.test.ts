@@ -850,10 +850,10 @@ describe('trusted input from a test runner', () => {
   describe('clicking at a position', () => {
     it('clicks there with the left button unless told otherwise, wherever the point lands', async () => {
       const run = PAGE_COMMANDS['/click_at'].run
-      expect(await run('10 20')).toBe('clicked at (10, 20)')
-      expect(await run('10 20 --button right')).toBe('clicked at (10, 20)')
-      expect(await run('10.5 20 --button middle')).toBe('clicked at (10.5, 20)')
-      expect(await run('1 2 --button left')).toBe('clicked at (1, 2)')
+      expect(JSON.parse(await run('10 20'))).toMatchObject({ x: 10, y: 20, button: 'left' })
+      expect(JSON.parse(await run('10 20 --button right'))).toMatchObject({ x: 10, y: 20, button: 'right' })
+      expect(JSON.parse(await run('10.5 20 --button middle'))).toMatchObject({ x: 10.5, y: 20, button: 'middle' })
+      expect(JSON.parse(await run('1 2 --button left'))).toMatchObject({ x: 1, y: 2, button: 'left' })
       expect(sent).toEqual([
         req({ op: 'click', x: 10, y: 20, button: 'left' }),
         req({ op: 'click', x: 10, y: 20, button: 'right' }),
@@ -865,6 +865,30 @@ describe('trusted input from a test runner', () => {
     it('refuses a button it does not know, asking for nothing', async () => {
       await expect(PAGE_COMMANDS['/click_at'].run('10 20 --button x')).rejects.toThrow('unknown button `x`: use left, right or middle')
       expect(sent).toEqual([])
+    })
+
+    it('takes a normalized point and replies it in pixels and normalized, with the page it is on', async () => {
+      Object.defineProperty(window, 'innerWidth', { value: 1600, configurable: true })
+      Object.defineProperty(window, 'innerHeight', { value: 900, configurable: true })
+      Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true })
+      expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('0.5 0.25 --normalized --button right'))).toStrictEqual({
+        x: 800,
+        y: 225,
+        normalized: { x: 0.5, y: 0.25 },
+        button: 'right',
+        screen: { width: 1600, height: 900, scale: 2 },
+        input: 'trusted'
+      })
+      expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('400 450'))).toMatchObject({ normalized: { x: 0.25, y: 0.5 } })
+      expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('1 1 --normalized'))).toMatchObject({ x: 1599, y: 899 })
+      await expect(PAGE_COMMANDS['/click_at'].run('2 0.5 --normalized')).rejects.toThrow('normalized coordinates run from 0 to 1')
+      await expect(PAGE_COMMANDS['/click_at'].run('1 2 --frames 3')).rejects.toThrow('unexpected `--frames`')
+      await expect(PAGE_COMMANDS['/click_at'].run('1 2 --button')).rejects.toThrow('--button needs a value')
+      expect(sent).toEqual([
+        req({ op: 'click', x: 800, y: 225, button: 'right' }),
+        req({ op: 'click', x: 400, y: 450, button: 'left' }),
+        req({ op: 'click', x: 1599, y: 899, button: 'left' })
+      ])
     })
   })
 
@@ -978,7 +1002,7 @@ describe('without a test runner', () => {
       input: 'synthetic'
     })
     expect(await PAGE_COMMANDS['/press_key'].run('KeyB')).toBe('pressed KeyB')
-    expect(await PAGE_COMMANDS['/click_at'].run('5 5')).toBe('clicked at (5, 5)')
+    expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('5 5'))).toMatchObject({ x: 5, y: 5, button: 'left' })
   })
 
   it('clicks at a position with the button asked for: click, auxclick or contextmenu', async () => {
@@ -988,11 +1012,11 @@ describe('without a test runner', () => {
     for (const type of ['mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu']) {
       target.addEventListener(type, (e) => seen.push(`${type}:${(e as MouseEvent).button}:${(e as MouseEvent).buttons}`))
     }
-    expect(await PAGE_COMMANDS['/click_at'].run('5 5')).toBe('clicked at (5, 5)')
+    expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('5 5'))).toMatchObject({ x: 5, y: 5, button: 'left' })
     expect(seen.splice(0)).toEqual(['mousedown:0:1', 'mouseup:0:0', 'click:0:0'])
-    expect(await PAGE_COMMANDS['/click_at'].run('5 5 --button right')).toBe('clicked at (5, 5)')
+    expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('5 5 --button right'))).toMatchObject({ x: 5, y: 5, button: 'right' })
     expect(seen.splice(0)).toEqual(['mousedown:2:2', 'mouseup:2:0', 'contextmenu:2:0'])
-    expect(await PAGE_COMMANDS['/click_at'].run('5 5 --button middle')).toBe('clicked at (5, 5)')
+    expect(JSON.parse(await PAGE_COMMANDS['/click_at'].run('5 5 --button middle'))).toMatchObject({ x: 5, y: 5, button: 'middle' })
     expect(seen.splice(0)).toEqual(['mousedown:1:4', 'mouseup:1:0', 'auxclick:1:0'])
     await expect(PAGE_COMMANDS['/click_at'].run('5 5 --button x')).rejects.toThrow('unknown button `x`: use left, right or middle')
     expect(seen).toEqual([])

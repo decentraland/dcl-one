@@ -1,18 +1,20 @@
 // A card or panel price, as the Shop's card rule (library/shop discovery/cardPrice) decided it: credits with
-// their mark, MANA with its glyph, or the reason there is no price.
+// their mark (or, `coin="full"`, the design's full-colour Credits coin), MANA with its glyph, or the reason
+// there is no price.
 
 import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
 import { CreditMark } from '@shop-host'
 import type { CardPrice } from '@shop/discovery/cardPrice'
 import { formatMana } from '@shop/model/money'
 import { ManaIcon } from '@hud/design'
+import creditsCoin from '../assets/modal/credits-coin.svg'
 
-export function PriceTag({ price, size = 16 }: { price: CardPrice; size?: number }): React.JSX.Element {
+export function PriceTag({ price, size = 16, coin = 'mark' }: { price: CardPrice; size?: number; coin?: 'mark' | 'full' }): React.JSX.Element {
   switch (price.kind) {
     case 'credits':
       return (
         <span title={`${formatCreditsFull(price.credits)} Credits`}>
-          <CreditMark size={size} />
+          {coin === 'full' ? <img src={creditsCoin} alt="" width={size} height={size} /> : <CreditMark size={size} />}
           {formatCredits(price.credits)}
         </span>
       )

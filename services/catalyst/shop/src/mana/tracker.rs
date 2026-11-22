@@ -227,8 +227,10 @@ pub async fn index_confirms(
         return Ok(None);
     };
     let now = Utc::now();
+    // Every index this book reads is published on the book's own chain.
+    let chain_id = chain.chain_id.0 as i64;
     let ready = |indexer: &'static str| async move {
-        chain_walk::ready_cursor(pool, indexer, net, now)
+        chain_walk::ready_cursor_on(pool, indexer, net, chain_id, now)
             .await
             .filter(|c| c.folded_block.is_some_and(|f| f >= block))
     };

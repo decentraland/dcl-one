@@ -149,6 +149,9 @@ pub async fn serve(
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
+    if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
+        tracing::warn!("{warning}");
+    }
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
     let sync_settings = SyncSettings::from_config(&config)?;
@@ -163,6 +166,7 @@ pub async fn serve(
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
+    worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -190,9 +194,9 @@ pub async fn serve(
         &content.settings.content_public_url,
     );
 
-    // ONE outbound client: the RPC validator uses it as is (`raw`), every
-    // mirror and upstream reader through the guard; peer sync has its own
-    // (`content::sync::sync_http_client`).
+    // ONE outbound client: every mirror and upstream reader goes through the
+    // guard; peer sync (`content::sync::sync_http_client`) and the RPC
+    // validator have their own.
     let http_client = http::Outbound::new(http::HttpClientCfg::serve(
         config.content.connections_max_idle,
     ))
@@ -251,21 +255,38 @@ pub async fn serve(
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
-        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
+        .map(|url| {
+            // The shared client's settings without redirects: one would hand the check
+            // to another node.
+            let client = http::HttpClientCfg {
+                max_redirects: None,
+                ..http::HttpClientCfg::serve(config.content.connections_max_idle)
+            }
+            .build()
+            .context("building the EIP-1654 RPC client")?;
+            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+        })
+        .transpose()?;
 
     // The content validator of the local write path (src/content/validator):
-    // the old catalyrst-validator rules over the ONE pool (the escrow
+    // the old catalyrst-validator rules over the ONE pool (the opt-in escrow
     // overlay), store and client, the shared EIP-1654 validator and the
     // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
-    let validator_settings = content::validator::Settings::parse(
-        config.validator.ignore_blockchain_access_checks,
-        config.writes.content_writes_enabled,
-        config.validator.additional_decentraland_address.as_deref(),
-        &config.node.eth_network,
-        config.content.eth_rpc_url()?,
-        config.economy.rpc_endpoint_polygon.as_deref(),
-    )
-    .context("content validator configuration")?;
+    if let Some(warning) = config.escrow_lease_flags_warning() {
+        tracing::warn!("{warning}");
+    }
+    let validator_settings = content::validator::Settings {
+        escrow_lease_ownership: config.validator.content_escrow_lease_ownership_enabled,
+        ..content::validator::Settings::parse(
+            config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes_enabled,
+            config.validator.additional_decentraland_address.as_deref(),
+            &config.node.eth_network,
+            config.content.eth_rpc_url()?,
+            config.economy.rpc_endpoint_polygon.as_deref(),
+        )
+        .context("content validator configuration")?
+    };
     // Sync and the read-through validate every entity a peer serves.
     let judges_peer_entities = sync_settings.is_some() || config.content.read_through_enabled;
     if judges_peer_entities {
@@ -559,6 +580,7 @@ pub async fn serve(
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
+    explorer_api.attach_land_authz(land.clone());
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -1016,7 +1038,10 @@ pub async fn serve(
             shop::mana::Settings {
                 writes_enabled: config.writes.data_writes_enabled,
                 track_interval: Duration::from_secs(
-                    config.marketplace.marketplace_index_interval_secs,
+                    config
+                        .marketplace
+                        .marketplace_executions_track_interval_secs
+                        .max(1),
                 ),
                 collections_chain_id: config.economy.collections_chain_id,
             },

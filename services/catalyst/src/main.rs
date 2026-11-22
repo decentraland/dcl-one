@@ -13,6 +13,8 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(test)]
 mod cli_tests;
+#[cfg(test)]
+mod preflight_tests;
 
 #[derive(Parser)]
 #[command(name = "catalyst", version, about = "Decentraland Catalyst node")]
@@ -36,6 +38,11 @@ enum Command {
     Builder {
         #[command(subcommand)]
         command: BuilderCommand,
+    },
+    /// Content server operator commands.
+    Content {
+        #[command(subcommand)]
+        command: ContentCommand,
     },
     /// Blob store operator commands.
     Storage {
@@ -62,6 +69,11 @@ enum Command {
     CameraReel {
         #[command(subcommand)]
         command: CameraReelCommand,
+    },
+    /// Shop operator commands.
+    Shop {
+        #[command(subcommand)]
+        command: ShopCommand,
     },
     /// Explore (places, events) operator commands.
     Explore {
@@ -97,6 +109,96 @@ enum PostureCommand {
         #[arg(value_parser = ["mirror", "island", "journey"])]
         name: String,
         keys: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShopCommand {
+    /// Move a chain notification producer's cursor (`shop.notification_cursor`)
+    /// back, with its replay floor, so its next passes announce every sale,
+    /// royalty, rental or transfer after that point again (runbook:
+    /// docs/shop-notices.md). A producer no pass has seeded yet is seeded
+    /// there and its first pass keeps it: the cutover seed from a legacy
+    /// cursor. Never moves a cursor forward. A notice already stored keeps
+    /// its id, so it is neither stored nor emailed twice. `--since` resolves
+    /// through the logs of the indexes the producer reads and is refused
+    /// until they have indexed past it. Prints the outcome as JSON and
+    /// records it in `ops.admin_audit` as `--actor`. Not behind
+    /// OPS_WRITES_ENABLED: the producers' own switches decide whether
+    /// anything is emitted.
+    NoticeRewind {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(catalyst::shop::market::notice_cursor::PRODUCERS))]
+        producer: String,
+        /// Announce the logs of this block (1 or more) and later.
+        #[arg(
+            long,
+            conflicts_with = "since",
+            required_unless_present = "since",
+            value_parser = clap::value_parser!(i64).range(1..)
+        )]
+        from_block: Option<i64>,
+        /// Announce the logs mined at or after this time (for `rental_ended`,
+        /// the periods ending at or after it): RFC 3339, `YYYY-MM-DD` (UTC)
+        /// or epoch milliseconds, the legacy cursor's unit.
+        #[arg(long, value_parser = catalyst::shop::market::notice_cursor::parse_since)]
+        since: Option<i64>,
+        /// Resolve and print, with each index's logs after the resulting
+        /// cursor (`logs_after`); write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// The chain the node's trade-events walk reads on each network, as
+        /// it configures it: `--since` counts a trade_events history only
+        /// when it was proven on that chain.
+        #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
+        marketplace_index_chain_id_ethereum: i64,
+        #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
+        marketplace_index_chain_id_matic: i64,
+        /// Who ran it, recorded as the `ops.admin_audit` actor: the
+        /// operator's name, `$USER` when not given, `cli` when neither is set.
+        #[arg(long, env = "USER", hide_env_values = true)]
+        actor: Option<String>,
+    },
+    /// Compare one chain index's logs over a block range as the RPC and a
+    /// portal speaking the SQD portal protocol return them, window by
+    /// window. Read-only: a read-only database connection for the index's
+    /// filters, no lease, no write, no schema bootstrap. The RPC is
+    /// `ETH_RPC_URL` or `RPC_ENDPOINT_POLYGON` (or their `_FILE`), the portal
+    /// key `CHAIN_LOGS_PORTAL_API_KEY` (or its `_FILE`). The network, the
+    /// dataset and the RPC must name one chain, or the run is refused. A
+    /// read that fails ends the run with what was compared and the rest
+    /// uncovered. Prints one JSON report, whatever happens; exits 4 when
+    /// refused, else 1 when anything differed, else 3 when part of the range
+    /// or a compared field was not compared, else 0. Without a report, 2 is
+    /// a usage error and 1 a process setup error before the command runs (an
+    /// invalid NODE_POSTURE): a difference always prints its report.
+    CompareSources {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        #[arg(long, value_parser = ["ethereum", "matic"])]
+        net: String,
+        #[arg(long, value_parser = ["nft", "sales", "trade_events", "committee", "mana_transfers", "rentals"])]
+        indexer: String,
+        #[arg(long)]
+        from: u64,
+        #[arg(long)]
+        to: u64,
+        /// Blocks per window.
+        #[arg(long, default_value_t = 10_000)]
+        window: u64,
+        #[arg(long, env = "CHAIN_LOGS_PORTAL_URL")]
+        portal_url: String,
+        /// The portal dataset; CHAIN_LOGS_PORTAL_DATASET_<NET> when not
+        /// given, else the network's mainnet dataset.
+        #[arg(long)]
+        dataset: Option<String>,
+        #[arg(long, env = "CHAIN_LOGS_PORTAL_MAX_RPS", default_value_t = 1.0)]
+        max_rps: f64,
+        /// Report the portal as holding every log of its dataset: an
+        /// operator assertion, labelled as such.
+        #[arg(long, env = "CHAIN_LOGS_PORTAL_ASSERT_FULL_HISTORY", default_value_t = false, action = clap::ArgAction::Set)]
+        assert_full_history: bool,
     },
 }
 
@@ -246,6 +348,48 @@ enum BuilderCommand {
         )]
         storage_root_folder: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ContentCommand {
+    /// List every entity id and content hash of the old content server's
+    /// denylist file (`<STORAGE_ROOT_FOLDER>/<DENYLIST_FILE_NAME>` on that
+    /// server, `denylist.txt` by default) in `content.denylist`, as console
+    /// rows added by `--added-by` (`content::denylist::import_file`). One id
+    /// a line; blank lines and lines starting with `#` are skipped, and so
+    /// are lines that are no entity id or hash (pointers), counted with
+    /// their line numbers. A listed id is left alone, so a re-run adds
+    /// nothing. A malformed line imports nothing and names itself. Prints
+    /// the counts as JSON; a running `serve` hides the new ids within about
+    /// 65 seconds (its 60 s denylist reload, then up to 5 s of cached history
+    /// answers). Not behind OPS_WRITES_ENABLED: an import is operator data.
+    ImportDenylist {
+        #[arg(
+            long,
+            env = "DATABASE_URL",
+            hide_env_values = true,
+            required_unless_present = "print_ids"
+        )]
+        database_url: Option<String>,
+        /// The file; `-` reads standard input.
+        #[arg(long)]
+        file: String,
+        /// The operator wallet recorded as each new row's `added_by` (the
+        /// console records the signed-in wallet); the audit actor is
+        /// `cli:<wallet>`.
+        #[arg(long, value_parser = wallet, required_unless_present = "print_ids")]
+        added_by: Option<String>,
+        /// Print the ids the import would list, one a line, and write
+        /// nothing.
+        #[arg(long)]
+        print_ids: bool,
+    },
+}
+
+/// `--added-by`: a wallet address, lowercased.
+fn wallet(value: &str) -> Result<String, String> {
+    catalyst::auth::normalize_eth_address(value)
+        .ok_or_else(|| "must be a wallet address (0x and 40 hex digits)".to_string())
 }
 
 #[derive(Subcommand)]
@@ -404,7 +548,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(arguments) = matches.subcommand_matches("serve") {
                 config.refuse_argv_secrets(arguments)?;
             }
-            check_posture(config)?;
+            serve_preflight(config, &|key: &str| std::env::var(key).ok())?;
             catalyst::worlds::scene_state::jsruntime::ensure_v8_initialized();
             // SAFETY: This startup thread performs the first common initialization.
             // All runtime/blocking workers descend from it afterwards. Prepared
@@ -435,6 +579,14 @@ fn main() -> anyhow::Result<()> {
 /// The refusals of [`posture::check`] against this process's environment.
 fn check_posture(config: &Config) -> anyhow::Result<()> {
     posture::check(config, &|key: &str| std::env::var(key).ok())
+}
+
+/// `serve`'s config refusals: the shared posture checks, then the DCL NAME
+/// reader that world writes need (`index` takes no world writes).
+fn serve_preflight(config: &Config, env: &posture::Lookup) -> anyhow::Result<()> {
+    posture::check(config, env)?;
+    posture::worlds_names_reader(config)?;
+    Ok(())
 }
 
 async fn run(
@@ -625,6 +777,199 @@ async fn run(
                 explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
             println!("{}", serde_json::to_string(&out)?);
             Ok(())
+        }
+        Command::Content {
+            command:
+                ContentCommand::ImportDenylist {
+                    database_url,
+                    file,
+                    added_by,
+                    print_ids,
+                },
+        } => {
+            let bytes = if file == "-" {
+                content::denylist::read_file(std::io::stdin().lock())?
+            } else {
+                let opened =
+                    std::fs::File::open(&file).with_context(|| format!("reading {file}"))?;
+                content::denylist::read_file(opened).with_context(|| format!("reading {file}"))?
+            };
+            if print_ids {
+                for id in content::denylist::checked_file(&bytes)?.ids {
+                    println!("{id}");
+                }
+                return Ok(());
+            }
+            let (Some(database_url), Some(added_by)) = (database_url, added_by) else {
+                anyhow::bail!("--database-url and --added-by are required");
+            };
+            tracing_subscriber::fmt().with_target(false).init();
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let out = content::denylist::import_file(&pool, &bytes, &added_by).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Shop {
+            command:
+                ShopCommand::NoticeRewind {
+                    database_url,
+                    producer,
+                    from_block,
+                    since,
+                    dry_run,
+                    marketplace_index_chain_id_ethereum,
+                    marketplace_index_chain_id_matic,
+                    actor,
+                },
+        } => {
+            use catalyst::shop::market::notice_cursor::{RewindFrom, rewind};
+            tracing_subscriber::fmt().with_target(false).init();
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 1,
+                    // A date far back walks every log since it.
+                    statement_timeout_ms: 900_000,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let from = match (from_block, since) {
+                (Some(b), _) => RewindFrom::Block(b),
+                (None, Some(t)) => RewindFrom::Time(t),
+                (None, None) => anyhow::bail!("give --from-block or --since"),
+            };
+            let actor = actor
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .unwrap_or("cli");
+            let trade_chains = (
+                marketplace_index_chain_id_ethereum,
+                marketplace_index_chain_id_matic,
+            );
+            let out = rewind(&pool, &producer, from, trade_chains, actor, dry_run).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+        Command::Shop {
+            command:
+                ShopCommand::CompareSources {
+                    database_url,
+                    net,
+                    indexer,
+                    from,
+                    to,
+                    window,
+                    portal_url,
+                    dataset,
+                    max_rps,
+                    assert_full_history,
+                },
+        } => {
+            use catalyst::shop::market::chain_walk::ChainNet;
+            use catalyst::shop::market::compare_sources;
+            tracing_subscriber::fmt()
+                .with_target(false)
+                .with_writer(std::io::stderr)
+                .init();
+            // The dataset as `serve` names it: the flag, else
+            // CHAIN_LOGS_PORTAL_DATASET_<NET>, else the network's mainnet.
+            let dataset = dataset.unwrap_or_else(|| {
+                let (var, default) = match ChainNet::parse(&net) {
+                    Some(ChainNet::Ethereum) => {
+                        ("CHAIN_LOGS_PORTAL_DATASET_ETHEREUM", "ethereum-mainnet")
+                    }
+                    _ => ("CHAIN_LOGS_PORTAL_DATASET_MATIC", "polygon-mainnet"),
+                };
+                std::env::var(var)
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| default.to_string())
+            });
+            // Every outcome prints a report: a setup that cannot run is
+            // refused, never raised (an error exit would read as a difference).
+            let setup = || -> anyhow::Result<(ChainNet, String, catalyst::chain_index::portal::PortalReader)> {
+                let net = ChainNet::parse(&net).context("--net")?;
+                anyhow::ensure!(
+                    max_rps.is_finite() && max_rps > 0.0,
+                    "--max-rps (CHAIN_LOGS_PORTAL_MAX_RPS) must be above 0"
+                );
+                let rpc_var = match net {
+                    ChainNet::Ethereum => "ETH_RPC_URL",
+                    ChainNet::Matic => "RPC_ENDPOINT_POLYGON",
+                };
+                let rpc_url = catalyst::config::Config::secret_from_env(rpc_var)?
+                    .with_context(|| format!("set {rpc_var} (or {rpc_var}_FILE)"))?;
+                let key = catalyst::config::Config::secret_from_env("CHAIN_LOGS_PORTAL_API_KEY")?
+                    .and_then(catalyst::chain_index::portal::Secret::new);
+                let reader = catalyst::chain_index::portal::PortalReader::new(
+                    &portal_url,
+                    &dataset,
+                    key,
+                    max_rps,
+                )
+                .map_err(anyhow::Error::msg)?;
+                Ok((net, rpc_url, reader))
+            };
+            let report = match setup() {
+                Err(e) => compare_sources::Report::refused(
+                    &net,
+                    &indexer,
+                    &dataset,
+                    from,
+                    to,
+                    format!("{e:#}"),
+                ),
+                Ok((net_v, rpc_url, reader)) => match catalyst::http::Outbound::new(
+                    catalyst::http::HttpClientCfg::default(),
+                ) {
+                    Err(e) => compare_sources::Report::refused(
+                        &net,
+                        &indexer,
+                        &dataset,
+                        from,
+                        to,
+                        format!("the outbound client: {}", e.without_url()),
+                    ),
+                    Ok(http) => compare_sources::command(
+                        &database_url,
+                        &http.allowing_configured_provider_hosts(),
+                        compare_sources::Request {
+                            net: net_v,
+                            indexer: indexer.clone(),
+                            from,
+                            to,
+                            window,
+                            rpc_url,
+                            reader,
+                            history: if assert_full_history {
+                                catalyst::chain_index::portal::AddressHistory::AssertedByOperator
+                            } else {
+                                catalyst::chain_index::portal::AddressHistory::Unknown
+                            },
+                        },
+                    )
+                    .await,
+                },
+            };
+            println!("{}", serde_json::to_string(&report)?);
+            match report.exit_code() {
+                0 => Ok(()),
+                code => std::process::exit(code),
+            }
         }
         Command::Communities {
             command:

@@ -155,6 +155,28 @@ pub async fn get_about(
             .await
             .map_err(|e| ApiError::internal(format!("quota block: {e}")))?;
     }
+    // An override that names another world held here is not handed out: the
+    // client would sign it and the gatekeeper would seat this world's
+    // visitors in that world's room. The world falls back to its own name,
+    // also for an override saved before that world was deployed here.
+    if let Some(world) = about.world.as_mut()
+        && let Some(name) = world.realm_name_override.clone()
+        && queries::override_names_another_world(
+            &state.pool,
+            &world.name,
+            &name,
+            &state.settings.realm_name,
+        )
+        .await
+        .map_err(read)?
+    {
+        tracing::warn!(
+            world = %world.name,
+            realm_name_override = %name,
+            "realm name override names another world here, not advertised"
+        );
+        world.realm_name_override = None;
+    }
     Ok(Json(build_about(&state.settings, &world_name, about)?))
 }
 

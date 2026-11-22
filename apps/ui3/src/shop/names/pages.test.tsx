@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { Hex } from "viem";
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import { LAND_NETWORKS } from "@shop/land/contracts";
 import { erc20Abi } from "../land/evm";
@@ -81,6 +82,15 @@ const type = (value: string) => fireEvent.change(screen.getByRole("textbox", { n
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
+
+
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPaymentForTests(true);
+});
+afterEach(() => undoSplit());
 
 describe("NAME registration search", () => {
   it("sanitizes input and explains invalid, banned and taken NAMEs; a taken one points to the resale browse", async () => {
@@ -289,12 +299,13 @@ describe("the NAME buy dialog", () => {
     expect(within(again).getByText(/You can still register it with MANA/)).toBeInTheDocument();
   });
 
-  it("offers the mixed rail only inside MANA, from the whole credits held plus Polygon MANA", async () => {
+  it("offers no Credits and MANA split: the credits node authorizes no part of a NAME", async () => {
     setup({ session: "web3", balanceCents: 3_000, polygonMana: 1_000n * MANA });
     const dialog = await open();
-    const mixed = await within(dialog).findByRole("radio", { name: /Credits and MANA/ });
-    expect(mixed.closest("label")!.textContent).toContain("300 Credits + 40 MANA");
-    expect(within(dialog).getAllByRole("radio")[0]).toBeChecked();
+    const radios = await within(dialog).findAllByRole("radio");
+    expect(radios[0]).toBeChecked();
+    expect(radios.map((r) => r.closest("label")!.textContent)).not.toContainEqual(expect.stringMatching(/Credits and MANA/));
+    expect(within(dialog).queryByRole("radio", { name: /Credits and MANA/ })).toBeNull();
   });
 });
 
