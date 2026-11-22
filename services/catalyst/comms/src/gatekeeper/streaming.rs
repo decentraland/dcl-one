@@ -320,19 +320,29 @@ pub(super) fn key_authority<'a>(
     scene: PlaceLookup<'a>,
 ) -> PlaceLookup<'a> {
     match world {
-        Some(world) => PlaceLookup::resolved(
-            state,
-            place_id,
-            scene::PlaceInfo {
-                world: true,
-                world_name: Some(world.key().to_owned()),
-                positions: Vec::new(),
-                base_position: None,
-            },
-            scene::NO_ADMINS,
-        ),
+        Some(world) => world_authority(state, place_id, world),
         None => scene,
     }
+}
+
+/// The world place with no footprint: its owner and the grantees with no
+/// parcel restriction hold it, and no `/scene-admin` grant does.
+pub(super) fn world_authority<'a>(
+    state: &'a CommsState,
+    place_id: &str,
+    world: &WorldName,
+) -> PlaceLookup<'a> {
+    PlaceLookup::resolved(
+        state,
+        place_id,
+        scene::PlaceInfo {
+            world: true,
+            world_name: Some(world.key().to_owned()),
+            positions: Vec::new(),
+            base_position: None,
+        },
+        scene::NO_ADMINS,
+    )
 }
 
 /// The decision for a stream-key verb on `authority` ([`key_authority`]),
