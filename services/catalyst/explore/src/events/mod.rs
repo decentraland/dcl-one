@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
+use futures::TryStreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -727,17 +728,65 @@ impl EventsComponent {
         };
         let mut binds: Vec<EventBind> = Vec::new();
         let where_sql = Self::build_where(&f, &mut binds);
+        let requested = next_placeholder(
+            &mut binds,
+            EventBind::TextArray(keys.iter().map(|key| key.to_lowercase()).collect()),
+        );
+        // Match the place-before-world resolver, then select one eligible event
+        // per destination. A busy destination must not consume another's budget.
+        let eligible = if matches!(list, EventListType::Live) {
+            "name IS NOT NULL AND name <> ''"
+        } else {
+            "name IS NOT NULL AND next_start_at IS NOT NULL"
+        };
+        // Live names are sanitized in Rust. A markup-only name must not hide
+        // the next usable name, so stream that ordered set before choosing winners.
+        let selection = if matches!(list, EventListType::Live) {
+            "SELECT"
+        } else {
+            "SELECT DISTINCT ON (destination)"
+        };
         let sql = format!(
-            "SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server, world, \
-                    {EFF_NEXT_START_SQL} AS next_start_at \
-             FROM explore.event{where_sql} \
-             ORDER BY {EFF_NEXT_START_SQL} ASC NULLS LAST, id ASC LIMIT 2500"
+            "{selection} id, name, place_id, server, world, next_start_at
+             FROM (
+               SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server, world,
+                      {EFF_NEXT_START_SQL} AS next_start_at,
+                      CASE WHEN lower(raw->>'place_id') = ANY({requested})
+                           THEN lower(raw->>'place_id')
+                           ELSE lower(raw->>'server') END AS destination
+               FROM explore.event{where_sql}
+             ) candidates
+             WHERE {eligible}
+             ORDER BY destination, next_start_at ASC NULLS LAST, id ASC"
         );
         let mut q = sqlx::query_as::<_, EventAt>(sqlx::AssertSqlSafe(sql));
         for b in &binds {
             q = bind_one(q, b);
         }
-        Ok(q.fetch_all(&self.pool).await?)
+        if matches!(list, EventListType::Upcoming) {
+            return Ok(q.fetch_all(&self.pool).await?);
+        }
+        let asked = AskedKeys::new(keys);
+        let mut selected = HashMap::new();
+        let mut rows = q.fetch(&self.pool);
+        while let Some(row) = rows.try_next().await? {
+            let Some(key) = asked.resolve(&row) else {
+                continue;
+            };
+            if selected.contains_key(&key)
+                || row
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| strip_all_markup(name).is_empty())
+            {
+                continue;
+            }
+            selected.insert(key, row);
+            if selected.len() == asked.0.len() {
+                break;
+            }
+        }
+        Ok(selected.into_values().collect())
     }
 }
 
@@ -1317,6 +1366,61 @@ mod tests {
         }
     }
     use serde_json::json;
+
+    #[tokio::test]
+    async fn destination_selection_survives_more_than_2500_earlier_events() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let run = uuid::Uuid::new_v4().simple().to_string();
+        let busy = format!("busy-{run}");
+        let quiet = format!("quiet-{run}");
+        let component = EventsComponent::new(
+            pool.clone(),
+            None,
+            None,
+            "https://events.decentraland.org".into(),
+        );
+        for (phase, hours) in [("live", -1_i32), ("next", 3)] {
+            sqlx::query(
+                "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+                 SELECT $1 || '-' || n, 'busy', timezone('UTC',now()) + $3 * interval '1 hour',
+                        timezone('UTC',now()) + $3 * interval '1 hour',7200000,true,
+                        jsonb_build_object('approved',true,'place_id',$2::text)
+                 FROM generate_series(1,2501) n"
+            ).bind(format!("{run}-{phase}")).bind(&busy).bind(hours).execute(&pool).await.unwrap();
+            sqlx::query(
+                "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+                 VALUES ($1,'quiet',timezone('UTC',now()) + $3 * interval '1 hour' + interval '1 minute',
+                         timezone('UTC',now()) + $3 * interval '1 hour' + interval '1 minute',7200000,true,
+                         jsonb_build_object('approved',true,'place_id',$2::text))"
+            ).bind(format!("{run}-{phase}-quiet")).bind(quiet.to_uppercase()).bind(hours).execute(&pool).await.unwrap();
+        }
+        // This event sorts before quiet's usable live name, but sanitizes empty.
+        sqlx::query(
+            "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+             VALUES ($1,'<b></b>',timezone('UTC',now()) - interval '61 minutes',
+                     timezone('UTC',now()) - interval '61 minutes',7200000,true,
+                     jsonb_build_object('approved',true,'place_id',$2::text))",
+        )
+        .bind(format!("{run}-markup"))
+        .bind(&quiet)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let keys = vec![busy.clone(), quiet.clone()];
+        let live = component.live_event_names(&keys).await.unwrap();
+        assert_eq!(live[&quiet].as_deref(), Some("quiet"));
+        assert_eq!(live[&busy].as_deref(), Some("busy"));
+        let next = component.next_events(&keys).await.unwrap();
+        assert_eq!(next[&quiet].name, "quiet");
+        assert_eq!(next[&busy].name, "busy");
+        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
+            .bind(format!("{run}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn event_poster_reads_use_the_configured_public_base_only_for_local_keys() {

@@ -54,8 +54,38 @@ impl Queries {
     }
 
     async fn load_current_bundle(&self) -> Result<CurrentBundle, sqlx::Error> {
-        let (current, scenes, worlds) =
-            tokio::try_join!(self.current(), self.current_scenes(), self.current_worlds())?;
+        // Retention may delete a selected snapshot while its children are read.
+        // Repeatable read retains the same committed generation for all three reads.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        let current: Option<CurrentSnapshot> = sqlx::query_as(
+            "SELECT id, taken_at, peers_count, islands_count, hot_scenes_count,
+                    scenes_polled, scene_users_total, worlds_polled, active_worlds,
+                    world_users_total, worlds_live_total
+             FROM presence.snapshots ORDER BY taken_at DESC, id DESC LIMIT 1",
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let snapshot_id = current.as_ref().map(|snapshot| snapshot.snapshot_id);
+        let scenes = sqlx::query_as(
+            "SELECT taken_at, pointer, scene_name, realm, count
+             FROM presence.scene_occupancy WHERE snapshot_id = $1
+             ORDER BY count DESC, pointer",
+        )
+        .bind(snapshot_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let worlds = sqlx::query_as(
+            "SELECT taken_at, world_name, count, live_users
+             FROM presence.world_membership WHERE snapshot_id = $1
+             ORDER BY count DESC, world_name",
+        )
+        .bind(snapshot_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(CurrentBundle {
             current,
             scenes,
