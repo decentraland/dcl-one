@@ -3051,6 +3051,44 @@ async fn a_broadcast_restarted_after_the_deadline_loses_the_expired_key() {
     crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
 }
 
+/// The grace for the broadcast live at the deadline ends with the four-hour cap.
+#[tokio::test]
+async fn a_broadcast_live_at_the_deadline_is_still_capped_at_four_hours() {
+    // A database of its own: the passes read every active credential.
+    let Some(pool) = own_db().await else { return };
+    let (_, room, metadata) = seeded_scene(&pool).await;
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = streaming_start_time WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::gatekeeper::streaming::key_expiry_pass_for_test(&h.state).await;
+    assert!(
+        streaming_flag(&pool, id).await,
+        "the live broadcast keeps its key"
+    );
+
+    sqlx::query("UPDATE social.scene_stream_access SET streaming_start_time = streaming_start_time - interval '4 hours', expiration_time = expiration_time - interval '4 hours' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let pass = crate::gatekeeper::streaming::ttl_pass_for_test;
+    assert!(pass(&h.state, id).await, "the cap cuts the stream");
+    let kind: String = sqlx::query_scalar(
+        "SELECT notification_kind FROM social.scene_stream_cleanup WHERE access_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kind, "streaming_time_exceeded");
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
+}
+
 /// The same lost webhook, before the pass: a link request that would
 /// replace the credential is refused as for a live broadcast.
 #[tokio::test]
