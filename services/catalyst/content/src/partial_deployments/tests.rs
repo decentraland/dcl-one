@@ -941,12 +941,13 @@ async fn uploads_that_wrote_nothing_go_without_the_store_lock() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// A superseded upload is released within its request without queueing on
-/// the store lock: while a deploy holds the lock's shared side the request
-/// answers at once and leaves the upload expired, and the next cleanup run
-/// reclaims it with its staged blobs.
+/// A superseded upload that staged blobs is left to the cleanup job: its
+/// request never asks for the store lock, even while a deploy holds the
+/// shared side, and marks the upload expired; a retry is refused as
+/// overtaken, not as expired; the next cleanup run reclaims it with the
+/// blobs only it named.
 #[tokio::test]
-async fn a_superseded_upload_never_waits_for_the_store_lock() {
+async fn a_superseded_upload_is_left_to_the_cleanup_job_and_refused_as_overtaken() {
     require_test_db!(Some(node) = Node::isolated("superseded-busy", Limits::default()).await);
     let router = node.router();
     let pool = &node.state.pool;
@@ -979,34 +980,44 @@ async fn a_superseded_upload_never_waits_for_the_store_lock() {
         .await
         .unwrap();
 
+    let mut entity: Entity = serde_json::from_slice(&scene.bytes).unwrap();
+    entity.id = scene.id.clone();
+    let overtaken = json!({"errors": [crate::write_deployer::newer_entity_message(&entity)]});
+
     let mut deploy = pool.begin().await.unwrap();
     gc::lock_store_shared(&mut deploy).await.unwrap();
-    let started = std::time::Instant::now();
     let (status, _, body) = send(&router, &scene, &scene.chain, vec![scene.files[1].clone()]).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(
-        // Under the 5 s a local deploy waits for the shared side.
-        started.elapsed() < Duration::from_secs(4),
-        "answered without waiting: {:?}",
-        started.elapsed()
-    );
+    assert_eq!(body, overtaken);
     assert!(store_lock_waiters(pool, "ExclusiveLock").await.is_empty());
-    let expired: bool = sqlx::query_scalar(
-        "SELECT created_at < timezone('UTC', now()) - interval '1 day'
-         FROM content.pending_deployments WHERE entity_id = $1",
+    let marked: bool = sqlx::query_scalar(
+        "SELECT created_at = 'epoch' FROM content.pending_deployments WHERE entity_id = $1",
     )
     .bind(&scene.id)
     .fetch_one(pool)
     .await
     .unwrap();
-    assert!(expired, "left to the cleanup job, already expired");
+    assert!(marked, "left to the cleanup job, already expired");
     assert!(storage.exist(&scene.id).await.unwrap());
+    let (status, _, body) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[1].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body, overtaken, "a retry is refused as overtaken");
 
     deploy.commit().await.unwrap();
     cleanup_expired(pool, storage, &Limits::default())
         .await
         .unwrap();
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(
+        !storage.exist(&scene.id).await.unwrap(),
+        "the entity file only the upload named goes"
+    );
     assert!(
         !storage.exist(&scene.id).await.unwrap(),
         "its staged entity file goes"
@@ -1242,8 +1253,7 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         assert!(storage.exist(kept).await.unwrap(), "{kept} is kept");
     }
 
-    // Defence in depth: a receipt claiming the global scene's blob as
-    // written, released (live, so no other test's cleanup takes it).
+    // Defence in depth: a receipt claiming the global scene's blob as written.
     let scene = make_scene_listing(
         &signer,
         &[b"fixed-own-2", b"fixed-missing-2"],
@@ -1263,12 +1273,8 @@ async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_
         .execute(pool)
         .await
         .unwrap();
-    let lock = EntityLock::try_acquire(pool, &scene.id)
-        .await
-        .unwrap()
-        .expect("free");
-    release_upload(pool, storage, &limits, &scene.id).await;
-    lock.release().await;
+    expire(pool, &scene.id).await;
+    cleanup_expired(pool, storage, &limits).await.unwrap();
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
     assert!(!storage.exist(&scene.files[0].0).await.unwrap());
     assert!(
@@ -1643,7 +1649,6 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         .unwrap();
     let refusal = finalize(
         deployer,
-        limits,
         &entity,
         scene.bytes.clone(),
         scene.chain.clone(),
@@ -1686,7 +1691,6 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         .unwrap();
     let refusal = finalize(
         deployer,
-        limits,
         &entity,
         scene.bytes.clone(),
         scene.chain.clone(),
@@ -1705,7 +1709,15 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         serde_json::from_slice::<Value>(&body).unwrap(),
         json!({"errors": [crate::write_deployer::newer_entity_message(&entity)]})
     );
-    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+    // It staged its entity file, so the cleanup job reclaims it.
+    let released: bool = sqlx::query_scalar(
+        "SELECT created_at = 'epoch' FROM content.pending_deployments WHERE entity_id = $1",
+    )
+    .bind(&scene.id)
+    .fetch_one(&node.state.pool)
+    .await
+    .unwrap();
+    assert!(released);
 }
 
 #[tokio::test]
@@ -1735,7 +1747,6 @@ async fn terminal_pointer_contention_waits_then_retains_the_upload() {
         Duration::from_secs(10),
         finalize(
             deployer,
-            limits,
             &entity,
             scene.bytes.clone(),
             scene.chain.clone(),

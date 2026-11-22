@@ -143,22 +143,6 @@ pub async fn lock_store_exclusive_within(
     }
 }
 
-/// [`lock_store_exclusive`] without waiting, so no shared request queues behind it: `None` while
-/// any other session holds either side.
-pub async fn try_lock_store_exclusive(
-    pool: &PgPool,
-) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, GcError> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET LOCAL idle_in_transaction_session_timeout = 0")
-        .execute(&mut *tx)
-        .await?;
-    let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
-        .bind(STORE_LOCK_KEY)
-        .fetch_one(&mut *tx)
-        .await?;
-    Ok(held.then_some(tx))
-}
-
 /// One run at a time across the fleet: `None` while another run holds it.
 pub async fn try_lock_run(
     pool: &PgPool,
