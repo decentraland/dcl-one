@@ -52,8 +52,8 @@ use super::metrics as worlds_metrics;
 use super::partial;
 use super::store::{self, SceneDeployment};
 use super::upload_limits::DeployRejection;
-use super::upload_spool::{self, SpooledFile};
 use super::{SharedState, upload_limits};
+use catalyst_storage::upload_spool::SpooledFile;
 
 /// Payload cap for a deployment: every file chunk and field value, multipart framing excluded.
 pub const MAX_UPLOAD_SIZE_BYTES: usize = 350 * 1024 * 1024;
@@ -247,7 +247,7 @@ pub async fn deploy_entity(State(state): State<SharedState>, request: Request) -
 
     let mut bytes_lease = upload_limits::reserve_in_flight();
     let mut files_lease = upload_limits::reserve_in_flight_files();
-    let spool_root = upload_spool::spool_root(&state.storage);
+    let spool_root = super::spool_root(&state.storage);
     let receiving = Instant::now();
     let received = |outcome: &'static str, bytes: u64| {
         worlds_metrics::upload_received(

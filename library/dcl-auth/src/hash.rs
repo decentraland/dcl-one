@@ -117,6 +117,25 @@ impl HashV1Writer {
     }
 }
 
+/// [`hash_bytes`] (the CIDv0: SHA-256 of the whole byte string) over content
+/// that arrives in pieces.
+#[derive(Default)]
+pub struct HashV0Writer(Sha256);
+
+impl HashV0Writer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, data: &[u8]) {
+        self.0.update(data);
+    }
+
+    pub fn finish(self) -> String {
+        cid_v0_to_string(&self.0.finalize())
+    }
+}
+
 fn balanced_reduce(nodes: Vec<TreeNode>) -> TreeNode {
     balanced_reduce_with(nodes, build_interior_node)
 }
@@ -232,6 +251,20 @@ mod tests {
         let bad_char = format!("{}g", &hex[..63]);
         for bad in [&hex[..63], &upper, &bad_char, ""] {
             assert_eq!(raw_cid_v1_from_sha256_hex(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_streaming_cid_v0_matches_the_whole_buffer() {
+        let data: Vec<u8> = (0..CHUNK_SIZE * 2 + 7).map(|i| (i % 251) as u8).collect();
+        for len in [0, 1, CHUNK_SIZE, CHUNK_SIZE + 1, data.len()] {
+            for piece in [1000, CHUNK_SIZE] {
+                let mut w = HashV0Writer::new();
+                for part in data[..len].chunks(piece) {
+                    w.update(part);
+                }
+                assert_eq!(w.finish(), hash_bytes(&data[..len]), "{len} in {piece}");
+            }
         }
     }
 
