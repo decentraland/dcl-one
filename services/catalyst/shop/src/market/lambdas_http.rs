@@ -218,4 +218,28 @@ mod tests {
             assert_eq!(body, expected.as_bytes());
         }
     }
+
+    /// The real lambdas router records the legacy HTTP series by lamb2's
+    /// route template, and leaves the trades reads out.
+    #[tokio::test(flavor = "current_thread")]
+    async fn lambdas_routes_record_lamb2_handlers() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        for path in ["/lambdas/status", "/lambdas/nope", "/v1/trades-mirror"] {
+            let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+            send(request).await;
+        }
+        let rendered = handle.render();
+        for line in [
+            "http_requests_total{method=\"GET\",handler=\"/status\",code=\"200\"} 1",
+            "http_requests_total{method=\"GET\",handler=\"\",code=\"404\"} 1",
+        ] {
+            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
+        }
+        assert!(!rendered.contains("trades"), "{rendered}");
+        assert!(!rendered.contains("nope"), "{rendered}");
+    }
 }

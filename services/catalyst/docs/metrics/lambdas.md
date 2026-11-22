@@ -16,12 +16,12 @@ at `02a37f5d` to what the node emits. Scraping is described in the
 | `cache_warmer_collections_warmed_total` | counter `collection` | not applicable | none | lamb2 declares the six `cache_warmer_*` series but its warmer records none of them. The node has no third-party collection cache warmer. |
 | `cache_warmer_duration_seconds` | histogram `collection` | not applicable | none | As above. |
 | `cache_warmer_errors_total` | counter `collection` | not applicable | none | As above. |
-| `cache_warmer_fatal_errors_total` | counter | not applicable | none | As above. lamb2 rendered a constant 0. |
-| `cache_warmer_total_duration_seconds` | histogram | not applicable | none | As above. lamb2 rendered empty buckets. |
-| `cache_warmer_last_warmup_timestamp` | gauge | not applicable | none | As above. lamb2 rendered a constant 0. |
+| `cache_warmer_fatal_errors_total` | counter | not applicable | none | As above. lamb2 rendered a constant 0, as prom-client does for an unlabelled series. |
+| `cache_warmer_total_duration_seconds` | histogram | not applicable | none | As above. lamb2 rendered empty buckets, as prom-client does for an unlabelled series. |
+| `cache_warmer_last_warmup_timestamp` | gauge | not applicable | none | As above. lamb2 rendered a constant 0, as prom-client does for an unlabelled series. |
 | `marketplace_api_fetches` | gauge `state` (`running`, `queued`) | not applicable | none | lamb2 bounded its inventory fetches to the marketplace API in a bulkhead. The node reads owned items from the collections and marketplace subgraphs (`chain_index::graph`), without a bulkhead or a queue to measure. |
 | `marketplace_api_fetches_shed_total` | counter `operation` | not applicable | none | Counted fetches the bulkhead refused. The node has no bulkhead and refuses none. |
-| `elements_cache_reads_total` | counter `result` (`hit`, `stale`, `miss`) | not applicable | none | lamb2 counted every read of its shared owned-elements cache, including the three reads behind each profile. The node has no such cache: owned copies and names are memoized per owner for 30 s (`chain_index::graph`), profile ownership is a batched subgraph check, and LAND permissions come from the land-authz index. Counting the memo alone would read as a drop in traffic, and it never serves stale entries while it refreshes them. |
+| `elements_cache_reads_total` | counter `result` (`hit`, `stale`, `miss`) | not emitted | none | lamb2 counted every read of its shared owned-elements cache, including the three reads behind each profile. The node has no such cache: owned copies and names are memoized per owner for 30 s (`chain_index::graph`), profile ownership is a batched subgraph check, and LAND permissions come from the land-authz index. Counting the memo alone under this name would read as a drop in traffic, and it never serves stale entries while it refreshes them. No replacement series counts the memo's hits and misses yet. |
 | `elements_cache_background_refresh_total` | counter `outcome` | not applicable | none | The node refreshes no entry in the background. A failed names read answers the last list fetched in the past 120 s, which is a fallback, not a refresh. |
 
 ## Series lamb2 inherited

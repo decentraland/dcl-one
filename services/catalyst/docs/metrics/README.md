@@ -58,11 +58,11 @@ that adds authentication (basic auth or a bearer token) before forwarding to
 ### Dashboards that select a job
 
 A scrape of the one endpoint gives every series the same `job` and `instance`.
-A query that told the two services apart by job (`job="content"`,
-`job="lamb2"`) needs that selector removed. The per-route HTTP series are the
-only family both services emitted, and their `handler` values differ except
-for `/status`: the content server's and lamb2's status routes now add up in
-one series.
+A query that told the two services apart by a job selector needs that
+selector removed or changed. The families both services emitted (the
+per-route HTTP series, and the logger and subgraph series, which the node
+does not emit) used distinct `handler` values except for `/status`: the
+content server's and lamb2's status routes now add up in one series.
 
 ## Per-route HTTP series
 
@@ -89,7 +89,12 @@ and `land_authz::routes::router`.
   server's `/queries/items/:pointer/...`. Both erc721 routes are
   `/queries/erc721/:chainId/:contract/:option/:emission?`.
 - A request no route matched has an empty `handler`: an unknown path under
-  `/content/` or `/lambdas/`. Unknown paths elsewhere are not counted.
+  `/content/` or `/lambdas/`. Unknown paths elsewhere are not counted. The
+  old proxy answered some unknown `/lambdas/` paths itself, so lamb2 never
+  counted those.
+- A request whose path matches a route but whose method does not is counted
+  under that route's template; the legacy services counted it with an empty
+  `handler`.
 - `method` is the request method, or `other` for a non-standard one. `code`
   is the response status.
 - The duration ends when the handler returns the response, before a streamed
