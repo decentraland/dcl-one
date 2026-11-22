@@ -89,12 +89,13 @@ in-app purchases cannot be clawed back by a later Apple refund
   and counted in `skipped_not_a_hash`, with the first 50 line numbers in
   `skipped_not_a_hash_lines`. Each new id becomes a console row with that
   wallet as `added_by`, and a `content`/`denylist.add` audit row whose actor
-  is `cli:<wallet>`, since the wallet is not a signed-in session. An id already listed is left alone, so a re-run imports nothing.
-  A line that is not an id (not UTF-8, longer than 512 bytes, or holding
-  whitespace or a control character, such as `id # note`, after the same
-  trim as JS `String.prototype.trim`) imports nothing; the first 50 are named
-  by number: fix the copy and run again. A file larger than 60 MB, or one
-  that would take the table past 100,000 ids, imports nothing.
+  is `cli:<wallet>`, since the wallet is not a signed-in session. An id
+  already listed is left alone, so a re-run imports nothing. A line that is
+  not an id (not UTF-8, longer than 512 bytes, or holding whitespace or a
+  control character, such as `id # note`, after the same trim as JS
+  `String.prototype.trim`) imports nothing; the first 50 are named by number:
+  fix the copy and run again. A file larger than 60 MB, or one that would
+  take the table past 100,000 ids, imports nothing.
 
   Imported ids are public, as console entries are: the Registry
   `GET /denylist` lists every `content.denylist` row, with the importing
@@ -118,8 +119,8 @@ in-app purchases cannot be clawed back by a later Apple refund
 
   A running `serve` hides the new ids within about 65 seconds (its 60-second
   denylist reload, then up to 5 seconds while cached `/pointer-changes` and
-  `/deployments` answers expire), a starting one at boot. The remote lists (`DENYLIST_URLS`) are not
-  imported: the node fetches them itself.
+  `/deployments` answers expire), a starting one at boot. The remote lists
+  (`DENYLIST_URLS`) are not imported: the node fetches them itself.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 
