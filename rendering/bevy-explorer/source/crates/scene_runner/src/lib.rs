@@ -8,7 +8,11 @@ use web_time::SystemTime;
 
 use bevy::{
     diagnostic::FrameCount,
-    ecs::{query::Has, schedule::ScheduleLabel, system::SystemParam},
+    ecs::{
+        query::Has,
+        schedule::{ExecutorKind, ScheduleLabel},
+        system::SystemParam,
+    },
     math::{FloatOrd, Vec3A, Vec3Swizzles},
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -126,6 +130,16 @@ pub struct SceneUpdates {
 impl SceneUpdates {
     pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
         self.receiver.get()
+    }
+
+    /// The scene the next loop pass would start, if any. Priority scenes bypass the
+    /// thread limit (but still occupy slots, preventing non-priority scenes from
+    /// running). Non-priority scenes respect the limit.
+    fn next_scene_to_start(&self, scene_threads: usize) -> Option<Entity> {
+        let &(ent, _) = self.scene_queue.front()?;
+        (self.jobs_in_flight.len() < scene_threads
+            || self.priority_scenes.values().any(|&e| e == ent))
+        .then_some(ent)
     }
 }
 
@@ -273,6 +287,10 @@ pub struct SceneLoopSchedule {
     #[cfg(not(target_arch = "wasm32"))]
     sleeper: SpinSleeper,
 }
+
+/// The time from the start of one scene loop pass to the start of the next while the loop
+/// can only wait for replies.
+const SCENE_REPLY_POLL: Duration = Duration::from_micros(250);
 
 // left px, top px, right px, bottom px
 #[derive(Default, Resource)]
@@ -432,6 +450,9 @@ impl Plugin for SceneRunnerPlugin {
         );
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
+        // every system in a pass is ordered behind the one before it or does almost
+        // nothing, so handing each to a worker costs more than running it
+        scene_schedule.set_executor_kind(ExecutorKind::SingleThreaded);
 
         scene_schedule.configure_sets(
             (
@@ -506,6 +527,7 @@ fn run_scene_loop(world: &mut World) {
         world.resource::<AppConfig>(),
         refresh_hz,
     ) as f64;
+    let scene_threads = world.resource::<AppConfig>().scene_threads;
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
@@ -537,9 +559,21 @@ fn run_scene_loop(world: &mut World) {
             && (world.resource::<SceneUpdates>().eligible_jobs > 0
                 || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
     {
+        let pass_start = Instant::now();
         schedule.run(world);
         run_once = true;
         scene_schedule_run_count += 1;
+
+        // with no scene to start, only a reply can give the next pass anything to do
+        let updates = world.resource::<SceneUpdates>();
+        if !updates.jobs_in_flight.is_empty()
+            && updates.next_scene_to_start(scene_threads).is_none()
+        {
+            let next_pass = (pass_start + SCENE_REPLY_POLL).min(target_end_time);
+            if let Some(wait) = next_pass.checked_duration_since(Instant::now()) {
+                std::thread::sleep(wait);
+            }
+        }
     }
     let loop_end_time = Instant::now();
     let eligible_scene_jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
@@ -1326,18 +1360,10 @@ fn send_scene_updates(
             .collect();
     }
 
-    // Peek at the next scene before popping. Priority scenes bypass the thread
-    // limit (but still occupy slots, preventing non-priority scenes from
-    // running). Non-priority scenes respect the limit.
-    let Some(&(ent, _)) = updates.scene_queue.front() else {
+    // peek at the next scene before popping
+    let Some(ent) = updates.next_scene_to_start(config.scene_threads) else {
         return;
     };
-
-    if updates.jobs_in_flight.len() >= config.scene_threads
-        && !updates.priority_scenes.values().any(|&e| e == ent)
-    {
-        return;
-    }
 
     updates.scene_queue.pop_front();
 

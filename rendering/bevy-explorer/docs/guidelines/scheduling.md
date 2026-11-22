@@ -76,7 +76,13 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    the system. Only transforms and text shapes have hand-written loop systems.
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
-scenes or replies outstanding. Priority: the scenes the player is in (the one they stand in,
+scenes or replies outstanding. When no scene can be started (none is queued, or `scene_threads`
+are all in flight) and replies are outstanding, it sleeps so that the next pass starts
+`SCENE_REPLY_POLL` (250 µs) after this one started, or at the deadline if that is sooner. The
+loop's schedule runs on the single-threaded executor: a pass is a chain of systems that mostly
+find nothing to do.
+
+Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the
 player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
 `update_scene_partitions`); both are divided by the time since the scene was last sent, so a
