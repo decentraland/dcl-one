@@ -40,7 +40,7 @@ class Upstream(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
             return
-        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        received = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         if self.path in ("/content/contents/test", "/worlds-content-server/contents/test",
                          "/ipfs/test", "/ab-cdn/content/contents/test"):
             # The headers content_file_headers() sends beside X-Accel-Redirect.
@@ -54,15 +54,16 @@ class Upstream(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        body = json.dumps({"upstream": self.server.product, "path": self.path,
+        body = json.dumps({"upstream": self.server.product, "path": self.path, "body_bytes": len(received),
                            "headers": {key.lower(): value for key, value in self.headers.items()}}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
-    do_POST = do_PUT = do_GET
+    do_POST = do_PUT = do_HEAD = do_OPTIONS = do_GET
 
 
 def serve():
@@ -131,6 +132,70 @@ def assert_budget(statuses, capacity):
     admitted = statuses.count(200)
     assert capacity - 1 <= admitted <= capacity, statuses
     assert statuses == [200] * admitted + [429] * (len(statuses) - admitted), statuses
+
+
+def notification_ingest(host):
+    forms = [("/notifications/notifications", "example.test"),
+             ("/notifications", "example.test"),
+             ("/notifications", "notifications.example.test")]
+    for path, vhost in forms:
+        ingested = request(host, path, vhost=vhost, method="POST", body=b"x" * (16 * 1024 * 1024))
+        assert ingested[0] == 200, ("notifications ingest body cap", vhost, path, ingested)
+        forwarded = json.loads(ingested[1])
+        assert (forwarded["upstream"], forwarded["path"], forwarded["body_bytes"]) == (
+            "apis", "/notifications/notifications", 16 * 1024 * 1024), ingested
+        # Send headers alone: an answer proves refusal precedes reading/buffering
+        # the body, for both framing forms and even on the alias's rewrite-break path.
+        cases = [(method, framing, 400) for method in ["GET", "HEAD", "OPTIONS", "PUT", "DELETE"]
+                 for framing in ["Content-Length: 16777216", "Transfer-Encoding: chunked"]]
+        cases.append(("POST", f"Content-Length: {17 * 1024 * 1024 + 1}", 413))
+        for method, framing, expected in cases:
+            with socket.create_connection((host, 8080), timeout=5) as conn:
+                conn.sendall((f"{method} {path} HTTP/1.1\r\nHost: {vhost}\r\n{framing}\r\n"
+                              "Origin: https://example.test\r\nConnection: close\r\n\r\n").encode())
+                response = http.client.HTTPResponse(conn, method=method)
+                try:
+                    response.begin()
+                except TimeoutError as error:
+                    raise AssertionError((vhost, path, method, framing, "no rejection before body")) from error
+                assert response.status == expected, (vhost, path, method, framing, response.status)
+                assert [value for key, value in response.getheaders()
+                        if key.lower() == "access-control-allow-origin"] == ["*"], response.getheaders()
+        for method in ["GET", "HEAD", "OPTIONS"]:
+            for body in [None, b""]:
+                result = request(host, path, vhost=vhost, method=method, body=body)
+                assert result[0] == 200, ("bodyless inbox", vhost, path, method, result)
+
+    held = []
+    try:
+        for index in range(10):
+            path, vhost = forms[index % len(forms)]
+            conn = socket.create_connection((host, 8080), timeout=5)
+            held.append(conn)
+            conn.sendall((f"POST {path} HTTP/1.1\r\nHost: {vhost}\r\nContent-Length: 1\r\n"
+                          "Expect: 100-continue\r\nConnection: close\r\n\r\n").encode())
+            # nginx sends 100 only after connection admission, before waiting for
+            # the byte we withhold. This avoids timing assumptions about counting.
+            with conn.makefile("rb") as response:
+                status = response.readline()
+                assert b" 100 " in status, ("notification upload admission", index, status)
+                assert response.readline() == b"\r\n"
+        for path, vhost in forms:
+            assert request(host, path, vhost=vhost, method="POST", body=b"x")[0] == 429
+            for method in ["GET", "HEAD", "OPTIONS"]:
+                result = request(host, path, vhost=vhost, method=method)
+                assert result[0] == 200, ("inbox during saturated uploads", vhost, path, method, result)
+        held.pop().close()
+        deadline = time.monotonic() + 5
+        while True:
+            status, answer = request(host, forms[0][0], method="POST", body=b"x")
+            if status != 429 or time.monotonic() >= deadline:
+                break
+        assert status == 200, ("notification upload slot released", status, answer)
+    finally:
+        for conn in held:
+            conn.close()
+    print("Real-nginx notification body guards, 16 MiB forwarding, shared POST cap and bodyless inbox passed.", flush=True)
 
 
 def client(args):
@@ -318,6 +383,7 @@ def client(args):
                        body=b"x" * (1024 * 1024 + 1))
     assert deployed[0] == 200, ("worlds deploy body cap", deployed)
     assert json.loads(deployed[1])["path"] == "/worlds-content-server/entities", deployed
+    notification_ingest(public)
     for path in ["/world/w.dcl.eth/settings", "/worlds-content-server/world/w.dcl.eth/settings"]:
         updated = request(public, path, vhost="worlds-content-server.example.test" if path.startswith("/world/")
                           else "example.test", method="PUT", body=b"x" * (1024 * 1024 + 1))

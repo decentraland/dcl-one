@@ -31,6 +31,10 @@ CAST_PRESENTATION_CAP = "101m"
 CAMERA_REEL_UPLOAD_CAP = "7m"
 # The root alias whose upload path takes CAMERA_REEL_UPLOAD_CAP.
 CAMERA_REEL_ALIAS = "^~ /camera-reel/"
+# Notification ingest: MAX_BODY_BYTES (16 MiB) plus 1 MiB so the service's
+# own 413 reaches the producer; a gateway test pins it.
+NOTIFICATIONS_INGEST_CAP = "17m"
+NOTIFICATIONS_INGEST_ALIAS = "= /notifications"
 # The content server's `POST /entities` route limit at the default field
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
@@ -270,11 +274,17 @@ def render(table, cfg, mime):
     def alias_rewrite(row):
         return row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
 
+    notification_upload = (f"client_max_body_size {NOTIFICATIONS_INGEST_CAP}; "
+                           f"limit_conn notification_ingest_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};")
+    notification_body_guard = "if ($notification_ingest_body_rejected) { return 400; }\n"
     for row in table["aliases"]:
         rewrite = alias_rewrite(row)
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
-        locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
+        extra = notification_upload if row["key"] == NOTIFICATIONS_INGEST_ALIAS else ""
+        # The guard must run before `break` stops this location's rewrite directives.
+        guard = notification_body_guard if row["key"] == NOTIFICATIONS_INGEST_ALIAS else ""
+        locations += location(row["key"], guard + f"rewrite {rewrite} break;\n" + proxy("apis", extra))
     # Worlds deploys reach these matches already rewritten under their host prefix.
     # The content deploy zone is only a coarse abuse guard: 200 at once, then
     # 5 r/s per address, above the content server's own per-client burst limit
@@ -353,6 +363,9 @@ def render(table, cfg, mime):
             for path in ("/camera-reel/api/images", "/camera-reel/api/images/"):
                 locations += location("= " + path, f"rewrite {alias_rewrite(row)} break;\n"
                                       + proxy("apis", camera_upload))
+    # Producers' bearer tokens are checked after nginx buffers the body. Only POSTs
+    # count toward the connection cap; GET on these paths reads the inbox.
+    locations += location("= /notifications/notifications", notification_body_guard + proxy("apis", notification_upload))
     # Both badges host forms reach this already rewritten under /badges. The admin
     # check is a bearer token the app reads after nginx buffers the body, so
     # concurrent uploads are capped as on the deploy routes.
@@ -576,6 +589,16 @@ http {{
     # An empty key is not counted: badge art reads share no upload cap.
     map $request_method $badge_asset_upload_key {{ PUT $binary_remote_addr; default ""; }}
     limit_conn_zone $badge_asset_upload_key zone=badge_asset_uploads:10m;
+    # Inbox reads share these paths but do not count toward the POST upload cap.
+    map $request_method $notification_ingest_upload_key {{ POST $binary_remote_addr; default ""; }}
+    limit_conn_zone $notification_ingest_upload_key zone=notification_ingest_uploads:10m;
+    # Reject non-POST bodies from headers before proxy buffering, including chunked
+    # bodies without Content-Length. Empty and all-zero lengths keep inbox reads free.
+    map "$request_method:$http_content_length:$http_transfer_encoding" $notification_ingest_body_rejected {{
+        default 1;
+        "~^POST:" 0;
+        "~^[^:]+:0*:$" 0;
+    }}
     limit_conn_zone $storage_write_key zone=storage_uploads:10m;
     limit_conn_status 429;
     proxy_http_version 1.1;
@@ -618,9 +641,10 @@ http {{
 
 
 def check_table(table):
-    # Without this alias row, render() would emit no camera reel upload locations.
-    if not any(row["key"] == CAMERA_REEL_ALIAS for row in table["aliases"]):
-        raise ValueError(f"root-aliases.nix has no {CAMERA_REEL_ALIAS} alias")
+    # These aliases must retain their upload caps when rewriting to the API paths.
+    for alias in (CAMERA_REEL_ALIAS, NOTIFICATIONS_INGEST_ALIAS):
+        if not any(row["key"] == alias for row in table["aliases"]):
+            raise ValueError(f"root-aliases.nix has no {alias} alias")
 
 
 def main():
