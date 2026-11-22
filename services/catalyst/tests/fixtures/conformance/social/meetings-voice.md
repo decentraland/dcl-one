@@ -8,8 +8,7 @@ stream from OBS, and talk over voice (nearby, private calls, community voice).
   `b6b2cef`, the pin in [`PARITY.md`](PARITY.md)).
 - dcl-one: `decentraland/dcl-one` @ `f695ad63b` (main, 2026-11-16); the Cast sections @ `05ca635f8`
   (main, 2026-11-17) with `fix/cast-follow-ups`.
-- Method: static reading, except MV-5, whose named tests ran on 2026-11-17 against the pin above,
-  and MV-13, whose quota regression tests ran locally on 2026-11-22. A row names the dcl-one test
+- Method: static reading only, except MV-5, whose named tests ran on 2026-11-17 against the pin above. A row names the dcl-one test
   that pins it, or says "untested".
 - Paths: `GK/` is upstream comms-gatekeeper `src/`; `C/` is dcl-one `services/catalyst/`;
   `G/` is `C/comms/src/gatekeeper/`; `B/` is `rendering/bevy-explorer/source/`.
@@ -53,14 +52,14 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 | Route | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
 | `POST /cast/streamer-token` | `routes.ts:241`; `cast.ts:242-304` | `G/streaming_cast.rs` `streamer_token` | DIVERGENCE: identity names the credential, display name cleaned (below) | `a_streaming_key_admits_a_streamer_who_becomes_a_presenter` |
-| `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | DIVERGENCE: issuance quota can answer 429; reuse exempt (MV-13, approval pending) | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires`; `streaming_generation_limit_covers_reset_create_delete_and_cast` |
+| `GET /cast/generate-stream-link` | `routes.ts:252`; `cast.ts:185-233` | `G/streaming_cast.rs` `generate_stream_link` over `issue_access` | MATCH | `a_scene_admin_gets_a_stream_link_that_is_reused_until_it_expires` |
 | `GET /cast/stream-info/:streamingKey` | `routes.ts:253`; `get-stream-info-handler.ts:30-93` | `G/streaming_cast.rs` `stream_info` | MATCH | `stream_info_answers_the_place_behind_a_live_key`; capture `cast-stream-info-invalid-key` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/watcher-token` | `routes.ts:246`; `cast.ts:368-443` | `G/streaming_cast.rs` `watcher_token` | DIVERGENCE: a world's access policy is checked, and the token carries the wallet and the world authorization proof (below) | `a_viewer_watches_a_parcel_or_world_stream_unless_banned`; `a_private_worlds_cast_refuses_watchers_the_world_does_not_admit` |
 | `GET/PUT/DELETE /cast/presenters[/:id]` | `routes.ts:291-293`; `cast.ts:512-614` | `G/streaming_cast.rs` `list_presenters`, `promote_presenter`, `demote_presenter` | MATCH | `scene_admins_list_promote_and_demote_presenters`; capture `cast-presenters-unauth` replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | `POST /cast/presentation-bot-token` | `routes.ts:286`; `cast.ts:455-500` | `G/streaming_cast.rs` `presentation_bot_token` | DIVERGENCE: identity names the credential | `a_streaming_key_admits_the_presentation_bot` |
 | `GET /scene-stream-access` | `list-scene-stream-access-handler.ts:62-80` | `G/streaming.rs:185-192` | MATCH: the stored expiry is answered, and a credential past it answers 404 `Streaming access has expired` | `C/tests/gatekeeper_policy.rs` (PostgreSQL) |
-| `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs` `issue_access` | DIVERGENCE: issuance quota can answer 429; reuse exempt (MV-13, approval pending) | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs`; `streaming_generation_limit_covers_reset_create_delete_and_cast` |
-| `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs` `reset_access` | DIVERGENCE: issuance quota can answer 429 while retaining the old credential (MV-13, approval pending). 404 (no active credential) still matches; concurrent change still answers 500, not compared with upstream (MV-9) | `C/tests/gatekeeper_policy.rs`; `streaming_generation_limit_covers_reset_create_delete_and_cast`; `streaming_generation_limit_serializes_concurrent_resets` |
+| `POST /scene-stream-access` | `add-…:80-130` | `G/streaming.rs:193-216,295-371` | MATCH | `C/tests/gatekeeper_policy.rs`; `canonical_rooms_tests.rs` |
+| `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs:373-398` | MATCH for 404 (no active credential); a concurrent change inside the reset answers 500, not compared with upstream (MV-9) | `C/tests/gatekeeper_policy.rs` |
 | `DELETE /scene-stream-access` | `remove-…:42-65` | `G/streaming.rs:400-413` | MATCH | `C/tests/gatekeeper_policy.rs` |
 | Platform bans on stream access (0a6b095) | `add-…:51-59` | `G/streaming.rs:131-136,225-247` | MATCH | `C/comms/src/gatekeeper/streaming.rs` tests |
 | Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs:914-942`; `G/streaming_jobs.rs:28-60,150-152,272-325` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs` `recipients` | MATCH: an expired key is kept while the broadcast live at its deadline runs and retired by the first key pass after it ends; a broadcast started after the deadline is cut; notices: each notice goes to the place's owner, its active scene admins and LAND owner, operators and managers (Genesis), or the world owner, the deployment/streaming grantees of its parcels and the scene admins of the key's scene whose granter holds the world-wide authority (with per-scene world keys, #1948, exactly the admins who hold the key; before it, an admin of another scene of the world may also hold it and is not told), deduplicated, as `GK/adapters/scene-admins.ts:14-84`; a place removal also tells the grants its cleanup revoked, on every scene of the world; a key revoked because its scene was undeployed tells no world scene admin | `G/streaming_jobs.rs` tests; `an_expired_key_is_retired_after_its_broadcast_ends`; `a_broadcast_restarted_after_the_deadline_loses_the_expired_key`; `a_broadcast_live_at_the_deadline_is_still_capped_at_four_hours`; `G/streaming_jobs.rs` and `G/streaming_notifications.rs` tests; `removing_a_scene_admin_revokes_the_key_it_generated` |
@@ -226,17 +225,3 @@ MV-1 to MV-4 (Cast routes, watcher token, the `apps/sites` streamer and watcher,
 10. **MV-10: Kick and end report success when LiveKit fails.** P2, S. Return an error or retry the
     removal; today the user may stay connected.
 12. **MV-12: HTTP-level tests for the bearer voice routes.** P2, M. Only the 401 shapes are captured; those are replayed by `the_gatekeeper_answers_its_stateless_captures_as_production`.
-
-13. **MV-13: Stream-key issuance quota — merge approval pending.** The pinned
-    comms-gatekeeper has no corresponding quota. POST and PUT
-    `/scene-stream-access`, and GET `/cast/generate-stream-link`, can return
-    HTTP 429 after six new credentials for one place in a rolling hour.
-    Reusing an existing valid credential consumes no quota; a refused reset
-    rolls back and retains the previous key. GET `/scene-stream-access` and
-    DELETE are unaffected; PUT's 404 and concurrent-change 500 behavior stay
-    as documented in MV-9. Regression tests in `G/cast_tests.rs`:
-    `streaming_generation_limit_covers_reset_create_delete_and_cast` and
-    `streaming_generation_limit_serializes_concurrent_resets`. This bounds
-    repeated key-notice fanout, but changes the wire contract. Explicit merge
-    approval is required for this policy difference; this entry records it
-    without approving it.

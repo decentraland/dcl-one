@@ -136,7 +136,9 @@ pub(in crate::gatekeeper) async fn recipients(
     // Most grants share a granter (the owner): one decision for each.
     let mut decided: std::collections::HashMap<Address, bool> = Default::default();
     for (admin, granter) in admins {
-        let (Ok(admin), Ok(granter)) = (Address::parse(&admin), Address::parse(&granter)) else {
+        // Historical rows may carry a padded or upper-case address.
+        let parse = |a: &str| Address::parse(&a.trim().to_ascii_lowercase());
+        let (Ok(admin), Ok(granter)) = (parse(&admin), parse(&granter)) else {
             continue;
         };
         let holds = match decided.get(&granter) {

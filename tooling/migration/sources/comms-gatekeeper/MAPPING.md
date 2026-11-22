@@ -54,7 +54,6 @@ scene namespace; unresolved cleanup resolves current applicable authority.
 New cleanup intents initialize `notification_started=false`. Re-import keeps
 native delivery decisions, recipient snapshots and cursor progress unchanged.
 
-The per-place generation quota counts retained credentials by `created_at`,
-including inactive credentials. Imports preserve source creation times; replay
-does not renew that hour or consume a fresh issuance. Import offline before
-starting Social writers, as required for the admin-key backfill.
+Imports preserve source creation times, including on inactive credentials.
+Import offline before starting Social writers, as required for the admin-key
+backfill.

@@ -9,17 +9,31 @@ through a recipient list.
 ## Decision
 
 Use the existing cleanup and removal outboxes for normalized recipient arrays,
-a resolution bit and a durable delivery cursor. Capture valid active local
-scene admins at removal-event creation through a plain MVCC read of Social
-grants, without Social row locks or writes. This prevents a pre-maintenance
-re-grant from erasing the earlier recipient. Retained grants supply fallback
-recipients for older events after the safety transaction commits.
-Notification-only enrichment runs after that commit. Resolve all external
-authority classes before marking the snapshot complete, and checkpoint each
+a resolution bit and a durable delivery cursor. Who is told follows the rule
+main adopted in #1932 (`streaming_notifications::recipients`): the owner, the
+LAND operators and managers or the World deployment/streaming grantees of the
+place, and the scene admins of the key's scene (of every scene of the world for
+a removal). A World scene admin is told only while the address that granted it
+still holds the world-wide authority, so an admin granted by a parcel-scoped
+grantee or another admin is never told, from a live lookup or a saved list.
+This decision adds durability on top of that rule: recipients are resolved
+once, saved, and delivered by cursor.
+
+At removal-event creation the trigger freezes the exact world scene places
+(`admin_keys`) and, for a Genesis place, the valid active admins of its base
+parcel, through a plain MVCC read of Social grants without Social row locks or
+writes. This keeps a pre-maintenance re-grant from erasing an earlier Genesis
+recipient. World admins are not frozen as addresses because their granter must
+be checked; the grants the removal ended keep its `removed_at`, so the
+resolution after the safety transaction still finds them on the frozen places
+even after the scene retired. Notification-only enrichment runs after that
+commit. Resolve every permission surface before marking the snapshot complete
+(an unreadable surface retries, never shrinks the set), and checkpoint each
 Social acceptance. Retries keep the event identity, original context and
 complete recipient set. Social's existing recipient/kind/event deduplication
 covers replay after acceptance but before the cursor write. A delivery failure
-does not undo revocation.
+does not undo revocation. A reset whose delivery started is finished as a
+reset, never converted to a revocation, so nobody is told twice.
 
 Key cleanup bounds all notification preparation to five seconds and saves
 partial recipients, exact keys and unresolved binding obligations. Runtime
@@ -47,16 +61,16 @@ identities remains ambiguous, never inferred from parcel overlap. A successful
 lookup with zero or several exact candidates records
 `admin_binding_pending=false` and `admin_binding_unresolvable=true`. That notice
 completes for independently established owner and permission holders plus any
-previously captured recipients, excluding all inferred local-admin namespaces
-for that World scene. SQL failures and timeouts remain pending and retryable;
+previously captured recipients, and tells no scene admin of that World scene. SQL failures and timeouts remain pending and retryable;
 they do not establish absence. The capture writes Explore alone and takes no
 Social row locks.
 
 ## Consequences
 
 Outbox storage grows with the number of affected wallets and is deleted after
-completion. Historical feed seeding suppresses notices but preserves safety
-cleanup. Existing scalar recipients are expanded rather than treated as a
+completion. Historical feed seeding, and a place first seen already disabled
+(an import adding a row neither catalogue leg held), suppress notices but
+preserve safety cleanup. Existing scalar recipients are expanded rather than treated as a
 complete set. Exact retired namespaces and overwritten grant history from
 before this evidence existed cannot always be recovered. Complete snapshots
 remain immutable across permission edits, scene re-adds and delivery retries.
@@ -69,8 +83,9 @@ before capture was installed cannot be reconstructed.
 
 Before exposing writers, a Social-writing serve process scans active native
 credentials with missing admin keys in bounded UUID batches, decodes their
-canonical rooms with the existing codec, and saves exact live world identity
-bindings under world/identity locks. Read-only Social replicas skip this write.
+canonical rooms with the existing codec, and saves an exact live world identity
+binding under world/identity locks only when it is the one identity across
+current and retained bindings for that scene, as deferred recovery requires. Read-only Social replicas skip this write.
 The upgrade requires stopping old writers and finishing offline imports before
 the coordinated startup, so identities cannot retire before this backfill.
 Noncanonical imported rooms and scenes already retired before the upgrade
@@ -78,23 +93,21 @@ remain outside exact recovery. A definitive missing or ambiguous canonical
 binding uses the owner/permission-holder fallback above; failed authority
 lookups remain retryable.
 
-## Credential issuance bound
+## Credential issuance: no limit today, revisit later
 
-REST creation, reset and Cast issuance share a rolling limit of six new
-credentials per place per hour. Reusing an existing credential consumes no
-issuance. Retained active and inactive credentials supply the count through
-`(place_id, created_at DESC)`; a transaction advisory lock per place serializes
-admission before deactivation and insertion. Refused issuance returns HTTP 429
-and preserves the previous credential. Revocation remains available. Six allows
-an initial key and five replacements in an hour; this is a configured budget,
-not a measured production workload. A separate quota table is unnecessary
-because credential history is already retained. A read-only check before
-creating a LiveKit ingress avoids that work when the quota is already exhausted;
-the locked check remains authoritative for concurrent requests. Requests that
-race can still create an unused ingress, which is then discarded.
+Stream key issuance (POST/PUT `/scene-stream-access` and GET
+`/cast/generate-stream-link`) has no per-place limit, as on the pinned
+upstream: every new key is minted and every reset is announced to all of the
+place's managers. A limit of six new keys per place per hour, answered with
+HTTP 429, was proposed in this change and removed before merge by the
+requester's decision, to keep today's behaviour and the upstream contract.
 
-This quota adds a 429 response absent from the pinned upstream contract on
-POST/PUT stream access and Cast stream-link issuance. It is recorded as a
-compatibility difference awaiting merge approval in
-[MV-13](../../services/catalyst/tests/fixtures/conformance/social/meetings-voice.md).
-Documenting the difference does not approve it.
+Next work: now that each reset notifies every manager (and emails them), a
+place whose key is reset repeatedly can flood its owner, operators, grantees
+and admins with notices. Before introducing any limit:
+
+- measure real issuance and reset rates per place in production;
+- decide whether to bound issuance, to coalesce notices, or both;
+- get explicit compatibility approval for any new 429 response on those
+  routes, recorded in the conformance file, since clients do not expect it.
+

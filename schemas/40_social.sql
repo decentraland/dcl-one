@@ -506,10 +506,6 @@ CREATE TABLE social.scene_stream_access (
 CREATE UNIQUE INDEX scene_stream_access_active_place_key
     ON social.scene_stream_access (place_id) WHERE active;
 
--- Per-place issuance quota counts both active and retired credentials in the last hour.
-CREATE INDEX scene_stream_access_place_created_idx
-    ON social.scene_stream_access (place_id, created_at DESC);
-
 -- The ingress_started/ingress_ended webhook updates of the active row.
 CREATE INDEX scene_stream_access_active_ingress_idx
     ON social.scene_stream_access (ingress_id) WHERE active;

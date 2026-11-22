@@ -2854,17 +2854,9 @@ pre-cutover grant history may have no exact recovery evidence. Existing scalar
 cleanup recipients are preserved while remaining authority classes resolve;
 an existing scalar value alone never marks the snapshot complete.
 
-Credential issuance uses retained `scene_stream_access` rows as rolling quota
-facts: six new credentials per place per hour, including reset and Cast. A
-transaction advisory lock keyed by place precedes credential writes, and the
-`scene_stream_access_place_created_idx` index bounds the recent-row probe to
-six matches. A read-only check of the same count precedes LiveKit ingress
-creation on create, reset and idle replacement; the locked check remains the
-race authority. Reuse and deletion do not consume issuance. Quota refusal rolls
-back replacement and returns 429. Historical imports preserve creation times.
-The schema object pass installs the index on existing databases; it builds in
-the migration transaction, so writes wait for the build. This is a configured
-policy; production query and index-write cost are unmeasured.
+Credential issuance has no per-place limit, as upstream; historical imports
+preserve creation times. Whether to bound it is open next work in the
+[streaming notification ADR](docs/adr/2026-11-21-streaming-notification-recipients.md).
 
 ## Stream state reconciliation
 

@@ -79,10 +79,13 @@ which then count twice with the imported facts. Rows upstream does not list
 ## Left to the node
 
 - `explore.place_removal_pending` / `place_removal_state`: the catalogue
-  triggers fill them. A moderation-disabled place enqueues one removal, as
-  the schema's own seed does for an existing disabled catalogue. Seeded
-  historical rows suppress notifications while retaining safety cleanup and
-  lifecycle state; later real removals enable notifications.
+  triggers fill them. An imported place that arrives already
+  moderation-disabled, in a catalogue leg that did not hold it and with no
+  row in the other leg, enqueues one removal with `notify=false`, as the
+  schema's own seed does for an existing disabled catalogue: its credentials
+  and grants are cleaned up, but nobody is notified of that historical
+  removal. A later disable (an UPDATE, including one re-importing an enabled
+  place as disabled) or a deletion notifies normally.
 - `explore.place_indexed` (view), `mirror_state`, `signed_actions`,
   `seen_nonces`.
 

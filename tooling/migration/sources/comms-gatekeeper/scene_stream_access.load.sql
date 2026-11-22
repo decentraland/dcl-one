@@ -24,8 +24,8 @@ SELECT id, place_id, ingress_id, timezone('UTC', now()), timezone('UTC', now()),
 FROM retired
 ON CONFLICT (access_id) DO NOTHING;
 
--- Preserve source creation times for the rolling per-place issuance quota;
--- an import replay must not count historical credentials as newly issued.
+-- Preserve source creation times: an import replay never makes a historical
+-- credential look newly issued.
 -- A row retired on the node stays retired; node streaming state with a newer
 -- webhook version wins.
 INSERT INTO social.scene_stream_access AS t

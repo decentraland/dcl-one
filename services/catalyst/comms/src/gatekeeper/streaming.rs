@@ -94,7 +94,8 @@ pub async fn backfill_admin_place_keys(pool: &PgPool) -> Result<(), sqlx::Error>
     }
 }
 
-/// Decode with the canonical room codec and recover only an exact live binding.
+/// Decode with the canonical room codec and recover only an exact live binding
+/// that is unique across current and retained bindings.
 /// The world/identity locks match publication; recheck the stored room on write.
 pub(super) async fn recover_admin_place_key(
     pool: &PgPool,
@@ -119,6 +120,19 @@ pub(super) async fn recover_admin_place_key(
         .into_iter()
         .find(|(_, entity)| entity.as_deref() == Some(scene.as_str()))
         .map(|(identity, _)| identity.to_string());
+    // As deferred recovery does: a retained binding of another identity for
+    // the same scene makes the live one ambiguous, so nothing is saved.
+    let unique: Option<String> = sqlx::query_scalar(
+        "WITH b AS (SELECT identity FROM explore.world_scene_binding WHERE world_name=$1 AND entity_id=$2 \
+         UNION SELECT identity FROM explore.world_scene_place WHERE world_name=$1 AND entity_id=$2 AND active) \
+         SELECT min(identity::text) FROM b HAVING count(*)=1",
+    )
+    .bind(world.key())
+    .bind(scene.as_str())
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    let key = key.filter(|key| unique.as_deref() == Some(key.as_str()));
     let saved = if let Some(key) = &key {
         sqlx::query_scalar("UPDATE social.scene_stream_access SET admin_place_key=$3 WHERE id=$1 AND room_id=$2 AND active AND admin_place_key IS NULL RETURNING admin_place_key")
             .bind(id).bind(room).bind(key).fetch_optional(&mut *tx).await?.flatten()
@@ -550,7 +564,6 @@ async fn issue_access(
                 }
             }
         }
-        check_generation_quota(&state.pool, place_id).await?;
         // The replacement's ingress first: a LiveKit failure keeps the old credential.
         let info = mint_ingress(ingress, room).await?;
         return replace_access(
@@ -725,7 +738,6 @@ async fn create_access(
     signer: &Address,
     admin_place_key: &str,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
-    check_generation_quota(pool, place_id).await?;
     let info = mint_ingress(ingress, room).await?;
     store_access(pool, ingress, place_id, room, signer, admin_place_key, info).await
 }
@@ -768,12 +780,11 @@ async fn replace_access(
             return Ok(None);
         };
         let mut tx = state.pool.begin().await?;
-        lock_generation_place(&mut tx, place_id).await?;
         if !prepared.record(&mut *tx).await? {
             return Ok(None);
         }
         let Some(row) =
-            insert_access(&mut tx, place_id, room, signer, admin_place_key, &info).await?
+            insert_access(&mut *tx, place_id, room, signer, admin_place_key, &info).await?
         else {
             return Ok(None);
         };
@@ -848,40 +859,10 @@ async fn discard_ingress(
     }
 }
 
-/// Every issuance takes this lock before touching the active credential, so
-/// concurrent reset/create requests observe committed per-place quota facts.
-async fn lock_generation_place(
-    tx: &mut sqlx::PgConnection,
-    place_id: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,1571))")
-        .bind(place_id)
-        .execute(tx)
-        .await?;
-    Ok(())
-}
-
-/// The pre-mint check avoids known quota refusals doing external work. Insertion
-/// repeats this check under the per-place lock to enforce the bound against races.
-async fn check_generation_quota<'e, E: sqlx::PgExecutor<'e>>(
-    executor: E,
-    place_id: &str,
-) -> Result<(), ApiError> {
-    let recent: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT 1 FROM social.scene_stream_access WHERE place_id=$1 AND created_at>timezone('UTC',statement_timestamp())-interval '1 hour' LIMIT 6) recent")
-        .bind(place_id).fetch_one(executor).await?;
-    if recent >= 6 {
-        return Err(ApiError::http(
-            429,
-            "Stream keys can be generated at most six times per hour for this place. Please try again later.",
-        ));
-    }
-    Ok(())
-}
-
 /// Inserts the place's active credential for `info`'s ingress; `None` when
 /// the place already has one.
-async fn insert_access(
-    executor: &mut sqlx::PgConnection,
+async fn insert_access<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     place_id: &str,
     room: &str,
     signer: &Address,
@@ -893,17 +874,6 @@ async fn insert_access(
             "livekit ingress response missing url or stream key",
         ));
     };
-    lock_generation_place(executor, place_id).await?;
-    let active: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access WHERE place_id=$1 AND active)",
-    )
-    .bind(place_id)
-    .fetch_one(&mut *executor)
-    .await?;
-    if active {
-        return Ok(None);
-    }
-    check_generation_quota(&mut *executor, place_id).await?;
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO social.scene_stream_access \
              (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active, admin_place_key) \
@@ -933,15 +903,8 @@ async fn store_access(
     admin_place_key: &str,
     info: crate::shared::livekit::IngressInfo,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
-    let stored = async {
-        let mut tx = pool.begin().await?;
-        let inserted =
-            insert_access(&mut tx, place_id, room, signer, admin_place_key, &info).await?;
-        tx.commit().await?;
-        Ok::<_, ApiError>(inserted)
-    }
-    .await;
-    let inserted = match stored {
+    // A failed insertion discards the ingress minted for it.
+    let inserted = match insert_access(pool, place_id, room, signer, admin_place_key, &info).await {
         Ok(inserted) => inserted,
         Err(error) => {
             discard_ingress(ingress, &info, place_id).await;
@@ -1015,7 +978,6 @@ async fn reset_access(
         let row = active_access(&state.pool, place_id)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
-        check_generation_quota(&state.pool, place_id).await?;
         // The replacement's ingress first: a LiveKit failure keeps the old credential.
         // The durable intent owns the old ingress's deletion and the reset notification,
         // delivered only once the replacement credential exists; it also covers a crash.
@@ -1032,8 +994,8 @@ async fn reset_access(
     }
     .await;
     result.map_err(|error: ApiError| {
-        // Preserve not-found and issuance-limit responses; swap failures use the reset error.
-        if error.code == 404 || error.code == 429 {
+        // Preserve not-found responses; swap failures use the reset error.
+        if error.code == 404 {
             return error;
         }
         tracing::error!(place_id, error = %error, "scene stream access reset failed");

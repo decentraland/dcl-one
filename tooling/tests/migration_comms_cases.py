@@ -248,8 +248,8 @@ class CommsMigrationCases:
                                      'recipients_resolved, recipient_cursor '
                                      'FROM social.scene_stream_cleanup;').strip(), 't\t2\tt\t1')
 
-    def test_comms_stream_access_replay_keeps_historical_quota_facts(self):
-        db = self.catalyst_db('comms_stream_quota')
+    def test_comms_stream_access_replay_keeps_historical_creation_times(self):
+        db = self.catalyst_db('comms_stream_created_at')
         identity = '55555555-5555-4555-8555-555555555555'
         run = self.comms_rows('scene_stream_access', self.STREAM_COLUMNS,
                              self.stream_row(identity, '2026-01-01Z', active=False))

@@ -630,13 +630,12 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             if let Some(recipient) = &row.recipient {
                 recipients.push(recipient.clone());
             }
-            let live_room: Option<String> = sqlx::query_scalar(
-                "SELECT room_id FROM social.scene_stream_access WHERE id=$1",
-            )
-            .bind(row.access_id)
-            .fetch_optional(&state.pool)
-            .await?
-            .flatten();
+            let live_room: Option<String> =
+                sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id=$1")
+                    .bind(row.access_id)
+                    .fetch_optional(&state.pool)
+                    .await?
+                    .flatten();
             let room = row
                 .source_context
                 .as_ref()
@@ -1016,9 +1015,19 @@ mod tests {
     }
 
     async fn fanout_access(state: &CommsState, place: &str, command: CleanupCommand) -> Uuid {
+        fanout_access_bound(state, place, command, None).await
+    }
+
+    /// `scene`: the world scene entity whose place the key saves.
+    async fn fanout_access_bound(
+        state: &CommsState,
+        place: &str,
+        command: CleanupCommand,
+        scene: Option<&str>,
+    ) -> Uuid {
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO social.scene_stream_access (id,place_id,streaming_url,streaming_key,generated_by,streaming,streaming_start_time,expiration_time) VALUES ($1,$2,'rtmp://example.invalid/live','test-key','test',$3,timezone('UTC',now())-interval '5 hours',timezone('UTC',now())-interval '1 second')")
-            .bind(id).bind(place).bind(command == CleanupCommand::DurationExpiry)
+        sqlx::query("INSERT INTO social.scene_stream_access (id,place_id,streaming_url,streaming_key,generated_by,streaming,streaming_start_time,expiration_time,admin_place_key) VALUES ($1,$2,'rtmp://example.invalid/live','test-key','test',$3,timezone('UTC',now())-interval '5 hours',timezone('UTC',now())-interval '1 second',(SELECT identity::text FROM explore.world_scene_place WHERE entity_id=$4 AND world_name=$2||'.dcl.eth'))")
+            .bind(id).bind(place).bind(command == CleanupCommand::DurationExpiry).bind(scene)
             .execute(&state.pool).await.unwrap();
         assert!(enqueue(state, id, command).await.unwrap());
         if command == CleanupCommand::Reset {
@@ -1451,6 +1460,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streaming_fanout_startup_backfill_skips_a_scene_with_a_conflicting_retained_binding() {
+        let Some((state, _directory, place)) = fanout_fixture(true).await else {
+            return;
+        };
+        let name = format!("{place}.dcl.eth");
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES ($1)")
+            .bind(&name)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        // An earlier identity of the same scene left a retained binding: the
+        // live one is ambiguous, so the backfill must not make it authoritative.
+        sqlx::query("INSERT INTO explore.world_scene_binding(world_name,entity_id,identity) VALUES ($1,'fanout-scene',$2)")
+            .bind(&name).bind(Uuid::new_v4()).execute(&state.pool).await.unwrap();
+        let room = crate::rooms::worlds_service_scene_room(
+            &crate::world_identity::WorldName::parse(&name).unwrap(),
+            &crate::world_identity::SceneId::parse("fanout-scene").unwrap(),
+        );
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,room_id) VALUES ($1,$2,'rtmp://example.invalid/live','test','test',$3)")
+            .bind(id).bind(&place).bind(&room).execute(&state.pool).await.unwrap();
+        super::super::backfill_admin_place_keys(&state.pool)
+            .await
+            .unwrap();
+        let saved: Option<String> = sqlx::query_scalar(
+            "SELECT admin_place_key FROM social.scene_stream_access WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        assert_eq!(saved, None);
+    }
+
+    #[tokio::test]
+    async fn streaming_fanout_reset_delivered_before_cleanup_failure_is_never_converted() {
+        let Some((state, directory, place)) = fanout_fixture(false).await else {
+            return;
+        };
+        let id = fanout_access(&state, &place, CleanupCommand::Reset).await;
+        // The reset reached everyone, but ingress deletion kept failing, the
+        // replacement was revoked in turn, and the grace period passed.
+        let told = directory.streaming_notifications.lock().unwrap().len();
+        sqlx::query("UPDATE social.scene_stream_cleanup SET ingress_deleted=false, ingress_id='IN_failing', notification_started=true, recipient_cursor=cardinality(recipients), occurred_at=timezone('UTC',now())-interval '2 hours', due_at=timezone('UTC',now()) WHERE access_id=$1")
+            .bind(id).execute(&state.pool).await.unwrap();
+        sqlx::query("DELETE FROM social.scene_stream_access WHERE place_id=$1 AND id<>$2")
+            .bind(&place)
+            .bind(id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        // Whether ingress deletion fails again or not, the reset is never
+        // turned into a revocation of the whole saved list.
+        let _ = cleanup_access(&state, id).await;
+        let row: Option<(String, i32, bool)> = sqlx::query_as(
+            "SELECT notification_kind, recipient_cursor, notification_started FROM social.scene_stream_cleanup WHERE access_id=$1",
+        )
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap();
+        if let Some((kind, cursor, started)) = row {
+            assert_eq!(kind, "streaming_key_reset");
+            assert!(started && cursor > 0, "the delivery position is kept");
+        }
+        let notices = directory.streaming_notifications.lock().unwrap();
+        assert_eq!(notices.len(), told, "nobody is told again");
+        assert!(
+            notices
+                .iter()
+                .all(|n| n.kind != StreamingNotificationKind::KeyRevoke)
+        );
+    }
+
+    #[tokio::test]
     async fn streaming_fanout_native_upgrade_backfills_before_retirement_with_sibling() {
         let Some((state, directory, place)) = fanout_fixture(true).await else {
             return;
@@ -1541,10 +1625,9 @@ mod tests {
             CleanupCommand::KeyExpiry,
             CleanupCommand::DurationExpiry,
         ] {
-            let id = fanout_access(&state, &place, command).await;
             // A world key names its scene; a key without one tells no scene admin.
-            sqlx::query("UPDATE social.scene_stream_access SET admin_place_key=(SELECT identity::text FROM explore.world_scene_place WHERE entity_id='fanout-scene' AND world_name=$2) WHERE id=$1 AND $3")
-                .bind(id).bind(format!("{place}.dcl.eth")).bind(world).execute(&state.pool).await.unwrap();
+            let key = world.then(|| "fanout-scene");
+            let id = fanout_access_bound(&state, &place, command, key).await;
             cleanup_access(&state, id).await.unwrap();
             {
                 let notices = directory.streaming_notifications.lock().unwrap();
@@ -2195,9 +2278,17 @@ mod tests {
         sqlx::query("UPDATE social.scene_stream_access SET expiration_time=timezone('UTC',now())-interval '1 second' WHERE id=$1")
             .bind(running).execute(&pool).await.unwrap();
         assert!(
-            !enqueue_prepared(&pool, running, CleanupCommand::KeyExpiry, 0, None, None, None)
-                .await
-                .unwrap(),
+            !enqueue_prepared(
+                &pool,
+                running,
+                CleanupCommand::KeyExpiry,
+                0,
+                None,
+                None,
+                None
+            )
+            .await
+            .unwrap(),
             "a live broadcast keeps its expired key"
         );
         sqlx::query("UPDATE social.scene_stream_access SET streaming=false WHERE id=$1")
@@ -2242,9 +2333,17 @@ mod tests {
         sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())-interval '1 second')")
             .bind(unstarted).bind(format!("unstarted-test-{unstarted}")).execute(&pool).await.unwrap();
         assert!(
-            enqueue_prepared(&pool, unstarted, CleanupCommand::KeyExpiry, 0, None, None, None)
-                .await
-                .unwrap()
+            enqueue_prepared(
+                &pool,
+                unstarted,
+                CleanupCommand::KeyExpiry,
+                0,
+                None,
+                None,
+                None
+            )
+            .await
+            .unwrap()
         );
         sqlx::query("DELETE FROM social.scene_stream_cleanup WHERE access_id=$1")
             .bind(unstarted)
