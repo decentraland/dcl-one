@@ -60,8 +60,10 @@ match legacy byte for byte. Parity work on these routes keeps this decision.
 ## Consequences
 
 - `?includeMimeType` answers `application/octet-stream` where the legacy
-  catalyst answers a document type. `content-reads.md` (CR-7) and
-  `docs/worlds-compatibility.md` record the difference.
+  catalyst answers a document type.
+  `services/catalyst/tests/fixtures/conformance/content-lambdas/content-reads.md`
+  (CR-7) and `services/catalyst/docs/worlds-compatibility.md` record the
+  difference.
 - A stored file opened directly in a browser tab runs sandboxed. Browsers may
   not render a PDF that way.
 - Moving the admin console to an origin of its own would not make this decision
