@@ -482,27 +482,33 @@ async fn moderate_place(
     } else {
         Target::Place(&id)
     };
-    let answer =
-        match place_moderation::apply(&explore.pool, target.clone(), &decision, session.address())
-            .await
-        {
-            Ok(None) => crate::shared::errors::ApiError::not_found(format!(
-                "Not found {} \"{id}\"",
-                if world { "world" } else { "place" }
-            ))
-            .into_response(),
-            Ok(Some(row)) => match &decision {
-                Decision::Disabled { disabled, .. } => {
-                    Json(json!({ "ok": true, "data": { "id": row, "disabled": disabled } }))
-                        .into_response()
-                }
-                _ => match place_moderation::answer(&explore.places, &target, &row).await {
-                    Ok(place) => Json(json!({ "ok": true, "data": place })).into_response(),
-                    Err(e) => e.into_response(),
-                },
+    let land = explore.places.land_authz().map(|l| &**l);
+    let answer = match place_moderation::apply(
+        &explore.pool,
+        target.clone(),
+        &decision,
+        session.address(),
+        land,
+    )
+    .await
+    {
+        Ok(None) => crate::shared::errors::ApiError::not_found(format!(
+            "Not found {} \"{id}\"",
+            if world { "world" } else { "place" }
+        ))
+        .into_response(),
+        Ok(Some(row)) => match &decision {
+            Decision::Disabled { disabled, .. } => {
+                Json(json!({ "ok": true, "data": { "id": row, "disabled": disabled } }))
+                    .into_response()
+            }
+            _ => match place_moderation::answer(&explore.places, &target, &row).await {
+                Ok(place) => Json(json!({ "ok": true, "data": place })).into_response(),
+                Err(e) => e.into_response(),
             },
-            Err(e) => e.into_response(),
-        };
+        },
+        Err(e) => e.into_response(),
+    };
     let detail = super::console::body_without(body, &[]).unwrap_or_else(|| json!({}));
     finish(
         state,

@@ -60,6 +60,18 @@ pub fn parcel_place_id(base_position: &str) -> String {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, base_position.as_bytes()).to_string()
 }
 
+/// A place's whole parcel set as `explore.place_parcel_rating.parcel_set_hash`
+/// keeps it: the hex SHA-256 of the string its distinct positions make sorted
+/// in byte order and joined by `;`. Two places with equal keys cover exactly
+/// the same parcels.
+pub(crate) fn parcel_set_hash(positions: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut positions: Vec<&str> = positions.iter().map(String::as_str).collect();
+    positions.sort_unstable();
+    positions.dedup();
+    hex::encode(Sha256::digest(positions.join(";").as_bytes()))
+}
+
 struct ListSource {
     prefix: String,
     relation: &'static str,
@@ -139,6 +151,11 @@ impl PlacesComponent {
     /// Attaches the shared LAND authority after its chain readers are initialized.
     pub fn set_land_authz(&self, land: Arc<crate::land_authz::LandAuthzState>) {
         let _ = self.land_authz.set(land);
+    }
+
+    /// The shared LAND authority, once attached.
+    pub fn land_authz(&self) -> Option<&Arc<crate::land_authz::LandAuthzState>> {
+        self.land_authz.get()
     }
 
     /// Current native estate membership for event authoring. An unattached or

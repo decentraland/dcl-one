@@ -331,6 +331,9 @@ pub struct SceneDeployment<'a> {
     pub forward_to: Option<&'a str>,
     /// The storage allowance the publish is charged to, re-checked before commit.
     pub quota: Option<&'a super::quota::QuotaCharge>,
+    /// The places site base a rating change's moderation notice links into;
+    /// `None` queues no notice.
+    pub places_notices: Option<&'a str>,
 }
 
 pub(crate) struct DerivedSceneSettings {

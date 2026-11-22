@@ -116,6 +116,9 @@ pub struct Settings {
     pub owner_reconcile_interval: std::time::Duration,
     /// `ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`: the access allow-list caps.
     pub access_caps: store::AccessCaps,
+    /// The places site base a creator's rating change is reported under, while
+    /// the places moderation webhook is on (`explore::Settings::places_notices`).
+    pub places_notices: Option<String>,
     /// `REALM_NAME`: this node's Genesis City realm (default `main`).
     pub realm_name: String,
 }
@@ -146,6 +149,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            places_notices: None,
             realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         })
     }
@@ -179,6 +183,11 @@ impl Settings {
         self
     }
 
+    pub fn with_places_notices(mut self, base: Option<&str>) -> Self {
+        self.places_notices = base.map(str::to_string);
+        self
+    }
+
     pub fn with_realm_name(mut self, realm_name: String) -> Self {
         self.realm_name = realm_name;
         self
@@ -207,6 +216,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            places_notices: None,
             realm_name: crate::comms::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }

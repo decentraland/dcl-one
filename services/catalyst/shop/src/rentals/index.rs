@@ -37,7 +37,7 @@ pub const INDEXER_RENTALS: &str = "rentals";
 
 /// The Rentals proxy on Ethereum mainnet and the block the pinned subgraph
 /// starts from (`rentals-graph@ddb42672:config/mainnet.json`).
-pub const RENTALS_MAINNET: &str = "0x3a1469499d0be105d4f77045ca403a5f6dc2f3f5";
+pub use crate::chain_index::registries::RENTALS_MAINNET;
 pub const RENTALS_MAINNET_START_BLOCK: u64 = 16_070_889;
 
 /// `AssetRented(address indexed _contractAddress, uint256 indexed _tokenId, address _lessor, address _tenant, address _operator, uint256 _rentalDays, uint256 _pricePerDay, bool _isExtension, address _sender, bytes _signature)`.

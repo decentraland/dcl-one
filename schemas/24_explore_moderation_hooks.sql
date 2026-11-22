@@ -22,7 +22,7 @@ CREATE TABLE explore.moderation_hooks (
     CONSTRAINT moderation_hooks_kind_check CHECK (
         CASE channel
             WHEN 'events' THEN kind IN ('submitted','edited','approved','rejected','deleted','profile_permissions','upcoming')
-            WHEN 'places' THEN kind IN ('disabled','rating_upgraded')
+            WHEN 'places' THEN kind IN ('disabled','rating_upgraded','rating_downgrade_refused','operator_rating_released')
         END),
     UNIQUE (channel, subject, kind, edit_bucket)
 );

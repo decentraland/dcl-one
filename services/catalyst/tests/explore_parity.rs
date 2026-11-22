@@ -667,6 +667,7 @@ const RESET_TABLES: &[&str] = &[
     "explore.user_likes",
     "explore.place_interaction_counts",
     "explore.place_moderation",
+    "explore.place_parcel_rating",
     "explore.place_ranking",
     "explore.place_reports",
     "explore.place_world_local",

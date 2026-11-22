@@ -1,5 +1,6 @@
 //! Worlds settings persistence on the shared pool.
 use super::*;
+use crate::explore::places::moderation::settle_world_rating;
 use crate::index::content_file_hash;
 
 /// What a deployed scene expresses about its world's settings; a value out
@@ -115,17 +116,21 @@ pub async fn get_world_settings(
 /// name's holder (a collaborator's edit is the holder's too; `None` when the
 /// holder is unknown, and the mirror then takes the holder of its next pass),
 /// so the mirror keeps those settings while that holder holds the name
-/// ([`mirror_keeps_local`]). Returns the row and the previous spawn.
+/// ([`mirror_keeps_local`]). A content rating applies only when it raises
+/// the stored one ([`CreatorRating`]); with `notify` (the places site base)
+/// a raise or a refused lower is queued for moderation in this transaction.
+/// Returns the row and the previous spawn.
 pub async fn update_world_settings(
     pool: &PgPool,
     world: &WorldName,
     owner: &Address,
     set_by: Option<&Address>,
     input: &WorldSettingsUpdate,
+    notify: Option<&str>,
 ) -> Result<(WorldSettingsRow, Option<String>), ApiError> {
     let mut tx = pool.begin().await?;
     let locked = sqlx::query(
-        r#"SELECT w.spawn_coordinates, br.min_x, br.max_x, br.min_y, br.max_y
+        r#"SELECT w.spawn_coordinates, w.content_rating, br.min_x, br.max_x, br.min_y, br.max_y
            FROM worlds.worlds w
            LEFT JOIN LATERAL (
              SELECT min(split_part(p, ',', 1)::int) AS min_x,
@@ -166,12 +171,25 @@ pub async fn update_world_settings(
         }
     }
 
+    // Held to an operator's rating even before the world row exists.
+    let own = locked
+        .as_ref()
+        .and_then(|r| r.get::<Option<String>, _>("content_rating"));
+    let content_rating = settle_world_rating(
+        &mut tx,
+        world.key(),
+        own,
+        input.content_rating.as_deref(),
+        notify,
+    )
+    .await?;
+
     let categories: Option<Vec<String>> = input
         .categories_provided
         .then(|| input.categories.clone().unwrap_or_default());
     let has_settings_patch = input.title.is_some()
         || input.description.is_some()
-        || input.content_rating.is_some()
+        || content_rating.is_some()
         || input.skybox_time_provided
         || input.categories_provided
         || input.single_player.is_some()
@@ -181,7 +199,7 @@ pub async fn update_world_settings(
         || input.preview_wearable_urns_provided;
     let mirrored_setting_patch = input.title.is_some()
         || input.description.is_some()
-        || input.content_rating.is_some()
+        || content_rating.is_some()
         || input.skybox_time_provided
         || input.categories_provided
         || input.single_player.is_some()
@@ -222,7 +240,7 @@ pub async fn update_world_settings(
     .bind(owner)
     .bind(&input.title)
     .bind(&input.description)
-    .bind(&input.content_rating)
+    .bind(content_rating)
     .bind(&input.spawn_coordinates)
     .bind(input.skybox_time)
     .bind(&categories)

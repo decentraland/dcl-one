@@ -196,6 +196,8 @@ check ownership on chain only refuse to sync a profile or outfit that a lease al
 
 On-chain bid notices upgrade: run `catalyst schema migrate` before deploying the API. Step `0053_shop_bid_received_producer` admits the `bid_received` producer in `shop.notification_cursor`. Sellers hear of Polygon ERC721BidV2 bids once `MARKETPLACE_SALES_INDEX_ENABLED` and `MARKETPLACE_NFT_INDEX_ENABLED` have published their indexes. The producer seeds its cursor at the published block, so bids indexed before it are not announced. To announce the bids placed since a previous notifier stopped, seed the cursor with `catalyst shop notice-rewind --producer bid_received` (`--since` or `--from-block`) at the first Polygon block that notifier did not cover.
 
+Content rating notices: run `catalyst schema migrate` before deploying the API. Step `0056_explore_rating_downgrade_notice` widens the places moderation notice kinds and preserves existing notices.
+
 Scene admin upgrade: the release script
 `schemas/releases/scene-admin-place-keys.sql` requires a maintenance window. Stop old API
 replicas before `catalyst schema migrate`. Then run
