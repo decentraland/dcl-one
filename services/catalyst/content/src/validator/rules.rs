@@ -17,9 +17,9 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    avatar_has_snapshots, navmap_thumbnail_error, profile_has_emotes,
+    avatar_has_snapshots, corresponds_to_a_snapshot, navmap_thumbnail_error, profile_has_emotes,
     should_validate_face_thumbnail, slot_key, validate_profile_emote_urns,
-    validate_profile_wearable_urns,
+    validate_profile_wearable_urns, validates_up_to_adr290_optionality,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
 use super::scene_parcels::validate_scene_parcels_match_pointers;
@@ -723,6 +723,46 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                         }
                     }
                 }
+            }
+        }
+
+        if validates_up_to_adr290_optionality(entity, deployment.files, adr_timestamps::ADR_45) {
+            let has_avatars = entity
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("avatars"))
+                .and_then(|a| a.as_array())
+                .is_some_and(|a| !a.is_empty());
+            let errors: Vec<String> = entity
+                .content
+                .iter()
+                .filter_map(|c| match &entity.metadata {
+                    Some(metadata) if has_avatars => {
+                        (!corresponds_to_a_snapshot(&c.file, &c.hash, metadata)).then(|| {
+                            format!(
+                                "This file is not expected: '{}' or its hash is invalid: '{}'. \
+                                 Please, include only valid snapshot files.",
+                                c.file, c.hash
+                            )
+                        })
+                    }
+                    _ => Some("Entity is missing metadata or avatars".to_string()),
+                })
+                .collect();
+            if !errors.is_empty() {
+                return ValidationResponse::from_errors(errors);
+            }
+        }
+
+        if validates_up_to_adr290_optionality(entity, deployment.files, adr_timestamps::ADR_158) {
+            let has = |name: &str| entity.content.iter().any(|c| c.file.to_lowercase() == name);
+            let errors: Vec<String> = ["body.png", "face256.png"]
+                .into_iter()
+                .filter(|name| !has(name))
+                .map(|name| format!("Profile entity is missing file '{name}'"))
+                .collect();
+            if !errors.is_empty() {
+                return ValidationResponse::from_errors(errors);
             }
         }
 
@@ -1622,6 +1662,187 @@ mod tests {
             };
             assert!(slots_pass(&two_avatars("1", "2.0"), false));
             assert!(!slots_pass(&two_avatars("1", "1.0"), false));
+        }
+
+        /// The profile content rules' verdict on `d`.
+        fn profile_content(d: &OwnedDeployment) -> ValidationResponse {
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced: true,
+                access_passed: false,
+            }
+            .validate_profile_content(&d.view())
+        }
+
+        fn errors(response: ValidationResponse) -> Vec<String> {
+            response
+                .errors()
+                .map(<[String]>::to_vec)
+                .unwrap_or_default()
+        }
+
+        #[test]
+        fn profiles_after_adr_74_need_an_avatar_with_emotes() {
+            let with_emotes = |timestamp, emotes: &[serde_json::Value]| {
+                let mut d = profile();
+                d.entity.timestamp = timestamp;
+                let metadata = d.entity.metadata.as_mut().unwrap();
+                let avatar = metadata["avatars"][0].clone();
+                metadata["avatars"] = emotes
+                    .iter()
+                    .map(|e| {
+                        let mut a = avatar.clone();
+                        a["avatar"]["emotes"] = e.clone();
+                        a
+                    })
+                    .collect();
+                d
+            };
+            let null = serde_json::Value::Null;
+            let empty = serde_json::json!([]);
+            let refused = vec!["Profile must have emotes after ADR 74.".to_string()];
+            for ts in [
+                adr_timestamps::ADR_74,
+                adr_timestamps::ADR_290_OPTIONAL + 1000,
+            ] {
+                assert_eq!(
+                    errors(profile_content(&with_emotes(
+                        ts,
+                        std::slice::from_ref(&null)
+                    ))),
+                    refused
+                );
+                let both_null = with_emotes(ts, &[null.clone(), null.clone()]);
+                assert_eq!(errors(profile_content(&both_null)), refused);
+                let mut absent = with_emotes(ts, std::slice::from_ref(&empty));
+                absent.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("emotes");
+                assert_eq!(errors(profile_content(&absent)), refused);
+                assert!(profile_content(&with_emotes(ts, std::slice::from_ref(&empty))).is_ok());
+                let one_empty = with_emotes(ts, &[null.clone(), empty.clone()]);
+                assert!(profile_content(&one_empty).is_ok());
+            }
+            assert!(profile_content(&with_emotes(adr_timestamps::ADR_74 - 1, &[null])).is_ok());
+        }
+
+        /// A profile at `timestamp` with face256 `QmF` and body `QmB`
+        /// snapshots and the given `(file, hash)` content.
+        fn profile_with_files(timestamp: Timestamp, content: &[(&str, &str)]) -> OwnedDeployment {
+            let mut d = profile();
+            d.entity.timestamp = timestamp;
+            d.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["snapshots"] =
+                serde_json::json!({ "face256": "QmF", "body": "QmB" });
+            d.entity.content = content
+                .iter()
+                .map(|(file, hash)| ContentMapping {
+                    file: file.to_string(),
+                    hash: hash.to_string(),
+                })
+                .collect();
+            d
+        }
+
+        const SNAPSHOT_FILES: [(&str, &str); 2] = [("body.png", "QmB"), ("face256.png", "QmF")];
+
+        #[test]
+        fn pre_adr_290_profile_files_must_be_avatar_snapshots() {
+            let not_expected = |file: &str, hash: &str| {
+                format!(
+                    "This file is not expected: '{file}' or its hash is invalid: '{hash}'. \
+                     Please, include only valid snapshot files."
+                )
+            };
+            let with_extra = |ts, extra: (&'static str, &'static str)| {
+                let mut files = SNAPSHOT_FILES.to_vec();
+                files.push(extra);
+                profile_with_files(ts, &files)
+            };
+            for ts in [
+                adr_timestamps::ADR_158,
+                adr_timestamps::ADR_290_OPTIONAL - 1,
+                adr_timestamps::ADR_290_OPTIONAL + 1000,
+            ] {
+                assert!(profile_content(&profile_with_files(ts, &SNAPSHOT_FILES)).is_ok());
+                assert_eq!(
+                    errors(profile_content(&with_extra(ts, ("other.png", "QmO")))),
+                    vec![not_expected("other.png", "QmO")]
+                );
+                // Only the last extension is dropped, and the hash must match the snapshot.
+                assert!(profile_content(&with_extra(ts, ("body", "QmB"))).is_ok());
+                assert!(profile_content(&with_extra(ts, ("body.jpg", "QmB"))).is_ok());
+                assert!(!profile_content(&with_extra(ts, ("body.png.bak", "QmB"))).is_ok());
+                assert!(!profile_content(&with_extra(ts, ("face256.png", "QmB"))).is_ok());
+            }
+            // From ADR-45, before the mandatory files of ADR-158.
+            let stray = [("other.png", "QmO"), ("face256.png", "QmX")];
+            assert_eq!(
+                errors(profile_content(&profile_with_files(
+                    adr_timestamps::ADR_45,
+                    &stray
+                ))),
+                vec![
+                    not_expected("other.png", "QmO"),
+                    not_expected("face256.png", "QmX")
+                ]
+            );
+            let mut no_avatars = profile_with_files(adr_timestamps::ADR_45, &stray);
+            no_avatars.entity.metadata = Some(serde_json::json!({ "avatars": [] }));
+            assert_eq!(
+                errors(profile_content(&no_avatars)),
+                vec!["Entity is missing metadata or avatars".to_string(); 2]
+            );
+            assert!(
+                profile_content(&profile_with_files(adr_timestamps::ADR_45 - 1, &stray)).is_ok()
+            );
+        }
+
+        #[test]
+        fn pre_adr_290_profiles_must_upload_body_and_face() {
+            let both_missing = vec![
+                "Profile entity is missing file 'body.png'".to_string(),
+                "Profile entity is missing file 'face256.png'".to_string(),
+            ];
+            let bare = |ts| {
+                let mut d = profile();
+                d.entity.timestamp = ts;
+                d
+            };
+            for ts in [
+                adr_timestamps::ADR_158,
+                adr_timestamps::ADR_290_OPTIONAL - 1,
+            ] {
+                assert_eq!(errors(profile_content(&bare(ts))), both_missing);
+                assert_eq!(
+                    errors(profile_content(&profile_with_files(
+                        ts,
+                        &[("body.png", "QmB")]
+                    ))),
+                    vec!["Profile entity is missing file 'face256.png'".to_string()]
+                );
+            }
+            assert!(profile_content(&bare(adr_timestamps::ADR_158 - 1)).is_ok());
+            // In the optional window only a profile still carrying snapshots,
+            // content or uploads is held to it.
+            let optional = adr_timestamps::ADR_290_OPTIONAL + 1000;
+            assert!(profile_content(&bare(optional)).is_ok());
+            assert_eq!(
+                errors(profile_content(&profile_with_files(optional, &[]))),
+                both_missing
+            );
+            // File names are matched case-insensitively.
+            let mut upper = profile_with_files(
+                adr_timestamps::ADR_158,
+                &[("Body.PNG", "QmB"), ("FACE256.png", "QmF")],
+            );
+            assert!(!profile_content(&upper).is_ok());
+            upper.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["snapshots"] = serde_json::json!({ "face256": "QmF", "body": "QmB", "Body": "QmB", "FACE256": "QmF" });
+            assert!(profile_content(&upper).is_ok());
         }
 
         #[test]

@@ -6,8 +6,19 @@ pub(super) fn should_validate_face_thumbnail(
     entity: &Entity,
     files: &HashMap<String, UploadedFile>,
 ) -> bool {
+    validates_up_to_adr290_optionality(entity, files, adr_timestamps::ADR_45)
+}
+
+/// Upstream `validateUpToADR290OptionalityTimestamp(from, ..)`: from `from`
+/// until ADR-290 is optional, then in the optional window only for profiles
+/// that still carry content, uploads or snapshots.
+pub(super) fn validates_up_to_adr290_optionality(
+    entity: &Entity,
+    files: &HashMap<String, UploadedFile>,
+    from: Timestamp,
+) -> bool {
     let ts = entity.timestamp;
-    if (adr_timestamps::ADR_45..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {
+    if (from..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {
         return true;
     }
     if (adr_timestamps::ADR_290_OPTIONAL..adr_timestamps::ADR_290_REJECTED).contains(&ts) {
@@ -118,8 +129,13 @@ pub(super) fn slot_key(slot: f64) -> u64 {
 /// (`if (avatar.avatar?.snapshots)`): absent, `null`, `false`, `0` and `""`
 /// are not snapshots, so a profile that serializes `"snapshots": null` passes.
 pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
+    is_truthy(avatar.get("avatar").and_then(|a| a.get("snapshots")))
+}
+
+/// JS truthiness of an optional JSON value.
+fn is_truthy(value: Option<&serde_json::Value>) -> bool {
     use serde_json::Value;
-    match avatar.get("avatar").and_then(|a| a.get("snapshots")) {
+    match value {
         None | Some(Value::Null) | Some(Value::Bool(false)) => false,
         Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
         Some(Value::String(s)) => !s.is_empty(),
@@ -127,15 +143,47 @@ pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
     }
 }
 
+/// Upstream `profileHasEmotes`: some avatar's `emotes` is truthy, so
+/// `"emotes": null` on every avatar has none while `[]` counts.
 pub(super) fn profile_has_emotes(metadata: &serde_json::Value) -> bool {
-    if let Some(avatars) = metadata.get("avatars").and_then(|v| v.as_array()) {
-        for avatar in avatars {
-            if avatar.get("avatar").and_then(|a| a.get("emotes")).is_some() {
-                return true;
-            }
-        }
-    }
-    false
+    metadata
+        .get("avatars")
+        .and_then(|v| v.as_array())
+        .is_some_and(|avatars| {
+            avatars
+                .iter()
+                .any(|avatar| is_truthy(avatar.get("avatar").and_then(|a| a.get("emotes"))))
+        })
+}
+
+/// Upstream `correspondsToASnapshot`: the file name without its last
+/// extension (`/\.[^/.]+$/`) is a snapshot key of some avatar whose value is
+/// `hash`.
+pub(super) fn corresponds_to_a_snapshot(
+    file: &str,
+    hash: &str,
+    metadata: &serde_json::Value,
+) -> bool {
+    let name = match file.rfind('.') {
+        Some(dot) if dot + 1 < file.len() && !file[dot + 1..].contains('/') => &file[..dot],
+        _ => file,
+    };
+    metadata
+        .get("avatars")
+        .and_then(|v| v.as_array())
+        .is_some_and(|avatars| {
+            avatars.iter().any(|avatar| {
+                avatar
+                    .get("avatar")
+                    .and_then(|a| a.get("snapshots"))
+                    .and_then(|s| s.as_object())
+                    .is_some_and(|snapshots| {
+                        snapshots
+                            .get(name)
+                            .is_some_and(|v| v.as_str() == Some(hash))
+                    })
+            })
+        })
 }
 
 fn is_old_emote(s: &str) -> bool {
