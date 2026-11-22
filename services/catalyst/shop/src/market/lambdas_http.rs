@@ -10,6 +10,7 @@ use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use super::graph;
 use crate::shared::cors::{self, HttpServerCors};
 
 pub const BUILD_INFO: &str = "dcl_lamb2_server_build_info";
@@ -18,7 +19,41 @@ pub const BUILD_INFO: &str = "dcl_lamb2_server_build_info";
 /// `commit_hash` is `COMMIT_HASH`, or the build's revision, or empty.
 pub fn register_series(commit_hash: &str) {
     metrics::describe_gauge!(BUILD_INFO, "Lamb2 server static build info.");
+    metrics::describe_counter!(
+        OWNER_MEMO_READS,
+        "Lambdas reads of an owner's items and names from the per-owner memo"
+    );
     metrics::gauge!(BUILD_INFO, "commitHash" => commit_hash.to_owned()).set(1.0);
+}
+
+pub const OWNER_MEMO_READS: &str = "dcl_lambdas_owner_memo_reads_total";
+
+/// The lambdas' reads of an owner's items and names from the per-owner memo
+/// (`chain_index::graph`), by `result`: `hit` answered from the memo, `miss`
+/// fetched from (or joined a fetch of) the subgraphs. It replaces lamb2's
+/// `elements_cache_reads_total`, which also counted profile and LAND reads.
+fn owner_memo_read(hit: bool) {
+    let result = if hit { "hit" } else { "miss" };
+    metrics::counter!(OWNER_MEMO_READS, "result" => result).increment(1);
+}
+
+/// [`graph::owned_copies`] for a lambdas route, counted in [`OWNER_MEMO_READS`].
+pub async fn owned_copies(
+    index: &crate::chain_index::ChainIndex,
+    owner: &str,
+    category: &str,
+) -> Result<std::sync::Arc<Vec<graph::OwnedCopy>>, String> {
+    owner_memo_read(graph::owned_copies_memoized(index, owner, category));
+    graph::owned_copies(index, owner, category).await
+}
+
+/// [`graph::owned_names_or_stale`] for a lambdas route, counted in [`OWNER_MEMO_READS`].
+pub async fn owned_names_or_stale(
+    index: &crate::chain_index::ChainIndex,
+    owner: &str,
+) -> Result<std::sync::Arc<Vec<graph::OwnedName>>, String> {
+    owner_memo_read(graph::all_owned_names_memoized(index, owner));
+    graph::owned_names_or_stale(index, owner).await
 }
 
 /// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
@@ -241,5 +276,26 @@ mod tests {
         }
         assert!(!rendered.contains("trades"), "{rendered}");
         assert!(!rendered.contains("nope"), "{rendered}");
+    }
+
+    /// A lambdas names read counts a miss, then a hit while the memo is fresh.
+    #[tokio::test(flavor = "current_thread")]
+    async fn owner_memo_reads_count_misses_then_hits() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let (index, _) = crate::chain_index::graph::test_support::index_with_names().await;
+        let owner = "0x00000000000000000000000000000000000000aa";
+        owned_names_or_stale(&index, owner).await.unwrap();
+        owned_names_or_stale(&index, owner).await.unwrap();
+        let rendered = handle.render();
+        for line in [
+            "dcl_lambdas_owner_memo_reads_total{result=\"miss\"} 1",
+            "dcl_lambdas_owner_memo_reads_total{result=\"hit\"} 1",
+        ] {
+            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
+        }
     }
 }

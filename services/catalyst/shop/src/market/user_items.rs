@@ -27,7 +27,7 @@ use crate::shared::query_params::{
 use super::definitions::{
     extract_emote_definition, extract_wearable_definition, locale_cmp, rarity_rank,
 };
-use super::graph::{self, OwnedCopy};
+use super::graph::OwnedCopy;
 use super::readers;
 use super::{MarketplaceState, SharedState, bad_request};
 
@@ -271,7 +271,8 @@ async fn owned_items_response(
         return envelope;
     }
 
-    let copies = match graph::owned_copies(&state.index, address, item_category).await {
+    let copies = match super::lambdas_http::owned_copies(&state.index, address, item_category).await
+    {
         Ok(c) => c,
         Err(e) => {
             return super::third_party::fetch_error(path_address, &e);
@@ -384,7 +385,7 @@ pub async fn user_names(
     let names = if !super::is_valid_eth_address(&address) {
         Default::default()
     } else {
-        match graph::owned_names_or_stale(&state.index, &address).await {
+        match super::lambdas_http::owned_names_or_stale(&state.index, &address).await {
             Ok(n) => n,
             Err(e) => {
                 tracing::warn!(error = %e, address, "names reader failed");
@@ -502,7 +503,7 @@ async fn owned_items_body(
     include_definitions: bool,
     extract: fn(&Value, &str) -> Option<Value>,
 ) -> Result<Value, String> {
-    let copies = graph::owned_copies(&state.index, owner, category).await?;
+    let copies = super::lambdas_http::owned_copies(&state.index, owner, category).await?;
     let mut rows: Vec<(String, i64, String)> = group_copies(&copies)
         .into_iter()
         .map(|g| {

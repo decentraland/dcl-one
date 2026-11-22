@@ -55,14 +55,21 @@ scrape from outside the node needs a proxy in the node's network namespace
 that adds authentication (basic auth or a bearer token) before forwarding to
 `127.0.0.1:5006`. Never expose the listener without authentication.
 
+Which of these a deployment uses is an open choice: a scraping sidecar in the
+node's network namespace, or an authenticating proxy there for an outside
+Prometheus. Neither is provided by this repository yet.
+
 ### Dashboards that select a job
 
 A scrape of the one endpoint gives every series the same `job` and `instance`.
 A query that told the two services apart by a job selector needs that
-selector removed or changed. The families both services emitted (the
-per-route HTTP series, and the logger and subgraph series, which the node
-does not emit) used distinct `handler` values except for `/status`: the
-content server's and lamb2's status routes now add up in one series.
+selector removed or changed. Three families were emitted by both services:
+
+- the per-route HTTP series, whose `handler` values are distinct except for
+  `/status` (the content server's and lamb2's status routes now add up in one
+  series);
+- the subgraph series, now one set for the whole process;
+- `wkc_logger_logs_total`, now one set for the whole process.
 
 ## Per-route HTTP series
 

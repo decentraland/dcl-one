@@ -194,7 +194,7 @@ async fn fetch_owned_items(
     owner: &str,
     category: &str,
 ) -> Result<Vec<OwnedItem>, String> {
-    let copies = graph::owned_copies(&state.index, owner, category).await?;
+    let copies = super::lambdas_http::owned_copies(&state.index, owner, category).await?;
     let mut rows: Vec<CopyRow> = copies
         .iter()
         .map(|c| {

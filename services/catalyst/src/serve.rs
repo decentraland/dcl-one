@@ -17,6 +17,8 @@ use crate::{
 mod adapters;
 #[path = "serve_lifecycle.rs"]
 mod lifecycle;
+#[path = "serve_log_metrics.rs"]
+mod log_metrics;
 #[path = "serve_routes.rs"]
 mod routes;
 #[path = "serve_settings.rs"]
@@ -218,6 +220,20 @@ mod metrics_tests {
         ] {
             assert!(!rendered.contains(raw), "{raw} leaked:\n{rendered}");
         }
+        // @dcl/thegraph-component's buckets.
+        metrics::histogram!(crate::chain_index::graph::SUBGRAPH_DURATION, "url" => "u").record(0.2);
+        let rendered_subgraph = handle.render();
+        let bounds: Vec<&str> = rendered_subgraph
+            .lines()
+            .filter(|line| line.starts_with("subgraph_query_duration_seconds_bucket{"))
+            .filter_map(|line| line.split("le=\"").nth(1)?.split('"').next())
+            .collect();
+        assert_eq!(
+            bounds,
+            [
+                "0.1", "0.3", "0.5", "1", "2", "5", "10", "20", "30", "60", "+Inf"
+            ]
+        );
         // prom-client's default buckets, as the legacy declarations set none.
         for series in ["http_request_duration_seconds", "http_request_size_bytes"] {
             let bounds: Vec<&str> = rendered
@@ -247,8 +263,9 @@ pub async fn serve(
     mut config: Config,
     mut prepared: crate::metrics_matcher::PreparedStats,
 ) -> anyhow::Result<()> {
-    config.node.init_tracing();
+    config.node.init_tracing_with(log_metrics::CountLogs);
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    log_metrics::register_series();
     shop::market::lambdas_http::register_series(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {

@@ -89,6 +89,10 @@ pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
     }
     builder
         .set_buckets_for_metric(
+            Matcher::Full("subgraph_query_duration_seconds".into()),
+            &[0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0],
+        )?
+        .set_buckets_for_metric(
             Matcher::Full("rpc_procedure_call_duration_seconds".into()),
             &[0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
         )?

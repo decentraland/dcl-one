@@ -1223,7 +1223,7 @@ async fn sanitize_outfits(
         }
         return Ok(());
     }
-    let copies = graph::owned_copies(&state.index, address, "wearable")
+    let copies = super::lambdas_http::owned_copies(&state.index, address, "wearable")
         .await
         .map_err(|e| super::third_party::fetch_error(address, &e))?;
     let mut tokens: HashMap<&str, Vec<&str>> = HashMap::new();
