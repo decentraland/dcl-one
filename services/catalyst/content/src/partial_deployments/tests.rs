@@ -961,7 +961,12 @@ async fn a_released_upload_that_staged_no_blob_is_deleted_at_once() {
         .execute(pool)
         .await
         .unwrap();
+    let lock = EntityLock::try_acquire(pool, &scene.id)
+        .await
+        .unwrap()
+        .expect("no batch holds it");
     release_upload(pool, &scene.id).await;
+    lock.release().await;
     assert_eq!(pending_rows(pool, &scene.id).await, 0);
 }
 
@@ -1041,10 +1046,6 @@ async fn a_superseded_upload_is_left_to_the_cleanup_job_and_refused_as_overtaken
     assert!(
         !storage.exist(&scene.id).await.unwrap(),
         "the entity file only the upload named goes"
-    );
-    assert!(
-        !storage.exist(&scene.id).await.unwrap(),
-        "its staged entity file goes"
     );
     assert!(
         storage.exist(&scene.files[0].0).await.unwrap(),
