@@ -438,22 +438,98 @@ fn alias(i: usize) -> String {
     format!("o{i}")
 }
 
-/// One aliased document per network and chunk of owners: `oN: nfts(where:
-/// {owner, urn_in}) { urn tokenId }`. Owners are validated hex addresses and
-/// the URNs are JSON-encoded, so the inlined literals cannot break the document.
-fn ownership_document(chunk: &[(&str, &[String])]) -> String {
+/// One aliased document per pending owner, each with its own NFT id cursor.
+/// All inlined values are JSON-encoded GraphQL string literals.
+fn ownership_document(chunk: &[(&str, &[String])], cursors: &[Option<String>]) -> String {
     let mut doc = String::from("query {");
-    for (i, (owner, urns)) in chunk.iter().enumerate() {
-        let urns = serde_json::to_string(urns).unwrap_or_else(|_| "[]".to_string());
+    for (i, ((owner, urns), cursor)) in chunk.iter().zip(cursors).enumerate() {
+        let Some(cursor) = cursor else { continue };
+        let owner = serde_json::to_string(owner).expect("string serialization");
+        let urns = serde_json::to_string(urns).expect("string array serialization");
+        let cursor = serde_json::to_string(cursor).expect("string serialization");
         doc.push_str(&format!(
-            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn tokenId }}",
-            alias(i),
-            owner,
-            urns
+            " {}: nfts(first: 1000, orderBy: id, orderDirection: asc, where: {{ owner: {}, urn_in: {}, id_gt: {} }}) {{ id urn tokenId }}",
+            alias(i), owner, urns, cursor
         ));
     }
     doc.push_str(" }");
     doc
+}
+
+/// A successful page must be bounded and strictly advance every returned id,
+/// including short pages. Missing fields cannot prove an empty result.
+pub(super) fn checked_page_cursor<'a>(
+    rows: &'a [Value],
+    after: &str,
+) -> Result<Option<&'a str>, String> {
+    if rows.len() > THE_GRAPH_PAGE_SIZE as usize {
+        return Err("subgraph returned more rows than requested".into());
+    }
+    let mut previous = after;
+    let mut last = None;
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or("subgraph row has no id")?;
+        if id <= previous {
+            return Err("subgraph page ids do not advance".into());
+        }
+        previous = id;
+        last = Some(id);
+    }
+    Ok(last)
+}
+
+async fn walk_ownership<F, Fut>(
+    chunk: &[(&str, &[String])],
+    max_pages: usize,
+    mut page: F,
+) -> Result<HashMap<String, HashMap<String, Vec<String>>>, String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let mut owned: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+    let mut cursors = vec![Some(String::new()); chunk.len()];
+    for _ in 0..max_pages {
+        let data = page(ownership_document(chunk, &cursors)).await?;
+        for (i, (owner, _)) in chunk.iter().enumerate() {
+            let Some(cursor) = cursors[i].as_deref() else {
+                continue;
+            };
+            let rows = data
+                .get(alias(i))
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("subgraph response without ownership alias {}", alias(i)))?;
+            let next = checked_page_cursor(rows, cursor)?.map(str::to_string);
+            let held = owned.entry((*owner).to_string()).or_default();
+            for nft in rows {
+                let urn = nft
+                    .get("urn")
+                    .and_then(Value::as_str)
+                    .ok_or("ownership row has no urn")?;
+                let token = nft
+                    .get("tokenId")
+                    .and_then(Value::as_str)
+                    .ok_or("ownership row has no tokenId")?;
+                held.entry(normalize_urn(urn))
+                    .or_default()
+                    .push(token.to_string());
+            }
+            cursors[i] = if rows.len() < THE_GRAPH_PAGE_SIZE as usize {
+                None
+            } else {
+                next
+            };
+        }
+        if cursors.iter().all(Option::is_none) {
+            return Ok(owned);
+        }
+    }
+    Err(format!(
+        "more than {max_pages} ownership pages of {THE_GRAPH_PAGE_SIZE}"
+    ))
 }
 
 /// Which of the requested `(owner, urn)` pairs the subgraphs confirm: the
@@ -503,22 +579,14 @@ pub async fn owned_tokens(
             .collect();
         owners.sort();
         for chunk in owners.chunks(OWNERS_PER_QUERY) {
-            let data = graph_query(state, url, &ownership_document(chunk), json!({})).await?;
-            for (i, (owner, _)) in chunk.iter().enumerate() {
-                let held = owned.entry((*owner).to_string()).or_default();
-                for nft in data
-                    .get(alias(i))
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    let Some(urn) = nft.get("urn").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    let tokens = held.entry(normalize_urn(urn)).or_default();
-                    if let Some(token) = nft.get("tokenId").and_then(Value::as_str) {
-                        tokens.push(token.to_string());
-                    }
+            let page = walk_ownership(chunk, FULL_WALK_PAGES, |document| async move {
+                graph_query(state, url, &document, json!({})).await
+            })
+            .await?;
+            for (owner, urns) in page {
+                let held = owned.entry(owner).or_default();
+                for (urn, tokens) in urns {
+                    held.entry(urn).or_default().extend(tokens);
                 }
             }
         }
@@ -1171,10 +1239,124 @@ mod tests {
     fn ownership_document_aliases_each_owner_with_json_encoded_urns() {
         let a = vec!["urn:decentraland:matic:collections-v2:0xa:1".to_string()];
         let b = vec!["urn:x\"y".to_string(), "urn:z".to_string()];
-        let doc = ownership_document(&[("0xaaaa", &a), ("0xbbbb", &b)]);
-        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn tokenId }"), "{doc}");
-        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn tokenId }"), "{doc}");
+        let doc = ownership_document(
+            &[("0xaaaa", &a), ("0xbbbb", &b)],
+            &[Some(String::new()), Some("cursor\"".into())],
+        );
+        assert!(
+            doc.contains("o0: nfts(first: 1000, orderBy: id, orderDirection: asc"),
+            "{doc}"
+        );
+        assert!(doc.contains(r#"owner: "0xaaaa", urn_in: ["urn:decentraland:matic:collections-v2:0xa:1"], id_gt: """#), "{doc}");
+        assert!(
+            doc.contains(r#"owner: "0xbbbb", urn_in: ["urn:x\"y","urn:z"], id_gt: "cursor\"""#),
+            "{doc}"
+        );
         assert!(doc.ends_with(" }"));
+    }
+
+    fn ownership_rows(start: usize, count: usize, urn: &str) -> Vec<Value> {
+        (start..start + count)
+            .map(|i| {
+                json!({
+                    "id": format!("nft-{i:08}"), "urn": urn, "tokenId": i.to_string()
+                })
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn ownership_reads_all_pages_and_stops_querying_completed_owners() {
+        use std::sync::{Arc, Mutex};
+        let owner_a = "0x0000000000000000000000000000000000000001";
+        let owner_b = "0x0000000000000000000000000000000000000002";
+        let urn_a = "urn:decentraland:matic:collections-v2:0xc:1";
+        let urn_b = "urn:decentraland:matic:collections-v2:0xc:2";
+        let responses = Arc::new(vec![
+            json!({ "o0": ownership_rows(0, 1000, urn_a), "o1": ownership_rows(0, 2, urn_b) }),
+            json!({ "o0": ownership_rows(1000, 1, urn_b) }),
+        ]);
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let captured = requests.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let responses = responses.clone();
+                let captured = captured.clone();
+                async move {
+                    let mut calls = captured.lock().unwrap();
+                    let response = responses[calls.len()].clone();
+                    calls.push(body);
+                    axum::Json(json!({ "data": response }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let index = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::IndexSettings {
+                matic_collections_subgraph_url: Some(url),
+                ..Default::default()
+            },
+        );
+        index.allow_loopback_for_tests();
+        let requested = HashSet::from([
+            (owner_a.into(), urn_a.into()),
+            (owner_a.into(), urn_b.into()),
+            (owner_b.into(), urn_b.into()),
+        ]);
+        let owned = owned_tokens(&index, &requested).await.unwrap();
+        assert_eq!(owned[owner_a][urn_a].len(), 1000);
+        assert_eq!(owned[owner_a][urn_b], ["1000"]);
+        assert_eq!(owned[owner_b][urn_b], ["0", "1"]);
+        let calls = requests.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        let second = calls[1]["query"].as_str().unwrap();
+        assert!(second.contains(r#"id_gt: "nft-00000999""#), "{second}");
+        assert!(second.contains("orderBy: id, orderDirection: asc"));
+        assert!(
+            !second.contains("o1:"),
+            "completed owner must not be fetched again"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn ownership_errors_on_truncation_and_malformed_or_nonadvancing_pages() {
+        let urns = vec!["urn:x".into()];
+        let chunk = [("0x1", urns.as_slice())];
+        let err = walk_ownership(&chunk, 1, |_| async {
+            Ok(json!({ "o0": ownership_rows(0, 1000, "urn:x") }))
+        })
+        .await
+        .unwrap_err();
+        assert!(err.contains("more than 1 ownership pages"));
+        for response in [
+            json!({}),
+            json!({ "o0": null }),
+            json!({ "o0": [{ "urn": "urn:x", "tokenId": "1" }] }),
+            json!({ "o0": [{ "id": "a", "urn": "urn:x" }] }),
+            json!({ "o0": [{ "id": "a", "tokenId": "1" }] }),
+            json!({ "o0": [{ "id": "b", "urn": "urn:x", "tokenId": "1" }, { "id": "a", "urn": "urn:x", "tokenId": "2" }] }),
+        ] {
+            assert!(
+                walk_ownership(&chunk, 2, |_| std::future::ready(Ok(response.clone())))
+                    .await
+                    .is_err()
+            );
+        }
+        let err = walk_ownership(&chunk, 2, |_| async {
+            Ok(json!({ "o0": ownership_rows(0, 1000, "urn:x") }))
+        })
+        .await
+        .unwrap_err();
+        assert!(err.contains("do not advance"), "{err}");
+        let err = walk_ownership(&chunk, 2, |_| async { Err("upstream failed".into()) })
+            .await
+            .unwrap_err();
+        assert_eq!(err, "upstream failed");
     }
 
     fn page_of(start: usize, n: usize) -> Value {

@@ -110,7 +110,7 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 fn matic_collections(query: &str) -> Value {
     if query.contains("urn_in") {
         // The ownership document of the profiles: the owner holds the hat, token 10.
-        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
+        json!({ "o0": [{ "id": "nft-10", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
     } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
