@@ -10,7 +10,7 @@ use alloy_primitives::{Address, U256, keccak256};
 use alloy_sol_types::SolCall;
 
 use super::*;
-use crate::http::jsonrpc::parse_envelope;
+use crate::http::jsonrpc::{block_info, parse_envelope};
 use crate::validator::fake_chain::{self, Query, Reply, at_deployment, five_min_before};
 
 const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
@@ -1020,30 +1020,28 @@ async fn only_a_block_read_that_may_succeed_is_asked_again() {
 
 #[test]
 fn transient_block_read_errors() {
-    let response = |code| RpcError::Response {
-        code,
-        message: String::new(),
+    let response = |code| {
+        BlockError::Rpc(RpcError::Response {
+            code,
+            message: String::new(),
+        })
     };
+    let block = |result| block_info(&result, BlockTag::Latest).unwrap_err();
+    let body = |bytes: &[u8]| BlockError::Rpc(parse_envelope(200, bytes).unwrap_err());
     for (e, retried) in [
-        (RpcError::Transport("timeout".into()), true),
-        (RpcError::Status(502), true),
-        (RpcError::Malformed("no block latest".into()), true),
-        (parse_envelope(200, b"<html>").unwrap_err(), true),
-        (
-            parse_envelope(200, br#"{"jsonrpc":"2.0","res"#).unwrap_err(),
-            true,
-        ),
+        (RpcError::Transport("timeout".into()).into(), true),
+        (RpcError::Status(502).into(), true),
+        (block(Value::Null), true),
+        (body(b"<html>"), true),
+        (body(br#"{"jsonrpc":"2.0","res"#), true),
         (response(-32000), true),
         (response(-32099), true),
         (response(-32603), true),
-        (RpcError::Refused("private address".into()), false),
-        (RpcError::Status(403), false),
+        (RpcError::Refused("private address".into()).into(), false),
+        (RpcError::Status(403).into(), false),
+        (block(json!({ "number": "0x1" })), false),
         (
-            RpcError::Malformed("block without a hex timestamp".into()),
-            false,
-        ),
-        (
-            RpcError::Malformed("block timestamp out of range".into()),
+            block(json!({ "number": "0x1", "timestamp": "0xffffffffffffffff" })),
             false,
         ),
         (response(-32001), false),

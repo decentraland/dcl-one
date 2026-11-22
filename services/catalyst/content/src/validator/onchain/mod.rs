@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 
 use super::error::ValidatorError;
 use crate::http::jsonrpc::{
-    BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
+    BlockError, BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
 };
 use crate::http::{Outbound, RetryDecision, retry_with_backoff};
 
@@ -245,23 +245,24 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
 /// will not change (a refused endpoint, a bad key or path, invalid params,
 /// EIP-1474's resource not found, transaction rejected, method or version
 /// not supported, a block without a usable number or timestamp).
-fn transient(e: &RpcError) -> bool {
+fn transient(e: &BlockError) -> bool {
     match e {
-        RpcError::Transport(_) => true,
-        RpcError::Status(s) => *s == 408 || (500..600).contains(s),
-        RpcError::Malformed(m) => !m.starts_with("block "),
-        RpcError::Response { code, .. } => {
+        BlockError::Missing(_) => true,
+        BlockError::Shape(_) => false,
+        BlockError::Rpc(RpcError::Transport(_) | RpcError::Malformed(_)) => true,
+        BlockError::Rpc(RpcError::Status(s)) => *s == 408 || (500..600).contains(s),
+        BlockError::Rpc(RpcError::Response { code, .. }) => {
             *code == -32603
                 || ((-32099..=-32000).contains(code)
                     && ![-32001, -32003, -32004, -32005, -32006].contains(code))
         }
-        RpcError::Refused(_) => false,
+        BlockError::Rpc(RpcError::Refused(_)) => false,
     }
 }
 
 /// One block, read again after a [`transient`] error, each wait doubling with
 /// up to as much again in jitter.
-async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockInfo, RpcError> {
+async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockInfo, BlockError> {
     let rpc = Rpc::new(http, url).with_timeout(BLOCK_READ_TIMEOUT);
     let rpc = &rpc;
     let mut attempt = 0;
@@ -295,7 +296,7 @@ async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockIn
     answer
         .ok()
         .flatten()
-        .unwrap_or_else(|| Err(RpcError::Transport("block read gave no answer".into())))
+        .unwrap_or_else(|| Err(RpcError::Transport("block read gave no answer".into()).into()))
 }
 
 /// One chain's RPC and the blocks read from it.
