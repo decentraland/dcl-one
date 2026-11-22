@@ -2389,6 +2389,49 @@ async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
     );
 }
 
+/// A client that closes its connection while its body is received counts
+/// one `dcl_multipart_upload_aborts_total{reason="client_closed"}`.
+#[tokio::test]
+async fn a_client_closing_mid_body_counts_one_abort() {
+    use tokio::io::AsyncWriteExt;
+    let recorder = crate::series::test_support::recorder();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let node = deploying_node("client-abort", Settings::for_tests()).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(axum::serve(listener, node.router()).into_future());
+
+    let part = "--b\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n\
+                --b\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\
+                Content-Type: application/octet-stream\r\n\r\npartial bytes";
+    let head = format!(
+        "POST /content/entities HTTP/1.1\r\nHost: localhost\r\n\
+         Content-Type: multipart/form-data; boundary=b\r\nContent-Length: 100000\r\n\
+         X-Real-IP: 203.0.113.60\r\n\r\n{part}"
+    );
+    let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+    client.write_all(head.as_bytes()).await.unwrap();
+    client.flush().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    drop(client);
+
+    let aborts = || {
+        crate::series::test_support::sample(
+            &recorder.handle().render(),
+            crate::series::MULTIPART_ABORTS,
+            &[("reason", "client_closed")],
+        )
+    };
+    for _ in 0..100 {
+        if aborts().is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(aborts(), Some(1.0));
+    server.abort();
+}
+
 /// An unsynced copy taking only scenes: a form with no typed entity file is
 /// 400 and a profile 503, and both count, since the client chose them.
 #[tokio::test]

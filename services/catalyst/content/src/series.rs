@@ -8,6 +8,8 @@
 //! [`register_series`] renders the counters of each closed label set at 0, and the gauges
 //! whose value is known at start, before the first event.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use metrics::{counter, gauge, histogram};
@@ -439,18 +441,31 @@ pub fn multipart_timed_out() {
     counter!(MULTIPART_TIMEOUTS).increment(1);
 }
 
-/// Armed while a `POST /entities` body is received: dropped armed, the request future was
-/// dropped with it (the client closed the connection), which counts one abort.
+/// A `POST /entities` client closed the connection while its body was received, once per
+/// request (`counted`).
+pub fn body_aborted(counted: &AtomicBool) {
+    if !counted.swap(true, Ordering::Relaxed) {
+        counter!(MULTIPART_ABORTS, "reason" => "client_closed").increment(1);
+    }
+}
+
+/// Armed while a `POST /entities` body is read: dropped armed, the request was dropped with
+/// it (the client went away), which counts one abort unless the body's stream already
+/// reported the close ([`body_aborted`]).
 pub struct ReceivingBody {
+    counted: Arc<AtomicBool>,
     armed: bool,
 }
 
 impl ReceivingBody {
-    pub fn start() -> Self {
-        Self { armed: true }
+    pub fn start(counted: Arc<AtomicBool>) -> Self {
+        Self {
+            counted,
+            armed: true,
+        }
     }
 
-    /// The body arrived, failed or timed out: nothing is counted on drop.
+    /// The read ended (read, failed or timed out): nothing is counted on drop.
     pub fn settled(mut self) {
         self.armed = false;
     }
@@ -459,7 +474,7 @@ impl ReceivingBody {
 impl Drop for ReceivingBody {
     fn drop(&mut self) {
         if self.armed {
-            counter!(MULTIPART_ABORTS, "reason" => "client_closed").increment(1);
+            body_aborted(&self.counted);
         }
     }
 }
@@ -631,12 +646,16 @@ mod tests {
     #[test]
     fn a_body_dropped_while_received_counts_one_abort() {
         let rendered = render(|| {
-            drop(ReceivingBody::start());
-            ReceivingBody::start().settled();
+            drop(ReceivingBody::start(Arc::default()));
+            ReceivingBody::start(Arc::default()).settled();
+            let counted = Arc::new(AtomicBool::new(false));
+            body_aborted(&counted);
+            drop(ReceivingBody::start(counted));
         });
         assert_eq!(
             sample(&rendered, MULTIPART_ABORTS, &[("reason", "client_closed")]),
-            Some(1.0)
+            Some(2.0),
+            "a close the stream reported is not counted again on drop"
         );
     }
 }

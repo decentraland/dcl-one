@@ -547,6 +547,17 @@ async fn uploads_of(
         .get("entityId")
         .and_then(|id| parts.iter().position(|part| part.names(id)));
     let received: u64 = parts.iter().map(|part| part.len() as u64).sum();
+    // A partial batch refused here is counted as its staging answer.
+    let partial = fields.get("partial").map(String::as_str) == Some("true");
+    let refused = |kind| {
+        if partial {
+            crate::series::partial_answered(kind, None);
+        }
+    };
+    let budget_exhausted_after = |received| {
+        refused("busy");
+        budget_exhausted_after(received)
+    };
     if !memory.grow(super::upload_admission::MIN_UPLOAD_RESERVATION_BYTES) {
         return Err(budget_exhausted_after(received));
     }
@@ -556,11 +567,10 @@ async fn uploads_of(
         if !memory.grow(memory.bytes() + part.len() as u64) {
             return Err(budget_exhausted_after(received));
         }
-        let bytes = Bytes::from(
-            part.read()
-                .await
-                .map_err(|e| spool_unavailable(&e, "read_error"))?,
-        );
+        let bytes = Bytes::from(part.read().await.map_err(|e| {
+            refused("error");
+            spool_unavailable(&e, "read_error")
+        })?);
         let inspected = serde_json::from_slice::<crate::entity::Entity>(&bytes)
             .map(|parsed| {
                 let hashes = crate::validator::rules::inspected_hashes(&parsed);
@@ -893,7 +903,9 @@ pub async fn create_entity(
         return Ok(source_busy());
     };
     let received = Arc::new(AtomicU64::new(0));
-    let multipart = Multipart::from_request(counting_body(request, Arc::clone(&received)), &())
+    let aborted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let body = counting_body(request, Arc::clone(&received), Arc::clone(&aborted));
+    let multipart = Multipart::from_request(body, &())
         .await
         .map_err(|_| invalid(NOT_MULTIPART_MESSAGE))?;
     if declared_length(&headers)
@@ -914,6 +926,7 @@ pub async fn create_entity(
         },
         started: request_started,
         received: &received,
+        aborted: &aborted,
     };
     deploy_form(
         &state,
@@ -939,15 +952,19 @@ fn source_busy() -> Response {
 }
 
 /// `request` with its body's bytes added to `received` as they arrive.
+/// A failed chunk is the connection closed or broken under the body: one
+/// client abort, counted once in `aborted`.
 fn counting_body(
     request: axum::extract::Request,
     received: Arc<AtomicU64>,
+    aborted: Arc<std::sync::atomic::AtomicBool>,
 ) -> axum::extract::Request {
     request.map(|body| {
-        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| {
-            if let Ok(chunk) = chunk {
+        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| match chunk {
+            Ok(chunk) => {
                 received.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             }
+            Err(_) => crate::series::body_aborted(&aborted),
         }))
     })
 }
@@ -1008,6 +1025,8 @@ struct Request<'a> {
     started: std::time::Instant,
     /// The body's bytes read so far.
     received: &'a AtomicU64,
+    /// Set once the client's close was counted ([`crate::series::body_aborted`]).
+    aborted: &'a Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
@@ -1064,7 +1083,7 @@ async fn deploy_form(
         },
     );
     let timeout = settings.multipart_upload_timeout;
-    let receiving = crate::series::ReceivingBody::start();
+    let receiving = crate::series::ReceivingBody::start(Arc::clone(request.aborted));
     let read = tokio::time::timeout(timeout, read).await;
     receiving.settled();
     let Ok(form) = read else {
@@ -1081,12 +1100,7 @@ async fn deploy_form(
     };
     let (files, entity) = match uploads_of(&fields, parts, memory).await {
         Ok(read) => read,
-        Err(refused) => {
-            if is_partial(&fields) {
-                crate::series::partial_answered("busy", None);
-            }
-            return Ok(refused);
-        }
+        Err(refused) => return Ok(refused),
     };
     if is_partial(&fields) {
         let answer = partial_batch(state, &deployer, request, fields, files).await;

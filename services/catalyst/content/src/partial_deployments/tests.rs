@@ -422,7 +422,6 @@ async fn a_scene_uploaded_in_batches_is_published_by_its_last_batch() {
             .await
             .unwrap();
     assert_eq!(rows, 0, "a published upload leaves no pending row");
-
 }
 
 /// A replay batch, which may carry no entity file, is answered the stored
