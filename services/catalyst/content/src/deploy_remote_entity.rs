@@ -1072,7 +1072,7 @@ mod tests {
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let (storage, tmp) = temp_storage("in-flight").await;
-        let deployer = LiveSyncDeployer::new(
+        let deployer = LiveSyncDeployer::without_store(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
@@ -1179,6 +1179,7 @@ mod tests {
             .unwrap();
         let deployer = LiveSyncDeployer::new(
             pool.clone(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         );
@@ -1268,6 +1269,7 @@ mod tests {
     ) -> Result<(), SyncError> {
         let deployer = LiveSyncDeployer::new(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage.clone(),
             1,
             crate::sync_deployer::SyncValidation::AuthChainOnly,
         );

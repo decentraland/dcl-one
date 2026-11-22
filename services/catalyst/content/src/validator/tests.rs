@@ -24,7 +24,7 @@ use super::checker::{
     BlockchainChecker, validate_item_access, validate_outfits_access, validate_profile_access,
 };
 use super::fake_chain::{self, FakeChain, Query, Reply};
-use super::types::OwnedDeployment;
+use super::types::{OwnedDeployment, UploadedFile};
 use super::*;
 use crate::auth::hash_bytes_v1;
 use crate::http::Outbound;
@@ -88,7 +88,7 @@ async fn signed(
     uploads: &[Vec<u8>],
 ) -> (
     Entity,
-    HashMap<String, bytes::Bytes>,
+    HashMap<String, UploadedFile>,
     crate::auth::AuthChain,
     String,
 ) {

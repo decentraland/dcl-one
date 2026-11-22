@@ -66,9 +66,13 @@ pub fn checker_bytecode() -> &'static str {
     CHECKER_BYTECODE.trim()
 }
 
-/// Distinct item URNs asked about per check; more refuses the check. An
-/// avatar wears at most 18 wearable categories and 10 emotes, an outfits
-/// entity about ten avatars of those; `@dcl/schemas` caps neither list.
+/// Distinct item URNs asked about per check; more refuses the check (400).
+/// Every item is an `eth_call` to the operator's RPC, and any signer can name
+/// any number of them: `@dcl/schemas` caps neither a profile's avatars nor an
+/// outfit's wearables, and the reference validator asks about every one. The
+/// bound keeps one signed deploy from driving that RPC without limit; no
+/// entity the clients build reaches it (an avatar wears at most 18 wearable
+/// categories and 10 emotes, an outfits entity ten avatars of those).
 pub(crate) const MAX_ITEMS_ASKED: usize = 200;
 /// Distinct third-party NFT contracts asked about per check; more refuses
 /// the check. Their standard probes are batched, so this matches the item cap.

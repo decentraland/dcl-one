@@ -242,7 +242,12 @@ async fn unlink(storage: &Storage, key: &str) -> Result<u64, crate::storage::Sto
 }
 
 /// The keys of a pruned batch that no domain names any more are unlinked;
-/// the reference check runs right before the unlink, after the rows are gone.
+/// the reference check runs right before the unlink, after the rows are gone,
+/// under the exclusive store lock. Every content writer that commits a
+/// deployment (local deploys, the peer-sync and read-through flush) takes its
+/// shared side and checks there that the files it names are stored, so a
+/// blob such a writer reuses is either named by its committed rows here or
+/// found gone by that writer, which then does not commit it.
 async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,

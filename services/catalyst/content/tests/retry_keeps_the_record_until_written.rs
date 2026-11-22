@@ -45,6 +45,7 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
     let storage = Arc::new(catalyst_storage::Storage::from_config(&tmp).await.unwrap());
     let deployer = Arc::new(LiveSyncDeployer::new(
         pool.clone(),
+        storage.clone(),
         1,
         catalyst_content::sync_deployer::SyncValidation::AuthChainOnly,
     ));
@@ -93,6 +94,7 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
     );
     let deployer = Arc::new(LiveSyncDeployer::new(
         pool.clone(),
+        storage.clone(),
         1,
         catalyst_content::sync_deployer::SyncValidation::AuthChainOnly,
     ));

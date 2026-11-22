@@ -117,6 +117,22 @@ pub(crate) mod support {
         };
     }
     pub(crate) use require_test_db;
+
+    /// The transactions queued (not yet granted) on the store lock in `mode`
+    /// (`ShareLock` or `ExclusiveLock`) in `pool`'s database.
+    pub async fn store_lock_waiters(pool: &sqlx::PgPool, mode: &str) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT virtualtransaction FROM pg_locks \
+             WHERE locktype = 'advisory' AND mode = $2 AND NOT granted \
+               AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+               AND (classid::bigint << 32 | objid::bigint) = $1",
+        )
+        .bind(crate::storage::gc::STORE_LOCK_KEY)
+        .bind(mode)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
 }
 
 /// Fixtures whose answer comes out of Postgres (an empty one): skipped
