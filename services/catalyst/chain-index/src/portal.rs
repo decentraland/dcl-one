@@ -28,7 +28,7 @@
 //! error.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -181,6 +181,9 @@ type Limiters = HashMap<(String, u64), Arc<OriginLimiter>>;
 pub struct OriginLimiter {
     rate: f64,
     state: Mutex<Bucket>,
+    /// Moves each time a hold is set: a reader that never saw a hold while
+    /// it lasted still learns there was one.
+    holds: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -206,6 +209,7 @@ impl OriginLimiter {
                 at: Instant::now(),
                 cooldown_until: None,
             }),
+            holds: AtomicU64::new(0),
         }
     }
 
@@ -249,6 +253,17 @@ impl OriginLimiter {
         }
     }
 
+    /// How many holds were set so far.
+    pub fn holds(&self) -> u64 {
+        self.holds.load(Ordering::SeqCst)
+    }
+
+    /// Whether a cooldown holds every reader of the origin now.
+    pub fn cooling(&self) -> bool {
+        let b = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        b.cooldown_until.is_some_and(|u| u > Instant::now())
+    }
+
     /// Holds every reader of the origin for `retry_after`, between
     /// [`MIN_COOLDOWN`] and [`MAX_COOLDOWN`] (a portal's header bounds no
     /// hold of ours), never shortening a longer hold already set.
@@ -262,6 +277,7 @@ impl OriginLimiter {
         if b.cooldown_until.is_none_or(|u| u < until) {
             b.cooldown_until = Some(until);
         }
+        self.holds.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -306,6 +322,83 @@ pub struct Page {
     pub upper: Header,
     /// The decoded lines' bytes, for a caller's aggregate bound.
     pub bytes: usize,
+    /// The revision of the lake manifest the answer was read from
+    /// (chain-lake's [`REVISION_HEADER`]); `None` when the portal sent none
+    /// or one that is not a hex digest.
+    pub revision: Option<String>,
+}
+
+/// The header chain-lake names the manifest a page was read from with; a
+/// coverage answer ([`LakeCoverage`]) carries the same value.
+pub const REVISION_HEADER: &str = "x-lake-coverage-revision";
+
+/// The most a coverage answer may weigh: one entry an address followed.
+pub const MAX_COVERAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// chain-lake's `GET /datasets/<ds>/contracts`: from which block the lake
+/// holds every log of each address, computed from one manifest
+/// (`revision`), up to `finalized`. An address it does not list carries no
+/// claim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LakeCoverage {
+    pub dataset: String,
+    pub chain_id: u64,
+    pub revision: String,
+    /// The highest block the answer reaches, inclusive, with its hash;
+    /// `None` when no receipt counts.
+    pub finalized: Option<Head>,
+    /// Each address (lowercase) with the first block, inclusive, from which
+    /// every log of it up to `finalized` is held.
+    pub from: HashMap<String, u64>,
+}
+
+fn digest_of(s: &str) -> Option<String> {
+    (s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit())).then(|| s.to_ascii_lowercase())
+}
+
+/// A coverage answer, or why it is malformed: schema version 1, a hex
+/// revision, a finalized head or `null`, and each address once.
+pub fn decode_coverage(v: &Value) -> Result<LakeCoverage, PortalError> {
+    let bad = |what: &str| PortalError::Malformed(format!("contracts: {what}"));
+    if v["schemaVersion"].as_u64() != Some(1) {
+        return Err(bad("schemaVersion"));
+    }
+    let dataset = v["dataset"].as_str().ok_or_else(|| bad("dataset"))?;
+    let chain_id = v["chainId"].as_u64().ok_or_else(|| bad("chainId"))?;
+    let revision = v["coverageRevision"]
+        .as_str()
+        .and_then(digest_of)
+        .ok_or_else(|| bad("coverageRevision"))?;
+    let finalized = match &v["finalized"] {
+        Value::Null => None,
+        f => Some(Head {
+            number: f["number"]
+                .as_u64()
+                .ok_or_else(|| bad("finalized number"))?,
+            hash: f["hash"]
+                .as_str()
+                .and_then(|h| hex_of(h, 66))
+                .ok_or_else(|| bad("finalized hash"))?,
+        }),
+    };
+    let mut from = HashMap::new();
+    for c in v["contracts"].as_array().ok_or_else(|| bad("contracts"))? {
+        let address = c["address"]
+            .as_str()
+            .and_then(|a| hex_of(a, 42))
+            .ok_or_else(|| bad("address"))?;
+        let block = c["from"].as_u64().ok_or_else(|| bad("from"))?;
+        if from.insert(address, block).is_some() {
+            return Err(bad("an address listed twice"));
+        }
+    }
+    Ok(LakeCoverage {
+        dataset: dataset.to_string(),
+        chain_id,
+        revision,
+        finalized,
+        from,
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -805,8 +898,47 @@ impl PortalReader {
                 .and_then(|s| s.parse().ok());
             return Err(PortalError::AboveHead { finalized });
         }
+        let revision = resp
+            .headers()
+            .get(REVISION_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(digest_of);
         let lines = read_lines(resp, line_cap(from, to, self.max_page_lines)).await?;
-        decode_page(&lines, from, to)
+        let mut page = decode_page(&lines, from, to)?;
+        page.revision = revision;
+        Ok(page)
+    }
+
+    /// chain-lake's coverage answer for the dataset (`/contracts`), counted
+    /// as an admission send.
+    pub async fn contracts(&self) -> Result<LakeCoverage, PortalError> {
+        let resp = self
+            .send(SendKind::Admission, self.client.get(self.url("contracts")))
+            .await?;
+        let bytes = crate::http::read_body_capped(resp, MAX_COVERAGE_BYTES)
+            .await
+            .map_err(|_| PortalError::Truncated)?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| json_error(&e))?;
+        decode_coverage(&v)
+    }
+
+    /// The same reader, counting its sends apart from the readers it was
+    /// cloned from (one window's sends); the origin's limiter stays shared.
+    pub fn with_own_sends(&self) -> Self {
+        Self {
+            sends: Arc::new(Sends::default()),
+            ..self.clone()
+        }
+    }
+
+    /// Whether the origin's limiter holds a cooldown now.
+    pub fn cooling(&self) -> bool {
+        self.limiter.cooling()
+    }
+
+    /// How many holds the origin's limiter set so far.
+    pub fn holds(&self) -> u64 {
+        self.limiter.holds()
     }
 }
 
@@ -1013,9 +1145,11 @@ pub fn decode_page(lines: &[Vec<u8>], from: u64, to: u64) -> Result<Page, Portal
         conflicts: conflicts.into_iter().collect(),
         upper,
         bytes: lines.iter().map(Vec::len).sum(),
+        revision: None,
     })
 }
 
+pub mod admit;
 pub mod compare;
 pub mod shadow;
 

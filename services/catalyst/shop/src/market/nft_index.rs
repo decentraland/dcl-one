@@ -1012,7 +1012,7 @@ impl ChainIndex for NftIndex {
         chunk: &mut usize,
         owner: &chain_walk::Owner,
         cursor: Option<(u64, &str)>,
-    ) -> anyhow::Result<usize> {
+    ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
@@ -1023,7 +1023,7 @@ impl ChainIndex for NftIndex {
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
-        let mut used = 0usize;
+        let mut used = chain_walk::Spent::default();
         // The cursor block's header that closed the last lane window opens
         // the next one: one read a window, the bracket unbroken.
         let mut opened: Option<crate::chain_index::rpc::BlockHeader> = None;
@@ -1036,7 +1036,7 @@ impl ChainIndex for NftIndex {
                 topics: collection_topics(self.net),
             }];
             while next <= last {
-                if used >= budget {
+                if used.charge >= budget {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
@@ -1046,7 +1046,7 @@ impl ChainIndex for NftIndex {
                     (Some(_), Some(last)) => Some(last),
                     (Some((block, _)), None) => {
                         let h = source.header(block).await?;
-                        used += h.requests;
+                        used.read(h.requests);
                         Some(h.value)
                     }
                     (None, _) => None,
@@ -1057,14 +1057,14 @@ impl ChainIndex for NftIndex {
                     .with_context(|| {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
                     })?;
-                used += w.requests;
+                used.window(&w);
                 source.lane_read();
                 let times = source.block_times(&w.logs).await?;
-                used += times.requests;
+                used.read(times.requests);
                 let times = times.value;
                 if let (Some(before), Some((block, stored))) = (before, cursor) {
                     let after = source.header(block).await?;
-                    used += after.requests;
+                    used.read(after.requests);
                     anyhow::ensure!(
                         before == after.value,
                         "chain changed while backfilling {}",
@@ -1075,7 +1075,7 @@ impl ChainIndex for NftIndex {
                             block,
                             stored: stored.to_string(),
                             chain: after.value.hash,
-                            requests: used,
+                            requests: used.requests,
                         }
                         .into());
                     }

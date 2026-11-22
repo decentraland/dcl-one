@@ -459,6 +459,30 @@ pub struct Diverged {
     pub requests: usize,
 }
 
+/// What lanes spent: what they charged the walk's log budget (a window's
+/// [`Window::charge`], plus the headers and times they read) and the
+/// requests they sent (its `requests`, plus the same reads). Both are equal
+/// over an RPC source.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Spent {
+    pub charge: usize,
+    pub requests: usize,
+}
+
+impl Spent {
+    /// A read that charges what it sends (a header, the block times).
+    pub fn read(&mut self, requests: usize) {
+        self.charge += requests;
+        self.requests += requests;
+    }
+
+    /// A window: its charge and its requests.
+    pub fn window(&mut self, w: &Window) {
+        self.charge += w.charge;
+        self.requests += w.requests;
+    }
+}
+
 impl Owner {
     /// Locks the cursor row until the caller's commit and refuses unless the
     /// row still carries this generation, is bound to this chain and is not
@@ -1106,7 +1130,8 @@ pub trait ChainIndex: Send + Sync {
         owner: &Owner,
     ) -> anyhow::Result<bool>;
     /// Work walked before the main range under the same budget (the nft
-    /// backfill lane), read from the pass's source; the requests it spent.
+    /// backfill lane), read from the pass's source: what it charged the
+    /// budget and the requests it sent ([`Spent`]).
     /// Every transaction it commits ends with `owner.check`. With the
     /// cursor's block and stored hash (`cursor`), each read is bracketed by
     /// that block's header, which must stay that hash: a stable bracket on
@@ -1124,8 +1149,8 @@ pub trait ChainIndex: Send + Sync {
         _chunk: &mut usize,
         _owner: &Owner,
         _cursor: Option<(u64, &str)>,
-    ) -> anyhow::Result<usize> {
-        Ok(0)
+    ) -> anyhow::Result<Spent> {
+        Ok(Spent::default())
     }
     /// Forgets what the index keeps in memory between its calls (the nft
     /// walk's collection set and pending contracts) after a pass failed past
@@ -1913,11 +1938,11 @@ async fn walk(
         .as_deref()
         .filter(|_| cur.last_block >= cur.start_block)
         .map(|h| (cur.last_block as u64, h));
-    let mut log_requests = match ix
+    let spent = match ix
         .lanes(pool, source, anchor, total, &mut chunk, owner, durable)
         .await
     {
-        Ok(used) => used,
+        Ok(spent) => spent,
         Err(e) if e.downcast_ref::<Diverged>().is_some() => {
             out.requests += e.downcast_ref::<Diverged>().map_or(0, |d| d.requests);
             // Lanes bracket only a cursor with a hash (`durable`).
@@ -1927,7 +1952,9 @@ async fn walk(
         }
         Err(e) => return Err(e),
     };
-    out.requests += log_requests;
+    // The budget pays what the lanes charged; the pass reports what they sent.
+    let mut log_requests = spent.charge;
+    out.requests += spent.requests;
     let mut next = (cur.last_block + 1) as u64;
     let mut expected = (cur.last_block, cur.last_block_hash.clone());
     while next <= target {
@@ -1955,7 +1982,7 @@ async fn walk(
             .await
             .with_context(|| format!("eth_getLogs [{next}, {to}]"))?;
         out.requests += window.requests;
-        log_requests += window.requests;
+        log_requests += window.charge;
         let times = source
             .block_times(&window.logs)
             .await
