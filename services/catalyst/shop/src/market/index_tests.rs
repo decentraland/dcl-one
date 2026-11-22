@@ -10889,9 +10889,9 @@ mod compare_sources_tests {
         assert_eq!(get_logs, 0, "every window and lane read from the portal");
     }
 
-    /// A source whose windows charge three times the requests they send: a
+    /// A source whose windows charge `.1` times the requests they send: a
     /// portal's logical charge, apart from its sends.
-    struct Charging<S>(S);
+    struct Charging<S>(S, usize);
 
     #[async_trait::async_trait]
     impl<S: chain_walk::LogSource> chain_walk::LogSource for Charging<S> {
@@ -10928,7 +10928,7 @@ mod compare_sources_tests {
             chunk: &mut usize,
         ) -> Result<chain_walk::Window, crate::chain_index::rpc::RpcError> {
             let mut w = self.0.window(from, to, groups, chunk).await?;
-            w.charge = w.requests * 3;
+            w.charge = w.requests * self.1;
             Ok(w)
         }
         async fn block_times(
@@ -10940,14 +10940,15 @@ mod compare_sources_tests {
         }
     }
 
-    /// A lane pays its windows' charge and reports their sends: with each
-    /// window charging three, a budget of four backfills one window a pass
-    /// where one charging what it sends backfills two, and each pass
-    /// reports the requests the RPC saw.
+    /// A lane pays its windows' charge, never less than their sends, and
+    /// reports their sends: with each window charging three, a budget of
+    /// four backfills one window a pass where one charging what it sends
+    /// backfills two, as does one charging nothing; and each pass reports the
+    /// requests the RPC saw.
     #[tokio::test]
     async fn a_lane_pays_its_windows_charge_and_reports_their_sends() {
         let mut reached = Vec::new();
-        for charging in [false, true] {
+        for charging in [None, Some(3), Some(0)] {
             let Some(db) = ScratchDb::create().await else {
                 return;
             };
@@ -10999,8 +11000,8 @@ mod compare_sources_tests {
             let rpc = chain_walk::RpcSource::new(Rpc::at(&st.http, &url));
             let owner = chain_walk::test_owner(&st.pool, &ix, &st.settings.market.indexes).await;
             let before = chain.requests.load(Ordering::SeqCst);
-            let out = if charging {
-                let source = Charging(rpc);
+            let out = if let Some(factor) = charging {
+                let source = Charging(rpc, factor);
                 chain_walk::run_pass(
                     &st.pool,
                     &source,
@@ -11042,8 +11043,8 @@ mod compare_sources_tests {
         }
         assert_eq!(
             reached,
-            [Some(19_999), Some(9_999)],
-            "two windows on the RPC's charge, one on three times it"
+            [Some(19_999), Some(9_999), Some(19_999)],
+            "two windows on the RPC's charge, one on three times it, two on none"
         );
     }
 }

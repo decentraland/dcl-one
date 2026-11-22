@@ -8,7 +8,9 @@
 //! portal. A window is read in three phases:
 //!
 //! 1. Admission. The coverage answer (`GET /datasets/<ds>/contracts`, read
-//!    once per source and again on a revision change) must name the
+//!    once per source, again on a revision change, and again, once a window,
+//!    when a window starts above it and it is older than [`COVERAGE_TTL`])
+//!    must name the
 //!    dataset and the network's chain. Its `finalized = (N, hash)` clamps
 //!    the window to `N`; an address is admitted when the answer lists it
 //!    from a block at or below the window's first (`from == a` included).
@@ -44,8 +46,11 @@
 //! anchor on another hash, the network's portal cools for
 //! [`Admission`]'s cooldown, during which windows go straight to the RPC;
 //! a hold the origin's limiter keeps cools it the same way until it passes.
-//! Once either passes, one window runs as the probe and the others go to
-//! the RPC until it ends; only a probe that reads its pages ends the
+//! A hold set while a window is in flight (its own 429 or 503) is read the
+//! same way: what that window saw is the hold's, not a failure of the
+//! portal. An anchor the RPC fails (or the deadline spent waiting on it) is
+//! the RPC's fault and changes nothing. Once either passes, one window runs
+//! as the probe and the others go to the RPC until it ends; only a probe that reads its pages ends the
 //! cooling, and a probe dropped before it ends lets the next window probe.
 //! A window that read no page (uncovered, above the coverage, another
 //! chain) changes nothing, and one that entered before the latest cooling
@@ -54,18 +59,19 @@
 //! hold logs of given the same hash and time by both (otherwise the whole
 //! window is read from the RPC).
 //!
-//! The window's `charge` (what the walk's log budget pays) is what the
-//! original filters cost as RPC log requests, and never less than the RPC
-//! log requests it sent, discarded ones included, so a walk pauses where it
-//! does in `rpc` mode; `requests` are the RPC requests actually sent (the
-//! anchor counted as it is sent) and `portal_sends` the portal ones,
+//! The window's `charge` (what the walk's log budget pays) is computed from
+//! its original filters, with a floor of the RPC log sends it actually
+//! made, discarded ones included; an early portal page can leave the pass at
+//! an earlier block than `rpc` mode would. `requests` are the RPC requests
+//! actually sent (the anchor counted as it is sent) and `portal_sends` the
+//! portal ones,
 //! discarded attempts included. Outcomes are counted in [`WINDOWS`], logs by
 //! source in [`LOGS`], RPC sends by kind in [`RPC_SENDS`] (each as it is
 //! sent, failed and dropped reads included) and portal sends in
 //! [`super::shadow::SENDS`] (when the window ends, however it ends).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -82,6 +88,9 @@ pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(20);
 pub const FAILURES_TO_COOL: u32 = 3;
 /// How long a network's portal cools.
 pub const COOLDOWN: Duration = Duration::from_secs(300);
+/// How old a coverage answer may be before a window above its finalized
+/// block reads it again.
+pub const COVERAGE_TTL: Duration = Duration::from_secs(10);
 
 /// `{net, result}`: one per window read with a portal configured, by
 /// [`Outcome::label`].
@@ -119,7 +128,8 @@ pub enum Outcome {
     CoverageRefused,
     /// The RPC's header at `N` carries another hash than the answer's.
     AnchorMismatch,
-    /// The RPC could not answer the header at `N`.
+    /// The RPC could not answer the header at `N` (or the deadline passed
+    /// while it was asked): an RPC fault, not the portal's.
     AnchorUnavailable,
     /// Pages named another revision again after the window was admitted
     /// again.
@@ -165,7 +175,8 @@ impl Outcome {
         matches!(self, Outcome::Admitted | Outcome::Split)
     }
 
-    /// The window says nothing of the portal's health: it read no page.
+    /// The window says nothing of the portal's health: it read no page, or
+    /// the RPC failed it.
     pub fn neutral(self) -> bool {
         matches!(
             self,
@@ -174,6 +185,7 @@ impl Outcome {
                 | Outcome::UnsupportedFilter
                 | Outcome::OtherChain
                 | Outcome::Cooling
+                | Outcome::AnchorUnavailable
         )
     }
 
@@ -203,6 +215,7 @@ pub struct Admission {
     net: &'static str,
     deadline: Duration,
     cooldown: Duration,
+    coverage_ttl: Duration,
     health: Mutex<Health>,
 }
 
@@ -241,11 +254,18 @@ impl Admission {
             net,
             deadline,
             cooldown,
+            coverage_ttl: COVERAGE_TTL,
             health: Mutex::new(Health {
                 seen_holds,
                 ..Health::default()
             }),
         }
+    }
+
+    /// With another coverage age limit (tests).
+    pub fn with_coverage_ttl(mut self, ttl: Duration) -> Self {
+        self.coverage_ttl = ttl;
+        self
     }
 
     pub fn reader(&self) -> &PortalReader {
@@ -309,6 +329,20 @@ impl Admission {
             return;
         }
         let mut h = self.health();
+        let holds = self.reader.holds();
+        if holds != h.seen_holds {
+            // A hold set while the window was in flight (its own 429 or 503,
+            // or another reader's): what it saw is the hold's, not the
+            // portal's. The portal waits for the hold, then one window probes.
+            let now = Instant::now();
+            h.seen_holds = holds;
+            h.failures = 0;
+            h.epoch += 1;
+            if h.cooling_until.is_none_or(|until| until < now) {
+                h.cooling_until = Some(now);
+            }
+            return;
+        }
         if h.epoch != ticket.epoch {
             return;
         }
@@ -387,7 +421,7 @@ impl Drop for RpcFlush<'_> {
 pub struct AdmittedPortal<'a, S> {
     inner: S,
     admission: Option<&'a Admission>,
-    coverage: Mutex<Option<Arc<LakeCoverage>>>,
+    coverage: Mutex<Option<(Instant, Arc<LakeCoverage>)>>,
     /// The chain id the walk read through this source: a window is admitted
     /// only when it is the dataset's.
     verified: Mutex<Option<u64>>,
@@ -462,20 +496,21 @@ fn partition(
 }
 
 impl<S: LogSource> AdmittedPortal<'_, S> {
-    /// The coverage answer: the one this source read, unless `fresh`.
+    /// The coverage answer: the one this source read, unless `fresh`; and
+    /// how long ago it was read.
     async fn coverage(
         &self,
         reader: &PortalReader,
         fresh: bool,
-    ) -> Result<Arc<LakeCoverage>, Outcome> {
+    ) -> Result<(Arc<LakeCoverage>, Duration), Outcome> {
         if !fresh
-            && let Some(c) = self
+            && let Some((at, c)) = self
                 .coverage
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
                 .clone()
         {
-            return Ok(c);
+            return Ok((c, at.elapsed()));
         }
         let answer = reader.contracts().await.map_err(|e| match e {
             PortalError::Malformed(_) => Outcome::CoverageRefused,
@@ -485,28 +520,40 @@ impl<S: LogSource> AdmittedPortal<'_, S> {
             return Err(Outcome::CoverageRefused);
         }
         let answer = Arc::new(answer);
-        *self.coverage.lock().unwrap_or_else(|p| p.into_inner()) = Some(answer.clone());
-        Ok(answer)
+        *self.coverage.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some((Instant::now(), answer.clone()));
+        Ok((answer, Duration::ZERO))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the window and what the phase reports while it runs"
+    )]
     async fn portal_phase(
         &self,
         net: &'static str,
         reader: &PortalReader,
+        coverage_ttl: Duration,
         from: u64,
         to: u64,
         groups: &[LogGroup],
         anchor_sends: &AtomicUsize,
+        in_anchor: &AtomicBool,
     ) -> Result<Plan, Outcome> {
-        let mut fresh = false;
+        let (mut fresh, mut readmitted, mut reread) = (false, false, false);
         loop {
-            let coverage = self.coverage(reader, fresh).await?;
-            let Some(n) = coverage.finalized.clone() else {
+            let (coverage, age) = self.coverage(reader, std::mem::take(&mut fresh)).await?;
+            let above = coverage.finalized.as_ref().is_none_or(|n| from > n.number);
+            if above && !reread && age > coverage_ttl {
+                // The lake may have finalized past the answer since it was
+                // read (a long pass): read it again, once a window.
+                reread = true;
+                fresh = true;
+                continue;
+            }
+            let Some(n) = coverage.finalized.clone().filter(|_| !above) else {
                 return Err(Outcome::AboveCoverage);
             };
-            if from > n.number {
-                return Err(Outcome::AboveCoverage);
-            }
             let upto = to.min(n.number);
             let (portal_groups, rpc_groups) = partition(groups, |a| {
                 coverage
@@ -523,11 +570,10 @@ impl<S: LogSource> AdmittedPortal<'_, S> {
             // Counted as it is sent, whatever comes back.
             anchor_sends.fetch_add(1, Ordering::SeqCst);
             metrics::counter!(RPC_SENDS, "net" => net, "kind" => "anchor").increment(1);
-            let anchor = self
-                .inner
-                .header(n.number)
-                .await
-                .map_err(|_| Outcome::AnchorUnavailable)?;
+            in_anchor.store(true, Ordering::SeqCst);
+            let anchor = self.inner.header(n.number).await;
+            in_anchor.store(false, Ordering::SeqCst);
+            let anchor = anchor.map_err(|_| Outcome::AnchorUnavailable)?;
             if anchor.requests > 1 {
                 let more = anchor.requests - 1;
                 anchor_sends.fetch_add(more, Ordering::SeqCst);
@@ -543,11 +589,12 @@ impl<S: LogSource> AdmittedPortal<'_, S> {
                 .iter()
                 .any(|r| r.as_deref() != Some(coverage.revision.as_str()))
             {
-                if fresh {
+                if readmitted {
                     return Err(Outcome::RevisionMoved);
                 }
                 // Every page read is dropped: the window is admitted again
                 // from the original filters under a fresh answer.
+                readmitted = true;
                 fresh = true;
                 continue;
             }
@@ -679,12 +726,29 @@ impl<S: LogSource> LogSource for AdmittedPortal<'_, S> {
             reader: &reader,
         };
         let anchor = AtomicUsize::new(0);
+        let in_anchor = AtomicBool::new(false);
         let phase = tokio::time::timeout(
             admission.deadline,
-            self.portal_phase(net, &reader, from, to, groups, &anchor),
+            self.portal_phase(
+                net,
+                &reader,
+                admission.coverage_ttl,
+                from,
+                to,
+                groups,
+                &anchor,
+                &in_anchor,
+            ),
         )
         .await
-        .unwrap_or(Err(Outcome::Deadline));
+        .unwrap_or_else(|_| {
+            // A deadline spent waiting on the RPC's anchor is the RPC's.
+            Err(if in_anchor.load(Ordering::SeqCst) {
+                Outcome::AnchorUnavailable
+            } else {
+                Outcome::Deadline
+            })
+        });
         let mut sent = Sent {
             anchor: anchor.load(Ordering::SeqCst),
             logs: 0,

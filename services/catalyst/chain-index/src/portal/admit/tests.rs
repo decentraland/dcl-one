@@ -75,6 +75,8 @@ struct Portal {
     /// This page (counted from one) gives every block another time.
     skew_page: Mutex<Option<usize>>,
     fail_pages: AtomicBool,
+    /// What a failed page answers, with its headers; a 500 unless set.
+    fail_with: Mutex<Option<(u16, &'static str)>>,
     /// Logs every page carries, whatever it asked.
     inject: Mutex<Vec<LakeLog>>,
     seen: Mutex<Vec<String>>,
@@ -145,7 +147,8 @@ impl Portal {
             let _ = gate.acquire().await;
         }
         if self.fail_pages.load(Ordering::SeqCst) {
-            return http(500, "", "");
+            let (status, headers) = self.fail_with.lock().unwrap().unwrap_or((500, ""));
+            return http(status, headers, "");
         }
         let served = self.pages.fetch_add(1, Ordering::SeqCst) + 1;
         {
@@ -1611,4 +1614,140 @@ async fn a_newer_hold_outlives_an_older_probe() {
         "{reached:?}"
     );
     assert_eq!(portal.page_count(), 2, "one fresh probe");
+}
+
+/// A probe whose own page gets a 429 sees the hold, not a portal failure:
+/// once the hold passes, the next window probes again, well before the
+/// network's cooldown would have ended.
+#[tokio::test]
+async fn a_hold_a_probe_receives_is_not_its_failure() {
+    let (portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)]).log(115, 0, A, &[T0])).await;
+    let cooldown = Duration::from_millis(200);
+    let adm = admission(&origin, 1_000.0, cooldown);
+    let rpc = FakeRpc::default();
+    let forked = FakeRpc {
+        branch: HashMap::from([(150, other_branch(150))]),
+        ..Default::default()
+    };
+    let groups = [group(&[A], json!([T0]))];
+    assert_eq!(window_of(&forked, &adm, &groups).await.reached, 200);
+    tokio::time::sleep(cooldown + Duration::from_millis(50)).await;
+    // The probe's page is answered 429.
+    *portal.fail_with.lock().unwrap() = Some((429, "retry-after: 1\r\n"));
+    portal.fail_pages.store(true, Ordering::SeqCst);
+    assert_eq!(window_of(&rpc, &adm, &groups).await.reached, 200);
+    assert!(adm.reader.cooling(), "the 429 set a hold");
+    portal.fail_pages.store(false, Ordering::SeqCst);
+    // The hold, shortened so the test is quick, passes; a cooling of the
+    // network (had the 429 counted as the probe's failure) would last
+    // another 200 ms.
+    adm.reader.limiter.state.lock().unwrap().cooldown_until =
+        Some(Instant::now() + Duration::from_millis(20));
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let w = window_of(&rpc, &adm, &groups).await;
+    assert_eq!(
+        (w.reached, positions(&w)),
+        (150, vec![(115, 0)]),
+        "probed again"
+    );
+}
+
+/// Anchors the RPC does not answer in time are the RPC's fault: three of
+/// them leave the portal open.
+#[tokio::test]
+async fn an_anchor_the_rpc_fails_does_not_cool_the_portal() {
+    let (_portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)]).log(115, 0, A, &[T0])).await;
+    let adm = admission(&origin, 1_000.0, COOLDOWN);
+    let slow = FakeRpc {
+        header_delay: HashMap::from([(150, Duration::from_secs(30))]),
+        ..Default::default()
+    };
+    let groups = [group(&[A], json!([T0]))];
+    for _ in 0..3 {
+        assert_eq!(window_of(&slow, &adm, &groups).await.reached, 200);
+    }
+    let rpc = FakeRpc::default();
+    let w = window_of(&rpc, &adm, &groups).await;
+    assert_eq!((w.reached, positions(&w)), (150, vec![(115, 0)]));
+}
+
+/// A window above an answer older than its age limit reads it again, once:
+/// a long pass follows the lake as it finalizes. A recent answer is kept.
+#[tokio::test]
+async fn a_window_above_an_old_answer_reads_it_again() {
+    let contracts = |portal: &Portal| {
+        portal
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.ends_with("/contracts"))
+            .count()
+    };
+    for (ttl, follows) in [(Duration::ZERO, true), (COVERAGE_TTL, false)] {
+        let (portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)]).log(115, 0, A, &[T0]).log(
+            200,
+            0,
+            A,
+            &[T0],
+        ))
+        .await;
+        let adm = admission(&origin, 1_000.0, COOLDOWN).with_coverage_ttl(ttl);
+        let rpc = FakeRpc::default();
+        let source = verified(&rpc, &adm).await;
+        let groups = [group(&[A], json!([T0]))];
+        let w = source.window(100, 200, &groups, &mut 1_000).await.unwrap();
+        assert_eq!(w.reached, 150);
+        // The lake finalizes further.
+        *portal.lake.lock().unwrap() = Some(
+            Lake::new(R2, 300, &[(A, 0)])
+                .log(115, 0, A, &[T0])
+                .log(200, 0, A, &[T0]),
+        );
+        let w = source.window(151, 300, &groups, &mut 1_000).await.unwrap();
+        if follows {
+            assert_eq!((w.reached, positions(&w)), (300, vec![(200, 0)]));
+            assert_eq!(contracts(&portal), 2);
+        } else {
+            assert_eq!(w.reached, 300, "from the RPC");
+            assert_eq!(contracts(&portal), 1, "the recent answer is kept");
+            assert_eq!(rpc.windows(), [Call::Window(151, 300, vec![A.into()])]);
+        }
+    }
+}
+
+/// A hold another reader of the origin set (a shadow, a comparison) while
+/// no window was in flight, passed unseen: of three windows at once,
+/// exactly one probes.
+#[tokio::test]
+async fn a_hold_another_reader_set_ends_with_one_probe() {
+    let (portal, origin) = lake_at(Lake::new(R1, 150, &[(A, 0)]).log(115, 0, A, &[T0])).await;
+    let adm = admission(&origin, 1_000.0, COOLDOWN);
+    let rpc = FakeRpc::default();
+    let groups = [group(&[A], json!([T0]))];
+    // Another reader's 429, its hold shortened so the test is quick.
+    let other = PortalReader::new(&origin, "polygon-mainnet", None, 1_000.0).unwrap();
+    other.limiter.cool(None);
+    other.limiter.state.lock().unwrap().cooldown_until =
+        Some(Instant::now() + Duration::from_millis(30));
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *portal.gate.lock().unwrap() = Some((1, gate.clone()));
+    let release = async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        gate.add_permits(10);
+    };
+    let (a, b, c, ()) = tokio::join!(
+        window_of(&rpc, &adm, &groups),
+        window_of(&rpc, &adm, &groups),
+        window_of(&rpc, &adm, &groups),
+        release
+    );
+    let reached: Vec<u64> = [a, b, c].iter().map(|w| w.reached).collect();
+    assert_eq!(
+        reached.iter().filter(|r| **r == 150).count(),
+        1,
+        "{reached:?}"
+    );
+    assert_eq!(portal.page_count(), 1, "one probe");
 }

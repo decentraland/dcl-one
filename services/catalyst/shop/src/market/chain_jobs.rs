@@ -1681,6 +1681,43 @@ fn log_switches(state: &Arc<MarketplaceState>, rentals: Option<bool>) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_portal_settings_are_read_as_the_environment_spells_them() {
+        let parse = |source: &str, origin: Option<&str>, deadline: u64| {
+            PortalSettings::parse(
+                source,
+                origin,
+                "ethereum-mainnet",
+                "polygon-mainnet",
+                None,
+                1.0,
+                false,
+                deadline,
+            )
+        };
+        let portal = Some("https://portal.example");
+        assert!(
+            parse("rpc", portal, 0).unwrap().is_none(),
+            "rpc reads nothing"
+        );
+        assert_eq!(
+            parse("portal", portal, 20).unwrap().unwrap().mode,
+            PortalMode::Source {
+                deadline: Duration::from_secs(20)
+            }
+        );
+        for deadline in [0, 601] {
+            assert!(parse("portal", portal, deadline).is_err(), "{deadline}");
+        }
+        // The deadline is only the portal mode's.
+        assert_eq!(
+            parse("shadow", portal, 0).unwrap().unwrap().mode,
+            PortalMode::Shadow
+        );
+        assert!(parse("portal", None, 20).is_err(), "portal needs a URL");
+        assert!(parse("lake", portal, 20).is_err());
+    }
+
     fn checkpoint(block: i64) -> Checkpoint {
         Checkpoint {
             block,

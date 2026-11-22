@@ -460,7 +460,8 @@ pub struct Diverged {
 }
 
 /// What lanes spent: what they charged the walk's log budget (a window's
-/// [`Window::charge`], plus the headers and times they read) and the
+/// [`Window::charge`], at least its requests, plus the headers and times
+/// they read) and the
 /// requests they sent (its `requests`, plus the same reads). Both are equal
 /// over an RPC source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -476,9 +477,10 @@ impl Spent {
         self.requests += requests;
     }
 
-    /// A window: its charge and its requests.
+    /// A window: its charge, and never less than the requests it sent (a
+    /// lane pays the headers it reads, an anchor included), and its requests.
     pub fn window(&mut self, w: &Window) {
-        self.charge += w.charge;
+        self.charge += w.charge.max(w.requests);
         self.requests += w.requests;
     }
 }
