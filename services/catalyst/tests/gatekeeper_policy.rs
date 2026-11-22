@@ -1215,7 +1215,12 @@ mod stream_access {
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
         ));
         let app = axum::Router::new().nest("/comms-gatekeeper", router(state.clone()));
-        let parcel = "17,-23";
+        let token = Uuid::new_v4().as_u128();
+        let parcel = &format!(
+            "{},{}",
+            (token % 301) as i32 - 150,
+            ((token >> 64) % 301) as i32 - 150
+        );
         let scene_id = format!("bafkreipeer{}", Uuid::new_v4().simple());
         deploy_scene(&pool, &scene_id, parcel).await;
         state
@@ -1225,6 +1230,7 @@ mod stream_access {
             .unwrap();
         let metadata = serde_json::json!({ "signer": SCENE_SIGNER, "realmName": "main", "parcel": parcel, "sceneId": scene_id }).to_string();
 
+        // A known gap while production derives places from local scenes only (#1462).
         derive::run_once(&pool, DeriveScope::Local, "/content")
             .await
             .unwrap();
