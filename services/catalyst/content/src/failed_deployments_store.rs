@@ -290,7 +290,9 @@ impl LiveFailedDeploymentsStore {
             .collect())
     }
 
-    /// Every record: the `dcl_content_server_failed_deployments` gauge, once per retry cycle.
+    /// Every record: the `dcl_content_server_failed_deployments` gauge, once per retry cycle. A
+    /// full count over the table, which holds only entities still failing: a record goes once
+    /// its entity lands, once the retry cap is spent, or when the prune finds it expired.
     pub async fn count_all(&self) -> Result<u64, SyncError> {
         let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM content.failed_deployments")
             .fetch_one(&self.pool)

@@ -1298,6 +1298,109 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
 
+    /// A snapshot pass counts its streamed and processed entities under `source="snapshots"`,
+    /// the skips by reason, and the stream's end and incompleteness.
+    #[tokio::test]
+    async fn a_snapshot_pass_reports_streamed_processed_and_its_end() {
+        use crate::batch_deployer::BatchDeployerConfig;
+        use crate::sync::metrics::{SyncSource, local_recorder, sample};
+        let Some(pool) = crate::sync_test_support::test_pool(2).await else {
+            return;
+        };
+        let line = |id: &str, kind: &str, timestamp: i64| {
+            serde_json::json!({
+                "entityId": id, "entityType": kind, "pointers": [], "authChain": [],
+                "entityTimestamp": timestamp,
+            })
+            .to_string()
+        };
+        let snapshot = format!(
+            "### Decentraland json snapshot\n{}\n{}\n{{not json}}\n",
+            line(&hash_bytes_v1(b"an old profile"), "profile", 1_000),
+            line(&hash_bytes_v1(b"an outfit"), "outfits", NOW_MS),
+        );
+        let cid = hash_bytes_v1(snapshot.as_bytes());
+        let (storage, tmp) = temp_storage("snap-metrics").await;
+        storage
+            .store(&cid, snapshot.into_bytes().into())
+            .await
+            .unwrap();
+        let deployer = BatchDeployer::new(
+            BatchDeployerConfig {
+                ignored_types: ["outfits".to_string()].into_iter().collect(),
+                ..Default::default()
+            },
+            crate::sync::test_sync_client(Client::new()),
+            storage.clone(),
+            pool.clone(),
+            Arc::new(crate::sync_deployer::LiveSyncDeployer::new(
+                pool.clone(),
+                storage.clone(),
+                1,
+                crate::sync_deployer::SyncValidation::AuthChainOnly,
+            )),
+            Arc::new(crate::failed_deployments_store::LiveFailedDeploymentsStore::new(pool)),
+            crate::bloom_filter::BloomFilter::with_capacity(10),
+        );
+        let report = Arc::new(DeploymentReport::new(SyncSource::snapshots()));
+        let (_metrics, recorded) = local_recorder();
+
+        let outcome = deploy_entities_from_snapshot(
+            &crate::sync::test_sync_client(Client::new()),
+            &storage,
+            &deployer,
+            SnapshotSource {
+                snapshot_hash: &cid,
+                servers: &HashSet::new(),
+                max_retries: 1,
+                retry_wait_ms: 0,
+            },
+            SnapshotFilter {
+                genesis_timestamp: 0,
+                entity_type_filter: None,
+            },
+            SnapshotScheduling::default(),
+            &report,
+            || false,
+        )
+        .await;
+        assert!(outcome.is_err(), "an unreadable line fails the snapshot");
+
+        let rendered = recorded.render();
+        let source = "remote_server=\"\",source=\"snapshots\"";
+        for (series, value) in [
+            (
+                format!("dcl_entities_deployments_streamed_total{{{source}}}"),
+                2.0,
+            ),
+            (
+                format!("dcl_entities_deployments_processed_total{{{source}}}"),
+                2.0,
+            ),
+            ("dcl_ignored_sync_deployments".into(), 2.0),
+            ("entity_skipped_old{entityType=\"profile\"}".into(), 1.0),
+            (
+                "schedule_entity_deployment_attempt{entityType=\"outfits\"}".into(),
+                1.0,
+            ),
+            (
+                "dcl_processed_snapshots_total{state=\"stream_end\"}".into(),
+                1.0,
+            ),
+            (
+                "dcl_processed_snapshots_total{state=\"incomplete\"}".into(),
+                1.0,
+            ),
+        ] {
+            assert_eq!(
+                sample(&rendered, &series),
+                Some(value),
+                "{series}:\n{rendered}"
+            );
+        }
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
     fn read_all(raw: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         open_snapshot_reader(std::io::Cursor::new(raw.to_vec()))

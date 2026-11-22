@@ -26,7 +26,7 @@ The series are defined in `content/src/sync/metrics.rs`. Fixed label sets render
 | --- | --- | --- | --- | --- |
 | `dcl_content_download_bytes_total` | counter `remote_server` | emitted | `deploy_remote_entity::fetch_verified`, `sync::snapshots::download_snapshot_file` | Decoded bytes of a body that arrived whole. |
 | `dcl_content_download_duration_seconds` | histogram `remote_server`, buckets 0.01–60 | emitted | same | One observation per request, whether it succeeds or fails. |
-| `dcl_content_download_errors_total` | counter `remote_server` | emitted | same | Request error, non-2xx status (404 included), unreadable or truncated body. |
+| `dcl_content_download_errors_total` | counter `remote_server` | emitted | same | Request error, non-2xx status (404 included), unreadable or truncated body. A read-through miss that a source answers 404 counts here too. |
 | `dcl_content_download_hash_errors_total` | counter `remote_server` | emitted | same | Whole body that does not hash to its name. |
 | `dcl_corrupt_entity_files_evicted_total` | counter | emitted | `deploy_remote_entity::evict_corrupt_entity_file_locked` | Stored entity file removed after it failed its hash check. |
 | `dcl_entities_deployments_processed_total` | counter `remote_server`, `source` | emitted | `batch_deployer::DeploymentReport::record_acknowledged`, `batch_deployer::skipped` | Deployed, recorded in `content.failed_deployments`, or skipped. |
@@ -48,8 +48,8 @@ The series are defined in `content/src/sync/metrics.rs`. Fixed label sets render
 | `dcl_pending_download_gauge` | gauge `entity_type` | emitted | `deploy_remote_entity::deploy_entity_streaming` | Entities whose entity and content files are downloading, during sync, retries and read-through. |
 | `dcl_pending_deployment_gauge` | gauge `entity_type` | emitted | `batch_deployer::BatchDeployer::schedule_undeployed` | Entities that hold a slot in the sync queue, from scheduling until their outcome is recorded. |
 | `dcl_deployment_time` | histogram `entity_type`, `failed`, prom-client default buckets | emitted | `deploy_remote_entity::deploy_entity_streaming` | Validation and hand-off to the batch writer. The database write happens in a later flush. |
-| `dcl_content_server_sync_state` | gauge | emitted | `SyncStatus::set_state` | `Syncing` is 1. `Bootstrapping`, `PartiallySynced` (profiles still bootstrapping) and `Failed` are 0. A process that does not run sync reports the state it mirrors from the leader. |
-| `dcl_content_server_failed_deployments` | gauge | emitted | `sync::retry_failed::execute_retry_cycle` | Rows in `content.failed_deployments`, counted once per retry cycle. Absent while the retry worker is off. |
+| `dcl_content_server_sync_state` | gauge | emitted | `SyncStatus::set_state` | `Syncing` is 1. `Bootstrapping`, `PartiallySynced` (profiles still bootstrapping) and `Failed` are 0. A node serving unsynced (`SERVE_UNSYNCED`) reports 1. A process that does not run sync reports the state it mirrors from the leader. |
+| `dcl_content_server_failed_deployments` | gauge | emitted | `sync::retry_failed::execute_retry_cycle` | Rows in `content.failed_deployments`, counted once per retry cycle (`retry_delay_ms`, 15 minutes by default). Absent until the first cycle (which waits for bootstrap when this process runs sync) and while the retry worker is off. |
 
 ## deployments-to-sqs
 
