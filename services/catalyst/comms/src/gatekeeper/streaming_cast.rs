@@ -533,12 +533,16 @@ enum Publisher {
     Tagged(Uuid),
 }
 
-/// Classifies `identity` against the streamer prefix of `place_id` and the
-/// bot prefix of `room`.
-fn classify_publisher(identity: &str, place_id: &str, room: &str) -> Publisher {
+/// Classifies `identity`, a participant of `room`: a streamer of any place
+/// (only keys of `room` mint streamers into it, and a key moved to another
+/// place keeps its minting place in the identity) or a bot of `room`.
+fn classify_publisher(identity: &str, room: &str) -> Publisher {
     let rest = identity
         .strip_prefix("stream:")
-        .and_then(|r| r.strip_prefix(place_id))
+        .and_then(|r| r.split_once(':').map(|(_, rest)| rest))
+        .map(|rest| format!(":{rest}"));
+    let rest = rest
+        .as_deref()
         .or_else(|| {
             identity
                 .strip_prefix("presentation-bot:")
@@ -626,7 +630,7 @@ async fn key_place(
     }
 }
 
-/// The key a watch location reads, with the room alias of a world scene
+/// The key a watch location reads, with the room of a world scene
 /// ([`active_access`]), and the place it shows. A name ending in `.eth` is a
 /// world: the scene on `parcel`, or without one the world's only scene (a
 /// multi-scene world needs the parcel, as upstream's `fetchWorldSceneId`).
@@ -655,13 +659,16 @@ async fn watch_place(
                     .await
             }
             None => {
-                let scenes: i64 = sqlx::query_scalar(
-                    "SELECT count(*) FROM (SELECT 1 FROM explore.world_scene_place \
-                     WHERE world_name = $1 AND active LIMIT 2) scenes",
-                )
-                .bind(world.key())
-                .fetch_one(pool)
-                .await?;
+                let scenes = match state.scenes.world_scene_count(&world).await {
+                    Ok(scenes) => scenes,
+                    Err(ResolveError::Db(error)) => {
+                        let store = "worlds.world_scenes";
+                        return Err(
+                            AuthorityNotEstablished::store_unavailable(store, &error).into()
+                        );
+                    }
+                    Err(_) => return Err(not_found()),
+                };
                 if scenes > 1 {
                     return Err(ApiError::bad_request(format!(
                         "A parcel is required to resolve a scene in multi-scene world {location}"
@@ -1289,6 +1296,10 @@ pub async fn generate_stream_link(
     refuse_barred(&state, &sf.signer, device_id.as_deref(), denied).await?;
     // The room, the key and the authority all come from the one bound scene.
     let bound = Context::resolve(&state, &sf.metadata).await?;
+    let world_base = bound.world_scene.as_ref().map(|(world, _)| {
+        let base = bound.footprint.base_position.clone().unwrap_or_default();
+        (world.clone(), base)
+    });
     let target = KeyTarget::bound(&state, bound).await?;
     let place_id = target.place_id.clone();
     match target.decide(&state, &sf.signer).await {
@@ -1299,8 +1310,7 @@ pub async fn generate_stream_link(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let alias = target.alias_room.as_deref();
-    let key = (place_id.as_str(), alias);
+    let key = (place_id.as_str(), target.world_room.as_deref());
     let access = issue_access(&state, &state.ingress(), key, &target.room, &sf.signer).await?;
     let row = key_place(&state.pool, &place_id, Some(&target.room)).await?;
     let (title, location) = match &row {
@@ -1312,6 +1322,22 @@ pub async fn generate_stream_link(
                 .unwrap_or_else(|| row.base_position.clone()),
         ),
         None => (None, "none".to_owned()),
+    };
+    // A world with several scenes needs the scene's parcel to watch it
+    // (upstream cast2's `/w/<world>/parcel/<parcel>`); a lookup that fails
+    // keeps the parcel, which every world accepts.
+    let location = match &world_base {
+        Some((world, _))
+            if state
+                .scenes
+                .world_scene_count(world)
+                .await
+                .is_ok_and(|n| n < 2) =>
+        {
+            location
+        }
+        Some((_, base)) => format!("{location}/parcel/{base}"),
+        None => location,
     };
     let (stream_link, watcher_link) =
         build_stream_links(&state.settings.cast2_url, &access.streaming_key, &location);
@@ -1463,8 +1489,8 @@ pub async fn watcher_token(
     let denied = unauthorized(super::super::voice::DENY_LISTED_MSG);
     refuse_barred(&state, watcher, device_id.as_deref(), denied).await?;
     let parcel = text(&body, "parcel").filter(|parcel| !parcel.is_empty());
-    let (place_id, alias, place) = watch_place(&state, location, parcel).await?;
-    let access = active_access(&state.pool, &place_id, alias.as_deref())
+    let (place_id, world_room, place) = watch_place(&state, location, parcel).await?;
+    let access = active_access(&state.pool, &place_id, world_room.as_deref())
         .await?
         .ok_or_else(|| no_active_stream(location))?;
     if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
@@ -1661,7 +1687,6 @@ pub(crate) fn watcher_wallet(
 /// removes a revoked publisher that connects later.
 pub(crate) async fn evict_revoked_publishers(
     state: &CommsState,
-    place_id: &str,
     room: &str,
     keep: Option<Uuid>,
 ) -> Result<(), ApiError> {
@@ -1669,7 +1694,7 @@ pub(crate) async fn evict_revoked_publishers(
         return Ok(());
     }
     let rooms = state.room_service();
-    let revoked = |identity: &str| match classify_publisher(identity, place_id, room) {
+    let revoked = |identity: &str| match classify_publisher(identity, room) {
         Publisher::Other => false,
         Publisher::Untagged => true,
         Publisher::Tagged(access) => Some(access) != keep,

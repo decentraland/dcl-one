@@ -15,14 +15,16 @@ A world scene's stream key (`social.scene_stream_access`) is stored under its pl
 - A world scene's key decides on the scene's footprint. The world's owner and a deployment or streaming grantee whose grant has no parcel restriction pass on every scene. A grantee restricted to parcels passes on the scenes whose parcels overlap its grant, the overlap rule that `/scene-admin` and scene bans use.
 - An explicit admin of the scene passes on that scene only, while the wallet that granted it holds world-wide authority (the owner or a grantee without a parcel restriction). An admin that a parcel-scoped grantee granted stays refused.
 - A revocation in a world takes the signed scene when it is current, else the scene standing on the signed parcel now.
-- A Cast watcher names a world scene by the body's `parcel`; without one, the world's only scene. A world with several scenes and no parcel answers 400, as upstream. The watcher link stays `/w/<world>`, so in a world with several scenes it needs the parcel.
-- A removed world ends every key streaming into one of its scene rooms. A removed Genesis place ends its own key and never a world scene's key with the same id.
-- A key stored under the world's catalogue place before this change stays valid as the key of the scene whose room it streams into. That scene reads, resets and revokes it, and a reset or renewal stores the replacement under the scene's place. No other scene reads it. Rows are not rewritten: publisher identities and presenter entries carry the place they were minted under. A legacy key ends at its first replacement, at its expiry (four days) or at a revocation.
+- A Cast watcher names a world scene by the body's `parcel`; without one, the world's only scene. A world with several scenes and no parcel answers 400, as upstream. The stream link of a scene in such a world is `/w/<world>/parcel/<base parcel>`, the Cast page route that sends the parcel; a single-scene world keeps `/w/<world>`.
+- A world scene's key is the active key streaming into its room. A row under the scene's place streaming into another room belongs to that room's scene: an imported identity can equal the catalogue id the world's single key was stored under. Before the scene stores a key under its place, such a row moves to the place of its room's scene.
+- A removed world ends every key streaming into one of its scene rooms, for any removal event of a world place. A removed Genesis place ends its own key and never a world scene's key with the same id.
+- A key stored under the world's catalogue place before this change stays valid as the key of the scene whose room it streams into. That scene reads, resets and revokes it, and a reset or renewal stores the replacement under the scene's place. No other scene reads it. A legacy key ends at its first replacement, at a revocation or at its expiry (four days, or later while a broadcast live at the deadline goes on, at most the four-hour streaming cap). A revocation evicts publishers by room and credential, whatever place their identity names.
+- Old replicas are stopped before the new binaries serve: an old replica stores world keys under the catalogue place.
 
 ## Alternatives
 
 - One key for a whole world (the previous design): a key reaches one room, so the other scenes' admins managed a stream they could not see.
-- A release step that rewrites each legacy row to its scene's place: a schema step runs before the object pass that creates `explore.world_scene_place` on an older database, and room names carry a length and escapes that SQL decodes poorly. A rewrite would also leave connected publishers under the old place in their identity, out of reach of the eviction of a later revocation.
+- A release step that rewrites each legacy row to its scene's place: a schema step runs before the object pass that creates `explore.world_scene_place` on an older database, and room names carry a length and escapes that SQL decodes poorly. Only a row that holds another scene's place is moved, when that scene mints.
 
 ## Consequences
 

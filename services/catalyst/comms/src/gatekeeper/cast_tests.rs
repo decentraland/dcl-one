@@ -1416,15 +1416,165 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     }
 }
 
+/// The harness resolver ([`StubScenes`]) with a world of `count` scenes.
+struct CountedScenes {
+    inner: StubScenes,
+    count: usize,
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::SceneIdentity for CountedScenes {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+        self.inner.classify_room(room).await
+    }
+    async fn resolve(
+        &self,
+        request: crate::rooms::RoomRequest<'_>,
+    ) -> Result<ResolvedRoom, crate::rooms::ResolveError> {
+        self.inner.resolve(request).await
+    }
+    async fn world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        self.inner.world_scene(world, scene).await
+    }
+    async fn world_active_scene(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        self.inner.world_active_scene(world).await
+    }
+    async fn world_scene_count(
+        &self,
+        _world: &WorldName,
+    ) -> Result<usize, crate::rooms::ResolveError> {
+        Ok(self.count)
+    }
+}
+
 /// A world location names one scene: the one on the body's parcel, or the
 /// world's only scene; a multi-scene world needs the parcel (upstream's
-/// `fetchWorldSceneId`). The watcher reads that scene's own key.
+/// `fetchWorldSceneId`), and its stream link carries it. A parcel with no
+/// scene and a world lobby name none. The watcher reads that scene's key.
 #[tokio::test]
 async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
     let Some(pool) = scratch().await else { return };
     let world = WorldName::parse(&format!("castmulti{}.dcl.eth", tag())).unwrap();
     seed_world(&pool, &world).await;
     let scene_id = format!("bafkreimulti{}", tag());
+    let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
+    let lobby = ResolvedRoom {
+        realm: RealmId::World(world.clone()),
+        scene_id: None,
+        deployment: None,
+        room: crate::rooms::worlds_service_world_room(&world),
+    };
+    let watch = |parcel: Option<&str>| {
+        let mut body = json!({"location": world.display(), "identity": "Viewer"});
+        if let Some(parcel) = parcel {
+            body["parcel"] = json!(parcel);
+        }
+        body
+    };
+    let metadata = json!({
+        "signer": SCENE_SIGNER,
+        "sceneId": scene_id,
+        "parcel": "3,4",
+        "realm": {"serverName": world.display(), "hostname": "worlds-content-server.example", "protocol": "v3"},
+    });
+    let viewer = random_key();
+    for (count, resolved) in [(1, &room), (2, &room), (1, &lobby)] {
+        let scenes = CountedScenes {
+            inner: StubScenes {
+                room: Ok(resolved.clone()),
+                scene: Ok(None),
+            },
+            count,
+        };
+        let h = harness_tuned(
+            pool.clone(),
+            None,
+            StubPolicy {
+                admin: PermissionDecision::Allowed,
+                ..Default::default()
+            },
+            None,
+            |state| state.scenes = Arc::new(scenes),
+        )
+        .await;
+        let watcher = |parcel: Option<&'static str>| {
+            let body = watch(parcel);
+            let h = &h;
+            let viewer = &viewer;
+            async move {
+                h.signed(
+                    viewer,
+                    "POST",
+                    "/cast/watcher-token",
+                    &viewer_metadata(),
+                    Some(body),
+                )
+                .await
+            }
+        };
+        if resolved.deployment.is_none() {
+            let (status, body) = watcher(None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "a lobby is no scene: {body}");
+            continue;
+        }
+        let (status, body) = h
+            .signed(KEY, "GET", "/cast/generate-stream-link", &metadata, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let link = match count {
+            1 => format!("https://cast.example/w/{}", world.display()),
+            _ => format!("https://cast.example/w/{}/parcel/3,4", world.display()),
+        };
+        assert_eq!(body["watcherLink"], link);
+        let (status, body) = watcher(None).await;
+        match count {
+            1 => {
+                assert_eq!(status, StatusCode::OK, "the world's only scene: {body}");
+                assert_eq!(body["roomId"], room.room);
+            }
+            _ => {
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+                assert_eq!(
+                    body["error"],
+                    format!(
+                        "A parcel is required to resolve a scene in multi-scene world {}",
+                        world.display()
+                    )
+                );
+            }
+        }
+        let (status, body) = watcher(Some("3,4")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["roomId"], room.room);
+        let (status, body) = watcher(Some("9,9")).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "no scene on the parcel: {body}"
+        );
+    }
+}
+
+/// A key stored under the world's catalogue place before keys were per
+/// scene is the key of the scene whose room it streams into: a stream link
+/// reuses it while it holds, and replaces it under the scene's place once it
+/// has expired.
+#[tokio::test]
+async fn a_stream_link_reuses_then_replaces_a_world_key_minted_before_per_scene_keys() {
+    let Some(pool) = scratch().await else { return };
+    let world = WorldName::parse(&format!("castlegacy{}.dcl.eth", tag())).unwrap();
+    seed_world(&pool, &world).await;
+    let scene_id = format!("bafkreilegacy{}", tag());
     let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
     let h = harness(
         pool.clone(),
@@ -1433,74 +1583,48 @@ async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
         None,
     )
     .await;
-    let scene_place = room.deployment.as_ref().unwrap().place_key();
-    seed_access(
+    let catalogue = format!("cast-legacy-{}", tag());
+    let legacy = seed_access(
         &pool,
-        &scene_place,
+        &catalogue,
         Some(&room.room),
         chrono::Duration::days(1),
     )
     .await;
-    let watch = |parcel: Option<&str>| {
-        let mut body = json!({"location": world.display(), "identity": "Viewer"});
-        if let Some(parcel) = parcel {
-            body["parcel"] = json!(parcel);
-        }
-        body
-    };
-    let viewer = random_key();
-    let (status, body) = h
-        .signed(
-            &viewer,
-            "POST",
-            "/cast/watcher-token",
-            &viewer_metadata(),
-            Some(watch(None)),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "the world's only scene: {body}");
-    assert_eq!(body["roomId"], room.room);
-    for (entity, parcel) in [(scene_id.as_str(), "3,4"), ("bafkreisecond", "9,9")] {
-        sqlx::query(
-            "INSERT INTO explore.world_scene_place (world_name, identity, entity_id, parcels) \
-             VALUES ($1, $2, $3, ARRAY[$4])",
-        )
-        .bind(world.key())
-        .bind(Uuid::new_v4())
-        .bind(entity)
-        .bind(parcel)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    let (status, body) = h
-        .signed(
-            &viewer,
-            "POST",
-            "/cast/watcher-token",
-            &viewer_metadata(),
-            Some(watch(None)),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(
-        body["error"],
-        format!(
-            "A parcel is required to resolve a scene in multi-scene world {}",
-            world.display()
-        )
+    let metadata = json!({
+        "signer": SCENE_SIGNER,
+        "sceneId": scene_id,
+        "parcel": "3,4",
+        "realm": {"serverName": world.display(), "hostname": "worlds-content-server.example", "protocol": "v3"},
+    });
+    assert_eq!(stream_link(&h, KEY, &metadata).await, legacy, "reused");
+    assert!(key_is_active(&pool, &legacy).await);
+    sqlx::query(
+        "UPDATE social.scene_stream_access SET expiration_time = timezone('UTC', now()) - interval '1 minute' \
+         WHERE streaming_key = $1",
+    )
+    .bind(&legacy)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let replacement = stream_link(&h, KEY, &metadata).await;
+    assert_ne!(replacement, legacy);
+    assert!(
+        !key_is_active(&pool, &legacy).await,
+        "the expired key is replaced"
     );
-    let (status, body) = h
-        .signed(
-            &viewer,
-            "POST",
-            "/cast/watcher-token",
-            &viewer_metadata(),
-            Some(watch(Some("3,4"))),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["roomId"], room.room);
+    let place: String = sqlx::query_scalar(
+        "SELECT place_id FROM social.scene_stream_access WHERE streaming_key = $1 AND active",
+    )
+    .bind(&replacement)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        place,
+        room.deployment.as_ref().unwrap().place_key(),
+        "under the scene's place"
+    );
 }
 
 #[tokio::test]
@@ -1930,7 +2054,6 @@ async fn revoking_a_key_removes_the_cast_publishers_it_admitted() {
 
     crate::gatekeeper::streaming::cast::evict_revoked_publishers(
         &h.state,
-        &scene.place_id,
         &scene.room,
         Some(replacement),
     )

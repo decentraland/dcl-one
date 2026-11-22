@@ -2839,29 +2839,42 @@ the place of a world scene's key is the scene's place
 each scene of a world has its own key, streaming into its own room
 ([ADR](docs/adr/2026-11-21-world-stream-keys-per-scene.md)).
 
-Workload: one read of the place's active key for each scene-signed stream
-verb, stream link and watcher token, hundreds a day; a world scene's read also
-matches the active key of its room (`place_id = $1 OR room_id = $2`, the two
-partial unique and room indexes over hundreds of active rows). A watcher of a
-world without a parcel reads at most two active `explore.world_scene_place`
-rows of the world (`world_scene_place_deployment_idx`).
+Workload: one read of the active key a verb acts on for each scene-signed
+stream verb, stream link and watcher token, hundreds a day: a Genesis key by
+place (the partial unique index), a world scene's key by room
+(`scene_stream_access_active_room_idx`), over hundreds of active rows. A
+watcher of a world without a parcel, and a stream link of a world scene, count
+the world's `worlds.world_scenes` rows up to two.
 
 Invariants:
 
-- A world scene's key names a room of that scene (`room_id`); the room, not the
-  place, tells a world key from a Genesis key, because an imported world-scene
-  identity is a place UUID.
+- A world scene's key is the active key streaming into its room. A row under
+  the scene's place that streams into another room is not this scene's: an
+  imported world-scene identity is a place UUID and can equal the catalogue id
+  a world's single key was stored under, so the room, not the place, decides.
+  Before a world scene stores a key under its place, such a row moves to the
+  place of the scene of its room, which keeps its stream; one whose room has
+  no scene keeps the place and the mint answers 409.
 - A key minted under the world's catalogue place before keys were per scene
   stays the key of the scene whose room it streams into: that scene reads,
   resets and revokes it, and its replacement is stored under the scene's place.
-  No row is rewritten (publisher identities carry the place); the key ends at
-  its first replacement, a revocation or its expiry, four days at most.
+  It ends at its first replacement, a revocation or its expiry: four days, or
+  later while a broadcast that was live at the deadline goes on (at most the
+  four-hour streaming cap). Publisher identities keep the place they were
+  minted under; a revocation evicts by room and credential, whatever the place.
 - A removed world ends every active key whose room is one of its scene rooms
   (`starts_with(room_id, <world room prefix>)`), the catalogue place's
-  included. A removed Genesis place ends its own key and no key streaming
+  included. Any removal event of a world place does, also one for a single
+  scene's Places row, as the grant cleanup revokes the grants of every scene
+  of the world. A removed Genesis place ends its own key and no key streaming
   into a world scene room.
 - The notice of a world scene key's cleanup names the world (its catalogue
-  place, else the world alone); its owner is the world's.
+  place, else the world alone) with the footprint of the scene of the key's
+  room, so the holders of its parcels are told; its owner is the world's.
+- Rollout: stop the old API replicas before the new binaries serve. An old
+  replica stores a world key under the world's catalogue place and replaces
+  by place, so during a mixed rollout two active keys can stream into one
+  room; the one the new binaries do not answer stays live until it expires.
 
 ## Stream key notifications
 

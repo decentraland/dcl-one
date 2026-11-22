@@ -162,6 +162,18 @@ pub async fn world_active_scene(
     row.map(|r| world_row(world, &r)).transpose()
 }
 
+/// How many scenes the world has, up to two: the rows `world_active_scene`
+/// chooses from.
+pub async fn world_scene_count(pool: &PgPool, world: &WorldName) -> Result<usize, ResolveError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1 LIMIT 2) s",
+    )
+    .bind(world.key())
+    .fetch_one(pool)
+    .await?;
+    Ok(count as usize)
+}
+
 /// A named scene of a world, when deployed there or retired within
 /// `SCENE_EVICTION_TTL_MS` (WCS resolves recently undeployed scenes' comms);
 /// a retired scene has no identity, so no storage scope.
@@ -577,6 +589,10 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         world_active_scene(&self.pool, world).await
+    }
+
+    async fn world_scene_count(&self, world: &WorldName) -> Result<usize, ResolveError> {
+        world_scene_count(&self.pool, world).await
     }
 }
 

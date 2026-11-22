@@ -2250,6 +2250,69 @@ mod stream_access {
                 .await
                 .unwrap();
         assert!(!legacy_active, "the reset replaced the legacy key");
+
+        // An imported identity can be the id of the world's catalogue place,
+        // where the world's one key was stored. Such a key streaming into the
+        // main scene's room is the main scene's: the side scene, whose
+        // identity equals that id, neither sees nor acts on it, and its own
+        // mint moves the old key to the main scene's place.
+        for (meta, place) in [(&scene_meta, &main_place), (&side_meta, &side_place)] {
+            let (status, body) = call_at(&app, &admin_key, "DELETE", PATH, meta).await;
+            assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+            settled(&pool, place).await;
+        }
+        sqlx::query("UPDATE explore.world_scene_place SET identity = $3::uuid WHERE world_name = $1 AND entity_id = $2")
+            .bind(world.key())
+            .bind(&side_id)
+            .bind(&place_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let collided: Uuid = sqlx::query_scalar(
+            "INSERT INTO social.scene_stream_access \
+                 (place_id, streaming_url, streaming_key, ingress_id, room_id, generated_by, created_at, expiration_time, active) \
+             VALUES ($1, 'rtmp://ingest.local/live', 'collided-world-key', '', $2, $3, timezone('UTC', now()), \
+                     timezone('UTC', now()) + interval '4 days', true) RETURNING id",
+        )
+        .bind(&place_id)
+        .bind(&scene_room)
+        .bind(admin.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for method in ["GET", "PUT", "DELETE"] {
+            let (status, body) = call_at(&app, &admin_key, method, PATH, &side_meta).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "side {method}: {body}");
+        }
+        let (status, body) = call_at(&app, &admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some("collided-world-key"))
+        );
+        let (status, body) = call_at(&app, &admin_key, "POST", PATH, &side_meta).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["streaming_key"], "collided-world-key");
+        let side_key = credential(place_id.clone()).await.unwrap();
+        assert_eq!(
+            (side_key.1.as_str(), side_key.2.as_str()),
+            (side_room.as_str(), body["streaming_key"].as_str().unwrap())
+        );
+        let moved: (bool, String) =
+            sqlx::query_as("SELECT active, place_id FROM social.scene_stream_access WHERE id = $1")
+                .bind(collided)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            moved,
+            (true, main_place.clone()),
+            "the main scene keeps its stream"
+        );
+        let (status, body) = call_at(&app, &admin_key, "GET", PATH, &scene_meta).await;
+        assert_eq!(
+            (status, body["streaming_key"].as_str()),
+            (StatusCode::OK, Some("collided-world-key"))
+        );
     }
 
     /// The answer to `signer`'s `GET /scene-stream-access` for the scene of

@@ -172,19 +172,19 @@ pub async fn scene_stream_access(
         }
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
-    let (place_id, alias, room) = (
+    let (place_id, world_room, room) = (
         target.place_id.as_str(),
-        target.alias_room.as_deref(),
+        target.world_room.as_deref(),
         target.room.as_str(),
     );
     let ingress = state.ingress();
     if method == Method::GET {
         // A key the place no longer holds (its scene redeployed, its minter
         // without the place) is never the one answered.
-        recheck_target(&state, place_id, alias).await;
+        recheck_target(&state, place_id, world_room).await;
     }
     match method {
-        Method::GET => match active_access(&state.pool, place_id, alias).await? {
+        Method::GET => match active_access(&state.pool, place_id, world_room).await? {
             Some(row) => {
                 // Upstream's list handler: the stored expiry is the one
                 // answered, and a credential past it that the expiry job has
@@ -197,13 +197,13 @@ pub async fn scene_stream_access(
             }
             None => Err(ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG)),
         },
-        Method::POST => issue_access(&state, &ingress, (place_id, alias), room, &sf.signer)
+        Method::POST => issue_access(&state, &ingress, (place_id, world_room), room, &sf.signer)
             .await
             .map(|resp| Json(resp).into_response()),
-        Method::PUT => reset_access(&state, &ingress, (place_id, alias), room, &sf.signer)
+        Method::PUT => reset_access(&state, &ingress, (place_id, world_room), room, &sf.signer)
             .await
             .map(|resp| Json(resp).into_response()),
-        Method::DELETE => remove_access(&state, place_id, alias).await,
+        Method::DELETE => remove_access(&state, place_id, world_room).await,
         _ => Ok(StatusCode::METHOD_NOT_ALLOWED.into_response()),
     }
 }
@@ -260,10 +260,11 @@ pub(super) struct KeyTarget<'a> {
     pub place_id: String,
     /// The room the scene's key streams into (empty for a Genesis revocation).
     pub room: String,
-    /// A world scene's room: an active key minted there under the world's
-    /// catalogue place, before world keys were per scene, is this scene's
-    /// until a reset or renewal replaces it or it expires ([`active_access`]).
-    pub alias_room: Option<String>,
+    /// A world scene's room: its key is the one streaming there, also one
+    /// minted under the world's catalogue place before world keys were per
+    /// scene, until a reset or renewal replaces it or it expires
+    /// ([`active_access`]).
+    pub world_room: Option<String>,
     authority: PlaceLookup<'a>,
     /// A world scene: the world-wide lookup and the scene's admin key
     /// ([`world_scene_admin`]).
@@ -285,7 +286,7 @@ impl<'a> KeyTarget<'a> {
         Ok(Self {
             place_id,
             room: bound.room,
-            alias_room: None,
+            world_room: None,
             authority: bound.place,
             world: None,
         })
@@ -335,7 +336,7 @@ impl<'a> KeyTarget<'a> {
         Self {
             authority: PlaceLookup::resolved(state, &key, footprint, scene::NO_ADMINS),
             world: Some((Self::world_wide(state, &key, world), key.clone())),
-            alias_room: Some(room.clone()),
+            world_room: Some(room.clone()),
             place_id: key,
             room,
         }
@@ -407,7 +408,7 @@ async fn revocation_target<'a>(
         return Ok(KeyTarget {
             place_id,
             room: String::new(),
-            alias_room: None,
+            world_room: None,
             authority,
             world: None,
         });
@@ -479,9 +480,9 @@ async fn revocation_authority<'a>(
 
 /// Rechecks the keys a verb may answer ([`cast::recheck_keys`]): the place's,
 /// and, for a world scene, the one streaming into its room.
-pub(super) async fn recheck_target(state: &SharedState, place_id: &str, alias: Option<&str>) {
+pub(super) async fn recheck_target(state: &SharedState, place_id: &str, world_room: Option<&str>) {
     cast::recheck_keys(state, cast::Keys::Place(place_id)).await;
-    if let Some(room) = alias {
+    if let Some(room) = world_room {
         cast::recheck_keys(state, cast::Keys::Room(room)).await;
     }
 }
@@ -496,13 +497,16 @@ pub(super) async fn recheck_target(state: &SharedState, place_id: &str, alias: O
 async fn issue_access(
     state: &SharedState,
     ingress: &IngressClient<'_>,
-    (place_id, alias): (&str, Option<&str>),
+    (place_id, world_room): (&str, Option<&str>),
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     // A key whose minter lost the place is never the one answered.
-    recheck_target(state, place_id, alias).await;
-    if let Some(existing) = active_access(&state.pool, place_id, alias).await? {
+    recheck_target(state, place_id, world_room).await;
+    if world_room.is_some() {
+        free_scene_place(state, place_id, room).await?;
+    }
+    if let Some(existing) = active_access(&state.pool, place_id, world_room).await? {
         match renewal(&existing, room, now_utc()) {
             Renewal::Reuse => return Ok(existing.response()),
             Renewal::Conflict => {
@@ -648,23 +652,75 @@ async fn resolve_place_id(
     .await?)
 }
 
-/// The place's active credential; with `alias`, a world scene's room, else
-/// the one streaming into that room under another place (a key minted there
-/// before world keys were per scene).
+/// The active credential a verb acts on. A Genesis key is its place's. A
+/// world scene's (`world_room`, its room) is the one streaming into that
+/// room, the row under the scene's place first: a row under that place that
+/// streams into another room is another scene's (a world key stored under a
+/// catalogue id that an imported identity equals), never this scene's.
 async fn active_access(
     pool: &PgPool,
     place_id: &str,
-    alias: Option<&str>,
+    world_room: Option<&str>,
 ) -> Result<Option<AccessRow>, sqlx::Error> {
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {ACCESS_COLUMNS} FROM social.scene_stream_access \
-         WHERE active AND (place_id = $1 OR room_id = $2) \
+         WHERE active AND CASE WHEN $2::text IS NULL THEN place_id = $1 ELSE room_id = $2 END \
          ORDER BY place_id = $1 DESC, created_at DESC LIMIT 1"
     )))
     .bind(place_id)
-    .bind(alias)
+    .bind(world_room)
     .fetch_optional(pool)
     .await
+}
+
+/// Before a world scene stores a key under its place: a key already there
+/// that streams into another scene's room (a world key stored under a
+/// catalogue id that this scene's imported identity equals) moves to the
+/// place of that room's scene, which keeps its stream. A key that cannot move
+/// keeps the place, and the mint answers 409 as for any held place.
+async fn free_scene_place(state: &CommsState, place_id: &str, room: &str) -> Result<(), ApiError> {
+    let held: Option<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id, room_id FROM social.scene_stream_access \
+         WHERE active AND place_id = $1 AND room_id IS DISTINCT FROM $2",
+    )
+    .bind(place_id)
+    .bind(room)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((id, Some(other))) = held else {
+        return Ok(());
+    };
+    let owner = match state
+        .scenes
+        .resolve(RoomRequest::NamedWorldScene { room: &other })
+        .await
+    {
+        Ok(resolved) => resolved.deployment.map(|deployment| deployment.place_key()),
+        Err(crate::rooms::ResolveError::Db(error)) => {
+            return Err(
+                AuthorityNotEstablished::store_unavailable("worlds.world_scenes", &error).into(),
+            );
+        }
+        Err(_) => None,
+    };
+    let Some(owner) = owner.filter(|owner| owner != place_id) else {
+        return Ok(());
+    };
+    let moved = sqlx::query(
+        "UPDATE social.scene_stream_access SET place_id = $3 WHERE id = $1 AND active AND place_id = $2 \
+         AND NOT EXISTS (SELECT 1 FROM social.scene_stream_access WHERE active AND place_id = $3)",
+    )
+    .bind(id)
+    .bind(place_id)
+    .bind(&owner)
+    .execute(&state.pool)
+    .await;
+    match moved {
+        Ok(_) => Ok(()),
+        // A concurrent mint took the other place: this key keeps its place.
+        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Mints (or reuses) the room's ingress and records it as the place's
@@ -924,12 +980,15 @@ fn concurrent_change() -> ApiError {
 async fn reset_access(
     state: &SharedState,
     ingress: &IngressClient<'_>,
-    (place_id, alias): (&str, Option<&str>),
+    (place_id, world_room): (&str, Option<&str>),
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let result = async {
-        let row = active_access(&state.pool, place_id, alias)
+        if world_room.is_some() {
+            free_scene_place(state, place_id, room).await?;
+        }
+        let row = active_access(&state.pool, place_id, world_room)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
         // The replacement's ingress first: a LiveKit failure keeps the old credential.
@@ -961,9 +1020,9 @@ async fn reset_access(
 async fn remove_access(
     state: &SharedState,
     place_id: &str,
-    alias: Option<&str>,
+    world_room: Option<&str>,
 ) -> Result<Response, ApiError> {
-    let row = active_access(&state.pool, place_id, alias)
+    let row = active_access(&state.pool, place_id, world_room)
         .await?
         .ok_or_else(|| ApiError::not_found("no active stream access for this scene"))?;
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
@@ -1183,9 +1242,9 @@ mod scene_key_tests {
         crate::rooms::worlds_service_scene_room(world, &SceneId::parse(scene).unwrap())
     }
 
-    /// A world scene reads its own key, else the key streaming into its room
-    /// under another place (the world's, from before keys were per scene);
-    /// another scene never reads it.
+    /// A world scene reads the key streaming into its room, its own first,
+    /// else one under another place (the world's, from before keys were per
+    /// scene); a key under its place streaming elsewhere is not its own.
     #[tokio::test]
     async fn a_world_scene_reads_its_key_then_the_one_streaming_into_its_room() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
@@ -1196,10 +1255,10 @@ mod scene_key_tests {
         let (room_a, room_b) = (room(&world, "SceneA"), room(&world, "SceneB"));
         let (place_a, place_b) = (format!("a-{tag}"), format!("b-{tag}"));
         let legacy = key(&pool, &format!("world-{tag}"), &room_a).await;
-        let read = |place: String, alias: Option<String>| {
+        let read = |place: String, room: Option<String>| {
             let pool = pool.clone();
             async move {
-                active_access(&pool, &place, alias.as_deref())
+                active_access(&pool, &place, room.as_deref())
                     .await
                     .unwrap()
                     .map(|row| row.id)
@@ -1213,13 +1272,110 @@ mod scene_key_tests {
         assert_eq!(
             read(place_a.clone(), None).await,
             None,
-            "a Genesis read has no alias"
+            "a Genesis read is by place"
         );
         let own = key(&pool, &place_a, &room_a).await;
         assert_eq!(
             read(place_a, Some(room_a)).await,
             Some(own),
             "its own key first"
+        );
+        // A key stored under scene C's place (a catalogue id C's imported
+        // identity equals) that streams into B's room is B's, never C's.
+        let place_c = format!("c-{tag}");
+        let collided = key(&pool, &place_c, &room_b).await;
+        assert_eq!(read(place_c, Some(room(&world, "SceneC"))).await, None);
+        assert_eq!(read(place_b, Some(room_b)).await, Some(collided));
+    }
+
+    /// The ingress check of a removal reads the keys the removal ends.
+    #[tokio::test]
+    async fn a_removal_sees_the_live_ingress_of_the_keys_it_ends() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("live{}.dcl.eth", &tag[..10])).unwrap();
+        let catalogue = format!("world-{tag}");
+        let idle = key(&pool, &format!("a-{tag}"), &room(&world, "SceneA")).await;
+        let has = |place: String, world: Option<String>| {
+            let pool = pool.clone();
+            async move {
+                removed_place_has_ingress(&pool, &place, world.as_deref())
+                    .await
+                    .unwrap()
+            }
+        };
+        let world_key = Some(world.key().to_owned());
+        assert!(
+            !has(catalogue.clone(), world_key.clone()).await,
+            "no ingress yet"
+        );
+        sqlx::query("UPDATE social.scene_stream_access SET ingress_id = 'IN_live' WHERE id = $1")
+            .bind(idle)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(has(catalogue, world_key).await, "a scene key of the world");
+        assert!(
+            !has(format!("a-{tag}"), None).await,
+            "a Genesis place with the same id is another place"
+        );
+    }
+
+    /// A reset's replacement is under the same place, or, in a world scene
+    /// room, any key streaming into that room; a Genesis room's key under
+    /// another place replaces nothing.
+    #[tokio::test]
+    async fn a_replacement_is_the_places_or_the_world_scene_rooms() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("reset{}.dcl.eth", &tag[..10])).unwrap();
+        let world_room = room(&world, "SceneA");
+        let genesis_room = format!("scene:main:{tag}");
+        let retire = |id: Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE social.scene_stream_access SET active = false WHERE id = $1")
+                    .bind(id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let legacy = key(&pool, &format!("world-{tag}"), &world_room).await;
+        retire(legacy).await;
+        assert!(
+            !jobs::replaced(&pool, &format!("world-{tag}"), legacy)
+                .await
+                .unwrap()
+        );
+        key(&pool, &format!("a-{tag}"), &world_room).await;
+        assert!(
+            jobs::replaced(&pool, &format!("world-{tag}"), legacy)
+                .await
+                .unwrap()
+        );
+        let old = key(&pool, &format!("g-{tag}"), &genesis_room).await;
+        retire(old).await;
+        key(&pool, &format!("h-{tag}"), &genesis_room).await;
+        assert!(
+            !jobs::replaced(&pool, &format!("g-{tag}"), old)
+                .await
+                .unwrap()
+        );
+        key(
+            &pool,
+            &format!("g-{tag}"),
+            &format!("scene:main:other{tag}"),
+        )
+        .await;
+        assert!(
+            jobs::replaced(&pool, &format!("g-{tag}"), old)
+                .await
+                .unwrap()
         );
     }
 

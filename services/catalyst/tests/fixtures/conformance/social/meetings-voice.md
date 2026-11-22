@@ -79,8 +79,9 @@ Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
   by `a_world_published_here_answers_every_scene_route_under_its_stripped_realm_name`
   (`C/tests/gatekeeper_policy.rs`) and `scene_key_tests` (`G/streaming.rs`).
 - A watcher names a world scene by the body's `parcel`, else the world's only scene; a world with
-  several scenes and no parcel answers 400, as upstream. Pinned by
-  `a_multi_scene_world_needs_the_parcel_to_watch_a_scene`.
+  several scenes and no parcel answers 400, as upstream. In such a world the stream link's watcher
+  link is `/w/<world>/parcel/<base parcel>` (upstream: `/w/<world>`), the route the Cast page reads
+  the parcel from. Pinned by `a_multi_scene_world_needs_the_parcel_to_watch_a_scene`.
 - Publisher identities name the credential that minted them (`stream:<place>:<access id>:<uuid>`,
   `presentation-bot:<room>:<access id>:<uuid>`). Revoking or replacing a key removes its WebRTC
   publishers from the room, and the `participant_joined` webhook removes one that joins later with a

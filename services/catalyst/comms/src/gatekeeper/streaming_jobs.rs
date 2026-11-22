@@ -8,10 +8,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::{CommsState, errors::ApiError};
-use crate::Address;
 use crate::gatekeeper::removed_places::{PlaceContext, RemovedPlaces};
 use crate::interfaces::{StreamingNotification, StreamingNotificationKind};
 use crate::jobs::{Jobs, PeriodicCfg};
+use crate::{Address, AuthorityNotEstablished};
 
 const BATCH: i64 = 20;
 const RECONCILE_BATCH: i64 = 20;
@@ -227,7 +227,10 @@ pub(super) async fn prepare(
         .as_deref()
         .and_then(crate::rooms::decode_world_scene_room)
     {
-        Some((world, _)) => Some(world_key_context(&feed, &place_id, &world).await?),
+        Some((world, _)) => {
+            let room = room.as_deref().unwrap_or_default();
+            Some(world_key_context(state, &feed, &place_id, &world, room).await?)
+        }
         None => feed.place(&place_id).await?,
     };
     let event = if let (Some(kind), Some(context)) = (command.notification(), context.as_ref()) {
@@ -269,12 +272,14 @@ pub(super) async fn prepare(
 /// The notice context of a key streaming into a scene room of `world`: the
 /// world's catalogue place, else the world alone, under the key's place.
 async fn world_key_context(
+    state: &CommsState,
     feed: &RemovedPlaces,
     place_id: &str,
     world: &crate::world_identity::WorldName,
-) -> Result<PlaceContext, sqlx::Error> {
+    room: &str,
+) -> Result<PlaceContext, ApiError> {
     let catalogued = feed.world(world.key()).await?;
-    Ok(PlaceContext {
+    let mut context = PlaceContext {
         place_id: place_id.to_owned(),
         ..catalogued.unwrap_or_else(|| PlaceContext {
             place_id: String::new(),
@@ -284,7 +289,30 @@ async fn world_key_context(
             base_position: String::new(),
             positions: serde_json::json!([]),
         })
-    })
+    };
+    // The scene's own footprint, so the holders of its parcels are told.
+    let request = crate::rooms::RoomRequest::NamedWorldScene { room };
+    match state.scenes.resolve(request).await {
+        Ok(resolved) => {
+            if let Some(deployment) = resolved.deployment {
+                context.base_position = deployment.base.canonical();
+                context.positions = serde_json::json!(
+                    deployment
+                        .parcels
+                        .iter()
+                        .map(crate::world_identity::Parcel::canonical)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        Err(crate::rooms::ResolveError::Db(error)) => {
+            return Err(
+                AuthorityNotEstablished::store_unavailable("worlds.world_scenes", &error).into(),
+            );
+        }
+        Err(_) => {}
+    }
+    Ok(context)
 }
 
 fn notification_kind(kind: &str) -> Result<StreamingNotificationKind, ApiError> {
@@ -425,7 +453,7 @@ async fn cleanup(state: &CommsState, target: Option<Uuid>) -> Result<(), ApiErro
 
 /// The Cast publishers the cleaned-up credential admitted leave its room
 /// (`cast::evict_revoked_publishers`); a credential that replaced it in the
-/// same place and room keeps its own publishers.
+/// same room keeps its own publishers.
 async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiError> {
     let room: Option<String> =
         sqlx::query_scalar("SELECT room_id FROM social.scene_stream_access WHERE id = $1")
@@ -436,16 +464,17 @@ async fn evict_publishers(state: &CommsState, row: &Cleanup) -> Result<(), ApiEr
     let Some(room) = room.filter(|r| !r.is_empty()) else {
         return Ok(());
     };
+    // The room's own successor, under whatever place: a world scene's key
+    // can replace one stored under the world's catalogue place.
     let successor: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM social.scene_stream_access \
-         WHERE place_id = $1 AND active AND id <> $2 AND room_id = $3 ORDER BY created_at DESC LIMIT 1",
+         WHERE active AND id <> $1 AND room_id = $2 ORDER BY created_at DESC LIMIT 1",
     )
-    .bind(&row.place_id)
     .bind(row.access_id)
     .bind(&room)
     .fetch_optional(&state.pool)
     .await?;
-    super::cast::evict_revoked_publishers(state, &row.place_id, &room, successor).await
+    super::cast::evict_revoked_publishers(state, &room, successor).await
 }
 
 /// How long a reset intent waits for its replacement credential before it
@@ -484,6 +513,26 @@ async fn delete_ingress(state: &CommsState, row: &Cleanup, token: Uuid) -> Resul
     Ok(())
 }
 
+/// Whether credential `access_id`, stored under `place_id`, has an active
+/// replacement: one under the same place, or, in a world scene room, one
+/// streaming into that room (a world scene's key replacing one stored under
+/// the world's catalogue place).
+pub(super) async fn replaced(
+    pool: &PgPool,
+    place_id: &str,
+    access_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access n WHERE n.active AND n.id <> $2 AND (n.place_id = $1 \
+         OR n.room_id = (SELECT o.room_id FROM social.scene_stream_access o WHERE o.id = $2 AND starts_with(o.room_id, $3))))",
+    )
+    .bind(place_id)
+    .bind(access_id)
+    .bind(crate::rooms::SCENE_ROOM_PREFIX)
+    .fetch_one(pool)
+    .await
+}
+
 async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), ApiError> {
     let Some(kind_str) = row.notification_kind.as_deref() else {
         return Ok(());
@@ -491,17 +540,7 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
     let kind = notification_kind(kind_str)?;
     if kind == StreamingNotificationKind::KeyExpired || kind == StreamingNotificationKind::KeyReset
     {
-        // A world scene room's key also replaces one stored under the world's
-        // catalogue place, from before world keys were per scene.
-        let replacement: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_access n WHERE n.active AND (n.place_id = $1 \
-             OR n.room_id = (SELECT o.room_id FROM social.scene_stream_access o WHERE o.id = $2 AND starts_with(o.room_id, $3))))",
-        )
-        .bind(&row.place_id)
-        .bind(row.access_id)
-        .bind(crate::rooms::SCENE_ROOM_PREFIX)
-        .fetch_one(&state.pool)
-        .await?;
+        let replacement = replaced(&state.pool, &row.place_id, row.access_id).await?;
         if kind == StreamingNotificationKind::KeyExpired && replacement {
             return Ok(());
         }
