@@ -620,7 +620,8 @@ pub async fn serve(
             config.worlds.deployment_processing_timeout_ms,
         );
         tokio::spawn(async move {
-            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            let swept = catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+            content::series::upload_spool_reclaimed(swept);
         });
     }
     // Expired partial uploads (content::partial_deployments) are reclaimed

@@ -285,6 +285,8 @@ async fn unlink_unreferenced(
 /// the start, each select bounded to its window; a full batch continues
 /// inside the window, a short one moves on. The token fires and the report
 /// covers what ran. `Ok` with `skipped` set when the options refuse the run.
+/// A pass that ran counts as a collection run (`dcl_content_garbage_collection_*`):
+/// `deferred` when the exclusive store lock stayed busy, `error` on any other failure.
 async fn run(
     pool: &PgPool,
     storage: &Storage,
@@ -292,6 +294,26 @@ async fn run(
     cancel: Option<&CancellationToken>,
 ) -> anyhow::Result<PruneReport> {
     let started = Instant::now();
+    let result = pass(pool, storage, opts, cancel, started).await;
+    if result.as_ref().is_ok_and(|report| report.skipped.is_some()) {
+        return result;
+    }
+    let outcome = match &result {
+        Ok(_) => "success",
+        Err(e) if matches!(e.downcast_ref(), Some(gc::GcError::LockTimeout)) => "deferred",
+        Err(_) => "error",
+    };
+    crate::series::gc_run(started, outcome);
+    result
+}
+
+async fn pass(
+    pool: &PgPool,
+    storage: &Storage,
+    opts: &PruneOptions,
+    cancel: Option<&CancellationToken>,
+    started: Instant,
+) -> anyhow::Result<PruneReport> {
     let mut report = PruneReport::default();
     if let Some(reason) = opts.skip_reason() {
         report.skipped = Some(reason.to_string());
@@ -330,6 +352,7 @@ async fn run(
             &mut report,
         )
         .await?;
+        crate::series::gc_items(report.blobs - blobs_before);
         counter!(DEPLOYMENTS_PRUNED).increment(pruned.deployments);
         counter!(CONTENT_FILES_PRUNED).increment(pruned.content_files);
         tracing::debug!(

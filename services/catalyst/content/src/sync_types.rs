@@ -93,6 +93,17 @@ pub enum DeploymentContext {
     SyncedFix,
 }
 
+impl DeploymentContext {
+    /// The `deployment_context` label of `total_deployments_count`.
+    pub fn label(self) -> &'static str {
+        match self {
+            DeploymentContext::Local => "LOCAL",
+            DeploymentContext::Synced => "SYNCED",
+            DeploymentContext::SyncedFix => "FIX_ATTEMPT",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
     #[error("HTTP request failed: {0}")]

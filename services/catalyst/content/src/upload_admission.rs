@@ -48,8 +48,11 @@ const MAX_QUOTA_SOURCES: usize = 100_000;
 
 /// Bytes reserved by in-flight deploys out of a fixed capacity.
 pub struct UploadBudget {
+    /// The `budget` label of its series: `memory` or `disk`.
+    label: &'static str,
     capacity: u64,
-    reserved: Mutex<u64>,
+    /// The bytes reserved and the reservations holding them.
+    reserved: Mutex<(u64, u64)>,
 }
 
 /// One request's share of an [`UploadBudget`], returned on drop.
@@ -59,11 +62,22 @@ pub struct Reservation<'a> {
 }
 
 impl UploadBudget {
-    pub fn new(capacity: u64) -> Self {
+    pub fn new(label: &'static str, capacity: u64) -> Self {
+        crate::series::upload_budget_capacity(label, capacity);
+        crate::series::upload_budget_usage(label, 0, 0);
         Self {
+            label,
             capacity,
-            reserved: Mutex::new(0),
+            reserved: Mutex::new((0, 0)),
         }
+    }
+
+    fn refuse(&self) {
+        crate::series::upload_budget_rejected(self.label, "bytes");
+    }
+
+    fn report(&self, reserved: (u64, u64)) {
+        crate::series::upload_budget_usage(self.label, reserved.0, reserved.1);
     }
 
     /// Reserves `bytes` (at least [`MIN_UPLOAD_RESERVATION_BYTES`]); `None`
@@ -72,10 +86,13 @@ impl UploadBudget {
     pub fn try_reserve(&self, bytes: u64) -> Option<Reservation<'_>> {
         let bytes = bytes.max(MIN_UPLOAD_RESERVATION_BYTES);
         let mut reserved = self.reserved.lock();
-        if reserved.saturating_add(bytes) > self.capacity {
+        if reserved.0.saturating_add(bytes) > self.capacity {
+            self.refuse();
             return None;
         }
-        *reserved += bytes;
+        reserved.0 += bytes;
+        reserved.1 += 1;
+        self.report(*reserved);
         Some(Reservation {
             budget: self,
             bytes,
@@ -89,10 +106,13 @@ impl UploadBudget {
     /// more than it sends never holds the bytes it does not send.
     pub fn try_admit(&self, fits: u64, hold: u64) -> Option<Reservation<'_>> {
         let mut reserved = self.reserved.lock();
-        if reserved.saturating_add(fits.max(hold)) > self.capacity {
+        if reserved.0.saturating_add(fits.max(hold)) > self.capacity {
+            self.refuse();
             return None;
         }
-        *reserved += hold;
+        reserved.0 += hold;
+        reserved.1 += 1;
+        self.report(*reserved);
         Some(Reservation {
             budget: self,
             bytes: hold,
@@ -109,10 +129,12 @@ impl Reservation<'_> {
         }
         let mut reserved = self.budget.reserved.lock();
         let more = bytes - self.bytes;
-        if reserved.saturating_add(more) > self.budget.capacity {
+        if reserved.0.saturating_add(more) > self.budget.capacity {
+            self.budget.refuse();
             return false;
         }
-        *reserved += more;
+        reserved.0 += more;
+        self.budget.report(*reserved);
         self.bytes = bytes;
         true
     }
@@ -132,13 +154,16 @@ impl UploadBudget {
 
     /// The bytes reserved now, across every reservation.
     pub fn reserved(&self) -> u64 {
-        *self.reserved.lock()
+        self.reserved.lock().0
     }
 }
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
-        *self.budget.reserved.lock() -= self.bytes;
+        let mut reserved = self.budget.reserved.lock();
+        reserved.0 -= self.bytes;
+        reserved.1 -= 1;
+        self.budget.report(*reserved);
     }
 }
 
@@ -197,7 +222,12 @@ impl SourceUploads {
         let key = source_key(client_ip);
         let mut in_flight = self.in_flight.lock();
         let (uploads, held) = in_flight.get(&key).copied().unwrap_or((0, 0));
-        if uploads >= self.max_uploads || held.saturating_add(declared) > self.max_bytes {
+        if uploads >= self.max_uploads {
+            crate::series::upload_budget_rejected("source", "source_concurrency");
+            return Err(SourceBusy);
+        }
+        if held.saturating_add(declared) > self.max_bytes {
+            crate::series::upload_budget_rejected("source", "source_bytes");
             return Err(SourceBusy);
         }
         in_flight.insert(key.clone(), (uploads + 1, held));
@@ -222,6 +252,7 @@ impl SourceLease<'_> {
         };
         let more = bytes - self.bytes;
         if held.saturating_add(more) > self.limits.max_bytes {
+            crate::series::upload_budget_rejected("source", "source_bytes");
             return false;
         }
         *held += more;
@@ -401,7 +432,7 @@ mod tests {
     #[test]
     fn a_reservation_grows_while_the_rest_fits() {
         let min = MIN_UPLOAD_RESERVATION_BYTES;
-        let budget = UploadBudget::new(3 * min);
+        let budget = UploadBudget::new("memory", 3 * min);
         let mut growing = budget.try_reserve(0).unwrap();
         let other = budget.try_reserve(0).unwrap();
         assert!(growing.grow(min / 2), "within what it holds");
@@ -418,7 +449,7 @@ mod tests {
     #[test]
     fn admission_checks_the_declared_size_but_holds_only_what_it_is_given() {
         let min = MIN_UPLOAD_RESERVATION_BYTES;
-        let budget = UploadBudget::new(4 * min);
+        let budget = UploadBudget::new("memory", 4 * min);
         let mut slow = budget.try_admit(4 * min, 1).expect("fits an empty budget");
         assert_eq!(budget.reserved(), 1, "only the hold is held");
         assert!(slow.grow(2 * min), "grows with what arrives");
@@ -433,7 +464,7 @@ mod tests {
         drop((slow, other));
         assert_eq!(budget.reserved(), 0);
 
-        let memory = UploadBudget::new(2 * min);
+        let memory = UploadBudget::new("memory", 2 * min);
         let mut reading = memory.try_admit(min, 0).expect("its share fits");
         assert_eq!(
             memory.reserved(),
@@ -452,7 +483,7 @@ mod tests {
 
     #[test]
     fn the_budget_admits_until_full_and_frees_on_drop() {
-        let budget = UploadBudget::new(3 * MIN_UPLOAD_RESERVATION_BYTES);
+        let budget = UploadBudget::new("memory", 3 * MIN_UPLOAD_RESERVATION_BYTES);
         let small = budget
             .try_reserve(1)
             .expect("a small body reserves the minimum");

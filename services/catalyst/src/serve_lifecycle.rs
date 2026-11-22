@@ -1,5 +1,5 @@
 //! Root HTTP server lifecycle.
-use crate::{comms, jobs};
+use crate::{comms, content, jobs};
 use anyhow::Context;
 use std::{sync::Arc, time::Duration};
 
@@ -8,6 +8,7 @@ const JOBS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) fn register_metrics() {
     comms::gatekeeper::admission::cluster::metrics::register_series();
+    content::series::register_series();
 }
 
 pub(super) fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {

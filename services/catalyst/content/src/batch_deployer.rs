@@ -254,9 +254,10 @@ impl BatchDeployer {
         if self.out_of_scope(&entity, chrono::Utc::now().timestamp_millis()) {
             return Ok(());
         }
-        if self.deployed_bloom.read().maybe_contains(&entity.entity_id)
-            && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp).await?
-        {
+        let deployed = self.deployed_bloom.read().maybe_contains(&entity.entity_id)
+            && is_entity_deployed(&self.pool, &entity.entity_id, entity.entity_timestamp).await?;
+        crate::series::bloom_filter_checked(deployed, 1);
+        if deployed {
             return Ok(());
         }
         self.schedule_undeployed(entity, content_servers, report)
@@ -282,10 +283,15 @@ impl BatchDeployer {
                 .collect()
         };
         if hits.is_empty() {
+            crate::series::bloom_filter_checked(false, records.len());
             return Ok(());
         }
         let deployed = deployed_entity_ids(&self.pool, &hits).await?;
-        records.retain(|e| !deployed.contains(&e.entity_id));
+        records.retain(|e| {
+            let known = deployed.contains(&e.entity_id);
+            crate::series::bloom_filter_checked(known, 1);
+            !known
+        });
         Ok(())
     }
 
@@ -330,6 +336,7 @@ impl BatchDeployer {
         if let Some(report) = &report {
             report.record_scheduled();
         }
+        crate::series::pending_deployment(&entity.entity_type, 1.0);
 
         tokio::spawn(async move {
             let result = super::deploy_remote_entity::deploy_entity_streaming(
@@ -406,6 +413,7 @@ impl BatchDeployer {
                 report.record_acknowledged();
             }
 
+            crate::series::pending_deployment(&entity.entity_type, -1.0);
             drop(slot);
             idle_notify.notify_waiters();
             progress.maybe_summarize(

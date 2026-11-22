@@ -1855,18 +1855,20 @@ fn pointer_quotas_name_the_full_parcels() {
         oldest: 1_000,
         deployer_oldest: Some(2_000),
     };
-    let (message, retry) = check_pointer_quotas(&[usage(4, 0)], 4, 1_000, 60_000).unwrap();
+    let (reason, message, retry) = check_pointer_quotas(&[usage(4, 0)], 4, 1_000, 60_000).unwrap();
     assert_eq!(
         message,
         "Too many partial uploads in progress for parcels 1,1 (max 4 per parcel). Complete an upload or wait for one to expire."
     );
     assert_eq!(retry, 60);
-    let (message, retry) = check_pointer_quotas(&[usage(3, 3)], 4, 1_000, 60_000).unwrap();
+    assert_eq!(reason, "uploads_per_pointer");
+    let (reason, message, retry) = check_pointer_quotas(&[usage(3, 3)], 4, 1_000, 60_000).unwrap();
     assert_eq!(
         message,
         "Too many partial uploads in progress for this account on parcels 1,1 (max 3 per parcel). Complete an upload or wait for one to expire."
     );
     assert_eq!(retry, 61);
+    assert_eq!(reason, "uploads_per_pointer_account");
     assert!(check_pointer_quotas(&[usage(2, 2)], 4, 1_000, 60_000).is_none());
 }
 
@@ -1929,8 +1931,8 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         scene.bytes.clone(),
         scene.chain.clone(),
         &hashes,
-        pending.created_at,
-        pending.created_at + limits.ttl_ms,
+        (pending.created_at, pending.created_at + limits.ttl_ms),
+        1,
     )
     .await
     .err()
@@ -1971,8 +1973,8 @@ async fn finalization_retains_rate_limited_uploads_and_releases_superseded_ones(
         scene.bytes.clone(),
         scene.chain.clone(),
         &hashes,
-        pending.created_at,
-        pending.created_at + limits.ttl_ms,
+        (pending.created_at, pending.created_at + limits.ttl_ms),
+        1,
     )
     .await
     .err()
@@ -2027,8 +2029,8 @@ async fn terminal_pointer_contention_waits_then_retains_the_upload() {
             scene.bytes.clone(),
             scene.chain.clone(),
             &hashes,
-            pending.created_at,
-            pending.created_at + limits.ttl_ms,
+            (pending.created_at, pending.created_at + limits.ttl_ms),
+            1,
         ),
     )
     .await

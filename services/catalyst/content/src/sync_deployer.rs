@@ -65,6 +65,8 @@ struct ParsedEntity {
     auth_chain: Value,
     content: Vec<(String, String)>,
     report: Option<Arc<DeploymentReport>>,
+    /// What brought it here, for `total_deployments_count`.
+    context: DeploymentContext,
     /// Retry state the entity must be recorded with if the batch flush that carries it fails.
     /// The deployer is asynchronous -- `deploy_entity` returns once the entity is buffered, so
     /// the caller's attempt is already spent by the time a flush failure re-reports it, and
@@ -229,6 +231,7 @@ fn parse_entity_for_deploy(
         auth_chain: auth_chain_json,
         content,
         report: None,
+        context: DeploymentContext::Synced,
         retry_count: 0,
         backoff_ms: 0,
         backlog_permit: None,
@@ -1011,6 +1014,12 @@ async fn flush_batch(
     tx.commit()
         .await
         .map_err(|e| SyncError::Storage(e.to_string()))?;
+    for e in entities
+        .iter()
+        .filter(|e| id_map.contains_key(e.entity_id.as_str()))
+    {
+        crate::series::deployment_stored(&e.entity_type, e.context.label());
+    }
 
     tracing::info!(
         count = rows.len(),
@@ -1058,15 +1067,24 @@ impl LiveSyncDeployer {
         entity_data: &[u8],
         entity_id: &str,
         auth_chain: &AuthChain,
-        _context: DeploymentContext,
+        context: DeploymentContext,
         report: Option<&Arc<DeploymentReport>>,
         retry_state: Option<(u32, u64)>,
         renders: Option<(&crate::storage::Storage, Vec<(String, String)>)>,
     ) -> Result<(), SyncError> {
-        let mut parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
+        let started = std::time::Instant::now();
+        let mut parsed = match parse_entity_for_deploy(entity_data, entity_id, auth_chain) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                crate::series::deployment_timed("unknown", started, true);
+                return Err(e);
+            }
+        };
         let verdict = self
             .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
-            .await?;
+            .await
+            .inspect_err(|_| crate::series::deployment_timed(&parsed.entity_type, started, true))?;
+        parsed.context = context;
         parsed.buffered = Some(BufferedMark::new(entity_id));
         scene_parcels::report_drift(
             &parsed.entity_type,
@@ -1104,6 +1122,7 @@ impl LiveSyncDeployer {
             );
         }
 
+        crate::series::deployment_timed(&parsed.entity_type, started, false);
         let mut buf = self.batch.lock().await;
         buf.push(parsed);
         if buf.len() >= BATCH_SIZE {

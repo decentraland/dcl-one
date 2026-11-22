@@ -61,7 +61,10 @@ const WORLDS_BUCKETS: [(&str, &[f64]); 7] = [
 /// Preserve aggregatable Pulse and social histograms in every recorder, including tests.
 pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
     let mut builder = PrometheusBuilder::new();
-    for (name, buckets) in WORLDS_BUCKETS {
+    for (name, buckets) in WORLDS_BUCKETS
+        .into_iter()
+        .chain(crate::content::series::BUCKETS)
+    {
         builder = builder.set_buckets_for_metric(Matcher::Full(name.into()), buckets)?;
     }
     for name in [

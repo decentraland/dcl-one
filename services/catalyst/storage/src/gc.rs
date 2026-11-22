@@ -44,6 +44,9 @@ pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
 /// Advisory lock key held for the length of one collector run.
 pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 
+/// Exclusive store-lock waits that gave up because publishes kept the shared side busy.
+pub const LOCK_WRITER_TIMEOUTS: &str = "dcl_content_lock_writer_timeouts_total";
+
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -137,6 +140,7 @@ pub async fn lock_store_exclusive_within(
     {
         Ok(_) => Ok(tx),
         Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+            metrics::counter!(LOCK_WRITER_TIMEOUTS).increment(1);
             Err(GcError::LockTimeout)
         }
         Err(e) => Err(e.into()),
