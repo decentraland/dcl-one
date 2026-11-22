@@ -1328,8 +1328,8 @@ Pending expiry remains effective while a media writer waits for a wallet.
 
 ### Durable world admission edits and stable bans
 
-World scene bans use `<world>:<base parcel>` keys. Genesis bans keep their entity
-keys. The release script `schemas/releases/world-scene-ban-keys.sql` consolidates active and retained
+World scene bans use `<world>:<base parcel>` keys; Genesis bans use the place
+("Scene bans" below). The release script `schemas/releases/world-scene-ban-keys.sql` consolidates active and retained
 world scene keys, keeping the newest ban when aliases overlap. It removes mapped
 legacy aliases so an unban cannot leave a hidden effective ban. Unmapped rows are
 retained. The existing retired-scene table supplies mappings during its configured
@@ -1360,7 +1360,7 @@ deadline. This does not add a cross-caller world ceiling.
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
 `schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
 world scenes still have mapped entity-id bans awaiting this conversion; fresh databases and
-unmapped or Genesis bans do not require it. Old binaries cannot enforce the
+unmapped bans do not require it, and Genesis bans have their own release ("Scene bans"). Old binaries cannot enforce the
 new stable ban keys. A binary-only rollback is not supported after rekeying;
 restore the matching pre-migration database backup. Do not reset a database.
 
@@ -1798,6 +1798,52 @@ running `serve` loads that relation at boot, so a pruned photo's bytes are
 withheld on `/contents/{hash}` after its next start; its reel route answers
 404 within the servable memo's minute. The bootstrap defines the table; an
 existing database gains it from the object pass, so no step exists.
+
+## Profile snapshot repair workload
+
+A profile may name avatar renders in `metadata.avatars[].avatar.snapshots`
+that its `content[]` omits. Sync fetches them when a source has them and writes
+a `content.content_files` row for each stored one (`{name}.png`, the reference
+catalyst's key, for the names `face`, `face128`, `face256` and `body` only) in
+the flush that writes the deployment; once that row commits, the blob
+collector and the history prune keep the render. A render no source served
+leaves no row, whether every source answered 404 or one failed (an error
+status, a timeout), until a later version of the profile or the repair below
+fetches it; with a single `SYNC_SOURCE`, one failed request is enough. Once
+the entity is verified and holds its flush-backlog slot, each stored render
+has its modified time set to now and is buffered with it, so the collector's
+age floor covers it until that flush commits. A render the process may not
+touch (a blob another uid owns) gets no row, with a `warn`. The history prune
+has no age floor and the flush takes no store lock, so a render named only by
+a pruned earlier version can be unlinked between the touch and the commit,
+as a `content[]` file can, and the row then names a missing blob.
+
+Any signed profile can name any stored hash among its snapshots, and the row
+it gets keeps that blob from the collector while the profile is active, as the
+reference catalyst's content-files fixer does. At most four rows per profile
+come from snapshots, and the denylist still decides what is served.
+
+`catalyst content repair-profile-snapshots` (`content::profile_snapshots::repair`)
+adds those rows to profiles stored without them. Inputs: active profiles
+(`entity_type = 'profile' AND deleter_deployment IS NULL`) read by `id` keyset
+in pages of `--batch` (default 500), and their `content_files` rows by
+`deployment = ANY` (served by the `(deployment, key)` unique index). No index
+covers `(entity_type, id)` and no partial index holds the active profiles, so a
+page either walks the primary key from the last `id`, reading every deployment
+of every type, superseded ones included, until it has `--batch` active
+profiles, or reads all profiles through `deployments_entity_type_index` and
+sorts them. With the first plan a whole pass reads every row of
+`content.deployments` once; the plan the server picks and the pass's duration
+on a production-sized table are unmeasured. Per page, the renders the store
+lacks are fetched from `SYNC_SOURCE`, at most 8 at once and within 64 MiB of
+decoded bodies (a larger body downloads alone). Writes: per page, one
+transaction that takes the store's shared lock, re-checks the blobs and
+row-locks the page's deployments that are still active (`FOR KEY SHARE`, so a
+concurrent history prune skips them or has already deleted them) and inserts
+a row for each stored render of those, with `ON CONFLICT (deployment, key) DO
+NOTHING`. A pass can be repeated
+or interrupted; a render no source served is tried again on the next pass, and
+a store fault ends the pass with an error.
 
 ## Badges catalog and progress workload
 
@@ -2568,7 +2614,8 @@ Invariants:
   world-scene identity is not bound to a deployment again, so no request
   reads its grants.
 - The release script `schemas/releases/scene-admin-place-keys.sql` moves the
-  grants of active deployments from the entity id to the place. Stop all old
+  grants of active deployments (a world scene's active identity, a Genesis
+  deployment that is not deleted) from the entity id to the place. Stop all old
   API replicas before `catalyst schema migrate`, apply the script with the
   administrative database role, then start the updated binaries: an old
   binary reads and writes grants by entity id. `catalyst serve` refuses
@@ -2590,6 +2637,60 @@ Invariants:
   (`ParcelSet::effective_base`). The release script and the import loads of
   scene admins and scene bans call it; `the_sql_base_parcel_is_the_resolvers`
   compares the two.
+
+## Scene bans
+
+`social.scene_bans` (`schemas/40_social.sql`) holds the bans of a scene, one
+row for each `(place_id, banned_address)`, under a key stable across redeploys
+(`ResolvedRoom::ban_key`): `<world>:<base parcel>` for a world scene (above),
+the place of a Genesis scene, the canonical base parcel its admins use. A
+Genesis room name carries no deployment; `ResolvedRoom::resolve_ban_key` reads
+it for the relay and Cast checks, and refuses a room no deployment stands
+behind (an overwritten scene) instead of reading its entity id. The scene-state
+socket and its sweep read the key from the deployment they host.
+
+Workload: one primary-key read for each scene join (`/get-scene-adapter`, a
+relay admission, a Cast watcher, a scene-state socket and its sweep) and
+moderation request; each Genesis relay admission and Cast watcher check adds
+one resolver lookup of the deployment (`content.deployments` by entity id);
+one read of a
+place's rows for a room metadata refresh and a ban listing
+(`scene_bans_place_time_idx`). Writes are rare: `POST` or `DELETE
+/scene-bans`, and the place removal cleanup.
+
+Invariants:
+
+- A redeploy writes no row. A Genesis redeploy on the same base parcel keeps
+  every ban; a scene on another base parcel has none.
+- The cleanup of a removed place deletes the bans made before the removal
+  (`banned_at`), in the transaction that revokes its admin grants: the rows on
+  the place id, the `<world>:<base>` rows of the world (any base, so replaced
+  scenes too), or the rows on the base parcel of a Genesis place when no
+  enabled `explore.place` row has that base.
+- The release script `schemas/releases/genesis-scene-ban-keys.sql` moves the
+  bans of Genesis deployments that are not deleted (`deleter_deployment IS
+  NULL`, as the resolver reads them, unpublished ones too) from the entity id
+  to the base parcel (`social.scene_base_parcel`), keeping the newest ban of a
+  wallet when two entities name one place, also against a row the place has.
+  The cutover import keeps the newest ban of aliases too. Stop all old
+  API replicas before `catalyst schema migrate`, then, with the
+  administrative database role, re-run
+  `schemas/releases/scene-admin-place-keys.sql` (idempotent: it moves only
+  the entity rows left and keeps the newest change of a wallet) and apply
+  `genesis-scene-ban-keys.sql`, then start the updated binaries. The re-run
+  is needed on a database that ran the admin release before it counted
+  unpublished deployments: `ensure_scene_admin_place_release` now refuses
+  their entity-keyed grants. `catalyst serve` refuses startup while a ban of
+  an active Genesis deployment has the entity key
+  (`ensure_genesis_scene_ban_release`). An unpublished deployment's grants
+  and bans move to its base parcel, so they apply to whichever scene later
+  stands on that parcel. A binary-only rollback is
+  not supported after the move; restore the matching backup. A row of an
+  entity that is not deployed, or has no parcel that parses, keeps its key,
+  and no request reads it. A local preview scene, which has no deployment,
+  keeps its entity id.
+- A kick intent queued before the release names the entity id; the removal
+  job reads its ban again on the scene's place (`legacy_ban_key`).
 
 ## Stream key notifications
 

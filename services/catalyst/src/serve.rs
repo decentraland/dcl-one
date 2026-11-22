@@ -167,6 +167,7 @@ pub async fn serve(
     db::bootstrap(&pool).await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
+    worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -1130,6 +1131,11 @@ pub async fn serve(
     social
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
+    if social.communities.flags_configured() {
+        comms_stage
+            .gatekeeper
+            .set_platform_moderator_flags(social.communities.flags.clone());
+    }
     social
         .communities
         .referral

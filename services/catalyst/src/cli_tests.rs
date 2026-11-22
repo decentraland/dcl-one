@@ -68,6 +68,7 @@ fn the_operator_database_urls_are_hidden() {
             ("builder", "catalog"),
             ("storage", "gc"),
             ("camera-reel", "import"),
+            ("content", "repair-profile-snapshots"),
             ("content", "import-denylist"),
             ("shop", "notice-rewind"),
             ("shop", "compare-sources"),
@@ -87,7 +88,36 @@ fn the_operator_database_urls_are_hidden() {
             );
             seen += 1;
         }
-        assert_eq!(seen, 7);
+        assert_eq!(seen, 9);
+    });
+}
+
+#[test]
+fn the_profile_snapshot_repair_reads_the_sync_sources_in_batches() {
+    on_a_wide_stack(|| {
+        let cli = <crate::Cli as clap::Parser>::try_parse_from([
+            "catalyst",
+            "content",
+            "repair-profile-snapshots",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            "https://peer.example/content",
+        ])
+        .unwrap();
+        let crate::Command::Content {
+            command:
+                crate::ContentCommand::RepairProfileSnapshots {
+                    sync_source, batch, ..
+                },
+        } = cli.command
+        else {
+            panic!("not the repair command");
+        };
+        assert_eq!(
+            (sync_source.as_str(), batch),
+            ("https://peer.example/content", 500)
+        );
     });
 }
 

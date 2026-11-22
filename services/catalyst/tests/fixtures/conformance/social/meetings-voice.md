@@ -62,7 +62,7 @@ Cast publishes into the scene's own LiveKit room, the one `/get-scene-adapter` h
 | `PUT /scene-stream-access` | `reset-…:86-150` | `G/streaming.rs:373-398` | MATCH for 404 (no active credential); a concurrent change inside the reset answers 500, not compared with upstream (MV-9) | `C/tests/gatekeeper_policy.rs` |
 | `DELETE /scene-stream-access` | `remove-…:42-65` | `G/streaming.rs:400-413` | MATCH | `C/tests/gatekeeper_policy.rs` |
 | Platform bans on stream access (0a6b095) | `add-…:51-59` | `G/streaming.rs:131-136,225-247` | MATCH | `C/comms/src/gatekeeper/streaming.rs` tests |
-| Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs:422-446`; `G/streaming_jobs.rs:28-60,239,278-326` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs:12-60` | MATCH | `G/streaming_jobs.rs` tests |
+| Ingress webhooks, 4 h TTL, stale-flag reconcile (cdd006c), key expiry deadline (1e7d0f2), notifications | `adapters/streaming-ttl-checker.ts`, `streaming-key-ttl-checker.ts` | `G/streaming.rs:914-942`; `G/streaming_jobs.rs:28-60,150-152,272-325` (leased jobs, durable cleanup queue); `G/streaming_notifications.rs:12-60` | MATCH: an expired key is kept while the broadcast live at its deadline runs and retired by the first key pass after it ends; a broadcast started after the deadline is cut | `G/streaming_jobs.rs` tests; `an_expired_key_is_retired_after_its_broadcast_ends`; `a_broadcast_restarted_after_the_deadline_loses_the_expired_key`; `a_broadcast_live_at_the_deadline_is_still_capped_at_four_hours` |
 
 Cast differences from upstream (each pinned by a test in `G/cast_tests.rs`):
 
@@ -112,7 +112,7 @@ match `GK/adapters/livekit.ts:28-29`.
 |---|---|---|---|---|
 | `POST /livekit-webhook` participant and room events | `routes.ts:179` | `G/webhook.rs:332-383,528-578`; disconnect reasons `G/voice/lifecycle.rs:172-195,327-394` | MATCH (non-2xx on failure so LiveKit retries) | `G/webhook.rs` ordering tests |
 | Private call create / end | `routes.ts:188-193` | `G/voice/private.rs:200,270` | DIVERGENCE: requires a UUID room and two distinct wallets; end answers 200 when the LiveKit room delete fails | `a_failed_room_delete_still_removes_the_call` |
-| Community create/join, status, active, bulk status | `routes.ts:196-210` | `G/voice/community.rs:60-242,470` | MATCH | `bulk_community_ids_bounded_at_100` |
+| Community create/join, status, active, bulk status | `routes.ts:196-210`; `community-voice-chat/schemas.ts:17-37`; `logic/voice/voice.ts:506-560,706-790` | `G/voice/community.rs:17-34,81-282,520` | MATCH: a missing or unknown `action` answers 400; the status, bulk status, active and user status routes answer inactive when the store fails | `bulk_community_ids_bounded_at_100`; `community_voice_join_refuses_a_missing_or_unknown_action_before_any_read`; `community_voice_status_routes_answer_inactive_when_the_store_fails` |
 | Speak request, promote, demote, mute (metadata) | `routes.ts:212-233` | `G/voice/community.rs:281-410,449` | MATCH | `G/voice/speaker_tests.rs` |
 | Kick | `routes.ts:231` | `G/voice/community.rs:412-442` | DIVERGENCE: presence row deleted at once; a failed LiveKit remove still answers success | `C/social/src/rpc/tests/social_api.rs` |
 | End community chat | `routes.ts:238` | `G/voice/lifecycle.rs:264-288` | DIVERGENCE: 200 when the room delete fails | `G/tests.rs` |

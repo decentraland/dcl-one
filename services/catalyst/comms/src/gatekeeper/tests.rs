@@ -1268,7 +1268,7 @@ async fn allow_local_preview_accepts_a_preview_scene_without_a_deployment() {
             .unwrap();
         let checked = scene::require_genesis_deployment(&state, &resolved).await;
         match checked {
-            Ok(()) => assert!(accepted, "{realm} {scene_id} was accepted"),
+            Ok(_) => assert!(accepted, "{realm} {scene_id} was accepted"),
             Err(error) => {
                 assert!(!accepted, "{realm} {scene_id}: {}", error.message);
                 assert_eq!(error.code, 404);
@@ -2072,6 +2072,114 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
         .unwrap()
         .is_empty()
     );
+}
+
+/// The moderator gate reads the `platform_user_moderators` flag on every
+/// check: a wallet dropped from the refreshed document is refused at once,
+/// and the env list applies only while no document is held.
+#[tokio::test]
+async fn a_revoked_platform_moderator_is_refused_without_a_restart() {
+    use super::auth::{ModeratorMode, authorize_moderator};
+    use super::moderation::handlers::moderator_creds;
+    use crate::shared::feature_flags::Snapshot;
+    use crate::shared::signed_fetch::SignedPath;
+
+    fn flags(enabled: bool, variant_enabled: bool, wallets: &str) -> serde_json::Value {
+        serde_json::json!({
+            "flags": { "dapps-platform_user_moderators": enabled },
+            "variants": { "dapps-platform_user_moderators": {
+                "name": "list",
+                "enabled": variant_enabled,
+                "payload": { "type": "string", "value": wallets }
+            } }
+        })
+    }
+    async fn admitted(state: &CommsState) -> bool {
+        let signed_headers = signed(KEY, "get", "/bans", "{}").await;
+        authorize_moderator(
+            &moderator_creds(state),
+            &signed_headers,
+            "get",
+            &SignedPath::local("/bans"),
+            ModeratorMode::Read,
+            None,
+            None,
+        )
+        .await
+        .is_ok()
+    }
+
+    let wallet = address_of(KEY);
+    let other = address_of(OUTSIDER_KEY);
+    let state = lazy_state(Settings {
+        moderator_addresses: vec![Address::parse(&wallet).unwrap()],
+        ..Settings::for_tests()
+    });
+    assert!(admitted(&state).await, "no flags attached: the env list");
+
+    let snapshot = Arc::new(Snapshot::empty());
+    state.set_platform_moderator_flags(snapshot.clone());
+    assert!(
+        admitted(&state).await,
+        "no document fetched yet: the env list"
+    );
+
+    snapshot.replace_sourced(
+        flags(
+            true,
+            true,
+            &format!("{other},\n{}", wallet.to_uppercase().replace("0X", "0x")),
+        ),
+        true,
+    );
+    assert!(admitted(&state).await, "listed in the flag");
+
+    snapshot.replace_sourced(flags(true, true, &other), true);
+    assert!(
+        !admitted(&state).await,
+        "revoked in the flag, though still in the env list"
+    );
+
+    snapshot.replace_sourced(flags(false, true, &wallet), true);
+    assert!(
+        !admitted(&state).await,
+        "a disabled flag lists no moderator"
+    );
+
+    snapshot.replace_sourced(flags(true, false, &wallet), true);
+    assert!(
+        !admitted(&state).await,
+        "a disabled variant lists no moderator"
+    );
+
+    let key = "dapps-platform_user_moderators";
+    for (variant, case) in [
+        (
+            serde_json::Value::Null,
+            "a missing variant lists no moderator",
+        ),
+        (
+            serde_json::json!({ "enabled": true, "payload": { "value": ["0x"] } }),
+            "a non-string payload lists no moderator",
+        ),
+        (
+            serde_json::json!({ "payload": { "value": wallet.clone() } }),
+            "a variant without `enabled` lists no moderator",
+        ),
+    ] {
+        let mut doc = flags(true, true, &wallet);
+        let variants = doc["variants"].as_object_mut().unwrap();
+        if variant.is_null() {
+            variants.remove(key);
+        } else {
+            variants.insert(key.to_string(), variant);
+        }
+        snapshot.replace_sourced(doc, true);
+        assert!(!admitted(&state).await, "{case}");
+    }
+
+    snapshot.replace_sourced(flags(true, true, &wallet), true);
+    assert!(admitted(&state).await, "granted again without a restart");
 }
 
 #[tokio::test]
@@ -4653,4 +4761,97 @@ async fn webhook_private_join_restart_reconstructs_old_room_after_delete_failure
         .unwrap();
     restarted.voice_db.delete_private_call(next).await.unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn community_voice_join_refuses_a_missing_or_unknown_action_before_any_read() {
+    // Every store read fails: a refusal is the body check, not a later 500.
+    let state = lazy_state(Settings::for_tests());
+    let join = |action: Option<&str>| {
+        let mut body = serde_json::json!({
+            "community_id": Uuid::new_v4().to_string(),
+            "user_address": wallet().as_str(),
+            "user_role": "owner",
+        });
+        if let Some(action) = action {
+            body["action"] = serde_json::json!(action);
+        }
+        voice::community_voice_chat_create_or_join(
+            State(state.clone()),
+            Json(serde_json::from_value(body).unwrap()),
+        )
+    };
+    let err = join(None).await.unwrap_err();
+    assert_eq!(
+        (err.code, err.message.as_str()),
+        (400, "The property action is required")
+    );
+    for unknown in ["", "leave", "CREATE", "Join"] {
+        let err = join(Some(unknown)).await.unwrap_err();
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            (400, "The property action is invalid"),
+            "{unknown:?}"
+        );
+    }
+}
+
+#[test]
+fn community_voice_actions_are_upstreams_enum() {
+    for action in [
+        "create",
+        "join",
+        "request-to-speak",
+        "promote-speaker",
+        "demote-speaker",
+        "kick-player",
+    ] {
+        assert_eq!(voice::community_voice_action(Some(action)).unwrap(), action);
+    }
+}
+
+#[tokio::test]
+async fn community_voice_status_routes_answer_inactive_when_the_store_fails() {
+    let state = lazy_state(Settings::for_tests());
+    let community = CommunityId::new();
+    let Json(status) =
+        voice::community_voice_chat_status(State(state.clone()), Path(community.to_string()))
+            .await
+            .expect("a failed read answers inactive");
+    assert_eq!(
+        (
+            status.active,
+            status.participant_count,
+            status.moderator_count
+        ),
+        (false, 0, 0)
+    );
+    let Json(bulk) = voice::community_voice_chat_bulk_status(
+        State(state.clone()),
+        Json(voice::BulkCommunityStatusBody {
+            community_ids: vec![community.to_string(), "not-a-uuid".into()],
+        }),
+    )
+    .await
+    .expect("a failed read answers every id inactive");
+    assert_eq!(
+        bulk,
+        serde_json::json!({ "data": [
+            { "community_id": community.to_string(), "active": false, "participant_count": 0, "moderator_count": 0 },
+            { "community_id": "not-a-uuid", "active": false, "participant_count": 0, "moderator_count": 0 },
+        ]})
+    );
+    let Json(active) = voice::community_voice_chat_active(State(state.clone()))
+        .await
+        .expect("a failed read lists none");
+    assert_eq!(active, serde_json::json!({ "data": [], "total": 0 }));
+    let member = wallet();
+    let Json(user) =
+        voice::check_user_community_status(State(state.clone()), Path(member.to_string()))
+            .await
+            .expect("a failed read answers not in a chat");
+    assert_eq!(
+        user,
+        serde_json::json!({ "userAddress": member.as_str(), "isInCommunityVoiceChat": false })
+    );
 }
