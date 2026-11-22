@@ -381,6 +381,11 @@ pub struct Outcome {
     pub compared_blocks: u64,
     /// The window's blocks not compared: fetched past the anchor, or never fetched.
     pub skipped_blocks: u64,
+    /// The RPC's logs in the compared prefix: an equal verdict over none
+    /// says nothing about the portal.
+    pub rpc_logs: usize,
+    /// The portal's logs in the compared prefix that the exact filter keeps.
+    pub portal_logs: usize,
     pub missing: usize,
     pub extra: usize,
     pub mismatch: usize,
@@ -412,6 +417,8 @@ impl Outcome {
             compared: None,
             compared_blocks: 0,
             skipped_blocks: read.reached.saturating_sub(read.from) + 1,
+            rpc_logs: 0,
+            portal_logs: 0,
             missing: 0,
             extra: 0,
             mismatch: 0,
@@ -565,6 +572,8 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
             Kept::No => out.drift_filtered += 1,
         }
     }
+    out.rpc_logs = rpc.len();
+    out.portal_logs = portal.len();
     let unavailable = |field: &'static str, out: &mut Outcome| {
         *out.unavailable.entry(field).or_default() += 1;
     };

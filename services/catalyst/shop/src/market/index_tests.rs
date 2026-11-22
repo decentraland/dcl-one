@@ -10172,6 +10172,15 @@ mod compare_sources_tests {
         assert_eq!(r.compared, [(101, 200), (201, 300), (301, 400)]);
         assert!(r.uncovered.is_empty());
         assert_eq!(r.totals.missing + r.totals.extra + r.totals.mismatch, 0);
+        assert!(
+            r.totals.rpc_logs > 0,
+            "an equal run over logs, not over none"
+        );
+        assert_eq!(r.totals.rpc_logs, r.totals.portal_logs);
+        assert_eq!(
+            r.totals.rpc_logs,
+            r.windows.iter().map(|w| w.outcome.rpc_logs).sum::<usize>()
+        );
         assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages >= 3);
         assert_eq!(r.windows[0].filter_fingerprint.len(), 64);
         db.drop().await;
@@ -10223,6 +10232,7 @@ mod compare_sources_tests {
         let r = compare(&db, &rpc, &portal, 101, 400).await;
         assert_eq!((r.outcome, r.exit_code()), ("different", 1));
         assert_eq!(r.totals.missing, 1);
+        assert_eq!(r.totals.portal_logs + 1, r.totals.rpc_logs);
         assert!(r.different && !r.incomplete);
         db.drop().await;
     }
