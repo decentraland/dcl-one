@@ -30,7 +30,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -48,6 +50,9 @@ pub const MAX_REQUEST_BYTES: usize = 900 * 1024;
 pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_LOGS: usize = 200_000;
+/// The most lines one answer may hold, however wide its range: each is
+/// kept until the page decodes.
+pub const MAX_PAGE_LINES: usize = 100_000;
 /// How many times a rejected batch may be halved.
 pub const MAX_SPLIT_DEPTH: u32 = 6;
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -562,6 +567,14 @@ pub struct PortalReader {
     key: Option<Secret>,
     limiter: Arc<OriginLimiter>,
     sends: Arc<Sends>,
+    max_page_lines: usize,
+}
+
+/// The lines an answer over `[from, to]` may hold: one a block (every line
+/// is a block's header), and never more than `absolute`.
+pub fn line_cap(from: u64, to: u64, absolute: usize) -> usize {
+    let span = to.saturating_sub(from).saturating_add(1);
+    usize::try_from(span).unwrap_or(usize::MAX).min(absolute)
 }
 
 impl std::fmt::Debug for PortalReader {
@@ -624,7 +637,15 @@ impl PortalReader {
             key,
             limiter,
             sends: Arc::new(Sends::default()),
+            max_page_lines: MAX_PAGE_LINES,
         })
+    }
+
+    /// The same reader with another absolute line cap (tests).
+    #[cfg(test)]
+    pub(crate) fn with_line_cap(mut self, cap: usize) -> Self {
+        self.max_page_lines = cap;
+        self
     }
 
     pub fn chain(&self) -> u64 {
@@ -784,9 +805,7 @@ impl PortalReader {
                 .and_then(|s| s.parse().ok());
             return Err(PortalError::AboveHead { finalized });
         }
-        // One line per block at most: every line is a block's header.
-        let max_lines = usize::try_from(to - from + 1).unwrap_or(usize::MAX);
-        let lines = read_lines(resp, max_lines).await?;
+        let lines = read_lines(resp, line_cap(from, to, self.max_page_lines)).await?;
         decode_page(&lines, from, to)
     }
 }

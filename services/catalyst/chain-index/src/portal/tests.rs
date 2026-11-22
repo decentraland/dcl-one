@@ -243,20 +243,42 @@ fn a_huge_retry_after_holds_at_most_the_cap() {
     assert!(again >= until && again <= Instant::now() + MAX_COOLDOWN);
 }
 
-/// The rate has a floor and the bucket one token: a burst of one, and no
-/// wait past the cap however small the rate.
+/// The rate has a floor and the bucket one token: a burst of one. Refill
+/// and sleep share Tokio's clock: at 5 a second the second send is still
+/// waiting just before 200 ms and goes at 200 ms.
 #[tokio::test(start_paused = true)]
 async fn the_rate_has_a_floor_and_a_burst_of_one() {
     let l = OriginLimiter::new(1e-20);
     assert_eq!(l.rate, MIN_RATE);
-    let l = OriginLimiter::new(5.0);
+    let l = Arc::new(OriginLimiter::new(5.0));
     l.acquire().await;
-    let started = tokio::time::Instant::now();
-    l.acquire().await;
+    let second = tokio::spawn({
+        let l = l.clone();
+        async move { l.acquire().await }
+    });
+    tokio::time::advance(Duration::from_millis(199)).await;
+    tokio::task::yield_now().await;
     assert!(
-        started.elapsed() >= Duration::from_millis(150),
-        "the second send waits: one token, not five"
+        !second.is_finished(),
+        "one token, not five: still waiting at 199 ms"
     );
+    tokio::time::advance(Duration::from_millis(1)).await;
+    tokio::time::timeout(Duration::from_millis(1), second)
+        .await
+        .expect("goes at 200 ms")
+        .unwrap();
+}
+
+/// The line cap is the block span, never past the absolute cap, and the
+/// widest range computes without overflow.
+#[test]
+fn the_line_cap_is_the_span_within_an_absolute_bound() {
+    assert_eq!(line_cap(5, 5, 10), 1);
+    assert_eq!(line_cap(1, 100, 10), 10);
+    assert_eq!(line_cap(1, 4, 10), 4);
+    assert_eq!(line_cap(0, u64::MAX, MAX_PAGE_LINES), MAX_PAGE_LINES);
+    assert_eq!(line_cap(0, u64::MAX, usize::MAX), usize::MAX);
+    assert_eq!(line_cap(10, 5, 10), 1);
 }
 
 /// One request a fake portal received.
@@ -531,6 +553,24 @@ async fn a_page_of_more_lines_than_blocks_is_refused() {
     let r = PortalReader::new(&origin, "polygon-mainnet", None, 100.0).unwrap();
     assert!(matches!(
         r.page(1, 2, &[], false).await,
+        Err(PortalError::TooLarge("lines"))
+    ));
+}
+
+/// However wide the range, a page holds at most the absolute line cap.
+#[tokio::test]
+async fn a_wide_page_is_held_to_the_absolute_line_cap() {
+    let (origin, _) = fake(vec![ok_ndjson(&[
+        json!({"header": header_line(1)}),
+        json!({"header": header_line(2)}),
+        json!({"header": header_line(3)}),
+    ])])
+    .await;
+    let r = PortalReader::new(&origin, "polygon-mainnet", None, 100.0)
+        .unwrap()
+        .with_line_cap(2);
+    assert!(matches!(
+        r.page(1, 1_000_000, &[], false).await,
         Err(PortalError::TooLarge("lines"))
     ));
 }
