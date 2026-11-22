@@ -2597,7 +2597,8 @@ wallet that is not the owner (`Policy::is_admin`: `/scene-admin`, `/scene-bans`,
 place's rows (tens at most) for `GET /scene-admin`, for a room metadata
 refresh and for each streaming notice (a Genesis place's base parcel, the
 place of a world key's scene or, for a world removal, of each active scene,
-with the grants a place removal ended at its `removed_at`). Writes are rare:
+with the grants a place removal ended at its `removed_at` on any scene of
+the world). Writes are rare:
 one row for `POST` or `DELETE /scene-admin`, and the place removal cleanup.
 
 Invariants:

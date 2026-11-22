@@ -44,10 +44,11 @@ pub(in crate::gatekeeper) enum Scope<'a> {
 /// upstream's `getAdminsAndExtraAddresses`: for a Genesis place its scene
 /// admins (granted on its base parcel) and the LAND owner, operators and
 /// managers; for a world its owner, the deployment/streaming grantees of its
-/// parcels, and the scene admins who hold its stream key: those of the
-/// key's scene (of every active scene for a removal) whose granter still
-/// holds the world-wide authority (`streaming::world_authority`). A surface
-/// that cannot be read is an error, never a smaller set.
+/// parcels, and the scene admins of the key's scene (of every active scene
+/// for a removal) whose granter still holds the world-wide authority
+/// (`streaming::world_authority`). With per-scene world keys (#1948) the
+/// admins of the key's scene are exactly those who hold it. A surface that
+/// cannot be read is an error, never a smaller set.
 pub(in crate::gatekeeper) async fn recipients(
     state: &CommsState,
     context: &PlaceContext,
@@ -78,32 +79,46 @@ pub(in crate::gatekeeper) async fn recipients(
         }
         return Ok(out);
     };
-    let keys = match scope {
-        Scope::Key { room } => key_scene_place(state, &world, room)
+    let admins: Vec<(String, String)> = match scope {
+        Scope::Key { room } => match key_scene_place(state, &world, room).await? {
+            Some(key) => state.moderation.notice_admins(&key, None).await?,
+            None => Vec::new(),
+        },
+        // The grants of the active scenes, and those this removal ended on
+        // any scene of the world: a scene that left since still has them.
+        Scope::Removal { revoked_at } => {
+            sqlx::query_as(
+                "SELECT a.admin_address, a.added_by FROM social.scene_admins a \
+             JOIN explore.world_scene_place p ON a.place_id = p.identity::text \
+             WHERE p.world_name = $1 AND ((a.active AND p.active) OR a.removed_at = $2)",
+            )
+            .bind(world.key())
+            .bind(revoked_at)
+            .fetch_all(&state.pool)
             .await?
-            .into_iter()
-            .collect(),
-        Scope::Removal { .. } => sqlx::query_scalar(
-            "SELECT identity::text FROM explore.world_scene_place WHERE world_name = $1 AND active",
-        )
-        .bind(world.key())
-        .fetch_all(&state.pool)
-        .await?,
+        }
     };
     let authority = super::world_authority(state, &context.place_id, &world);
-    for key in keys {
-        for (admin, granter) in state.moderation.notice_admins(&key, revoked_at).await? {
-            let (Ok(admin), Ok(granter)) = (Address::parse(&admin), Address::parse(&granter))
-            else {
-                continue;
-            };
-            match scene::scene_manager_decision(state, &authority, &granter).await {
-                PermissionDecision::Allowed => {
-                    out.insert(admin);
-                }
-                decision if super::lacks_authority(&decision) => {}
-                PermissionDecision::Refused(why) => return Err(why.into()),
+    // Most grants share a granter (the owner): one decision for each.
+    let mut decided: std::collections::HashMap<Address, bool> = Default::default();
+    for (admin, granter) in admins {
+        let (Ok(admin), Ok(granter)) = (Address::parse(&admin), Address::parse(&granter)) else {
+            continue;
+        };
+        let holds = match decided.get(&granter) {
+            Some(holds) => *holds,
+            None => {
+                let holds = match scene::scene_manager_decision(state, &authority, &granter).await {
+                    PermissionDecision::Allowed => true,
+                    decision if super::lacks_authority(&decision) => false,
+                    PermissionDecision::Refused(why) => return Err(why.into()),
+                };
+                decided.insert(granter, holds);
+                holds
             }
+        };
+        if holds {
+            out.insert(admin);
         }
     }
     Ok(out)
@@ -563,6 +578,14 @@ mod tests {
         sqlx::query("UPDATE social.scene_admins SET removed_at = $3 WHERE place_id = $1 AND admin_address = $2")
             .bind(&w.place).bind(earlier.as_str()).bind(removed_at - chrono::Duration::seconds(5))
             .execute(&w.pool).await.unwrap();
+        // The scene left before the retry: its revoked grants are still told,
+        // and a grant still active on a scene that left is not.
+        let (left, still_active) = (uuid::Uuid::new_v4(), address('2'));
+        sqlx::query("INSERT INTO explore.world_scene_place (world_name, identity, parcels, active) VALUES ($1, $2, '{\"-121,6\"}', false)")
+            .bind(&world_name).bind(left).execute(&w.pool).await.unwrap();
+        grant_by(&w.pool, &left.to_string(), &still_active, &address('a')).await;
+        sqlx::query("UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE identity = $1::uuid")
+            .bind(&w.place).execute(&w.pool).await.unwrap();
 
         let told = recipients(
             &w.state,

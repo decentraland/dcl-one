@@ -35,16 +35,20 @@ async fn cleanup(
         feed.save_owner(event.event_id, recipient.as_str()).await?;
     }
     let recipients = match recipient {
-        Ok(owner) => recipients(
-            state,
-            &context,
-            owner.clone(),
-            Scope::Removal {
+        Ok(owner) => {
+            let scope = Scope::Removal {
                 revoked_at: event.removed_at,
-            },
-        )
-        .await
-        .map(|all| (owner, all)),
+            };
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                recipients(state, &context, owner.clone(), scope),
+            )
+            .await
+            {
+                Ok(all) => all.map(|all| (owner, all)),
+                Err(_) => Err(ApiError::http(503, "place notice recipients timed out")),
+            }
+        }
         Err(error) => Err(error),
     };
     if event.cleaned_at.is_none() {
@@ -1440,6 +1444,9 @@ mod tests {
         .unwrap();
         assert!(!active, "the first pass revoked the grant");
         let saved: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE event_id = $1").bind(event.event_id).fetch_one(&pool).await.unwrap();
+        // The scene leaves before the retry.
+        sqlx::query("UPDATE explore.world_scene_place SET active = false, entity_id = NULL WHERE identity = $1")
+            .bind(identity).execute(&pool).await.unwrap();
         directory.fail.store(false, Ordering::SeqCst);
         cleanup(&state, &feed, &saved).await.unwrap();
         let notifications = directory.stub.streaming_notifications.lock().unwrap();
