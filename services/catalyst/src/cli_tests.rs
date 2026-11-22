@@ -68,7 +68,10 @@ fn the_operator_database_urls_are_hidden() {
             ("builder", "catalog"),
             ("storage", "gc"),
             ("camera-reel", "import"),
+            ("content", "repair-profile-snapshots"),
+            ("content", "import-denylist"),
             ("shop", "notice-rewind"),
+            ("shop", "compare-sources"),
         ] {
             let cmd = cli
                 .find_subcommand(sub)
@@ -85,7 +88,36 @@ fn the_operator_database_urls_are_hidden() {
             );
             seen += 1;
         }
-        assert_eq!(seen, 6);
+        assert_eq!(seen, 9);
+    });
+}
+
+#[test]
+fn the_profile_snapshot_repair_reads_the_sync_sources_in_batches() {
+    on_a_wide_stack(|| {
+        let cli = <crate::Cli as clap::Parser>::try_parse_from([
+            "catalyst",
+            "content",
+            "repair-profile-snapshots",
+            "--database-url",
+            "postgres:///catalyst",
+            "--sync-source",
+            "https://peer.example/content",
+        ])
+        .unwrap();
+        let crate::Command::Content {
+            command:
+                crate::ContentCommand::RepairProfileSnapshots {
+                    sync_source, batch, ..
+                },
+        } = cli.command
+        else {
+            panic!("not the repair command");
+        };
+        assert_eq!(
+            (sync_source.as_str(), batch),
+            ("https://peer.example/content", 500)
+        );
     });
 }
 
@@ -115,6 +147,48 @@ fn schema_layout_prints_this_builds_stamp_and_steps() {
         for (line, step) in lines[3..].iter().zip(&steps) {
             assert_eq!(*line, format!("step {} {}", step.name, step.sha256));
         }
+    });
+}
+
+/// `content import-denylist --added-by` takes a wallet and lowercases it;
+/// anything else is refused before the file or the database is touched.
+/// `--print-ids` needs neither the wallet nor the database.
+#[test]
+fn import_denylist_takes_only_a_wallet() {
+    on_a_wide_stack(|| {
+        let parse = |args: &[&str]| {
+            let mut argv = vec!["catalyst", "content", "import-denylist", "--file", "-"];
+            argv.extend_from_slice(args);
+            <crate::Cli as clap::Parser>::try_parse_from(argv)
+        };
+        let db = ["--database-url", "postgres://example.invalid/db"];
+        let cli = parse(&[
+            db[0],
+            db[1],
+            "--added-by",
+            " 0x00000000000000000000000000000000000000AA ",
+        ])
+        .unwrap();
+        let crate::Command::Content {
+            command: crate::ContentCommand::ImportDenylist { added_by, .. },
+        } = cli.command
+        else {
+            panic!("not import-denylist");
+        };
+        assert_eq!(
+            added_by.as_deref(),
+            Some("0x00000000000000000000000000000000000000aa")
+        );
+        for bad in [
+            "admin",
+            "0x1234",
+            "0x00000000000000000000000000000000000000zz",
+        ] {
+            let err = parse(&[db[0], db[1], "--added-by", bad]).err().unwrap();
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "{bad}");
+            assert!(err.to_string().contains("wallet address"), "{err}");
+        }
+        assert!(parse(&["--print-ids"]).is_ok());
     });
 }
 

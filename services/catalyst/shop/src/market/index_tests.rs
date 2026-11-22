@@ -38,6 +38,50 @@ use super::trade_events::{self, TradeEventsIndex};
 use super::{MarketSettings, MarketplaceState, Settings, SharedState};
 use crate::chain_index::rpc::Rpc;
 
+tokio::task_local! {
+    /// The shadow a test's walks offer their accepted windows to.
+    static TEST_SHADOW: Option<Arc<crate::chain_index::portal::shadow::Shadow>>;
+}
+
+/// The shadow of the running test, if it set one.
+fn test_shadow() -> Option<Arc<crate::chain_index::portal::shadow::Shadow>> {
+    TEST_SHADOW.try_with(Clone::clone).ok().flatten()
+}
+
+/// A Polygon shadow over a portal that accepts connections and never
+/// answers, its worker running until the returned sender is dropped, and
+/// how many connections the portal took.
+async fn stalled_shadow() -> (
+    Arc<crate::chain_index::portal::shadow::Shadow>,
+    tokio::sync::oneshot::Sender<()>,
+    Arc<AtomicUsize>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = accepted.clone();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = listener.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            held.push(sock);
+        }
+    });
+    let reader =
+        crate::chain_index::portal::PortalReader::new(&origin, "polygon-mainnet", None, 100.0)
+            .unwrap();
+    let (shadow, worker) = crate::chain_index::portal::shadow::channel(
+        reader,
+        "matic",
+        crate::chain_index::portal::AddressHistory::Unknown,
+    );
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(worker.run(async move {
+        let _ = stopped.await;
+    }));
+    (shadow, stop, accepted)
+}
+
 struct ScratchDb {
     name: String,
     pool: PgPool,
@@ -105,6 +149,13 @@ struct FakeChain {
     get_logs: AtomicUsize,
     /// Answer eth_getLogs without `blockTimestamp` (the Polygon backends that do).
     strip_timestamps: std::sync::atomic::AtomicBool,
+    /// Logs without their `blockHash`, as an endpoint that omits it.
+    strip_block_hash: std::sync::atomic::AtomicBool,
+    /// `eth_chainId` answers an error.
+    fail_chain_id: std::sync::atomic::AtomicBool,
+    /// Text the failing reads echo in their error message (a gateway that
+    /// repeats the request it got).
+    echo: Mutex<String>,
     batches: AtomicUsize,
     drop_in_batch: Mutex<Vec<u64>>,
     /// Every request in arrival order, as [`call_tag`] names it.
@@ -188,6 +239,9 @@ impl FakeChain {
             requests: AtomicUsize::new(0),
             get_logs: AtomicUsize::new(0),
             strip_timestamps: std::sync::atomic::AtomicBool::new(false),
+            strip_block_hash: std::sync::atomic::AtomicBool::new(false),
+            fail_chain_id: std::sync::atomic::AtomicBool::new(false),
+            echo: Mutex::new(String::new()),
             batches: AtomicUsize::new(0),
             drop_in_batch: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
@@ -359,6 +413,9 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
     let refuse = |message: String| json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": message } });
     match body["method"].as_str() {
         Some("eth_blockNumber") => reply(json!(format!("0x{:x}", *chain.head.lock()))),
+        Some("eth_chainId") if chain.fail_chain_id.load(Ordering::SeqCst) => {
+            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": format!("upstream refused {}", chain.echo.lock()) } })
+        }
         Some("eth_chainId") => reply(json!(format!(
             "0x{:x}",
             chain.chain_id.load(Ordering::SeqCst)
@@ -378,7 +435,7 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     .saturating_sub(chain.finalized_lag.load(Ordering::SeqCst))
             } else {
                 if chain.fail_headers.load(Ordering::SeqCst) {
-                    return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": "header unavailable" } });
+                    return json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32000, "message": format!("header unavailable {}", chain.echo.lock()) } });
                 }
                 hex_u64(&body["params"][0])
             };
@@ -490,6 +547,14 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
                     })
                 })
                 .cloned()
+                // Each log names its block's hash, as an endpoint's do.
+                .map(|mut l| {
+                    if !chain.strip_block_hash.load(Ordering::SeqCst) {
+                        let block = hex_u64(&l["blockNumber"]);
+                        l["blockHash"] = json!(chain.hash_of(block));
+                    }
+                    l
+                })
                 .collect();
             if chain.strip_timestamps.load(Ordering::SeqCst) {
                 let stripped: Vec<Value> = hits
@@ -581,7 +646,11 @@ async fn try_pass(
     url: &str,
     ix: &dyn ChainIndex,
 ) -> anyhow::Result<PassOutcome> {
-    let source = chain_walk::RpcSource::new(Rpc::at(&state.http, url));
+    let shadow = test_shadow();
+    let source = crate::chain_index::portal::shadow::Shadowed::new(
+        chain_walk::RpcSource::new(Rpc::at(&state.http, url)),
+        shadow.as_deref(),
+    );
     let owner = chain_walk::test_owner(&state.pool, ix, &state.settings.market.indexes).await;
     chain_walk::run_pass(
         &state.pool,
@@ -1576,8 +1645,30 @@ async fn a_reorg_past_the_confirmation_depth_rewinds_and_the_refold_follows_the_
 /// outcomes.
 #[tokio::test]
 async fn the_walk_sends_the_pinned_requests_in_order() {
+    pinned_requests_in_order().await;
+}
+
+/// The same requests and outcomes with a shadow whose portal never answers:
+/// the walk offers its accepted windows and never waits on them.
+#[tokio::test]
+async fn the_pinned_requests_hold_with_a_stalled_shadow() {
+    let (shadow, stop, accepted) = stalled_shadow().await;
+    if TEST_SHADOW
+        .scope(Some(shadow), pinned_requests_in_order())
+        .await
+    {
+        assert!(
+            accepted.load(Ordering::SeqCst) >= 1,
+            "an accepted window reached the shadow's portal"
+        );
+    }
+    drop(stop);
+}
+
+/// Runs the pinned walk; false when no test database is configured.
+async fn pinned_requests_in_order() -> bool {
     let Some(db) = ScratchDb::create().await else {
-        return;
+        return false;
     };
     let s = nft_index::start_block(ChainNet::Matic);
     let c1 = "0x00000000000000000000000000000000000000c1";
@@ -1675,6 +1766,7 @@ async fn the_walk_sends_the_pinned_requests_in_order() {
     assert_eq!(outcomes, PINNED_OUTCOMES);
     assert_eq!(calls, PINNED_CALLS);
     db.drop().await;
+    true
 }
 
 /// `tag` with every block number at or past `s` written as `s+N`.
@@ -3557,6 +3649,123 @@ async fn mana_sync_migration_preserves_existing_cursors() {
     db.drop().await;
 }
 
+/// A source recording every window the walk accepts.
+struct Recording<'a> {
+    inner: chain_walk::RpcSource<'a>,
+    offers: Mutex<Vec<(u64, u64, String)>>,
+}
+
+#[async_trait::async_trait]
+impl chain_walk::LogSource for Recording<'_> {
+    async fn chain_id(&self) -> Result<chain_walk::Read<u64>, crate::chain_index::rpc::RpcError> {
+        self.inner.chain_id().await
+    }
+    async fn head(&self) -> Result<chain_walk::Read<u64>, crate::chain_index::rpc::RpcError> {
+        self.inner.head().await
+    }
+    async fn finalized(
+        &self,
+    ) -> Result<
+        chain_walk::Read<crate::chain_index::rpc::BlockHeader>,
+        crate::chain_index::rpc::RpcError,
+    > {
+        self.inner.finalized().await
+    }
+    async fn header(
+        &self,
+        number: u64,
+    ) -> Result<
+        chain_walk::Read<crate::chain_index::rpc::BlockHeader>,
+        crate::chain_index::rpc::RpcError,
+    > {
+        self.inner.header(number).await
+    }
+    async fn window(
+        &self,
+        from: u64,
+        to: u64,
+        groups: &[chain_walk::LogGroup],
+        chunk: &mut usize,
+    ) -> Result<chain_walk::Window, crate::chain_index::rpc::RpcError> {
+        self.inner.window(from, to, groups, chunk).await
+    }
+    async fn block_times(
+        &self,
+        logs: &[crate::chain_index::rpc::RpcLog],
+    ) -> Result<chain_walk::Read<HashMap<i64, i64>>, crate::chain_index::rpc::RpcError> {
+        self.inner.block_times(logs).await
+    }
+    fn accepted(&self, read: &crate::chain_index::portal::compare::AcceptedView<'_>) {
+        self.offers
+            .lock()
+            .push((read.from, read.reached, read.reached_hash.to_string()));
+    }
+}
+
+/// Only a window whose bracket held is offered: a fork while its logs are
+/// read offers nothing, and a clean pass offers each committed window once,
+/// contiguous, the last one ending at the cursor's block and hash.
+#[tokio::test]
+async fn only_a_window_whose_bracket_held_is_offered() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let chain = FakeChain::new(100, vec![], 1000, 1000);
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(10, 30), false);
+    let ix = super::mana_transfers::ManaTransfersIndex {
+        net: ChainNet::Matic,
+    };
+    let source = Recording {
+        inner: chain_walk::RpcSource::new(Rpc::at(&st.http, &url)),
+        offers: Mutex::new(Vec::new()),
+    };
+    let owner = chain_walk::test_owner(&db.pool, &ix, &st.settings.market.indexes).await;
+    chain.reorg_on_logs.store(true, Ordering::SeqCst);
+    let pass = chain_walk::run_pass(
+        &db.pool,
+        &source,
+        &ix,
+        &st.settings.market.indexes,
+        &owner,
+        None,
+        &|_| {},
+    )
+    .await;
+    assert!(pass.is_err(), "the bracket caught the fork");
+    assert!(
+        source.offers.lock().is_empty(),
+        "a rejected bracket offers nothing"
+    );
+    let out = chain_walk::run_pass(
+        &db.pool,
+        &source,
+        &ix,
+        &st.settings.market.indexes,
+        &owner,
+        None,
+        &|_| {},
+    )
+    .await
+    .unwrap();
+    let offers = source.offers.lock().clone();
+    assert!(offers.len() > 1, "{offers:?}");
+    for pair in offers.windows(2) {
+        assert_eq!(pair[1].0, pair[0].1 + 1, "contiguous: {offers:?}");
+    }
+    let cur = chain_walk::cursor(&db.pool, chain_walk::INDEXER_MANA, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    let last = offers.last().unwrap();
+    assert_eq!(
+        (last.1 as i64, Some(last.2.clone())),
+        (cur.last_block, cur.last_block_hash)
+    );
+    assert_eq!(out.indexed_to, cur.last_block);
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn mana_sync_refuses_missing_finality_and_a_fork_during_fetch() {
     let Some(db) = ScratchDb::create().await else {
@@ -5124,6 +5333,7 @@ mod supervisor {
             projections,
             member_deadline: Duration::from_secs(60),
             stats: Arc::default(),
+            shadow: None,
         }
     }
 
@@ -5551,9 +5761,26 @@ mod supervisor {
     /// the pinned order (the finalized header serves as the window's before).
     #[tokio::test]
     async fn two_projections_at_one_checkpoint_read_their_windows_once() {
+        windows_once().await;
+    }
+
+    /// The same requests and rows with a shadow whose portal never answers:
+    /// the walks alone and the shared walk offer their accepted windows and
+    /// never wait on them.
+    #[tokio::test]
+    async fn the_shared_trace_holds_with_a_stalled_shadow() {
+        let (shadow, stop, accepted) = super::stalled_shadow().await;
+        if super::TEST_SHADOW.scope(Some(shadow), windows_once()).await {
+            assert!(accepted.load(Ordering::SeqCst) >= 1);
+        }
+        drop(stop);
+    }
+
+    /// Runs the comparison; false when no test database is configured.
+    async fn windows_once() -> bool {
         let (Some(alone), Some(together)) = (ScratchDb::create().await, ScratchDb::create().await)
         else {
-            return;
+            return false;
         };
         let s = nft_index::start_block(ChainNet::Matic);
         let c1 = "0x00000000000000000000000000000000000000c1";
@@ -5656,6 +5883,7 @@ mod supervisor {
             &at,
             Duration::from_secs(60),
             &counted,
+            super::test_shadow().as_deref(),
         )
         .await;
         let sent = counted.load(Ordering::SeqCst);
@@ -5723,6 +5951,7 @@ mod supervisor {
         assert!(together_calls.len() < alone_calls.len());
         alone.drop().await;
         together.drop().await;
+        true
     }
 
     /// The touch each member's first walk under its generation makes runs
@@ -5799,6 +6028,7 @@ mod supervisor {
                 &at,
                 Duration::from_millis(800),
                 &counted,
+                None,
             ),
         )
         .await
@@ -6276,6 +6506,16 @@ mod supervisor {
                 }) as Arc<dyn ChainIndex>
             })
         };
+        // Only a shared walk holds a member to its deadline: sales walking
+        // the window alone would wait in its commit for good. On a short
+        // cadence, one projection's close can outlast the other's interval
+        // on a slow machine, and the other then walks alone. On this one,
+        // each stands idle when the other comes due, and the two walk each
+        // window together.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
         let mut sup = supervisor(&st, ChainNet::Matic, projections);
         sup.member_deadline = Duration::from_millis(300);
         let stats = sup.stats.clone();
@@ -6288,6 +6528,11 @@ mod supervisor {
             .await;
         }
         for (round, landed) in [(1u64, false), (2, true)] {
+            let walks = stats.walks.load(Ordering::SeqCst);
+            eventually("nft and sales walk together again", || async {
+                stats.walks.load(Ordering::SeqCst) > walks
+            })
+            .await;
             let start = last_block(&db.pool, INDEXER_SALES).await;
             let sales = sale_events(&db.pool).await;
             let entered = hooks.write_entered.load(Ordering::SeqCst);
@@ -6517,6 +6762,7 @@ mod supervisor {
                     &at,
                     Duration::from_secs(60),
                     &AtomicUsize::new(0),
+                    None,
                 )
                 .await;
                 for (slot, end) in ends {
@@ -6910,6 +7156,7 @@ mod supervisor {
             &at,
             Duration::from_secs(60),
             &counted,
+            None,
         )
         .await;
         assert_eq!(
@@ -9709,4 +9956,595 @@ async fn a_started_walk_touch_is_fenced_by_its_owner() {
     assert!(updated_at().await > aged, "the current job touched it");
     assert!(current.started.done());
     db.drop().await;
+}
+
+/// `catalyst shop compare-sources` over a fake chain and a fake portal that
+/// serves the same chain's logs and headers.
+mod compare_sources_tests {
+    use super::*;
+    use crate::chain_index::portal::{AddressHistory, PortalReader};
+    use crate::market::compare_sources::{self, Request};
+    use axum::routing::get;
+
+    /// What the fake portal does differently from its chain.
+    #[derive(Default)]
+    struct Quirks {
+        /// At most this many blocks a page (an early end).
+        page_blocks: Option<u64>,
+        /// Logs it does not serve, by (block, log index).
+        drop: Vec<(u64, u64)>,
+        /// Its heads answer 503.
+        heads_down: bool,
+        /// After this many pages, the RPC's headers start failing.
+        rpc_fails_after_pages: Option<usize>,
+        pages: usize,
+    }
+
+    struct Portal {
+        chain: Arc<FakeChain>,
+        quirks: Mutex<Quirks>,
+    }
+
+    fn finalized(chain: &FakeChain) -> u64 {
+        chain
+            .head
+            .lock()
+            .saturating_sub(chain.finalized_lag.load(Ordering::SeqCst))
+    }
+
+    fn header(chain: &FakeChain, n: u64) -> Value {
+        json!({"number": n, "hash": chain.hash_of(n), "parentHash": chain.hash_of(n.saturating_sub(1)), "timestamp": time_of(n)})
+    }
+
+    async fn stream(State(p): State<Arc<Portal>>, body: String) -> axum::response::Response {
+        let q: Value = serde_json::from_str(&body).unwrap();
+        let from = q["fromBlock"].as_u64().unwrap();
+        let fin = finalized(&p.chain);
+        if from > fin {
+            return (
+                StatusCode::NO_CONTENT,
+                [("x-sqd-finalized-head-number", fin.to_string())],
+            )
+                .into_response();
+        }
+        let mut quirks = p.quirks.lock();
+        quirks.pages += 1;
+        if quirks
+            .rpc_fails_after_pages
+            .is_some_and(|n| quirks.pages >= n)
+        {
+            p.chain.fail_headers.store(true, Ordering::SeqCst);
+        }
+        let mut to = q["toBlock"].as_u64().unwrap().min(fin);
+        if let Some(n) = quirks.page_blocks {
+            to = to.min(from + n - 1);
+        }
+        let wanted = |l: &Value| {
+            q["logs"].as_array().unwrap().iter().any(|r| {
+                let address = l["address"].as_str().unwrap().to_ascii_lowercase();
+                r["address"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a == &json!(address))
+                    && (0..4).all(|i| match r.get(format!("topic{i}")) {
+                        None => true,
+                        Some(alts) => l["topics"].get(i).is_some_and(|t| {
+                            alts.as_array()
+                                .unwrap()
+                                .contains(&json!(t.as_str().unwrap().to_ascii_lowercase()))
+                        }),
+                    })
+            })
+        };
+        let mut blocks: std::collections::BTreeMap<u64, Vec<Value>> = Default::default();
+        for l in p.chain.logs.lock().iter() {
+            let (b, i) = (hex_u64(&l["blockNumber"]), hex_u64(&l["logIndex"]));
+            if b < from || b > to || quirks.drop.contains(&(b, i)) || !wanted(l) {
+                continue;
+            }
+            blocks.entry(b).or_default().push(json!({
+                "logIndex": i, "transactionIndex": 0, "address": l["address"], "topics": l["topics"],
+                "data": l["data"], "transactionHash": l["transactionHash"],
+            }));
+        }
+        blocks.entry(to).or_default();
+        let body: String = blocks
+            .into_iter()
+            .map(|(b, logs)| {
+                let mut line = json!({"header": header(&p.chain, b)});
+                if !logs.is_empty() {
+                    line["logs"] = json!(logs);
+                }
+                format!("{line}\n")
+            })
+            .collect();
+        ([("content-type", "application/x-ndjson")], body).into_response()
+    }
+
+    async fn heads(State(p): State<Arc<Portal>>, uri: axum::http::Uri) -> axum::response::Response {
+        if p.quirks.lock().heads_down {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        let n = if uri.path().ends_with("/finalized-head") {
+            finalized(&p.chain)
+        } else {
+            *p.chain.head.lock()
+        };
+        axum::Json(json!({"number": n, "hash": p.chain.hash_of(n)})).into_response()
+    }
+
+    async fn serve_portal(chain: Arc<FakeChain>, quirks: Quirks) -> String {
+        let portal = Arc::new(Portal {
+            chain,
+            quirks: Mutex::new(quirks),
+        });
+        let mut app = Router::new();
+        for ds in ["polygon-mainnet", "ethereum-mainnet"] {
+            app = app
+                .route(&format!("/datasets/{ds}/finalized-stream"), post(stream))
+                .route(&format!("/datasets/{ds}/head"), get(heads))
+                .route(&format!("/datasets/{ds}/finalized-head"), get(heads));
+        }
+        let app = app.with_state(portal);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn mana_log(block: u64, index: u64, amount: u64) -> crate::chain_index::rpc::RpcLog {
+        crate::chain_index::rpc::RpcLog {
+            address: super::super::mana_transfers::contract(ChainNet::Matic),
+            topics: vec![
+                super::super::mana_transfers::TRANSFER.into(),
+                format!("0x{:0>64}", &ALICE[2..]),
+                format!("0x{:0>64}", &BOB[2..]),
+            ],
+            data: format!("0x{amount:064x}"),
+            block_number: format!("0x{block:x}"),
+            log_index: format!("0x{index:x}"),
+            block_timestamp: Some(format!("0x{:x}", time_of(block))),
+            block_hash: None,
+            transaction_hash: Some(format!("0x{:064x}", block * 1_000 + index)),
+        }
+    }
+
+    async fn compare(
+        db: &ScratchDb,
+        rpc: &str,
+        portal: &str,
+        from: u64,
+        to: u64,
+    ) -> compare_sources::Report {
+        compare_on(db, rpc, portal, "polygon-mainnet", from, to).await
+    }
+
+    async fn compare_on(
+        db: &ScratchDb,
+        rpc: &str,
+        portal: &str,
+        dataset: &str,
+        from: u64,
+        to: u64,
+    ) -> compare_sources::Report {
+        compare_with(db, rpc, portal, dataset, from, to, 100).await
+    }
+
+    async fn compare_with(
+        db: &ScratchDb,
+        rpc: &str,
+        portal: &str,
+        dataset: &str,
+        from: u64,
+        to: u64,
+        window: u64,
+    ) -> compare_sources::Report {
+        compare_sources::run(
+            &db.pool,
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "mana_transfers".into(),
+                from,
+                to,
+                window,
+                rpc_url: rpc.to_string(),
+                reader: PortalReader::new(portal, dataset, None, 1_000.0).unwrap(),
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await
+    }
+
+    fn chain() -> Arc<FakeChain> {
+        let chain = FakeChain::new(
+            1_000,
+            vec![
+                mana_log(120, 0, 1),
+                mana_log(250, 3, 2),
+                mana_log(399, 1, 3),
+            ],
+            1_000,
+            1_000,
+        );
+        chain.finalized_lag.store(10, Ordering::SeqCst);
+        chain
+    }
+
+    #[tokio::test]
+    async fn equal_sources_compare_the_whole_range() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain, Quirks::default()).await,
+        );
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("equal", 0), "{r:#?}");
+        assert_eq!(r.compared, [(101, 200), (201, 300), (301, 400)]);
+        assert!(r.uncovered.is_empty());
+        assert_eq!(r.totals.missing + r.totals.extra + r.totals.mismatch, 0);
+        assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages >= 3);
+        assert_eq!(r.windows[0].filter_fingerprint.len(), 64);
+        db.drop().await;
+    }
+
+    /// The portal stops early each page: the RPC is read again to where it
+    /// stopped, and the next window starts after that block.
+    #[tokio::test]
+    async fn an_early_portal_end_is_compared_where_both_agree() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(
+            chain,
+            Quirks {
+                page_blocks: Some(30),
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!(r.outcome, "equal", "{r:#?}");
+        let mut next = 101;
+        for (a, b) in &r.compared {
+            assert_eq!(*a, next, "contiguous");
+            next = b + 1;
+        }
+        assert_eq!(next, 401, "the whole range");
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn a_missing_log_makes_the_run_different() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(
+            chain,
+            Quirks {
+                drop: vec![(250, 3)],
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("different", 1));
+        assert_eq!(r.totals.missing, 1);
+        assert!(r.different && !r.incomplete);
+        db.drop().await;
+    }
+
+    /// A range past the finalized head is reported uncovered; an empty
+    /// intersection is incomplete, never equal.
+    #[tokio::test]
+    async fn uncovered_blocks_make_the_run_incomplete() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain, Quirks::default()).await,
+        );
+        let r = compare(&db, &rpc, &portal, 901, 1_200).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3));
+        assert_eq!(r.compared, [(901, 990)]);
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (991, 1_200));
+        let r = compare(&db, &rpc, &portal, 995, 1_200).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3));
+        assert!(r.compared.is_empty());
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (995, 1_200));
+        db.drop().await;
+    }
+
+    /// The projection, the dataset and the RPC must name one chain: a
+    /// matic run against an Ethereum dataset over an RPC serving Ethereum is
+    /// refused before any window, though dataset and RPC agree.
+    #[tokio::test]
+    async fn a_run_on_the_wrong_network_is_refused() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        chain.chain_id.store(1, Ordering::SeqCst);
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        let r = compare_on(&db, &rpc, &portal, "ethereum-mainnet", 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4), "{r:#?}");
+        assert!(r.refused.is_some() && r.compared.is_empty());
+        assert_eq!(r.sends.portal.pages, 0, "no window was read");
+        // The dataset right but the RPC on another chain: refused too.
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4));
+        db.drop().await;
+    }
+
+    /// An outage at admission or a read failing mid-run still reports: the
+    /// windows already compared, the sends, the rest uncovered; exit 3.
+    #[tokio::test]
+    async fn a_read_failure_is_reported_not_raised() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let rpc = serve(chain.clone()).await;
+        let down = serve_portal(
+            chain.clone(),
+            Quirks {
+                heads_down: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &down, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
+        assert!(
+            r.uncovered[0].reason.starts_with("portal_unavailable"),
+            "{r:#?}"
+        );
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (101, 400));
+        assert!(r.sends.portal.admission > 0);
+        let failing = serve_portal(
+            chain.clone(),
+            Quirks {
+                rpc_fails_after_pages: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &failing, 101, 400).await;
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
+        assert_eq!(
+            r.compared,
+            [(101, 200)],
+            "the window before the failure is kept"
+        );
+        let last = r.uncovered.last().unwrap();
+        assert_eq!((last.from, last.to), (201, 400));
+        assert!(last.reason.starts_with("read_failed"), "{last:?}");
+        db.drop().await;
+    }
+
+    /// A compared field one side lacked leaves the run incomplete, never
+    /// equal; a difference besides makes it different and incomplete.
+    #[tokio::test]
+    async fn an_unavailable_field_leaves_the_run_incomplete() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        chain.strip_block_hash.store(true, Ordering::SeqCst);
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(chain.clone(), Quirks::default()).await;
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
+        assert!(
+            r.totals
+                .unavailable
+                .get("block_hash")
+                .is_some_and(|n| *n > 0)
+        );
+        let dropping = serve_portal(
+            chain,
+            Quirks {
+                drop: vec![(250, 3)],
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &dropping, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("different", 1));
+        assert!(r.different && r.incomplete);
+        db.drop().await;
+    }
+
+    /// An RPC that echoes a credential in its errors never puts it in the
+    /// report, whether it fails at admission or after a compared window; the
+    /// coverage and the sends are still reported.
+    #[tokio::test]
+    async fn an_rpc_error_never_reaches_the_report() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        *chain.echo.lock() = "https://rpc.example/sk-example-rpc".into();
+        let rpc = serve(chain.clone()).await;
+        let portal = serve_portal(chain.clone(), Quirks::default()).await;
+        chain.fail_chain_id.store(true, Ordering::SeqCst);
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        chain.fail_chain_id.store(false, Ordering::SeqCst);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("sk-example-rpc"), "{json}");
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3));
+        assert_eq!(
+            r.uncovered[0].reason,
+            "rpc_unavailable: eth_chainId: rpc_error"
+        );
+        assert!(r.sends.rpc_requests >= 1);
+        let failing = serve_portal(
+            chain.clone(),
+            Quirks {
+                rpc_fails_after_pages: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        let r = compare(&db, &rpc, &failing, 101, 400).await;
+        chain.fail_headers.store(false, Ordering::SeqCst);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains("sk-example-rpc"), "{json}");
+        assert_eq!(r.compared, [(101, 200)]);
+        let last = r.uncovered.last().unwrap();
+        assert_eq!(
+            last.reason, "read_failed: rpc window [201, 300]: rpc_error",
+            "{last:?}"
+        );
+        assert!(r.sends.rpc_requests > 0 && r.sends.portal.pages > 0);
+        db.drop().await;
+    }
+
+    /// The command as the binary runs it, for an index whose filters read
+    /// the database, against a database that cannot be reached: a report of
+    /// the whole range uncovered, exit 3, and not one chain read.
+    #[tokio::test]
+    async fn an_unreachable_database_is_reported_before_any_chain_read() {
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        let reader = PortalReader::new(&portal, "polygon-mainnet", None, 1_000.0).unwrap();
+        let r = compare_sources::command(
+            "postgres://nobody@127.0.0.1:1/unreachable",
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "nft".into(),
+                from: 101,
+                to: 400,
+                window: 100,
+                rpc_url: rpc,
+                reader,
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await;
+        assert_eq!((r.outcome, r.exit_code()), ("incomplete", 3), "{r:#?}");
+        assert_eq!(
+            r.uncovered[0].reason,
+            "database_unavailable: probe: database_error"
+        );
+        assert_eq!((r.uncovered[0].from, r.uncovered[0].to), (101, 400));
+        assert_eq!(r.sends.rpc_requests, 0);
+        assert_eq!(r.sends.portal, Default::default());
+        assert_eq!(chain.requests.load(Ordering::SeqCst), 0);
+        // A URL that does not parse is refused, never echoed.
+        let reader = PortalReader::new(&portal, "polygon-mainnet", None, 1_000.0).unwrap();
+        let r = compare_sources::command(
+            "not a url with sk-example-db",
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "nft".into(),
+                from: 101,
+                to: 400,
+                window: 100,
+                rpc_url: "http://127.0.0.1:1".into(),
+                reader,
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4));
+        assert!(!serde_json::to_string(&r).unwrap().contains("sk-example-db"));
+    }
+
+    /// The widest window is clamped to the range, never overflowing.
+    #[tokio::test]
+    async fn the_widest_window_is_clamped_to_the_range() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain, Quirks::default()).await,
+        );
+        let r = compare_with(&db, &rpc, &portal, "polygon-mainnet", 101, 400, u64::MAX).await;
+        assert_eq!((r.outcome, r.exit_code()), ("equal", 0), "{r:#?}");
+        assert_eq!(r.compared, [(101, 400)]);
+        db.drop().await;
+    }
+
+    /// A mismatch known before any read is refused before the database is
+    /// probed: down or not, `--net matic` against an Ethereum dataset is a
+    /// refusal, not an incomplete run.
+    #[tokio::test]
+    async fn a_known_mismatch_is_refused_before_the_database_is_probed() {
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        let reader = PortalReader::new(&portal, "ethereum-mainnet", None, 1_000.0).unwrap();
+        let r = compare_sources::command(
+            "postgres://nobody@127.0.0.1:1/unreachable",
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "nft".into(),
+                from: 101,
+                to: 400,
+                window: 100,
+                rpc_url: rpc,
+                reader,
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4), "{r:#?}");
+        assert_eq!(chain.requests.load(Ordering::SeqCst), 0);
+    }
+
+    /// The database the filters come from must be the network's: a cursor
+    /// bound to a testnet is refused; a bound mainnet one is reported.
+    #[tokio::test]
+    async fn the_database_cursor_must_name_the_networks_chain() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id) \
+             VALUES ('mana_transfers', 'matic', 1, 1, true, 80002)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4), "{r:#?}");
+        assert_eq!(r.sends.portal.pages, 0);
+        sqlx::query("UPDATE shop.chain_cursor SET chain_id = 137 WHERE indexer = 'mana_transfers'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.database_chain), ("equal", Some(137)));
+        db.drop().await;
+    }
 }

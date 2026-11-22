@@ -146,6 +146,7 @@ impl CleanupCommand {
         }
     }
 
+    /// Key expiry's own predicate spares only a broadcast live since before the deadline.
     fn permits_running(self) -> bool {
         self != Self::IdleReplacement
     }
@@ -246,18 +247,17 @@ pub(super) async fn prepare(
             let context = context
                 .as_ref()
                 .ok_or_else(|| ApiError::http(503, "stream notification context unavailable"))?;
-            if !binding_unresolvable {
-                recipients = super::notifications::scene_admins(
-                    &state.pool,
-                    context,
-                    at,
-                    &admin_place_key.iter().cloned().collect::<Vec<_>>(),
-                )
-                .await?;
-            }
-            let (owner, resolved) =
-                super::notifications::recipients(state, context, &recipients).await?;
-            recipients = resolved;
+            let owner = super::notifications::owner(state, context).await?;
+            recipients = key_recipients(
+                state,
+                context,
+                owner.clone(),
+                admin_place_key.as_deref(),
+                binding_unresolvable,
+                room.as_deref(),
+                at,
+            )
+            .await?;
             recipients_resolved = true;
             Ok::<_, ApiError>(super::notifications::notification(
                 context,
@@ -298,6 +298,31 @@ pub(super) async fn prepare(
         recipients,
         recipients_resolved,
     }))
+}
+
+/// Everyone a key notice reaches (`notifications::recipients`), sorted. The
+/// saved or recovered scene place decides its scene admins, so they survive
+/// the scene's retirement; a definitively unresolvable binding tells none;
+/// with neither, the room's live scene does.
+async fn key_recipients(
+    state: &CommsState,
+    context: &PlaceContext,
+    owner: Address,
+    admin_key: Option<&str>,
+    binding_unresolvable: bool,
+    room: Option<&str>,
+    at: NaiveDateTime,
+) -> Result<Vec<Address>, ApiError> {
+    let scope = if admin_key.is_some() || binding_unresolvable {
+        super::notifications::Scope::KeyScene {
+            place: admin_key,
+            at,
+        }
+    } else {
+        super::notifications::Scope::Key { room }
+    };
+    let recipients = super::notifications::recipients(state, context, owner, scope).await?;
+    Ok(recipients.into_iter().collect())
 }
 
 /// Runtime notification lookup takes no publication locks and never writes a credential.
@@ -345,7 +370,8 @@ pub(super) async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
     let changed:Option<Uuid> = sqlx::query_scalar(
         "WITH removed AS (UPDATE social.scene_stream_access SET active=false,streaming=false \
          WHERE id=$1 AND active AND ($3 OR NOT streaming) AND streaming_state_version=$4 \
-         AND ($2::text IS DISTINCT FROM 'streaming_key_expired' OR (COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()))) \
+         AND ($2::text IS DISTINCT FROM 'streaming_key_expired' OR (COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) \
+           AND (NOT streaming OR streaming_start_time IS NULL OR streaming_start_time>COALESCE(expiration_time,created_at+interval '4 days')))) \
          AND ($2::text IS DISTINCT FROM 'streaming_time_exceeded' OR (streaming AND streaming_start_time<=timezone('UTC',now())-interval '4 hours')) \
          RETURNING id,place_id,ingress_id) \
          INSERT INTO social.scene_stream_cleanup(access_id,place_id,ingress_id,notification_kind,occurred_at,due_at,recipient,metadata,source_context,recipients,recipients_resolved) \
@@ -360,7 +386,7 @@ pub(super) async fn enqueue_prepared<'e, E: sqlx::PgExecutor<'e>>(
 async fn expire_streams(state: &CommsState) -> Result<(), ApiError> {
     expire(state, Expiry::Duration).await
 }
-async fn expire_keys(state: &CommsState) -> Result<(), ApiError> {
+pub(super) async fn expire_keys(state: &CommsState) -> Result<(), ApiError> {
     expire(state, Expiry::Key).await
 }
 
@@ -368,7 +394,7 @@ async fn expire(state: &CommsState, expiry: Expiry) -> Result<(), ApiError> {
     let query = if matches!(expiry, Expiry::Duration) {
         "SELECT id FROM social.scene_stream_access WHERE active AND streaming AND streaming_start_time<=timezone('UTC',now())-interval '4 hours' AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY streaming_start_time,id LIMIT $1"
     } else {
-        "SELECT id FROM social.scene_stream_access WHERE active AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
+        "SELECT id FROM social.scene_stream_access WHERE active AND (NOT streaming OR streaming_start_time IS NULL OR streaming_start_time>COALESCE(expiration_time,created_at+interval '4 days')) AND COALESCE(expiration_time,created_at+interval '4 days')<=timezone('UTC',now()) AND (cleanup_retry_at IS NULL OR cleanup_retry_at<=timezone('UTC',now())) ORDER BY COALESCE(expiration_time,created_at+interval '4 days'),id LIMIT $1"
     };
     let ids: Vec<Uuid> = sqlx::query_scalar(query)
         .bind(BATCH)
@@ -539,7 +565,10 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
         {
             return Ok(());
         }
-        if kind == StreamingNotificationKind::KeyReset && !replacement {
+        // Once delivery started the saved reset is finished as it is, never
+        // converted: recipients already told of the reset are not told again.
+        if kind == StreamingNotificationKind::KeyReset && !replacement && !row.notification_started
+        {
             // A replacement commits with its reset intent (`replace_access`), so one still
             // missing after the grace period never will (an intent from before that, or the
             // replacement revoked in turn): the reset is delivered as the revocation it is.
@@ -601,6 +630,20 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             if let Some(recipient) = &row.recipient {
                 recipients.push(recipient.clone());
             }
+            let live_room: Option<String> = sqlx::query_scalar(
+                "SELECT room_id FROM social.scene_stream_access WHERE id=$1",
+            )
+            .bind(row.access_id)
+            .fetch_optional(&state.pool)
+            .await?
+            .flatten();
+            let room = row
+                .source_context
+                .as_ref()
+                .and_then(|value| value.get("binding_room"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .or(live_room);
             let mut admin_key = row
                 .source_context
                 .as_ref()
@@ -613,27 +656,15 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
                     .and_then(serde_json::Value::as_bool)
                     == Some(true);
             if admin_key.is_none() && !binding_unresolvable {
-                let room: Option<String> = sqlx::query_scalar(
-                    "SELECT room_id FROM social.scene_stream_access WHERE id=$1",
-                )
-                .bind(row.access_id)
-                .fetch_optional(&state.pool)
-                .await?
-                .flatten();
-                let room = row
-                    .source_context
-                    .as_ref()
-                    .and_then(|value| value.get("binding_room"))
-                    .and_then(serde_json::Value::as_str)
-                    .or(room.as_deref());
                 admin_key = tokio::time::timeout(
                     Duration::from_secs(5),
-                    notification_admin_key(&state.pool, row.access_id, room),
+                    notification_admin_key(&state.pool, row.access_id, room.as_deref()),
                 )
                 .await
                 .map_err(|_| ApiError::internal("stream notification binding timed out"))??;
                 binding_unresolvable = admin_key.is_none()
                     && (room
+                        .as_deref()
                         .and_then(crate::rooms::decode_world_scene_room)
                         .is_some()
                         || saved_context
@@ -650,19 +681,6 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             if changed.rows_affected() == 0 {
                 return Err(ApiError::internal("stream cleanup lease lost"));
             }
-            // Empty exact keys would still infer active World admins by parcel
-            // overlap. An unresolvable canonical binding must bypass that lookup.
-            if !binding_unresolvable {
-                recipients.extend(
-                    super::notifications::scene_admins(
-                        &state.pool,
-                        &context,
-                        row.occurred_at,
-                        &admin_key.into_iter().collect::<Vec<_>>(),
-                    )
-                    .await?,
-                );
-            }
             recipients.sort();
             recipients.dedup();
             let changed = sqlx::query("UPDATE social.scene_stream_cleanup SET recipients=$3 WHERE access_id=$1 AND claim_token=$2 AND NOT recipients_resolved")
@@ -670,13 +688,27 @@ async fn notify(state: &CommsState, row: &Cleanup, token: Uuid) -> Result<(), Ap
             if changed.rows_affected() == 0 {
                 return Err(ApiError::internal("stream cleanup lease lost"));
             }
-            let (_, resolved) = tokio::time::timeout(
-                Duration::from_secs(5),
-                super::notifications::recipients(state, &context, &recipients),
-            )
+            let resolved = tokio::time::timeout(Duration::from_secs(5), async {
+                let owner = match &row.recipient {
+                    Some(owner) => owner.clone(),
+                    None => super::notifications::owner(state, &context).await?,
+                };
+                key_recipients(
+                    state,
+                    &context,
+                    owner,
+                    admin_key.as_deref(),
+                    binding_unresolvable,
+                    room.as_deref(),
+                    row.occurred_at,
+                )
+                .await
+            })
             .await
             .map_err(|_| ApiError::internal("stream notification authority timed out"))??;
-            recipients = resolved;
+            recipients.extend(resolved);
+            recipients.sort();
+            recipients.dedup();
         }
         let template = if let Some(metadata) = metadata {
             metadata
@@ -835,6 +867,75 @@ async fn clear_stale(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn a_scalar_era_notice_reaches_the_stored_owner_and_every_admin_and_operator_once() {
+        use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let (owner, approved, admin) = (
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+        );
+        let directory = Arc::new(StubDirectory::default());
+        let state = CommsState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            crate::gatekeeper::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy {
+                land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                    owner: owner.into(),
+                    approved_for_all: vec![approved.into(), owner.into()],
+                    ..Default::default()
+                })))),
+                ..Default::default()
+            }),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            directory.clone(),
+        );
+        sqlx::query("INSERT INTO social.scene_admins (place_id, admin_address, added_by) VALUES ('-130,8', $1, $1)")
+            .bind(admin).execute(&pool).await.unwrap();
+        let context = PlaceContext {
+            place_id: "catalogue-place".into(),
+            owner_address: None,
+            world: false,
+            world_name: None,
+            base_position: "-130,8".into(),
+            positions: serde_json::json!(["-130,8"]),
+        };
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_cleanup(access_id,place_id,notification_kind,occurred_at,due_at,recipient,metadata,source_context) \
+            VALUES($1,'catalogue-place','streaming_key_revoke',timezone('UTC',now()),timezone('UTC',now()),$2,$3,$4)")
+            .bind(id).bind(owner).bind(serde_json::json!({"title":"snapshot","address":owner}))
+            .bind(serde_json::to_value(&context).unwrap()).execute(&pool).await.unwrap();
+
+        cleanup_access(&state, id).await.unwrap();
+
+        {
+            let told = directory.streaming_notifications.lock().unwrap();
+            let mut recipients: Vec<&str> = told.iter().map(|n| n.recipient.as_str()).collect();
+            recipients.sort();
+            assert_eq!(recipients, [owner, approved, admin]);
+            for notice in told.iter() {
+                assert_eq!(notice.event_key, format!("streaming_key_revoke-{id}"));
+                assert_eq!(notice.metadata["title"], "snapshot");
+                assert_eq!(notice.metadata["address"], notice.recipient.as_str());
+            }
+        }
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.scene_stream_cleanup WHERE access_id=$1)",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!pending, "the delivered row is gone");
+    }
+
     fn wallet(n: u8) -> Address {
         Address::parse(&format!("0x{n:040x}")).unwrap()
     }
@@ -873,20 +974,22 @@ mod tests {
             (place.as_str(), wallet(8), true),
             ("unrelated-scene", wallet(9), true),
         ] {
-            sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,active,removed_at) VALUES ($1,$2,$2,$3,CASE WHEN $3 THEN NULL ELSE timezone('UTC',now()) END)")
-                .bind(key).bind(admin).bind(active).execute(&pool).await.unwrap();
+            // Granted by the owner, who holds the world-wide authority.
+            sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by,active,removed_at) VALUES ($1,$2,$3,$4,CASE WHEN $4 THEN NULL ELSE timezone('UTC',now()) END)")
+                .bind(key).bind(admin).bind(wallet(1)).bind(active).execute(&pool).await.unwrap();
         }
-        let policy = if world {
-            StubPolicy {
-                world_owner: Ok(Some(wallet(1))),
-                grantees: Ok([wallet(3), wallet(4)].into_iter().collect()),
-                expected_grantee_parcels: Some(
-                    crate::world_identity::ParcelSet::parse(&["10,20"]).unwrap(),
-                ),
-                ..Default::default()
-            }
+        let policy: Arc<dyn crate::interfaces::AccessPolicy> = if world {
+            // A parcel-scoped grantee never widens its authority to the key:
+            // the admin it granted is never told, saved list or not.
+            sqlx::query("INSERT INTO social.scene_admins (place_id,admin_address,added_by) VALUES ($1,$2,$3)")
+                .bind(&admin_key).bind(wallet(11)).bind(wallet(3)).execute(&pool).await.unwrap();
+            Arc::new(super::super::notifications::test_support::WorldPolicy {
+                owner: wallet(1),
+                wide: Default::default(),
+                protected: [wallet(1), wallet(3), wallet(4)].into_iter().collect(),
+            })
         } else {
-            StubPolicy {
+            Arc::new(StubPolicy {
                 land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
                     owner: wallet(1).to_string(),
                     operator: Some(wallet(3).to_string()),
@@ -895,7 +998,7 @@ mod tests {
                     approved_for_all: vec![wallet(6).to_string()],
                 })))),
                 ..Default::default()
-            }
+            })
         };
         let directory = Arc::new(StubDirectory::default());
         let state = CommsState::new(
@@ -904,7 +1007,7 @@ mod tests {
             crate::gatekeeper::Settings::for_tests(),
             None,
             None,
-            Arc::new(policy),
+            policy,
             Arc::new(StubScenes::default()),
             Arc::new(crate::presence::Presence::new()),
             directory.clone(),
@@ -1439,6 +1542,9 @@ mod tests {
             CleanupCommand::DurationExpiry,
         ] {
             let id = fanout_access(&state, &place, command).await;
+            // A world key names its scene; a key without one tells no scene admin.
+            sqlx::query("UPDATE social.scene_stream_access SET admin_place_key=(SELECT identity::text FROM explore.world_scene_place WHERE entity_id='fanout-scene' AND world_name=$2) WHERE id=$1 AND $3")
+                .bind(id).bind(format!("{place}.dcl.eth")).bind(world).execute(&state.pool).await.unwrap();
             cleanup_access(&state, id).await.unwrap();
             {
                 let notices = directory.streaming_notifications.lock().unwrap();
@@ -2069,9 +2175,9 @@ mod tests {
             .await
             .unwrap();
 
-        // The accepted four-day credential deadline also revokes a running stream.
+        // The four-day credential deadline waits for a stream running since before it.
         let running = Uuid::new_v4();
-        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())+interval '4 days')")
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,streaming_start_time,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())-interval '1 minute',timezone('UTC',now())+interval '4 days')")
             .bind(running).bind(format!("deadline-test-{running}")).execute(&pool).await.unwrap();
         assert!(
             !enqueue_prepared(
@@ -2088,6 +2194,17 @@ mod tests {
         );
         sqlx::query("UPDATE social.scene_stream_access SET expiration_time=timezone('UTC',now())-interval '1 second' WHERE id=$1")
             .bind(running).execute(&pool).await.unwrap();
+        assert!(
+            !enqueue_prepared(&pool, running, CleanupCommand::KeyExpiry, 0, None, None, None)
+                .await
+                .unwrap(),
+            "a live broadcast keeps its expired key"
+        );
+        sqlx::query("UPDATE social.scene_stream_access SET streaming=false WHERE id=$1")
+            .bind(running)
+            .execute(&pool)
+            .await
+            .unwrap();
         // Unresolved historic owner does not prevent durable revocation intent.
         assert!(
             enqueue_prepared(
@@ -2117,6 +2234,25 @@ mod tests {
             .unwrap();
         sqlx::query("DELETE FROM social.scene_stream_access WHERE id=$1")
             .bind(running)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A streaming flag with no recorded start has no grace.
+        let unstarted = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.scene_stream_access(id,place_id,streaming_url,streaming_key,generated_by,streaming,expiration_time) VALUES($1,$2,'rtmp://example.org','test-key','test',true,timezone('UTC',now())-interval '1 second')")
+            .bind(unstarted).bind(format!("unstarted-test-{unstarted}")).execute(&pool).await.unwrap();
+        assert!(
+            enqueue_prepared(&pool, unstarted, CleanupCommand::KeyExpiry, 0, None, None, None)
+                .await
+                .unwrap()
+        );
+        sqlx::query("DELETE FROM social.scene_stream_cleanup WHERE access_id=$1")
+            .bind(unstarted)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM social.scene_stream_access WHERE id=$1")
+            .bind(unstarted)
             .execute(&pool)
             .await
             .unwrap();

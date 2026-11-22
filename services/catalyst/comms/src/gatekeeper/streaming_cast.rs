@@ -638,6 +638,29 @@ async fn room_scene(state: &CommsState, room: &str) -> Result<Option<ResolvedRoo
     }
 }
 
+/// Where the bans of a room live.
+enum RoomBans {
+    Key(SceneBanKey),
+    /// A world lobby: no scene bans.
+    Lobby,
+    /// A Genesis scene this node does not hold: refused, never its entity id.
+    Unresolved,
+}
+
+async fn scene_ban_key(state: &CommsState, scene: &ResolvedRoom) -> Result<RoomBans, ApiError> {
+    match scene
+        .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+        .await
+    {
+        Ok(Some(key)) => Ok(RoomBans::Key(key)),
+        Ok(None) => Ok(RoomBans::Lobby),
+        Err(ResolveError::Db(error)) => {
+            Err(AuthorityNotEstablished::store_unavailable("content.deployments", &error).into())
+        }
+        Err(_) => Ok(RoomBans::Unresolved),
+    }
+}
+
 // ── tokens ──
 
 #[derive(Serialize)]
@@ -1369,9 +1392,9 @@ pub async fn watcher_token(
     let scene_room = room_scene(&state, &room)
         .await?
         .ok_or_else(|| no_active_stream(location))?;
-    let ban_key = scene_room
-        .ban_key()
-        .ok_or_else(|| no_active_stream(location))?;
+    let RoomBans::Key(ban_key) = scene_ban_key(&state, &scene_room).await? else {
+        return Err(no_active_stream(location));
+    };
     if is_scene_banned(&state, &ban_key, watcher).await? {
         tracing::warn!(%watcher, place_id, "cast watcher token refused: scene ban");
         return Err(forbidden(SCENE_BANNED_WATCHER_MSG));
@@ -1658,8 +1681,12 @@ pub async fn refuse_on_join(
         return refuse_revoked_publisher(state, room, identity).await;
     };
     let banned = super::barred(state, wallet, None).await?.is_some()
-        || match room_scene(state, room).await?.and_then(|s| s.ban_key()) {
-            Some(key) => is_scene_banned(state, &key, wallet).await?,
+        || match room_scene(state, room).await? {
+            Some(scene) => match scene_ban_key(state, &scene).await? {
+                RoomBans::Key(key) => is_scene_banned(state, &key, wallet).await?,
+                RoomBans::Lobby => false,
+                RoomBans::Unresolved => true,
+            },
             None => false,
         };
     if banned {

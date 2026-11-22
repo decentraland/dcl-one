@@ -185,6 +185,15 @@ Sign-in identity upgrade: run `catalyst schema migrate` before deploying the API
 
 Curation committee upgrade: run `catalyst schema migrate` before deploying the API. Step `0052_shop_committee_index` admits the `committee` index in `shop.chain_cursor`. Builder's committee routes admit only `BUILDER_ADMIN_ADDRESSES` until `MARKETPLACE_COMMITTEE_INDEX_ENABLED` (on under the mirror posture) has walked and published the Polygon committee.
 
+Escrow lease upgrade: escrow leases (`shop.usage_grants`) no longer count as item ownership on
+their own. `EXPLORER_ESCROW_GRANTS_ENABLED` now defaults to `false` under every posture and with
+no posture; island, journey and posture-less nodes listed active leases in the explorer backpack
+before. Where the item ownership check runs (not with `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, which journey
+sets), profile and outfits deploys no longer accept an item held only by a lease. To keep both, set `EXPLORER_ESCROW_GRANTS_ENABLED=true` and
+`CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`; startup warns when only one is set. Peers that
+check ownership on chain only refuse to sync a profile or outfit that a lease alone made valid
+([decision](../../docs/adr/2026-11-03-deploy-access-from-live-rpcs.md)).
+
 On-chain bid notices upgrade: run `catalyst schema migrate` before deploying the API. Step `0053_shop_bid_received_producer` admits the `bid_received` producer in `shop.notification_cursor`. Sellers hear of Polygon ERC721BidV2 bids once `MARKETPLACE_SALES_INDEX_ENABLED` and `MARKETPLACE_NFT_INDEX_ENABLED` have published their indexes. The producer seeds its cursor at the published block, so bids indexed before it are not announced. To announce the bids placed since a previous notifier stopped, seed the cursor with `catalyst shop notice-rewind --producer bid_received` (`--since` or `--from-block`) at the first Polygon block that notifier did not cover.
 
 Scene admin upgrade: the release script

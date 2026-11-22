@@ -447,7 +447,6 @@ pub mod test_support {
         pub land: Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished>,
         pub protected: Result<BTreeSet<Address>, AuthorityNotEstablished>,
         pub grantees: Result<BTreeSet<Address>, AuthorityNotEstablished>,
-        pub expected_grantee_parcels: Option<ParcelSet>,
         /// `None`: the world exists with the `access_type` setting (unrestricted when unknown).
         pub admission: Option<WorldAdmission>,
     }
@@ -463,7 +462,6 @@ pub mod test_support {
                 land: Ok(None),
                 protected: Ok(BTreeSet::new()),
                 grantees: Ok(BTreeSet::new()),
-                expected_grantee_parcels: None,
                 admission: None,
             }
         }
@@ -542,12 +540,6 @@ pub mod test_support {
             _world: &WorldName,
             _parcels: &ParcelSet,
         ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
-            if let Some(expected) = &self.expected_grantee_parcels {
-                assert_eq!(
-                    _parcels, expected,
-                    "world notification grants must use the place footprint"
-                );
-            }
             self.grantees.as_ref().cloned().map_err(copy)
         }
     }

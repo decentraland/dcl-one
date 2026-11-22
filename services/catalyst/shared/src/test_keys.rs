@@ -1,5 +1,5 @@
-//! Fixed test wallets and signed-fetch header builders the comms, worlds and
-//! social tests share.
+//! Fixed test wallets, signed auth chains and signed-fetch header builders the
+//! comms, content, worlds and social tests share.
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
@@ -14,6 +14,8 @@ pub const KEY: &str = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d
 pub const AUTHORITATIVE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 pub const OUTSIDER_KEY: &str = "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba";
+/// Hardhat's first public dev account; the content tests sign their entities with it.
+pub const ENTITY_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 pub fn wallet(key: &str) -> PrivateKeySigner {
     key.parse().unwrap()
@@ -65,24 +67,7 @@ pub async fn signed_at(
         Shape::Legacy => build_legacy_payload(method, path, timestamp, signed),
         Shape::V6 => build_payload_v6(method, path, timestamp, signed),
     };
-    let wallet = wallet(key);
-    let signature = wallet
-        .sign_message(payload.as_bytes())
-        .await
-        .unwrap()
-        .to_string();
-    let chain = [
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", wallet.address()),
-            signature: Some(String::new()),
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload,
-            signature: Some(signature),
-        },
-    ];
+    let chain = signed_chain(key, &payload).await;
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTH_TIMESTAMP_HEADER,
@@ -99,6 +84,29 @@ pub async fn signed_at(
         );
     }
     headers
+}
+
+/// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY) in which `key` signs `payload`: an entity
+/// id or a signed-fetch payload.
+pub async fn signed_chain(key: &str, payload: &str) -> Vec<AuthLink> {
+    let wallet = wallet(key);
+    let signature = wallet
+        .sign_message(payload.as_bytes())
+        .await
+        .unwrap()
+        .to_string();
+    vec![
+        AuthLink {
+            link_type: AuthLinkType::SIGNER,
+            payload: format!("{:#x}", wallet.address()),
+            signature: Some(String::new()),
+        },
+        AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload: payload.to_string(),
+            signature: Some(signature),
+        },
+    ]
 }
 
 pub async fn signed(key: &str, method: &str, path: &str, metadata: &str) -> HeaderMap {

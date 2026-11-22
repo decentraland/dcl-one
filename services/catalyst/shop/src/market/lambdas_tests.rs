@@ -1206,8 +1206,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "{uri}"
     );
     // An active escrow grant joins the explorer's on-chain copies only where
-    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
-    // as lamb2 lists chain-owned tokens only).
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off unless the operator opts
+    // in, as lamb2 lists chain-owned tokens only).
     sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
         .bind(OWNER)
         .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))

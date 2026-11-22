@@ -288,6 +288,50 @@ fn resolved_room(realm: RealmId, scene: &str, parcel: &str) -> ResolvedRoom {
     }
 }
 
+/// Answers a Genesis lookup with `genesis` and any other with `world`.
+struct TwoScenes {
+    genesis: ResolvedRoom,
+    world: ResolvedRoom,
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::SceneIdentity for TwoScenes {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+        crate::interfaces::test_support::classify_fixture(self, room).await
+    }
+
+    async fn resolve(
+        &self,
+        request: crate::rooms::RoomRequest<'_>,
+    ) -> Result<ResolvedRoom, crate::rooms::ResolveError> {
+        Ok(match request {
+            crate::rooms::RoomRequest::Adapter {
+                realm: RealmId::Shared(_),
+                ..
+            } => self.genesis.clone(),
+            _ => self.world.clone(),
+        })
+    }
+
+    async fn world_scene(
+        &self,
+        _: &WorldName,
+        _: &SceneId,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        Ok(self.world.deployment.clone())
+    }
+
+    async fn world_active_scene(
+        &self,
+        _: &WorldName,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        Ok(self.world.deployment.clone())
+    }
+}
+
 struct Harness {
     state: SharedState,
     app: axum::Router,
@@ -1240,11 +1284,21 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
         "0,0",
     )
     .await;
-    let h = harness(
+    let genesis_room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness_tuned(
         pool.clone(),
-        Some(world_room.clone()),
-        PermissionDecision::Allowed,
         None,
+        StubPolicy {
+            admin: PermissionDecision::Allowed,
+            ..Default::default()
+        },
+        None,
+        |state| {
+            state.scenes = Arc::new(TwoScenes {
+                genesis: genesis_room,
+                world: world_room.clone(),
+            })
+        },
     )
     .await;
     let watch = |location: String| json!({"location": location, "identity": "Viewer #1"});
@@ -1327,10 +1381,10 @@ async fn a_viewer_watches_a_parcel_or_world_stream_unless_banned() {
     assert_eq!(body["roomId"], world_room.room);
     assert_eq!(body["placeName"], world.display());
 
-    // Banned from the scene the stream runs in.
+    // Banned from the scene the stream runs in, on its place.
     h.state
         .moderation
-        .scene_ban(&scene.id, &viewer, &wallet(), &[], "Scene")
+        .scene_ban(&scene.parcel, &viewer, &wallet(), &[], "Scene")
         .await
         .unwrap();
     let (status, body) = h
@@ -1427,7 +1481,8 @@ async fn platform_bans_refuse_watchers_by_wallet_or_recorded_device() {
     }
 
     // Another wallet's ban on the device this wallet last connected from.
-    let h = harness(pool.clone(), None, PermissionDecision::Allowed, None).await;
+    let room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
     let key = random_key();
     let viewer = Address::parse(&address_of(&key)).unwrap();
     let device = format!("cast-device-{}", tag());
@@ -3094,6 +3149,125 @@ async fn a_live_ingress_with_the_flag_down_is_flagged_and_capped() {
     crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
 }
 
+/// A key that expires during a broadcast keeps the stream; the key job's
+/// first pass after the broadcast ends retires it.
+#[tokio::test]
+async fn an_expired_key_is_retired_after_its_broadcast_ends() {
+    // A database of its own: the pass reads every active credential.
+    let Some(pool) = own_db().await else { return };
+    let (_, room, metadata) = seeded_scene(&pool).await;
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = streaming_start_time WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let state = || async {
+        sqlx::query_as::<_, (bool, Option<String>)>(
+            "SELECT a.active, c.notification_kind FROM social.scene_stream_access a \
+             LEFT JOIN social.scene_stream_cleanup c ON c.access_id = a.id WHERE a.id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let pass = crate::gatekeeper::streaming::key_expiry_pass_for_test;
+
+    pass(&h.state).await;
+    assert_eq!(
+        state().await,
+        (true, None),
+        "the live broadcast keeps its key"
+    );
+    assert_eq!(h.livekit.deleted_ingresses.load(Ordering::SeqCst), 0);
+
+    report_ingress(&h, &ingress, "ENDPOINT_INACTIVE");
+    ingress_webhook(&h, "ingress_ended", &ingress).await;
+    assert!(!streaming_flag(&pool, id).await, "the broadcast ended");
+    pass(&h.state).await;
+    assert_eq!(
+        state().await,
+        (false, Some("streaming_key_expired".into())),
+        "the ended broadcast's key expires"
+    );
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
+}
+
+/// The grace is for the broadcast live at the deadline: one restarted after
+/// it (a reconnect between two passes) loses the expired key.
+#[tokio::test]
+async fn a_broadcast_restarted_after_the_deadline_loses_the_expired_key() {
+    // A database of its own: the pass reads every active credential.
+    let Some(pool) = own_db().await else { return };
+    let (_, room, metadata) = seeded_scene(&pool).await;
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = streaming_start_time WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    report_ingress(&h, &ingress, "ENDPOINT_INACTIVE");
+    ingress_webhook(&h, "ingress_ended", &ingress).await;
+    report_ingress(&h, &ingress, "ENDPOINT_PUBLISHING");
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    assert!(streaming_flag(&pool, id).await, "the broadcast restarted");
+
+    crate::gatekeeper::streaming::key_expiry_pass_for_test(&h.state).await;
+    let retired: (bool, Option<String>) = sqlx::query_as(
+        "SELECT a.active, c.notification_kind FROM social.scene_stream_access a \
+         LEFT JOIN social.scene_stream_cleanup c ON c.access_id = a.id WHERE a.id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retired, (false, Some("streaming_key_expired".into())));
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
+}
+
+/// The grace for the broadcast live at the deadline ends with the four-hour cap.
+#[tokio::test]
+async fn a_broadcast_live_at_the_deadline_is_still_capped_at_four_hours() {
+    // A database of its own: the passes read every active credential.
+    let Some(pool) = own_db().await else { return };
+    let (_, room, metadata) = seeded_scene(&pool).await;
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let (id, ingress) = linked_ingress(&h, &metadata, "ENDPOINT_PUBLISHING").await;
+    ingress_webhook(&h, "ingress_started", &ingress).await;
+    sqlx::query("UPDATE social.scene_stream_access SET expiration_time = streaming_start_time WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::gatekeeper::streaming::key_expiry_pass_for_test(&h.state).await;
+    assert!(
+        streaming_flag(&pool, id).await,
+        "the live broadcast keeps its key"
+    );
+
+    sqlx::query("UPDATE social.scene_stream_access SET streaming_start_time = streaming_start_time - interval '4 hours', expiration_time = expiration_time - interval '4 hours' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let pass = crate::gatekeeper::streaming::ttl_pass_for_test;
+    assert!(pass(&h.state, id).await, "the cap cuts the stream");
+    let kind: String = sqlx::query_scalar(
+        "SELECT notification_kind FROM social.scene_stream_cleanup WHERE access_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kind, "streaming_time_exceeded");
+    crate::gatekeeper::streaming::drain_cleanup_for_test(&h.state, id).await;
+}
+
 /// The same lost webhook, before the pass: a link request that would
 /// replace the credential is refused as for a live broadcast.
 #[tokio::test]
@@ -3186,6 +3360,179 @@ async fn a_redeploy_keeps_the_scene_admins_of_the_place() {
     }
 }
 
+/// A Genesis scene's bans are on its place, as its admins are: a redeploy
+/// on the same base parcel keeps both, the new scene's join refuses the
+/// banned wallet, and the removal of the place ends the ban and the grant.
+#[tokio::test]
+async fn a_genesis_redeploy_keeps_the_bans_and_admins_until_the_place_is_removed() {
+    // A database of its own: the pass takes every pending removal.
+    let Some(pool) = own_db().await else { return };
+    let (scene, old, metadata) = seeded_scene(&pool).await;
+    let (admin, banned) = (random_key(), random_key());
+    let before = authority_harness(&pool, &old, actor_policy(&pool, &[])).await;
+    scene_admin(&before, KEY, "POST", &metadata, &admin).await;
+    let body = json!({"banned_address": address_of(&banned)});
+    let (status, body) = before
+        .signed(KEY, "POST", "/scene-bans", &metadata, Some(body))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+
+    let (new, metadata) = redeployed(&old, &metadata);
+    let h = authority_harness(&pool, &new, actor_policy(&pool, &[])).await;
+    let (status, body) = h
+        .signed(&admin, "GET", "/scene-bans/addresses", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains(&address_of(&banned)), "{body}");
+    let mut join = metadata.clone();
+    join["signer"] = json!("dcl:explorer");
+    join["realmName"] = json!("main");
+    let (status, body) = h
+        .signed(&banned, "POST", "/get-scene-adapter", &join, None)
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // A Cast of the new scene refuses the banned watcher, on the place.
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&new.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let watch = json!({"location": scene.parcel, "identity": "viewer"});
+    let (status, body) = h
+        .signed(
+            &banned,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // A redeploy on another base parcel is another place, without the ban.
+    let parcel = unique_parcel();
+    seed_place(
+        &pool,
+        &format!("cast-moved-{}", tag()),
+        json!({ "positions": [parcel] }),
+        &parcel,
+    )
+    .await;
+    let (moved, moved_metadata) = redeployed_at(&new, &metadata, &parcel);
+    let m = authority_harness(&pool, &moved, actor_policy(&pool, &[])).await;
+    let (status, body) = m
+        .signed(KEY, "GET", "/scene-bans/addresses", &moved_metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.to_string().contains(&address_of(&banned)), "{body}");
+    // A resolver fault refuses the watcher with 503, never without the ban.
+    let down = harness_tuned(pool.clone(), None, StubPolicy::default(), None, |state| {
+        state.scenes = Arc::new(StubScenes {
+            room: Err(crate::rooms::ResolveError::Db(sqlx::Error::PoolClosed)),
+            scene: Ok(None),
+        });
+    })
+    .await;
+    let watch = json!({"location": scene.parcel, "identity": "viewer"});
+    let (status, body) = down
+        .signed(
+            &banned,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+
+    sqlx::query("DELETE FROM explore.place WHERE id = $1")
+        .bind(&scene.place_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let cleaned = crate::gatekeeper::moderation::maintenance::run_once(&h.state).await;
+    assert!(cleaned.is_ok(), "{cleaned:?}");
+    let (bans, admins): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM social.scene_bans WHERE place_id = $1), \
+                (SELECT count(*) FROM social.scene_admins WHERE place_id = $1 AND active)",
+    )
+    .bind(&scene.parcel)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((bans, admins), (0, 0));
+}
+
+/// A wallet joining a Genesis scene from a parcel that is not its base meets
+/// the ban made on the scene: the key is the base parcel whatever parcel the
+/// request names, at the adapter and for a Cast watcher.
+#[tokio::test]
+async fn a_genesis_ban_holds_on_every_parcel_of_the_scene() {
+    let Some(pool) = scratch().await else { return };
+    let scene = genesis_scene();
+    let side = unique_parcel();
+    seed_place(
+        &pool,
+        &scene.place_id,
+        json!({ "positions": [scene.parcel, side] }),
+        &scene.parcel,
+    )
+    .await;
+    let mut room = resolved_room(RealmId::Shared("main".into()), &scene.id, &scene.parcel);
+    let deployment = room.deployment.as_mut().unwrap();
+    deployment.parcels = [deployment.base, Parcel::parse(&side).unwrap()]
+        .into_iter()
+        .collect();
+    let h = authority_harness(&pool, &room, actor_policy(&pool, &[])).await;
+    let mut metadata = scene_metadata(&scene);
+    metadata["parcel"] = json!(side);
+    let banned = random_key();
+    let body = json!({"banned_address": address_of(&banned)});
+    let (status, body) = h
+        .signed(KEY, "POST", "/scene-bans", &metadata, Some(body))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let stored: String =
+        sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address = $1")
+            .bind(address_of(&banned))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, scene.parcel);
+
+    let mut join = metadata.clone();
+    join["signer"] = json!("dcl:explorer");
+    join["realmName"] = json!("main");
+    let (status, body) = h
+        .signed(&banned, "POST", "/get-scene-adapter", &join, None)
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, body) = h
+        .signed(&random_key(), "POST", "/get-scene-adapter", &join, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    seed_access(
+        &pool,
+        &scene.place_id,
+        Some(&room.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let watch = json!({"location": side, "identity": "viewer"});
+    let (status, body) = h
+        .signed(
+            &banned,
+            "POST",
+            "/cast/watcher-token",
+            &viewer_metadata(),
+            Some(watch),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+}
+
 /// A key is for one scene room, and a redeploy gives the scene a new room:
 /// the key made before is revoked when it is next read or used, as any
 /// revoked key, and the next link is a key for the new room.
@@ -3219,8 +3566,8 @@ async fn a_redeploy_revokes_the_key_of_the_old_scene_room() {
 }
 
 /// `DELETE /scene-admin` revokes the key the removed admin generated, and
-/// tells the place's owner as any revocation does; the removal of another
-/// admin leaves the key alone.
+/// tells the place's owner and its remaining admins as any revocation does;
+/// the removal of another admin leaves the key alone.
 #[tokio::test]
 async fn removing_a_scene_admin_revokes_the_key_it_generated() {
     let Some(pool) = scratch().await else { return };
@@ -3238,8 +3585,8 @@ async fn removing_a_scene_admin_revokes_the_key_it_generated() {
         },
     )
     .await;
-    let (admin, other) = (random_key(), random_key());
-    for admin in [&admin, &other] {
+    let (admin, other, kept) = (random_key(), random_key(), random_key());
+    for admin in [&admin, &other, &kept] {
         scene_admin(&h, KEY, "POST", &metadata, admin).await;
     }
     let key = stream_link(&h, &admin, &metadata).await;
@@ -3253,9 +3600,15 @@ async fn removing_a_scene_admin_revokes_the_key_it_generated() {
     scene_admin(&h, KEY, "DELETE", &metadata, &admin).await;
     assert_revoked(&h, &key, &scene.room, &streamer).await;
     let told = social.streaming_notifications.lock().unwrap();
-    assert_eq!(told.len(), 1);
-    assert_eq!(told[0].kind, StreamingNotificationKind::KeyRevoke);
-    assert_eq!(told[0].recipient.as_str(), address_of(KEY));
+    assert!(
+        told.iter()
+            .all(|notice| notice.kind == StreamingNotificationKind::KeyRevoke)
+    );
+    let mut recipients: Vec<String> = told.iter().map(|n| n.recipient.as_str().into()).collect();
+    recipients.sort();
+    let mut expected = vec![address_of(KEY), address_of(&kept)];
+    expected.sort();
+    assert_eq!(recipients, expected);
 }
 
 /// LiveKit answers a delete only when the ingress worker stopped the push,
@@ -3683,8 +4036,16 @@ async fn a_burst_of_notifications_for_one_place_ends_with_its_check() {
 async fn a_watcher_banned_since_its_token_is_refused_on_join() {
     let Some(pool) = scratch().await else { return };
     let (scene, room, _) = seeded_scene(&pool).await;
-    let h = harness(pool.clone(), Some(room), PermissionDecision::Allowed, None).await;
-    // A preview room: its joins write no scene metadata.
+    let policy = StubPolicy {
+        admin: PermissionDecision::Allowed,
+        ..Default::default()
+    };
+    let h = harness_tuned(pool.clone(), Some(room), policy, None, |state| {
+        state.settings.allow_local_preview = true;
+    })
+    .await;
+    // A preview room: its joins write no scene metadata, and with
+    // ALLOW_LOCAL_PREVIEW its bans are on the entity id.
     let room = format!("scene:preview:{}", scene.id);
     seed_access(
         &pool,

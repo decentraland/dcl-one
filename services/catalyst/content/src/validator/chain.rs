@@ -7,7 +7,7 @@
 //! | --- | --- |
 //! | LAND rights of a scene | `checkLAND` per parcel (owner, operator, update operator, update manager, approved; of the LAND or its estate) |
 //! | claimed names | `checkName` per name |
-//! | owned wearables/emotes | `ownerOf` of each item token, `ownerOf`/`balanceOf` of each third-party item's NFT, plus the escrow lease overlay `shop.usage_grants` |
+//! | owned wearables/emotes | `ownerOf` of each item token, `ownerOf`/`balanceOf` of each third-party item's NFT; with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED`, also the escrow lease overlay `shop.usage_grants` |
 //! | collection access of a wearable/emote deploy | `validateWearables` with the ADR-32 hashes of the deployment; L1 items only by the Decentraland address |
 //! | third-party items | `validateThirdParty` with the root the entity's merkle proof yields |
 //!
@@ -89,7 +89,8 @@ fn lease_covers(urn: &str, grants: &[(String, Option<String>)]) -> bool {
 }
 
 impl Sources {
-    /// The owner's active escrow leases (`shop.usage_grants`) on the
+    /// The owner's active, still-locked escrow leases (`shop.usage_grants`:
+    /// `active` with `unlock_at` ahead, as the backpack reads them) on the
     /// requested URNs (`exact`, compared as stored) or under the requested
     /// `LIKE` patterns: `(urn key, token id)`. Bounded by the request; the
     /// grantee's partial index serves it (the urn clause is a filter).
@@ -105,6 +106,7 @@ impl Sources {
         let rows: Vec<(String, Option<String>)> = sqlx::query_as(
             "SELECT urn, token_id FROM shop.usage_grants \
              WHERE grantee_address = lower($1) AND status = 'active' \
+               AND unlock_at > timezone('UTC', now()) \
                AND (urn = ANY($2) OR urn LIKE ANY($3))",
         )
         .bind(owner)
@@ -157,16 +159,21 @@ impl BlockchainChecker for Sources {
         if urns.is_empty() {
             return Ok(PermissionResult::ok());
         }
-        // Leased items first: the chain must grant every other item at one block.
-        let patterns: Vec<String> = urns
-            .iter()
-            .flat_map(|u| [like_pattern(u), like_pattern(&urn_key(u))])
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let grants = self
-            .granted(eth_address, &exact_forms(urns.iter()), &patterns)
-            .await?;
+        // Leased items first, only with CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED
+        // (a peer that checks ownership on chain only rejects what a lease
+        // admits): the chain must grant every other item at one block.
+        let grants = if self.escrow_lease_ownership {
+            let patterns: Vec<String> = urns
+                .iter()
+                .flat_map(|u| [like_pattern(u), like_pattern(&urn_key(u))])
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            self.granted(eth_address, &exact_forms(urns.iter()), &patterns)
+                .await?
+        } else {
+            Vec::new()
+        };
         let on_chain: Vec<String> = urns
             .iter()
             .filter(|u| !lease_covers(u, &grants))

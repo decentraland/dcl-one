@@ -1588,6 +1588,16 @@ async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existi
     catalyst::worlds::rooms::ensure_scene_admin_place_release(pool)
         .await
         .unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/genesis-scene-ban-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_genesis_scene_ban_release(pool)
+        .await
+        .unwrap();
     // The previous main has the same schema version and throttle relation,
     // but not this additive queue. Only this test-owned database is changed.
     sqlx::query("DROP TABLE social.world_access_rechecks")

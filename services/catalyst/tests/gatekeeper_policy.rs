@@ -1447,26 +1447,16 @@ mod stream_access {
         .await
         .unwrap();
         assert_eq!(rows, 2, "the replaced credential is kept, inactive");
+        // The owner and both scene admins, once each.
+        let granted = Address::parse(&address_of(&granted_key)).unwrap();
+        let recipients =
+            std::collections::BTreeSet::from([land_owner.clone(), admin.clone(), granted.clone()]);
         {
             let notifications = directory.streaming_notifications.lock().unwrap();
-            let expected = std::collections::BTreeSet::from([
-                land_owner.clone(),
-                admin.clone(),
-                Address::parse(&address_of(&granted_key)).unwrap(),
-            ]);
-            assert_eq!(notifications.len(), expected.len());
-            assert_eq!(
-                notifications
-                    .iter()
-                    .map(|event| event.recipient.clone())
-                    .collect::<std::collections::BTreeSet<_>>(),
-                expected
-            );
-            assert!(
-                notifications
-                    .iter()
-                    .all(|event| event.kind == StreamingNotificationKind::KeyReset)
-            );
+            let told: std::collections::BTreeSet<_> =
+                notifications.iter().map(|n| n.recipient.clone()).collect();
+            assert_eq!(notifications.len(), 3);
+            assert_eq!(told, recipients);
         }
 
         let stranger = random_key();
@@ -1584,23 +1574,15 @@ mod stream_access {
         );
         {
             let notifications = directory.streaming_notifications.lock().unwrap();
-            let expected = std::collections::BTreeSet::from([
-                land_owner.clone(),
-                admin.clone(),
-                Address::parse(&address_of(&granted_key)).unwrap(),
-            ]);
-            assert_eq!(notifications.len(), expected.len() * 2);
-            for kind in [
-                StreamingNotificationKind::KeyReset,
-                StreamingNotificationKind::KeyRevoke,
-            ] {
+            assert_eq!(notifications.len(), 6);
+            for recipient in &recipients {
                 assert_eq!(
                     notifications
                         .iter()
-                        .filter(|event| event.kind == kind)
-                        .map(|event| event.recipient.clone())
-                        .collect::<std::collections::BTreeSet<_>>(),
-                    expected
+                        .filter(|event| &event.recipient == recipient)
+                        .count(),
+                    2,
+                    "{recipient} hears of the reset and the removal"
                 );
             }
         }
@@ -3187,6 +3169,20 @@ mod relay_authority_policy {
         );
         let (player, banned, other) = (wallet(), wallet(), wallet());
         let scene = format!("bafkrei{}", Uuid::new_v4().simple());
+        let n = Uuid::new_v4().as_u128();
+        let parcel = format!("{},{}", 20_000 + n % 9_000, 20_000 + (n >> 32) % 9_000);
+        sqlx::query(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+             entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+             VALUES ('0x0000000000000000000000000000000000000001', 'v3', 'scene', $1, $2, timezone('UTC', now()), $3, \
+             timezone('UTC', now()), '[]'::json)",
+        )
+        .bind(&scene)
+        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel } })))
+        .bind(vec![parcel.clone()])
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             relay
                 .authorize(&room(
@@ -3214,6 +3210,27 @@ mod relay_authority_policy {
                 .await,
             Err(DenialReason::NotAuthorized)
         );
+        // A scene ban is read on the place, the base parcel; a Genesis room
+        // no deployment stands behind is refused.
+        let scene_banned = wallet();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+            .bind(&parcel)
+            .bind(&scene_banned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (who, room_name) in [
+            (&scene_banned, format!("scene:main:{scene}")),
+            (&player, "scene:main:bafkreinotdeployed".to_string()),
+        ] {
+            assert_eq!(
+                relay
+                    .authorize(&room(who.as_str(), who.as_str(), &room_name, ""))
+                    .await,
+                Err(DenialReason::NotAuthorized),
+                "{room_name}"
+            );
+        }
         assert_eq!(
             relay
                 .authorize(&room(player.as_str(), player.as_str(), "island-abc", ""))

@@ -26,6 +26,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use crate::shared::routing::{erase, get, post};
+use crate::storage::gc;
 use axum::body::Bytes;
 use axum::extract::{Extension, OriginalUri, Path, Query, State};
 use axum::http::HeaderMap;
@@ -360,9 +361,42 @@ fn authorized_community_binding(
         .map_err(|_| ApiError::bad_request("community_id must be a uuid"))
 }
 
-/// Stores the bytes under their CID; `wrote` is set when this call created
-/// the blob, so a write that then loses its race keeps its budget spent.
+/// The blob budget a request spent, and whether any of its blobs was created.
+struct BlobSpend<'a> {
+    signer: &'a str,
+    kib: u32,
+    wrote: bool,
+}
+
+impl BlobSpend<'_> {
+    /// Gives the budget back unless a blob was created: a write that loses
+    /// its race after creating one keeps its budget spent.
+    fn refund_unwritten(&self) {
+        if !self.wrote {
+            BLOB_BUDGET.refund(self.signer, self.kib);
+        }
+    }
+}
+
+/// Stores the bytes under their CID for a row the caller writes and commits
+/// on `tx` (under the store lock's shared side, [`gc::store_for_row`]),
+/// marking `spend` when this call created the blob. A failed store refunds
+/// `spend` (unless an earlier blob was created), so a retry is not charged twice.
 async fn store_blob(
+    tx: &mut sqlx::PgConnection,
+    state: &MessagingState,
+    bytes: Vec<u8>,
+    spend: &mut BlobSpend<'_>,
+) -> Result<String, ApiError> {
+    let stored = store_blob_bytes(tx, state, bytes, &mut spend.wrote).await;
+    if stored.is_err() {
+        spend.refund_unwritten();
+    }
+    stored
+}
+
+async fn store_blob_bytes(
+    tx: &mut sqlx::PgConnection,
     state: &MessagingState,
     bytes: Vec<u8>,
     wrote: &mut bool,
@@ -375,17 +409,17 @@ async fn store_blob(
             .await
             .map_err(|e| ApiError::internal(format!("mls blob hash task: {e}")))?
     };
-    let stored = async {
-        if !storage.exist(&cid).await? {
-            storage.store(&cid, bytes).await?;
-            *wrote = true;
+    match gc::store_for_row(tx, storage, &cid, bytes).await {
+        Ok(created) => *wrote |= created,
+        Err(gc::GcError::LockTimeout) => {
+            return Err(service_unavailable(
+                "The message store is being collected; retry shortly",
+            ));
         }
-        Ok::<_, crate::storage::StorageError>(())
-    }
-    .await;
-    if let Err(e) = stored {
-        tracing::error!(error = %e, "mls blob store failed");
-        return Err(service_unavailable("The message store is unavailable"));
+        Err(e) => {
+            tracing::error!(error = %e, "mls blob store failed");
+            return Err(service_unavailable("The message store is unavailable"));
+        }
     }
     Ok(cid)
 }
@@ -626,7 +660,12 @@ pub async fn create_group(
     if exists {
         return Err(ApiError::http(409, "group already exists"));
     }
-    let (mut spent, mut wrote) = (0, false);
+    let mut spend = BlobSpend {
+        signer: &creator,
+        kib: 0,
+        wrote: false,
+    };
+    let mut tx = state.pool.begin().await?;
     let initial = match &b.initial_commit {
         Some(c) => {
             let commit_bytes = opaque(decode_b64(c, "initial_commit")?, "initial_commit")?;
@@ -638,14 +677,14 @@ pub async fn create_group(
                 .as_deref()
                 .map(|w| decode_b64(w, "welcome").and_then(|w| opaque(w, "welcome")))
                 .transpose()?;
-            spent = spend_blob_budget(
+            spend.kib = spend_blob_budget(
                 &creator,
                 commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
             )?;
             let commit_hash = mls::content_hash(&commit_bytes);
-            let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
+            let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut spend).await?;
             let welcome_cid = match welcome_bytes {
-                Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
+                Some(w) => Some(store_blob(&mut tx, &state, w, &mut spend).await?),
                 None => None,
             };
             Some((commit_cid, welcome_cid, commit_hash))
@@ -687,12 +726,11 @@ pub async fn create_group(
     .bind(&commit_hash)
     .bind(chrono::Utc::now().timestamp())
     .bind(now)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     if !created {
-        if !wrote {
-            BLOB_BUDGET.refund(&creator, spent);
-        }
+        spend.refund_unwritten();
         return Err(ApiError::http(409, "group already exists"));
     }
     // An initial commit moves the group from epoch 0 to 1.
@@ -806,15 +844,19 @@ pub async fn submit_commit(
         creator: &creator,
     };
     check_roster_change(&state.pool, &group, &signer, &added, &removed).await?;
-    let spent = spend_blob_budget(
-        &signer,
-        commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
-    )?;
+    let mut spend = BlobSpend {
+        signer: &signer,
+        kib: spend_blob_budget(
+            &signer,
+            commit_bytes.len() + welcome_bytes.as_ref().map_or(0, Vec::len),
+        )?,
+        wrote: false,
+    };
     let commit_hash = mls::content_hash(&commit_bytes);
-    let mut wrote = false;
-    let commit_cid = store_blob(&state, commit_bytes, &mut wrote).await?;
+    let mut tx = state.pool.begin().await?;
+    let commit_cid = store_blob(&mut tx, &state, commit_bytes, &mut spend).await?;
     let welcome_cid = match welcome_bytes {
-        Some(w) => Some(store_blob(&state, w, &mut wrote).await?),
+        Some(w) => Some(store_blob(&mut tx, &state, w, &mut spend).await?),
         None => None,
     };
     let now = now_utc();
@@ -850,12 +892,11 @@ pub async fn submit_commit(
     .bind(&added)
     .bind(&removed)
     .bind(now)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     if b.epoch != locked + 1 {
-        if !wrote {
-            BLOB_BUDGET.refund(&signer, spent);
-        }
+        spend.refund_unwritten();
         return Err(ApiError::http(409, "epoch advanced concurrently; retry"));
     }
     Ok(Json(
@@ -1083,9 +1124,13 @@ pub async fn send_message(
     let signature_hash = mls::content_hash(
         format!("{group_id}:{}:{signer}:{ciphertext_hash}", routing.epoch).as_bytes(),
     );
-    let spent = spend_blob_budget(&signer, ciphertext.len())?;
-    let mut wrote = false;
-    let ciphertext_cid = store_blob(&state, ciphertext, &mut wrote).await?;
+    let mut spend = BlobSpend {
+        signer: &signer,
+        kib: spend_blob_budget(&signer, ciphertext.len())?,
+        wrote: false,
+    };
+    let mut tx = state.pool.begin().await?;
+    let ciphertext_cid = store_blob(&mut tx, &state, ciphertext, &mut spend).await?;
     let inserted = sqlx::query(
         "INSERT INTO social.mls_message_refs \
             (signature_hash, group_id, author, epoch, ciphertext_hash, ciphertext_cid, signed_at, received_at) \
@@ -1099,11 +1144,12 @@ pub async fn send_message(
     .bind(&ciphertext_cid)
     .bind(now)
     .bind(now_utc())
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
-    if inserted == 0 && !wrote {
-        BLOB_BUDGET.refund(&signer, spent);
+    tx.commit().await?;
+    if inserted == 0 {
+        spend.refund_unwritten();
     }
     Ok(Json(json!({
         "group_id": group_id,
@@ -1416,6 +1462,39 @@ mod tests {
             429
         );
         spend_blob_budget(&light, MAX_OPAQUE_BYTES).unwrap();
+    }
+
+    /// A store refused on the store lock (the collector holds it) answers
+    /// 503 and gives the budget back, so the retry is not charged twice.
+    #[tokio::test]
+    async fn a_blob_store_refused_on_the_store_lock_refunds_its_budget() {
+        let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mls-refund-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = MessagingState::new(pool.clone(), storage, None, Settings::default());
+        let signer = address_of(&random_key());
+        for _ in 0..63 {
+            spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap();
+        }
+        let mut spend = BlobSpend {
+            signer: &signer,
+            kib: spend_blob_budget(&signer, MAX_OPAQUE_BYTES).unwrap(),
+            wrote: false,
+        };
+        let collector = gc::lock_store_exclusive(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let refused = store_blob(&mut tx, &state, vec![7; MAX_OPAQUE_BYTES], &mut spend)
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code, 503);
+        drop(tx);
+        collector.rollback().await.unwrap();
+        spend_blob_budget(&signer, MAX_OPAQUE_BYTES)
+            .expect("the refused store gave its budget back");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

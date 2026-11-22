@@ -312,7 +312,7 @@ async fn validate_synced_within(
     }
     let files = HashMap::from([(
         entity_id.to_string(),
-        bytes::Bytes::copy_from_slice(entity_bytes),
+        bytes::Bytes::copy_from_slice(entity_bytes).into(),
     )]);
     let synced = Synced {
         sources,
@@ -439,7 +439,7 @@ mod tests {
             .expect("no thumbnail check on a synced item");
 
         let entity = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes))]);
+        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes).into())]);
         let local = super::super::validate(
             &entity,
             &files,
@@ -827,13 +827,11 @@ mod tests {
             files: &files,
             auth_chain: &chain,
         };
-        // The local check reads the escrow overlay.
-        let Some(pool) = crate::sync_test_support::test_pool(1).await else {
-            return;
-        };
+        // Neither check reads the database: without the escrow-lease opt-in
+        // the local check reads no lease either.
         let (storage, tmp) = crate::sync_test_support::temp_storage("malformed-urn").await;
         let sources = Sources::new(
-            pool,
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             storage,
             crate::http::Outbound::for_tests(),
             None,

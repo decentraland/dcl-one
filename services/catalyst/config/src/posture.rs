@@ -320,15 +320,11 @@ const ROWS: &[Row] = &[
         "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/tpr-matic-mainnet",
     ),
-    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
-    // answers the same; island and journey also list this node's escrow grants.
-    row(
-        "lambdas",
-        "EXPLORER_ESCROW_GRANTS_ENABLED",
-        Is("false"),
-        Is("true"),
-        Is("true"),
-    ),
+    // lamb2's explorer backpack lists chain-owned tokens only; listing this
+    // node's escrow grants too stays an operator's opt-in under every posture,
+    // island and journey included: set `EXPLORER_ESCROW_GRANTS_ENABLED=true`
+    // with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`.
+    same("lambdas", "EXPLORER_ESCROW_GRANTS_ENABLED", "false"),
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
     // and `textSearch` only: a mirror answers the same; island and journey
     // also take this node's extended filters.
@@ -569,6 +565,11 @@ const ROWS: &[Row] = &[
         Is("false"),
         Is("true"),
     ),
+    // Peers check item ownership on chain only and reject an entity that
+    // wears an item held only by an escrow lease, so counting leases stays an
+    // operator's opt-in under every posture (set it with
+    // `EXPLORER_ESCROW_GRANTS_ENABLED`).
+    same("writes", "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "false"),
     // PRESENCE_COLLECTOR_ENABLED stays unset: the headcount archive writes
     // to the database, so it follows DATA_WRITES_ENABLED.
 ];
@@ -717,6 +718,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
     config.content.denylist_urls()?;
+    config.content.check_upload_limits()?;
     let Some(posture) = posture else {
         return Ok(());
     };

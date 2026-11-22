@@ -68,6 +68,12 @@ pub(crate) async fn ttl_pass_for_test(state: &CommsState, id: Uuid) -> bool {
     jobs::enqueue(state, id, cut).await.unwrap()
 }
 
+/// The key expiry job's pass, for tests with a database of their own.
+#[cfg(test)]
+pub(crate) async fn key_expiry_pass_for_test(state: &CommsState) {
+    jobs::expire_keys(state).await.unwrap();
+}
+
 /// Preserve exact native room bindings before startup exposes any scene writers.
 /// Batches bound memory; unresolved or noncanonical imported rooms remain NULL.
 pub async fn backfill_admin_place_keys(pool: &PgPool) -> Result<(), sqlx::Error> {
@@ -384,19 +390,29 @@ pub(super) fn key_authority<'a>(
     scene: PlaceLookup<'a>,
 ) -> PlaceLookup<'a> {
     match world {
-        Some(world) => PlaceLookup::resolved(
-            state,
-            place_id,
-            scene::PlaceInfo {
-                world: true,
-                world_name: Some(world.key().to_owned()),
-                positions: Vec::new(),
-                base_position: None,
-            },
-            scene::NO_ADMINS,
-        ),
+        Some(world) => world_authority(state, place_id, world),
         None => scene,
     }
+}
+
+/// The world place with no footprint: its owner and the grantees with no
+/// parcel restriction hold it, and no `/scene-admin` grant does.
+pub(super) fn world_authority<'a>(
+    state: &'a CommsState,
+    place_id: &str,
+    world: &WorldName,
+) -> PlaceLookup<'a> {
+    PlaceLookup::resolved(
+        state,
+        place_id,
+        scene::PlaceInfo {
+            world: true,
+            world_name: Some(world.key().to_owned()),
+            positions: Vec::new(),
+            base_position: None,
+        },
+        scene::NO_ADMINS,
+    )
 }
 
 /// The decision for a stream-key verb on `authority` ([`key_authority`]),
