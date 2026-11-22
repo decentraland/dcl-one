@@ -252,6 +252,15 @@ parked legacy `world` bucket once that world has an active identity; unknown
 other legacy scopes still count. Storage rows remain retained and inaccessible
 through new scene scopes. Verify migration and recovery limits and measure quota-query costs before acceptance.
 
+The partial `world_scene_place_retired_identity_idx` on
+`(world_name, (identity::text)) WHERE NOT active` bounds the quota exclusion to
+retired identities in the requested world. It keeps the UUID-to-text comparison:
+legacy namespaces need not parse as UUIDs. On 100,000 synthetic identities,
+the quota read used 103 buffers instead of 668, with both custom and generic
+prepared plans; the index occupied 5.65 MiB after write probes. Retiring 1,000
+new identities increased measured WAL from 221 kB to 332 kB. Production world
+sizes, request rates and latency are unmeasured.
+
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
 adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
@@ -1127,6 +1136,31 @@ traffic is low-rate two-wallet writes and indexed existence probes, with at most
 one pending per normalized wallet; retained media depends on its connection and
 cleanup lifecycle. Capacity and production latency are not established by the
 functional tests.
+
+Wallet-scoped media probes use `private_voice_chat_participants_address_idx`
+and `community_voice_chat_users_address_idx`, both nonunique B-trees on
+`address`. These are separate from the pending-call party indexes. They retain
+every status so expiry predicates can use their existing timestamps without
+time-dependent partial indexes. On 100,000 synthetic memberships per table,
+selective and missing-wallet probes used 3–4 buffers instead of 1,024–1,137
+under custom and generic plans. A wallet holding 10% of community rows still
+selected a sequential scan with a custom plan. Each index occupied about
+2.9 MiB after write probes; inserting 1,000 memberships added about 78 kB of
+WAL per table. These are warm synthetic measurements, not production latency
+or capacity claims.
+
+The schema object pass installs these two address indexes and the retired
+world identity index for existing databases, without rewriting table rows or
+adding migration steps. It builds them non-concurrently in its transaction,
+blocking writes while the indexes build. Measured builds on the synthetic
+100,000-row tables took 64, 65 and 108 ms respectively; production lock time is
+unmeasured. To avoid that build inside the migration transaction, build each
+index beforehand with `CREATE INDEX CONCURRENTLY` and the exact definition in
+`schemas/40_social.sql` or `schemas/21_world_scene_places.sql`, outside a
+transaction. The object pass then skips it. A failed concurrent build leaves
+an invalid index: inspect `pg_index.indisvalid`, drop that invalid index and
+retry before migrating. Existing binaries and import load statements remain
+compatible because columns, constraints and query results are unchanged.
 
 Community detail, listing and member-request reads fetch voice status separately
 through the existing comms `VoiceDb` on the same pool and presence configuration.

@@ -214,6 +214,10 @@ CREATE TABLE social.private_voice_chat_participants (
 CREATE INDEX private_voice_chat_participants_status_idx
     ON social.private_voice_chat_participants (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes and current-call selection.
+CREATE INDEX private_voice_chat_participants_address_idx
+    ON social.private_voice_chat_participants (address);
+
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
@@ -415,6 +419,10 @@ CREATE TABLE social.community_voice_chat_users (
 -- The sweep and the active-rooms/moderator-count aggregates.
 CREATE INDEX community_voice_chat_users_status_idx
     ON social.community_voice_chat_users (status, status_updated_at);
+
+-- Wallet-scoped live-presence probes before call admission.
+CREATE INDEX community_voice_chat_users_address_idx
+    ON social.community_voice_chat_users (address);
 
 -- ── scene moderation (comms-gatekeeper, place-scoped) ──────────────────────
 
