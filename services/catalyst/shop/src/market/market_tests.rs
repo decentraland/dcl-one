@@ -3370,7 +3370,8 @@ async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
         return;
     };
     let contract = "0x0000000000000000000000000000000000000001";
-    sqlx::query("INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, name, category, search_is_store_minter, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) VALUES ('matic', $1, 1, 137, 'wearable_v2', 'urn:test', $1, 'epic', 1, 100, 99, 1000000000000000000, 'Boundary Hat', 'hat', true, true, 1, 1, 1, timezone('UTC', now()))")
+    seed_item_row(&db.pool, contract, "1", contract).await;
+    sqlx::query("UPDATE shop.items SET price = 1000000000000000000, name = 'Boundary Hat', search_is_store_minter = true, search_is_collection_approved = true WHERE network = 'matic' AND contract_address = $1 AND item_id = 1")
         .bind(contract).execute(&db.pool).await.unwrap();
     for asset_type in [1, 2] {
         insert_trade(
