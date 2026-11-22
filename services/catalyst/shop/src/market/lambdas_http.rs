@@ -12,6 +12,15 @@ use axum::response::{IntoResponse, Response};
 
 use crate::shared::cors::{self, HttpServerCors};
 
+pub const BUILD_INFO: &str = "dcl_lamb2_server_build_info";
+
+/// lamb2's `dcl_lamb2_server_build_info{commitHash}`, set to 1 at startup:
+/// `commit_hash` is `COMMIT_HASH`, or the build's revision, or empty.
+pub fn register_series(commit_hash: &str) {
+    metrics::describe_gauge!(BUILD_INFO, "Lamb2 server static build info.");
+    metrics::gauge!(BUILD_INFO, "commitHash" => commit_hash.to_owned()).set(1.0);
+}
+
 /// lamb2's CORS under `/lambdas/`: `*` for any origin, no credentials and
 /// no exposed headers; a preflight is 204 with no `Allow-Methods`, origin
 /// `*` for a request with `Origin`, and the requested headers reflected

@@ -19,6 +19,7 @@ pub mod drain;
 pub mod errors;
 pub mod feature_flags;
 pub mod health;
+pub mod http_metrics;
 pub mod http_util;
 pub mod identity;
 pub mod js;

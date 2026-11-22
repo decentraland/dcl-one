@@ -1033,7 +1033,12 @@ pub fn router(state: SharedState) -> Router {
             timeout,
         ));
     }
-    app.with_state(state)
+    // Outermost, so the timeout's 408 is counted too; the `/v1/trades`
+    // reads are left out by their template.
+    app.layer(axum::middleware::from_fn(
+        crate::shared::http_metrics::observe,
+    ))
+    .with_state(state)
 }
 
 /// The marketplace-server surface (the old `catalyrst-market` crate's

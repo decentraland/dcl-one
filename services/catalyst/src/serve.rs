@@ -137,6 +137,107 @@ mod metrics_tests {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
     }
+
+    /// The content and lamb2 per-route series: legacy names, labels, help and
+    /// buckets, one handler for both content mounts and no raw path.
+    #[tokio::test(flavor = "current_thread")]
+    async fn content_and_lambdas_routes_render_the_legacy_http_series() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        super::register_metrics();
+        crate::shop::market::lambdas_http::register_series("abc123");
+        let content = || {
+            axum::Router::new()
+                .route("/contents/{hashId}", get(|| async { "body" }))
+                .route(
+                    "/queries/erc721/{chainId}/{contract}/{option}",
+                    get(|| async { "" }),
+                )
+                .route(
+                    "/queries/erc721/{chainId}/{contract}/{option}/{emission}",
+                    get(|| async { "" }),
+                )
+        };
+        let app = content()
+            .nest("/content", content())
+            .route("/lambdas/users/{address}/wearables", get(|| async { "[]" }))
+            .route("/v1/trades", get(|| async { "[]" }))
+            .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
+            .layer(axum::middleware::from_fn(
+                crate::shared::http_metrics::observe,
+            ));
+        for (method, path) in [
+            ("GET", "/contents/QmRawHash1"),
+            ("GET", "/content/contents/QmRawHash2"),
+            ("HEAD", "/content/contents/QmRawHash3"),
+            ("GET", "/content/queries/erc721/1/0xc/opt"),
+            ("GET", "/content/queries/erc721/1/0xc/opt/7"),
+            ("GET", "/lambdas/users/0xRawAddress/wearables"),
+            ("GET", "/content/no-such-route"),
+            ("GET", "/no-such-root-route"),
+            ("GET", "/v1/trades"),
+        ] {
+            let request = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header("content-length", "0")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            app.clone().oneshot(request).await.unwrap();
+        }
+        let rendered = handle.render();
+        for line in [
+            "# HELP http_requests_total Total number of HTTP requests",
+            "# TYPE http_requests_total counter",
+            "# HELP http_request_duration_seconds Request duration in seconds.",
+            "# TYPE http_request_duration_seconds histogram",
+            "# HELP http_request_size_bytes Duration of HTTP requests size in bytes",
+            "# TYPE http_request_size_bytes histogram",
+            "http_requests_total{method=\"GET\",handler=\"/contents/:hashId\",code=\"200\"} 2",
+            "http_requests_total{method=\"HEAD\",handler=\"/contents/:hashId\",code=\"200\"} 1",
+            "http_requests_total{method=\"GET\",handler=\"/queries/erc721/:chainId/:contract/:option/:emission?\",code=\"200\"} 2",
+            "http_requests_total{method=\"GET\",handler=\"/users/:address/wearables\",code=\"200\"} 1",
+            "http_requests_total{method=\"GET\",handler=\"\",code=\"404\"} 1",
+            "# HELP dcl_lamb2_server_build_info Lamb2 server static build info.",
+            "# TYPE dcl_lamb2_server_build_info gauge",
+            "dcl_lamb2_server_build_info{commitHash=\"abc123\"} 1",
+        ] {
+            assert!(rendered.contains(line), "missing {line}:\n{rendered}");
+        }
+        for raw in [
+            "QmRawHash",
+            "0xRawAddress",
+            "no-such",
+            "/v1/trades",
+            "/content/",
+        ] {
+            assert!(!rendered.contains(raw), "{raw} leaked:\n{rendered}");
+        }
+        // prom-client's default buckets, as the legacy declarations set none.
+        for series in ["http_request_duration_seconds", "http_request_size_bytes"] {
+            let bounds: Vec<&str> = rendered
+                .lines()
+                .filter(|line| {
+                    line.starts_with(&format!("{series}_bucket{{"))
+                        && line.contains("handler=\"/users/:address/wearables\"")
+                })
+                .filter_map(|line| line.split("le=\"").nth(1)?.split('"').next())
+                .collect();
+            assert_eq!(
+                bounds,
+                [
+                    "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10",
+                    "+Inf"
+                ],
+                "{series}"
+            );
+        }
+    }
 }
 
 /// Run with Stats prepared before creating workers. The unsafe preparation
@@ -148,6 +249,7 @@ pub async fn serve(
 ) -> anyhow::Result<()> {
     config.node.init_tracing();
     let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
+    shop::market::lambdas_http::register_series(&config.commit_hash().unwrap_or_default());
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     if let Ok(Some(warning)) = catalyst_config::posture::worlds_names_reader(&config) {
         tracing::warn!("{warning}");

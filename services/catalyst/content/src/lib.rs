@@ -952,7 +952,11 @@ pub fn build_router(state: SharedState) -> Router {
             },
         ));
     }
-    app.with_state(state)
+    // Outermost, so the timeout's 408 is counted too.
+    app.layer(axum::middleware::from_fn(
+        crate::shared::http_metrics::observe,
+    ))
+    .with_state(state)
 }
 
 #[cfg(test)]

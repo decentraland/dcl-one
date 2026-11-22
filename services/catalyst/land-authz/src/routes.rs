@@ -55,6 +55,9 @@ pub fn router(state: SharedState) -> Router {
         .route("/lambdas/land-authz/status", get(status))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .layer(axum::middleware::from_fn(
+            crate::shared::http_metrics::observe,
+        ))
         .with_state(state)
 }
 
