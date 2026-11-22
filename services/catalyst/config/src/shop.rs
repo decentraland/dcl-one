@@ -243,8 +243,8 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "CHAIN_LOGS_PORTAL_API_KEY", hide_env_values = true)]
     pub chain_logs_portal_api_key: Option<String>,
 
-    /// Requests per second to the portal origin, shared by every reader of
-    /// it in the process, burst one.
+    /// Requests per second to the portal origin (at least 0.01), shared by
+    /// every reader of it in the process, burst one.
     #[arg(long, env = "CHAIN_LOGS_PORTAL_MAX_RPS", default_value_t = 1.0)]
     pub chain_logs_portal_max_rps: f64,
 

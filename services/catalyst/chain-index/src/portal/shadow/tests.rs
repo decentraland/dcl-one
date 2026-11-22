@@ -172,3 +172,20 @@ async fn a_stalled_portal_stops_with_the_worker() {
         .expect("the worker stops with its sample in flight")
         .unwrap();
 }
+
+/// A worker that is gone is counted apart from a busy one, and an offer to
+/// it neither waits nor fails.
+#[tokio::test]
+async fn an_offer_to_a_dead_worker_returns_at_once() {
+    let (shadow, worker) = channel(
+        reader("http://127.0.0.1:9"),
+        "matic",
+        AddressHistory::Unknown,
+    );
+    drop(worker);
+    assert!(shadow.tx.is_closed());
+    let p = parts(vec![rpc_log(110, 0)]);
+    let started = Instant::now();
+    shadow.offer(&view(&p, 137));
+    assert!(started.elapsed() < Duration::from_millis(50));
+}

@@ -218,8 +218,45 @@ fn readers_of_one_origin_and_credential_share_their_limiter() {
         "at least the minimum cooldown"
     );
     // A shorter hold never shortens a longer one.
+    a.cool(Some(Duration::from_secs(60)));
+    let long = b.state.lock().unwrap().cooldown_until.unwrap();
+    assert!(long >= until + Duration::from_secs(40));
     b.cool(None);
-    assert!(b.state.lock().unwrap().cooldown_until.unwrap() >= until);
+    assert_eq!(
+        b.state.lock().unwrap().cooldown_until.unwrap(),
+        long,
+        "unchanged"
+    );
+}
+
+/// A portal's `Retry-After` bounds no hold of ours: the largest one panics
+/// nothing and holds at most five minutes.
+#[test]
+fn a_huge_retry_after_holds_at_most_the_cap() {
+    let l = OriginLimiter::new(1.0);
+    l.cool(Some(Duration::from_secs(u64::MAX)));
+    let until = l.state.lock().unwrap().cooldown_until.unwrap();
+    assert!(until <= Instant::now() + MAX_COOLDOWN);
+    assert!(until >= Instant::now() + MAX_COOLDOWN - Duration::from_secs(5));
+    l.cool(Some(Duration::from_secs(1_000_000_000)));
+    let again = l.state.lock().unwrap().cooldown_until.unwrap();
+    assert!(again >= until && again <= Instant::now() + MAX_COOLDOWN);
+}
+
+/// The rate has a floor and the bucket one token: a burst of one, and no
+/// wait past the cap however small the rate.
+#[tokio::test(start_paused = true)]
+async fn the_rate_has_a_floor_and_a_burst_of_one() {
+    let l = OriginLimiter::new(1e-20);
+    assert_eq!(l.rate, MIN_RATE);
+    let l = OriginLimiter::new(5.0);
+    l.acquire().await;
+    let started = tokio::time::Instant::now();
+    l.acquire().await;
+    assert!(
+        started.elapsed() >= Duration::from_millis(150),
+        "the second send waits: one token, not five"
+    );
 }
 
 /// One request a fake portal received.
@@ -479,4 +516,21 @@ async fn portal_text_never_reaches_an_error() {
         let text = format!("{e} {e:?}");
         assert!(!text.contains("sk-example-echo"), "{text}");
     }
+}
+
+/// A page holds at most one line a block: a body of more lines is refused
+/// before it is decoded.
+#[tokio::test]
+async fn a_page_of_more_lines_than_blocks_is_refused() {
+    let (origin, _) = fake(vec![ok_ndjson(&[
+        json!({"header": header_line(1)}),
+        json!({"header": header_line(2)}),
+        json!({"header": header_line(2)}),
+    ])])
+    .await;
+    let r = PortalReader::new(&origin, "polygon-mainnet", None, 100.0).unwrap();
+    assert!(matches!(
+        r.page(1, 2, &[], false).await,
+        Err(PortalError::TooLarge("lines"))
+    ));
 }

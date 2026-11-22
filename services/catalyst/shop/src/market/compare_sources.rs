@@ -17,8 +17,9 @@
 //!   both sides read; the next window starts after it;
 //! - a window that cannot be compared stops the run, its suffix uncovered.
 //!
-//! The projection, the dataset and the RPC must name one chain before any
-//! window is read; otherwise the run is refused. A read that fails (an
+//! The projection, the dataset, the database's cursor of the index (when
+//! bound; `database_chain` reports it) and the RPC must name one chain before
+//! any window is read; otherwise the run is refused. A read that fails (an
 //! outage at admission, a bracket that moves mid-run) ends the run with the
 //! windows compared so far and the rest uncovered with its reason.
 //!
@@ -164,9 +165,12 @@ pub struct Report {
     pub totals: Totals,
     /// `refused`, `different`, `incomplete` or `equal`, in that precedence.
     pub outcome: &'static str,
-    /// Why nothing was compared: the projection, the dataset and the RPC
-    /// do not name one chain.
+    /// Why nothing was compared: the projection, the dataset, the
+    /// database's cursor and the RPC do not name one chain.
     pub refused: Option<String>,
+    /// The chain the database's cursor of this index is bound to; `null`
+    /// when it has no row or no binding, so the filters' chain is unproven.
+    pub database_chain: Option<i64>,
     pub different: bool,
     pub incomplete: bool,
     pub sends: Sends,
@@ -204,6 +208,7 @@ impl Report {
             totals: Totals::default(),
             outcome: "refused",
             refused: Some(why),
+            database_chain: None,
             different: false,
             incomplete: true,
             sends: Sends {
@@ -356,6 +361,7 @@ pub async fn run(pool: &PgPool, http: &crate::http::Outbound, req: Request) -> R
         totals: Totals::default(),
         outcome: "incomplete",
         refused: None,
+        database_chain: None,
         different: false,
         incomplete: false,
         sends: Sends {
@@ -394,23 +400,46 @@ async fn measure(
         to: req.to,
         reason,
     };
-    // The index's filters read the database: an unreachable one ends the
-    // run before any chain read.
-    if let Err(e) = sqlx::query("SELECT 1").execute(pool).await {
-        let e = anyhow::Error::new(e);
-        return out.uncovered.push(all(format!(
-            "database_unavailable: {}",
-            reason("probe", &e)
-        )));
-    }
-    // The projection, the dataset and the RPC must name one chain before
-    // any window is read.
+    // The projection, the dataset, the database's cursor and the RPC must
+    // name one chain before any window is read; the dataset is known
+    // before any read.
     let projection = chain_walk::mainnet_chain(req.net) as u64;
     if req.reader.chain() != projection {
         out.refused = Some(format!(
             "the dataset {} serves chain {}, the {} {} projection reads chain {projection}",
             req.reader.dataset(),
             req.reader.chain(),
+            req.net.db_name(),
+            req.indexer
+        ));
+        out.uncovered.push(all("refused".into()));
+        return;
+    }
+    // The index's filters read the database: an unreachable one ends the
+    // run before any chain read. A cursor bound to another chain (a testnet
+    // or staging database) is refused; an unbound one is reported.
+    let cursor_chain = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT chain_id FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+    )
+    .bind(&req.indexer)
+    .bind(req.net.db_name())
+    .fetch_optional(pool)
+    .await;
+    match cursor_chain {
+        Err(e) => {
+            let e = anyhow::Error::new(e);
+            return out.uncovered.push(all(format!(
+                "database_unavailable: {}",
+                reason("probe", &e)
+            )));
+        }
+        Ok(row) => out.database_chain = row.flatten(),
+    }
+    if let Some(c) = out.database_chain
+        && c as u64 != projection
+    {
+        out.refused = Some(format!(
+            "the database's {} {} cursor is bound to chain {c}, the projection reads chain {projection}",
             req.net.db_name(),
             req.indexer
         ));

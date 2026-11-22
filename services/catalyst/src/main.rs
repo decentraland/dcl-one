@@ -165,7 +165,9 @@ enum ShopCommand {
     /// read that fails ends the run with what was compared and the rest
     /// uncovered. Prints one JSON report, whatever happens; exits 4 when
     /// refused, else 1 when anything differed, else 3 when part of the range
-    /// or a compared field was not compared, else 0 (2 is a usage error).
+    /// or a compared field was not compared, else 0. Without a report, 2 is
+    /// a usage error and 1 a process setup error before the command runs (an
+    /// invalid NODE_POSTURE): a difference always prints its report.
     CompareSources {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
@@ -182,7 +184,8 @@ enum ShopCommand {
         window: u64,
         #[arg(long, env = "CHAIN_LOGS_PORTAL_URL")]
         portal_url: String,
-        /// The portal dataset; the network's mainnet dataset when not given.
+        /// The portal dataset; CHAIN_LOGS_PORTAL_DATASET_<NET> when not
+        /// given, else the network's mainnet dataset.
         #[arg(long)]
         dataset: Option<String>,
         #[arg(long, env = "CHAIN_LOGS_PORTAL_MAX_RPS", default_value_t = 1.0)]
@@ -794,17 +797,29 @@ async fn run(
                 .with_target(false)
                 .with_writer(std::io::stderr)
                 .init();
+            // The dataset as `serve` names it: the flag, else
+            // CHAIN_LOGS_PORTAL_DATASET_<NET>, else the network's mainnet.
             let dataset = dataset.unwrap_or_else(|| {
-                match ChainNet::parse(&net) {
-                    Some(ChainNet::Ethereum) => "ethereum-mainnet",
-                    _ => "polygon-mainnet",
-                }
-                .to_string()
+                let (var, default) = match ChainNet::parse(&net) {
+                    Some(ChainNet::Ethereum) => {
+                        ("CHAIN_LOGS_PORTAL_DATASET_ETHEREUM", "ethereum-mainnet")
+                    }
+                    _ => ("CHAIN_LOGS_PORTAL_DATASET_MATIC", "polygon-mainnet"),
+                };
+                std::env::var(var)
+                    .ok()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| default.to_string())
             });
             // Every outcome prints a report: a setup that cannot run is
             // refused, never raised (an error exit would read as a difference).
             let setup = || -> anyhow::Result<(ChainNet, String, catalyst::chain_index::portal::PortalReader)> {
                 let net = ChainNet::parse(&net).context("--net")?;
+                anyhow::ensure!(
+                    max_rps.is_finite() && max_rps > 0.0,
+                    "--max-rps (CHAIN_LOGS_PORTAL_MAX_RPS) must be above 0"
+                );
                 let rpc_var = match net {
                     ChainNet::Ethereum => "ETH_RPC_URL",
                     ChainNet::Matic => "RPC_ENDPOINT_POLYGON",

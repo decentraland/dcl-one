@@ -10471,4 +10471,65 @@ mod compare_sources_tests {
         assert_eq!(r.compared, [(101, 400)]);
         db.drop().await;
     }
+
+    /// A mismatch known before any read is refused before the database is
+    /// probed: down or not, `--net matic` against an Ethereum dataset is a
+    /// refusal, not an incomplete run.
+    #[tokio::test]
+    async fn a_known_mismatch_is_refused_before_the_database_is_probed() {
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        let reader = PortalReader::new(&portal, "ethereum-mainnet", None, 1_000.0).unwrap();
+        let r = compare_sources::command(
+            "postgres://nobody@127.0.0.1:1/unreachable",
+            &crate::http::Outbound::for_tests(),
+            Request {
+                net: ChainNet::Matic,
+                indexer: "nft".into(),
+                from: 101,
+                to: 400,
+                window: 100,
+                rpc_url: rpc,
+                reader,
+                history: AddressHistory::Unknown,
+            },
+        )
+        .await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4), "{r:#?}");
+        assert_eq!(chain.requests.load(Ordering::SeqCst), 0);
+    }
+
+    /// The database the filters come from must be the network's: a cursor
+    /// bound to a testnet is refused; a bound mainnet one is reported.
+    #[tokio::test]
+    async fn the_database_cursor_must_name_the_networks_chain() {
+        let Some(db) = ScratchDb::create().await else {
+            return;
+        };
+        let chain = chain();
+        let (rpc, portal) = (
+            serve(chain.clone()).await,
+            serve_portal(chain.clone(), Quirks::default()).await,
+        );
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, full_history, chain_id) \
+             VALUES ('mana_transfers', 'matic', 1, 1, true, 80002)",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.exit_code()), ("refused", 4), "{r:#?}");
+        assert_eq!(r.sends.portal.pages, 0);
+        sqlx::query("UPDATE shop.chain_cursor SET chain_id = 137 WHERE indexer = 'mana_transfers'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let r = compare(&db, &rpc, &portal, 101, 400).await;
+        assert_eq!((r.outcome, r.database_chain), ("equal", Some(137)));
+        db.drop().await;
+    }
 }

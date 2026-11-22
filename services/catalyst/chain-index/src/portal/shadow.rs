@@ -76,8 +76,11 @@ impl Shadow {
         if view.chain_id != self.chain {
             return skipped(self.net, "chain_mismatch");
         }
-        let Ok(permit) = self.tx.try_reserve() else {
-            return skipped(self.net, "busy");
+        let permit = match self.tx.try_reserve() {
+            Ok(permit) => permit,
+            Err(mpsc::error::TrySendError::Full(())) => return skipped(self.net, "busy"),
+            // The worker is gone: shown apart, never as a busy one.
+            Err(mpsc::error::TrySendError::Closed(())) => return skipped(self.net, "closed"),
         };
         if view.bounded_size().is_none() {
             return skipped(self.net, "oversize");

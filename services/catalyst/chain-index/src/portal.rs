@@ -52,6 +52,10 @@ pub const MAX_LOGS: usize = 200_000;
 pub const MAX_SPLIT_DEPTH: u32 = 6;
 const TIMEOUT: Duration = Duration::from_secs(60);
 const MIN_COOLDOWN: Duration = Duration::from_secs(10);
+/// The longest hold a portal's `Retry-After` can set.
+pub const MAX_COOLDOWN: Duration = Duration::from_secs(300);
+/// The slowest rate a limiter accepts: one request every hundred seconds.
+pub const MIN_RATE: f64 = 0.01;
 
 /// The chain a portal dataset serves, by its name; `None` for a name this
 /// node does not know, which is refused rather than guessed.
@@ -166,8 +170,8 @@ pub struct SendCounts {
 type Limiters = HashMap<(String, u64), Arc<OriginLimiter>>;
 
 /// The sends of one origin and credential in this process: a token bucket
-/// of `rate` per second (a burst of one second's worth) and a cooldown every
-/// reader of the origin honours.
+/// refilled at `rate` per second holding one token (a burst of one), and a
+/// cooldown every reader of the origin honours.
 #[derive(Debug)]
 pub struct OriginLimiter {
     rate: f64,
@@ -182,16 +186,18 @@ struct Bucket {
 }
 
 impl OriginLimiter {
+    /// `rate` requests per second, at least [`MIN_RATE`]; a rate that is not
+    /// a positive number is refused upstream (config and the command).
     fn new(rate: f64) -> Self {
         let rate = if rate.is_finite() && rate > 0.0 {
-            rate
+            rate.max(MIN_RATE)
         } else {
             1.0
         };
         Self {
             rate,
             state: Mutex::new(Bucket {
-                tokens: rate.max(1.0),
+                tokens: 1.0,
                 at: Instant::now(),
                 cooldown_until: None,
             }),
@@ -222,13 +228,15 @@ impl OriginLimiter {
                     _ => {
                         b.cooldown_until = None;
                         let elapsed = now.duration_since(b.at).as_secs_f64();
-                        b.tokens = (b.tokens + elapsed * self.rate).min(self.rate.max(1.0));
+                        b.tokens = (b.tokens + elapsed * self.rate).min(1.0);
                         b.at = now;
                         if b.tokens >= 1.0 {
                             b.tokens -= 1.0;
                             return;
                         }
-                        Duration::from_secs_f64((1.0 - b.tokens) / self.rate)
+                        Duration::try_from_secs_f64((1.0 - b.tokens) / self.rate)
+                            .unwrap_or(MAX_COOLDOWN)
+                            .min(MAX_COOLDOWN)
                     }
                 }
             };
@@ -236,10 +244,15 @@ impl OriginLimiter {
         }
     }
 
-    /// Holds every reader of the origin for `retry_after` (at least
-    /// [`MIN_COOLDOWN`]), never shortening a longer hold already set.
+    /// Holds every reader of the origin for `retry_after`, between
+    /// [`MIN_COOLDOWN`] and [`MAX_COOLDOWN`] (a portal's header bounds no
+    /// hold of ours), never shortening a longer hold already set.
     pub fn cool(&self, retry_after: Option<Duration>) {
-        let until = Instant::now() + retry_after.unwrap_or(MIN_COOLDOWN).max(MIN_COOLDOWN);
+        let hold = retry_after
+            .unwrap_or(MIN_COOLDOWN)
+            .clamp(MIN_COOLDOWN, MAX_COOLDOWN);
+        let now = Instant::now();
+        let until = now.checked_add(hold).unwrap_or(now);
         let mut b = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if b.cooldown_until.is_none_or(|u| u < until) {
             b.cooldown_until = Some(until);
@@ -771,7 +784,9 @@ impl PortalReader {
                 .and_then(|s| s.parse().ok());
             return Err(PortalError::AboveHead { finalized });
         }
-        let lines = read_lines(resp).await?;
+        // One line per block at most: every line is a block's header.
+        let max_lines = usize::try_from(to - from + 1).unwrap_or(usize::MAX);
+        let lines = read_lines(resp, max_lines).await?;
         decode_page(&lines, from, to)
     }
 }
@@ -813,9 +828,13 @@ async fn json_body(resp: reqwest::Response) -> Result<Value, PortalError> {
     serde_json::from_slice(&bytes).map_err(|e| json_error(&e))
 }
 
-/// The body's lines, each within [`MAX_LINE_BYTES`] and all within
-/// [`MAX_BODY_BYTES`]; a body that breaks off is [`PortalError::Truncated`].
-async fn read_lines(mut resp: reqwest::Response) -> Result<Vec<Vec<u8>>, PortalError> {
+/// The body's lines, each within [`MAX_LINE_BYTES`], all within
+/// [`MAX_BODY_BYTES`] and at most `max_lines` of them (one a block); a body
+/// that breaks off is [`PortalError::Truncated`].
+async fn read_lines(
+    mut resp: reqwest::Response,
+    max_lines: usize,
+) -> Result<Vec<Vec<u8>>, PortalError> {
     let mut lines = Vec::new();
     let mut current: Vec<u8> = Vec::new();
     let mut total = 0usize;
@@ -832,6 +851,9 @@ async fn read_lines(mut resp: reqwest::Response) -> Result<Vec<Vec<u8>>, PortalE
         for &b in chunk.iter() {
             if b == b'\n' {
                 if !current.iter().all(u8::is_ascii_whitespace) {
+                    if lines.len() >= max_lines {
+                        return Err(PortalError::TooLarge("lines"));
+                    }
                     lines.push(std::mem::take(&mut current));
                 } else {
                     current.clear();
@@ -845,6 +867,9 @@ async fn read_lines(mut resp: reqwest::Response) -> Result<Vec<Vec<u8>>, PortalE
         }
     }
     if !current.iter().all(u8::is_ascii_whitespace) {
+        if lines.len() >= max_lines {
+            return Err(PortalError::TooLarge("lines"));
+        }
         lines.push(current);
     }
     Ok(lines)
