@@ -271,7 +271,7 @@ impl Database {
     ) -> Result<PaginatedResponse<RentalListing>, sqlx::Error> {
         let f = &q.filter;
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(format!(
-            "SELECT {LISTING_OUTER_COLUMNS}, COUNT(*) OVER() AS rentals_listings_count \
+            "WITH filtered AS (SELECT {LISTING_OUTER_COLUMNS}, rentals.max_price_per_day, rentals.min_price_per_day \
              FROM signatures.rental_assets a JOIN ("
         ));
         qb.push(LISTING_INNER_SELECT.replace(
@@ -403,24 +403,30 @@ impl Database {
             _ => "asc",
         };
         let order = match q.sort_by.as_deref() {
-            Some("land_creation_date") => format!("ORDER BY a.nft_created_at {dir} "),
-            Some("name") => format!("ORDER BY a.search_text {dir} "),
-            Some("max_rental_price") => format!("ORDER BY rentals.max_price_per_day {dir} "),
-            Some("min_rental_price") => format!("ORDER BY rentals.min_price_per_day {dir} "),
-            _ => format!("ORDER BY rentals.created_at {dir} "),
+            Some("land_creation_date") => format!("ORDER BY page.metadata_created_at {dir} "),
+            Some("name") => format!("ORDER BY page.search_text {dir} "),
+            Some("max_rental_price") => format!("ORDER BY page.max_price_per_day {dir} "),
+            Some("min_rental_price") => format!("ORDER BY page.min_price_per_day {dir} "),
+            _ => format!("ORDER BY page.created_at {dir} "),
         };
-        qb.push(order);
+        qb.push(") SELECT page.*, counted.rentals_listings_count FROM (SELECT count(*) AS rentals_listings_count FROM filtered) counted LEFT JOIN LATERAL (SELECT page.*, true AS page_present FROM filtered page ");
+        qb.push(&order);
         qb.push("LIMIT ")
             .push_bind(q.limit)
             .push(" OFFSET ")
             .push_bind(q.offset);
+        qb.push(") page ON true ").push(order);
 
         let rows = qb.build().fetch_all(&self.pool).await?;
         let total: i64 = rows
             .first()
             .map(|r| r.try_get::<i64, _>("rentals_listings_count").unwrap_or(0))
             .unwrap_or(0);
-        let results: Vec<RentalListing> = rows.iter().map(row_to_listing).collect();
+        let results: Vec<RentalListing> = rows
+            .iter()
+            .filter(|r| r.get::<Option<bool>, _>("page_present") == Some(true))
+            .map(row_to_listing)
+            .collect();
         Ok(PaginatedResponse::new(results, total, q.limit, q.offset))
     }
 

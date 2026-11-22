@@ -3361,3 +3361,82 @@ async fn deep_merged_pages_read_the_graph_in_pages_it_accepts() {
         "1,400 accounts across both networks, skip 995: ten rows past the 1000-row window, not an empty page"
     );
 }
+
+#[tokio::test]
+async fn shop_feed_totals_survive_exact_and_past_end_offsets() {
+    use super::shop::*;
+    use sqlx::Row;
+    let Some(db) = crate::test_db::OwnDatabase::create("shop_page_totals").await else {
+        return;
+    };
+    let contract = "0x0000000000000000000000000000000000000001";
+    sqlx::query("INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, total_supply, max_supply, available, price, name, category, search_is_store_minter, search_is_collection_approved, created_at, updated_at, reviewed_at, mirrored_at) VALUES ('matic', $1, 1, 137, 'wearable_v2', 'urn:test', $1, 'epic', 1, 100, 99, 1000000000000000000, 'Boundary Hat', 'hat', true, true, 1, 1, 1, timezone('UTC', now()))")
+        .bind(contract).execute(&db.pool).await.unwrap();
+    for asset_type in [1, 2] {
+        insert_trade(
+            &db.pool,
+            "public_item_order",
+            contract,
+            Asset {
+                asset_type: 4,
+                contract: contract.to_string(),
+                value: "1".to_string(),
+            },
+            Asset {
+                asset_type,
+                contract: contract.to_string(),
+                value: "1000000000000000000".to_string(),
+            },
+        )
+        .await;
+    }
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("1").unwrap();
+    for feed in 0..4 {
+        let mut total = 0;
+        for (step, skip) in [(0, 0), (1, 1), (2, 1000)] {
+            let skip = if step == 1 { total } else { skip };
+            let base = ShopCatalogFilters {
+                first: Some(1),
+                skip: Some(skip),
+                search: Some("Boundary Hat".to_string()),
+                ..Default::default()
+            };
+            let unified = UnifiedCatalogFilters {
+                base: base.clone(),
+                ..Default::default()
+            };
+            let b = match feed {
+                0 => build_shop_listings_sql(&base, None),
+                1 => build_legacy_listings_sql(
+                    &LegacyCatalogFilters {
+                        first: Some(1),
+                        skip: Some(skip),
+                        search: base.search.clone(),
+                        ..Default::default()
+                    },
+                    None,
+                ),
+                2 => build_unified_listings_sql(&unified, rate, None),
+                _ => build_unified_items_sql(&unified, rate, None),
+            };
+            let rows = sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
+                .fetch_all(&db.pool)
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+            if step == 0 {
+                total = rows[0].get("total");
+                assert!(total > 0, "feed {feed}");
+                assert_eq!(rows[0].get::<Option<bool>, _>("page_present"), Some(true));
+            } else {
+                assert_eq!(
+                    rows[0].get::<i64, _>("total"),
+                    total,
+                    "feed {feed}, skip {skip}"
+                );
+                assert_eq!(rows[0].get::<Option<bool>, _>("page_present"), None);
+            }
+        }
+    }
+    db.drop().await;
+}

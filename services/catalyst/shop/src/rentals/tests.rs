@@ -1001,3 +1001,64 @@ async fn a_held_asset_off_the_indexed_contract_is_not_relisted() {
         None
     );
 }
+
+#[tokio::test]
+async fn rental_totals_survive_exact_past_end_and_zero_size_pages() {
+    use super::db::{ListingFilters, ListingQuery};
+    let Some(own) = crate::test_db::OwnDatabase::create("rental_page_totals").await else {
+        return;
+    };
+    let db = Database::new(own.pool.clone());
+    insert(&db, "1", LESSOR, "test-page-signature")
+        .await
+        .unwrap();
+    for history in [false, true] {
+        for sort_by in [
+            "land_creation_date",
+            "name",
+            "max_rental_price",
+            "min_rental_price",
+            "created_at",
+        ] {
+            for (offset, limit, expected) in [(0, 1, 1), (1, 1, 0), (2, 1, 0), (0, 0, 0)] {
+                let page = db
+                    .get_listings(&ListingQuery {
+                        sort_by: Some(sort_by.to_string()),
+                        sort_direction: Some("desc".to_string()),
+                        offset,
+                        limit,
+                        history,
+                        filter: ListingFilters {
+                            token_id: Some("1".to_string()),
+                            rental_days: vec![10],
+                            ..Default::default()
+                        },
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    page.total, 1,
+                    "{sort_by}, history {history}, offset {offset}, limit {limit}"
+                );
+                assert_eq!(page.results.len(), expected);
+            }
+        }
+    }
+    let empty = db
+        .get_listings(&ListingQuery {
+            sort_by: None,
+            sort_direction: None,
+            offset: 0,
+            limit: 10,
+            history: false,
+            filter: ListingFilters {
+                token_id: Some("2".to_string()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(empty.total, 0);
+    assert!(empty.results.is_empty());
+    own.drop().await;
+}
