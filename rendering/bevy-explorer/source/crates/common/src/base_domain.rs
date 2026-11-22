@@ -117,6 +117,21 @@ pub fn decentraland_domain(url: &str) -> Option<&'static str> {
     })
 }
 
+/// The Decentraland deployment a url runs on, when that url may be given this installation's
+/// persistent identifier (comms' `deviceIdentifier`, the feature-flags rollout id): a parsed url
+/// with an `https` scheme and a host, no username, password or fragment, on a
+/// [`decentraland_domain`]. None for anything else, so a third-party realm, a node or a local
+/// service never receives it.
+pub fn device_identifier_domain(url: &str) -> Option<&'static str> {
+    let parsed = url::Url::parse(url).ok()?;
+    let plain = parsed.scheme() == "https"
+        && parsed.host_str().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.fragment().is_none();
+    plain.then(|| decentraland_domain(url)).flatten()
+}
+
 fn host(sub: &str) -> String {
     format!("{sub}.{}", get())
 }
@@ -231,6 +246,48 @@ pub fn url(service: Service, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_device_identifier_goes_only_to_plain_https_decentraland_urls() {
+        for (url, domain) in [
+            (
+                "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+                Some("decentraland.org"),
+            ),
+            (
+                "https://feature-flags.decentraland.zone/explorer.json",
+                Some("decentraland.zone"),
+            ),
+            ("https://decentraland.org/", Some("decentraland.org")),
+            // not https
+            ("http://feature-flags.decentraland.org/explorer.json", None),
+            ("wss://comms-gatekeeper.decentraland.org/ws", None),
+            // userinfo or a fragment
+            ("https://user@comms-gatekeeper.decentraland.org/", None),
+            (
+                "https://user:secret@comms-gatekeeper.decentraland.org/",
+                None,
+            ),
+            ("https://comms-gatekeeper.decentraland.org/#x", None),
+            // not a Decentraland host
+            (
+                "https://feature-flags.decentraland.org.example.test/explorer.json",
+                None,
+            ),
+            (
+                "https://gateway.example.test/mount/feature-flags/explorer.json",
+                None,
+            ),
+            ("https://notdecentraland.org/", None),
+            ("http://127.0.0.1:5222/feature-flags/explorer.json", None),
+            ("http://localhost:3000/explorer.json", None),
+            // not a url
+            ("decentraland.org", None),
+            ("", None),
+        ] {
+            assert_eq!(device_identifier_domain(url), domain, "{url}");
+        }
+    }
 
     // NOTE: asserts literal URLs, so no test in this crate may set() a custom domain —
     // tests share the process-wide OnceLock.

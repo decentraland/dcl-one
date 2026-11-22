@@ -69,6 +69,7 @@ fn the_operator_database_urls_are_hidden() {
             ("storage", "gc"),
             ("camera-reel", "import"),
             ("content", "import-denylist"),
+            ("shop", "notice-rewind"),
         ] {
             let cmd = cli
                 .find_subcommand(sub)
@@ -85,7 +86,7 @@ fn the_operator_database_urls_are_hidden() {
             );
             seen += 1;
         }
-        assert_eq!(seen, 6);
+        assert_eq!(seen, 7);
     });
 }
 
@@ -157,5 +158,61 @@ fn import_denylist_takes_only_a_wallet() {
             assert!(err.to_string().contains("wallet address"), "{err}");
         }
         assert!(parse(&["--print-ids"]).is_ok());
+    });
+}
+
+/// `notice-rewind` takes exactly one of `--from-block` (1 or more) and
+/// `--since` (after the epoch), and an explicit `--actor`.
+#[test]
+fn notice_rewind_takes_one_starting_point_in_range() {
+    on_a_wide_stack(|| {
+        let parse = |extra: &[&str]| {
+            let mut args = vec![
+                "catalyst",
+                "shop",
+                "notice-rewind",
+                "--database-url",
+                "postgres://example.invalid/db",
+                "--producer",
+                "transfer_received",
+            ];
+            args.extend_from_slice(extra);
+            <crate::Cli as clap::Parser>::try_parse_from(args)
+        };
+        let kind = |extra: &[&str]| parse(extra).err().map(|e| e.kind());
+        assert_eq!(
+            kind(&["--from-block", "10", "--since", "2026-11-01"]),
+            Some(clap::error::ErrorKind::ArgumentConflict)
+        );
+        assert_eq!(
+            kind(&[]),
+            Some(clap::error::ErrorKind::MissingRequiredArgument)
+        );
+        for bad in ["--from-block=0", "--from-block=-3"] {
+            assert_eq!(
+                kind(&[bad]),
+                Some(clap::error::ErrorKind::ValueValidation),
+                "{bad}"
+            );
+        }
+        for bad in ["1970-01-01", "1969-12-31T00:00:00Z", "2026-11-01T00:00:00"] {
+            assert_eq!(
+                kind(&[&format!("--since={bad}")]),
+                Some(clap::error::ErrorKind::ValueValidation),
+                "{bad}"
+            );
+        }
+        let cli = parse(&["--from-block", "10", "--actor", "ops-oncall"]).unwrap();
+        let crate::Command::Shop {
+            command:
+                crate::ShopCommand::NoticeRewind {
+                    from_block, actor, ..
+                },
+        } = cli.command
+        else {
+            panic!("not notice-rewind");
+        };
+        assert_eq!(from_block, Some(10));
+        assert_eq!(actor.as_deref(), Some("ops-oncall"));
     });
 }

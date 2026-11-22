@@ -1,6 +1,6 @@
 import { useParams, useRouteError } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 import { Button } from "@dcl/one-ui";
 import { GeneralWarning } from "@dcl/one-ui/foundations/icons";
@@ -39,7 +39,7 @@ export function CommunityErrorView() {
   const retry = useFailedReadRecovery(communityKeys.detail(id));
 
   return (
-    <SitesChrome active="play" overlayNav>
+    <SitesLayout active="play" overlayNav>
       <main className={styles.root} role="alert">
         <GeneralWarning className={styles.icon} size={72} aria-hidden="true" />
         <h1 className={styles.title}>{copy.title}</h1>
@@ -50,6 +50,6 @@ export function CommunityErrorView() {
           </Button>
         ) : null}
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

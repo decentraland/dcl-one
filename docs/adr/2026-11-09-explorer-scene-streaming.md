@@ -31,10 +31,10 @@ the spawn order was left to this decision.
   is kept until it is past load plus unload, the band the settings describe. The scene the player
   stands in, portables and system scenes are always required and never in the band.
 - **A live ring under the distance.** Whatever the load distance, a scene with a parcel within
-  `LIVE_RING` (1) of the player's parcel, the Chebyshev ring of the eight parcels around it, is
-  required, and a live scene is kept while a parcel is within `LIVE_KEEP_RING` (2). At a run that
-  leaves about 1.5 s before the player reaches the scene's edge. A larger load distance still
-  widens the live area.
+  the live ring ("Live Scene Ring", default 1) of the player's parcel, at 1 the Chebyshev ring of
+  the eight parcels around it, is required, and a live scene is kept while a parcel is within one
+  ring further (2 by default). At ring 1 and a run that leaves about 1.5 s before the player
+  reaches the scene's edge. A larger load distance still widens the live area.
 - **Waves.** Beyond the player's own scene, portables, system scenes and the scene an imposter is
   being baked from, which spawn at once, at most `SCENES_PER_WAVE` (6) scenes are loading at a
   time. The limit is on scenes loading, not on
@@ -62,8 +62,9 @@ collider shapes in main-world memory, while showing the scene needs its textures
 the GPU.
 
 - **Range in parcel rings.** A stand-in starts when the scene's partition `parcel_distance`, the
-  Chebyshev ring of its nearest parcel around the player's, is at most 3 (about 48 m), and is
-  kept until that ring passes 4 (about 64 m). Never in preview.
+  Chebyshev ring of its nearest parcel around the player's, is at most the near ring ("Near LOD
+  Ring", default 3, about 48 m), and is kept until its scene is past the next ring (4, about
+  64 m). Never in preview.
 - **Colliders: by distance, never interrupted.** Every scene within the start ring starts its
   colliders part, whatever the facing, so a player backing into a loading scene is stopped like
   one walking in; the ring bounds how many. Once started, it goes only when the scene leaves the
@@ -96,7 +97,7 @@ the GPU.
   not among the scene's deployed files, such as a model the scene loads from a url, is skipped
   and logged at debug level: the stand-in never fetches a url the scene chose before the scene
   runs. Primitive meshes, text and materials the scene's code sets are not in the descriptor at
-  all. A scene whose models are all skipped keeps its walls.
+  all. A scene whose models are all skipped gets no near LOD.
 - **The live container path.** Each model becomes a glTF container per part, named by its file
   in the scene's content map, which the live glTF systems (`gltf_container`) load and process a
   slice a frame under the instantiation deadline. A visuals container (`GltfPart::Visuals`) hangs
@@ -132,8 +133,8 @@ the GPU.
   `Tier::Lod`: after every live scene's and before requests that are no scene's. Once the
   scene spawns, its own registration takes the hash to the scene tier.
 - **Hand-off.** The root stays hidden until each of its visuals containers is processed; then
-  the visuals show in one frame. If no model loaded, nothing shows and the scene keeps its
-  loading walls; the colliders stay. The stand-in goes, both parts with it, in the frame the live
+  the visuals show in one frame. If no model loaded, nothing shows and its parcels stay the
+  imposters'; the colliders stay. The stand-in goes, both parts with it, in the frame the live
   scene's content is first on screen (`RendererSceneContext::content_shown`), and a scene whose
   content has been on screen never gets a stand-in again, even while its content is briefly
   blocked (an imposter bake), so a stand-in does not come back over live content. The live scene
@@ -146,8 +147,6 @@ the GPU.
   against every `SceneColliderData`, so a player who reaches a loading scene walks on its
   colliders. Pointer events and triggers query live scenes only. The colliders go with the
   stand-in.
-- **Walls.** While a stand-in's visuals show, its scene's loading walls are hidden; a scene
-  without shown visuals keeps them.
 - **Debug view.** The Scene stand-ins debug section counts near LODs' colliders parts and the
   near and far LODs' visuals by state, and can tint the near LOD's models green and the far
   LOD's mesh blue (`/lod_tint`). The tint changes only the stand-in's own materials, never the
@@ -209,18 +208,19 @@ the same kind.
   client logs each trip and recovery once, and `/scene_lod_state` shows the missing count, the
   failures in a row and the seconds to the next probe (`far.missing`, `far.failures`,
   `far.paused_s`). A far LOD whose download failed with an error or a timeout shows its
-  imposters until its scene leaves the band (ring 20 or the tile edge) and comes back; it is
+  imposters until its scene leaves the band (the far ring or the tile edge) and comes back; it is
   not retried in place.
 - **Range in parcel rings.** It draws where the near LOD's keep band ends: its scene's nearest
-  parcel past ring 4 (about 64 m) and within ring 20 (about 320 m), the scene not wholly behind
-  the camera. Nearer, it draws only to stand in for near visuals that find no place under "Max
-  Near LODs", were stopped, or have nothing to show; at ring 4, where near visuals cannot start,
-  that is whenever they are not already shown, so a scene there (after a teleport, or once the
-  count stopped its far LOD) is never left to its imposters. A far LOD stays, its visuals stopped,
-  while its scene's near LOD shows, so when the near visuals stop (the setting lowered, or the
-  player walks out) its mesh starts loading again at once, with no new far LOD to spawn and
-  name; the scene shows its imposters only while that mesh loads. Beyond ring 20 only the
-  imposters remain. It has visuals only: no colliders part.
+  parcel past the near keep ring (4 by default, about 64 m) and within the far ring ("Far LOD
+  Ring", default 20, about 320 m), the scene not wholly behind the camera. Nearer, it draws only
+  to stand in for near visuals that find no place under "Max Near LODs", were stopped, or have
+  nothing to show; past the near start ring, where near visuals cannot start, that is whenever
+  they are not already shown, so a scene there (after a teleport, or once the count stopped its
+  far LOD) is never left to its imposters. A far LOD stays, its visuals stopped, while its
+  scene's near LOD shows, so when the near visuals stop (the setting lowered, or the player walks
+  out) its mesh starts loading again at once, with no new far LOD to spawn and name; the scene
+  shows its imposters only while that mesh loads. Beyond the far ring only the imposters remain.
+  It has visuals only: no colliders part.
 - **A count.** At most "Max Far LODs" far LODs (a Performance setting, 0 to 600, default 200)
   load or show at once, in view and behind the camera together, by the near LODs' visuals rule:
   nearest in view first while a place is free, then one behind the camera making way for each in
@@ -228,37 +228,40 @@ the same kind.
   the camera first.
 - **Edge on imposter tiles.** Imposters are tiles of 2^level parcels a side, and any tile with a
   stand-in's parcel in it is split down to single parcels. A far LOD is therefore shown only if
-  every parcel of its scene within ring 20 lies where the imposters would draw a tile of level 1 or
-  less (`FAR_LOD_MAX_TILE_LEVEL`, 2 parcels a side). The imposters choose each tile's level through
-  `Tiling::tile_distance` and `Tiling::level_allowed`, and the far LODs read the level through the
-  same functions (`Tiling::level`), on the layout the imposters publish with their tiles
-  (`ImposterTiling`, owned by the imposter plugin), so far LODs never draw over tiles laid out
-  for another focus. Until the first layout (at login or after a realm change) no far LOD fits;
-  that one is published as soon as the focus is known, without waiting for the player's scene to
-  load, since there are no tiles yet to overlap. No larger tile ever holds a far LOD, so the edge
+  every parcel of its scene within the scan ring lies where the imposters would draw a tile of level
+  1 or less (`FAR_LOD_MAX_TILE_LEVEL`, 2 parcels a side). The imposters choose each tile's level
+  through `Tiling::tile_distance` and `Tiling::level_allowed`, and the far LODs read the level
+  through the same functions (`Tiling::level`), on the layout the imposters publish with their
+  tiles (`ImposterTiling`, owned by the imposter plugin), so far LODs never draw over tiles laid
+  out for another focus. Until the first layout (at login or after a realm change) no far LOD
+  fits; that one is published as soon as the focus is known, without waiting for the player's
+  scene to load, since there are no tiles yet to overlap. No larger tile ever holds a far LOD, so the edge
   between far LODs and imposters falls on a tile boundary and the splitting stays among the small
-  tiles. At the default imposter distances that edge lies between about 200 m and 290 m; ring 20
-  bounds it where the tiles reach further (a camera far from the player).
-- **Which parcels.** A far LOD's parcels are those the realm's pointers name within ring 20,
-  which the pointers are read over: they decide whether it fits the tiles, bound its materials
-  (`StandInBounds`) and are the parcels the imposters leave to it. A parcel past ring 20 is not
-  checked. For a scene whose parcels are connected that changes nothing at the default imposter
-  distances with the imposters focused on the player: to reach past ring 20 the scene has a
-  parcel in ring 20, at least 312 m away, whose 4-parcel tile starts at least 264 m away, past
-  the 200 m where level 2 begins, so it fails the check there. Only a scene with disjoint
-  parcels, a level-2 distance raised past about 264 m or a camera far from the player could
-  show a far LOD with parcels past ring 20; those lie outside its bounds, so the mesh is clipped
-  there and the imposters draw them. A far LOD's parcels are fixed when it is spawned (a near
-  LOD refreshes its own until its definition arrives). With the default distances they cannot go
-  stale; with a raised level-2 distance its clip bounds can lag until the far LOD is respawned.
+  tiles. At the default imposter distances that edge lies between about 200 m and 290 m; the far
+  ring bounds it where the tiles reach further (a camera far from the player).
+- **Which parcels.** A far LOD's parcels are those the realm's pointers name within the scan
+  ring, which the pointers are read over: they decide whether it fits the tiles, bound its
+  materials (`StandInBounds`) and are the parcels the imposters leave to it. A parcel past the
+  scan ring is not checked. For a scene whose parcels are connected that changes nothing at the
+  default rings and imposter distances with the imposters focused on the player: to reach past
+  ring 20 the scene has a parcel in ring 20, at least 312 m away, whose 4-parcel tile starts at
+  least 264 m away, past the 200 m where level 2 begins, so it fails the check there. That holds
+  for a far ring of 16 or more. With a smaller far ring, a level-2 distance raised past what the
+  far ring's parcels reach, disjoint parcels or a camera far from the player, a scene can show a
+  far LOD with parcels past the scan ring; those lie outside its bounds, so the mesh is clipped
+  there and the imposters draw them.
+  A far LOD's parcels are fixed when it is spawned (a near LOD refreshes its own until its
+  definition arrives). With the default distances they cannot go stale; with a raised level-2
+  distance its clip bounds can lag until the far LOD is respawned.
 - **No hysteresis at the edge.** A far LOD goes as soon as the focus parcel moves one of its
   parcels' tiles above level 1, and comes back when it moves back. Holding it any longer would
   split a level-2 tile around it, the cost the edge exists to avoid, so a player stepping back
   and forth across that parcel boundary sees the scene swap between mesh and imposter tile.
-- **Cost per frame.** The scenes within ring 20, with each one's nearest ring, parcels and
-  whether its far LOD fits the tiles, are read from the pointers again only when the player's
-  parcel, the realm's pointers (`ScenePointers::generation`), the preview state or the tile
-  layout change; each frame checks only the stand-ins against what is on screen.
+- **Cost per frame.** The scenes within the stand-ins' scan ring (ring 20 by default), with each
+  one's nearest ring, parcels and whether its far LOD fits the tiles, are read from the pointers
+  again only when the player's parcel, the scan ring, the realm's pointers
+  (`ScenePointers::generation`), the preview state or the tile layout change; each frame checks
+  only the stand-ins against what is on screen.
 - **Memory.** The mesh keeps its CPU copy, like every mesh the container path loads: about
   0.5 MB per far LOD on average (sampled over 99 scenes within ring 20 of 0,0; the largest mesh
   holds 515k vertices), up to "Max Far LODs" of them. No collision shape is built for it: the
@@ -267,10 +270,42 @@ the same kind.
   normals, 16-bit texture coordinates). The vendored glTF loader reads them through a backport of
   upstream bevy's support (`rendering/bevy-explorer/docs/guidelines/bevy-fork.md`).
 - **Hand-off.** Like the near LOD it shows in one frame once processed, and goes in the frame the
-  live scene's content is on screen. Imposters skip its parcels and its scene's loading walls
-  are hidden while it is shown.
+  live scene's content is on screen. Imposters skip its parcels while it is shown.
 
-The removal of the loading walls is a later decision.
+### What a loading scene shows
+
+A loading scene raises no walls. It is parked below the world until it is ready and shows
+nothing of its own; its stand-in covers its parcels instead: the near LOD where one is
+shown, else the far LOD, else the imposter tile of its parcels, else nothing. The scene is
+raised at its fifth tick, and its stand-in stays over it until the live scene's content is on
+screen (`RendererSceneContext::content_shown`): the two overlap for those frames rather than
+swapping in one. The walls' material, shader and systems are
+gone; preview mode's grid plane under each parcel stays.
+
+The walls never stopped a player from walking onto a loading scene. Within the near ring the near
+LOD's colliders part does, drawn or not: a player who arrives first walks on the scene's collider
+nodes, or on the floor where it has none.
+
+### Settings
+
+The bands and counts are Performance settings, read each frame, so a change applies on the next
+one. All five are hidden in preview mode, like "Scene Load Distance", and none is in the HUD's
+graphics presets.
+
+| Setting | Default | Range | What it sets |
+| --- | --- | --- | --- |
+| Live Scene Ring | 1 | 0 to 3 | scenes within it go live; kept one ring further |
+| Near LOD Ring | 3 | 1 to 8 | near LODs start within it; kept one ring further |
+| Far LOD Ring | 20 | 5 to 40 | far LODs' outer bound; the imposter tiles may end them sooner |
+| Max Near LODs | 12 | 0 to 40 | near LODs drawn at once, in view and behind the camera; their colliders take no place |
+| Max Far LODs | 200 | 0 to 600 | far LODs that load or show at once, in view and behind the camera |
+
+The rings stay ordered whatever the values. A config value outside a range is clamped to it.
+Far LODs start one ring past the near keep ring, or past the live keep ring when the live ring
+reaches further. A near ring at or inside the live ring leaves near LODs only to live scenes
+still loading. A far ring inside the near keep ring leaves no normal far-start band; far LODs
+may still stand in for near LODs that wait over the "Max Near LODs" count or have nothing to
+show. The Scene stand-ins debug section and `/scene_lod_state` report the active rings.
 
 ## Rejected
 
@@ -320,10 +355,11 @@ The removal of the loading walls is a later decision.
   been measured.
 - A scene stalled in loading holds a wave slot for at least 20 s, then the wave moves on with it still
   loading.
-- Loading scenes keep their animated walls; what shows while a scene loads is a later decision.
-- Within three rings, a loading scene shows its own models as soon as they arrive instead of
-  its walls, and the live scene reuses those models when it comes up.
-- A scene the asset pipeline has not processed has no descriptor and keeps its walls.
+- A loading scene shows its stand-in instead of animated walls.
+- Within three rings, a loading scene shows its own models as soon as they arrive, and the live
+  scene reuses those models when it comes up.
+- A scene the asset pipeline has not processed has no descriptor and no LOD: its imposter tile
+  stands in where one is baked, and nothing shows on its parcels where none is.
 - A stand-in's collisions are the defaults only: a container's collision masks, `MeshCollider`
   components set by scene code, primitives a script creates and things a script moves are
   absent until the scene is live.
@@ -337,5 +373,5 @@ The removal of the loading walls is a later decision.
   until it does.
 - A far LOD costs one request, its mesh. A scene the server has no mesh for costs that request
   once a session, and a failing LOD service a few requests a minute.
-- A large scene with a parcel within ring 20 outside the small tiles has no far LOD while that
-  parcel is there.
+- A large scene with a parcel within the scan ring outside the small tiles has no far LOD while
+  that parcel is there.

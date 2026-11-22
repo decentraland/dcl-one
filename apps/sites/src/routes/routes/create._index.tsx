@@ -12,15 +12,22 @@ import CreateLanding from "@/features/create-landing/CreateLanding";
 import { CREATOR_HUB_DOWNLOAD } from "@/features/create-landing/HeroDownload";
 import { SubNav } from "@/features/creators/components/SubNav";
 
+import { absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
 import type { Route } from "./+types/create._index";
 
-export const meta = () => [
-  { title: "Create in Decentraland | Decentraland" },
-  {
-    name: "description",
-    content: "Download the Creator Hub to start building immersive scenes and interactive experiences in Decentraland.",
-  },
-];
+// decentraland.org serves /create from creators-website, whose shell carries this card.
+const CREATE_SOCIAL_IMAGE =
+  "https://images.ctfassets.net/ea2ybdmmn1kv/3fZB29mbYNJdp7sv1y2SJ2/108e55d6d3e23cd11e7d75563d81caf5/hero.webp?fm=jpg&q=85";
+
+export function meta({ matches }: Route.MetaArgs) {
+  return socialMeta({
+    title: "Create in Decentraland | Wearables, Emotes, Scenes & Worlds",
+    description:
+      "Everything you need to create in Decentraland: build Wearables, Emotes, Scenes and Worlds, manage your collections and join the creator community.",
+    image: CREATE_SOCIAL_IMAGE,
+    url: absoluteUrl(publicBase(matches), "/create"),
+  });
+}
 
 // The landing never waits long for the release: without it the hero links to the download page, which does.
 const RELEASE_WAIT_MS = 300;

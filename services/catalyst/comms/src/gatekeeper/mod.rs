@@ -156,6 +156,8 @@ pub struct RawSettings {
     /// `preview`/`localpreview` realm) gets a Genesis scene token without a
     /// deployed scene behind it.
     pub allow_local_preview: bool,
+    /// `REALM_NAME`: this node's Genesis City realm name (default `main`).
+    pub realm_name: Option<String>,
 }
 
 impl RawSettings {
@@ -202,6 +204,8 @@ pub struct Settings {
     pub commit_hash: Option<String>,
     /// Local preview scenes skip the Genesis deployment check (`ALLOW_LOCAL_PREVIEW`).
     pub allow_local_preview: bool,
+    /// This node's Genesis City realm name: never read as a world's label.
+    pub realm_name: String,
 }
 
 /// Masks the moderator and gatekeeper tokens (the LiveKit secret is masked
@@ -367,6 +371,9 @@ impl Settings {
             },
             commit_hash: raw.commit_hash,
             allow_local_preview: raw.allow_local_preview,
+            realm_name: raw
+                .realm_name
+                .unwrap_or_else(|| crate::world_identity::GENESIS_CITY_REALM.to_string()),
         })
     }
 
@@ -397,6 +404,7 @@ impl Settings {
             cast2_url: streaming::cast::DEFAULT_CAST2_URL.to_string(),
             commit_hash: None,
             allow_local_preview: false,
+            realm_name: crate::world_identity::GENESIS_CITY_REALM.to_string(),
         }
     }
 }

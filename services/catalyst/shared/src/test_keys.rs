@@ -75,7 +75,7 @@ pub async fn signed_at(
         AuthLink {
             link_type: AuthLinkType::SIGNER,
             payload: format!("{:#x}", wallet.address()),
-            signature: None,
+            signature: Some(String::new()),
         },
         AuthLink {
             link_type: AuthLinkType::EcdsaSignedEntity,

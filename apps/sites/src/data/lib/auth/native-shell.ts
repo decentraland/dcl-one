@@ -28,16 +28,28 @@ type ShellSignIn = {
   cancel: () => void;
 };
 
+function waitForNextPoll(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    const timer = setTimeout(finish, POLL_INTERVAL_MS);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
 export function beginShellBrowserSignIn(): ShellSignIn {
   const id = requestId();
-
-  let cancelled = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  const controller = new AbortController();
+  const { signal } = controller;
+  const timeout = setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
 
   const identity = (async (): Promise<AuthIdentity | null> => {
     const { buildEphemeralMessage, DEFAULT_EXPIRATION_MS, generateEphemeralKey } =
       await import("./identity");
-    if (cancelled) return null;
+    if (signal.aborted) return null;
     const ephemeral = generateEphemeralKey();
     const expiration = new Date(Date.now() + DEFAULT_EXPIRATION_MS);
     const expirationIso = expiration.toISOString();
@@ -57,32 +69,38 @@ export function beginShellBrowserSignIn(): ShellSignIn {
     if (!w.__DCL_SHELL_TEST_SUPPRESS_NAV__) window.location.href = approveUrl;
 
     const message = buildEphemeralMessage(ephemeral.address, expiration);
-    const deadline = Date.now() + POLL_TIMEOUT_MS;
-    while (!cancelled && Date.now() < deadline) {
-      await new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, POLL_INTERVAL_MS);
-      });
-      if (cancelled) break;
-      let res: Response;
+    while (!signal.aborted) {
+      await waitForNextPoll(signal);
+      if (signal.aborted) break;
+
+      let body: { signer?: string; signature?: string };
       try {
-        res = await fetch(`${RELAY_PATH}?id=${encodeURIComponent(id)}`, {
+        const res = await fetch(`${RELAY_PATH}?id=${encodeURIComponent(id)}`, {
           cache: "no-store",
+          signal,
+        });
+        if (res.status !== 200) {
+          // Every poll before the approval answers without the signature: its body is let go, not left open.
+          await res.body?.cancel().catch(() => {});
+          continue;
+        }
+        body = await res.json();
+      } catch {
+        continue;
+      }
+      if (signal.aborted || typeof body?.signer !== "string" || typeof body?.signature !== "string") continue;
+
+      const { recoverMessageAddress } = await import("viem");
+      let recovered: string;
+      try {
+        recovered = await recoverMessageAddress({
+          message,
+          signature: body.signature as `0x${string}`,
         });
       } catch {
         continue;
       }
-      if (res.status !== 200) continue;
-      const body = (await res.json()) as { signer?: string; signature?: string };
-      if (!body?.signer || !body?.signature) continue;
-
-      const { recoverMessageAddress } = await import("viem");
-      const recovered = await recoverMessageAddress({
-        message,
-        signature: body.signature as `0x${string}`,
-      });
-      if (recovered.toLowerCase() !== body.signer.toLowerCase()) {
-        continue;
-      }
+      if (signal.aborted || recovered.toLowerCase() !== body.signer.toLowerCase()) continue;
 
       const authChain: AuthLink[] = [
         { type: "SIGNER", payload: body.signer.toLowerCase(), signature: "" },
@@ -102,13 +120,14 @@ export function beginShellBrowserSignIn(): ShellSignIn {
       return next;
     }
     return null;
-  })();
+  })().finally(() => {
+    clearTimeout(timeout);
+    // Settled either way: nothing else may start or stay pending on this request.
+    controller.abort();
+  });
 
   return {
     identity,
-    cancel: () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    },
+    cancel: () => controller.abort(),
   };
 }

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { preprocessCSS, resolveConfig, type ResolvedConfig } from 'vite'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { planComponents, cssDeclarations, type ComponentPlanContext } from './install-components.js'
 import { runtimeFiles } from './promotion/eligibility.js'
 import * as eligibility from './promotion/eligibility.js'
@@ -53,7 +53,7 @@ describe('when planning public components from verified installer inputs', () =>
     ).toBe(false)
   })
 
-  it.each(
+  describe.each(
     [
       null,
       undefined,
@@ -63,15 +63,17 @@ describe('when planning public components from verified installer inputs', () =>
       { components: ['DemoNav'], internal: null },
       { components: ['DemoNav'], internal: [3] }
     ].map((registry) => ({ registry }))
-  )(
-    'should reject malformed registry containers before reading component input: %j',
-    async ({ registry }) => {
-      const read = vi.spyOn(context.source, 'getComponentPage')
+  )('and the registry container is malformed: %j', ({ registry }) => {
+    let read: MockInstance
+    beforeEach(() => {
+      read = vi.spyOn(context.source, 'getComponentPage')
       context.registry = registry as unknown as ComponentPlanContext['registry']
+    })
+    it('should reject the registry before reading component input', async () => {
       await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
       expect(read).not.toHaveBeenCalled()
-    }
-  )
+    })
+  })
 
   describe.each([{ components: [] }, { components: [], internal: [] }])(
     'and the registry is legally empty: %j',
@@ -97,11 +99,15 @@ describe('when planning public components from verified installer inputs', () =>
         })
         expect(await planComponents(context)).toEqual(first)
       })
-      it('should still enforce the configured raster policy before returning an empty plan', async () => {
-        context.config.imageFills = 'assets'
-        await expect(planComponents(context)).rejects.toThrow(
-          'Public component installation requires the placeholder raster policy'
-        )
+      describe('and the configured raster policy is assets', () => {
+        beforeEach(() => {
+          context.config.imageFills = 'assets'
+        })
+        it('should still enforce the raster policy before returning an empty plan', async () => {
+          await expect(planComponents(context)).rejects.toThrow(
+            'Public component installation requires the placeholder raster policy'
+          )
+        })
       })
     }
   )
@@ -120,17 +126,29 @@ describe('when planning public components from verified installer inputs', () =>
         internal: ['DemoNav']
       })
     })
-    it('should reject a component listed with both public and internal visibility', async () => {
-      context.registry = { components: ['DemoNav'], internal: ['DemoNav'] }
-      await expect(planComponents(context)).rejects.toThrow('Duplicate component registry name')
+    describe('and the component is also listed as public', () => {
+      beforeEach(() => {
+        context.registry = { components: ['DemoNav'], internal: ['DemoNav'] }
+      })
+      it('should reject the component listed with both visibilities', async () => {
+        await expect(planComponents(context)).rejects.toThrow('Duplicate component registry name')
+      })
     })
-    it('should reject an unknown internal component', async () => {
-      context.registry = { components: [], internal: ['Missing'] }
-      await expect(planComponents(context)).rejects.toThrow('Unknown component')
+    describe('and the internal component is unknown', () => {
+      beforeEach(() => {
+        context.registry = { components: [], internal: ['Missing'] }
+      })
+      it('should reject the unknown internal component', async () => {
+        await expect(planComponents(context)).rejects.toThrow('Unknown component')
+      })
     })
-    it('should reject malformed internal names instead of omitting them', async () => {
-      context.registry = { components: [], internal: 'DemoNav' as unknown as string[] }
-      await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
+    describe('and the internal names are not a list', () => {
+      beforeEach(() => {
+        context.registry = { components: [], internal: 'DemoNav' as unknown as string[] }
+      })
+      it('should reject the malformed internal names instead of omitting them', async () => {
+        await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
+      })
     })
   })
 
@@ -217,7 +235,7 @@ describe('when planning public components from verified installer inputs', () =>
     expect(mapping.issues).toEqual([])
   })
 
-  it.each([
+  describe.each([
     {
       components: ['DemoNav', 'DemoNav'],
       error: 'Invalid component registry: Duplicate component registry name: DemoNav'
@@ -238,137 +256,197 @@ describe('when planning public components from verified installer inputs', () =>
       error: 'Invalid or duplicate accepted limit'
     }
   ])(
-    'should reject invalid or unavailable registry names $components',
-    async ({ components, error }) => {
-      context.registry = { components }
-      await expect(planComponents(context)).rejects.toThrow(error)
+    'and the registry lists the invalid or unavailable names $components',
+    ({ components, error }) => {
+      beforeEach(() => {
+        context.registry = { components }
+      })
+      it('should reject the registry names', async () => {
+        await expect(planComponents(context)).rejects.toThrow(error)
+      })
     }
   )
 
-  it('should write the accepted limits back with the public name', async () => {
-    const limits = [{ id: 'logo-size', text: 'The logo is pending.' }]
-    context.registry = { components: [{ name: 'DemoNav', limits }] }
+  describe('and a public component carries accepted limits', () => {
+    let limits: { id: string; text: string }[]
+    beforeEach(() => {
+      limits = [{ id: 'logo-size', text: 'The logo is pending.' }]
+      context.registry = { components: [{ name: 'DemoNav', limits }] }
+    })
 
-    const plan = await planComponents(context)
+    it('should write the accepted limits back with the public name', async () => {
+      const plan = await planComponents(context)
 
-    expect(JSON.parse(plan.files.get('promotion.json')!.toString())).toEqual({
-      components: [{ name: 'DemoNav', limits }]
+      expect(JSON.parse(plan.files.get('promotion.json')!.toString())).toEqual({
+        components: [{ name: 'DemoNav', limits }]
+      })
     })
   })
 
   // A public component with accepted limits whose spec left the capture: the plan stops instead of writing the
   // registry back without that component and its limits.
-  it('should refuse, not drop the limits, when a limited component is missing from the capture', async () => {
-    context.registry = {
-      components: ['DemoNav', { name: 'Gone', limits: [{ id: 'a', text: 'Pending.' }] }]
-    }
+  describe('and a limited component is missing from the capture', () => {
+    beforeEach(() => {
+      context.registry = {
+        components: ['DemoNav', { name: 'Gone', limits: [{ id: 'a', text: 'Pending.' }] }]
+      }
+    })
 
-    await expect(planComponents(context)).rejects.toThrow(
-      'Unknown component or missing dependency: Gone'
-    )
+    it('should refuse instead of dropping the limits', async () => {
+      await expect(planComponents(context)).rejects.toThrow(
+        'Unknown component or missing dependency: Gone'
+      )
+    })
   })
 
-  it.each([
+  describe.each([
     ['a limit text with a bidi override', 'Logo \u202Eis pending.'],
     ['a limit text with a line separator', 'Logo\u2028pending.'],
     ['a limit text with a www link', 'See www.example.org.'],
     ['a limit text with a javascript link', 'Click javascript:alert(1).'],
     ['a limit text with markup', 'Logo <img> pending.']
-  ])('should report %s under the neutral registry prefix', async (_label, text) => {
-    context.registry = { components: [{ name: 'DemoNav', limits: [{ id: 'a', text }] }] }
-
-    await expect(planComponents(context)).rejects.toThrow(
-      'Invalid component registry: Invalid or duplicate accepted limit of component DemoNav'
-    )
-  })
-
-  it('should refuse limits on an internal name', async () => {
-    context.registry = {
-      components: [],
-      internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }] as unknown as string[]
-    }
-    await expect(planComponents(context)).rejects.toThrow('names only, without limits')
-  })
-
-  it('should reject a legacy seal in place of the names-only registry', async () => {
-    context.registry = {
-      components: ['DemoNav'],
-      files: {}
-    } as ComponentPlanContext['registry']
-    await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
-  })
-
-  it('should consume a live source supplied by the core without selecting a fallback', async () => {
-    const input = context.source
-    context.source = new Proxy(input, {
-      get(target, key) {
-        if (key === 'name') return 'rest'
-        const value = Reflect.get(target, key, target)
-        return typeof value === 'function' ? value.bind(target) : value
-      }
+  ])('and the registry has %s', (_label, text) => {
+    beforeEach(() => {
+      context.registry = { components: [{ name: 'DemoNav', limits: [{ id: 'a', text }] }] }
     })
-    const plan = await planComponents(context)
-    expect(plan.components).toEqual(['DemoNav'])
-  })
 
-  it('should reject missing live component data rather than returning an empty plan', async () => {
-    const input = context.source
-    context.source = new Proxy(input, {
-      get(target, key) {
-        if (key === 'name') return 'rest'
-        if (key === 'getComponentPageById') return async () => undefined
-        const value = Reflect.get(target, key, target)
-        return typeof value === 'function' ? value.bind(target) : value
-      }
-    })
-    await expect(planComponents(context)).rejects.toThrow()
-  })
-
-  it('should refuse raster-asset generation instead of reintroducing captured mock images', async () => {
-    context.config.imageFills = 'assets'
-    await expect(planComponents(context)).rejects.toThrow('placeholder raster policy')
-  })
-
-  it.each(runtimeFiles)('should refuse a missing runtime input %s', async (file) => {
-    context.runtime = new Map([...context.runtime].filter(([name]) => name !== file))
-    await expect(planComponents(context)).rejects.toThrow('Missing locked runtime input: ' + file)
-  })
-
-  it('should reject components excluded by the source eligibility policy', async () => {
-    vi.spyOn(eligibility, 'promotionExclusion').mockReturnValue(['manual review required'])
-    await expect(planComponents(context)).rejects.toThrow('Component is not eligible: DemoNav')
-  })
-
-  it.each(['MissingDependency', 'DemoNav'])(
-    'should reject an unavailable or recursive component dependency %s',
-    async (dependency) => {
-      const loaded = structuredClone(
-        await specs.loadSpecsFromSource(context.source, context.config, 'promotion')
-      )
-      loaded.specs.find((spec) => spec.name === 'DemoNav')!.views[0]!.root.ref = {
-        component: dependency,
-        props: {}
-      }
-      vi.spyOn(specs, 'loadSpecsFromSource').mockResolvedValueOnce(loaded)
+    it('should report it under the neutral registry prefix', async () => {
       await expect(planComponents(context)).rejects.toThrow(
-        dependency === 'DemoNav' ? 'Recursive component dependency' : 'missing dependency'
+        'Invalid component registry: Invalid or duplicate accepted limit of component DemoNav'
       )
+    })
+  })
+
+  describe('and an internal name carries limits', () => {
+    beforeEach(() => {
+      context.registry = {
+        components: [],
+        internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }] as unknown as string[]
+      }
+    })
+    it('should refuse the limits', async () => {
+      await expect(planComponents(context)).rejects.toThrow('names only, without limits')
+    })
+  })
+
+  describe('and the registry carries a legacy seal', () => {
+    beforeEach(() => {
+      context.registry = {
+        components: ['DemoNav'],
+        files: {}
+      } as ComponentPlanContext['registry']
+    })
+    it('should reject the seal in place of the names-only registry', async () => {
+      await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
+    })
+  })
+
+  describe('and the core supplies a live source', () => {
+    beforeEach(() => {
+      const input = context.source
+      context.source = new Proxy(input, {
+        get(target, key) {
+          if (key === 'name') return 'rest'
+          const value = Reflect.get(target, key, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
+    })
+    it('should consume the live source without selecting a fallback', async () => {
+      const plan = await planComponents(context)
+      expect(plan.components).toEqual(['DemoNav'])
+    })
+  })
+
+  describe('and the live source returns no component data', () => {
+    beforeEach(() => {
+      const input = context.source
+      context.source = new Proxy(input, {
+        get(target, key) {
+          if (key === 'name') return 'rest'
+          if (key === 'getComponentPageById') return async () => undefined
+          const value = Reflect.get(target, key, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
+    })
+    it('should reject the missing data rather than returning an empty plan', async () => {
+      await expect(planComponents(context)).rejects.toThrow('Missing inventory snapshot: ')
+    })
+  })
+
+  describe('and the raster policy is assets', () => {
+    beforeEach(() => {
+      context.config.imageFills = 'assets'
+    })
+    it('should refuse raster-asset generation instead of reintroducing captured mock images', async () => {
+      await expect(planComponents(context)).rejects.toThrow('placeholder raster policy')
+    })
+  })
+
+  describe.each(runtimeFiles)('and the runtime input %s is missing', (file) => {
+    beforeEach(() => {
+      context.runtime = new Map([...context.runtime].filter(([name]) => name !== file))
+    })
+    it('should refuse the missing runtime input', async () => {
+      await expect(planComponents(context)).rejects.toThrow('Missing locked runtime input: ' + file)
+    })
+  })
+
+  describe('and the source eligibility policy excludes the component', () => {
+    beforeEach(() => {
+      vi.spyOn(eligibility, 'promotionExclusion').mockReturnValue(['manual review required'])
+    })
+    it('should reject the excluded component', async () => {
+      await expect(planComponents(context)).rejects.toThrow('Component is not eligible: DemoNav')
+    })
+  })
+
+  describe.each([
+    ['MissingDependency', 'missing dependency'],
+    ['DemoNav', 'Recursive component dependency']
+  ])(
+    'and the component depends on the unavailable or recursive component %s',
+    (dependency, message) => {
+      beforeEach(async () => {
+        const loaded = structuredClone(
+          await specs.loadSpecsFromSource(context.source, context.config, 'promotion')
+        )
+        loaded.specs.find((spec) => spec.name === 'DemoNav')!.views[0]!.root.ref = {
+          component: dependency,
+          props: {}
+        }
+        vi.spyOn(specs, 'loadSpecsFromSource').mockResolvedValueOnce(loaded)
+      })
+      it('should reject the dependency', async () => {
+        await expect(planComponents(context)).rejects.toThrow(message)
+      })
     }
   )
 
-  it('should reject a capture that disappears before mapping emission', async () => {
-    const original = context.source.getComponentPageById!.bind(context.source)
-    let navReads = 0
-    vi.spyOn(context.source, 'getComponentPageById').mockImplementation(async (id, name) => {
-      if (id === '10:7' && ++navReads === 2) return undefined
-      return original(id, name)
+  describe('and a capture disappears before mapping emission', () => {
+    beforeEach(() => {
+      const original = context.source.getComponentPageById!.bind(context.source)
+      let navReads = 0
+      vi.spyOn(context.source, 'getComponentPageById').mockImplementation(async (id, name) => {
+        if (id === '10:7' && ++navReads === 2) return undefined
+        return original(id, name)
+      })
     })
-    await expect(planComponents(context)).rejects.toThrow('Missing captured component mapping')
+    it('should reject the plan', async () => {
+      await expect(planComponents(context)).rejects.toThrow('Missing captured component mapping')
+    })
   })
 
-  it('should propagate source read failures without returning a partial plan', async () => {
-    vi.spyOn(context.source, 'getTokenCollections').mockRejectedValueOnce(new Error('read failed'))
-    await expect(planComponents(context)).rejects.toThrow('read failed')
+  describe('and a source read fails', () => {
+    beforeEach(() => {
+      vi.spyOn(context.source, 'getTokenCollections').mockRejectedValueOnce(
+        new Error('read failed')
+      )
+    })
+    it('should propagate the failure without returning a partial plan', async () => {
+      await expect(planComponents(context)).rejects.toThrow('read failed')
+    })
   })
 })
 
