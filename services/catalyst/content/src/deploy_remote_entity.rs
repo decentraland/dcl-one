@@ -1346,9 +1346,12 @@ mod tests {
             eprintln!("skipping: permissions do not bind when running as root");
             return;
         }
+        let (storage, tmp) = temp_storage("render-untouchable").await;
+        let _tmp = RemoveOnDrop(tmp);
+        let own_uid = std::fs::metadata(storage.root()).unwrap().uid();
         let foreign = std::path::Path::new("/etc/passwd");
         match std::fs::metadata(foreign) {
-            Ok(meta) if meta.is_file() && meta.uid() != unsafe { libc::geteuid() } => {}
+            Ok(meta) if meta.is_file() && meta.uid() != own_uid => {}
             _ => {
                 eprintln!(
                     "skipping: no file owned by another uid at {}",
@@ -1357,8 +1360,6 @@ mod tests {
                 return;
             }
         }
-        let (storage, tmp) = temp_storage("render-untouchable").await;
-        let _tmp = RemoveOnDrop(tmp);
         let [held, refused, hidden, absent] =
             [b"held".as_slice(), b"refused", b"hidden", b"absent"].map(hash_bytes_v1);
         assert_ne!(hex_prefix(&held), hex_prefix(&hidden));
