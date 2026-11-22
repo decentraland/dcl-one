@@ -6297,9 +6297,16 @@ mod supervisor {
         let url = serve(chain.clone()).await;
         let st = state_over(db.pool.clone(), &url, index_settings(100, 1_000_000), false);
         let namespace = format!("shared-lease-loss-{}", std::process::id());
+        // Only sales' lease is meant to go, and on `second`, whose short
+        // keepalive notices it. The walk and nft's lease are on `first`: a
+        // lease statement that outlasts 200 ms on a loaded runner would end
+        // nft's acquisition too, and sales would walk the window alone.
         let first = Jobs::with_leases(
             db.pool.clone(),
-            lease_settings(&namespace, Duration::from_millis(100)),
+            LeaseSettings {
+                keepalive: Duration::from_secs(30),
+                ..lease_settings(&namespace, Duration::from_millis(100))
+            },
         )
         .with_first_pass_now(true);
         let second = Jobs::with_leases(
@@ -6317,17 +6324,28 @@ mod supervisor {
         });
         let mut projections = nft_and_sales(&url);
         projections[1].make = hooked_sales(&hooks);
-        chain_jobs::spawn_with(
-            &first,
-            supervisor(&st, ChainNet::Matic, projections),
-            Some(leases),
-        );
+        // As in `a_commit_past_the_deadline_recovers_from_wherever_the_cursor_is`:
+        // on a short cadence one projection's close can outlast the other's
+        // interval on a slow machine, and sales then walks the new window
+        // alone. On this one each stands idle when the other comes due.
+        for p in &mut projections {
+            p.cfg = PeriodicCfg::every(Duration::from_secs(1))
+                .with_error_backoff(Duration::from_millis(400));
+        }
+        let sup = supervisor(&st, ChainNet::Matic, projections);
+        let stats = sup.stats.clone();
+        chain_jobs::spawn_with(&first, sup, Some(leases));
         for indexer in [INDEXER_NFT, INDEXER_SALES] {
             eventually("each walked alone to the head", || async {
                 published(&db.pool, indexer, ChainNet::Matic).await
             })
             .await;
         }
+        let walks = stats.walks.load(Ordering::SeqCst);
+        eventually("nft and sales walk together", || async {
+            stats.walks.load(Ordering::SeqCst) > walks
+        })
+        .await;
         let before = cursor(&db.pool, INDEXER_SALES, ChainNet::Matic)
             .await
             .unwrap()

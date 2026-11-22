@@ -1665,9 +1665,14 @@ fn deployer_over_chain(
 }
 
 /// A signed one-parcel scene at `timestamp`: its files, id, auth chain and parcel.
+/// Each call takes a parcel no other call of this process took: these tests
+/// share one database, and a random parcel another test had just deployed
+/// a newer scene on refused this one as older.
 async fn signed_scene_at(timestamp: i64) -> (Vec<Bytes>, String, Value, String) {
-    let n = uuid::Uuid::new_v4().as_u128();
-    let parcel = format!("{},{}", 130 + (n % 20) as i32, 130 + ((n >> 8) % 20) as i32);
+    static NEXT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    assert!(n < 400, "the 20x20 block of test parcels is used up");
+    let parcel = format!("{},{}", 130 + n % 20, 130 + n / 20);
     let model = Bytes::from_static(b"current access model");
     let (bytes, id, chain) = signed_entity_of(serde_json::json!({
         "version": "v3",
@@ -1741,11 +1746,10 @@ async fn a_scene_published_past_the_request_ttl_needs_current_access() {
         ),
         other => panic!("a parcel sold since the upload started must be refused, got {other:?}"),
     }
+    let published = publish(deployer_over_chain(&pool, &storage, &kept, false)).await;
     assert!(
-        publish(deployer_over_chain(&pool, &storage, &kept, false))
-            .await
-            .is_ok(),
-        "a deployer still holding the parcel publishes"
+        published.is_ok(),
+        "a deployer still holding the parcel publishes, got {published:?}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
