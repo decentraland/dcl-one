@@ -192,12 +192,7 @@ pub fn parse_metadata(raw: &str) -> Option<Value> {
     }
 }
 
-/// Upstream folds with `String.prototype.trim`, whose WhiteSpace set includes
-/// ZWNBSP (U+FEFF); Rust's `str::trim` follows the Unicode `White_Space`
-/// property, which does not.
-fn js_trim(value: &str) -> &str {
-    value.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
-}
+use crate::js_date::js_trim;
 
 fn is_canonical(value: &str) -> bool {
     value == js_trim(value).to_lowercase().as_str()
@@ -319,9 +314,14 @@ impl SignedPath {
 /// so a chain signed over `/v1/x` does not open `/social-api/v1/x` unless the
 /// proxy says that is what the client asked.
 pub fn candidate_paths<'a>(headers: &'a HeaderMap, path: &'a SignedPath) -> Vec<&'a str> {
+    candidates(header_str(headers, ORIGINAL_PATH_HEADER), path)
+}
+
+/// [`candidate_paths`] over an `x-original-path` value already read.
+pub(crate) fn candidates<'a>(original: Option<&'a str>, path: &'a SignedPath) -> Vec<&'a str> {
     let mut paths = Vec::with_capacity(2);
     paths.push(path.request.as_str());
-    if let Some(original) = header_str(headers, ORIGINAL_PATH_HEADER)
+    if let Some(original) = original
         .map(|raw| raw.split('?').next().unwrap_or(raw))
         .filter(|stripped| stripped.ends_with(path.local.as_str()) && *stripped != path.request)
     {

@@ -206,7 +206,7 @@ The metadata is the signed `x-identity-metadata` header; there is no body.
 | field | upstream | dcl-one |
 |---|---|---|
 | `type` | Read as is. A missing `type` reads as `undefined`. | `meta.get("type").as_str()`, else `""` (`:236,256,319`). |
-| `wallets` (deployment, streaming) | `authMetadata.wallets \|\| []`, lowercased, **not validated**. A non-string element throws a `TypeError`, which becomes a 500 (`permissions/component.ts:246,299`). | Only the string elements are read, and each must be an address, else `400 Invalid address: <w>.` (`:300-316`). |
+| `wallets` (deployment, streaming) | `authMetadata.wallets \|\| []`, lowercased, **not validated**. A non-string element throws a `TypeError`, which becomes a 500 (`permissions/component.ts:246,299`). | Only the string elements are read, and each must be an address, else `400 Invalid address: <w>.` (`permissions.rs` `metadata_wallets`). No application count cap; auth-chain validation bounds the complete signed payload to 100,000 bytes (`dcl-auth` `MAX_AUTH_LINK_FIELD_LEN`), and HTTP header limits also apply. These byte limits do not define a fixed wallet count. |
 | `wallets`, `communities` (access allow-list) | Stored as given. Only the lengths are checked against `ACCESS_MAX_WALLETS` (1000) and `ACCESS_MAX_COMMUNITIES` (50), which come from env (`access/component.ts:24-25,61-71`). | Each wallet must be an address and each community a UUID. The lengths are checked against `ACCESS_MAX_COMMUNITIES` then `ACCESS_MAX_WALLETS` (`access_from_metadata`, `:399-412`; `config/src/worlds.rs:134-150`, defaults 50 and 1000) (WP-09). |
 | `nft` | Any truthy value. | Must be a string (`:323-325`). |
 | `secret` | Any truthy value, hashed with bcrypt cost 10. A non-string truthy value makes `hashSync` throw, which becomes a 500. | Must be a non-empty string, hashed with bcrypt `DEFAULT_COST` (12) (`:330-341`). |
@@ -241,7 +241,7 @@ The metadata is the signed `x-identity-metadata` header; there is no body.
 | effect | upstream | dcl-one | verdict |
 |---|---|---|---|
 | Deployment/streaming replace | Two passes, not atomic: revoke the wallets no longer listed, grant the new ones. Rows already listed keep their parcel scoping. Unrestricted streaming deletes every streaming row (`permissions/component.ts:224-313`). | One statement (`store_access.rs` `replace_world_wide_permission`) with the same set semantics. | MATCH |
-| Grant/revoke notifications | SNS `WORLDS_PERMISSION_GRANTED`/`REVOKED`, one per added or removed address. The description names the world; the URL is `${BUILDER_URL}/worlds?tab=dcl` (`permissions/component.ts:23-85`). | Inbox and email rows in the same transaction, at most 50 per direction. The description leaves the world out; the URL comes from the notices config (`permissions.rs:184-211`, `notices.rs:78-125`; test `permission_edits_notify_each_address_actually_changed`, `tests.rs:6593`). | DIVERGENT: intended (worlds-compatibility.md "Notifications") |
+| Grant/revoke notifications | SNS `WORLDS_PERMISSION_GRANTED`/`REVOKED`, one per added or removed address. The description names the world; the URL is `${BUILDER_URL}/worlds?tab=dcl` (`permissions/component.ts:23-85`). | Inbox and email rows for every added or removed address, in batches of at most 50 within the edit transaction. The description names a world that matches the world-name pattern, or says "a world" otherwise; the URL comes from the notices config (`permissions.rs` `commit_with_notices`, `notices.rs` `Notices::permission_changed`; tests `permission_edits_notify_each_address_actually_changed`, `one_edit_notifies_every_added_and_removed_address`, `a_later_notice_batch_failure_rolls_back_permissions_and_email_deliveries`). | DIVERGENT: intended (worlds-compatibility.md "Notifications") |
 | `WORLD_SETTINGS_CHANGED` event on `access` | SNS `{type:"world", subType:"world-settings-changed", key:"<world>-<ts>", metadata:{worldName, accessType}}` after every successful `setAccess` (`access/component.ts:121-132`) | none | intended (worlds-compatibility.md "No settings events", WP-13) |
 | Kicks after an access change | `handleAccessChange(prev, next)` (`access-change-handler/component.ts:118-187`). The first matching rule wins: (1) next is `unrestricted`: no kick. (2) The type changed, or the secret hash changed (a re-posted password always gets a new hash): kick every participant except the owner and the deployment-grant holders. (3) The allow-list wallets or communities changed: kick the non-privileged participants that `checkAccess` now refuses; one whose check fails is kept. (4) Otherwise no kick. Kicks run in batches of `ACCESS_KICK_BATCH_SIZE` (20), and failures are logged. | `Revocation::AccessSetting` re-decides every admission in the world's live rooms on a spawned task (`permissions.rs:285-289`, `core/mod.rs:361-367`, `comms/src/gatekeeper/revocation.rs:59-74`). The owner and every deployment **or streaming** grant holder stay. A switch to an allow-list keeps participants already on it. A shared-secret admission is void until the new secret is presented. | DIVERGENT: intended (worlds-compatibility.md "Kicks on access change"). Depends on the comms area (WP-14). |
 
@@ -657,9 +657,12 @@ filter keeps it (`store::raw_records_exclude`), and no operator disable or quota
 17. **WP-17 · routes 2, 4, 5, 9, 10 · notification transport and text.** Status: intended (worlds-compatibility.md).
     - Upstream: SNS `WORLDS_PERMISSION_GRANTED`/`REVOKED`, one per changed address; the description names the world;
       `url: ${BUILDER_URL}/worlds?tab=dcl` (`permissions/component.ts:23-85`).
-    - dcl-one: inbox and email rows in the edit transaction, at most 50 per direction, with no world in the
-      description; removing a grant's last parcel sends a revoke (`commit_with_notices`, `permissions.rs:212`;
-      `notices.rs:78`). worlds-compatibility.md "Delivery", "Last parcel removed".
+    - dcl-one: inbox and email rows for every changed address, in batches of at most 50 within the edit
+      transaction. The description names a world that matches the world-name pattern, or says "a world"
+      otherwise; removing a grant's last parcel sends a revoke (`permissions.rs` `commit_with_notices`,
+      `notices.rs` `Notices::permission_changed`; tests `one_edit_notifies_every_added_and_removed_address`,
+      `a_later_notice_batch_failure_rolls_back_permissions_and_email_deliveries`). worlds-compatibility.md
+      "Delivery", "Last parcel removed".
     - Severity: none (closed).
 
 18. **WP-18 · route 5 · removing the last parcel.** Status: intended (worlds-compatibility.md).

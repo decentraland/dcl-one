@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -247,6 +248,49 @@ class SocialMigrationCases:
     def social_ea_community(self, src, owner):
         self.sql(src, f"""INSERT INTO communities VALUES ('{self.SOCIAL_COMMUNITY}', 'c', '', '{owner}',
             false, true, false, false, '2026-01-01', '2026-01-01');""")
+
+    def test_when_copying_community_thumbnails_it_should_fill_the_imported_ones_and_keep_the_nodes(self):
+        from tooling.tests import migration_harness as harness
+        src, tgt = self.social_ea_dbs()
+        owner = self.wallet('a')
+        held, none = '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000a2'
+        self.social_ea_community(src, owner)
+        self.sql(src, f"""INSERT INTO communities VALUES
+            ('{held}', 'h', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01'),
+            ('{none}', 'n', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01');""")
+        self.social_ea_run('communities')
+        self.sql(tgt, f"""INSERT INTO social.community_thumbnails VALUES ('{held}', 'QmNodeOwn', now());""")
+        upstream, node = self.tmp / 'social-cdn', self.tmp / 'social-node'
+        self.addCleanup(shutil.rmtree, upstream, True)
+        self.addCleanup(shutil.rmtree, node, True)
+        image = harness.blobs.PNG_MAGIC + b'thumbnail'
+        for cid in (self.SOCIAL_COMMUNITY, held):
+            path = upstream / harness.blobs.community_thumbnail_path(cid)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(image)
+        copy = ('blobs', 'social-service-ea', '--from-dir', str(upstream), '--to', str(node))
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('copied 1, already in the store 0, none upstream 1', out)
+        key = harness.blobs.hash_bytes_v0(image)
+        self.assertEqual(harness.blobs.Store(node).path(key).read_bytes(), image)
+        self.assertEqual(self.sql(tgt, 'SELECT community_id, thumbnail_hash FROM social.community_thumbnails'
+                                       ' ORDER BY community_id;').strip().splitlines(),
+                         [f'{held}\tQmNodeOwn', f'{self.SOCIAL_COMMUNITY}\t{key}'])
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 imported without a thumbnail here', out)
+        # upstream serving something that is not a picture fails the run, unlike a community with none
+        bad = '00000000-0000-4000-8000-0000000000a3'
+        self.sql(src, f"""INSERT INTO communities VALUES
+            ('{bad}', 'b', '', '{owner}', false, true, false, false, '2026-01-01', '2026-01-01');""")
+        self.social_ea_run('communities')
+        path = upstream / harness.blobs.community_thumbnail_path(bad)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'<html>not found</html>')
+        code, out = self.migrate(*copy, sources_dir=harness.migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('not an image 1', out)
 
     def test_when_the_node_changed_imported_settings_it_should_keep_them_on_a_rerun(self):
         src, tgt = self.social_ea_dbs()

@@ -167,9 +167,9 @@ def client(args):
                  "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
                  "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
                  "/internal/thirdweb-sign", "/api/screens/v1/play",
-                 "/profile/alice", "/cast", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
+                 "/profile/alice", "/cast", "/press", "/press/", "/assets/example.js", "/docs/index.md", "/download", "/download_success"]:
         hit(path, "sites")
-    for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
+    for path in ["/about", "/press-release", "/content/contents/blob", "/lambdas/profiles", "/api/status",
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
                  "/places/place/?position=1,2", "/places/world/?name=sample.dcl.eth",
                  "/places/world?name=sample.dcl.eth", "/events/api/status",
@@ -232,6 +232,8 @@ def client(args):
     print("Internal paths, admin CIDRs, normalized paths and forwarded-header trust passed.", flush=True)
 
     hit("/about", "apis", vhost="peer.example.test")
+    hit("/comms-gatekeeper/scene-admin", "apis", vhost="worlds-content-server.example.test")
+    hit("/cast-presenter-service/presentations/p/slides/s.png", "apis", vhost="realm-provider-ea.example.test")
     hit("/peer/about?x=1", "apis", vhost="gateway.example.test", target="/about?x=1")
     data = hit("/comms-gatekeeper/get-scene-adapter", "apis", vhost="gateway.example.test")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"

@@ -105,7 +105,7 @@ impl Wallet {
             AuthLink {
                 link_type: AuthLinkType::SIGNER,
                 payload: format!("{:#x}", self.root.address()),
-                signature: None,
+                signature: Some(String::new()),
             },
             AuthLink {
                 link_type: AuthLinkType::EcdsaEphemeral,

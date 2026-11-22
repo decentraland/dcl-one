@@ -390,6 +390,9 @@ def render(table, cfg, mime):
     locations += location("= /content", proxy("$content_root"))
     for path in ("/assets/", "/fonts/", "/errors/"):
         locations += location("^~ " + path, proxy("sites"))
+    # The hosted component gallery: static files the Sites image carries (infra/packages/sites.nix),
+    # with no route file to claim the prefix.
+    locations += pair("/ui-gallery", "sites", True)
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
@@ -488,6 +491,7 @@ http {{
         "~^badges:/badges/({badges_mounts})(/|$)" "";
         "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
+        "~^(worlds-content-server|realm-provider(-ea)?):/(comms-gatekeeper|cast-presenter-service)/" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
     }}

@@ -5,7 +5,5 @@ static/
 *.log
 reference
 coverage/
-# scripts/gen-error-pages.mts output, written by the sites asset sync
-public/errors/
 # scripts/gen-schema-stubs.mts output, written by the perf build
 src/**/*.stub.ts

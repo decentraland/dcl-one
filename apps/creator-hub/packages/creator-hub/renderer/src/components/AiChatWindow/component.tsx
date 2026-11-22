@@ -83,9 +83,29 @@ export function AiChatWindow() {
       aiPreload.sendAiRemoteCommand({ type: 'removeAssetMention', mention }),
     [],
   );
+  const onRemoveRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'removeRecording' }),
+    [],
+  );
+  const onSendRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'sendRecording' }),
+    [],
+  );
+  const onDraftConsumed = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'consumeDraftPrompt' }),
+    [],
+  );
   // The close button shuts the assistant entirely (window + inline panel), consistent with the
   // inline close — not a dock-back. The main window handles it (it owns the inline open flag).
   const onClose = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'closeAssistant' }), []);
+  const onToggleRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'toggleRecording' }),
+    [],
+  );
+  const onCancelRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'cancelRecording' }),
+    [],
+  );
   const onShareDecision = useCallback(
     (granted: boolean) => aiPreload.sendAiRemoteCommand({ type: 'shareDecision', granted }),
     [],
@@ -127,6 +147,13 @@ export function AiChatWindow() {
       detecting={mirror.detecting}
       selection={mirror.selection}
       assetMentions={mirror.assetMentions}
+      recording={mirror.recording ?? null}
+      recorder={mirror.recorder}
+      onToggleRecording={onToggleRecording}
+      onCancelRecording={onCancelRecording}
+      onSendRecording={onSendRecording}
+      draftPrompt={mirror.draftPrompt}
+      onDraftConsumed={onDraftConsumed}
       billingDismissed={mirror.billingDismissed}
       sessions={mirror.sessions}
       currentSessionId={mirror.currentSessionId}
@@ -143,6 +170,7 @@ export function AiChatWindow() {
       onDeleteSession={onDeleteSession}
       onClearSelection={onClearSelection}
       onRemoveAssetMention={onRemoveAssetMention}
+      onRemoveRecording={onRemoveRecording}
       onClose={onClose}
       sharing={mirror.sharing}
       onShareDecision={onShareDecision}

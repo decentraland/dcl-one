@@ -1,0 +1,62 @@
+/* Covers the page under the site header, which stays reachable (source CreateEventSuccess). */
+.overlay {
+  position: fixed;
+  inset: var(--site-header-h, 92px) 0 0;
+  z-index: 19;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  /* no token: the source page gradient, the same as the editor's background */
+  background: radial-gradient(52.86% 115.71% at 9.01% 25.79%, #7434b1 0%, #481c6c 37.11%, #2b1040 100%);
+  color: var(--dcl-text-primary);
+}
+
+.content {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-48);
+  width: 100%;
+  max-width: 737px;
+  padding: var(--dcl-space-48) var(--dcl-space-24);
+}
+
+.check {
+  display: grid;
+  place-items: center;
+  width: 94px;
+  height: 94px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-feedback-success);
+  color: var(--dcl-neutrals-white);
+}
+
+.message {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.334;
+  text-align: center;
+}
+
+.notice { align-self: stretch; }
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-24);
+}
+
+.action { min-width: 189px; }
+
+@media (max-width: 1023px) {
+  .content { gap: var(--dcl-space-32); padding: var(--dcl-space-32) var(--dcl-space-16); }
+  .message { font-size: 18px; }
+}
+
+@media (max-width: 599px) {
+  .actions { flex-direction: column; align-self: stretch; gap: var(--dcl-space-12); }
+  .action { width: 100%; }
+}

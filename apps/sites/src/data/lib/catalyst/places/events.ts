@@ -12,7 +12,7 @@ import {
   EventRecordSchema,
 } from "../generated-schemas/events";
 import { warnInvalid } from "../warn";
-import { readCopy, type CopyStamp } from "@ui/data/copyAsOf";
+import { readCopy, type CopyStamp } from "@web-core/freshness/copyAsOf";
 import type { EventAttendeeRecord as RsEventAttendee } from "@catalyst-api/events/EventAttendeeRecord";
 import type { ApiData as RsApiOk } from "@catalyst-api/places/ApiData";
 import type { EventCategoryRecord as RsEventCategory } from "@catalyst-api/events/EventCategoryRecord";

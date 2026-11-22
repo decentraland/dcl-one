@@ -1,5 +1,5 @@
 import type { CollectibleCard } from "../catalyst/marketplace/index";
-import type { PublicFreshness } from "@ui/data/screens/section";
+import type { PublicFreshness } from "@web-core/freshness/section";
 
 export const SHOP_PAGE_SIZE = 40;
 export const SHOP_OVERVIEW_SIZE = 8;

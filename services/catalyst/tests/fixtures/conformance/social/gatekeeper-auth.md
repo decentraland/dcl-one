@@ -28,8 +28,11 @@ scene and world administration and moderation.
 
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
-| Signed fetch: crypto-middleware 6.x payload, legacy form only with canonical metadata keys (37776fc, 315f59d) | `GK/logic/utils.ts:23-48` | `G/auth.rs:196-258`, keys `:53-63` | MATCH | `either_shape_with_mixed_case_metadata_verifies_through_the_allowlist` |
-| Re-spelled `signer` key refused (637d2a4) | crypto-middleware 6.3.0 | `G/auth.rs:117-119,219-226` | MATCH | `the_signer_allowlist_refuses_missing_respelled_and_unlisted_signers` |
+| Signed fetch: crypto-middleware 6.x payload, legacy form only with canonical metadata keys (37776fc, 315f59d) | `GK/logic/utils.ts:23-48` | `G/auth.rs:193-256`, keys `:53-63` | MATCH | `either_shape_with_mixed_case_metadata_verifies_through_the_allowlist` |
+| Freshness window: 60 s back and ahead on every route, `/get-server-scene-adapter` and the moderator gate included | crypto-middleware 6.3.0 (resolved by the upstream `yarn.lock`) `DEFAULT_EXPIRATION` = 60 s (`libs/crypto-middleware/src/types.ts:17`, `verifyExpiration` in `verify.ts:230-253`), no route overrides it | `SIGNED_FETCH_WINDOW_SECS` (`library/dcl-auth/src/signed_fetch.rs`), aliased as `DEFAULT_EXPIRATION_SECS` (`G/auth.rs:42`), whole seconds | MATCH | `a_present_but_empty_timestamp_expires_and_a_stale_one_is_refused` |
+| Malformed chain (link order, unsigned link, unknown type, bad ephemeral payload) | 401 | 400 "Invalid chain format" | DIVERGENCE (status only) | – |
+| Absent `x-identity-metadata` | signed over an empty string | signed over `{}` (`G/auth.rs:210`) | DIVERGENCE (both clients always send the header) | – |
+| Re-spelled `signer` key refused (637d2a4) | crypto-middleware 6.3.0 | `G/auth.rs:114-117,216-224` | MATCH | `the_signer_allowlist_refuses_missing_respelled_and_unlisted_signers` |
 | Signer gate on the adapter routes | none (`utils.ts:34-103`) | `/get-scene-adapter` refuses the scene signer, a re-spelled key too (`verify_wallet_signed_fetch`, `G/auth.rs`); `/get-server-scene-adapter` has no gate | DIVERGENCE (stricter) | `the_scene_adapter_refuses_the_scene_signer` |
 | Any verify failure answers 401 | `utils.ts:46-48` | `handlers.rs:106,231` | MATCH | captures `get-scene-adapter-unauth`, `get-server-scene-adapter-unauth`, replayed by `the_gatekeeper_answers_its_stateless_captures_as_production` |
 | Realm name source, `/get-scene-adapter` | signed `realmName` only, else 401 (`utils.ts:50-53`) | signed `realmName` only, else 401; `sceneId` signed only, else 400; the body is ignored (`handlers.rs`, `signed_scene_target`) | MATCH | `room_comes_from_signed_realm_name_and_scene_id_only`, `the_scene_adapter_room_comes_from_signed_metadata_not_the_body` |
@@ -45,7 +48,7 @@ scene and world administration and moderation.
 | Room names (52f32da lowercase) | `livekit.ts:223-245` | `w1:` world scheme, `scene:<realm>:<scene>` (`C/comms/src/rooms.rs:95-134`) | DIVERGENCE (documented `rooms.rs:13-18`, [`worlds-comms.md`](../worlds/worlds-comms.md)) | `canonical_world_client_and_authoritative_tokens_are_byte_identical` |
 | Same preview room on both endpoints (101073b), no preview fallback (2de6a61) | server handler `:32-53` | `resolve_adapter_room` (`handlers.rs:118,242`) | MATCH | `server_adapter_uses_signed_context_with_optional_irrelevant_body` |
 | Authoritative-server identity → server token | server handler `:40-43,59-60` | `handlers.rs:233-248` | MATCH | `authoritative_server_signature_still_mints_a_token` |
-| Scene admins added to room `presenters` on join | `comms-scene-handler.ts:154-170` | `spawn_admin_presenter_on_join`, only in a room with an active credential (`G/streaming_cast.rs`) | MATCH, see [`meetings-voice.md`](meetings-voice.md) | `an_expired_credential_does_not_promote_admins_on_join` |
+| Scene admins added to room `presenters` on join | `comms-scene-handler.ts:154-170` | `spawn_admin_presenter_on_join`, only in a room with an active credential (`G/streaming_cast.rs`) | DIVERGENCE (narrower: upstream promotes on every join), see [`meetings-voice.md`](meetings-voice.md) | `an_expired_credential_does_not_promote_admins_on_join` |
 
 ## 2. LiveKit token claims
 
@@ -63,7 +66,7 @@ scene and world administration and moderation.
 
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
-| Device bans; connection IP/device recorded; null upsert keeps the stored value (21f055b, 0a7c499) | `player-connection-db.ts` | `store.rs:30-37,630-651`; IP from socket or trusted proxy only (`G/auth.rs:455-461`) | MATCH (IP source is a documented divergence) | `a_lookup_without_a_device_id_is_widened_to_the_recorded_device`, `the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header` |
+| Device bans; connection IP/device recorded; null upsert keeps the stored value (21f055b, 0a7c499) | `player-connection-db.ts` | `store.rs:30-37,630-651`; IP from socket or trusted proxy only (`G/auth.rs:471-473`) | MATCH (IP source is a documented divergence) | `a_lookup_without_a_device_id_is_widened_to_the_recorded_device`, `the_scene_adapter_records_the_pinned_client_ip_not_a_client_set_header` |
 | Platform bans held in memory (8be80d5) | `adapters/ban-registry/*` | SQL on every check; Pulse polls `GET /bans` with ETag | DIVERGENCE (never stale) | – |
 | Island mints check bans **and** the deny list | `cluster-subscriber/component.ts:372-381` | bans and blocked wallets only (`G/admission/cluster/gateway.rs:68-81`); the comment at `subscriber.rs:576-577` says no deny-list store exists, but `CommsState.deny_list` does | GAP-AU-1 | `a_banned_wallet_is_skipped_entirely` (bans only) |
 | Island mint when the ban lookup fails | deferred: nothing minted, `dcl_gatekeeper_cluster_access_check_failed_total`, a later hint retries (`cluster-subscriber/component.ts:379-383`) | deferred: nothing minted or remembered, `comms_cluster_access_check_failed_total` only, a later hint or reconnect retries (`G/admission/cluster/subscriber.rs`, `admission_withheld`) | MATCH | `an_access_check_failure_defers_the_assignment` |
@@ -74,13 +77,13 @@ scene and world administration and moderation.
 |---|---|---|---|---|
 | GET: scene or authoritative-server signer | `routes.ts:101-106,140` | `G/moderation/handlers.rs:109-125` | MATCH | `scene_admin_routes_write_the_relations_under_the_scene_signer_gate` |
 | GET place, scene signer, bound to the current deployment (53deed5) | `list-scene-admins-handler.ts:39-47` | `G/moderation/context.rs:47-200` (stricter: an old deployment answers 400) | MATCH | `toolkit_signed_scope_rejects_malformed_cross_scene_and_unsigned_redirects_before_authority` |
-| GET place, server signer | realm + parcel | query `place_id`, or world name / raw sceneId (`handlers.rs:141-145`), which do not match how rows are keyed | GAP-AU-12 | untested |
+| GET place, server signer | realm + parcel | the signed realm, `sceneId` and `parcel` resolved as for the scene signer, read under the scene's place; a `place_id` must name the signed scene (`G/moderation/handlers.rs` `list_admins`) | MATCH since #1832, recorded here late (stricter: `sceneId` required; the Explorer's authoritative server signs it) | `a_server_signed_admin_list_answers_as_the_resolver_says` |
 | GET response with names, `canBeRemoved`, extras and lease holders; no 500 without profiles (79bdef1) | `list-…:69-100` | `handlers.rs:183-209`; `scene_policy.rs:276-305` | MATCH | untested (capture `scene-admin-signed-scene` not replayed) |
 | World extras: owner plus deployment/streaming grantees | `adapters/scene-admins.ts:32-62` | `C/worlds/src/policy.rs:1499-1545` | MATCH | `toolkit_ban_listings_admit_extended_holders` |
 | POST/DELETE gate `isSceneOwnerOrAdmin`: owner, admin, extended permissions (LAND operators, world deploy/stream grantees), land lease | `GK/adapters/scene-manager.ts:81-94` | `scene_manager_decision`: owner or explicit admin, else an extended holder (`G/admission/scene_policy.rs`); unreadable grants answer 503. The stream key of a world is the exception, see [`meetings-voice.md`](meetings-voice.md) | MATCH | `a_land_owner_moderates_a_genesis_scene_without_an_admin_row`, `toolkit_ban_listings_admit_extended_holders` |
 | Target protection; add by `name` | `add-…:62-91` | `handlers.rs:59-85,239-258` | MATCH (messages differ) | `scene_ban_rejects_admin_target_and_admin_decisions_are_explicit` |
 | Room metadata `sceneAdmins` (1c3b907) | `room-metadata-sync/component.ts:33-161` | `G/admission/scene_effects.rs:206-212`, `maintenance.rs:208-245` (also the world lobby) | MATCH | `canonical_moderation_metadata_and_kick_target_the_joined_scene_and_lobby` |
-| Storage key | Places `place.id`, stable across redeploys | `social.scene_admins.place_id` = deployment entity id (`C/comms/src/world_identity.rs:195-201`) | GAP-AU-11 | untested |
+| Storage key | Places `place.id`, stable across redeploys | `social.scene_admins.place_id` = the scene's place, stable across redeploys: a world scene's identity, a Genesis scene's base parcel (`C/comms/src/rooms.rs:286`); a world keys each scene apart, see [`meetings-voice.md`](meetings-voice.md) | MATCH | `a_scene_admin_mints_lists_resets_and_removes_the_stream_key`, `a_redeploy_revokes_the_key_of_a_replaced_scene_the_resolver_still_answers` |
 
 ## 5. Scene bans (`/scene-bans`, `/scene-bans/addresses`)
 
@@ -91,14 +94,15 @@ scene and world administration and moderation.
 | POST/DELETE gate | `isSceneOwnerOrAdmin` (`scene-bans.ts:165-168`) | `scene_manager_decision` (`G/moderation/handlers.rs` `ban_user`, `unban_user`) | MATCH | `toolkit_ban_listings_admit_extended_holders` |
 | Persist, then kick and update metadata | `scene-bans.ts:190-216` | transaction with a durable removal job (`store.rs:237-264`) | MATCH (stronger) | `notification_failure_rolls_back_scene_ban_before_kick_or_room_metadata` |
 | World ban from a previous deployment (`allowPreviousDeployment`) | `scene-bans.ts:157-162` | needs the current deployment | DIVERGENCE (stricter) | untested |
-| Storage key | Places id | worlds `world:base` (stable); Genesis entity id (`C/comms/src/access.rs:66-84`) | GAP-AU-11 (Genesis only) | `world_ban_keys_on_resolved_scene_id_not_world_name` (worlds) |
-| Removed-place cleanup skips opted-out places (2f425e4) | `scene-bans.ts:442-487` | deletes by `explore.place` id (`maintenance.rs:73-79`), which matches neither key | GAP-AU-14 (unverified at runtime) | untested |
+| Storage key | Places id, stable across redeploys | stable across redeploys: a world scene's `world:base`, a Genesis scene's place, the base parcel its admins use (`SceneBanKey`, `ResolvedRoom::ban_key` in `C/comms/src/rooms.rs`); `/get-scene-adapter`, the relay, Cast watchers, room metadata and the scene-state socket and its sweep (`C/worlds/src/scene_state/ws.rs` `admit`) read that key; a Genesis room no deployment stands behind is refused | MATCH | `world_ban_keys_on_resolved_scene_id_not_world_name`, `a_genesis_redeploy_keeps_the_bans_and_admins_until_the_place_is_removed`, `a_genesis_scene_refuses_a_wallet_banned_on_its_place` |
+| Removed-place cleanup skips opted-out places (2f425e4) | `scene-bans.ts:442-487` | deletes the bans made before the removal on the keys of the world's scenes, or on the Genesis base parcel when no enabled place has that base (`G/moderation/maintenance.rs` `cleanup`). An opted-out place is not a removal: Explore's trigger records none for `opt_out` (`schemas/10_explore.sql`) | MATCH | `opt_out_is_not_removal_and_delete_preserves_owner_context`, `a_genesis_redeploy_keeps_the_bans_and_admins_until_the_place_is_removed`, `a_removed_local_world_place_revokes_the_admins_of_its_scenes` |
 
 ## 6. Platform moderation
 
 | Behavior | Upstream | dcl-one | Status | Test |
 |---|---|---|---|---|
-| Moderator: `MODERATOR_TOKEN` or a wallet in the `platform_user_moderators` feature flag | `logic/moderator/component.ts:19-102` | token or static `PLATFORM_USER_MODERATORS` (`G/auth.rs:411-452`) | DIVERGENCE (static list) | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
+| Moderator signed fetch: current payload only, scene signer refused | `signedFetch` without canonical keys (`routes.ts:255-262`) | `authorize_moderator` (`G/auth.rs:423-464`, the current-payload call `:447-458`); it also guards the report list and evidence download (`G/reports.rs:897,998`), which have no upstream route | MATCH | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else` |
+| Moderator: `MODERATOR_TOKEN` or a wallet in the `platform_user_moderators` feature flag | `logic/moderator/component.ts:19-102` | token or a wallet in the `platform_user_moderators` flag of the refreshed dapps document, read per request (`CommsState::platform_moderators`, `G/mod.rs`); a disabled flag or variant lists none, as upstream. Upstream grants no wallet before a flags document exists; dcl-one admits `PLATFORM_USER_MODERATORS` while none is held: `FF_URL` unset, or never fetched and none stored. A failed refresh keeps the last document with no age limit (`social_dapps_flags_last_refresh_timestamp_seconds`). Refreshed every `FEATURE_FLAG_REFRESH_INTERVAL_IN_MS` (240 s default) | DIVERGENCE (env fallback before first flags document) | `the_moderator_gate_accepts_the_token_or_a_listed_wallet_and_nothing_else`, `a_revoked_platform_moderator_is_refused_without_a_restart`, `dapps_flags_refresh_preserves_the_audience_and_last_good_document` |
 | Ban create: 409 duplicate, advisory lock (defb3ad), device snapshot, kick everywhere | `user-moderation/component.ts:60-97` | `handlers.rs:704-747`, `store.rs:472-536` | MATCH | `concurrent_create_ban_yields_single_active_ban` |
 | `GET /users/{a}/bans`: device id stripped (70054bf) | `ban-status-handler.ts:23-48` | `store.rs:434-453,687-773` | MATCH | `the_public_status_shape_never_carries_the_device_id_and_the_moderator_list_keeps_it` |
 | `GET /users/{a}/bans`: device match answers `matchedOn:"device"` without the record; own ban `matchedOn:"address"` | `ban-status-handler.ts:38-48` | `ban_status` (`G/moderation/store.rs`): the wallet's own ban first, else a ban of its recorded device. The route is public on both sides, so anyone can learn that a wallet shares a device with a banned one; accepted with upstream's shape | MATCH | `a_lookup_without_a_device_id_is_widened_to_the_recorded_device` |
@@ -114,7 +118,7 @@ scene and world administration and moderation.
 | Commit | Topic | dcl-one |
 |---|---|---|
 | 52f32da | Lowercase LiveKit room names | DIVERGENCE: own `w1:` scheme |
-| 2f425e4 | Keep serving opted-out world scenes | MATCH for admission; cleanup key GAP-AU-14 |
+| 2f425e4 | Keep serving opted-out world scenes | MATCH |
 | d366aef | Recover missing island assignments from Pulse | DIVERGENCE: own Pulse (`cluster_lookup`) |
 | 53deed5 | Bind scene permissions to verified deployments | MATCH for moderation; GAP-AU-2, GAP-AU-4 (realm half) for admission |
 | 1e7d0f2, cdd006c | Stream access expiry, ingress reconcile | MATCH, see [`meetings-voice.md`](meetings-voice.md) |
@@ -135,14 +139,8 @@ scene and world administration and moderation.
 6. **GAP-AU-6: `with_not_before` shortens island tokens.** Severity P2. Keep the lifetime and reject a non-positive `nbf`, as upstream does.
 8. **GAP-AU-8: Check order.** Severity P2. A wallet both deny-listed and platform-banned gets 401; upstream gives 403.
 9. **GAP-AU-9: Undocumented token claims and realm sources.** Severity P2. Record `name`, `isGuest` metadata, server-token metadata, the island `canUpdateOwnMetadata=false`, `displayName` as a canonical key as divergences, or remove them. `/get-server-scene-adapter` and streaming still fall back to `realm.serverName` (`realm_name_from_metadata`). The web place-page scene chat signs `/get-scene-adapter` as `dcl:explorer`.
-11. **GAP-AU-11: Scene admins, and Genesis scene bans, are lost on redeploy.** Severity P1.
-    - Expected: keyed on the stable Places id.
-    - dcl-one: keyed on the deployment entity id. World bans already use a stable `world:base` key; give admins and Genesis bans a stable key too (base parcel), with a schema migration step.
-12. **GAP-AU-12: The authoritative server's admin listing reads the wrong key.** Severity P1. Resolve the place from the signed realm and parcel, as the scene signer path does.
-14. **GAP-AU-14: Removed-place cleanup deletes by a key no row uses.** Severity P2. Unverified at runtime; write the test first.
 15. **GAP-AU-15: Small shape differences.** Severity P2. Ban listing offset rounding, `/mute` body, add/remove admin error texts.
 16. **GAP-AU-16: The gateway publishes the retired `/auth/challenge` and `/auth/livekit-token`.** Severity P2. Remove the two rows from `infra/gateway/routes.nix`; nothing reads their probes.
 
-Not verified: the upstream signed-fetch freshness window (crypto-middleware is not installed in the
-checkout); whether explorers write their own metadata in island rooms; preview-realm event
+Not verified: whether explorers write their own metadata in island rooms; preview-realm event
 suppression (dd34391).

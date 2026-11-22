@@ -83,6 +83,10 @@ pub mod read_through;
 // content_files and the blobs nothing else names (CONTENT_HISTORY_PRUNE_*).
 pub mod history_prune;
 
+// Profile avatar renders named only in metadata: their content_files rows, and the one-off
+// repair of profiles stored without them (`catalyst content repair-profile-snapshots`).
+pub mod profile_snapshots;
+
 mod about;
 pub mod about_comms;
 mod active_entities;
@@ -466,18 +470,20 @@ impl SyncStatus {
         *self.copy_deploy_types.write() = types;
     }
 
-    /// False while a deploy has to wait: the node is bootstrapping, or it
-    /// serves an unsynced copy of a peer.
+    /// Whether a deploy of any type is taken: only once every type
+    /// bootstrapped (`Syncing`), and never on an unsynced copy of a peer. A
+    /// node still bootstrapping, partially synced or `Failed` refuses.
     pub fn takes_deploys(&self) -> bool {
-        self.state_name() != "Bootstrapping" && !self.unsynced_copy.load(Ordering::Relaxed)
+        self.state() == SyncState::Syncing && !self.is_unsynced_copy()
     }
 
-    /// Whether a deploy of `entity_type` is taken: any while
-    /// [`Self::takes_deploys`], and on an unsynced copy the types it names.
+    /// Whether a deploy of `entity_type` is taken: once that type
+    /// bootstrapped ([`Self::is_type_ready`]), and on an unsynced copy only
+    /// the types it names.
     pub fn takes_deploys_of(&self, entity_type: &str) -> bool {
-        self.takes_deploys()
-            || (self.state_name() != "Bootstrapping"
-                && self
+        self.is_type_ready(entity_type)
+            && (!self.is_unsynced_copy()
+                || self
                     .copy_deploy_types
                     .read()
                     .iter()
@@ -486,8 +492,16 @@ impl SyncStatus {
 
     /// Whether some deploy may be taken: the gate before the form is read.
     pub fn takes_some_deploys(&self) -> bool {
-        self.takes_deploys()
-            || (self.state_name() != "Bootstrapping" && !self.copy_deploy_types.read().is_empty())
+        let some_ready = match &*self.state.read() {
+            SyncState::Syncing => true,
+            SyncState::PartiallySynced { ready_types } => !ready_types.is_empty(),
+            SyncState::Bootstrapping | SyncState::Failed => false,
+        };
+        some_ready && (!self.is_unsynced_copy() || !self.copy_deploy_types.read().is_empty())
+    }
+
+    fn is_unsynced_copy(&self) -> bool {
+        self.unsynced_copy.load(Ordering::Relaxed)
     }
 
     pub fn is_type_ready(&self, entity_type: &str) -> bool {
@@ -972,5 +986,31 @@ mod sync_status_tests {
         assert!(!sync.is_type_ready("scene"));
         sync.set_state(SyncState::Syncing);
         assert!(sync.is_type_ready("scene"));
+    }
+
+    #[test]
+    fn deploys_wait_for_their_type_and_a_failed_sync_takes_none() {
+        let sync = SyncStatus::default();
+        let gates = |sync: &SyncStatus| {
+            (
+                sync.takes_some_deploys(),
+                sync.takes_deploys(),
+                sync.takes_deploys_of("scene"),
+                sync.takes_deploys_of("profile"),
+            )
+        };
+        assert_eq!(gates(&sync), (false, false, false, false), "bootstrapping");
+        sync.set_state(SyncState::PartiallySynced {
+            ready_types: vec!["scene".into()],
+        });
+        assert_eq!(
+            gates(&sync),
+            (true, false, true, false),
+            "profiles still bootstrapping"
+        );
+        sync.set_state(SyncState::Failed);
+        assert_eq!(gates(&sync), (false, false, false, false), "failed");
+        sync.set_state(SyncState::Syncing);
+        assert_eq!(gates(&sync), (true, true, true, true), "synced");
     }
 }
