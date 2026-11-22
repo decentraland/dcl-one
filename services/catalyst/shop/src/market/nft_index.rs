@@ -1058,6 +1058,7 @@ impl ChainIndex for NftIndex {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
                     })?;
                 used += w.requests;
+                source.lane_read();
                 let times = source.block_times(&w.logs).await?;
                 used += times.requests;
                 let times = times.value;

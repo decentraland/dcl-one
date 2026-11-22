@@ -42,6 +42,8 @@ use super::chain_walk::{
     self, Budget, ChainIndex, Cursor, Fenced, Holdings, IndexSettings, LogGroup, LogSource,
     Opening, Owner, PassOutcome, RpcSource, WrongChain, requests_for,
 };
+use crate::chain_index::portal::compare::AcceptedView;
+use crate::chain_index::portal::shadow::{Shadow, Shadowed};
 use crate::chain_index::rpc::{BlockHeader, Rpc, RpcLog};
 use crate::jobs::LeaseControl;
 
@@ -331,8 +333,9 @@ pub async fn walk_together(
     at: &Checkpoint,
     deadline: Duration,
     sent: &AtomicUsize,
+    shadow: Option<&Shadow>,
 ) -> Vec<(usize, MemberEnd)> {
-    let source = RpcSource::new(Rpc::at(http, url).counting(sent));
+    let source = Shadowed::new(RpcSource::new(Rpc::at(http, url).counting(sent)), shadow);
     let mut ends = Vec::new();
     let started = std::time::Instant::now();
 
@@ -703,6 +706,17 @@ pub async fn walk_together(
             }
             return ends;
         }
+        // The shared read is accepted (its commits may still fail): offered
+        // once to the shadow, whatever each member's share.
+        source.accepted(&AcceptedView {
+            chain_id: served as u64,
+            from: next,
+            reached: window.reached,
+            reached_hash: &header.hash,
+            groups: &groups,
+            logs: &window.logs,
+            times: &times,
+        });
         // Each member's share, committed in the fixed order.
         walking.sort_by_key(|w| w.member.slot);
         let mut committed = Vec::new();

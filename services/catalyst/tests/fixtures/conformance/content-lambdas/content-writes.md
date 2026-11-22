@@ -221,7 +221,7 @@ All rows below are 400 `{"errors":[...]}` upstream unless the row says otherwise
 - **Blob store:** for content existence (`isContentStoredAlready`) and stored sizes (size rule).
 - **Ownership:**
   - Upstream: on-chain (L1/L2 RPC: Checker contract, collection and third-party registry contracts) when `L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` are set, else the subgraphs (land manager, blocks L1/L2, collections L1/L2, ENS owner, third-party registry) (`content-validator/component.ts:238-270`).
-  - dcl-one: on-chain only, `ETH_RPC_URL` and `RPC_ENDPOINT_POLYGON` (`validator/mod.rs:14-20`), plus the `shop.usage_grants` lease overlay (dcl-one-only grants). The `land_authz` index is used only by the test path without the validator (`write_deployer.rs:557-601`).
+  - dcl-one: on-chain only, `ETH_RPC_URL` and `RPC_ENDPOINT_POLYGON` (`validator/mod.rs:14-20`), plus, only with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED` (off by default and under every posture), the `shop.usage_grants` lease overlay (dcl-one-only grants) for the items a profile or outfits wears; peer-synced entities are checked on chain only (`validator/synced.rs`). The `land_authz` index is used only by the test path without the validator (`write_deployer.rs:557-601`).
   - dcl-one has these sources when the RPC URLs are configured. With `CONTENT_WRITES_ENABLED` on, a missing or plaintext RPC refuses to start (`validator/mod.rs:108-130`).
 - **Sync state:** the bootstrapping gate needs the sync status. dcl-one: `SyncStatus` (`lib.rs:395-415`).
 

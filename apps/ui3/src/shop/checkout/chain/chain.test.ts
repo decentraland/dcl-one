@@ -30,7 +30,7 @@ import {
   relaySignedMetaTransaction,
   SignatureDeclinedError,
 } from "./metatx";
-import { createRpcReader, waitForReceipt, type ChainReader } from "./rpc";
+import { createRpcReader, defaultSleep, waitForReceipt, type ChainReader } from "./rpc";
 import { sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
 
 const FIXTURES = join(__dirname, "../../../../../../services/catalyst/tests/fixtures/shop");
@@ -545,5 +545,32 @@ describe("the RPC reader", () => {
     };
     expect(await waits()).toEqual([...Array(30).fill(500), 2_000, 2_000, 2_000]);
     expect(new Set(await waits(5_000))).toEqual(new Set([5_000]));
+  });
+});
+
+describe("the wait between reads", () => {
+  afterEach(() => void vi.useRealTimers());
+
+  it("ends after its time and takes its abort listener with it", async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    const added = vi.spyOn(stop.signal, "addEventListener");
+    const removed = vi.spyOn(stop.signal, "removeEventListener");
+    const waited = defaultSleep(3_000, stop.signal);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(waited).resolves.toBeUndefined();
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith("abort", added.mock.calls[0]![1]);
+  });
+
+  it("ends at once with an AbortError when its signal aborts, or already has", async () => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    const waited = defaultSleep(3_000, stop.signal);
+    stop.abort();
+    await expect(waited).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(defaultSleep(3_000, stop.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
