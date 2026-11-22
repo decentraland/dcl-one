@@ -1201,6 +1201,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await
@@ -1285,6 +1286,7 @@ mod tests {
                 context: DeploymentContext::Synced,
                 report: None,
                 retry_state: None,
+                discard_overtaken: false,
             },
         )
         .await
