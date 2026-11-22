@@ -45,7 +45,7 @@ impl Node {
             partial_uploads: limits,
             ..Settings::for_tests()
         };
-        Some(Self::on(pool, tag, settings).await)
+        Some(Self::on(pool, tag, settings, None).await)
     }
 
     async fn with_settings(tag: &str, settings: Settings) -> Option<Self> {
@@ -60,10 +60,15 @@ impl Node {
         eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
     ) -> Option<Self> {
         let pool = crate::db::scratch::pool(6).await?;
-        Some(Self::on(pool, tag, settings).await)
+        Some(Self::on(pool, tag, settings, eip1654).await)
     }
 
-    async fn on(pool: PgPool, tag: &str, settings: Settings) -> Self {
+    async fn on(
+        pool: PgPool,
+        tag: &str,
+        settings: Settings,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Self {
         let tmp = std::env::temp_dir().join(format!(
             "catalyst-partial-{tag}-{}-{}",
             std::process::id(),
