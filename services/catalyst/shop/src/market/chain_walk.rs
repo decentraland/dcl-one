@@ -1992,6 +1992,16 @@ async fn walk(
             return diverged(pool, source, ix, owner, at, out, started).await;
         }
         let header = reached.unwrap_or(after.value);
+        // Accepted, not yet committed (the commit may still fail).
+        source.accepted(&crate::chain_index::portal::compare::AcceptedView {
+            chain_id: ix.chain_id() as u64,
+            from: next,
+            reached: window.reached,
+            reached_hash: &header.hash,
+            groups: &groups,
+            logs: &window.logs,
+            times: &times,
+        });
         let written = commit_window(
             pool,
             ix,

@@ -63,15 +63,21 @@ pub enum WorldAdmission {
     Open(AccessType),
 }
 
-/// The `social.scene_bans.place_id` a scene's bans live under: a world scene
-/// by world and base parcel, so a ban survives redeploys (the old
-/// worlds-content-server's key), a Genesis scene by its entity id.
+/// The `social.scene_bans.place_id` a scene's bans live under, stable across
+/// redeploys: a world scene by world and base parcel (the old
+/// worlds-content-server's key), a Genesis scene by its place, the key its
+/// admins share (`rooms::ActiveDeployment::place_key`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SceneBanKey(String);
 
 impl SceneBanKey {
     pub fn world(world: &WorldName, base: Parcel) -> Self {
         Self(format!("{}:{base}", world.key()))
+    }
+
+    /// A Genesis deployment's key: its place.
+    pub fn genesis(deployment: &crate::rooms::ActiveDeployment) -> Self {
+        Self(deployment.place_key())
     }
 
     pub fn scene(scene: &SceneId) -> Self {

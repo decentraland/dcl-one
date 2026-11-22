@@ -566,6 +566,7 @@ impl State {
             denylist: Arc::default(),
             flags: Arc::new(feature_flags::Snapshot::from_document(
                 feature_flags::embedded_document(),
+                false,
             )),
             map: map::MapState::new(),
             ab_cdn,
