@@ -16,6 +16,8 @@
 //!   answer for that block: undecidable).
 //! - items, as the reference validator: no thumbnail check, and pointers
 //!   naming one collections-v1 asset by address and by name count as one.
+//! - a scene's navmap thumbnail, as the reference validator: any spelling of
+//!   a file the entity includes.
 //! - a timestamp more than `REQUEST_TTL_FORWARDS_MS` ahead of this node's
 //!   clock is undecided until the clock catches up; more than a day ahead,
 //!   refused.
@@ -23,7 +25,9 @@
 //!   wallet included; past it the entity is undecided.
 //! - access: every check asks the chain at the entity timestamp's block, then
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
-//!   ownership leaves out the escrow lease overlay, which knows only the
+//!   ownership leaves out the items the reference never asks about (a v2
+//!   item on L1, a v1 item on L2, a third-party item whose NFT chain is not
+//!   a listed network) and the escrow lease overlay, which knows only the
 //!   leases active now, and counts a collection URN naming no item as owned
 //!   (the reference skips URNs it cannot parse). Its item caps are wider than
 //!   a local deploy's and past them the entity is undecided, never refused
@@ -193,22 +197,29 @@ impl BlockchainChecker for Synced<'_> {
         urns: &[String],
         timestamp: Timestamp,
     ) -> Result<PermissionResult, ValidatorError> {
+        // The reference never asks about the URNs it skips: they count as owned.
+        let asked: Vec<String> = urns
+            .iter()
+            .filter(|u| !super::onchain::reference_skips(u))
+            .cloned()
+            .collect();
         let owned = self
             .sources
             .access()
             .items_capped(
                 eth_address,
-                urns,
+                &asked,
                 timestamp,
                 super::onchain::SYNCED_ITEM_CAPS,
             )
             .await?;
         // The reference skips URNs it cannot parse, so they count as owned.
         Ok(PermissionResult::from_failing(
-            urns.iter()
+            asked
+                .into_iter()
                 .zip(owned)
                 .filter(|(u, o)| !o && !super::onchain::is_malformed_item(u))
-                .map(|(u, _)| u.clone())
+                .map(|(u, _)| u)
                 .collect(),
         ))
     }

@@ -154,10 +154,6 @@ pub fn validate_third_party_merkle_proof_content(
         );
     }
 
-    if tp_props.merkle_proof.proof.is_empty() {
-        return ValidationResponse::fail("The merkle proof is empty".to_string());
-    }
-
     if tp_props.merkle_proof.hashing_keys.is_empty() {
         return ValidationResponse::fail(
             "The hashing keys in the merkle proof are empty".to_string(),
@@ -504,6 +500,29 @@ mod tests {
             errors[0],
             "The third-party wearable merkle proof must commit the 'id' field"
         );
+    }
+
+    #[test]
+    fn a_one_leaf_tree_proof_has_no_siblings() {
+        let raw = String::from_utf8(WOODIE_0.to_vec()).unwrap();
+        let start = raw.find(r#""proof":["#).unwrap() + r#""proof":["#.len();
+        let end = start + raw[start..].find(']').unwrap();
+        let raw = format!("{}{}", &raw[..start], &raw[end..]).into_bytes();
+        let deployment = deployment_from_raw(WOODIE_0_ID, &raw);
+        let result = validate_third_party_merkle_proof_content(
+            &deployment.view(),
+            WEARABLE_REQUIRED_HASHING_KEYS,
+            "wearable",
+        );
+        assert!(
+            result.is_ok(),
+            "an empty proof is a one-leaf tree, got {result}"
+        );
+        let tp: ThirdPartyProps =
+            serde_json::from_value(deployment.entity.metadata.clone().unwrap()).unwrap();
+        let leaf =
+            super::super::merkle::to_node(tp.merkle_proof.index, &tp.merkle_proof.entity_hash);
+        assert!(verify_third_party_merkle_proof(&tp.merkle_proof, &leaf));
     }
 
     #[test]

@@ -42,6 +42,8 @@ pub(crate) fn is_malformed_item(urn: &str) -> bool {
     matches!(items::item_ref(urn), items::ItemRef::Malformed)
 }
 
+pub(crate) use items::reference_skips;
+
 sol! {
     interface Checker {
         function checkLAND(address _sender, address _land, address _estate, int256 _x, int256 _y) external view returns (bool);

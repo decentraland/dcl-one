@@ -199,9 +199,61 @@ pub fn item_ref(urn: &str) -> ItemRef {
     }
 }
 
+/// Whether the reference's on-chain client (`ownsItemsAtTimestamp`) leaves
+/// out an item [`item_ref`] asks about, counting it as owned: a collections-v2
+/// item on L1, a collections-v1 item on L2, and a third-party item whose
+/// `nftChain` is not spelled as a listed network (`ethereum` is not one).
+pub fn reference_skips(urn: &str) -> bool {
+    let item = item_ref(urn);
+    if item.on_l1().is_none() {
+        return false;
+    }
+    let Some(segments) = super::super::urn::segments(urn) else {
+        return false;
+    };
+    let kind = segments.get(3).map(|(_, d)| d.to_lowercase());
+    match (kind.as_deref(), item) {
+        (Some("collections-v1"), ItemRef::Token { l1, .. }) => !l1,
+        (Some("collections-v2"), ItemRef::Token { l1, .. }) => l1,
+        (Some("collections-thirdparty"), ItemRef::ThirdParty { .. }) => {
+            let nft_chain = segments.get(7).map(|(_, d)| d.as_str()).unwrap_or("");
+            !L1_NETWORKS.contains(&nft_chain) && !L2_NETWORKS.contains(&nft_chain)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reference_skips_cross_layer_items_and_unlisted_nft_chains() {
+        for skipped in [
+            format!("urn:decentraland:ethereum:collections-v2:{A}:0:5"),
+            format!("urn:decentraland:sepolia:collections-v2:{A}:0:5"),
+            format!("urn:decentraland:matic:collections-v1:{A}:hat:3"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:ethereum:{A}:5"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:Mainnet:{A}:5"),
+        ] {
+            assert!(reference_skips(&skipped), "{skipped}");
+            assert!(
+                item_ref(&skipped).on_l1().is_some(),
+                "{skipped} is asked locally"
+            );
+        }
+        for asked in [
+            format!("urn:decentraland:matic:collections-v2:{A}:0:5"),
+            format!("urn:decentraland:ethereum:collections-v1:{A}:hat:3"),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12".to_string(),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:mainnet:{A}:5"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:amoy:{A}:5"),
+            format!("urn:decentraland:matic:collections-v2:{A}:1"),
+            "invalid-urn".to_string(),
+        ] {
+            assert!(!reference_skips(&asked), "{asked}");
+        }
+    }
 
     const A: &str = "0xaaa0000000000000000000000000000000000001";
 
@@ -332,7 +384,7 @@ mod tests {
         assert_eq!(
             item_ref(&format!("urn:decentraland:sepolia:collections-v2:{A}:0:5")),
             token(true, Some(addr), 5),
-            "a v2 item on an L1 network is asked on L1, as the reference splits it"
+            "a v2 item on an L1 network is asked on L1 for a local deploy"
         );
         assert_eq!(
             item_ref(&format!("urn:decentraland:matic:collections-v1:{A}:hat:3")),
