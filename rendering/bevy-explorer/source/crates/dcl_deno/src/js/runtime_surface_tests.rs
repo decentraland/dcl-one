@@ -335,6 +335,65 @@ fn wasm_streaming_compilation_is_absent() {
     assert_eq!(outcome, "undefined undefined");
 }
 
+/// The HUD's system ops return ordinary objects, not serde_v8's null-prototype ones.
+#[test]
+fn system_op_results_are_ordinary_objects() {
+    use system_bridge::{MapPinInfo, PlatformBanNotice, SystemApi, WorldAccessVerdict};
+    let (mut runtime, _) = create_runtime(false, true, "test-system-ops", Default::default());
+    let (host, mut inbox) = tokio::sync::mpsc::unbounded_channel();
+    {
+        let state = runtime.op_state();
+        let mut state = state.borrow_mut();
+        state.put(context(false));
+        state.put(dcl_js::SuperUserScene(host));
+    }
+    std::thread::spawn(move || {
+        while let Some(event) = inbox.blocking_recv() {
+            match event {
+                SystemApi::GetWorldAccess(_, response) => response.send(WorldAccessVerdict::Allowed),
+                SystemApi::GetMapPinsStream(stream) => {
+                    let _ = stream.send(vec![MapPinInfo {
+                        id: "hash:1".to_owned(),
+                        x: 1,
+                        y: 2,
+                        title: "pin".to_owned(),
+                    }]);
+                }
+                SystemApi::GetPlatformBanStream(stream) => {
+                    let _ = stream.send(PlatformBanNotice {
+                        banned: true,
+                        reason: "r".to_owned(),
+                        custom_message: None,
+                        expires_at: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+    });
+    eval(
+        &mut runtime,
+        r#"
+        const ops = Deno.core.ops;
+        const plain = (v) => Object.getPrototypeOf(v) === Object.prototype;
+        (async () => {
+            const access = await ops.op_get_world_access("world.dcl.eth");
+            const pins = await ops.op_read_map_pins_stream(await ops.op_get_map_pins_stream());
+            const ban = await ops.op_read_platform_ban_stream(await ops.op_get_platform_ban_stream());
+            return JSON.stringify([access, plain(pins[0]), `${pins[0]}`, plain(ban), String(ban)]);
+        })().then((x) => { globalThis.__outcome = x; }, (e) => { globalThis.__outcome = String(e); });
+        "#
+        .to_owned(),
+    )
+    .unwrap();
+    run_event_loop(&mut runtime);
+    let outcome = eval(&mut runtime, "globalThis.__outcome".to_owned()).unwrap();
+    assert_eq!(
+        outcome,
+        r#"["allowed",true,"[object Object]",true,"[object Object]"]"#
+    );
+}
+
 /// Runs `test` (this module) in a child test process, so a V8 abort fails one test instead of
 /// killing the whole test binary. The child prints a marker once its body has returned.
 fn run_in_child(test: &str, body: impl FnOnce() -> String) {
