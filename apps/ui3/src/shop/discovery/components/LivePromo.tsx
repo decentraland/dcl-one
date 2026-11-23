@@ -10,6 +10,8 @@ import "./livepromo.css";
 const SETTLE_MS = 700;
 
 const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
+// The module path, not the "@dcl/one-ui" barrel: import() of the barrel keeps its whole namespace, which loses this
+// lazy chunk and pulls every icon into the chunk the root route loads.
 const AnimatedBackground = lazy(() =>
   import("@dcl/one-ui/components/AnimatedBackground/AnimatedBackground").then((m) => ({ default: m.AnimatedBackground })),
 );
