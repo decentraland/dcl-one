@@ -29,6 +29,9 @@ pub struct Identity {
     index: u32,
     device_number: u32,
     mandate: Mandate,
+    /// The profile version its Pulse handshakes announce: 0, none, unless a profile was deployed
+    /// for the wallet ([`Identity::with_profile_version`]).
+    profile_version: i32,
 }
 
 /// How a wallet delegates to its device key.
@@ -91,7 +94,27 @@ impl Identity {
             index,
             device_number: 0,
             mandate: Mandate::Derived,
+            profile_version: 0,
         }
+    }
+
+    /// The identity of visiting player `index` of the crowd labelled `label`: the same wallet on
+    /// every run under that label, and never one a run's own players have, whose material holds
+    /// the run's id.
+    pub fn visitor(label: &str, index: u32) -> Identity {
+        Identity::derive(&format!("crowd-visit/{label}"), index)
+    }
+
+    /// The same identity, its handshakes announcing profile `version`: the version of the
+    /// profile deployed for its wallet.
+    pub fn with_profile_version(mut self, version: i32) -> Identity {
+        self.profile_version = version;
+        self
+    }
+
+    /// The profile version its Pulse handshakes announce.
+    pub fn profile_version(&self) -> i32 {
+        self.profile_version
     }
 
     /// The identity of a wallet whose private key is given (a scene listener's wallet, which the
@@ -109,6 +132,7 @@ impl Identity {
             index: 0,
             device_number: 0,
             mandate,
+            profile_version: 0,
         })
     }
 
@@ -130,6 +154,7 @@ impl Identity {
             index: 0,
             device_number: 0,
             mandate: Mandate::Derived,
+            profile_version: 0,
         }
     }
 
@@ -151,6 +176,7 @@ impl Identity {
             index: self.index,
             device_number,
             mandate,
+            profile_version: self.profile_version,
         }
     }
 
@@ -163,6 +189,7 @@ impl Identity {
             index: self.index,
             device_number: self.device_number,
             mandate: self.mandate,
+            profile_version: self.profile_version,
         }
     }
 
@@ -252,7 +279,7 @@ impl Identity {
         serde_json::to_vec(&bag).expect("a map of strings serializes")
     }
 
-    /// A player's Pulse handshake.
+    /// A player's Pulse handshake, announcing the identity's profile version.
     pub fn pulse_handshake(
         &self,
         timestamp_ms: i64,
@@ -261,7 +288,7 @@ impl Identity {
         ClientMessage {
             message: Some(client_message::Message::Handshake(HandshakeRequest {
                 auth_chain: self.pulse_auth_chain(timestamp_ms),
-                profile_version: 0,
+                profile_version: self.profile_version,
                 initial_state,
                 protocol_features: 0,
             })),
@@ -328,6 +355,50 @@ mod tests {
         assert_ne!(second.session(), first.session());
         assert_ne!(second.second_device().session(), second.session());
         assert_eq!(first.same_device().session(), first.session());
+    }
+
+    /// The profile version a handshake of `identity` announces.
+    fn announced_version(identity: &Identity) -> i32 {
+        let ClientMessage {
+            message: Some(client_message::Message::Handshake(request)),
+        } = identity.pulse_handshake(now_ms(), None)
+        else {
+            panic!("a handshake message");
+        };
+        request.profile_version
+    }
+
+    #[test]
+    fn a_handshake_announces_the_profile_the_identity_has() {
+        let plain = Identity::derive("run/pulse-smoke/0", 0);
+        assert_eq!(plain.profile_version(), 0);
+        assert_eq!(announced_version(&plain), 0);
+        let visitor = Identity::visitor("crowd-a", 3).with_profile_version(1);
+        assert_eq!(announced_version(&visitor), 1);
+        assert_eq!(announced_version(&visitor.second_device()), 1);
+        assert_eq!(announced_version(&visitor.same_device()), 1);
+        // the handshake still verifies
+        let now = now_ms();
+        let ClientMessage {
+            message: Some(client_message::Message::Handshake(request)),
+        } = visitor.pulse_handshake(now, None)
+        else {
+            panic!("a handshake message");
+        };
+        assert_eq!(
+            verify_handshake(&request, now).unwrap().user_address,
+            visitor.address()
+        );
+    }
+
+    #[test]
+    fn a_visitor_is_the_same_wallet_on_every_run_of_its_label() {
+        let first = Identity::visitor("crowd-a", 3);
+        assert_eq!(first.address(), Identity::visitor("crowd-a", 3).address());
+        assert_ne!(first.address(), Identity::visitor("crowd-a", 4).address());
+        assert_ne!(first.address(), Identity::visitor("crowd-b", 3).address());
+        // and never a wallet a run's own players have
+        assert_ne!(first.address(), Identity::derive("crowd-a", 3).address());
     }
 
     #[test]

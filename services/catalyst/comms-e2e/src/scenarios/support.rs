@@ -44,7 +44,10 @@ pub fn sorted_wallets(identities: &[&Identity]) -> Vec<String> {
     wallets
 }
 
-/// Dials, handshakes and announces the realm and position.
+/// Dials, handshakes and announces the realm and position. An identity with a profile also
+/// announces its profile version first, on the same ordered channel as the teleport: Pulse takes
+/// a player's profile version from that announcement, not from the handshake, and tells it to
+/// everyone the player then joins.
 pub async fn enter_at(
     ctx: &Ctx,
     name: &str,
@@ -53,6 +56,12 @@ pub async fn enter_at(
     world: [f32; 3],
 ) -> Result<PulseBot> {
     let bot = PulseBot::enter(ctx, name, identity).await?;
+    if identity.profile_version() > 0 {
+        bot.send(
+            crate::pulse::messages::profile_announcement(identity.profile_version()),
+            crate::pulse::Channel::Reliable,
+        );
+    }
     bot.teleport(realm, world)?;
     Ok(bot)
 }

@@ -15,13 +15,24 @@
 //! - every other wallet it caught a join of (visitors the plan did not name), with when;
 //! - samples of how many of the crowd and of the visitors each player held while it stayed.
 //!
-//! It is the one scenario that meets real people: it is skipped unless the run names a place,
-//! and a host that is not loopback needs `--allow-host` as for every scenario.
+//! A client draws another player only once it has that player's profile, so before the crowd
+//! enters, each player makes sure the realm serves a minimal profile for its wallet
+//! ([`crate::profile`]): it asks the realm's lambdas, deploys the profile to the realm's content
+//! server when they do not serve it, and then announces that profile's version: in its Pulse
+//! handshake, and in a profile announcement before it enters the realm, which is where Pulse
+//! takes it from. A player's wallet comes from the plan's crowd label and its index, not from the
+//! run, so every visit under one label deploys the same profiles once.
+//!
+//! It is the one scenario that meets real people and the one that writes to a server: it is
+//! skipped unless the run names a place, a host that is not loopback needs `--allow-host` as for
+//! every scenario, and the content server and lambdas the realm names pass the same check before
+//! anything is sent to them.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, anyhow, bail};
+use futures::future::join_all;
 use serde::Serialize;
 
 use super::crowd::{
@@ -30,6 +41,8 @@ use super::crowd::{
 };
 use super::support::{leave_all, offset, settle};
 use crate::engine::{Ctx, Entry, Needs, Scenario, ScenarioFuture, VisitPlan};
+use crate::identity::Identity;
+use crate::profile::{self, Ensured, PROFILE_VERSION};
 use crate::pulse::{Channel, PulseBot, messages};
 
 /// The variables the command line takes a visit plan from.
@@ -37,6 +50,19 @@ pub const REALM_VARIABLE: &str = "CE2E_VISIT_REALM";
 pub const PARCEL_VARIABLE: &str = "CE2E_VISIT_PARCEL";
 pub const SECONDS_VARIABLE: &str = "CE2E_VISIT_SECONDS";
 pub const EXPECT_VARIABLE: &str = "CE2E_VISIT_EXPECT";
+pub const LABEL_VARIABLE: &str = "CE2E_VISIT_LABEL";
+
+/// The crowd's label unless the plan names another, and the longest a label may be.
+pub const DEFAULT_LABEL: &str = "ce2e-visit";
+const LONGEST_LABEL: usize = 32;
+
+/// Profiles made sure of at once: the content server admits a few uploads in flight from one
+/// client and refuses more for a moment.
+const PROFILE_WAVE: usize = 4;
+
+/// How long the lambdas may take to serve the profiles deployed, before the crowd enters without
+/// waiting further.
+const SERVED_DEADLINE: Duration = Duration::from_secs(30);
 
 /// How long the crowd stays unless the plan says otherwise, and the longest it may.
 pub const DEFAULT_SECONDS: u64 = 120;
@@ -64,8 +90,9 @@ pub static CROWD_VISIT: Scenario = Scenario {
     name: "crowd-visit",
     tags: &["pulse", "crowd", "visit"],
     guards: &["claim: real clients and a crowd in one place see each other"],
-    summary: "A crowd (20, or CE2E_CROWD_PLAYERS, at most 30) goes to the realm and parcel the run's visit plan names (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL), where other clients stand, walks there for CE2E_VISIT_SECONDS (120 unless given) and leaves as a client does: every player must catch a Pulse join event for each wallet in CE2E_VISIT_EXPECT and for each other player; notes give every join each player caught, visitors included, and samples of what each held. Skipped without a plan",
+    summary: "A crowd (20, or CE2E_CROWD_PLAYERS, at most 30) goes to the realm and parcel the run's visit plan names (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL), where other clients stand: each player first makes sure the realm's content server holds a minimal profile for its wallet (the wallet from CE2E_VISIT_LABEL and its index; deployed only when the lambdas do not serve it) and announces its version; the crowd walks there for CE2E_VISIT_SECONDS (120 unless given) and leaves as a client does: every player must catch a Pulse join event for each wallet in CE2E_VISIT_EXPECT and for each other player, each announcing the profile; notes give the profiles deployed and already there, every join each player caught, visitors included, and samples of what each held. Skipped without a plan",
     needs: Needs {
+        api: true,
         visit: true,
         ..Needs::NONE
     },
@@ -79,20 +106,41 @@ pub fn all() -> Vec<&'static Scenario> {
     vec![&CROWD_VISIT]
 }
 
-/// The visit plan the texts of the four variables name: `None` when neither a realm nor a parcel
+/// The crowd label `text` (the text of [`LABEL_VARIABLE`]) names, or [`DEFAULT_LABEL`].
+pub fn label_from(text: Option<&str>) -> Result<String> {
+    let Some(text) = text else {
+        return Ok(DEFAULT_LABEL.to_owned());
+    };
+    let label = text.trim();
+    if label.is_empty()
+        || label.len() > LONGEST_LABEL
+        || !label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        bail!(
+            "{LABEL_VARIABLE} takes 1 to {LONGEST_LABEL} lowercase letters, digits and dashes, \
+             got {text:?}"
+        );
+    }
+    Ok(label.to_owned())
+}
+
+/// The visit plan the texts of the five variables name: `None` when neither a realm nor a parcel
 /// is given. A realm and a parcel come together; every part given must be right.
 pub fn plan_from(
     realm: Option<&str>,
     parcel: Option<&str>,
     seconds: Option<&str>,
     expect: Option<&str>,
+    label: Option<&str>,
 ) -> Result<Option<VisitPlan>> {
     let (realm, parcel) = match (realm, parcel) {
         (None, None) => {
-            if seconds.is_some() || expect.is_some() {
+            if seconds.is_some() || expect.is_some() || label.is_some() {
                 bail!(
-                    "{SECONDS_VARIABLE} and {EXPECT_VARIABLE} belong to a visit plan: name the \
-                     place with {REALM_VARIABLE} and {PARCEL_VARIABLE}"
+                    "{SECONDS_VARIABLE}, {EXPECT_VARIABLE} and {LABEL_VARIABLE} belong to a visit \
+                     plan: name the place with {REALM_VARIABLE} and {PARCEL_VARIABLE}"
                 );
             }
             return Ok(None);
@@ -138,7 +186,146 @@ pub fn plan_from(
         parcel,
         seconds,
         expect: wallets,
+        label: label_from(label)?,
     }))
+}
+
+/// How many players' profiles were deployed and how many the realm served already.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProfileCounts {
+    pub deployed: usize,
+    pub already_served: usize,
+    pub sent_again: usize,
+}
+
+/// Makes sure the realm serves every player's profile, [`PROFILE_WAVE`] at a time: the realm
+/// description names the content server and the lambdas, each of which this run must admit
+/// before anything is sent. Fails at the first player whose profile it could not make sure of.
+async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCounts> {
+    let api = ctx
+        .stack()
+        .api
+        .clone()
+        .ok_or_else(|| anyhow!("the stack file names no API (`api`) to read the realm from"))?;
+    let client = profile::client()?;
+    let mut endpoints = profile::endpoints(&client, &api).await?;
+    let front = ctx
+        .stack()
+        .explorer
+        .as_ref()
+        .map(|explorer| explorer.api_front);
+    if let Some(past) = front.and_then(|front| endpoints.past_front(front, &api)) {
+        // as crowd-discovery's adapter: the realm names the explorer's front for the API
+        ctx.note(
+            "profiles_reached_through",
+            "the realm names the explorer front; dialed at the API",
+        );
+        endpoints = past;
+    }
+    let refused = endpoints
+        .hosts()
+        .iter()
+        .filter(|host| !ctx.admits_host(host))
+        .count();
+    if refused > 0 {
+        bail!(
+            "the realm description keeps profiles on {refused} host(s) that are not loopback and \
+             that --allow-host does not name (its content.publicUrl and lambdas.publicUrl): no \
+             profile was deployed"
+        );
+    }
+    let mut counts = ProfileCounts::default();
+    let indices: Vec<usize> = (0..identities.len()).collect();
+    for wave in indices.chunks(PROFILE_WAVE) {
+        let ensured = join_all(wave.iter().map(|&index| {
+            let (client, endpoints) = (&client, &endpoints);
+            async move { profile::ensure(client, endpoints, &identities[index], index).await }
+        }))
+        .await;
+        for (&index, outcome) in wave.iter().zip(ensured) {
+            match outcome.with_context(|| {
+                format!(
+                    "{} could not make sure of its profile ({} of {} done)",
+                    player_name(index),
+                    counts.deployed + counts.already_served,
+                    identities.len()
+                )
+            })? {
+                Ensured::AlreadyServed => counts.already_served += 1,
+                Ensured::Deployed(deployed) => {
+                    counts.deployed += 1;
+                    if deployed == profile::Deployed::AcceptedOnRetry {
+                        counts.sent_again += 1;
+                    }
+                }
+            }
+        }
+    }
+    ctx.note("profiles_deployed", counts.deployed);
+    ctx.note("profiles_already_served", counts.already_served);
+    ctx.note("profiles_sent_again_after_retry_after", counts.sent_again);
+    if counts.deployed > 0 {
+        let served = wait_served(&client, &endpoints, identities).await;
+        ctx.note("profiles_served_before_entering", served);
+    }
+    Ok(counts)
+}
+
+/// Waits until the lambdas serve every player's profile, or [`SERVED_DEADLINE`]: a client asks
+/// them when it sees the player join. Returns how many they served.
+async fn wait_served(
+    client: &reqwest::Client,
+    endpoints: &profile::Endpoints,
+    identities: &[Identity],
+) -> usize {
+    let deadline = Instant::now() + SERVED_DEADLINE;
+    loop {
+        let versions = join_all(identities.iter().map(|identity| async move {
+            profile::served_version(client, &endpoints.lambdas, &identity.address()).await
+        }))
+        .await;
+        let served = versions
+            .iter()
+            .filter(|version| matches!(version, Ok(Some(v)) if *v == i64::from(PROFILE_VERSION)))
+            .count();
+        if served == identities.len() || Instant::now() >= deadline {
+            return served;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// The join events of crowd mates that announced a profile version other than
+/// [`PROFILE_VERSION`], as `(player, wallet, version)`.
+pub fn other_versions(
+    entries: &[Entry],
+    names: &[String],
+    crowd: &[String],
+) -> Vec<(usize, String, i64)> {
+    let mut found = Vec::new();
+    for entry in entries.iter().filter(|entry| entry.kind == "joined") {
+        let Some(observer) = names.iter().position(|name| *name == entry.actor) else {
+            continue;
+        };
+        let wallet = entry
+            .detail
+            .get("wallet")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_lowercase();
+        if !crowd.contains(&wallet) {
+            continue;
+        }
+        let version = entry
+            .detail
+            .get("profile_version")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(-1);
+        if version != i64::from(PROFILE_VERSION) {
+            found.push((observer, wallet, version));
+        }
+    }
+    found
 }
 
 /// Where player `index` of `players` stands: on a grid of [`COLUMNS`], [`SPACING`] apart,
@@ -318,8 +505,8 @@ async fn visit(ctx: Ctx) -> Result<()> {
     }
     fits_one_address(players, &[pulse_handshakes_per_address(&ctx)])?;
     let here = ctx.stack().grid.parcel_centre(plan.parcel.0, plan.parcel.1);
-    let identities: Vec<_> = (0..players)
-        .map(|index| ctx.identity(index as u32))
+    let identities: Vec<Identity> = (0..players)
+        .map(|index| Identity::visitor(&plan.label, index as u32))
         .collect();
     let wallets: Vec<String> = identities
         .iter()
@@ -337,6 +524,15 @@ async fn visit(ctx: Ctx) -> Result<()> {
     ctx.note("expected_wallets", &plan.expect);
     // index i is player-i: the names a viewer sees in a client map back to these
     ctx.note("crowd_wallets", &wallets);
+    ctx.note("crowd_label", &plan.label);
+    ctx.note("profile_version", PROFILE_VERSION);
+
+    // a profile for every player before anyone enters: nobody has entered if this fails
+    ensure_profiles(&ctx, &identities).await?;
+    let identities: Vec<Identity> = identities
+        .into_iter()
+        .map(|identity| identity.with_profile_version(PROFILE_VERSION))
+        .collect();
 
     let started = Instant::now();
     let bots = enter_crowd(&ctx, &identities, &plan.realm, &spots).await?;
@@ -388,6 +584,8 @@ async fn visit(ctx: Ctx) -> Result<()> {
             .collect::<BTreeMap<_, _>>(),
     );
     ctx.note("expected_missed_by", &missed);
+    let unannounced = other_versions(&entries, &names, &wallets);
+    ctx.note("crowd_joins_without_the_profile_version", unannounced.len());
     if let Some(first) = bots.first() {
         // where player-0 last held each visitor: whether they stood where the crowd did
         let view = first.view();
@@ -416,7 +614,16 @@ async fn visit(ctx: Ctx) -> Result<()> {
                 unmet.join(", ")
             );
         }
-        join_verdict(&crowd).map_err(|joins| anyhow!("join events within the crowd: {joins}"))
+        join_verdict(&crowd).map_err(|joins| anyhow!("join events within the crowd: {joins}"))?;
+        if let Some((player, wallet, version)) = unannounced.first() {
+            bail!(
+                "{} join events of crowd players announced another profile version than {PROFILE_VERSION}, \
+                 the first to {}: {wallet} with {version}",
+                unannounced.len(),
+                player_name(*player)
+            );
+        }
+        Ok(())
     })();
 
     // every player leaves the way a client does, whatever the outcome

@@ -14,6 +14,7 @@ pub mod gatekeeper;
 pub mod identity;
 pub mod livekit;
 pub mod oracle;
+pub mod profile;
 pub mod pulse;
 pub mod scenarios;
 pub mod stack;

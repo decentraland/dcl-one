@@ -76,6 +76,9 @@ pub struct VisitPlan {
     pub seconds: u64,
     /// Wallets (lowercase) every player of the crowd must catch a join event of.
     pub expect: Vec<String>,
+    /// The crowd's label: a visiting player's wallet comes from it and the player's index, so
+    /// every visit under one label is the same crowd, with the same profiles.
+    pub label: String,
 }
 
 /// What a scenario needs from the stack beyond Pulse over ENet.
@@ -151,6 +154,7 @@ struct CtxInner {
     one_source_address: std::sync::atomic::AtomicBool,
     crowd: Mutex<CrowdSize>,
     visit: Mutex<Option<VisitPlan>>,
+    allowed_hosts: Mutex<Vec<String>>,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
     notes: Mutex<Vec<Note>>,
@@ -204,6 +208,7 @@ impl Ctx {
                 one_source_address: std::sync::atomic::AtomicBool::new(false),
                 crowd: Mutex::new(CrowdSize::default()),
                 visit: Mutex::new(None),
+                allowed_hosts: Mutex::new(Vec::new()),
                 timeline: Timeline::new(),
                 seeded: Mutex::new(Seeded::new(seed)),
                 notes: Mutex::new(Vec::new()),
@@ -290,6 +295,24 @@ impl Ctx {
     /// Sets the visit plan `crowd-visit` follows in this context.
     pub fn set_visit(&self, visit: Option<VisitPlan>) {
         *self.inner.visit.lock() = visit;
+    }
+
+    /// Sets the hosts outside loopback this run admits (`--allow-host`), for the addresses a
+    /// scenario learns while it runs.
+    pub fn set_allowed_hosts(&self, hosts: &[String]) {
+        *self.inner.allowed_hosts.lock() = hosts.to_vec();
+    }
+
+    /// Whether this run may reach `host`, learned while it runs rather than named in the stack
+    /// file: a loopback host, or one `--allow-host` names, as for the stack file's own hosts.
+    pub fn admits_host(&self, host: &str) -> bool {
+        crate::stack::is_loopback_host(host)
+            || self
+                .inner
+                .allowed_hosts
+                .lock()
+                .iter()
+                .any(|allowed| allowed == host)
     }
 
     pub fn repeat(&self) -> u32 {
@@ -497,6 +520,7 @@ pub async fn run_scenarios(
                 }
                 ctx.set_crowd(options.crowd);
                 ctx.set_visit(options.visit.clone());
+                ctx.set_allowed_hosts(&options.allowed_hosts);
                 ctx.record(
                     "runner",
                     "start",

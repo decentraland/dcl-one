@@ -182,7 +182,7 @@ impl Session {
                     state: full.state.unwrap_or_default(),
                 };
                 self.place(&mut subject);
-                let detail = serde_json::json!({ "subject": subject.subject_id, "wallet": wallet, "realm": joined.realm, "sequence": subject.sequence });
+                let detail = serde_json::json!({ "subject": subject.subject_id, "wallet": wallet, "realm": joined.realm, "sequence": subject.sequence, "profile_version": joined.profile_version });
                 self.view.subjects.insert(subject.subject_id, subject);
                 ("joined", detail)
             }

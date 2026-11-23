@@ -362,7 +362,7 @@ fn crowd_from(players: Option<String>, room_players: Option<String>) -> Result<C
 }
 
 /// The visit plan the environment names: `CE2E_VISIT_REALM`, `CE2E_VISIT_PARCEL`,
-/// `CE2E_VISIT_SECONDS` and `CE2E_VISIT_EXPECT`.
+/// `CE2E_VISIT_SECONDS`, `CE2E_VISIT_EXPECT` and `CE2E_VISIT_LABEL`.
 fn visit_from_environment(
     selection: &[&Scenario],
 ) -> Result<Option<catalyst_comms_e2e::engine::VisitPlan>> {
@@ -375,6 +375,7 @@ fn visit_from_environment(
             read(visit::PARCEL_VARIABLE),
             read(visit::SECONDS_VARIABLE),
             read(visit::EXPECT_VARIABLE),
+            read(visit::LABEL_VARIABLE),
         ],
     )
 }
@@ -383,7 +384,7 @@ fn visit_from_environment(
 /// when it holds `crowd-visit`: a variable the run does not use cannot stop it.
 fn visit_for(
     selection: &[&Scenario],
-    [realm, parcel, seconds, expect]: [Option<String>; 4],
+    [realm, parcel, seconds, expect, label]: [Option<String>; 5],
 ) -> Result<Option<catalyst_comms_e2e::engine::VisitPlan>> {
     if !selection
         .iter()
@@ -396,6 +397,7 @@ fn visit_for(
         parcel.as_deref(),
         seconds.as_deref(),
         expect.as_deref(),
+        label.as_deref(),
     )
 }
 
@@ -446,7 +448,15 @@ mod tests {
 
     #[test]
     fn a_run_without_crowd_visit_does_not_read_the_visit_variables() {
-        let malformed = || [Some("r".into()), Some("0;0".into()), Some("0".into()), None];
+        let malformed = || {
+            [
+                Some("r".into()),
+                Some("0;0".into()),
+                Some("0".into()),
+                None,
+                Some("Not A Label".into()),
+            ]
+        };
         for other in ["pulse-smoke", "pulse-crowd", "crowd-discovery"] {
             let selection = scenarios::select(Some(other), None, false);
             assert_eq!(visit_for(&selection, malformed()).unwrap(), None, "{other}");
@@ -454,11 +464,24 @@ mod tests {
         let visit = scenarios::select(Some("crowd-visit"), None, false);
         assert_eq!(visit.len(), 1);
         assert!(visit_for(&visit, malformed()).is_err());
-        assert_eq!(visit_for(&visit, [None, None, None, None]).unwrap(), None);
-        let plan = visit_for(&visit, [Some("r".into()), Some("1,2".into()), None, None])
-            .unwrap()
-            .unwrap();
+        assert_eq!(
+            visit_for(&visit, [None, None, None, None, None]).unwrap(),
+            None
+        );
+        let plan = visit_for(
+            &visit,
+            [
+                Some("r".into()),
+                Some("1,2".into()),
+                None,
+                None,
+                Some("crowd-b".into()),
+            ],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(plan.parcel, (1, 2));
+        assert_eq!(plan.label, "crowd-b");
     }
 
     #[test]

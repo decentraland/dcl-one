@@ -2,6 +2,8 @@
 //! need no stack.
 #![allow(dead_code)]
 
+pub mod content;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 
