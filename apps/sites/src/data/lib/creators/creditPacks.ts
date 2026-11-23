@@ -2,7 +2,7 @@
 // one. The catalogue is credits-server's (public GET /credits/packs); the bundled copy is only a
 // fallback so the picker renders before, or without, the fetch. Ids are the contract: checkout is
 // always priced by the server from `packId`.
-import { config } from './config'
+import { creditsUrl } from './credits'
 
 export type CreditPack = {
   id: string
@@ -44,7 +44,7 @@ type ServerCreditPack = {
 }
 
 export async function fetchCreditPacks(): Promise<CreditPack[]> {
-  const response = await fetch(`${config.get('CREDITS_SERVER_URL')}/credits/packs`)
+  const response = await fetch(`${creditsUrl()}/credits/packs`)
   if (!response.ok) {
     await response.body?.cancel()
     throw new Error(`credit packs request failed (${response.status})`)
@@ -54,7 +54,6 @@ export async function fetchCreditPacks(): Promise<CreditPack[]> {
     .slice()
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
     .map(pack => {
-      // An empty string is a missing url, so `||` rather than `??`.
       const artUrl = pack.imageUrlWebp || pack.imageUrl || undefined
       return { id: pack.id, usd: pack.usd, credits: pack.credits, ...(artUrl ? { artUrl } : {}) }
     })

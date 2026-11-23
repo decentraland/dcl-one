@@ -12,7 +12,7 @@ import type { Session } from '@/data/lib/creators/auth'
 import type { Collection } from '@/data/lib/creators/collections'
 import { FeatureFlag } from '@/data/lib/creators/featureFlags'
 import type { Item } from '@/data/lib/creators/items'
-import { createCreditsCheckout } from '@/data/lib/creators/credits'
+import { canAuthorizePublication, createCreditsCheckout } from '@/data/lib/creators/credits'
 import type { PackSelection, PackTotals } from '@/data/lib/creators/creditPacks'
 import { saveTopUpResume } from '@/data/lib/creators/creditsTopUp'
 import { openExternal, redirectExternal } from '@/data/lib/creators/navigation'
@@ -90,7 +90,9 @@ export function PaymentStep({
   const mana = useManaBalance(address)
   const fee = useMemo(() => getPublicationFee(rarities.data ?? [], items.length), [rarities.data, items.length])
 
-  const creditsFlag = useFeatureFlag(FeatureFlag.SHOP_CREDITS_FOR_COLLECTIONS_FEE)
+  const creditsFlag = useFeatureFlag(FeatureFlag.SHOP_CREDITS_FOR_COLLECTIONS_FEE, {
+    enabled: canAuthorizePublication()
+  })
   const methods = useMemo(
     () => getAvailablePaymentMethods(mana.data, creditsFlag.enabled),
     [mana.data, creditsFlag.enabled]

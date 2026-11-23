@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { config } from '@/data/lib/creators/config'
+import { peerUrl } from '@/data/lib/creators/catalyst'
 
 // The subset of the Catalyst profile the ui2 Navbar `avatar` prop consumes.
 export type ProfileAvatar = {
@@ -17,12 +17,9 @@ export type ProfileAvatar = {
 // every wallet without a profile into an error. The hooks below hand callers undefined for "no
 // profile", the same as "not loaded yet".
 async function fetchProfile(address: string): Promise<ProfileAvatar | null> {
-  const res = await fetch(`${config.get('PEER_URL')}/lambdas/profiles/${address.toLowerCase()}`)
+  const res = await fetch(`${peerUrl()}/lambdas/profiles/${address.toLowerCase()}`)
   if (!res.ok) {
-    // Cancel the unread body so the connection is released back to the pool.
     await res.body?.cancel()
-    // Only a 404 means "no profile"; anything else (5xx, 429) is a real failure, left to fail and
-    // retry instead of being cached as a wallet without a profile.
     if (res.status === 404) return null
     throw new Error(`Could not fetch the profile: the Catalyst answered ${res.status}`)
   }

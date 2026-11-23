@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchCatalystContent, fetchEntitiesByPointers } from './catalyst'
+import { fetchCatalystContent, fetchEntitiesByPointers, peerUrl } from './catalyst'
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
@@ -15,7 +15,7 @@ describe('fetchEntitiesByPointers', () => {
 
     await expect(fetchEntitiesByPointers(['urn:1', 'urn:2'])).resolves.toEqual([entity])
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('https://peer.decentraland.zone/content/entities/active')
+    expect(url).toBe(`${window.location.origin}/content/entities/active`)
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body as string)).toEqual({ pointers: ['urn:1', 'urn:2'] })
   })
@@ -35,7 +35,7 @@ describe('fetchCatalystContent', () => {
   it('downloads a deployed file by hash', async () => {
     fetchMock.mockResolvedValue(new Response('glb-bytes', { status: 200 }))
     const blob = await fetchCatalystContent('Qmhash')
-    expect(fetchMock).toHaveBeenCalledWith('https://peer.decentraland.zone/content/contents/Qmhash')
+    expect(fetchMock).toHaveBeenCalledWith(`${window.location.origin}/content/contents/Qmhash`)
     await expect(blob.text()).resolves.toBe('glb-bytes')
   })
 
@@ -90,7 +90,31 @@ describe('fetchBaseWearables', () => {
       }
     ])
     expect(fetchMock.mock.calls[0][0]).toBe(
-      'https://peer.decentraland.zone/lambdas/collections/wearables?collectionId=urn:decentraland:off-chain:base-avatars'
+      `${window.location.origin}/lambdas/collections/wearables?collectionId=urn:decentraland:off-chain:base-avatars`
     )
+  })
+})
+
+describe('peerUrl', () => {
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    afterEach(() => {
+      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
+    })
+
+    it("should be the node behind the page's origin, which serves content and lambdas at its root", () => {
+      expect(peerUrl()).toBe(window.location.origin)
+      expect(peerUrl('dcl.example')).toBe(window.location.origin)
+    })
+
+    it('should be the public node base when the page names one', () => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
+      expect(peerUrl()).toBe('https://node.example')
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's peer", () => {
+      expect(peerUrl('decentraland.zone')).toBe('https://peer.decentraland.zone')
+    })
   })
 })
