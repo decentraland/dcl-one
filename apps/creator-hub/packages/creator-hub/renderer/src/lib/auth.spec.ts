@@ -44,6 +44,7 @@ const sendTransaction = () =>
 describe('AuthServerProvider.request', () => {
   beforeEach(() => {
     AuthServerProvider.setOpenBrowser(vi.fn());
+    AuthServerProvider.setAuthServerUrl('https://auth-api.decentraland.org');
     localStorage.setItem('auth-server-provider-address', ACCOUNT);
   });
 
@@ -51,6 +52,22 @@ describe('AuthServerProvider.request', () => {
     localStorage.clear();
     getIdentityMock.mockReset();
     ioMock.mockReset();
+  });
+
+  describe('when the relay is mounted under a gateway prefix', () => {
+    beforeEach(() => {
+      AuthServerProvider.setAuthServerUrl('https://dcl.dev/auth-api');
+      getIdentityMock.mockReturnValue({ authChain: AUTH_CHAIN });
+      ioMock.mockReturnValue(fakeSocket({ result: '0xhash' }));
+    });
+
+    it('should deliver the outcome via the prefixed Socket.IO transport', async () => {
+      await expect(sendTransaction()).resolves.toBe('0xhash');
+      expect(ioMock).toHaveBeenCalledWith('https://dcl.dev', {
+        path: '/auth-api/socket.io',
+        transports: ['websocket'],
+      });
+    });
   });
 
   describe('when there is no live identity', () => {

@@ -106,11 +106,20 @@ function isErrorWithMessage(error: unknown): error is Error {
 export class AuthServerProvider {
   private static authServerUrl: string = '';
   private static authDappUrl: string = '';
+  private static identityFetcher?: (
+    url: string,
+    id: string,
+    verifier: string,
+  ) => Promise<{ status: number; body: string }>;
   private static openBrowser: (url: string, target?: string, features?: string) => void;
 
   /**
    * Set the url of the auth server to be consumed by this provider.
    */
+  static setIdentityFetcher(fetcher: NonNullable<typeof AuthServerProvider.identityFetcher>) {
+    AuthServerProvider.identityFetcher = fetcher;
+  }
+
   static setAuthServerUrl(url: string) {
     AuthServerProvider.authServerUrl = url;
   }
@@ -149,10 +158,17 @@ export class AuthServerProvider {
     identityId: string,
     verifier: string,
   ): Promise<{ identity: AuthIdentity; signer: string }> => {
-    const response = await fetch(
-      `${AuthServerProvider.authServerUrl}/identities/${encodeURIComponent(identityId)}`,
-      { headers: { [SIGN_IN_VERIFIER_HEADER]: verifier } },
+    const native = await AuthServerProvider.identityFetcher?.(
+      AuthServerProvider.authServerUrl,
+      identityId,
+      verifier,
     );
+    const response = native
+      ? new Response(native.body || null, { status: native.status })
+      : await fetch(
+          `${AuthServerProvider.authServerUrl}/identities/${encodeURIComponent(identityId)}`,
+          { headers: { [SIGN_IN_VERIFIER_HEADER]: verifier } },
+        );
 
     if (response.status === 404) {
       throw new SignInError('not_found', 'Sign in identity not found');
@@ -294,7 +310,13 @@ export class AuthServerProvider {
    * Creates a socket connection and waits for it to be connected before returning it.
    */
   private static getSocket = async () => {
-    const socket = io(AuthServerProvider.authServerUrl);
+    const url = AuthServerProvider.authServerUrl;
+    const base = URL.canParse(url) ? new URL(url) : null;
+    const path = base?.pathname.replace(/\/+$/, '');
+    const socket =
+      base && path
+        ? io(base.origin, { path: `${path}/socket.io`, transports: ['websocket'] })
+        : io(url);
 
     await new Promise<void>(resolve => {
       const onConnect = () => {
