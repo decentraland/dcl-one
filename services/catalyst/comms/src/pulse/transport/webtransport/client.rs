@@ -108,6 +108,8 @@ impl Client {
         local: Option<IpAddr>,
     ) -> Result<Client, ClientError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
+            // Each test client drives just one connection. A swarm creates many clients.
+            .worker_threads(1)
             .enable_all()
             .build()
             .map_err(|e| ClientError::Connect(e.to_string()))?;

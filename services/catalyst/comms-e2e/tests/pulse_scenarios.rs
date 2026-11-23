@@ -56,7 +56,7 @@ fn assert_passed(result: &ScenarioResult) {
         } => {
             let tail: Vec<String> = timeline
                 .iter()
-                .filter(|entry| entry.actor == "scenario")
+                .filter(|entry| entry.actor == "scenario" || entry.kind == "transport failed")
                 .chain(timeline.iter().rev().take(25).rev())
                 .map(|entry| format!("{entry:?}"))
                 .collect();
