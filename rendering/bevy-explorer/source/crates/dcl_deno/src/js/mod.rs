@@ -40,6 +40,7 @@ pub mod local_storage;
 pub mod op_wrappers;
 mod plain;
 mod sources;
+mod structured_clone;
 pub mod websocket;
 
 /// Upstream ops scenes do not get: the lock manager and BroadcastChannel are not part of the
@@ -111,7 +112,10 @@ pub fn create_runtime(
         ops.extend(set);
     }
 
-    for op in clock::override_ops() {
+    for op in clock::override_ops()
+        .into_iter()
+        .chain(structured_clone::override_ops())
+    {
         op_map.insert(op.name, op);
     }
 

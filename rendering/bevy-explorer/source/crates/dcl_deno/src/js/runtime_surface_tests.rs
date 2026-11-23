@@ -335,6 +335,56 @@ fn wasm_streaming_compilation_is_absent() {
     assert_eq!(outcome, "undefined undefined");
 }
 
+/// Runs `test` (this module) in a child test process, so a V8 abort fails one test instead of
+/// killing the whole test binary. The child prints a marker once its body has returned.
+fn run_in_child(test: &str, body: impl FnOnce() -> String) {
+    const CHILD: &str = "DCL_DENO_CHILD_TEST";
+    let name = format!("{}::{test}", module_path!().split_once("::").unwrap().1);
+    if std::env::var(CHILD).as_deref() == Ok(name.as_str()) {
+        let outcome = body();
+        println!("child-outcome:{outcome}");
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([name.as_str(), "--exact", "--nocapture", "--test-threads=1"])
+        .env(CHILD, &name)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("child-outcome:"),
+        "child {name} failed: {:?}\n{stdout}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn structured_clone_ignores_the_host_object_brand() {
+    run_in_child("structured_clone_ignores_the_host_object_brand", || {
+        let mut runtime = client_runtime();
+        let outcome = eval(
+            &mut runtime,
+            r#"
+            let branded;
+            try {
+                const brand = Symbol.for("Deno.core.hostObject");
+                branded = JSON.stringify(
+                    performance.mark("x", { detail: { [brand]: () => ({ type: "nope" }) } }).detail);
+            } catch (e) {
+                branded = String(e);
+            }
+            const plain = performance.mark("y", { detail: { a: [1, { b: "c" }] } }).detail;
+            JSON.stringify([branded, plain])
+            "#
+            .to_owned(),
+        )
+        .unwrap();
+        assert_eq!(outcome, r#"["{}",{"a":[1,{"b":"c"}]}]"#);
+        outcome
+    });
+}
+
 /// A fresh, empty storage folder for one test.
 fn storage_dir(name: &str) -> std::path::PathBuf {
     let nanos = std::time::SystemTime::now()
