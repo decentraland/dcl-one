@@ -132,8 +132,8 @@ keeps counting; upstream's daily rescore alone changes nothing. The score is cop
 counters. When upstream's counters changed, events and attendees take upstream's
 values and `ranking_tracking_since` moves to the moment upstream was read, so the node's
 ended-event scan does not count again an imported event upstream counted; events that ended
-on the node only before that moment are dropped. Photos and streams are upstream's plus what
-the node added since the previous load (imported photos are published without a ranking
+on the node only before that moment are dropped. Photos and streams are upstream's plus the
+node's own count, what it holds above upstream's last loaded value (imported photos are published without a ranking
 increment, so the node never counts one of them). A taken-over mirrored community starts its tracking
 there too.
 

@@ -232,8 +232,8 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_post_loaded (
     id uuid PRIMARY KEY,
     content text NOT NULL
 );
--- Upstream's ranking counters as last loaded (unchanged: the node's are left alone) and the
--- photo/stream counters written then (the node's own additions are what it holds above them).
+-- Upstream's ranking counters as last loaded: unchanged, the node's are left alone; the node's own
+-- photo/stream count is what it holds above them.
 CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ranking_loaded (
     community_id uuid PRIMARY KEY,
     events_count integer NOT NULL,
@@ -241,11 +241,16 @@ CREATE TABLE IF NOT EXISTS dcl_migration.social_community_ranking_loaded (
     streams_count integer NOT NULL,
     events_total_attendees integer NOT NULL,
     streams_total_participants integer NOT NULL,
-    ranking_score real NOT NULL,
-    written_photos_count integer NOT NULL,
-    written_streams_count integer NOT NULL,
-    written_streams_total_participants integer NOT NULL
+    ranking_score real NOT NULL
 );
+DO $ddl$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'dcl_migration'
+             AND table_name = 'social_community_ranking_loaded' AND column_name = 'written_photos_count') THEN
+    ALTER TABLE dcl_migration.social_community_ranking_loaded
+        DROP COLUMN written_photos_count, DROP COLUMN written_streams_count,
+        DROP COLUMN written_streams_total_participants;
+  END IF;
+END $ddl$;
 -- The has_started_program the wallet import last wrote; a wallet that no longer matches started
 -- the program on the node.
 CREATE TABLE IF NOT EXISTS dcl_migration.credit_wallet_loaded (
