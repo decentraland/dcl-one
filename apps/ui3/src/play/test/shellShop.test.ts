@@ -1473,29 +1473,60 @@ describe('a purchase of several items (the cart)', () => {
       expect(t.cancels).toEqual([])
     })
 
-    it('ends a part bought through a call it can’t read, by its credit’s SETTLED, as Credits purchases always were', async () => {
+    const BUNDLED = '0x' + '4b'.repeat(32)
+    // An account that pays through a bundler: its transaction goes to the EntryPoint, not the manager.
+    const bundle = { to: '0x' + '5f'.repeat(20), input: '0x765e827f' as Hex, from: '0x' + '6e'.repeat(20) }
+    /** The chain as an EntryPoint bundle shows it (`receipt`: its status, or none), and the part's own call at OWN. */
+    const bundled = (receipt: 'success' | 'reverted' | null): ShellShopServices['manaEvidence'] =>
+      () =>
+        ({
+          transaction: async (_c: number, hash: string) => (hash === BUNDLED ? bundle : hash === OWN ? { to: TRUSTED.address, input: encodeUseCredits(argsFor('accept')), from: BOOK.buyer } : null),
+          receipt: async (_c: number, hash: string) =>
+            hash === BUNDLED ? (receipt ? { transactionHash: hash, status: receipt, blockNumber: 1n } : null) : hash === OWN ? { transactionHash: hash, status: 'success', blockNumber: 1n } : null
+        }) as never
+
+    it.each([['a successful receipt', 'success'], ['a reverted receipt', 'reverted'], ['no receipt', null]] as const)(
+      'says it couldn’t verify a part whose credit was recorded spent in a call it can’t read (%s), and keeps its items',
+      async (_, receipt) => {
+        const storage = memoryStorage()
+        const node = recordOf()
+        const t = setup({ storage, items: ITEMS, offers: mixed, resolvers: trades, run: runAs(BUNDLED, 'pending', 'pending'), evidence: bundled(receipt), creditRecordOf: node.lookup })
+        const { operation } = await t.checkout('7', '8')
+        ;(await t.until('confirm')).handlers.onConfirm?.()
+        await vi.waitFor(() => expect(t.sleeps.length).toBeGreaterThan(1))
+        node.settle(BUNDLED)
+        // Said where the purchase is shown, with CHECK AGAIN; never a success, so its items stay in the cart.
+        const said = await vi.waitFor(() => {
+          const last = t.shown.at(-1)!
+          expect(last.view).toMatchObject({ step: 'pending', check: 'ready', message: expect.stringMatching(/couldn't verify the purchase of these items/) })
+          return last
+        })
+        expect(createLedger(() => storage).load(BUYER).find((r) => r.id === operation)).toMatchObject({ state: 'pending', unverified: true })
+        // CHECK AGAIN looks once more: still unverified, nothing cancelled, nothing signed again.
+        said.handlers.onCheckAgain?.()
+        await vi.waitFor(() => expect(t.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready' }))
+        expect(t.events.some((e) => e.state === 'succeeded')).toBe(false)
+        expect(t.run).toHaveBeenCalledTimes(1)
+        expect(t.cancels).toEqual([])
+        // Another page on the same browser: still unverified, never bought on the node's word alone.
+        const after = setup({ storage, items: ITEMS, offers: mixed, resolvers: trades, evidence: bundled(receipt), creditRecordOf: node.lookup })
+        await after.shop.request('shop.capabilities', undefined)
+        await vi.waitFor(() => expect(after.sleeps.length).toBeGreaterThan(1))
+        expect(after.events.some((e) => e.operation === operation && e.state === 'succeeded')).toBe(false)
+        expect(createLedger(() => storage).load(BUYER).find((r) => r.id === operation)).toMatchObject({ state: 'pending', unverified: true })
+        expect(after.run).not.toHaveBeenCalled()
+        expect(after.cancels).toEqual([])
+      }
+    )
+
+    it('buys an unverified part once, when the node then shows its own call', async () => {
       const node = recordOf()
-      const BUNDLED = '0x' + '4b'.repeat(32)
-      // An account that pays through a bundler: its transaction goes to the EntryPoint, not the manager.
-      const bundle = { to: '0x' + '5f'.repeat(20), input: '0x765e827f' as Hex, from: '0x' + '6e'.repeat(20) }
-      const t = setup({
-        items: ITEMS,
-        offers: mixed,
-        resolvers: trades,
-        run: runAs(BUNDLED, 'pending', 'pending'),
-        evidence: () =>
-          ({
-            transaction: async (_c: number, hash: string) => (hash === BUNDLED ? bundle : null),
-            receipt: async (_c: number, hash: string) => (hash === BUNDLED ? { transactionHash: hash, status: 'success', blockNumber: 1n } : null)
-          }) as never,
-        creditRecordOf: node.lookup
-      })
+      const t = setup({ items: ITEMS, offers: mixed, resolvers: trades, run: runAs(BUNDLED, 'pending', 'pending'), evidence: bundled('success'), creditRecordOf: node.lookup })
       await t.checkout('7', '8')
       ;(await t.until('confirm')).handlers.onConfirm?.()
-      await vi.waitFor(() => expect(t.sleeps.length).toBeGreaterThan(2))
-      expect(t.events.some((e) => e.state === 'succeeded')).toBe(false)
-      // The node says the credit was spent in that very transaction: the part is bought, and nothing after it starts.
       node.settle(BUNDLED)
+      await vi.waitFor(() => expect(t.shown.at(-1)?.view).toMatchObject({ message: expect.stringMatching(/couldn't verify/) }))
+      node.settle(OWN)
       await vi.waitFor(() => expect(t.events.filter((e) => e.state === 'succeeded')).toHaveLength(1))
       expect(t.run).toHaveBeenCalledTimes(1)
       expect(t.cancels).toEqual([])

@@ -66,6 +66,12 @@ export interface OperationRecord {
    * records (`record:kept-v1`): a build that doesn't read the terms would take those for the purchase.
    */
   sale?: SplitSale
+  /**
+   * A Credits part whose credit the node lists as spent, in a transaction this page reads but can't read as its call (a
+   * bundle through an EntryPoint, a smart wallet's call to itself): not known bought, so its items stay in the cart and it
+   * says so; never sent again, and its credit never given back. Bought only by evidence of its own terms.
+   */
+  unverified?: true
   createdAt: number
   updatedAt: number
 }
@@ -172,6 +178,7 @@ function isRecord(v: unknown, buyer: string): v is OperationRecord {
     (v.mana === undefined || isManaAttempt(v.mana)) &&
     (v.split === undefined || isSplitSale(v.split)) &&
     (v.sale === undefined || isSplitSale(v.sale)) &&
+    (v.unverified === undefined || v.unverified === true) &&
     isTime(v.createdAt) &&
     isTime(v.updatedAt)
   )

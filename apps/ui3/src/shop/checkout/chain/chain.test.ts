@@ -456,12 +456,13 @@ describe("relaying a meta-transaction", () => {
 });
 
 describe("a request the buyer turned down in the wallet", () => {
-  it("is 4001, ACTION_REJECTED or WalletConnect's 5000, itself or one level down; nothing else", () => {
+  it("is the request's own 4001, ACTION_REJECTED or WalletConnect's 5000; never a cause under another error", () => {
     for (const code of [4001, "ACTION_REJECTED", 5000]) {
       expect(isWalletRefusal({ code })).toBe(true);
-      expect(isWalletRefusal({ code: -32603, cause: { code } })).toBe(true);
+      expect(isWalletRefusal({ code: 4900, cause: { code } })).toBe(false);
+      expect(isWalletRefusal({ code: -32603, cause: { code } })).toBe(false);
     }
-    for (const e of [{ code: 4900 }, { code: 4100 }, { code: -32603, cause: { code: 4900 } }, { name: "AbortError" }, new Error("User rejected the request"), null, undefined]) {
+    for (const e of [{ code: 4900 }, { code: 4100 }, { name: "AbortError" }, new Error("User rejected the request"), null, undefined]) {
       expect(isWalletRefusal(e)).toBe(false);
     }
   });

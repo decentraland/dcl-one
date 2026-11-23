@@ -137,10 +137,10 @@ export class RefusedBeforeWallet extends Error {
  * -32002, -32603, no code) may come after the wallet broadcast it.
  */
 export function isWalletRefusal(err: unknown): boolean {
-  const refused = (code: unknown): boolean => code === 4001 || code === "ACTION_REJECTED" || code === WALLETCONNECT_USER_REJECTED;
-  const e = err as { code?: unknown; cause?: { code?: unknown } | null } | null;
-  // The code itself, or one level down where a library wraps the provider's error (`cause`).
-  return refused(e?.code) || refused(e?.cause?.code);
+  // The request's own answer only: a cause nested under another error (a 4900, an RPC error) doesn't say the request itself
+  // was turned down, so it proves nothing.
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 4001 || code === "ACTION_REJECTED" || code === WALLETCONNECT_USER_REJECTED;
 }
 
 /** WalletConnect's code for a request the user rejected in the wallet (its USER_REJECTED, 5000). */

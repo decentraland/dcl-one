@@ -186,6 +186,8 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
 
 /** A split whose credit the node says another transaction spent: not this item, and not Credits to give back. */
 const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another transaction, so this item wasn't bought here."
+/** A Credits part whose credit was recorded spent in a transaction this page can't read as its purchase (`unverified`). */
+const UNVERIFIED = "Your Credits were recorded as spent, but we couldn't verify the purchase of these items. They stay in your cart until it can be verified."
 const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
 const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.'
 const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
@@ -834,10 +836,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /** Purchase in progress; one paid in MANA shows what it offers now (./manaFlow). */
   const showPending = (op: Operation): void => {
     if (!op.mana) {
+      if (op.unverified) {
+        // CHECK AGAIN looks once more: it cancels nothing and signs nothing.
+        const view = (check: 'ready' | 'checking'): void => show(op, { step: 'pending', check, message: UNVERIFIED }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
+        view('ready')
+        return
+      }
       show(op, { step: 'pending' }, { onClose: () => hide(op) })
       return
     }
     manaFlow.showPending(op)
+  }
+  /** Marks a Credits part `unverified` (kept with it) and says so where its dialog is up. */
+  const unverified = (op: Operation): void => {
+    if (op.unverified) return
+    op.unverified = true
+    keep(op)
+    publish(op)
+    if (slot.holds(op) && stillPending(op)) showPending(op)
   }
   /** CHECK AGAIN: one look now, besides the watch's own; the dialog follows if it settled. */
   const checkAgain = async (op: Operation, view: (check: 'ready' | 'checking') => void): Promise<void> => {
@@ -1198,12 +1214,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return true
       }
       // A Credits part (never a split) whose credit the node says was spent, in a transaction read but not readable as a
-      // useCredits at the manager (a smart wallet's own call, a bundle through an EntryPoint): bought, as a Credits purchase
-      // has always been found out by its credit's SETTLED. It ends the part; it starts nothing after it.
-      if (outcome === 'unreadable' && !op.split) {
-        settled(op, 'succeeded', { txHash: record.txHash })
-        return true
-      }
+      // useCredits at the manager (a bundle through an EntryPoint, a smart wallet's own call): not known bought. It says so,
+      // and keeps saying so after a reload, its items still in the cart; nothing is cancelled or signed for it. Only
+      // evidence of its own terms buys it, once.
+      if (outcome === 'unreadable' && !op.split) unverified(op)
       return false
     }
     if (record?.status === 'EXPIRED') {

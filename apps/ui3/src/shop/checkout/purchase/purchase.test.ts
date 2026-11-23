@@ -801,6 +801,8 @@ describe("a kept credits group the wallet was handed", () => {
     ["a 4900 that says cancelled", cancelledAfter],
     ["a wallet's own 4100", walletUnauthorized],
     ["a wallet's error named and coded as the guard's", namedAsTheGuard],
+    ["a disconnect whose cause says rejected", () => Object.assign(new Error("The wallet disconnected."), { code: 4900, cause: { code: 4001 } })],
+    ["an RPC error whose cause says rejected", () => Object.assign(new Error("Internal error"), { code: -32603, cause: { code: 4001 } })],
   ])("sent, then %s instead of its hash: held, its credit kept, on its own transaction and after the relay's refusal", async (_, error) => {
     const direct = await harness();
     sendsThenThrows(direct, error());
@@ -950,8 +952,8 @@ describe("a kept credits group the wallet was handed", () => {
     expect(cancels(h)).toBe(1);
   });
 
-  it("a rejection WalletConnect reports, or one a library wraps, still fails it and gives its credit back", async () => {
-    for (const error of [Object.assign(new Error("User rejected."), { code: 5000 }), Object.assign(new Error("rejected"), { code: -32603, cause: { code: 4001 } })]) {
+  it("a rejection WalletConnect reports as its own still fails it and gives its credit back", async () => {
+    for (const error of [Object.assign(new Error("User rejected."), { code: 5000 })]) {
       const h = await harness();
       const original = h.wallet.request.bind(h.wallet);
       h.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
