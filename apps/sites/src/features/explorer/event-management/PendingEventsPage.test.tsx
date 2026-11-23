@@ -288,6 +288,7 @@ describe("when opening the Pending Events page", () => {
     await user.click(await screen.findByRole("link", { name: "Moon concert" }));
     await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(currentPath()).toBe(PATH));
     // The fake queue still lists the event, as the API does until its next read settles.
     await user.click(screen.getByRole("link", { name: "Moon concert" }));
     expect(currentPath()).toBe(`${PATH}?id=pending-one`);
