@@ -816,20 +816,17 @@ impl DecentralandApp {
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
         app.add_plugins(debug_panel::MemoryDebugPanelPlugin);
 
-        #[cfg(target_arch = "wasm32")]
         run_small_schedules_in_order(&mut app);
 
         app
     }
 }
 
-/// Web: runs the main schedules other than `PostUpdate` on the engine worker, one system after
-/// another. Most of their systems take microseconds, and handing each to a compute worker and
-/// waiting for it costs more than running it; with the multi-threaded executor that cost alone
-/// kept the app's update from fitting in one display refresh. `PostUpdate` stays multi-threaded:
-/// its systems (transform propagation, visibility) are large enough to gain from the workers.
-/// Natively a thread wakes cheaply, so every schedule keeps the multi-threaded executor.
-#[cfg(target_arch = "wasm32")]
+/// Runs the main schedules other than `PostUpdate` one system after another, on the thread that
+/// runs the schedule (the engine worker on the web). Most of their systems take microseconds, and
+/// handing each to a compute thread and waiting for it costs more than running it. `PostUpdate`
+/// stays multi-threaded: its systems (transform propagation, visibility) are large enough to gain
+/// from the compute threads.
 fn run_small_schedules_in_order(app: &mut App) {
     use bevy::{
         app::{RunFixedMainLoop, SpawnScene},

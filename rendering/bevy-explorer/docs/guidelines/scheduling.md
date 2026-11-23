@@ -34,13 +34,14 @@ flowchart LR
   Update --> PostUpdate
 ```
 
-On the web, `PreUpdate`, `RunFixedMainLoop`, `Update`, `SpawnScene` and `Last` run their
-systems on the engine worker, one after another, in an order that still honours every
-`before`, `after` and set chain (`run_small_schedules_in_order`, `src/lib.rs`). Most of their
-systems take microseconds, and handing one to a compute worker and waiting for it costs more
-than running it. `PostUpdate` keeps the multi-threaded executor, as every schedule does natively.
-A system in one of those schedules cannot rely on running beside another, on any platform:
-order what must be ordered.
+`PreUpdate`, `RunFixedMainLoop`, `Update`, `SpawnScene` and `Last` run their systems one
+after another on the thread that runs the schedule (the engine worker on the web), in an order
+that still honours every `before`, `after` and set chain (`run_small_schedules_in_order`,
+`src/lib.rs`). Most of their systems take microseconds, and handing one to a compute thread and
+waiting for it costs more than running it. `PostUpdate` keeps the multi-threaded executor: its
+systems (transform propagation, visibility) are large enough to gain from the compute threads.
+A system in one of the in-order schedules cannot rely on running beside another: order what
+must be ordered.
 
 `SceneSets`, chained in `Update`:
 
