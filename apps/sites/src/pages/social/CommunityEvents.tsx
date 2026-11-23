@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from "react-router";
 import { CommunityEventsList } from "@dcl/one-ui/apps/sites/social/CommunityLists";
 
 import { useAuth } from "@/data/lib/auth/context";
-import { eventDetailQuery } from "@/data/lib/catalyst/places/events-page";
+import { eventDetailQuery, readEventId } from "@/data/lib/catalyst/places/events-page";
 import { eventsQuery } from "@/data/lib/community/queries";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import type { Zone } from "@/features/components/event-schedule";
@@ -21,11 +21,15 @@ import { listMore, listStatus } from "./list-state";
 /** The search parameter naming the event whose detail is open over the page. */
 const EVENT_PARAM = "event";
 
-/** Marks the history entry a plain click pushed, so closing that detail goes back to the entry before. */
+/**
+ * Marks the history entry a plain click pushed, so closing that detail goes back to the entry before.
+ * The mark names this document: a reload keeps history state, but the entry before is then another document's.
+ */
 const OPENED_HERE = "communityEventOpened";
+const THIS_DOCUMENT = Math.random().toString(36).slice(2);
 
 const openedHere = (state: unknown) =>
-  typeof state === "object" && state !== null && (state as Record<string, unknown>)[OPENED_HERE] === true;
+  typeof state === "object" && state !== null && (state as Record<string, unknown>)[OPENED_HERE] === THIS_DOCUMENT;
 
 /**
  * The server renders times in UTC with no calendar link (it has no origin); once hydrated the
@@ -62,22 +66,26 @@ export function useCommunityEvents(
 ) {
   const { identity } = useAuth();
   const query = useInfiniteQuery({ ...eventsQuery(communityId), enabled });
-  const events = useMemo(() => query.data?.pages.flatMap((page) => page.events) ?? [], [query.data]);
+  // Cached pages answer even while disabled; a hidden community shows, and reads profiles for, none.
+  const events = useMemo(
+    () => (enabled ? (query.data?.pages.flatMap((page) => page.events) ?? []) : []),
+    [enabled, query.data],
+  );
   const reminders = useEventReminders(enabled ? identity : null, () => openSignIn());
   const viewer = useViewer(initialNow);
 
   const location = useLocation();
   const navigate = useNavigate();
-  const eventId = new URLSearchParams(location.search).get(EVENT_PARAM)?.trim() || null;
+  const eventId = readEventId(new URLSearchParams(location.search), EVENT_PARAM);
   const listed = eventId ? events.find((event) => event.id === eventId) : undefined;
   // The first page usually holds it, so the read by id waits for that page to settle.
   const detail = useQuery({
     ...eventDetailQuery(eventId ?? ""),
     enabled: enabled && Boolean(eventId) && !listed && !query.isPending,
   });
-  const hosted = detail.data && detail.data.community_id === communityId ? detail.data : null;
-  // Cached reads (another page's, or before a sign-out) answer even while disabled, so they open nothing then.
-  const open = enabled ? (listed ?? hosted ?? null) : null;
+  // Like the list, a cached read (another page's, or before a sign-out) counts for nothing while disabled.
+  const hosted = enabled && detail.data && detail.data.community_id === communityId ? detail.data : null;
+  const open = listed ?? hosted ?? null;
 
   const groups = useMemo(() => [creatorWallets(events), creatorWallets(hosted ? [hosted] : [])], [events, hosted]);
   const profiles = useCreatorProfiles(groups);
@@ -88,7 +96,7 @@ export function useCommunityEvents(
       if (id === eventId) return;
       const next = new URLSearchParams(location.search);
       next.set(EVENT_PARAM, id);
-      void navigate({ search: `?${next}` }, { preventScrollReset: true, state: { [OPENED_HERE]: true } });
+      void navigate({ search: `?${next}` }, { preventScrollReset: true, state: { [OPENED_HERE]: THIS_DOCUMENT } });
     },
     [eventId, location.search, navigate],
   );

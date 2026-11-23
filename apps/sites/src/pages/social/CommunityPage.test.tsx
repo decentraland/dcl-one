@@ -41,7 +41,13 @@ vi.mock("@/core/lib/telemetry/track", () => telemetry);
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: auth.identity }) }));
 vi.mock("@/features/components/auth/signin-store", () => signIn);
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("@/features/events/useCreatorProfiles", () => ({ useCreatorProfiles: () => ({}) }));
+const creators = vi.hoisted(() => ({ asked: [] as string[] }));
+vi.mock("@/features/events/useCreatorProfiles", () => ({
+  useCreatorProfiles: (groups: string[][]) => {
+    creators.asked.push(...groups.flat());
+    return {};
+  },
+}));
 vi.mock("@/features/events/useEventReminders", () => ({
   REMIND_FAILED: "Couldn't update your reminder. Try again.",
   useEventReminders: (_identity: unknown, onSignIn: () => void) => {
@@ -105,7 +111,9 @@ const upcomingEvent = (): Event => ({
 
 let client: QueryClient;
 
-function show(path = `/social/communities/${ID}`, sid = SID, seed?: (client: QueryClient) => void) {
+type Entry = string | { pathname: string; search: string; state: unknown };
+
+function show(path: Entry = `/social/communities/${ID}`, sid = SID, seed?: (client: QueryClient) => void) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed?.(client);
   const router = createMemoryRouter(
@@ -131,6 +139,7 @@ beforeEach(() => {
   for (const fn of Object.values(net)) fn.mockReset();
   events.fetchEvent.mockReset();
   telemetry.track.mockReset();
+  creators.asked = [];
   signIn.openSignIn.mockReset();
   auth.identity = null;
   reminders.failed = null;
@@ -235,6 +244,19 @@ describe("CommunityPage", () => {
 
         it("should drop the action", async () => {
           await waitFor(() => expect(router.state.location.search).toBe(""));
+        });
+      });
+
+      describe("and the link's unknown action is dropped from an entry with state", () => {
+        let router: Router;
+
+        beforeEach(() => {
+          router = show({ pathname: `/social/communities/${ID}`, search: "?action=leave&event=ev-1", state: { kept: true } });
+        });
+
+        it("should keep the entry's state and the other parameters", async () => {
+          await waitFor(() => expect(router.state.location.search).toBe("?event=ev-1"));
+          expect(router.state.location.state).toEqual({ kept: true });
         });
       });
 
@@ -466,6 +488,23 @@ describe("CommunityPage", () => {
               expect(router.state.location.search).toBe("");
               expect(router.state.historyAction).toBe("REPLACE");
             });
+          });
+        });
+
+        describe("and the history entry was marked by an earlier document, as after a reload", () => {
+          beforeEach(async () => {
+            router = show({
+              pathname: `/social/communities/${ID}`,
+              search: "?event=ev-1",
+              state: { communityEventOpened: "an-earlier-document" },
+            });
+            await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /close/i }));
+          });
+
+          it("should close in place, dropping the event from the URL", async () => {
+            await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+            expect(router.state.historyAction).toBe("REPLACE");
+            expect(router.state.location.search).toBe("");
           });
         });
 
@@ -865,7 +904,7 @@ describe("CommunityPage", () => {
         let router: Router;
 
         beforeEach(() => {
-          const hosted = { ...upcomingEvent(), community_id: ID };
+          const hosted = { ...upcomingEvent(), community_id: ID, user: "0x4444444444444444444444444444444444444444" };
           router = show(`/social/communities/${ID}?event=ev-1`, SID, (seeded) => {
             seeded.setQueryData(eventsPageKeys.detail("ev-1"), hosted);
             seeded.setQueryData(communityKeys.events(ID), {
@@ -880,6 +919,7 @@ describe("CommunityPage", () => {
           await act(async () => {});
           expect(screen.queryByRole("dialog")).toBeNull();
           expect(router.state.location.search).toBe("?event=ev-1");
+          expect(creators.asked).not.toContain("0x4444444444444444444444444444444444444444");
         });
       });
 
