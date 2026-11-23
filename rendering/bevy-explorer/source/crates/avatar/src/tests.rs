@@ -216,6 +216,11 @@ fn register_test_emote(world: &mut World, urn: &str, loaded: bool) {
         // a handle with no asset behind it: the clip is still loading
         Handle::default()
     };
+    register_test_emote_gltf(world, urn, gltf);
+}
+
+/// Register `urn` as a built-in emote for the test body shape, its clip in `gltf`.
+fn register_test_emote_gltf(world: &mut World, urn: &str, gltf: Handle<Gltf>) {
     let urn = EmoteUrn::new(urn).unwrap();
     world
         .run_system_once(move |mut emotes: CollectibleManager<Emote>| {
@@ -298,6 +303,20 @@ fn the_preload_stops_asking_once_the_equipped_clips_have_loaded() {
     world.entity_mut(player).despawn();
     world.run_system_once(preload_equipped_emotes).unwrap();
     assert!(world.get::<EquippedEmotesLoaded>(waiting).is_none());
+}
+
+#[test]
+fn the_preload_stops_asking_for_a_clip_whose_glb_failed_to_load() {
+    use crate::animate::{preload_equipped_emotes, EquippedEmotesLoaded};
+
+    let mut app = app_with_avatar_scenes();
+    let failed = broken_body_gltf(&mut app, BodyGltfFailure::FailedLoad);
+    let world = app.world_mut();
+    register_test_emote_gltf(world, EQUIPPED_CLAP, failed);
+    let player = spawn_preloading_player(world, &[EQUIPPED_CLAP], TEST_BODY_SHAPE);
+
+    world.run_system_once(preload_equipped_emotes).unwrap();
+    assert!(world.get::<EquippedEmotesLoaded>(player).is_some());
 }
 
 #[test]

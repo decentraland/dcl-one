@@ -270,9 +270,10 @@ pub(crate) struct EquippedEmotesLoaded {
 
 /// Loads the local player's equipped emotes once their avatar is built, so the first press of
 /// each plays at once instead of waiting on the pointer, entity and clip fetches. Loaded emotes
-/// stay in the collectible cache, so this stops asking once every equipped clip has loaded, and
-/// asks again when the equipped set or the body shape changes. `file_emote_downloads` files the
-/// equipped emotes under the player, so their downloads rank with the player's own.
+/// stay in the collectible cache, so this stops asking once every equipped clip has loaded or its
+/// GLB has failed to load, and asks again when the equipped set or the body shape changes.
+/// `file_emote_downloads` files the equipped emotes under the player, so their downloads rank
+/// with the player's own.
 pub(crate) fn preload_equipped_emotes(
     mut commands: Commands,
     player: Query<
@@ -287,6 +288,7 @@ pub(crate) fn preload_equipped_emotes(
     definitions: Query<&AvatarDefinition>,
     mut emote_loader: CollectibleManager<Emote>,
     gltfs: Res<Assets<Gltf>>,
+    asset_server: Res<AssetServer>,
 ) {
     let Ok((player, shape, children, loaded)) = player.single() else {
         return;
@@ -306,7 +308,11 @@ pub(crate) fn preload_equipped_emotes(
         .flat_map(|urn| EmoteUrn::new_quiet(urn).ok())
     {
         match emote_loader.get_representation(&urn, bodyshape) {
-            Ok(emote) => pending |= emote.avatar_animation(&gltfs).is_err(),
+            // a GLB that failed to load never yields a clip, so it is settled too
+            Ok(emote) => {
+                pending |=
+                    emote.avatar_animation(&gltfs).is_err() && !emote.load_failed(&asset_server)
+            }
             Err(CollectibleError::Loading) => pending = true,
             // missing, failed or not made for this body shape: playing it fails the same way
             Err(_) => {}
