@@ -78,6 +78,7 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
+mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -180,6 +181,7 @@ impl Plugin for AvatarRenderPlugin {
         app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -1479,11 +1481,12 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, inverse_bindposes, mut mat_cache, mut mask_cache): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut run): (
         Res<AppConfig>,
         Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
+        ResMut<processing_timing::AvatarProcessingRun>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
@@ -1503,6 +1506,8 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
+    let started = bevy::platform::time::Instant::now();
+    let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
         let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)
@@ -1518,6 +1523,7 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
+        processed += 1;
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
@@ -2121,6 +2127,10 @@ fn process_avatar(
             state: LoadingState::Finished,
         });
     }
+    *run = processing_timing::AvatarProcessingRun {
+        spent: started.elapsed(),
+        processed,
+    };
 }
 
 // derive the scene material for an avatar's gltf material, sharing the asset

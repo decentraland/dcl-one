@@ -41,6 +41,10 @@ def check(rows, root):
     # (decentraland/dcl-one#631): abgen's CDN, whose Bevy variants `/ab-cdn` refuses.
     ungated = {"abgenCdn"}
     excluded = {"authPage", "reels", "storage", "ethereumRpc", "socialRpc", "pulseServer"} | ungated
+    # The web page alone reaches these on the public host, and hands that base to its engine.
+    # The gateway still routes them for an engine launched with a gateway: the feature-flags
+    # service, which picks a player's rollout group from the id each request carries.
+    page_direct = ungated | {"featureFlags"}
     assert excluded <= {row["name"] for row in rows}, "removed service needs contract review"
 
     for row in rows:
@@ -57,7 +61,7 @@ def check(rows, root):
             hud_base = hud["options"][name]
             if name == "pulseServer":
                 assert hud_base == "example.test", hud_base
-            elif name in ungated:
+            elif name in page_direct:
                 # composed from Decentraland's domain, never from the page's own host
                 assert hud_base == f'https://{row["sub"]}.decentraland.org{row["path"]}', hud_base
             else:
@@ -87,7 +91,7 @@ def check(rows, root):
             assert virtual_path == urlsplit(hud_base).path + "/child", row
         else:
             assert virtual_path == direct.path + "/child", row
-            if row["web"]:
+            if row["web"] and name not in page_direct:
                 assert row["direct"] == hud_base, (row, hud_base)
         for probe in row["signing"]:
             target = urlsplit(probe["target"])

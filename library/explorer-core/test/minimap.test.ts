@@ -14,7 +14,7 @@ import {
   saveStyle,
   saveZoom
 } from '../features/minimap/minimapPrefs'
-import { minimapHomeTarget } from '../features/minimap/minimapHome'
+import { genesisStartParcel, minimapHomeTarget } from '../features/minimap/minimapHome'
 import { isPlacePanelHome, isStandingInHome } from '../features/map/home'
 import { jumpInLink } from '../features/map/shareLinks'
 import { DEFAULT_REALM } from '@hud-host'
@@ -122,6 +122,12 @@ describe('minimap Set as Home', () => {
   it('makes home the parcel in Genesis City, the World by name elsewhere', () => {
     expect(minimapHomeTarget(DEFAULT_REALM, { x: 3, y: 4 })).toEqual({ realm: DEFAULT_REALM, parcel: { x: 3, y: 4 } })
     expect(minimapHomeTarget('boedo.dcl.eth', { x: 3, y: 4 })).toEqual({ realm: 'boedo.dcl.eth', parcel: { x: 0, y: 0 } })
+  })
+
+  it('jumps back to the Genesis City home parcel, or to Genesis Plaza without one', () => {
+    expect(genesisStartParcel({ parcel: { x: 10, y: 20 }, world: null })).toEqual({ x: 10, y: 20 })
+    expect(genesisStartParcel({ parcel: null, world: 'boedo.dcl.eth' })).toEqual({ x: 0, y: 0 })
+    expect(genesisStartParcel({ parcel: null, world: null })).toEqual({ x: 0, y: 0 })
   })
 
   it('counts any parcel of the home place as home', () => {

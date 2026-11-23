@@ -81,7 +81,7 @@ class WorkflowTest(unittest.TestCase):
         def watched(name, path):
             patterns = re.findall(r"^ +- '?([^'\n]+)'?$", (ci.ROOT / name).read_text(), re.M)
             return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
-        tool, crate = 'tooling/patched-sources.py', 'rendering/bevy-explorer/vendor/boimp/Cargo.toml'
+        tool, crate = 'tooling/patched-sources.py', 'rendering/bevy-explorer/vendor/bevy_dui/Cargo.toml'
         # The guards, the Changes job and the Test Suite of this workflow run the tool on the series.
         for path in (tool, crate, 'rendering/bevy-explorer/patches/bevy/source.toml',
                      'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'):
@@ -701,7 +701,8 @@ class SelectionTest(unittest.TestCase):
         # with the new fingerprint, or fetch-play.py finds no producer for it. Markdown is in
         # neither the fingerprint nor the selection.
         for name, lanes in (('library/hashing/src/cid.ts', {'web'}), ('library/hashing/package.json', {'web'}),
-                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set())):
+                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set()),
+                            ('apps/creator-hub/packages/zip-extract/index.js', {'web'}), ('apps/creator-hub/packages/zip-extract/README.md', set())):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -1163,7 +1164,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_in_tree_crates_select_every_lane_and_rebuild_the_images(self):
         # Cargo compiles the crates tracked as exact bytes from their paths.
-        self.write('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'changed')
+        self.write('rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs', 'changed')
         head = self.commit()
         result = ci.select(self.base, head)
         self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
@@ -1174,15 +1175,15 @@ class SelectionTest(unittest.TestCase):
         for name in ('bevy', 'winit', 'old'):
             self.write(f'{pins}/{name}/source.toml', f'name = "{name}"\ncommit = "1"\n')
         self.write(f'{pins}/bevy/series/0001-one.patch', 'one')
-        self.write(f'{vendor}/boimp/src/lib.rs', 'one')
+        self.write(f'{vendor}/bevy_dui/src/lib.rs', 'one')
         before = self.commit()
         cases = [
             # A patch, a document and a file beside the pin change no pin.
             ({f'{pins}/bevy/series/0001-one.patch': 'two', f'{pins}/README.md': 'text', f'{pins}/winit/notes.toml': 'x'}, '', False),
             ({f'{pins}/winit/source.toml': 'name = "winit"\ncommit = "2"\n'}, 'winit', False),
             ({f'{pins}/bevy/source.toml': 'commit = "3"\n', f'{pins}/new/source.toml': 'commit = "1"\n'}, 'bevy new', False),
-            ({f'{vendor}/boimp/src/lib.rs': 'two'}, '', True),
-            ({f'{vendor}/boimp/upstream.lock.json': '{}'}, '', True),
+            ({f'{vendor}/bevy_dui/src/lib.rs': 'two'}, '', True),
+            ({f'{vendor}/bevy_dui/upstream.lock.json': '{}'}, '', True),
             ({'tooling/vendor-provenance.py': 'changed'}, '', True),
             ({'tooling/enet-provenance.py': 'changed'}, '', True),
             ({'tooling/upstream-drift.py': 'changed', 'rendering/bevy-explorer/source/vendor/basisu/x.c': 'x'}, '', False),

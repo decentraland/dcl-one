@@ -32,27 +32,32 @@ fn hot_scenes_stably_sort_then_take_100_and_throw_on_invalid_truthy_metadata() {
     ] {
         assert!(content::hot_scenes(&[json!({"metadata":{"scene":scene}})], &[], "url").is_err());
     }
-    for thumbnail in [
-        serde_json::json!(3),
-        serde_json::json!(true),
-        serde_json::json!([]),
-    ] {
-        assert!(content::hot_scenes(&[json!({"metadata":{"scene":{"base":"0","parcels":[]},"display":{"navmapThumbnail":thumbnail}}})],&[],"url").is_err());
-    }
 }
 #[test]
-fn thumbnail_undefined_null_false_empty_http_and_unmatched_are_distinct() {
+fn thumbnail_resolves_only_through_scene_content() {
+    let content_files = serde_json::json!([{"file":"thumb.png","hash":"h1"},{"file":"https://x/t.png","hash":"h2"}]);
     for (thumb, want) in [
-        (serde_json::json!(null), Some(serde_json::json!(null))),
-        (serde_json::json!(false), Some(serde_json::json!(false))),
-        (serde_json::json!(""), Some(serde_json::json!(""))),
-        (
-            serde_json::json!("http-ish"),
-            Some(serde_json::json!("http-ish")),
-        ),
+        (serde_json::json!(null), None),
+        (serde_json::json!(false), None),
+        (serde_json::json!(""), None),
+        (serde_json::json!(3), None),
+        (serde_json::json!(true), None),
+        (serde_json::json!([]), None),
+        (serde_json::json!({}), None),
+        (serde_json::json!("missing.png"), None),
+        (serde_json::json!("http-ish"), None),
         (serde_json::json!("HTTP://x"), None),
+        (serde_json::json!("https://y/t.png"), None),
+        (
+            serde_json::json!("thumb.png"),
+            Some(serde_json::json!("url/contents/h1")),
+        ),
+        (
+            serde_json::json!("https://x/t.png"),
+            Some(serde_json::json!("url/contents/h2")),
+        ),
     ] {
-        let scene = json!({"id":"s","metadata":{"scene":{"base":"0","parcels":[]},"display":{"navmapThumbnail":thumb}}});
+        let scene = json!({"id":"s","metadata":{"scene":{"base":"0","parcels":[]},"display":{"navmapThumbnail":thumb}},"content":content_files.clone()});
         let out: Value =
             serde_json::from_str(&content::hot_scenes(&[scene], &[], "url").unwrap()).unwrap();
         assert_eq!(out[0].get("thumbnail"), want.as_ref());
@@ -331,7 +336,7 @@ fn selected_metadata_keeps_index_key_order_and_distinguishes_omitted_fields() {
             "https://content.example/content/"
         )
         .unwrap(),
-        r#"[{"id":"ordered","name":{"0":0,"2":2,"10":10,"01":1,"4294967295":5,"z":9007199254740992},"baseCoords":[-1,0],"usersTotalCount":1,"parcels":[[-1,0]],"creator":"","projectId":false,"description":null},{"id":"empty","baseCoords":[0,0],"usersTotalCount":0,"parcels":[],"thumbnail":false}]"#
+        r#"[{"id":"ordered","name":{"0":0,"2":2,"10":10,"01":1,"4294967295":5,"z":9007199254740992},"baseCoords":[-1,0],"usersTotalCount":1,"parcels":[[-1,0]],"creator":"","projectId":false,"description":null},{"id":"empty","baseCoords":[0,0],"usersTotalCount":0,"parcels":[]}]"#
     );
 }
 

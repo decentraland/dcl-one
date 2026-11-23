@@ -24,7 +24,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-RLpBnTbtZwL9R6fc+bnOlVOwZC4InF9ATdj+NPLyV74=";
+    hash = "sha256-SLNUX8keBkVq448n5Z6DoK9slEPVfsQCiqwEFfRtwks=";
   };
   pnpmDepsKey = builtins.substring 0 12
     (builtins.hashString "sha256" (fetchPnpmDeps (pnpmDepsArgs // { pname = "foundation-sites"; })).drvPath);

@@ -1,5 +1,5 @@
--- ranking_score and last_score_calculated_at are upstream's ranking job's
--- output; the node has no writer for ranking_score, so it is not copied.
+-- ranking_score and the counters it is computed from are loaded by the
+-- community_ranking_metrics step.
 SELECT c.id,
        c.name,
        c.description,

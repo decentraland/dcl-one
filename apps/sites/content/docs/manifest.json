@@ -2707,7 +2707,7 @@
       },
       {
        "type": "item",
-       "title": "Archipelago",
+       "title": "Realm WebSocket connector",
        "url": "/docs/contributor/communications/archipelago/",
        "icon": null,
        "children": []
@@ -3074,7 +3074,7 @@
       },
       {
        "type": "item",
-       "title": "Archipelago Workers",
+       "title": "Comms statistics and WebSocket API",
        "url": "/docs/apis/apis/archipelago-workers/",
        "icon": null,
        "children": []
@@ -3284,7 +3284,7 @@
   },
   {
    "url": "/docs/apis/apis/archipelago-workers/",
-   "title": "Archipelago Workers",
+   "title": "Comms statistics and WebSocket API",
    "description": null,
    "icon": null,
    "space": "apis",
@@ -3504,7 +3504,7 @@
   },
   {
    "url": "/docs/apis/archipelago-workers/",
-   "title": "Archipelago Workers",
+   "title": "Comms API reference link",
    "description": null,
    "icon": null,
    "space": "apis",
@@ -3834,7 +3834,7 @@
   },
   {
    "url": "/docs/contributor/communications/archipelago/",
-   "title": "archipelago",
+   "title": "Realm WebSocket connector",
    "description": null,
    "icon": null,
    "space": "contributor",
