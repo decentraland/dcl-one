@@ -1565,50 +1565,238 @@ async fn a_multi_scene_world_needs_the_parcel_to_watch_a_scene() {
     }
 }
 
-/// A key under this scene's place that streams into a room no other scene
-/// holds cannot move: the stream link revokes it and mints this scene's key,
-/// creating one ingress.
-#[tokio::test]
-async fn a_stream_link_revokes_a_key_under_its_place_that_cannot_move() {
-    let Some(pool) = scratch().await else { return };
-    let world = WorldName::parse(&format!("caststrand{}.dcl.eth", tag())).unwrap();
-    seed_world(&pool, &world).await;
-    let scene_id = format!("bafkreistrand{}", tag());
-    let room = resolved_room(RealmId::World(world.clone()), &scene_id, "3,4");
-    let h = harness(
-        pool.clone(),
-        Some(room.clone()),
-        PermissionDecision::Allowed,
-        None,
-    )
-    .await;
-    let scene_place = room.deployment.as_ref().unwrap().place_key();
-    let elsewhere = crate::rooms::worlds_service_scene_room(
-        &world,
-        &SceneId::parse(&format!("bafkreigone{}", tag())).unwrap(),
+/// The harness resolver ([`StubScenes`], scene A) with a second scene B of
+/// the same world: B's room and B's parcels resolve to B. With `b_unreadable`,
+/// B's room answers a store error.
+struct SceneAandB {
+    a: StubScenes,
+    b: ResolvedRoom,
+    b_unreadable: bool,
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::SceneIdentity for SceneAandB {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+        self.a.classify_room(room).await
+    }
+    async fn resolve(
+        &self,
+        request: crate::rooms::RoomRequest<'_>,
+    ) -> Result<ResolvedRoom, crate::rooms::ResolveError> {
+        use crate::rooms::RoomRequest;
+        match &request {
+            RoomRequest::NamedWorldScene { room } if *room == self.b.room => {
+                if self.b_unreadable {
+                    return Err(crate::rooms::ResolveError::Db(sqlx::Error::PoolTimedOut));
+                }
+                return Ok(self.b.clone());
+            }
+            RoomRequest::Parcel { realm, parcel }
+                if **realm == self.b.realm
+                    && self
+                        .b
+                        .deployment
+                        .as_ref()
+                        .is_some_and(|d| d.parcels.contains(parcel)) =>
+            {
+                return Ok(self.b.clone());
+            }
+            _ => {}
+        }
+        self.a.resolve(request).await
+    }
+    async fn world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        self.a.world_scene(world, scene).await
+    }
+    async fn world_active_scene(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<ActiveDeployment>, crate::rooms::ResolveError> {
+        self.a.world_active_scene(world).await
+    }
+}
+
+/// Scene A of a two-scene world, a harness whose resolver knows scene B too,
+/// A's signed metadata, and both places.
+async fn two_scene_world(
+    pool: &PgPool,
+    b_unreadable: bool,
+    bans: Option<StubBanStatus>,
+) -> (Harness, ResolvedRoom, ResolvedRoom, Value) {
+    let world = WorldName::parse(&format!("casttwo{}.dcl.eth", tag())).unwrap();
+    seed_world(pool, &world).await;
+    let scene_a = format!("bafkreia{}", tag());
+    let a = resolved_room(RealmId::World(world.clone()), &scene_a, "3,4");
+    let b = resolved_room(
+        RealmId::World(world.clone()),
+        &format!("bafkreib{}", tag()),
+        "9,9",
     );
-    let stranded = seed_access(
-        &pool,
-        &scene_place,
-        Some(&elsewhere),
-        chrono::Duration::days(1),
+    let scenes = SceneAandB {
+        a: StubScenes {
+            room: Ok(a.clone()),
+            scene: Ok(None),
+        },
+        b: b.clone(),
+        b_unreadable,
+    };
+    let h = harness_tuned(
+        pool.clone(),
+        None,
+        StubPolicy {
+            admin: PermissionDecision::Allowed,
+            ..Default::default()
+        },
+        bans,
+        |state| state.scenes = Arc::new(scenes),
     )
     .await;
     let metadata = json!({
         "signer": SCENE_SIGNER,
-        "sceneId": scene_id,
+        "sceneId": scene_a,
         "parcel": "3,4",
         "realm": {"serverName": world.display(), "hostname": "worlds-content-server.example", "protocol": "v3"},
     });
+    (h, a, b, metadata)
+}
+
+fn place_of(room: &ResolvedRoom) -> String {
+    room.deployment.as_ref().unwrap().place_key()
+}
+
+/// A key under scene A's place that streams into scene B's room, while B
+/// has a key of its own, cannot move to B: A's stream link revokes it while
+/// idle and mints one ingress; while it is live, A's stream link and reset
+/// answer 409 and mint nothing.
+#[tokio::test]
+async fn a_held_key_that_cannot_move_is_revoked_while_idle_and_kept_while_live() {
+    let Some(pool) = scratch().await else { return };
+    let (h, a, b, metadata) = two_scene_world(&pool, false, None).await;
+    let b_own = seed_access(
+        &pool,
+        &place_of(&b),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let held = seed_access(
+        &pool,
+        &place_of(&a),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    sqlx::query("UPDATE social.scene_stream_access SET streaming = true WHERE streaming_key = $1")
+        .bind(&held)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (method, path) in [
+        ("GET", "/cast/generate-stream-link"),
+        ("PUT", "/scene-stream-access"),
+    ] {
+        let (status, body) = h.signed(KEY, method, path, &metadata, None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{method} {path}: {body}");
+    }
+    assert_eq!(
+        h.livekit.ingresses.load(Ordering::SeqCst),
+        0,
+        "nothing minted"
+    );
+    assert!(key_is_active(&pool, &held).await, "a live key stays");
+    sqlx::query("UPDATE social.scene_stream_access SET streaming = false WHERE streaming_key = $1")
+        .bind(&held)
+        .execute(&pool)
+        .await
+        .unwrap();
     let minted = stream_link(&h, KEY, &metadata).await;
-    assert_ne!(minted, stranded);
-    assert!(!key_is_active(&pool, &stranded).await, "revoked");
-    assert!(key_is_active(&pool, &minted).await);
+    assert!(
+        !key_is_active(&pool, &held).await,
+        "the idle key is revoked"
+    );
+    assert!(key_is_active(&pool, &b_own).await, "B's own key stays");
     assert_eq!(
         h.livekit.ingresses.load(Ordering::SeqCst),
         1,
         "one ingress minted"
     );
+    let place: String = sqlx::query_scalar(
+        "SELECT place_id FROM social.scene_stream_access WHERE streaming_key = $1 AND active",
+    )
+    .bind(&minted)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(place, place_of(&a));
+}
+
+/// A held key with no room (and so no scene to move to) is revoked; a held
+/// key whose room's scene cannot be read keeps everything and the reset
+/// answers 503, not 500.
+#[tokio::test]
+async fn a_held_key_with_no_room_is_revoked_and_an_unreadable_scene_answers_503() {
+    let Some(pool) = scratch().await else { return };
+    let (h, a, _, metadata) = two_scene_world(&pool, false, None).await;
+    let roomless = seed_access(&pool, &place_of(&a), None, chrono::Duration::days(1)).await;
+    let minted = stream_link(&h, KEY, &metadata).await;
+    assert!(!key_is_active(&pool, &roomless).await, "revoked");
+    assert!(key_is_active(&pool, &minted).await);
+
+    let (h, a, b, metadata) = two_scene_world(&pool, true, None).await;
+    seed_access(
+        &pool,
+        &place_of(&a),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let (status, body) = h
+        .signed(KEY, "PUT", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(h.livekit.ingresses.load(Ordering::SeqCst), 0);
+}
+
+/// A revocation answers 204 only for a key of its own scene that the
+/// request's recheck ended: a key under the scene's place that streams into
+/// another scene's room, revoked by that recheck, leaves the answer 404.
+#[tokio::test]
+async fn a_revocation_answers_404_when_its_recheck_ended_another_scenes_key() {
+    let Some(pool) = scratch().await else { return };
+    // Every wallet is banned, so the recheck revokes each key it reads.
+    let bans = Some(StubBanStatus(Ok(Some(Ban::Platform))));
+    let (h, a, b, metadata) = two_scene_world(&pool, false, bans).await;
+    let held = seed_access(
+        &pool,
+        &place_of(&a),
+        Some(&b.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let (status, body) = h
+        .signed(KEY, "DELETE", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!key_is_active(&pool, &held).await, "the recheck revoked it");
+    let own = seed_access(
+        &pool,
+        &place_of(&a),
+        Some(&a.room),
+        chrono::Duration::days(1),
+    )
+    .await;
+    let (status, body) = h
+        .signed(KEY, "DELETE", "/scene-stream-access", &metadata, None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "its own key: {body}");
+    assert!(!key_is_active(&pool, &own).await);
 }
 
 /// A key stored under the world's catalogue place before keys were per

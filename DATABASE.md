@@ -2839,9 +2839,11 @@ the place of a world scene's key is the scene's place
 each scene of a world has its own key, streaming into its own room
 ([ADR](docs/adr/2026-11-21-world-stream-keys-per-scene.md)).
 
-Workload: one read of the active key a verb acts on for each scene-signed
-stream verb, stream link and watcher token, hundreds a day: a Genesis key by
-place (the partial unique index), a world scene's key by room
+Workload: each scene-signed stream verb and stream link first rechecks the
+keys of its place and, for a world scene, of its room (one read each and one
+authority decision per key found, usually one or none), then reads the active
+key it acts on; a watcher token reads that key alone. Hundreds a day: a
+Genesis key by place (the partial unique index), a world scene's key by room
 (`scene_stream_access_active_room_idx`), over hundreds of active rows. A
 watcher of a world without a parcel, and a stream link of a world scene, count
 the world's `worlds.world_scenes` rows up to two.
@@ -2854,8 +2856,10 @@ Invariants:
   a world's single key was stored under, so the room, not the place, decides.
   Before a world scene stores a key under its place, such a row moves to the
   place of the scene of its room, which keeps its stream; when it cannot (its
-  room has no scene, or that scene has a key of its own) it is revoked, before
-  any ingress is minted.
+  room has no scene, or that scene has a key of its own) it is revoked while
+  idle and still under that place, before any ingress is minted; a live one
+  answers 409. The move bumps the row's `streaming_state_version`, so a
+  revocation read before a concurrent move is not stored.
 - A key minted under the world's catalogue place before keys were per scene
   stays the key of the scene whose room it streams into: that scene reads,
   resets and revokes it, and its replacement is stored under the scene's place.

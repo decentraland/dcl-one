@@ -210,7 +210,7 @@ async fn publishing_access(
     if now_ms() >= expires_ms(access.created_at, access.expiration_time) {
         return Err(unauthorized(EXPIRED_STREAMING_KEY_MSG));
     }
-    if !keep_or_revoke(state, &access).await? {
+    if !matches!(keep_or_revoke(state, &access).await?, Checked::Kept) {
         return Err(unauthorized(INVALID_STREAMING_KEY_MSG));
     }
     let room = access
@@ -238,7 +238,7 @@ async fn key_ends(
     let room = access.room_id.as_deref().unwrap_or_default();
     let resolved = room_scene(state, room).await?;
     if !still_deployed(state, room, resolved.as_ref()).await? {
-        return Ok(Some("its scene was replaced or removed"));
+        return Ok(Some(SCENE_REPLACED));
     }
     let Some(minter) = minter else {
         return Ok(None);
@@ -320,24 +320,45 @@ async fn still_deployed(
     }
 }
 
+/// What a recheck did with one key.
+enum Checked {
+    Kept,
+    /// This recheck revoked it.
+    Revoked(RevokedKey),
+    /// Someone else ended it meanwhile.
+    Gone,
+}
+
+/// A key a recheck revoked: its room, and whether it ended because its scene
+/// was replaced or removed (a redeploy of its place).
+pub(crate) struct RevokedKey {
+    pub room: Option<String>,
+    pub replaced: bool,
+}
+
+const SCENE_REPLACED: &str = "its scene was replaced or removed";
+
 /// Revokes `access` when it ends ([`key_ends`]), as `DELETE
 /// /scene-stream-access` does: the ingress is deleted, its publishers leave
-/// and the place's owner is told. Returns whether the key stays. A webhook or
-/// the reconciliation can change the row between the snapshot and the
-/// write: the revocation is tried again, and is an error while it is not stored.
-async fn keep_or_revoke(state: &SharedState, access: &KeyedAccess) -> Result<bool, ApiError> {
+/// and the place's owner is told. A webhook or the reconciliation can change
+/// the row between the snapshot and the write: the revocation is tried
+/// again, and is an error while it is not stored.
+async fn keep_or_revoke(state: &SharedState, access: &KeyedAccess) -> Result<Checked, ApiError> {
     let Some(why) = key_ends(state, access).await? else {
-        return Ok(true);
+        return Ok(Checked::Kept);
     };
     for _ in 0..3 {
         let revoke = super::jobs::CleanupCommand::Revoke;
         let Some(revocation) = super::jobs::prepare(state, access.id, revoke).await? else {
-            return Ok(false);
+            return Ok(Checked::Gone);
         };
         if revocation.record(&state.pool).await? {
             tracing::info!(place_id = %access.place_id, minter = %access.generated_by, why, "stream key revoked");
             super::settle_cleanup(state, access.id, &access.place_id);
-            return Ok(false);
+            return Ok(Checked::Revoked(RevokedKey {
+                room: access.room_id.clone(),
+                replaced: why == SCENE_REPLACED,
+            }));
         }
     }
     Err(super::concurrent_change())
@@ -365,8 +386,9 @@ pub(crate) enum Keys<'a> {
 }
 
 /// [`keep_or_revoke`] on each credential `keys` selects; one that cannot be
-/// decided keeps its key for the next recheck. Returns how many it revoked.
-pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> usize {
+/// decided keeps its key for the next recheck. Returns the keys this recheck
+/// revoked itself.
+pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> Vec<RevokedKey> {
     let after;
     let (filter, value) = match keys {
         Keys::Room(room) => ("room_id = $1", room),
@@ -396,17 +418,17 @@ pub(crate) async fn recheck_keys(state: &SharedState, keys: Keys<'_>) -> usize {
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(%error, "stream keys not read for a recheck");
-            return 0;
+            return Vec::new();
         }
     };
-    let mut revoked = 0;
+    let mut revoked = Vec::new();
     for access in &rows {
         if let Keys::After(cursor) = keys {
             cursor.lock().unwrap().clone_from(&access.place_id);
         }
         match keep_or_revoke(state, access).await {
-            Ok(true) => {}
-            Ok(false) => revoked += 1,
+            Ok(Checked::Kept | Checked::Gone) => {}
+            Ok(Checked::Revoked(key)) => revoked.push(key),
             Err(error) => {
                 tracing::warn!(place_id = %access.place_id, %error, "stream key recheck undecided; the key stays");
             }
@@ -744,11 +766,7 @@ async fn room_scene(state: &CommsState, room: &str) -> Result<Option<ResolvedRoo
                 .await
             {
                 Ok(resolved) => Ok(Some(resolved)),
-                Err(ResolveError::Db(error)) => Err(AuthorityNotEstablished::store_unavailable(
-                    "worlds.world_scenes",
-                    &error,
-                )
-                .into()),
+                Err(ResolveError::Db(error)) => Err(super::scene_identity_unavailable(&error)),
                 Err(_) => Ok(None),
             }
         }
@@ -1322,6 +1340,8 @@ pub async fn generate_stream_link(
         PermissionDecision::Refused(why) => return Err(why.into()),
     }
     let key = (place_id.as_str(), target.world_room.as_deref());
+    // A key whose minter lost the place is never the one answered.
+    super::recheck_target(&state, key.0, key.1).await;
     let access = issue_access(&state, &state.ingress(), key, &target.room, &sf.signer).await?;
     let row = key_place(&state.pool, &place_id, Some(&target.room)).await?;
     let (title, location) = match &row {

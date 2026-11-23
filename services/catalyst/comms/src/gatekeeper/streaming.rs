@@ -179,11 +179,9 @@ pub async fn scene_stream_access(
         target.room.as_str(),
     );
     let ingress = state.ingress();
-    if method == Method::GET {
-        // A key the place no longer holds (its scene redeployed, its minter
-        // without the place) is never the one answered.
-        recheck_target(&state, place_id, world_room).await;
-    }
+    // A key the place no longer holds (its scene redeployed, its minter
+    // without the place) is never the one a verb answers or acts on.
+    let revoked = recheck_target(&state, place_id, world_room).await;
     match method {
         Method::GET => match active_access(&state.pool, place_id, world_room).await? {
             Some(row) => {
@@ -204,7 +202,7 @@ pub async fn scene_stream_access(
         Method::PUT => reset_access(&state, &ingress, (place_id, world_room), room, &sf.signer)
             .await
             .map(|resp| Json(resp).into_response()),
-        Method::DELETE => remove_access(&state, place_id, world_room).await,
+        Method::DELETE => remove_access(&state, place_id, world_room, &revoked).await,
         _ => Ok(StatusCode::METHOD_NOT_ALLOWED.into_response()),
     }
 }
@@ -465,11 +463,11 @@ async fn revocation_authority<'a>(
         .await
     {
         Ok(current) => current,
-        Err(crate::rooms::ResolveError::NoSceneAtParcel { .. }) => return Ok(stored),
-        Err(error) => {
-            tracing::warn!(%error, place_id, "scene resolver unavailable for a stream key revocation");
-            return Err(service_unavailable("Scene identity is unavailable"));
+        Err(crate::rooms::ResolveError::Db(error)) => {
+            return Err(scene_identity_unavailable(&error));
         }
+        // No usable scene stands on the parcel: the place's owner alone.
+        Err(_) => return Ok(stored),
     };
     Ok(scene_authority(state, &current, place_id)
         .await?
@@ -482,10 +480,10 @@ pub(super) async fn recheck_target(
     state: &SharedState,
     place_id: &str,
     world_room: Option<&str>,
-) -> usize {
+) -> Vec<cast::RevokedKey> {
     let mut revoked = cast::recheck_keys(state, cast::Keys::Place(place_id)).await;
     if let Some(room) = world_room {
-        revoked += cast::recheck_keys(state, cast::Keys::Room(room)).await;
+        revoked.extend(cast::recheck_keys(state, cast::Keys::Room(room)).await);
     }
     revoked
 }
@@ -504,11 +502,8 @@ async fn issue_access(
     room: &str,
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
-    // A key whose minter lost the place is never the one answered.
-    recheck_target(state, place_id, world_room).await;
-    if world_room.is_some() && !free_scene_place(state, place_id, room).await? {
-        return Err(concurrent_change());
-    }
+    // The caller has rechecked the place's keys ([`recheck_target`]).
+    free_scene_place(state, (place_id, world_room), room).await?;
     if let Some(existing) = active_access(&state.pool, place_id, world_room).await? {
         match renewal(&existing, room, now_utc()) {
             Renewal::Reuse => return Ok(existing.response()),
@@ -688,13 +683,17 @@ async fn active_access(
 /// under a catalogue id that this scene's imported identity equals). It
 /// moves to the place of its room's scene, which keeps its stream; when it
 /// cannot (its room has no scene, or that scene has a key of its own), it is
-/// revoked. Whether the place is free: false only when that revocation met a
-/// concurrent change, and then nothing is minted.
+/// revoked while idle ([`revoke_held`]). Before any ingress is minted, a
+/// live one answers 409 as a live broadcast does, and a change meanwhile
+/// 409 to retry. A Genesis key's place holds no other scene's key.
 async fn free_scene_place(
     state: &SharedState,
-    place_id: &str,
+    (place_id, world_room): (&str, Option<&str>),
     room: &str,
-) -> Result<bool, ApiError> {
+) -> Result<(), ApiError> {
+    if world_room.is_none() {
+        return Ok(());
+    }
     let held: Option<(Uuid, Option<String>)> = sqlx::query_as(
         "SELECT id, room_id FROM social.scene_stream_access \
          WHERE active AND place_id = $1 AND room_id IS DISTINCT FROM $2",
@@ -704,7 +703,7 @@ async fn free_scene_place(
     .fetch_optional(&state.pool)
     .await?;
     let Some((id, other)) = held else {
-        return Ok(true);
+        return Ok(());
     };
     let owner = match other.as_deref() {
         Some(other) => match state
@@ -721,8 +720,11 @@ async fn free_scene_place(
         None => None,
     };
     if let Some(owner) = owner.filter(|owner| owner != place_id) {
+        // The move bumps the version, so a revocation prepared before it fails.
         let moved = sqlx::query(
-            "UPDATE social.scene_stream_access SET place_id = $3 WHERE id = $1 AND active AND place_id = $2 \
+            "UPDATE social.scene_stream_access \
+             SET place_id = $3, streaming_state_version = streaming_state_version + 1 \
+             WHERE id = $1 AND active AND place_id = $2 \
              AND NOT EXISTS (SELECT 1 FROM social.scene_stream_access WHERE active AND place_id = $3)",
         )
         .bind(id)
@@ -731,19 +733,70 @@ async fn free_scene_place(
         .execute(&state.pool)
         .await;
         match moved {
-            Ok(done) if done.rows_affected() == 1 => return Ok(true),
+            Ok(done) if done.rows_affected() == 1 => return Ok(()),
             Ok(_) => {}
             // A concurrent mint took the other place.
             Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {}
             Err(error) => return Err(error.into()),
         }
     }
-    if !jobs::enqueue(state, id, jobs::CleanupCommand::Revoke).await? {
-        return Ok(false);
+    match revoke_held(state, id, place_id).await? {
+        Held::Freed => Ok(()),
+        Held::Live => Err(renewal_conflict()),
+        Held::Changed => Err(concurrent_change()),
+    }
+}
+
+/// What [`revoke_held`] did with a key held under a scene's place.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Held {
+    /// Revoked, or no longer under the place (moved meanwhile, or gone).
+    Freed,
+    /// Streaming: it stays.
+    Live,
+    /// It changed between the read and the revocation.
+    Changed,
+}
+
+/// Revokes key `id` while it is still active under `place_id` and idle. A key
+/// a concurrent request moved to its own scene's place is that scene's, and
+/// stays.
+pub(crate) async fn revoke_held(
+    state: &SharedState,
+    id: Uuid,
+    place_id: &str,
+) -> Result<Held, ApiError> {
+    let current: Option<(bool, i64)> = sqlx::query_as(
+        "SELECT streaming, streaming_state_version FROM social.scene_stream_access \
+         WHERE id = $1 AND active AND place_id = $2",
+    )
+    .bind(id)
+    .bind(place_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    match current {
+        None => Ok(Held::Freed),
+        Some((true, _)) => Ok(Held::Live),
+        Some((false, version)) => revoke_at(state, id, place_id, version).await,
+    }
+}
+
+/// [`revoke_held`]'s revocation, conditional on the version it read.
+pub(crate) async fn revoke_at(
+    state: &SharedState,
+    id: Uuid,
+    place_id: &str,
+    version: i64,
+) -> Result<Held, ApiError> {
+    let Some(revocation) = jobs::prepare(state, id, jobs::CleanupCommand::Revoke).await? else {
+        return Ok(Held::Freed);
+    };
+    if revocation.version() != version || !revocation.record(&state.pool).await? {
+        return Ok(Held::Changed);
     }
     tracing::info!(place_id, access_id = %id, "revoked a key held under this scene's place for another room");
     settle_cleanup(state, id, place_id);
-    Ok(true)
+    Ok(Held::Freed)
 }
 
 /// A scene resolver whose store cannot be read: 503, as every authority
@@ -1014,12 +1067,7 @@ async fn reset_access(
     signer: &Address,
 ) -> Result<SceneStreamAccessResponse, ApiError> {
     let result = async {
-        // A key the place no longer holds (its scene redeployed, its minter
-        // without the place) is never the one reset.
-        recheck_target(state, place_id, world_room).await;
-        if world_room.is_some() && !free_scene_place(state, place_id, room).await? {
-            return Err(concurrent_change());
-        }
+        free_scene_place(state, (place_id, world_room), room).await?;
         let row = active_access(&state.pool, place_id, world_room)
             .await?
             .ok_or_else(|| ApiError::not_found(STREAM_ACCESS_NOT_FOUND_MSG))?;
@@ -1040,8 +1088,9 @@ async fn reset_access(
     .await;
     result.map_err(|error: ApiError| {
         // Upstream's reset answers its `StreamingAccessNotFoundError` as 404
-        // and any other failure of the swap as this 500.
-        if error.code == 404 {
+        // and any other failure of the swap as this 500. A change to retry
+        // (409) and a source that cannot be read (503) keep their answers.
+        if matches!(error.code, 404 | 409 | 503) {
             return error;
         }
         tracing::error!(place_id, error = %error, "scene stream access reset failed");
@@ -1053,16 +1102,22 @@ async fn remove_access(
     state: &SharedState,
     place_id: &str,
     world_room: Option<&str>,
+    revoked: &[cast::RevokedKey],
 ) -> Result<Response, ApiError> {
-    // A key the recheck ends (its scene replaced by a redeploy, its minter
-    // without the place) is revoked by this request: 204 as for the others.
-    let revoked = recheck_target(state, place_id, world_room).await;
+    // A key of this scene that the request's recheck ended (its scene
+    // replaced by a redeploy, its minter without the place) was revoked by
+    // this request: 204 as for any other. A world key streaming into another
+    // scene's room is not this scene's.
+    let ours = revoked.iter().any(|key| match world_room {
+        Some(room) => key.replaced || key.room.as_deref() == Some(room),
+        None => true,
+    });
     let Some(row) = active_access(&state.pool, place_id, world_room).await? else {
-        return match revoked {
-            0 => Err(ApiError::not_found(
+        return match ours {
+            false => Err(ApiError::not_found(
                 "no active stream access for this scene",
             )),
-            _ => Ok(StatusCode::NO_CONTENT.into_response()),
+            true => Ok(StatusCode::NO_CONTENT.into_response()),
         };
     };
     if !jobs::enqueue(state, row.id, jobs::CleanupCommand::Revoke).await? {
@@ -1326,6 +1381,111 @@ mod scene_key_tests {
         let collided = key(&pool, &place_c, &room_b).await;
         assert_eq!(read(place_c, Some(room(&world, "SceneC"))).await, None);
         assert_eq!(read(place_b, Some(room_b)).await, Some(collided));
+    }
+
+    fn scratch_state(pool: PgPool) -> SharedState {
+        use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+        std::sync::Arc::new(CommsState::new(
+            pool,
+            crate::http::Outbound::for_tests(),
+            crate::gatekeeper::Settings::for_tests(),
+            None,
+            None,
+            std::sync::Arc::new(StubPolicy::default()),
+            std::sync::Arc::new(StubScenes::default()),
+            std::sync::Arc::new(crate::presence::Presence::new()),
+            std::sync::Arc::new(StubDirectory::default()),
+        ))
+    }
+
+    /// A key held under another scene's place is revoked only while it is
+    /// still there, idle and unchanged: one a concurrent request moved to its
+    /// own scene's place stays that scene's, a live one stays, and a change
+    /// after the read stops the revocation.
+    #[tokio::test]
+    async fn a_held_key_is_revoked_only_while_idle_and_still_held() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let state = scratch_state(pool.clone());
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = WorldName::parse(&format!("held{}.dcl.eth", &tag[..10])).unwrap();
+        let (place_a, place_b) = (format!("a-{tag}"), format!("b-{tag}"));
+        let room_b = room(&world, "SceneB");
+        let active = |id: Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT active FROM social.scene_stream_access WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let set = |sql: &'static str, id: Uuid| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
+            }
+        };
+        // A concurrent request moved it first; the stale revocation leaves it.
+        let moved = key(&pool, &place_a, &room_b).await;
+        sqlx::query("UPDATE social.scene_stream_access SET place_id = $2, streaming_state_version = streaming_state_version + 1 WHERE id = $1")
+            .bind(moved)
+            .bind(&place_b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            revoke_held(&state, moved, &place_a).await.unwrap(),
+            Held::Freed
+        );
+        assert!(active(moved).await, "the moved key is the other scene's");
+        set(
+            "UPDATE social.scene_stream_access SET active = false WHERE id = $1",
+            moved,
+        )
+        .await;
+        // Live: it stays.
+        let live = key(&pool, &place_a, &room_b).await;
+        set(
+            "UPDATE social.scene_stream_access SET streaming = true WHERE id = $1",
+            live,
+        )
+        .await;
+        assert_eq!(
+            revoke_held(&state, live, &place_a).await.unwrap(),
+            Held::Live
+        );
+        assert!(active(live).await);
+        set(
+            "UPDATE social.scene_stream_access SET active = false WHERE id = $1",
+            live,
+        )
+        .await;
+        // Changed after the read: the revocation is not stored.
+        let changed = key(&pool, &place_a, &room_b).await;
+        let read: i64 = sqlx::query_scalar(
+            "SELECT streaming_state_version FROM social.scene_stream_access WHERE id = $1",
+        )
+        .bind(changed)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        set("UPDATE social.scene_stream_access SET streaming_state_version = streaming_state_version + 1 WHERE id = $1", changed).await;
+        assert_eq!(
+            revoke_at(&state, changed, &place_a, read).await.unwrap(),
+            Held::Changed
+        );
+        assert!(active(changed).await);
+        // Idle and still held: revoked.
+        assert_eq!(
+            revoke_held(&state, changed, &place_a).await.unwrap(),
+            Held::Freed
+        );
+        assert!(!active(changed).await);
     }
 
     /// The ingress check of a removal reads the keys the removal ends.

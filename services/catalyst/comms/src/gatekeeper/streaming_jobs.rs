@@ -191,6 +191,11 @@ pub(super) struct Prepared {
 }
 
 impl Prepared {
+    /// The credential's `streaming_state_version` this intent is conditional on.
+    pub(super) fn version(&self) -> i64 {
+        self.version
+    }
+
     /// Deactivates the credential and records its cleanup; false when it
     /// changed since `prepare` (or is gone).
     pub(super) async fn record<'e, E: sqlx::PgExecutor<'e>>(

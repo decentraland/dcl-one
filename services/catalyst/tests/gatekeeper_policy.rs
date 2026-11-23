@@ -2422,7 +2422,12 @@ mod stream_access {
             .unwrap();
         // The owner's key of the first scene, then the admin's of the second.
         let mut replaced: Option<String> = None;
-        for (timestamp, minter) in [(1000, &owner_key), (2000, &admin_key), (3000, &admin_key)] {
+        for (timestamp, minter) in [
+            (1000, &owner_key),
+            (2000, &admin_key),
+            (3000, &admin_key),
+            (4000, &admin_key),
+        ] {
             let scene_id = format!("Redeployed{timestamp}{tag}");
             let scene = json!({ "base": "0,0", "parcels": ["0,0"] });
             let entity = json!({ "type": "scene", "timestamp": timestamp, "pointers": ["0,0"], "metadata": { "scene": scene } });
@@ -2450,18 +2455,23 @@ mod stream_access {
                     resolve(&pool, room).await.is_ok(),
                     "the replaced scene's room resolves"
                 );
-                if timestamp == 3000 {
-                    // A revocation signed from the scene standing there now
-                    // ends the old scene's key too.
-                    let (status, body) = call(&app, &admin_key, "DELETE", &metadata).await;
-                    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+                if timestamp >= 3000 {
+                    // A revocation (3000) or a reset (4000) signed from the
+                    // scene standing there now ends the old scene's key too:
+                    // the revocation answers it, the reset finds no key.
+                    let (method, expected) = match timestamp {
+                        3000 => ("DELETE", StatusCode::NO_CONTENT),
+                        _ => ("PUT", StatusCode::NOT_FOUND),
+                    };
+                    let (status, body) = call(&app, &admin_key, method, &metadata).await;
+                    assert_eq!(status, expected, "{method}: {body}");
                     let active = "SELECT EXISTS (SELECT FROM social.scene_stream_access WHERE room_id = $1 AND active)";
                     let active: bool = sqlx::query_scalar(active)
                         .bind(&old)
                         .fetch_one(&pool)
                         .await
                         .unwrap();
-                    assert!(!active, "the replaced scene's key is revoked");
+                    assert!(!active, "{method}: the replaced scene's key is revoked");
                 } else {
                     let key = key_of(&app, &pool, &owner_key, &metadata, &old).await;
                     assert_eq!(key, (StatusCode::NOT_FOUND, false), "{timestamp}");
