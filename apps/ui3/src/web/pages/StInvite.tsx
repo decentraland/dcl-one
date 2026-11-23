@@ -140,6 +140,7 @@ type InviteHeroProps = {
   referrer: Referrer | null;
   secondary?: boolean;
   loading?: boolean;
+  onCta?: () => void;
 };
 
 function Envelope({ size }: { size: number }) {
@@ -153,7 +154,7 @@ function Envelope({ size }: { size: number }) {
 
 // The invite hero as decentraland.org draws it. Both envelopes render and
 // CSS shows the one for the width, where the original picks one with useDesktopMediaQuery.
-function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading }: InviteHeroProps) {
+function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading, onCta }: InviteHeroProps) {
   const [client, setClient] = useState(false);
   useEffect(() => setClient(true), []);
   const Title = secondary ? "h2" : "h1";
@@ -186,7 +187,7 @@ function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading
             <p className="stinvite__subtitle">{subtitle}</p>
           </div>
           <div className="stinvite__actions">
-            <Button variant="primary" size="lg" className="stinvite__cta-btn" href={referralUrl(address)}>
+            <Button variant="primary" size="lg" className="stinvite__cta-btn" href={referralUrl(address)} onClick={onCta}>
               {buttonLabel}
             </Button>
           </div>
@@ -277,13 +278,17 @@ function InviteFaqs() {
   );
 }
 
+export type InviteHeroKey = "first" | "second";
+
 type StInviteProps = {
   referrer?: Referrer | null;
   loading?: boolean;
+  /** A hero's call to action was activated; its link still navigates. */
+  onCta?: (hero: InviteHeroKey) => void;
 };
 
 // The invite page as decentraland.org draws it: a page without the site navigation.
-export default function StInvite({ referrer = null, loading = false }: StInviteProps) {
+export default function StInvite({ referrer = null, loading = false, onCta }: StInviteProps) {
   return (
     <SitesChrome hideNav>
       <div className="stinvite">
@@ -293,6 +298,7 @@ export default function StInvite({ referrer = null, loading = false }: StInviteP
           buttonLabel="JOIN NOW"
           referrer={referrer}
           loading={loading}
+          onCta={onCta && (() => onCta("first"))}
         />
         <InviteHero
           secondary
@@ -300,6 +306,7 @@ export default function StInvite({ referrer = null, loading = false }: StInviteP
           subtitle="Meet people from around the world, attend live events, and customize your digital self -- all in a virtual world owned by its community."
           buttonLabel="JOIN FREE"
           referrer={referrer}
+          onCta={onCta && (() => onCta("second"))}
         />
         <InviteFaqs />
       </div>

@@ -2,11 +2,11 @@ export type MiscEvents = {
   Click: {
     click_id?: string;
     clicked_at?: number;
-    download_target: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
+    download_target?: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
     event?: "Download";
     mac_arch?: "apple_silicon" | "intel" | "unknown";
     os?: "Android" | "Windows" | "iOS" | "macOS";
-    place: "Creator Hub Success Footer" | "Creators Hero" | "Download" | "Landing Come Hang Out" | "Landing Hero" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    place: "Creator Hub Success Footer" | "Creators Hero" | "Download" | "Landing Come Hang Out" | "Landing Hero" | "Referrer Invite First Hero" | "Referrer Invite Second Hero" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
     track_called_at: number;
     track_deferred: boolean;
     track_delivered_at: number;
@@ -16,6 +16,29 @@ export type MiscEvents = {
     utm_org?: string;
     utm_source?: string;
     utm_term?: string;
+  };
+  "Legacy Events Redirected": {
+    destination: string;
+    origin: "events";
+    preservedParams: Record<string, string>;
+    source: string;
+    timestamp: string;
+  };
+  "Legacy Places Redirected": {
+    destination: string;
+    origin: "places";
+    preservedParams: Record<string, string>;
+    source: string;
+    timestamp: string;
+  };
+  "Report Player Submit Failed": {
+    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
+  };
+  "Report Player Submit Started": {
+    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
+  };
+  "Report Player Submitted": {
+    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
   };
   catalyst_schema_drift: {
     issues_count: number;

@@ -1,4 +1,4 @@
-import StInvite from "../../web/pages/StInvite";
+import StInvite, { type InviteHeroKey } from "../../web/pages/StInvite";
 import StProfileReferralRewardsTab from "../../web/pages/StProfileReferralRewardsTab";
 import "./ldinvitereferralview.css";
 
@@ -12,6 +12,7 @@ type LdInviteReferralViewProps = {
   referrerHasClaimedName?: boolean;
   invitedUsersAccepted?: number;
   onStep?: (step: LdInviteStep) => void;
+  onCta?: (hero: InviteHeroKey) => void;
 };
 
 export default function LdInviteReferralView({
@@ -21,6 +22,7 @@ export default function LdInviteReferralView({
   referrerHasClaimedName = false,
   invitedUsersAccepted = 0,
   onStep = undefined,
+  onCta = undefined,
 }: LdInviteReferralViewProps) {
   if (step === "rewards") {
     return (
@@ -47,7 +49,7 @@ export default function LdInviteReferralView({
 
   return (
     <main className="invite-referral-route">
-      <StInvite referrer={{ name: handle ?? "", ethAddress: referrerAddress ?? "" }} loading={false} />
+      <StInvite referrer={{ name: handle ?? "", ethAddress: referrerAddress ?? "" }} loading={false} onCta={onCta} />
     </main>
   );
 }

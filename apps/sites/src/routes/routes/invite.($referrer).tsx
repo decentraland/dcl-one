@@ -7,8 +7,10 @@ import { loadInviteReferral } from "@/data/lib/catalyst/landings/referral.server
 import { ETH_ADDRESS_RE } from "@/data/lib/catalyst/format/address";
 import type { ReferrerVM, ReferralState } from "@/data/lib/catalyst/landings/referral";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import { track } from "@/core/lib/telemetry/track";
 
+import { trackInviteClick } from "@/features/invite/invite-click";
 import { faceUrl } from "@/features/social/community/view";
 
 import { DEFAULT_SOCIAL_DESCRIPTION, DEFAULT_SOCIAL_TITLE, absoluteImage, absoluteUrl, publicBase, socialMeta } from "../lib/social-meta";
@@ -64,6 +66,7 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
 export default function InviteReferral({ loaderData }: Route.ComponentProps) {
   const { sid, step, referrerParam, referrer, referral } = loaderData;
   const [, setSearchParams] = useSearchParams();
+  const userId = useAnalyticsUserId();
   const hasReferrer = Boolean(referrerParam);
   useInviteTelemetry(sid, step, hasReferrer, referrer, referral);
   return (
@@ -73,6 +76,7 @@ export default function InviteReferral({ loaderData }: Route.ComponentProps) {
       referrerAddress={referrer?.address ?? null}
       referrerHasClaimedName={referrer?.hasClaimedName ?? false}
       invitedUsersAccepted={referral?.invitedUsersAccepted ?? 0}
+      onCta={(hero) => trackInviteClick(hero, { sid, userId })}
       onStep={(s) =>
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);

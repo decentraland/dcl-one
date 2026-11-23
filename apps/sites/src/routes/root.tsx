@@ -32,6 +32,7 @@ import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
 import { ThumbnailPublicBase } from "@dcl/one-ui/components/AppChrome/thumbnail-public-base";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { isPublicResponsePath, pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { useLegacyRedirectEvent } from "@/core/lib/telemetry/legacy-redirect";
 import { useNotFoundPageView, useRoutePageView } from "@/core/lib/telemetry/page-view";
 import { sitesSegmentPublicConfig } from "@/core/lib/telemetry/public-config.server";
 import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
@@ -332,6 +333,7 @@ export default function App() {
   // in the browser, so SSR never shares a cache between visitors.
   const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
   useRoutePageView();
+  useLegacyRedirectEvent();
   useSessionChangeRevalidation();
   useEffect(() => {
     appHydrated = true;

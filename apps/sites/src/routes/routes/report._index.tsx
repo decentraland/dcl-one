@@ -1,4 +1,5 @@
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import ReportForm from "@/features/social/report/ReportForm";
 
 import { publicBase } from "../lib/social-meta";
@@ -15,5 +16,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export default function Report({ loaderData }: Route.ComponentProps) {
-  return <ReportForm trackCtx={{ sid: loaderData.sid, story: "landings/report-abuse", variant: "form" }} />;
+  const analyticsUserId = useAnalyticsUserId();
+  return (
+    <ReportForm
+      trackCtx={{ sid: loaderData.sid, story: "landings/report-abuse", variant: "form" }}
+      analyticsUserId={analyticsUserId}
+    />
+  );
 }

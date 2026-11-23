@@ -7,7 +7,8 @@ import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackgr
 import { GeneralClose, GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import SitesLayout from "../../components/chrome/SitesLayout";
 
-import { track, type TrackContext } from "@/core/lib/telemetry/track";
+import { legacyAnalyticsReady, track, type TrackContext } from "@/core/lib/telemetry/track";
+import { trackedUserDropped } from "@/core/lib/telemetry/tracked-user";
 import { useAuth } from "@/data/lib/auth/context";
 import {
   buildSubmitReport,
@@ -173,7 +174,8 @@ function FileUpload({
   );
 }
 
-export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
+/** `analyticsUserId` is the server-verified wallet the legacy events name as Segment's `userId`. */
+export default function ReportForm({ trackCtx, analyticsUserId = "" }: { trackCtx: TrackContext; analyticsUserId?: string }) {
   const navigate = useNavigate();
   const { pathname, search, hash } = useLocation();
   const returnTo = pathname + search + hash;
@@ -313,14 +315,23 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     setSubmitting(true);
     setFailure(null);
     track("report_submit_started", { reason, evidence_count: evidence.length }, trackCtx);
+    // decentraland.org's own three events (`Report Player *`), with the chosen category as `reason`: sent only
+    // when its analytics had loaded by the press, as its `isInitialized` check did, and never queued.
+    const user = analyticsUserId && !trackedUserDropped() ? analyticsUserId : undefined;
+    const legacyCtx: TrackContext | null = legacyAnalyticsReady()
+      ? { sid: trackCtx.sid, ...(user ? { userId: user } : {}), legacy: true }
+      : null;
+    if (legacyCtx) track("Report Player Submit Started", { reason }, legacyCtx);
     try {
       const result = await submitReport({
         draft,
       });
       track("report_completed", { reason, report_id: result.reportId, evidence_count: evidence.length }, trackCtx);
+      if (legacyCtx) track("Report Player Submitted", { reason }, legacyCtx);
       navigate("/report/success", { state: { submitted: true } });
     } catch (err) {
       track("report_failed", { reason: err instanceof ReportSubmitError ? err.step : "request" }, trackCtx);
+      if (legacyCtx) track("Report Player Submit Failed", { reason }, legacyCtx);
       setFailure(err instanceof ReportSubmitError && SHOWN_STEPS.includes(err.step) ? err.message : SUBMIT_FAILED);
     } finally {
       busy.current = false;

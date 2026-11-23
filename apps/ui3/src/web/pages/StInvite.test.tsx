@@ -1,4 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import StInvite, { referralUrl } from "./StInvite";
 
@@ -23,6 +24,26 @@ describe("StInvite", () => {
     const expected = referralUrl("0xabc");
     expect(screen.getByRole("link", { name: "JOIN NOW" })).toHaveAttribute("href", expected);
     expect(screen.getByRole("link", { name: "JOIN FREE" })).toHaveAttribute("href", expected);
+  });
+
+  it("reports which hero's CTA was activated and leaves its link to navigate", async () => {
+    const onCta = vi.fn();
+    const prevented: boolean[] = [];
+    const record = (event: Event) => {
+      prevented.push(event.defaultPrevented);
+      event.preventDefault();
+    };
+    window.addEventListener("click", record);
+    try {
+      render(<StInvite referrer={{ name: "bevynaut2", ethAddress: "0xABC" }} onCta={onCta} />);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("link", { name: "JOIN NOW" }));
+      await user.click(screen.getByRole("link", { name: "JOIN FREE" }));
+    } finally {
+      window.removeEventListener("click", record);
+    }
+    expect(onCta.mock.calls).toEqual([["first"], ["second"]]);
+    expect(prevented).toEqual([false, false]);
   });
 });
 
