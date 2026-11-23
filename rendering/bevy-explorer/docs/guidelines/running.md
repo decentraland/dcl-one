@@ -302,6 +302,13 @@ State, in every build:
   (the same per format: `ktx2-bc`, `glb`, and `glb-br` on web), `fallbacks` (files that loaded
   their original instead), `fallbacksByFormat` (those whose chosen variant failed, per format)
   and `recentFallbacks` (the last 20, with the file, its entity and the reason).
+- `/scene_topics`: the **Scene messages** debug section's routing, topic-traffic and policy
+  readings. `sceneRooms`, `room`, `running`, `isolated` and `subscribedScenes` describe routing.
+  `published`, `publishDropped`, `received` and `receiveDropped` count topic packets, including
+  rejected banned senders in both received and dropped. `bannedSenderDrops`, `filteredInboundCrdt`,
+  `filteredOutboundCrdt` and `invalidMessages` cover the engine's message policy across channels;
+  `binaryPayloadLimit` is 13,269 bytes on egress. Counters are cumulative since startup, and
+  filtering counts packets whose CRDT records changed.
 - `/item_purchase_state`: the scene item purchase (`openExplorerUi` with `EU_ITEM_PURCHASE`) as
   JSON, the Scene item purchase debug section's source: `hudListeners` (HUDs subscribed to
   requests; with none, a request is answered `REJECTED_FEATURE_DISABLED`), `active` (the request
@@ -326,7 +333,9 @@ State, in every build:
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
   `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
   `checkedAgoSecs`, `error`), the local user's scene admission
-  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`,
+  `retainedRefusals`: scene id, scope and `retryDue` in elapsed engine seconds, from the active
+  room or its saved deadline while away),
   the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
   connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
   `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,

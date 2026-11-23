@@ -743,6 +743,11 @@ CREATE INDEX notifications_address_time_idx
 -- partial predicate, and carries the keyset tie-breaker).
 CREATE INDEX notifications_unread_idx
     ON social.notifications (address, occurred_at DESC, id DESC) WHERE NOT read;
+-- Event history adoption probes one wallet/type/event in created order.
+-- Keyed carriers leave this index; other producers without an eventId do not enter it.
+CREATE INDEX notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
@@ -1560,6 +1565,22 @@ CREATE TABLE social.worn_history (
     first_seen timestamp(3) without time zone NOT NULL,
     CONSTRAINT worn_history_pkey PRIMARY KEY (address, urn)
 );
+
+-- Notification preparation can fail after the wear is claimed. The claim and
+-- obligation commit together; completion deletes this row with its notices.
+CREATE TABLE social.first_wear_outbox (
+    address text NOT NULL,
+    urn text NOT NULL,
+    wearer text,
+    attempts integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    retry_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    CONSTRAINT first_wear_outbox_pkey PRIMARY KEY (address, urn),
+    CONSTRAINT first_wear_outbox_history_fkey FOREIGN KEY (address, urn)
+        REFERENCES social.worn_history (address, urn) ON DELETE CASCADE
+);
+CREATE INDEX first_wear_outbox_due_idx
+    ON social.first_wear_outbox (retry_at, address, urn);
 
 -- A wallet with a row is eligible; its first profile seen seeds worn_history
 -- silently (an empty outfit still gets a row, or its real first wear would be
