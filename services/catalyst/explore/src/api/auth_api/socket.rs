@@ -90,21 +90,33 @@ impl SocketBindings {
             if status == "signed" {
                 let socket = binding.socket.clone();
                 drop(binding);
-                let mut tx = state.pool.begin().await?;
-                if let Some(outcome) = claim_outcome(&mut *tx, &id, now_micros()).await? {
-                    let outcome: Value = serde_json::from_str(&outcome)
-                        .map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
-                    if socket.emit("outcome", &outcome).is_err() {
-                        // Keep the outcome available to HTTP polling when the socket drops.
-                        tx.rollback().await?;
-                        continue;
-                    }
-                    tx.commit().await?;
+                if let Err(error) = self.deliver_outcome(state, &id, &socket).await {
+                    tracing::warn!(%error, "auth relay socket outcome delivery failed");
                 }
-                self.0.remove(&id);
             }
         }
         Ok(())
+    }
+
+    async fn deliver_outcome(
+        &self,
+        state: &AppState,
+        id: &str,
+        socket: &SocketRef,
+    ) -> sqlx::Result<()> {
+        let mut tx = state.pool.begin().await?;
+        if let Some(outcome) = claim_outcome(&mut *tx, id, now_micros()).await? {
+            let outcome: Value =
+                serde_json::from_str(&outcome).map_err(|err| sqlx::Error::Decode(Box::new(err)))?;
+            if socket.emit("outcome", &outcome).is_err() {
+                // A failed enqueue leaves the outcome available to HTTP polling.
+                return tx.rollback().await;
+            }
+        }
+
+        // An enqueued outcome must not be sent again on this socket if commit fails.
+        self.0.remove(id);
+        tx.commit().await
     }
 }
 

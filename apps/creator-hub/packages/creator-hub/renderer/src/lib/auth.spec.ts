@@ -107,6 +107,13 @@ describe('AuthServerProvider.request', () => {
         });
       });
 
+      it('should use WebSocket on the relay host', async () => {
+        await sendTransaction();
+        expect(ioMock).toHaveBeenCalledWith('https://auth-api.decentraland.org', {
+          transports: ['websocket'],
+        });
+      });
+
       it('should resolve with the hash', async () => {
         await expect(sendTransaction()).resolves.toBe('0xhash');
       });

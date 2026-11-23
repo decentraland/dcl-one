@@ -2741,11 +2741,12 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
-replicas need synchronized clocks (NTP). The periodic `auth-api-identity-sweep` job runs on every replica
-every 30 seconds. It deletes expired requests, expired identities and
-tombstones older than 14 days. Each row is deleted once across replicas. The expiry indexes
+replicas need synchronized clocks (NTP). The periodic
+`auth-api-identity-sweep` job runs on every replica every 30 seconds. It
+deletes expired requests, expired identities and tombstones older than 14
+days. Each row is deleted once across replicas. The expiry indexes
 (`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
-`auth_identity_tombstones_created_idx`) serve those deletes; every other read
+`auth_identity_tombstones_created_idx`) serve those deletes. Every other read
 and write is by primary key. Nothing references these rows and they
 reference nothing: no FK. The bootstrap defines the tables; an existing
 database gains them from the object pass, so no step exists. A restart of
