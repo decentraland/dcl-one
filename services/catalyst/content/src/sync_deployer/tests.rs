@@ -1447,3 +1447,19 @@ async fn a_flush_waits_for_the_exclusive_store_lock() {
     delete_entity_rows(&pool, &[&id]).await;
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+/// A flush task that unwinds still counts its flush done and wakes `flush`.
+#[test]
+fn a_dropped_flush_guard_counts_the_flush_done_and_wakes_the_waiter() {
+    use futures::FutureExt;
+    let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let idle_notify = Arc::new(tokio::sync::Notify::new());
+    let flushing = FlushInFlight::start(in_flight.clone(), idle_notify.clone());
+    assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let woken = idle_notify.notified();
+
+    drop(flushing);
+
+    assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(woken.now_or_never().is_some(), "flush woken");
+}

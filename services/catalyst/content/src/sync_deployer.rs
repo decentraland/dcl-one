@@ -352,6 +352,33 @@ pub struct LiveSyncDeployer {
     access_passed: Arc<std::sync::Mutex<HashMap<String, std::time::Instant>>>,
 }
 
+/// A batch flush in flight: counted down, then `flush` woken, even when its task panics.
+struct FlushInFlight {
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    idle_notify: Arc<tokio::sync::Notify>,
+}
+
+impl FlushInFlight {
+    fn start(
+        in_flight: Arc<std::sync::atomic::AtomicUsize>,
+        idle_notify: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self {
+            in_flight,
+            idle_notify,
+        }
+    }
+}
+
+impl Drop for FlushInFlight {
+    fn drop(&mut self) {
+        self.in_flight
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        self.idle_notify.notify_waiters();
+    }
+}
+
 fn spawn_flush(
     pool: PgPool,
     storage: Option<Arc<Storage>>,
@@ -361,29 +388,62 @@ fn spawn_flush(
     lost: Arc<std::sync::atomic::AtomicU64>,
     entities: Vec<ParsedEntity>,
 ) {
+    use futures::FutureExt;
     if entities.is_empty() {
         return;
     }
-    in_flight.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let flushing = FlushInFlight::start(in_flight, idle_notify);
     tokio::spawn(async move {
+        let _flushing = flushing;
         let _permit = flush_sem.acquire().await;
-        match flush_batch(&pool, storage.as_deref(), &entities).await {
-            Ok(dropped) if dropped.is_empty() => {}
+        // A panic is a failed flush: its entities are recorded for retry.
+        let flushed =
+            std::panic::AssertUnwindSafe(flush_batch(&pool, storage.as_deref(), &entities))
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|panic| {
+                    Err(SyncError::Other(format!(
+                        "the batch flush panicked: {}",
+                        crate::jobs::panic_message(panic.as_ref())
+                    )))
+                });
+        let recorded = match flushed {
+            Ok(dropped) if dropped.is_empty() => return,
             Ok(dropped) => {
                 tracing::warn!(
                     count = dropped.len(),
                     "Batch flush left out entities whose files left the store; recorded for retry"
                 );
-                record_flush_failures(&pool, &lost, &entities, |id| dropped.get(id).cloned()).await;
+                std::panic::AssertUnwindSafe(record_flush_failures(&pool, &lost, &entities, |id| {
+                    dropped.get(id).cloned()
+                }))
+                .catch_unwind()
+                .await
             }
             Err(e) => {
                 tracing::error!(error = %e, count = entities.len(), "Batch flush failed");
                 let reason = format!("batch flush failed: {}", e);
-                record_flush_failures(&pool, &lost, &entities, |_| Some(reason.clone())).await;
+                std::panic::AssertUnwindSafe(record_flush_failures(&pool, &lost, &entities, |_| {
+                    Some(reason.clone())
+                }))
+                .catch_unwind()
+                .await
             }
+        };
+        // Which entities were recorded is unknown: every one counts lost, holding the frontier.
+        if let Err(panic) = recorded {
+            for entity in &entities {
+                lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if let Some(report) = &entity.report {
+                    report.record_lost();
+                }
+            }
+            tracing::error!(
+                count = entities.len(),
+                panic = crate::jobs::panic_message(panic.as_ref()),
+                "Recording a failed batch flush panicked; holding the sync frontier back"
+            );
         }
-        in_flight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        idle_notify.notify_waiters();
     });
 }
 
