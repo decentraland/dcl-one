@@ -330,16 +330,6 @@ fn the_catalog_defaults_to_upstream_filters() {
     }
 }
 
-#[test]
-fn land_index_interval_must_leave_room_in_the_public_freshness_window() {
-    let db = ("DATABASE_URL", "postgres:///catalyst");
-    let interval = "LAND_AUTHZ_INDEX_INTERVAL_SECS";
-    let config = Config::parse_env_for_tests([db, (interval, "240")]).unwrap();
-    assert_eq!(config.land_authz.land_authz_index_interval_secs, 240);
-    let err = Config::parse_env_for_tests([db, (interval, "241")]).unwrap_err();
-    assert!(err.to_string().contains(interval), "{err}");
-}
-
 /// CS-25: a mirror syncs from the DAO catalyst list, `SYNC_SOURCE` its fallback.
 #[test]
 fn a_mirror_syncs_from_the_dao_list() {

@@ -4617,6 +4617,98 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
 }
 
 #[tokio::test]
+async fn public_land_routes_use_the_land_subgraph_only_after_the_fold_expires() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    seed_rights(&db.pool).await;
+
+    async fn graphql(axum::Json(request): axum::Json<Value>) -> axum::Json<Value> {
+        let query = request["query"].as_str().unwrap();
+        let variables = &request["variables"];
+        let data = if query.contains("fetchOperatorsOfParcel") {
+            assert_eq!(variables, &json!({ "x": 1, "y": 1 }));
+            json!({
+                "estates": [],
+                "parcels": [{ "owner": { "address": ALICE }, "updateOperator": DANA }]
+            })
+        } else if query.contains("fetchAuthorizations") {
+            assert_eq!(variables["address"], ALICE);
+            json!({ "authorizations": [] })
+        } else {
+            assert!(query.contains("fetchParcelsByUpdateOperator"));
+            assert_eq!(variables["updateOperator"], DANA);
+            json!({ "parcels": [{
+                "id": "0x1", "x": "1", "y": "1", "owner": { "id": ALICE }, "updateOperator": DANA
+            }] })
+        };
+        axum::Json(json!({ "data": data }))
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", post(graphql)))
+            .await
+            .unwrap();
+    });
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        crate::http::Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            land_subgraph_url: Some(url),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+    let app = router(state_over(db.pool.clone(), settings, Some(market)));
+    let operators = "/lambdas/parcels/1/1/operators";
+    let permissions = format!("/lambdas/users/{ALICE}/parcels/1/1/permissions");
+    let lands = format!("/lambdas/users/{DANA}/lands-permissions");
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], BOB);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-authz-index");
+    assert_eq!(body["owner"], false);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["elements"][0]["x"], "3");
+
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-interval '11 minutes'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+
+    let (status, _, body) = get_json(&app, operators).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["owner"], ALICE);
+    assert_eq!(body["updateOperator"], DANA);
+    let (status, headers, body) = get_json(&app, &permissions).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[SOURCE_HEADER], "land-subgraph");
+    assert_eq!(body["owner"], true);
+    let (status, _, body) = get_json(&app, &lands).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["totalAmount"], 1);
+    assert_eq!(body["elements"][0]["id"], "0x1");
+
+    server.abort();
+    db.drop().await;
+}
+
+#[tokio::test]
 async fn transient_partial_batches_recover_without_restarting_the_indexer() {
     let Some(db) = ScratchDb::create().await else {
         return;
