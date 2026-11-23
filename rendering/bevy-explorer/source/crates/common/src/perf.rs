@@ -4,6 +4,10 @@
 use bevy::{diagnostic::DiagnosticPath, prelude::*};
 use serde::Serialize;
 
+/// Milliseconds a frame spends processing avatars whose parts are ready.
+pub const AVATAR_PROCESSING: DiagnosticPath =
+    DiagnosticPath::const_new("instantiation/avatar_processing");
+
 /// Why frame sampling is paused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

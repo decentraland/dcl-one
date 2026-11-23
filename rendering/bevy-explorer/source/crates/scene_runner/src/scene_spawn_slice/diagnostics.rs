@@ -11,12 +11,13 @@ use bevy::{
     scene::SceneSpawner,
 };
 use bevy_console::ConsoleCommand;
+use common::perf::AVATAR_PROCESSING;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use super::{
     processing_share, slice,
-    spawn_timing::{AVATAR_PROCESSING, GLTF_PROCESSING, SCENE_SPAWNER},
+    spawn_timing::{GLTF_PROCESSING, SCENE_SPAWNER},
     InstantiationCharges, ProcessingDeadline,
 };
 use crate::{
