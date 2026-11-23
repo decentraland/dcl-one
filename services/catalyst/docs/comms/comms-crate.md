@@ -151,10 +151,10 @@ unverified pending acceptance evidence.
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
 re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
-completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter); when
-that share is full a new socket closes the oldest pending one instead of being refused, so
-handshakes held open cannot refuse new joins. An evicted handshake closes without a close frame,
-like one past its deadline; the Explorer (`rendering/bevy-explorer`, `comms/src/archipelago.rs`)
+completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter). When
+that share is full, admitting a new socket closes the oldest pending one. An evicted handshake
+closes without a close frame, like one past its deadline. The Explorer
+(`rendering/bevy-explorer`, `comms/src/archipelago.rs`)
 treats that, a 503 on the upgrade and any other handshake failure alike as transient and
 reconnects after 1, 2, 4, then 5 s, and does not read `Retry-After` on `/ws`.
 `comms_ws_pending_evictions_total` counts evictions (a steady rate under normal load means the
@@ -177,6 +177,20 @@ for the short reconciliation rounds even after older accepted assignments flush.
 `/stats/health` appends `feed_assignment_full`, counting rejected mailbox assignments;
 `feed_assignment_coalesced` remains zero for response compatibility.
 Undecodable frames close with 1007; restart closes every socket with 1012.
+
+**Connector capacity.** All connector mounts share the primary's socket budget.
+API replicas add read capacity for statistics. The
+[standalone Archipelago connector](https://github.com/decentraland/archipelago-workers/blob/47d92d5621862a38e7fb35a733b668880a9e5375/ws-connector/src/controllers/handlers/ws-handler.ts#L43-L60)
+could distribute sockets across replicas and had no equivalent socket admission
+caps. Catalyst bounds total socket use and the share that one client source can
+hold. Players behind a shared NAT count against the same per-source limits and
+can receive 429 with `Retry-After: 5` while the primary still has free slots.
+
+Peak-load sizing remains open in [#1543](https://github.com/decentraland/dcl-one/issues/1543).
+Size the limits using a mounted primary behind the deployment's gateway. Cover
+the expected peak of connected clients and bursts of joins and reconnects,
+including clients behind a shared NAT. Record the active socket count, handshake
+success and latency, upgrade 429 and 503 responses, and pending-handshake evictions.
 
 **Deployment.**
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.
