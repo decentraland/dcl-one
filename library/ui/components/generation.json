@@ -21,8 +21,8 @@
     "dependencies": [
       {
         "path": "library/ui/package.json",
-        "sha256": "9f826dc0bd22131abc0abcd443edcf55b18a75719cee25dbd5af59604f42cc34",
-        "indexBlobSha": "d41f7a4ed64845cc4a00559137bedea2f3467035"
+        "sha256": "3aee31cb53bda68828bc5f4ed966a564c72893dec9e24b006ff26af84b261705",
+        "indexBlobSha": "a66ba30495fd760629da88b99c0a0d272c5cdfcd"
       },
       {
         "path": "library/ui/pnpm-lock.yaml",
