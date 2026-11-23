@@ -619,6 +619,23 @@ const NEVER_WENT = 'one of its transactions never went out.'
 const PART_FAILED = 'one of its transactions didn’t go through.'
 /** How a checkout says the rest waited for a part still being confirmed. */
 const AFTER_PENDING_PART = 'the rest wasn’t sent while an earlier part was still being confirmed.'
+// Over the terms read anew after the node refused a split's Credits part (a 402), so the buyer knows why Buy Item is back.
+/** The split again, with another Credits part. */
+const SPLIT_UPDATED = 'Your Credits balance changed, so the split was updated.'
+/** The same split again: nothing it shows changed. */
+const SPLIT_REFUSED = 'The Credits payment couldn’t be authorized. Please review your payment options.'
+/** No split any more: one way pays alone, or none does. */
+const SPLIT_GONE = 'The Credits payment couldn’t be authorized, so paying with Credits and MANA together is no longer available.'
+
+/**
+ * What Buy Item says over the terms read anew after the node refused `refused`'s Credits part: the balance changed only
+ * where the new split's Credits part did; where only its MANA did, or nothing, it says just that the Credits weren't
+ * authorized, as the step shows the rest.
+ */
+export function splitRefusedNotice(refused: SplitQuote, now: SplitQuote | undefined): string {
+  if (!now) return SPLIT_GONE
+  return now.creditsCents !== refused.creditsCents ? SPLIT_UPDATED : SPLIT_REFUSED
+}
 // A reverted transaction's credits are retired, not handed back: they come back with the expiry sweep (as the
 // checkout's own reverted failure says), so the copy never claims they were returned.
 const REVERTED_PART = 'one of its transactions failed on-chain; the Credits it held come back on their own.'
@@ -1416,7 +1433,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * operation (its own record, checkout and durability) reads the terms anew, so a storage that failed
    * once and works again doesn't keep refusing.
    */
-  const restart = (op: Operation, req: ShopBuyRequest, ended: 'cancelled' | 'failed'): void => {
+  const restart = (op: Operation, req: ShopBuyRequest, ended: 'cancelled' | 'failed', refused?: SplitQuote): void => {
     op.unwatchWallet?.()
     op.unwatchWallet = undefined
     move(op, ended)
@@ -1425,15 +1442,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       .then((fresh) => {
         fresh.input = op.input
         slot.hand(fresh)
-        void review(fresh, req)
+        void review(fresh, req, refused)
       })
       .finally(() => {
         starting = false
       })
   }
 
-  /** Reads the terms and shows them: Buy Item, or Insufficient Funds when the balance is short. */
-  const review = async (op: Operation, req: ShopBuyRequest): Promise<void> => {
+  /**
+   * Reads the terms and shows them: Buy Item, or Insufficient Funds when the balance is short. `refused`: the split whose
+   * Credits part the node just refused, which Buy Item explains against these terms.
+   */
+  const review = async (op: Operation, req: ShopBuyRequest, refused?: SplitQuote): Promise<void> => {
     const who = signedIn()
     if (!who) {
       show(op, { step: 'signIn' }, {
@@ -1467,7 +1487,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Cancelled while it loaded.
     if (op.state !== 'reviewing' || !slot.holds(op)) return
     if (typeof quote === 'string') fail(op, quote)
-    else present(op, req, quote)
+    else present(op, req, quote, undefined, refused)
   }
 
   const readQuote = async (op: Operation, login: StoredLogin, buyer: string, kind: ShopWalletKind, req: ShopBuyRequest): Promise<Quote | string> => {
@@ -1621,7 +1641,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
   }
 
-  const present = (op: Operation, req: ShopBuyRequest, quote: Quote, initial?: ShopPaymentMethod): void => {
+  const present = (op: Operation, req: ShopBuyRequest, quote: Quote, initial?: ShopPaymentMethod, refused?: SplitQuote): void => {
     const short = quote.total - quote.balance
     const creditsPay = quote.parts.length > 0 && short <= 0 && !quote.creditsUnread
     const mana = quote.mana
@@ -1636,7 +1656,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           credits: { price: quote.parts.length > 0 ? quote.total : null, balance: quote.creditsUnread ? null : quote.balance, pays: creditsPay },
           mana: { price: mana.price, balance: mana.balance, pays: mana.pays },
           ...(quote.split ? { split: { credits: quote.split.credits, mana: quote.split.manaWei } } : {}),
-          ...(initial ? { initial } : {})
+          ...(initial ? { initial } : {}),
+          ...(refused ? { notice: splitRefusedNotice(refused, quote.split) } : {})
         },
         { onClose: () => close(op, 'cancelled'), onPay: (method) => void settle(op, req, quote, method) }
       )
@@ -1821,8 +1842,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           break
         }
         // Nothing of the checkout was handed off. A balance that fell short shows the terms again at that balance; a split's
-        // parts follow the balance, so its terms are read anew (a fresh quote), never shown at the old ones.
-        if (outcome.topUp != null) quote.split ? restart(op, req, 'cancelled') : present(op, req, { ...quote, balance: outcome.topUp })
+        // parts follow the balance, so its terms are read anew (a fresh quote), never shown at the old ones, and say why.
+        if (outcome.topUp != null) quote.split ? restart(op, req, 'cancelled', quote.split) : present(op, req, { ...quote, balance: outcome.topUp })
         else if (outcome.switchTo != null) failSwitching(op, outcome.message, outcome.switchTo, wallet, () => restart(op, req, 'failed'))
         else fail(op, outcome.message, outcome.retry === 'cancelled' ? again : outcome.retry === 'failed' ? () => restart(op, req, 'failed') : undefined)
         return
