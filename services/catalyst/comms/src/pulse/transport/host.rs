@@ -46,6 +46,8 @@ pub enum Event {
         /// Source IP, when the transport knows it at connect time (WebTransport). ENet leaves
         /// this `None`; the server resolves it via [`Host::peer_ip`].
         ip: Option<String>,
+        /// Immutable WebTransport connection ID for refusing this connection even after slot reuse.
+        webtransport_connection: Option<u64>,
     },
     Receive {
         peer: PeerId,
@@ -390,6 +392,7 @@ impl Host {
                 Ok(Some(Event::Connect {
                     peer: peer.0 as PeerId,
                     ip: None,
+                    webtransport_connection: None,
                 }))
             }
             Some(enet::EventNoRef::Disconnect { peer, .. }) => {
