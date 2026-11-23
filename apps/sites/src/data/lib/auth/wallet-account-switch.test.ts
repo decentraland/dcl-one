@@ -42,7 +42,12 @@ let callbacks: Array<{ signedBy?: string; signout?: true }>;
 let server: "answer" | "refuse" | "offline";
 
 async function authCallback(_url: string, init: RequestInit = {}): Promise<Response> {
-  const body = JSON.parse(String(init.body)) as { signout?: true };
+  const body = JSON.parse(String(init.body)) as { signout?: true; challenge?: unknown };
+  // A sign-in first asks for its one-time challenge, which changes no wallet cookie.
+  if (body.challenge === true) {
+    if (server === "offline") throw new TypeError("Failed to fetch");
+    return Response.json({ ok: true, challenge: "a".repeat(43) });
+  }
   if (body.signout) {
     callbacks.push({ signout: true });
     if (server === "offline") throw new TypeError("Failed to fetch");
@@ -122,8 +127,9 @@ describe("when the Sites session belongs to a browser wallet", () => {
       // The wallet now exposes B, to the event and to the next probe alike.
       wallet.request.mockResolvedValue([B]);
       wallet.emit([B]);
-      await vi.waitFor(() => expect(callbacks).toEqual([{ signedBy: B }]));
-      await vi.waitFor(() => expect(verified).toBeNull());
+      // The refusal cleared the cookie; the sign-out that follows a failed switch clears it again.
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signedBy: B }, { signout: true }]));
+      expect(verified).toBeNull();
       expect(trackedUserDropped()).toBe(true);
       expect(session.getIdentity()?.signer).toBe(B);
     });
@@ -134,8 +140,8 @@ describe("when the Sites session belongs to a browser wallet", () => {
       // The wallet now exposes B, to the event and to the next probe alike.
       wallet.request.mockResolvedValue([B]);
       wallet.emit([B]);
-      // The proof failed on the way, so the old account's cookie is cleared too (that fails here as well).
-      await vi.waitFor(() => expect(callbacks).toEqual([{ signedBy: B }, { signout: true }]));
+      // The challenge failed on the way, so the old account's cookie is cleared too (that fails here as well).
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signout: true }]));
       expect(trackedUserDropped()).toBe(true);
       expect(session.getIdentity()?.signer).toBe(B);
     });
@@ -221,8 +227,8 @@ describe("when the Sites session belongs to a browser wallet", () => {
       wallet.emit([A]);
       expect(session.getIdentity()?.signer).toBe(A);
       // Suspending cleared the cookie; the account that came back is proven again.
-      await vi.waitFor(() => expect(verified).toBe(A));
-      expect(callbacks).toEqual([{ signout: true }, { signedBy: A }]);
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signout: true }, { signedBy: A }]));
+      expect(verified).toBe(A);
     });
   });
 

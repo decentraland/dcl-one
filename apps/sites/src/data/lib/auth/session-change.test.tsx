@@ -44,24 +44,71 @@ describe("session change", () => {
     vi.unstubAllGlobals();
   });
 
-  it("marks the change for any answer of /auth/callback, a refusal included (it clears the cookie)", async () => {
-    const fetchMock = vi.fn(async () => Response.json({ ok: false }, { status: 401 }));
+  const CHALLENGE = "a".repeat(43);
+
+  /** /auth/callback: a challenge for the sign-in to answer, then `answer` to the post that changes the cookie. */
+  function callback(answer: () => Response) {
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) =>
+      JSON.parse(String(init.body)).challenge === true ? Response.json({ ok: true, challenge: CHALLENGE }) : answer(),
+    );
     vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("marks the change for any answer of /auth/callback, a refusal included (it clears the cookie)", async () => {
+    const fetchMock = callback(() => Response.json({ ok: false }, { status: 401 }));
     const response = await postAuthCallback({ token: "expired" });
     expect(response).toEqual({ ok: false, status: 401 });
-    expect(fetchMock).toHaveBeenCalledWith(AUTH_CALLBACK_PATH, expect.objectContaining({ method: "POST", body: '{"token":"expired"}' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(1, AUTH_CALLBACK_PATH, expect.objectContaining({ method: "POST", body: '{"challenge":true}' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      AUTH_CALLBACK_PATH,
+      expect.objectContaining({ method: "POST", body: `{"token":"expired","challenge":"${CHALLENGE}"}` }),
+    );
     expect(sessionChangePending()).toBe(true);
+  });
+
+  it.each([
+    ["a refusal", () => Response.json({ ok: false }, { status: 403 })],
+    ["an answer without a challenge", () => Response.json({ ok: true })],
+    ["an answer that is not JSON", () => new Response("<html>", { status: 200 })],
+  ])("posts no sign-in and marks no change when the challenge gets %s", async (_name, challengeAnswer) => {
+    const fetchMock = vi.fn(async () => challengeAnswer());
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await postAuthCallback({ token: "t" });
+    expect(response?.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sessionChangePending()).toBe(false);
+  });
+
+  it("holds the tabs' shared lock for each cookie change, so another tab's post never interleaves", async () => {
+    callback(() => Response.json({ ok: true }));
+    const held: string[] = [];
+    const request = vi.fn(async (name: string, run: () => Promise<unknown>) => {
+      held.push(name);
+      return run();
+    });
+    vi.stubGlobal("navigator", { ...navigator, locks: { request } });
+    expect(await postAuthCallback({ token: "t" })).toEqual({ ok: true, status: 200 });
+    await postAuthCallback({ signout: true });
+    expect(held).toEqual(["dcl:auth:verified-wallet", "dcl:auth:verified-wallet"]);
+  });
+
+  it("asks a sign-out for no challenge", async () => {
+    const fetchMock = callback(() => Response.json({ ok: true }));
+    await postAuthCallback({ signout: true });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(AUTH_CALLBACK_PATH, expect.objectContaining({ body: '{"signout":true}' }));
   });
 
   it("lets only a successful sign-in restore an account a sign-out left out", async () => {
     beginSignOut();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("error", { status: 500 })));
+    callback(() => new Response("error", { status: 500 }));
     await postAuthCallback({ token: "t" });
     expect(trackedUserDropped()).toBe(true);
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: false }, { status: 401 })));
+    callback(() => Response.json({ ok: false }, { status: 401 }));
     await postAuthCallback({ token: "expired" });
     expect(trackedUserDropped()).toBe(true);
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
+    callback(() => Response.json({ ok: true }));
     await postAuthCallback({ token: "good" });
     expect(trackedUserDropped()).toBe(false);
   });
@@ -72,7 +119,7 @@ describe("session change", () => {
   ])("releases the answer's body on %s, which no caller reads", async (_label, status) => {
     const answer = Response.json({ ok: status === 200 }, { status });
     const cancel = vi.spyOn(answer.body!, "cancel");
-    vi.stubGlobal("fetch", vi.fn(async () => answer));
+    callback(() => answer);
     expect(await postAuthCallback({ token: "t" })).toEqual({ ok: status === 200, status });
     expect(cancel).toHaveBeenCalledOnce();
   });

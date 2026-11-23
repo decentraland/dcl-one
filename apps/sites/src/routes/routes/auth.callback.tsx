@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useLoaderData, useNavigate, useSearchParams } from "react-router";
 
-import {
-  clearVerifiedWalletCookie,
-  serializeVerifiedWalletCookie,
-} from "@/core/lib/telemetry/session";
 import { useAuth } from "@/data/lib/auth/context";
 import { postAuthCallback } from "@/data/lib/auth/session-change";
 import { getWalletForToken } from "@/data/lib/auth/thirdweb/index";
-import { verifyAuthChainRequest } from "@/data/lib/auth/verify-request.server";
+import { answerAuthCallback } from "@/data/lib/auth/auth-callback.server";
 import MagicCallback from "@/features/auth/login/MagicCallback";
 import { safeRedirectTarget } from "@/features/auth/login/redirect";
 
@@ -23,49 +19,8 @@ export function loader(_args: Route.LoaderArgs) {
   return { magicApiKey: process.env.MAGIC_API_KEY || null };
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  if (request.method !== "POST") {
-    return Response.json({ ok: false }, { status: 405 });
-  }
-
-  let token = "";
-  let signout = false;
-  try {
-    const body = (await request.json()) as { token?: unknown; signout?: unknown };
-    if (typeof body?.token === "string") token = body.token;
-    if (body?.signout === true) signout = true;
-  } catch {
-  }
-
-  if (signout) {
-    return Response.json(
-      { ok: true },
-      { headers: { "Set-Cookie": clearVerifiedWalletCookie() } },
-    );
-  }
-
-  // An in-app sign-in (e-mail, the in-app wallet) proves its wallet with its token; any other (Magic, a
-  // browser wallet, WalletConnect) with a request its session signed (confirmSignIn).
-  const address = token ? await getWalletForToken(token, request.signal) : await signedWallet(request);
-  if (!address) {
-    return Response.json(
-      { ok: false },
-      { status: 401, headers: { "Set-Cookie": clearVerifiedWalletCookie() } },
-    );
-  }
-
-  return Response.json(
-    { ok: true, address },
-    {
-      status: 200,
-      headers: { "Set-Cookie": serializeVerifiedWalletCookie(address) },
-    },
-  );
-}
-
-async function signedWallet(request: Request): Promise<string | null> {
-  const verified = await verifyAuthChainRequest(request);
-  return verified.ok ? verified.wallet : null;
+export function action({ request }: Route.ActionArgs) {
+  return answerAuthCallback(request);
 }
 
 function extractToken(authResultRaw: string): string | null {

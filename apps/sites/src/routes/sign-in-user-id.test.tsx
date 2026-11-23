@@ -80,11 +80,16 @@ function hexToUtf8(hex: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+const CHALLENGE = "a".repeat(43);
+
 function proofOf(init: RequestInit): Proof {
-  const body = JSON.parse(String(init.body)) as { token?: string; signout?: true };
+  const body = JSON.parse(String(init.body)) as { token?: string; signout?: true; challenge?: string };
   if (body.signout) return { signout: true };
+  // A sign-in answers the challenge it asked for; a signed one signs it too.
+  expect(body.challenge).toBe(CHALLENGE);
   if (body.token) return { token: body.token };
   const headers = new Headers(init.headers);
+  expect(JSON.parse(headers.get("x-identity-metadata") ?? "{}")).toEqual({ challenge: CHALLENGE });
   const signer = JSON.parse(headers.get("x-identity-auth-chain-0") ?? "null") as { payload?: string } | null;
   expect(headers.get("x-identity-auth-chain-1")).toBeTruthy();
   expect(headers.get("x-identity-timestamp")).toBeTruthy();
@@ -94,6 +99,10 @@ function proofOf(init: RequestInit): Proof {
 async function routeFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const url = new URL(String(input), ORIGIN);
   if (url.pathname === "/auth/callback") {
+    if (JSON.parse(String(init.body)).challenge === true) {
+      if (server === "offline") throw new TypeError("Failed to fetch");
+      return Response.json({ ok: true, challenge: CHALLENGE });
+    }
     const proof = proofOf(init);
     proofs.push(proof);
     if ("signout" in proof) {
@@ -244,7 +253,8 @@ describe("a sign-in /auth/callback does not confirm", () => {
     magic.finish.mockImplementation(() => createIdentityFromPrivateKey(key));
     returnFromMagic();
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/shop"));
-    expect(proofs).toHaveLength(1);
+    // The network failed on the challenge already: no proof left the browser.
+    expect(proofs).toEqual([]);
     expect(userIdAtNavigation).toBeNull();
     expect(getIdentity()?.signer).toBe(wallet);
   });

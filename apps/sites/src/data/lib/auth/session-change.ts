@@ -3,6 +3,7 @@ import { useRevalidator, useRouteLoaderData } from "react-router";
 
 import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
+import { isIdentityExpired } from "./expiry";
 import type { AuthIdentity } from "./types";
 
 /**
@@ -67,6 +68,7 @@ export function resetSessionChangeForTests(): void {
   revalidateRoot = null;
   reloadBeforeMount = false;
   signOutAnswered = 0;
+  resetAuthCallbackQueueForTests();
 }
 
 /**
@@ -89,39 +91,45 @@ export function signedOutElsewhere(): void {
   markSessionChanged({ revalidate: true });
 }
 
-/** What a caller learns from `/auth/callback`'s answer; its body is never read. */
+/** What a caller learns from `/auth/callback`'s answer. */
 export type AuthCallbackAnswer = { ok: boolean; status: number };
+
+/** What the verified-wallet cookie should end up saying: a sign-in to prove, or nobody. */
+type Intent = { token: string } | { identity: AuthIdentity } | { signout: true };
+type PostOptions = { keepalive?: boolean; revalidate?: boolean; clearOnFailure?: boolean };
+
+/** Tabs on this origin share the cookie: one post at a time across them. */
+const COOKIE_LOCK = "dcl:auth:verified-wallet";
+/** The latest intent of this document; only its answer moves the tracked user. */
+let latestIntent = 0;
+let queue: Promise<unknown> = Promise.resolve();
 
 /**
  * Posts to `/auth/callback`, which sets or clears the verified-wallet cookie on every answer it
  * gives; a post that got an answer marks the session changed, one that failed on the way (offline,
  * aborted) does not, since no cookie changed. Resolves to the answer's status, or null.
+ *
+ * Posts run one at a time, in the order they were asked for, so the cookie ends with the last intent;
+ * an earlier answer that arrives while a later intent is queued does not restore or settle anything.
  */
-export async function postAuthCallback(
+export function postAuthCallback(
   body: { token: string } | { signout: true },
   opts: { keepalive?: boolean; revalidate?: boolean } = {},
 ): Promise<AuthCallbackAnswer | null> {
-  return post(body, {}, opts);
+  return enqueue(body, opts);
 }
 
 /**
  * Sets the verified-wallet cookie for a sign-in that holds no in-app token (Magic, a browser wallet,
- * WalletConnect): the session signs the post, and `/auth/callback` verifies its auth chain and keeps
- * the wallet that signed it. Resolves as `postAuthCallback` does; null as well when the session could
- * not sign (expired), which posts nothing.
+ * WalletConnect): the session signs the post, challenge included, and `/auth/callback` verifies its
+ * auth chain and keeps the wallet that signed it. Resolves as `postAuthCallback` does; null as well
+ * when the session could not sign (expired), which posts nothing.
  */
-export async function confirmSignIn(
+export function confirmSignIn(
   identity: AuthIdentity,
   opts: { revalidate?: boolean } = {},
 ): Promise<AuthCallbackAnswer | null> {
-  let headers: Record<string, string>;
-  try {
-    const { signRequest } = await import("./signer");
-    headers = (await signRequest(identity, "POST", AUTH_CALLBACK_PATH)).headers;
-  } catch {
-    return null;
-  }
-  return post({}, headers, opts);
+  return enqueue({ identity }, opts);
 }
 
 /**
@@ -131,48 +139,104 @@ export async function confirmSignIn(
  */
 export function suspendSignedInAccount(): void {
   beginSignOut();
-  void postAuthCallback({ signout: true }, { keepalive: true, revalidate: true });
+  void enqueue({ signout: true }, { keepalive: true, revalidate: true });
 }
 
 /**
  * The wallet moved the session to another account without a sign-in page: page views leave the
  * account out until the server names the new one, then root's data reloads in place. A wrong account
- * is worse than none, so when the new one cannot be proven (its session could not sign, the post
- * never arrived) the cookie naming the previous one is cleared; a refusal clears it on its own.
+ * is worse than none, so when the new one is not proven (refused, its session could not sign, the
+ * post never arrived) and nothing newer was asked for since, the cookie is cleared.
  */
-export async function switchSignedInAccount(identity: AuthIdentity): Promise<AuthCallbackAnswer | null> {
+export function switchSignedInAccount(identity: AuthIdentity): Promise<AuthCallbackAnswer | null> {
   signOutAnswered = 0;
   dropTrackedUser();
-  const answer = await confirmSignIn(identity, { revalidate: true });
-  if (answer === null) await postAuthCallback({ signout: true }, { revalidate: true });
-  return answer;
+  return enqueue({ identity }, { revalidate: true, clearOnFailure: true });
 }
 
-async function post(
-  body: { token: string } | { signout: true } | Record<string, never>,
-  signed: Record<string, string>,
-  opts: { keepalive?: boolean; revalidate?: boolean },
-): Promise<AuthCallbackAnswer | null> {
-  let response: Response;
+/** Forgets queued intents, as a fresh document starts (resetSessionChangeForTests). */
+function resetAuthCallbackQueueForTests(): void {
+  latestIntent = 0;
+  queue = Promise.resolve();
+}
+
+function enqueue(intent: Intent, opts: PostOptions): Promise<AuthCallbackAnswer | null> {
+  const mine = ++latestIntent;
+  const run = async () => {
+    const answer = await send(intent, mine, opts);
+    if (opts.clearOnFailure && !answer?.ok && mine === latestIntent) {
+      await send({ signout: true }, mine, { revalidate: opts.revalidate });
+    }
+    return answer;
+  };
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  const turn = () => (locks ? locks.request(COOKIE_LOCK, run) : run());
+  const result = queue.then(turn, turn);
+  queue = result.catch(() => {});
+  return result;
+}
+
+async function call(body: unknown, opts: { keepalive?: boolean }, headers: Record<string, string> = {}): Promise<Response | null> {
   try {
-    response = await fetch(AUTH_CALLBACK_PATH, {
+    return await fetch(AUTH_CALLBACK_PATH, {
       method: "POST",
-      headers: { ...signed, "Content-Type": "application/json" },
+      headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify(body),
       ...(opts.keepalive ? { keepalive: true } : {}),
     });
   } catch {
-    // A sign-out that never reached the server keeps the account left out (the visitor asked to sign
-    // out) and the reload beginSignOut asked for.
     return null;
   }
+}
+
+/** The one-time challenge a sign-in answers (an HttpOnly cookie of this browser holds its twin). */
+async function challenge(): Promise<string | AuthCallbackAnswer | null> {
+  const response = await call({ challenge: true }, {});
+  if (!response) return null;
+  if (!response.ok) {
+    void response.body?.cancel().catch(() => {});
+    return { ok: false, status: response.status };
+  }
+  try {
+    const body = (await response.json()) as { challenge?: unknown };
+    return typeof body.challenge === "string" ? body.challenge : { ok: false, status: response.status };
+  } catch {
+    return { ok: false, status: response.status };
+  }
+}
+
+async function send(intent: Intent, mine: number, opts: PostOptions): Promise<AuthCallbackAnswer | null> {
+  let response: Response | null;
+  if ("signout" in intent) {
+    response = await call({ signout: true }, opts);
+  } else {
+    if ("identity" in intent && isIdentityExpired(intent.identity)) return null;
+    // Asking for a challenge changes no wallet cookie: a refusal here settles nothing.
+    const nonce = await challenge();
+    if (typeof nonce !== "string") return nonce;
+    if ("token" in intent) {
+      response = await call({ token: intent.token, challenge: nonce }, opts);
+    } else {
+      let headers: Record<string, string>;
+      try {
+        const { signRequest } = await import("./signer");
+        headers = (await signRequest(intent.identity, "POST", AUTH_CALLBACK_PATH, { challenge: nonce })).headers;
+      } catch {
+        return null;
+      }
+      response = await call({ challenge: nonce }, opts, headers);
+    }
+  }
+  // A sign-out that never reached the server keeps the account left out (the visitor asked to sign
+  // out) and the reload beginSignOut asked for.
+  if (!response) return null;
   void response.body?.cancel().catch(() => {});
   const answer = { ok: response.ok, status: response.status };
   markSessionChanged({ revalidate: opts.revalidate });
-  // Only a successful answer settles the change: after a failed one (a 5xx, a gateway error) the
-  // cookie may be unchanged, so a sign-out keeps the account left out and a sign-in restores nothing.
-  if (!answer.ok) return answer;
-  if ("signout" in body) signOutAnswered = generation;
+  // Only a successful answer to the latest intent settles the change: after a failed one (a 5xx, a
+  // gateway error) the cookie may be unchanged, and an older one is about to be overwritten.
+  if (!answer.ok || mine !== latestIntent) return answer;
+  if ("signout" in intent) signOutAnswered = generation;
   else {
     // A sign-in replaces whatever sign-out was in progress.
     signOutAnswered = 0;

@@ -49,7 +49,9 @@ const rootData = (router: Awaited<ReturnType<typeof start>>) =>
 function answerCallback(nextCookies: string) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
+    vi.fn(async (_url: string, init: RequestInit) => {
+      // A sign-in first asks for its one-time challenge, which changes no wallet cookie.
+      if (JSON.parse(String(init.body)).challenge === true) return Response.json({ ok: true, challenge: "a".repeat(43) });
       cookies = nextCookies;
       return Response.json({ ok: true });
     }),
