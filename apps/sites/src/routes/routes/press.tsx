@@ -10,44 +10,21 @@ import {
 
 import { pressCopy } from "@/features/press/locale";
 
-import { canonicalLink } from "../lib/canonical";
+import { publicBase, SOCIAL_LOGO } from "../lib/social-meta";
+import { STATIC_PAGE_CARDS, staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/press";
 
-const TITLE = "Press Kit | Decentraland";
-const DESCRIPTION =
-  "Decentraland brand assets, screenshots and media resources for press and partners.";
-const SOCIAL_IMAGE =
-  "https://marketing-files.decentraland.org/uploads/1778186218133_decentraland-background.webp";
-const SOCIAL_LOGO =
-  "https://marketing-files.decentraland.org/uploads/1778267186976_DCL_icon_fullcolor.png";
+const TITLE = `${STATIC_PAGE_CARDS["/press"].title} | Decentraland`;
 const PRESS_EMAIL = "press@decentraland.org";
 const PRESS_KIT_URL = "https://dcl.gg/press";
 
 export const handle = { sitesLocalized: true } satisfies SitesLocaleHandle;
 
+// The page renders its own localized <title>, so the head keeps only the card.
 export function meta({ matches }: Route.MetaArgs) {
-  const [canonical] = canonicalLink(
-    matches[0]?.loaderData?.publicPageBase,
-    "/press",
-  );
-  return [
-    { name: "description", content: DESCRIPTION },
-    { property: "og:type", content: "website" },
-    { property: "og:title", content: TITLE },
-    { property: "og:description", content: DESCRIPTION },
-    { property: "og:site_name", content: "Decentraland" },
-    { property: "og:image", content: SOCIAL_IMAGE },
-    { property: "og:logo", content: SOCIAL_LOGO },
-    { name: "twitter:card", content: "summary_large_image" },
-    { name: "twitter:creator", content: "@decentraland" },
-    { name: "twitter:site", content: "@decentraland" },
-    { name: "twitter:title", content: TITLE },
-    { name: "twitter:description", content: DESCRIPTION },
-    { name: "twitter:image", content: SOCIAL_IMAGE },
-    ...(canonical
-      ? [canonical, { property: "og:url", content: canonical.href }]
-      : []),
-  ];
+  return staticPageMeta("/press", publicBase(matches), {
+    extra: [{ property: "og:logo", content: SOCIAL_LOGO }],
+  }).filter((tag) => !("title" in tag));
 }
 
 export default function Press() {

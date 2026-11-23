@@ -71,7 +71,7 @@ impl PulseServer {
                 // ENet resets immediately and emits no local Disconnect callback. WT keeps
                 // its slot until its worker emits Disconnect, so retain that reservation.
                 if disconnected.is_ok() && !transports.owns_wt(peer) {
-                    self.ip_limiter.release(peer);
+                    self.release_connection(peer);
                 }
                 let departure = self.notify_player_left(transports, peer, observers).await;
                 departures = departures.and(departure);

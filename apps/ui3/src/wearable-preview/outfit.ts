@@ -1,3 +1,5 @@
+import { hiddenBy, itemHides } from "@explorer-core/engine/avatarHides";
+
 type Rgb = { r: number; g: number; b: number };
 
 interface ColorWrapper {
@@ -24,6 +26,8 @@ interface Representation {
   bodyShapes?: string[];
   mainFile?: string;
   contents?: string[];
+  overrideHides?: string[];
+  overrideReplaces?: string[];
 }
 
 interface EntityData {
@@ -45,6 +49,7 @@ export interface Entity {
 interface Avatar {
   bodyShape?: string;
   wearables?: string[];
+  forceRender?: string[];
   skin?: ColorWrapper;
   hair?: ColorWrapper;
   eyes?: ColorWrapper;
@@ -75,13 +80,16 @@ export interface ResolvedOutfit {
   bodyShape: string;
   wearables: string[];
   colors: AvatarColors;
+  /** The categories the profile keeps showing whatever hides them; an outfit or a URN list names none. */
+  forceRender?: string[];
 }
 
 export interface HidingRules {
+  /** The categories hidden by a wearable that is itself shown. */
   hidden: Set<string>;
+  /** The categories of the wearables that are shown. */
   equippedCats: Set<string>;
   skinEquipped: boolean;
-  handsDefaultHidden: boolean;
 }
 
 const DEFAULT_BODY = "urn:decentraland:off-chain:base-avatars:BaseMale";
@@ -246,6 +254,7 @@ export async function resolveOutfit(base: string, src: OutfitSource): Promise<Re
         .map((s) => s.trim())
         .filter(Boolean);
   let colors: AvatarColors = { skin: null, hair: null, eyes: null };
+  let forceRender: string[] | undefined;
 
   let outfit: OutfitData | null = src.outfit && typeof src.outfit === "object" ? src.outfit : null;
   if (outfit && outfit.address) {
@@ -273,51 +282,42 @@ export async function resolveOutfit(base: string, src: OutfitSource): Promise<Re
     if (av.bodyShape) bodyShape = av.bodyShape;
     if (Array.isArray(av.wearables) && av.wearables.length) wearables = av.wearables;
     colors = { skin: colorOf(av.skin), hair: colorOf(av.hair), eyes: colorOf(av.eyes) };
+    if (Array.isArray(av.forceRender) && av.forceRender.length) forceRender = av.forceRender;
   }
 
   const seen = new Set<string>();
   wearables = wearables.map(itemUrn).filter((u) => (seen.has(u) ? false : (seen.add(u), true)));
-  return { bodyShape, wearables, colors };
+  return forceRender ? { bodyShape, wearables, colors, forceRender } : { bodyShape, wearables, colors };
 }
 
-const SKIN_HIDES = [
-  "eyes", "mouth", "eyebrows", "hair", "facial_hair",
-  "upper_body", "lower_body", "feet", "hands_wear", "hands", "head",
-];
-
-export function computeHiding(wearables: string[], byPointer: Map<string, Entity>): HidingRules {
-  const equippedCats = new Set<string>();
-  const hidden = new Set<string>();
-  let skinEquipped = false;
-  let handsDefaultHidden = false;
+/**
+ * What an outfit hides on `bodyShape`, by the rules the Explorer HUD uses (`avatarHides`): each item's hides, then
+ * category priority, where an item that is hidden hides nothing itself.
+ */
+export function computeHiding(
+  wearables: string[],
+  byPointer: Map<string, Entity>,
+  bodyShape?: string,
+  forceRender: string[] = [],
+): HidingRules {
+  const equipped: { category: string; hides: string[] }[] = [];
   for (const urn of wearables) {
     const e = byPointer.get(urn.toLowerCase());
-    const cat = categoryOf(e);
-    if (!e || !cat) continue;
-    equippedCats.add(cat);
-    if (cat === "skin") skinEquipped = true;
-    const d: EntityData = e.metadata?.data || {};
-    for (const h of [...(d.hides || []), ...(d.replaces || [])]) if (h !== cat) hidden.add(h);
-    const coversUpperBody = cat === "upper_body" || (d.hides || []).includes("upper_body");
-    if (coversUpperBody && !(d.removesDefaultHiding || []).includes("hands"))
-      handsDefaultHidden = true;
+    const category = categoryOf(e);
+    if (!e || !category) continue;
+    equipped.push({ category, hides: itemHides(category, e.metadata?.data, bodyShape) });
   }
-  if (skinEquipped) for (const c of SKIN_HIDES) hidden.add(c);
-  return { hidden, equippedCats, skinEquipped, handsDefaultHidden };
+  const hidden = new Set(hiddenBy(equipped, forceRender).keys());
+  const equippedCats = new Set(equipped.map((w) => w.category).filter((category) => !hidden.has(category)));
+  return { hidden, equippedCats, skinEquipped: equippedCats.has("skin") };
 }
 
 const BASE_MESH_HIDERS: [string, (r: HidingRules) => boolean][] = [
   ["ubody_basemesh", (r) => r.equippedCats.has("upper_body") || r.hidden.has("upper_body")],
   ["lbody_basemesh", (r) => r.equippedCats.has("lower_body") || r.hidden.has("lower_body")],
   ["feet_basemesh", (r) => r.equippedCats.has("feet") || r.hidden.has("feet")],
-  [
-    "hands_basemesh",
-    (r) =>
-      r.equippedCats.has("hands_wear") ||
-      r.hidden.has("hands") ||
-      r.hidden.has("hands_wear") ||
-      r.handsDefaultHidden,
-  ],
+  // Handwear sits on the hands: only a wearable that hides `hands`, as an upper body does by default, removes them.
+  ["hands_basemesh", (r) => r.hidden.has("hands")],
   ["head_basemesh", (r) => r.hidden.has("head")],
   ["mask_eyes", (r) => r.hidden.has("eyes")],
   ["mask_eyebrows", (r) => r.hidden.has("eyebrows")],

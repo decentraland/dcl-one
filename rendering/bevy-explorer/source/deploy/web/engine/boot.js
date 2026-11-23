@@ -470,7 +470,7 @@ initEngine()
     // Deferred launch: the host calls this once the user picks a destination — avoiding a wasted
     // default-realm load. One engine per page (see start()'s __bevyStarted guard).
     window.__bevyLaunch = (realm, position, host) => start({ ...config, holdWorld: host?.holdWorld === true, sessionId: host?.sessionId, campaignAnonUserId: host?.campaignAnonUserId, realm, position })
-    // The persisted home scene ({ realm (null = none pinned), parcel: "x,y" }), valid once
+    // The home that applies at startup ({ realm (null = none pinned), parcel: "x,y", pinned }), valid once
     // engine_init has loaded the config — the host's places picker targets it from "Skip to
     // Home" before launching.
     window.__bevyHomeScene = () => { try { return JSON.parse(engine_home_scene()) } catch { return null } }

@@ -42,6 +42,7 @@ use super::chain_walk::{
     self, Budget, ChainIndex, Cursor, Fenced, Holdings, IndexSettings, LogGroup, LogSource,
     Opening, Owner, PassOutcome, RpcSource, WrongChain, requests_for,
 };
+use crate::chain_index::portal::admit::{Admission, AdmittedPortal};
 use crate::chain_index::portal::compare::AcceptedView;
 use crate::chain_index::portal::shadow::{Shadow, Shadowed};
 use crate::chain_index::rpc::{BlockHeader, Rpc, RpcLog};
@@ -334,8 +335,12 @@ pub async fn walk_together(
     deadline: Duration,
     sent: &AtomicUsize,
     shadow: Option<&Shadow>,
+    portal: Option<&Admission>,
 ) -> Vec<(usize, MemberEnd)> {
-    let source = Shadowed::new(RpcSource::new(Rpc::at(http, url).counting(sent)), shadow);
+    let source = Shadowed::new(
+        AdmittedPortal::new(RpcSource::new(Rpc::at(http, url).counting(sent)), portal),
+        shadow,
+    );
     let mut ends = Vec::new();
     let started = std::time::Instant::now();
 
