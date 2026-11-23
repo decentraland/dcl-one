@@ -665,7 +665,7 @@
   },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
-    "tokens": 82
+    "tokens": 81
   },
   "library/ui/components/FriendCTA/FriendCTA.module.css": {
     "primitives": 0,
