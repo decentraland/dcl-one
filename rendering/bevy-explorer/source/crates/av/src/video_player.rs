@@ -278,7 +278,7 @@ fn player_config_added<T: AVPlayer>(
         .report();
 }
 
-/// Where a player's volume is decided: its config, the user's scene-audio setting, and silence
+/// Where a player's volume is decided: its config, the user's streaming setting, and silence
 /// while the user is outside its scene. The backend applies it at its output.
 fn update_av_volume<T: AVPlayer>(
     mut av_players: Query<(&SceneEntity, &T::Config, &mut AVSinks<T>)>,
@@ -309,7 +309,7 @@ fn update_av_volume<T: AVPlayer>(
         } = sinks.as_mut();
 
         let volume = if containing_scenes.contains(&scene.root) {
-            config.volume() * audio_settings.scene()
+            config.volume() * audio_settings.streaming()
         } else {
             0.0
         };
