@@ -181,7 +181,7 @@ impl Plugin for AvatarRenderPlugin {
         app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
-        app.init_resource::<processing_timing::AvatarProcessingRun>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -233,7 +233,6 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
-        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_systems(
             Update,
             (
