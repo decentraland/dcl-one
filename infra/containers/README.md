@@ -222,6 +222,8 @@ and lowercases the rest, then adds and validates a check that keeps place ids lo
 holds an exclusive lock on the table for its first run and is safe to run again.
 Keep the pre-run database backup: rollback must restore it.
 
+Rental listing status upgrade: run `catalyst schema migrate` before deploying the API. Step `0056_signatures_rental_cancel_reason` adds the nullable `signatures.rentals.cancel_reason`, which the `rentals` index fold, the `rental-listing-status` job and the listing refresh route read and write; existing cancellations keep no reason.
+
 World-admission upgrade: the release script
 `schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
 scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.
