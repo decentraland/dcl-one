@@ -1867,6 +1867,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     use catalyst::worlds::core::store::{
         AccessSetting, WorldSettingsUpdate, store_access_for_owner, update_world_settings,
     };
+    use sha2::Digest;
 
     let Some(scratch) = db::scratch_database().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
@@ -1929,6 +1930,17 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
     .unwrap();
     let edited = world_row(&node.pool, world).await;
     assert_eq!(edited.0.as_deref(), Some("Mine"));
+    let thumbnail = [&b"GIF89a"[..], &[42; 256 * 1024]].concat();
+    let sha256 = hex::encode(sha2::Sha256::digest(&thumbnail));
+    let cid = hash_bytes_v1(&thumbnail);
+    {
+        let mut st = fake.state.lock();
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Source", "thumbnail_hash": sha256, "settings_version": 1}),
+        );
+        st.blobs.insert(sha256.clone(), thumbnail);
+    }
     for _ in 0..2 {
         let summary = node.pass(&ctx).await;
         assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
@@ -1942,6 +1954,16 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
         set_here(&node.pool, world).await,
         (false, None, true, Some(seller.into()))
     );
+    let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
+    assert!(settings.get("thumbnail_hash").is_none(), "{settings}");
+    let alias: Option<String> = sqlx::query_scalar(
+        "SELECT blob_cid FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1",
+    )
+    .bind(&sha256)
+    .fetch_optional(&node.pool)
+    .await
+    .unwrap();
+    assert_eq!(alias.as_deref(), Some(cid.as_str()));
 
     // The source restricts the world: the copied access bumps the version even though the
     // source's settings counter is not ahead.

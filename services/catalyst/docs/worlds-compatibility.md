@@ -522,6 +522,10 @@ A difference not listed here is a gap, not a decision.
   <w>.`), `nft` must be a string, a `secret` that is not a non-empty string
   is a 400 (upstream: 500 for a non-string), and a parcel coordinate outside
   32 bits is 400 `Invalid parcels: …` (upstream stores it).
+- **Deployment and streaming allow-list edits** treat an omitted `wallets`
+  field as an empty array. An explicit `null`, another non-array value or
+  a non-string element answers 400 and preserves the grants. Upstream
+  treats `null` as an empty array and clears the grants.
 - **Parcel holder lookups** (`POST .../permissions/{permission}/parcels`)
   match the requested parcels in canonical form, so `00,01` finds a grant on
   `0,1`.

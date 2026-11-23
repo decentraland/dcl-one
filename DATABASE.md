@@ -160,11 +160,12 @@ before storing the blob, so an unlink batch's reference read keeps it.
 each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
 images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
 before inserting the mapping under the same store lock as the settings write.
-The cutover importer uses the verified blob inventory in its settings batch.
-The CID refers to bytes in the blob store. Legacy hex reads probe the primary
-key after a raw-leaf miss. The index on the CID lets the blob collector keep
-the bytes after a world changes its thumbnail or is no longer listed. The
-alias keeps a saved URL valid across those changes.
+The mirror and the cutover importer record aliases even when the world keeps
+its local settings. The importer uses the verified blob inventory. Legacy
+hex reads probe the primary key after a raw-leaf miss. Alias rows are
+permanent and the index on the CID lets the blob collector keep their bytes
+indefinitely, including after a world changes its thumbnail or leaves the
+listing. Operators can withhold the bytes through the content denylist.
 
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
