@@ -114,7 +114,7 @@ impl PubSub {
         }
     }
 
-    async fn forward_mutation(&self, event: super::fanout::Event) {
+    pub(crate) async fn forward_mutation(&self, event: super::fanout::Event) {
         let Some(outbound) = self.outbound.get() else {
             return;
         };

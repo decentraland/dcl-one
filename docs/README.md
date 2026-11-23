@@ -14,6 +14,7 @@
 ## Architecture decisions
 
 - [Organizing library and services](adr/2026-10-19-organizing-library-services-folders.md)
+- [`comms-e2e`, a tool crate beside the Catalyst domain crates](adr/2026-11-19-comms-e2e-tool-crate.md)
 - [Protocol in dcl-one](adr/2026-10-25-protocol-in-dcl-one.md)
 - [SDK in dcl-one](adr/2026-10-26-sdk-in-dcl-one.md)
 - [Creator Hub in dcl-one](adr/2026-11-09-creator-hub-in-dcl-one.md)

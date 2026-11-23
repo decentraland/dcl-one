@@ -24,7 +24,7 @@ use common::{
 };
 use crc::CRC_32_CKSUM;
 use ipfs::IpfsAssetServer;
-use scene_material::{BoundRegion, SceneBound, SceneBounds, SceneMaterial};
+use scene_material::{BoundRegion, SceneBounds, SceneMaterial};
 
 use scene_runner::{
     initialize_scene::{
@@ -171,6 +171,7 @@ fn make_scene_oven(
                 &mat.base.normal_map_texture,
                 &mat.base.metallic_roughness_texture,
                 &mat.base.emissive_texture,
+                &mat.extension.alpha_texture,
             ]
             .into_iter()
             .flatten()
@@ -218,6 +219,7 @@ fn make_scene_oven(
                         &mat.base.normal_map_texture,
                         &mat.base.metallic_roughness_texture,
                         &mat.base.emissive_texture,
+                        &mat.extension.alpha_texture,
                     ]
                     .into_iter()
                     .flatten()
@@ -459,9 +461,8 @@ fn bake_scene_imposters(
                     let Some(mat) = materials.get_mut(h_mat) else {
                         continue;
                     };
-                    let bound = SceneBound::new(&SceneBounds::rect(&region), bound_tolerance);
-                    mat.extension.data = bound.data;
-                    mat.extension.cells = bound.cells;
+                    mat.extension
+                        .rebind(&SceneBounds::rect(&region), bound_tolerance);
                 }
 
                 debug!("region: {rmin}-{rmax}, snap: {}-{}", aabb.min(), aabb.max());
@@ -1259,4 +1260,89 @@ fn output_progress(
         *max_count,
         ((*max_count - count) as f32 / *max_count as f32 * 100.0).floor() as usize
     );
+}
+
+#[cfg(test)]
+mod test {
+    /// A text shape's imposter bake (`text_sdf_baker.wgsl`, which draws through
+    /// `bound_material_baker.wgsl`) compiles on this machine's adapter: a text quad in front of
+    /// a bake camera. Needs a GPU, so `#[ignore]`d and skipped by CI:
+    ///
+    /// ```text
+    /// cargo test -p imposters text_bake_pipeline_compiles -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn text_bake_pipeline_compiles() {
+        use bevy::{
+            asset::RenderAssetUsages, math::Vec4, prelude::*, render::storage::ShaderStorageBuffer,
+        };
+        use boimp::{
+            bake::ImposterBakeMaterialPlugin, ImposterBakeBundle, ImposterBakeCamera,
+            ImposterBakePlugin,
+        };
+        use pipeline_test::{compile_pipelines, fragment_pipelines, headless_app};
+        use scene_material::{SceneBound, SceneMaterial, EMPTY_SCENE_CELLS};
+        use scene_runner::update_world::text_shape::{TextSdf, TextSdfMaterial, TextSdfParams};
+
+        let mut app = headless_app();
+        app.add_plugins((
+            ImposterBakePlugin,
+            MaterialPlugin::<TextSdfMaterial>::default(),
+            ImposterBakeMaterialPlugin::<TextSdfMaterial>::default(),
+        ));
+        app.finish();
+        app.cleanup();
+
+        let world = app.world_mut();
+        // the unbounded scene's cell table, as SceneBoundPlugin inserts it
+        world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
+            EMPTY_SCENE_CELLS.id(),
+            ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
+        );
+        // as a text shape's face layer
+        let text = world
+            .resource_mut::<Assets<TextSdfMaterial>>()
+            .add(TextSdfMaterial {
+                base: SceneMaterial {
+                    base: StandardMaterial {
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        double_sided: true,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    extension: SceneBound::new_unbounded(),
+                },
+                extension: TextSdf {
+                    params: TextSdfParams {
+                        outline_color: Vec4::ZERO,
+                        shadow_color: Vec4::ZERO,
+                        outline_width: 0.0,
+                        shadow_softness: 0.0,
+                        spread: 1.0,
+                        flags: 1,
+                    },
+                    depth_write: true,
+                },
+            });
+        let quad = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(Rectangle::new(1.0, 1.0));
+        world.spawn((Mesh3d(quad), MeshMaterial3d(text)));
+        world.spawn(ImposterBakeBundle {
+            camera: ImposterBakeCamera {
+                grid_size: 1,
+                multisample: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        compile_pipelines(&mut app);
+        assert!(
+            fragment_pipelines(&app, "embedded://shaders/text_sdf_baker.wgsl") >= 1,
+            "no text_sdf_baker.wgsl pipeline compiled"
+        );
+    }
 }

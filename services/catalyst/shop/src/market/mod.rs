@@ -253,8 +253,9 @@ pub struct MarketSettings {
     /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client
     /// (the tip forward's and the trade post's per-address limits).
     pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
-    /// `CHAIN_LOGS_SOURCE=shadow`: the portal accepted windows are compared with.
-    pub shadow: Option<chain_jobs::ShadowSettings>,
+    /// `CHAIN_LOGS_SOURCE=shadow|portal`: the portal accepted windows are
+    /// compared with, or windows it admits are read from.
+    pub portal: Option<chain_jobs::PortalSettings>,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -278,7 +279,7 @@ impl std::fmt::Debug for MarketSettings {
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
             .field("tips", &self.tips)
-            .field("shadow", &self.shadow)
+            .field("portal", &self.portal)
             .finish_non_exhaustive()
     }
 }
@@ -296,7 +297,7 @@ impl Default for MarketSettings {
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
             trusted_proxy_cidrs: Vec::new(),
-            shadow: None,
+            portal: None,
         }
     }
 }
@@ -342,7 +343,7 @@ impl MarketSettings {
             indexes: chain_walk::IndexSettings::default(),
             tips: tips::TipSettings::default(),
             trusted_proxy_cidrs: Vec::new(),
-            shadow: None,
+            portal: None,
         })
     }
 
@@ -352,9 +353,9 @@ impl MarketSettings {
         self
     }
 
-    /// The shadow comparison's portal (`main.rs` fills it from `Config`).
-    pub fn with_shadow(mut self, shadow: Option<chain_jobs::ShadowSettings>) -> Self {
-        self.shadow = shadow;
+    /// The portal and how the walks use it (`main.rs` fills it from `Config`).
+    pub fn with_portal(mut self, portal: Option<chain_jobs::PortalSettings>) -> Self {
+        self.portal = portal;
         self
     }
 

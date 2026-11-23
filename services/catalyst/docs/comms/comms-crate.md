@@ -341,8 +341,13 @@ its protobuf types belong above Comms in the module layers.
 The version-1 envelope contains a process UUID and a tagged event: a normalized
 recipient plus friendship, block or private-call protobuf; community voice plus
 scope and optional excluded creator; community membership status; community
-deletion; or an immutable payload reference. The decoder checks version, kind,
-UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
+deletion; an accepted friendship's two wallets, which each replica announces to
+its own sockets from its own topology; or an immutable payload reference. The
+decoder checks version, kind, UUIDs, normalized wallet identities, status enums
+and the permitted protobuf arm. A message it rejects increments
+`social_event_delivery_dropped` (`undecodable_inbound`). During a rolling
+upgrade, a replica that predates an event kind rejects it, so its sockets miss
+that event until the replica is upgraded.
 Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
 and neither private parties nor closure notices can be added by another arm.
 Private acceptance reads the caller's credential before publishing ACCEPTED, then

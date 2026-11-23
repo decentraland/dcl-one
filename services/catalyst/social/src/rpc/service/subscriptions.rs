@@ -48,7 +48,10 @@ impl SocialServiceImpl {
                     Some(friendship_update::Update::Cancel(response)) => {
                         response.user.as_ref().map(|user| &user.address)
                     }
-                    _ => None,
+                    Some(friendship_update::Update::Block(response)) => {
+                        response.user.as_ref().map(|user| &user.address)
+                    }
+                    None => None,
                 };
                 let Some(actor) = actor.cloned() else {
                     continue;

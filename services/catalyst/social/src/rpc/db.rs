@@ -222,6 +222,30 @@ fn expiry_bound(now: NaiveDateTime, expiration_ms: i64) -> NaiveDateTime {
     now - ChronoDuration::milliseconds(expiration_ms)
 }
 
+fn private_voice_preflight_sql() -> String {
+    format!(
+        r#"SELECT
+                 EXISTS (
+                   SELECT 1 FROM social.blocks
+                   WHERE (blocker_address = $1 AND blocked_address = $2)
+                      OR (blocker_address = $2 AND blocked_address = $1)
+                 ) AS blocked,
+                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $1) AS caller_privacy,
+                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $2) AS callee_privacy,
+                 (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
+                 EXISTS (
+                   SELECT 1 FROM social.private_voice_chats c
+                   WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
+                     AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
+                 ) AS busy,
+                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
+                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $2 AND {live}) AS callee_in_community_voice,
+                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
+                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
+        live = crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$3", "$4"),
+    )
+}
+
 impl Db {
     pub fn new(pool: PgPool) -> Self {
         Self {
@@ -852,28 +876,7 @@ impl Db {
     ) -> Result<PrivateVoicePreflight, DbError> {
         let caller = caller.to_lowercase();
         let callee = callee.to_lowercase();
-        let sql = format!(
-            r#"SELECT
-                 EXISTS (
-                   SELECT 1 FROM social.blocks
-                   WHERE (blocker_address = $1 AND blocked_address = $2)
-                      OR (blocker_address = $2 AND blocked_address = $1)
-                 ) AS blocked,
-                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $1) AS caller_privacy,
-                 (SELECT private_messages_privacy FROM social.user_settings WHERE address = $2) AS callee_privacy,
-                 (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
-                 EXISTS (
-                   SELECT 1 FROM social.private_voice_chats c
-                   WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
-                     AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
-                 ) AS busy,
-                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
-                 EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $2 AND {live}) AS callee_in_community_voice,
-                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
-                 EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
-            live =
-                crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$3", "$4"),
-        );
+        let sql = private_voice_preflight_sql();
         let (interrupted, initial) = presence.sql_cutoffs();
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&caller)
@@ -1535,5 +1538,40 @@ impl Db {
     pub(crate) async fn expire_social_event_payloads(&self) -> Result<u64, DbError> {
         Ok(sqlx::query("DELETE FROM social.event_payloads WHERE id IN (SELECT id FROM social.event_payloads WHERE expires_at<=timezone('UTC',now()) ORDER BY expires_at,id LIMIT 64 FOR UPDATE SKIP LOCKED)")
             .execute(&self.pool).await?.rows_affected())
+    }
+}
+
+#[cfg(test)]
+mod preflight_plan_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wallet_indexes_support_social_voice_preflight() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let sql = format!("EXPLAIN {}", private_voice_preflight_sql());
+        let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind("caller")
+            .bind("callee")
+            .bind(now_naive())
+            .bind(now_naive())
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+        for index in [
+            "private_voice_chat_participants_address_idx",
+            "community_voice_chat_users_address_idx",
+        ] {
+            assert!(
+                plan.iter().filter(|line| line.contains(index)).count() >= 2,
+                "expected indexed probes for caller and callee: {plan:?}"
+            );
+        }
     }
 }
