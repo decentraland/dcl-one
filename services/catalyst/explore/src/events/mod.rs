@@ -733,13 +733,14 @@ impl EventsComponent {
         let requested: Vec<_> = asked.0.keys().cloned().collect();
         let mut pending = requested.clone();
         let mut selected = Vec::new();
-        let mut offset = 0_i64;
+        let mut after_start = vec![None::<chrono::NaiveDateTime>; pending.len()];
+        let mut after_id = vec![String::new(); pending.len()];
         let mut limit = 1_i64;
         let n = binds.len();
         // Keep place-before-world precedence relative to the full request even
         // when only the destinations with unusable names need another page.
         let sql = format!(
-            "SELECT page.* FROM unnest(${}::text[]) AS wanted(key)
+            "SELECT page.* FROM unnest(${}::text[], ${}::timestamp[], ${}::text[]) AS wanted(key, after_start, after_id)
              CROSS JOIN LATERAL (
                SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server,
                       world, {EFF_NEXT_START_SQL} AS next_start_at
@@ -748,41 +749,49 @@ impl EventsComponent {
                      (world IS TRUE AND server_lower = wanted.key
                       AND (place_id_lower = ANY(${}::text[])) IS NOT TRUE))
                  AND name IS NOT NULL {}
-               ORDER BY next_start_at ASC, id ASC LIMIT ${} OFFSET ${}
+                 AND (wanted.after_start IS NULL OR
+                      ({EFF_NEXT_START_SQL}, id) > (wanted.after_start, wanted.after_id))
+               ORDER BY next_start_at ASC, id ASC LIMIT ${}
              ) page ORDER BY wanted.key, page.next_start_at ASC, page.id ASC",
             n + 1,
             n + 2,
-            if live { "AND name <> ''" } else { "" },
             n + 3,
-            n + 4
+            n + 4,
+            if live { "AND name <> ''" } else { "" },
+            n + 5
         );
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx)
-            .await?;
+        let mut snapshot = if live {
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            Some(tx)
+        } else {
+            None
+        };
         loop {
             let mut q = sqlx::query_as::<_, EventAt>(sqlx::AssertSqlSafe(sql.as_str()));
             for bind in &binds {
                 q = bind_one(q, bind);
             }
-            let rows = q
+            let q = q
                 .bind(&pending)
+                .bind(&after_start)
+                .bind(&after_id)
                 .bind(&requested)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(&mut *tx)
-                .await?;
-            if !live {
-                selected = rows;
-                break;
-            }
+                .bind(limit);
+            let Some(tx) = snapshot.as_mut() else {
+                return Ok(q.fetch_all(&self.pool).await?);
+            };
+            let rows = q.fetch_all(&mut **tx).await?;
             let mut seen = HashMap::new();
             for row in rows {
                 let Some(key) = asked.resolve(&row) else {
                     continue;
                 };
-                let (count, found) = seen.entry(key).or_insert((0_i64, false));
+                let (count, found, cursor) = seen.entry(key).or_insert((0_i64, false, None));
                 *count += 1;
+                *cursor = row.next_start_at.map(|start| (start, row.id.clone()));
                 if !*found
                     && row
                         .name
@@ -793,19 +802,28 @@ impl EventsComponent {
                     *found = true;
                 }
             }
-            pending = seen
-                .into_iter()
-                .filter(|(_, (count, found))| !found && *count == limit)
-                .map(|(key, _)| key.to_lowercase())
-                .collect();
+            pending.clear();
+            after_start.clear();
+            after_id.clear();
+            for (key, (count, found, cursor)) in seen {
+                if !found
+                    && count == limit
+                    && let Some((start, id)) = cursor
+                {
+                    pending.push(key.to_lowercase());
+                    after_start.push(Some(start));
+                    after_id.push(id);
+                }
+            }
             if pending.is_empty() {
                 break;
             }
-            offset += limit;
             // Markup-only rows are unusual. Read further candidates only where needed.
             limit = 32;
         }
-        tx.commit().await?;
+        if let Some(tx) = snapshot {
+            tx.commit().await?;
+        }
         Ok(selected)
     }
 }
@@ -1437,6 +1455,35 @@ mod tests {
         let next = component.next_events(&keys).await.unwrap();
         assert_eq!(next[&quiet].name, "quiet");
         assert_eq!(next[&busy].name, "busy");
+        db.drop().await;
+    }
+
+    #[tokio::test]
+    async fn destination_selection_matches_places_before_world_servers() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("destination_priority", Schema::Full, 2).await else {
+            return;
+        };
+        let events = EventsComponent::new(db.pool.clone(), None, None, String::new());
+        // Both requests see the same ordering. If a world matching a requested place
+        // also consumes its server's one-row budget, the server-only event disappears.
+        for (phase, hours) in [("live", -1_i32), ("next", 3)] {
+            sqlx::query(
+                "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
+                 SELECT $1 || id,id,timezone('UTC',now()) + $2 * interval '1 hour',
+                        timezone('UTC',now()) + $2 * interval '1 hour',7200000,true,
+                        jsonb_build_object('approved',true,'place_id',place,'server',server,'world',world)
+                 FROM (VALUES ('a-both',true,'place','server'),('b-scene',false,'other','server'),
+                              ('c-world',true,'other','server')) rows(id,world,place,server)"
+            ).bind(phase).bind(hours).execute(&db.pool).await.unwrap();
+        }
+        let keys = ["Place".into(), "Server".into()];
+        let live = events.live_event_names(&keys).await.unwrap();
+        let next = events.next_events(&keys).await.unwrap();
+        for (key, expected) in [("Place", "a-both"), ("Server", "c-world")] {
+            assert_eq!(live[key].as_deref(), Some(expected));
+            assert_eq!(next[key].name, expected);
+        }
         db.drop().await;
     }
 
