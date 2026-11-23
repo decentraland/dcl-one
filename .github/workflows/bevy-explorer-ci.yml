@@ -70,9 +70,7 @@
 concurrency:
   group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   # Main runs finish; runs started meanwhile wait as one pending run (the newest replaces it).
-  # A run that ready_for_review starts waits too: the development smoke job of the same commit
-  # reads the web build of the run in progress, and that workflow does not run again.
-  cancel-in-progress: ${{ github.event.action != 'ready_for_review' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
 name: Bevy Explorer / CI
 jobs:
   source:
@@ -158,6 +156,7 @@ jobs:
       web: ${{ steps.plan.outputs.web }}
       native-matrix: ${{ steps.plan.outputs.native-matrix == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:macos') }}
       images: ${{ steps.consumers.outputs.images }}
+      held: ${{ steps.plan.outputs.held }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Offline. Cargo takes each patched source from this repository by `rev`: every `rev` in Cargo.toml
@@ -1403,25 +1402,33 @@ jobs:
             corepack pnpm@12.21.0 dist-tag rm "$pkg" "$TAG"
           fi
     timeout-minutes: 5
-  # One result for this workflow, so auto-merge and branch rules can wait on it. It always reports:
-  # green when the guards, format checks, native and web builds and tests passed or were skipped
-  # because nothing they test changed, red when one failed, was cancelled or is missing. A closed
-  # pull request runs only the preview cleanup, so it skips the gate.
+  # Branch protection reads the newest gate on the commit until the next run's gate reports, so a held
+  # draft and an unmerged close must not leave a pass or a skip behind.
   gate:
     name: Explorer CI gate
     needs: [source, changes, fmt, toml, clippy, test, headless-smoke, build-deploy-web, package-web, images-compile, images]
-    if: ${{ always() && github.event.action != 'closed' }}
+    if: ${{ always() && !(github.event.action == 'closed' && github.event.pull_request.merged) }}
     runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 5
     steps:
       - name: Require the checks, builds and tests to pass or be skipped
         env:
           RESULTS: ${{ toJSON(needs) }}
+          HELD: ${{ needs.changes.outputs.held }}
+          ACTION: ${{ github.event.action }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key)=\(.value.result)"'
           failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key')
           if [ -n "$failed" ]; then
             echo "::error::Required jobs did not pass: $(echo $failed)"
+            exit 1
+          fi
+          if [ "$HELD" = true ]; then
+            echo "::error::This draft held the test jobs. Mark it ready for review to run them."
+            exit 1
+          fi
+          if [ "$ACTION" = closed ]; then
+            echo "::error::Closed without merging. Reopening runs the checks again."
             exit 1
           fi
 permissions:

@@ -38,7 +38,9 @@ on:
       - 'library/**/tests/fixtures/**'
   # Every pull request, so "CI gate" always reports and can be a required check; the `changes` plan skips the
   # heavy jobs when nothing under push.paths changed (a skipped job counts as passing for a required check).
+  # ready_for_review: the Explorer CI gate fails a draft's held run, so the smoke job reads the ready run.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 permissions:
   contents: read
   actions: read
