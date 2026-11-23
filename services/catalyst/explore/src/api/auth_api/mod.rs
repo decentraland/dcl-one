@@ -2484,12 +2484,11 @@ mod tests {
             return;
         };
         let now = now_micros();
-        let in_grace = now - Duration::seconds(1);
         seed_requests(
             &state,
             MAX_PENDING_REQUESTS,
             ChallengeStatus::Pending,
-            in_grace,
+            now - Duration::seconds(1),
             now,
         )
         .await;
@@ -2498,12 +2497,14 @@ mod tests {
             None,
             "expired requests hold no slot"
         );
-        let live = now + Duration::seconds(REQUEST_TTL_SECONDS);
-        sqlx::query("UPDATE explore_api.auth_requests SET expiration = $1")
-            .bind(naive(live))
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        seed_requests(
+            &state,
+            MAX_PENDING_REQUESTS,
+            ChallengeStatus::Pending,
+            now + Duration::seconds(REQUEST_TTL_SECONDS),
+            now,
+        )
+        .await;
         assert_eq!(
             refusal(&state, None, now).await,
             Some(StatusCode::SERVICE_UNAVAILABLE)
