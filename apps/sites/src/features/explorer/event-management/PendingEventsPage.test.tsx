@@ -237,7 +237,7 @@ describe("when opening the Pending Events page", () => {
     await user.click(within(review).getByRole("button", { name: "Approve" }));
     expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
     expect(postJSON).toHaveBeenCalledWith(...moderation("pending-one", { approved: true }));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(client.getQueryState(eventsPageKeys.detail("pending-one"))?.isInvalidated).toBe(true);
     await waitFor(() => expect(readsOf(EVENTS)).toBe(2));
   });
@@ -308,7 +308,7 @@ describe("when opening the Pending Events page", () => {
     await user.click(within(reject).getByRole("button", { name: "Submit" }));
     expect(await screen.findByText("Event/Experience rejected successfully")).toBeTruthy();
     expect(postJSON).toHaveBeenCalledWith(...moderation("pending-one", { rejected: true, rejection_reason: "Invalid image, Invalid location. Wrong parcel" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("should return to the review when the rejection is cancelled", async () => {
@@ -355,7 +355,7 @@ describe("when opening the Pending Events page", () => {
       await user.click(await screen.findByRole("link", { name: "Moon concert" }));
       await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
       expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
-      expect(screen.queryByRole("dialog")).toBeNull();
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(currentPath()).toBe(PATH);
     });
 
@@ -367,7 +367,7 @@ describe("when opening the Pending Events page", () => {
       await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
       await user.click(within(reject).getByRole("button", { name: "Submit" }));
       expect(await screen.findByText("Event/Experience rejected successfully")).toBeTruthy();
-      expect(screen.queryByRole("dialog")).toBeNull();
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
 
     it("should report a failed approval and let it be tried again", async () => {
