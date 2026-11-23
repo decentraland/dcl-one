@@ -1226,4 +1226,109 @@ mod test {
             }
         }
     }
+
+    /// The forward shader (`bound_material.wgsl`) compiles with a normal map where it reads its
+    /// normal from the prepass: a mesh with uvs and tangents, in front of a camera with a normal
+    /// prepass and no MSAA, as the player's camera is while the avatar outline is on. Needs a
+    /// GPU, so `#[ignore]`d and skipped by CI:
+    ///
+    /// ```text
+    /// cargo test -p scene_material normal_map_compiles_with_prepass_normals -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a GPU; run with --ignored"]
+    fn normal_map_compiles_with_prepass_normals() {
+        use bevy::{
+            asset::RenderAssetUsages,
+            core_pipeline::prepass::{DepthPrepass, NormalPrepass},
+            prelude::*,
+            render::{
+                camera::RenderTarget,
+                render_resource::{
+                    CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor,
+                    TextureDimension, TextureFormat,
+                },
+                storage::ShaderStorageBuffer,
+                RenderApp,
+            },
+        };
+        use pipeline_test::{compile_pipelines, headless_app, render_target};
+
+        use crate::{SceneBound, SceneMaterial, EMPTY_SCENE_CELLS};
+
+        let mut app = headless_app();
+        app.add_plugins(MaterialPlugin::<SceneMaterial>::default());
+        app.finish();
+        app.cleanup();
+
+        let target = render_target(&mut app);
+        let world = app.world_mut();
+        // the unbounded scene's cell table, as SceneBoundPlugin inserts it
+        world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
+            EMPTY_SCENE_CELLS.id(),
+            ShaderStorageBuffer::new(&[0; 8], RenderAssetUsages::RENDER_WORLD),
+        );
+
+        let normal_map = world.resource_mut::<Assets<Image>>().add(Image::new_fill(
+            Extent3d::default(),
+            TextureDimension::D2,
+            &[128, 128, 255, 255],
+            TextureFormat::Rgba8Unorm,
+            RenderAssetUsages::RENDER_WORLD,
+        ));
+        let mut cube = Mesh::from(Cuboid::new(0.5, 0.5, 0.5));
+        cube.generate_tangents().unwrap();
+        let cube = world.resource_mut::<Assets<Mesh>>().add(cube);
+        let material = world
+            .resource_mut::<Assets<SceneMaterial>>()
+            .add(SceneMaterial {
+                base: StandardMaterial {
+                    normal_map_texture: Some(normal_map),
+                    ..Default::default()
+                },
+                extension: SceneBound::new_unbounded(),
+            });
+
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(target.into()),
+                ..default()
+            },
+            Msaa::Off,
+            DepthPrepass,
+            NormalPrepass,
+            Transform::from_xyz(0.0, 0.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ));
+        world.spawn((Mesh3d(cube), MeshMaterial3d(material)));
+
+        compile_pipelines(&mut app);
+
+        let shader = app
+            .world()
+            .resource::<AssetServer>()
+            .get_handle::<Shader>("embedded://shaders/bound_material.wgsl")
+            .expect("bound_material.wgsl never loaded")
+            .id();
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        let compiled = cache.pipelines().any(|pipeline| {
+            let PipelineDescriptor::RenderPipelineDescriptor(descriptor) = &pipeline.descriptor
+            else {
+                return false;
+            };
+            let Some(fragment) = &descriptor.fragment else {
+                return false;
+            };
+            let has = |def: &str| fragment.shader_defs.iter().any(|d| *d == def.into());
+            fragment.shader.id() == shader
+                && matches!(pipeline.state, CachedPipelineState::Ok(_))
+                && has("LOAD_PREPASS_NORMALS")
+                && has("VERTEX_TANGENTS")
+                && has("STANDARD_MATERIAL_NORMAL_MAP")
+        });
+        assert!(
+            compiled,
+            "no bound_material.wgsl pipeline compiled with a normal map and prepass normals"
+        );
+    }
 }
