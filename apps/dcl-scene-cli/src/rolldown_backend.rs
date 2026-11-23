@@ -12,7 +12,9 @@ use rolldown_utils::indexmap::FxIndexMap;
 use rolldown_utils::pattern_filter::StringOrRegex;
 use std::path::PathBuf;
 
-/// Bundle to `opts.outfile`; the files the bundler loaded come back.
+/// Bundle to `opts.outfile`; the files the bundler loaded come back. An import
+/// the bundler cannot resolve fails the build and writes nothing, so the last
+/// good bundle stays in place.
 pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<Vec<PathBuf>> {
     let mut bundler = Bundler::new(bundler_options(project, opts)?).map_err(|e| {
         anyhow::Error::from(
@@ -23,7 +25,7 @@ pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<Vec<PathBuf
             .why(format!("{e:?}")),
         )
     })?;
-    let output = bundler.write().await.map_err(|e| {
+    let output = bundler.generate().await.map_err(|e| {
         anyhow::Error::from(
             UserError::new(
                 "build failed \u{2014} rolldown reported errors",
@@ -38,22 +40,32 @@ pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<Vec<PathBuf
             ),
         )
     })?;
+    let mut unresolved = Vec::new();
     for warning in &output.warnings {
         let kind = warning.kind().to_string();
-        if kind == "INVALID_ANNOTATION" || kind == "IMPORT_IS_UNDEFINED" {
-            continue;
+        match kind.as_str() {
+            "INVALID_ANNOTATION" | "IMPORT_IS_UNDEFINED" => {}
+            "UNRESOLVED_IMPORT" => unresolved.push(warning.to_string()),
+            _ => tracing::warn!("rolldown {kind}: {warning}"),
         }
-        // An import rolldown cannot resolve stays a bare `require` in the chunk, and the split
-        // loader's require serves only `~system/*` and the registry: the scene throws "not in the
-        // sdk runtime registry" the moment that module loads. Say so at build time, not only
-        // under --verbose.
-        if kind == "UNRESOLVED_IMPORT" {
-            crate::ux::note(format!(
-                "\u{26a0} {warning} \u{2014} the scene will throw when this module loads; check that package is fully installed in node_modules"
-            ));
-            continue;
+    }
+    if !unresolved.is_empty() {
+        return Err(UserError::new(
+            "build failed \u{2014} the scene imports modules that cannot be found",
+            TrySteps::one("install the missing package: npm install <package>")
+                .and("or fix the import path in the file named below"),
+        )
+        .why(unresolved.join("\n"))
+        .into());
+    }
+    let dir = opts.outfile.parent().unwrap_or(&project.root);
+    for asset in &output.assets {
+        let dest = dir.join(asset.filename());
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| crate::ux::write_error(parent, e))?;
         }
-        tracing::warn!("rolldown {kind}: {warning}");
+        std::fs::write(&dest, asset.content_as_bytes())
+            .map_err(|e| crate::ux::write_error(&dest, e))?;
     }
     Ok(bundler
         .watch_files()
@@ -156,4 +168,59 @@ fn defines(production: bool) -> FxIndexMap<String, String> {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+    use crate::esbuild::EsbuildOptions;
+    use crate::scene::{Project, Tmp};
+
+    fn scene(tag: &str, source: &str) -> (Tmp, Project, EsbuildOptions) {
+        let t = Tmp::new(tag);
+        t.write("tsconfig.json", "{}");
+        t.write("src/index.ts", source);
+        t.write("src/helper.ts", "export const helper = 'helped'\n");
+        t.write("bin/index.js", "previous bundle\n");
+        let project = Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({"main": "bin/index.js"}),
+        };
+        let opts = EsbuildOptions {
+            production: false,
+            entrypoint: t.0.join("src/index.ts"),
+            outfile: t.0.join("bin/index.js"),
+            tsconfig: t.0.join("tsconfig.json"),
+            aliases: vec![],
+            externals: vec![],
+        };
+        (t, project, opts)
+    }
+
+    #[tokio::test]
+    async fn an_import_of_a_missing_package_fails_the_build_and_keeps_the_last_bundle() {
+        let (t, project, opts) = scene(
+            "unresolved",
+            "import { Tween } from 'not-an-installed-package'\nexport function main() { Tween() }\n",
+        );
+        let err = crate::ux::render(&run(&project, &opts).await.unwrap_err(), false, false);
+        assert!(err.contains("not-an-installed-package"), "{err}");
+        assert!(err.contains("npm install"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(t.0.join("bin/index.js")).unwrap(),
+            "previous bundle\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scene_whose_imports_resolve_is_written() {
+        let (t, project, opts) = scene(
+            "resolved",
+            "import { helper } from './helper'\nexport function main() { console.log(helper) }\n",
+        );
+        run(&project, &opts).await.unwrap();
+        let bundle = std::fs::read_to_string(t.0.join("bin/index.js")).unwrap();
+        assert!(bundle.contains("helped"), "{bundle}");
+        assert!(bundle.contains("sourceMappingURL=data:"), "{bundle}");
+    }
 }

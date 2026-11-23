@@ -164,6 +164,8 @@ The normal scene build uses these bindings without npm.
 
 The built-in pipeline bundles to `bin/index.js`, type-checks beside the build with incremental tsc
 (`.dcl-cache/`), and encodes `main.crdt` in Rust (`DCL_ONE_CRDT_VERIFY=1` compares with node).
+An import the bundler cannot resolve (a package missing from `node_modules`, a wrong path) fails the
+build and writes nothing, so under a watcher the last good bundle keeps serving.
 A watcher (`start`, `build --watch`) keeps one node process with tsc 5.x or 6.x loaded and the last
 program in memory, so the check after a save covers the edit alone; it reports what a spawned tsc
 does, ends with the watcher, and with TypeScript 7 each check spawns tsc.
