@@ -979,7 +979,9 @@ class SelectionTest(unittest.TestCase):
                             ('services/catalyst/Cargo.lock', True), ('services/catalyst/new/Cargo.toml', True),
                             ('services/catalyst/rust-toolchain.toml', True), ('.cargo/config.toml', True),
                             ('library/new/Cargo.toml', True), ('apps/sites/pnpm-lock.yaml', True),
-                            ('apps/sites/package.json', True), ('apps/sites/.npmrc', True)):
+                            ('apps/sites/package.json', True), ('apps/sites/.npmrc', True),
+                            ('library/ui/pnpm-lock.yaml', True), ('library/ui/package.json', True),
+                            ('library/ui/pnpm-workspace.yaml', True), ('library/ui/gallery/src/new.tsx', False)):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

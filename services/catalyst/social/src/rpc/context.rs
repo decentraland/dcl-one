@@ -371,8 +371,12 @@ impl Context {
             .get_or_init(|| Arc::new(crate::comms::topology::Topology::default()))
     }
 
-    /// Attaches the communities state (once).
+    /// Attaches the communities state (once), and the topology to it when
+    /// that is already attached ([`super::State::start_topology`] does it otherwise).
     pub fn set_communities(&self, communities: crate::communities::SharedState) {
+        if let Some(topology) = self.0.topology.get() {
+            communities.set_topology(topology.clone());
+        }
         let _ = self.0.communities.set(communities);
     }
 

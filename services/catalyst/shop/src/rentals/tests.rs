@@ -963,8 +963,8 @@ async fn a_running_rent_conflicts_and_an_ended_one_lets_its_lessor_relist() {
     assert_eq!(out["source"], "rentals-index");
 
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('rentals', 'ethereum', 0, 10, 10, timezone('UTC', now()), true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('rentals', 'ethereum', 0, 10, 10, timezone('UTC', now()), true, 1)",
     )
     .execute(&pool)
     .await

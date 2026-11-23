@@ -127,7 +127,7 @@ export function mapAuthor(entry: CmsEntry): BlogCmsAuthor | null {
 }
 
 /** A post without a known category, as sites. */
-const UNCATEGORIZED: BlogCategory = { slug: "uncategorized", title: "Uncategorized" };
+export const UNCATEGORIZED: BlogCategory = { slug: "uncategorized", title: "Uncategorized" };
 /** A post without a known author, as sites names it; no page to link. */
 const NO_AUTHOR: BlogAuthor = { slug: "", name: "Decentraland", image: "" };
 

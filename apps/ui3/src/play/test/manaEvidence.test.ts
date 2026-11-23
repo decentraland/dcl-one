@@ -2,7 +2,7 @@
 // to a signed send ends it as bought, and only a consumed nonce with no possible match ends it as not bought.
 import { describe, expect, it, vi } from 'vitest'
 import { encodeAbiParameters, encodeEventTopics, keccak256, parseAbiItem, type Hex } from 'viem'
-import { boundedReader, createManaEvidence, decodeExecution, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
+import { boundedReader, createManaEvidence, decodeExecution, manaIncluded, resolveMana, type ManaEvidence, type ManaExecution } from '../shell/shop/manaEvidence'
 import { createRpcReader } from '../../shop/checkout/chain/rpc'
 import type { ManaAttemptRecord } from '../shell/shop/manaPurchase'
 
@@ -38,6 +38,8 @@ function chain(opts: { now?: bigint; executions?: ManaExecution[] | Error; unlog
   const all = [...new Map([...logged, ...(opts.unlogged ?? [])].map((e) => [`${e.blockNumber}:${e.logIndex}`, e])).values()]
   const evidence: ManaEvidence = {
     finalized: vi.fn(async () => F),
+    // The finalized block's time: the epoch, so no credit's expiry is proven here.
+    finalizedTime: vi.fn(async () => 0),
     nonceAt: vi.fn(async (_c, _v, user, block) => (opts.now ?? 7n) - BigInt(all.filter((e) => e.user === user && e.blockNumber > block).length)),
     executions: vi.fn(async (_c, _v, from, to) => {
       if (opts.executions instanceof Error) throw opts.executions
@@ -230,6 +232,30 @@ describe('a MANA sale on chain', () => {
     expect(() => decodeExecution({ topics: ['0x5845892132946850460bff5a0083f71031bc5bf9aadcd40f1de79423eac9b10b'], data: '0x', transactionHash: HASH, blockNumber: '0x1' } as never)).toThrow(/place/)
   })
 
+  it('reads a transaction with its sender, so a useCredits the buyer’s own wallet sent can be told whose it is', async () => {
+    const answers: Record<string, unknown> = { [HASH]: { hash: HASH, from: BUYER, to: STORE, input: '0x1234', nonce: '0x1' }, [RELAY_HASH]: null }
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const { method, params, id } = JSON.parse(String(init?.body)) as { method: string; params: [string]; id: number }
+      expect(method).toBe('eth_getTransactionByHash')
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: answers[params[0]] }))
+    }
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    expect(await evidence.transaction(137, HASH)).toEqual({ from: BUYER, to: STORE, input: '0x1234' })
+    expect(await evidence.transaction(137, RELAY_HASH)).toBeNull()
+  })
+
+  it('reads the finalized block’s time, what proves a credit past its expiry can no longer be spent', async () => {
+    const fetchImpl = async (_url: string, init?: RequestInit) => {
+      const { method, params, id } = JSON.parse(String(init?.body)) as { method: string; params: [string, boolean]; id: number }
+      expect([method, params]).toEqual(['eth_getBlockByNumber', ['finalized', false]])
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { number: '0x10', timestamp: '0x6553f100' } }))
+    }
+    const reader = { call: async () => '0x' as Hex, receipt: async () => null, balance: async () => 0n, code: async () => '0x' as Hex }
+    const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
+    expect(await evidence.finalizedTime(137)).toBe(0x6553f100)
+  })
+
   it('lets an error answer’s body go instead of leaving it open', async () => {
     let cancelled = false
     const body = new ReadableStream({ pull: () => new Promise(() => {}), cancel: () => void (cancelled = true) })
@@ -238,5 +264,31 @@ describe('a MANA sale on chain', () => {
     const evidence = createManaEvidence({ url: () => 'https://rpc.test', fetchImpl: fetchImpl as unknown as typeof fetch, reader })
     await expect(evidence.finalized(137)).rejects.toThrow(/HTTP 503/)
     await vi.waitFor(() => expect(cancelled).toBe(true))
+  })
+})
+
+describe('a MANA sale on chain before it is final', () => {
+  const included = (rec: ManaAttemptRecord, evidence: ManaEvidence) => manaIncluded(rec, { chainId: 137, buyer: BUYER, venue: { address: STORE, metaTx: 'functionSignature' }, evidence })
+  const sent = record({ sends: [{ id: 's2', stage: 'dispatched', payload: keccak256(SIGNED), at: 1, hash: RELAY_HASH }] })
+
+  it('holds once the relay’s hash is this sale’s own signed execution past the checkpoint, final or not', async () => {
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: F + 50n } } }))).toBe(true)
+  })
+
+  it('doesn’t hold on a receipt alone: another transaction, another contract, at or before the checkpoint, reverted, or no hash', async () => {
+    const ok = { status: 'success' as const, blockNumber: 300n }
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: OTHER_SIGNED } }, receipts: { [RELAY_HASH]: ok } }))).toBe(false)
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: '0x' + '99'.repeat(20), input: SIGNED } }, receipts: { [RELAY_HASH]: ok } }))).toBe(false)
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 100n } } }))).toBe(false)
+    expect(await included(sent, chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: { status: 'reverted', blockNumber: 300n } } }))).toBe(false)
+    expect(await included(record(), chain({ txs: { [RELAY_HASH]: { to: STORE, input: SIGNED } }, receipts: { [RELAY_HASH]: ok } }))).toBe(false)
+  })
+
+  it('holds for a forwarder’s transaction whose block holds the execution that consumed the nonce with this call, never another call', async () => {
+    const forwarder = '0x' + '99'.repeat(20)
+    const at = (call: Hex) =>
+      chain({ now: 8n, executions: [execution({ blockNumber: 300n, txHash: RELAY_HASH, call })], txs: { [RELAY_HASH]: { to: forwarder, input: OTHER_SIGNED } }, receipts: { [RELAY_HASH]: { status: 'success', blockNumber: 300n } } })
+    expect(await included(sent, at(CALL))).toBe(true)
+    expect(await included(sent, at('0xbeef'))).toBe(false)
   })
 })

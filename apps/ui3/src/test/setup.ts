@@ -7,6 +7,18 @@ import { FIXTURE_NOW } from "../shop/market/fixtureNow";
 
 configure({ asyncUtilTimeout: 10_000 });
 
+// jsdom has no IntersectionObserver; links that preload their page once in view need one. Nothing is ever in view.
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  globalThis.IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
+
 // The shop fixtures carry absolute dates (bid and order expiries) relative to FIXTURE_NOW.
 const atFixtureTime = () => expect.getState().testPath?.includes("/src/shop/") ?? false;
 beforeEach(() => {

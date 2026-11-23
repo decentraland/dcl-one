@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useLocation } from "react-router";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { BlogIndexPage, BlogNotFound, BlogRoutingProvider, BlogSearchForm, BlogUnavailable } from "@dcl/one-ui/apps/sites/blog";
 
 import type { BlogListPayload } from "@/data/lib/blog/types";
@@ -43,7 +43,7 @@ export function BlogIndexView(data: BlogIndexData) {
   }
 
   return (
-    <SitesChrome active="learn">
+    <SitesLayout active="learn">
       <BlogRoutingProvider routing={blogRouting}>
         {data.state === "ok" ? (
           <div onClickCapture={onPostClick}>
@@ -67,6 +67,6 @@ export function BlogIndexView(data: BlogIndexData) {
           <BlogUnavailable />
         )}
       </BlogRoutingProvider>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

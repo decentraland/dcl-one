@@ -86,6 +86,25 @@ impl Wallet {
     }
 }
 
+/// A scoped login (ADR-162) from `wallet` to `ephemeral` for `grants` until
+/// `expiration_ms`, with `payload` signed by the ephemeral key.
+pub fn create_scoped_auth_chain(
+    wallet: &Wallet,
+    ephemeral: &Wallet,
+    expiration_ms: i64,
+    grants: &[crate::scoped_login::ScopedLoginGrant],
+    payload: &str,
+) -> Result<serde_json::Value, SignError> {
+    let message =
+        crate::scoped_login::scoped_ephemeral_message(&ephemeral.address(), expiration_ms, grants)
+            .map_err(SignError::SigningFailed)?;
+    Ok(serde_json::json!([
+        { "type": "SIGNER", "payload": wallet.address(), "signature": "" },
+        { "type": "ECDSA_SCOPED_EPHEMERAL", "payload": message, "signature": wallet.sign_message(message.as_bytes())? },
+        { "type": "ECDSA_SIGNED_ENTITY", "payload": payload, "signature": ephemeral.sign_message(payload.as_bytes())? },
+    ]))
+}
+
 /// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY over `payload`): what a
 /// signed fetch by a plain key carries.
 pub fn create_simple_auth_chain(

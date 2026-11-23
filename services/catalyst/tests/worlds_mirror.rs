@@ -1923,6 +1923,7 @@ async fn an_owner_edit_here_is_kept_while_that_owner_holds_the_name() {
             title: Some("Mine".into()),
             ..WorldSettingsUpdate::default()
         },
+        None,
     )
     .await
     .unwrap();

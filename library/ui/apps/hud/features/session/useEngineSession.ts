@@ -100,6 +100,7 @@ import type {
   GalleryPhotoMeta,
   GalleryWriteMessage,
   ExternalUrlOpenedMessage,
+  SatelliteTileMessage,
   PlaceMessage,
   WorldAccessMessage,
   SignedPlace,
@@ -995,7 +996,7 @@ export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1213,11 +1214,15 @@ export interface EngineSession {
   lobbyStage: { preset: string; set: (options: { preset?: string; idleEmotes?: boolean }) => void }
   /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
   openExternalUrl: (url: string) => Promise<boolean>
+  /** One deep-zoom satellite detail tile for the map, as base64 JPEG bytes; null when the engine
+   *  cannot decode it or the request fails. `path` is relative to the tile source. */
+  fetchSatelliteTile: (path: string) => Promise<string | null>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: EngineViewportRegion,
     rect: { x: number; y: number; width: number; height: number } | null,
-    dpr?: number
+    dpr?: number,
+    focus?: { x: number; y: number; width: number; height: number }
   ) => void
   /** Report the screen area the persistent HUD occupies (see lib/hudInset.ts). */
   setInteractableArea: (area: InteractableArea) => void
@@ -2639,6 +2644,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'gallery':
         case 'galleryWrite':
         case 'externalUrlOpened':
+        case 'satelliteTile':
         case 'place':
         case 'worldAccess':
         case 'giftingPage': {
@@ -2930,9 +2936,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'commands':
           driverRef.current?.send({ kind: 'consoleCommand', command: 'help' })
           break
-        case 'console':
-          driverRef.current?.send({ kind: 'consoleCommand', command: cmd.command, args: cmd.args })
+        case 'console': {
+          // The typed line goes to the engine whole, so the engine splits it by its one rule
+          // (quotes, escapes, a rest-of-line argument). Both HUD hosts install the function.
+          const run = (window as Window & { engine_console_command?: (line: string) => Promise<string> }).engine_console_command
+          if (run == null) {
+            pushSystemMessage('The engine console is not available.')
+            break
+          }
+          const reply = (output: unknown) =>
+            pushSystemMessage(formatConsoleReply(cmd.command, cmd.hasArgs ? [cmd.line] : [], output instanceof Error ? output.message : String(output)))
+          run(cmd.line).then(reply, reply)
           break
+        }
         case 'system':
           pushSystemMessage(cmd.message)
           break
@@ -3362,6 +3378,13 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   )
   const openExternalUrl = useCallback(
     async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
+    [bridgeCall]
+  )
+  const fetchSatelliteTile = useCallback(
+    async (path: string): Promise<string | null> => {
+      const msg = await bridgeCall('satelliteTile', (requestId) => ({ kind: 'getSatelliteTile', requestId, path }))
+      return msg?.ok === true && typeof msg.data === 'string' ? msg.data : null
+    },
     [bridgeCall]
   )
   const setGalleryPhotoPublic = useCallback(
@@ -4395,17 +4418,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   const lobbyStageOptions = useRef({ preset: lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string, idleEmotes: false })
   const lastLobbyReport = useRef<{ rect: { x: number; y: number; width: number; height: number } | null; dpr?: number } | null>(null)
   const setEngineViewport = useCallback(
-    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
+    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number, focus?: { x: number; y: number; width: number; height: number }) => {
       if (region === 'avatarPreview') setAvatarPreviewRect(rect)
       // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
       if (region === 'signin' && rect == null) setSigninStageReady(false)
+      // likewise the lobby's, which the bridge announces again to the next report
+      if (region === 'lobby' && rect == null) setLobbyStageReady(false)
       if (region === 'lobby') {
         lastLobbyReport.current = { rect, dpr }
         const { preset, idleEmotes } = lobbyStageOptions.current
         driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, stagePreset: preset, idleEmotes })
         return
       }
-      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr })
+      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}) })
     },
     []
   )
@@ -5308,6 +5333,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     openExternalUrl,
+    fetchSatelliteTile,
     setEngineViewport,
     lobbyStage: { preset: lobbyStagePresetState, set: setLobbyStage },
     setInteractableArea,

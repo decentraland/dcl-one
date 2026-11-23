@@ -54,7 +54,7 @@ struct Recipient {
 /// The sites the notices point at and the Slack switch.
 #[derive(Clone, Debug)]
 pub struct Links {
-    /// The events site (`/whats-on/{id}`): the link of the notices the old
+    /// The Sites origin of the Events pages: the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
     /// Backend events asset mount (`<origin>/events`) for the bundled default image.
@@ -251,7 +251,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
                 &intent.event,
             )
         }
-        _ => format!("{base}/whats-on/{}", urlencoding::encode(&intent.event_id)),
+        // A rejected event is not public, so its owner lands in its editor; a
+        // deleted one has no page left, so My Events.
+        "event_rejected" => format!(
+            "{base}/events/edit-event/{}",
+            urlencoding::encode(&intent.event_id)
+        ),
+        "event_deleted" => format!("{base}/events?tab=my"),
+        _ => format!("{base}/events?id={}", urlencoding::encode(&intent.event_id)),
     };
     let (title, description) = match intent.kind.as_str() {
         // `Notifications/index.ts:56-57`
@@ -317,7 +324,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         intent.kind.as_str(),
         "event_approved" | "event_rejected" | "event_deleted"
     ) {
-        metadata["myHangouts"] = json!(format!("{base}/whats-on?tab=my"));
+        metadata["myHangouts"] = json!(format!("{base}/events?tab=my"));
     }
     if intent.kind == "event_rejected" {
         metadata["reason"] = json!(text(&intent.event, "rejection_reason"));
@@ -1873,8 +1880,20 @@ mod tests {
                     "https://assets.example.org/events/"
                 ),
             )["link"],
-            "https://web.example.org/whats-on/legacy-event",
-            "notices upstream sent without a link keep this node's event page"
+            "https://web.example.org/events/edit-event/legacy-event",
+            "a rejected event is not public, so its notice opens the owner's editor"
+        );
+        assert_eq!(
+            metadata(
+                &intent("event_deleted", json!({"name":"Legacy"})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events/"
+                ),
+            )["link"],
+            "https://web.example.org/events?tab=my",
+            "a deleted event has no page, so its notice opens My Events"
         );
     }
 
@@ -1893,7 +1912,7 @@ mod tests {
                 &links,
             );
             assert_eq!(
-                payload["myHangouts"], "https://web.example.org/whats-on?tab=my",
+                payload["myHangouts"], "https://web.example.org/events?tab=my",
                 "{kind}"
             );
             assert_eq!(payload["title"], "Party", "{kind}");

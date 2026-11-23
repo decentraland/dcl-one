@@ -91,30 +91,27 @@ describe('when mapping captured text geometry and overlapping layers', () => {
   it.each([
     ['SPACE_BETWEEN', false],
     ['MIN', true]
-  ])(
-    'should emit the item spacing as a CSS gap only when the row is not %s-distributed',
-    (main, gap) => {
-      // Figma ignores itemSpacing under SPACE_BETWEEN; a CSS gap would be a minimum that overflows a narrower box.
-      const view = buildView(
-        {
-          type: 'FRAME',
-          w: 390,
-          h: 48,
-          layout: { mode: 'HORIZONTAL', pad: [0, 0, 0, 0], gap: 854.67, main, cross: 'CENTER' },
-          children: [
-            { type: 'FRAME', name: 'logo', w: 32, h: 32 },
-            { type: 'FRAME', name: 'menu', w: 32, h: 32 }
-          ]
-        } as RawNode,
-        env
-      )
-      expect(view.css.decls.some(([property]) => property === 'gap')).toBe(gap)
-      expect(view.css.decls).toContainEqual([
-        'justify-content',
-        main === 'SPACE_BETWEEN' ? 'space-between' : 'flex-start'
-      ])
-    }
-  )
+  ])('should emit the item spacing of a %s-distributed row as a CSS gap: %s', (main, gap) => {
+    // Figma ignores itemSpacing under SPACE_BETWEEN; a CSS gap would be a minimum that overflows a narrower box.
+    const view = buildView(
+      {
+        type: 'FRAME',
+        w: 390,
+        h: 48,
+        layout: { mode: 'HORIZONTAL', pad: [0, 0, 0, 0], gap: 854.67, main, cross: 'CENTER' },
+        children: [
+          { type: 'FRAME', name: 'logo', w: 32, h: 32 },
+          { type: 'FRAME', name: 'menu', w: 32, h: 32 }
+        ]
+      } as RawNode,
+      env
+    )
+    expect(view.css.decls.some(([property]) => property === 'gap')).toBe(gap)
+    expect(view.css.decls).toContainEqual([
+      'justify-content',
+      main === 'SPACE_BETWEEN' ? 'space-between' : 'flex-start'
+    ])
+  })
 
   describe.each([
     ['HORIZONTAL', 'margin-left', ['FILL', 'FIXED'], ['HUG', 'FIXED']],
