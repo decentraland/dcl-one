@@ -3,6 +3,7 @@ use crate::sync_test_support::{
     signed_chain, signed_chain_behind_contract, temp_storage, test_pool, unique,
 };
 use crate::sync_types::AuthLinkType;
+use futures::FutureExt;
 
 const ENTITY_BODY: &[u8] = br#"{"type":"scene","pointers":["0,0"],"timestamp":1,"content":[]}"#;
 
@@ -1451,15 +1452,118 @@ async fn a_flush_waits_for_the_exclusive_store_lock() {
 /// A flush task that unwinds still counts its flush done and wakes `flush`.
 #[test]
 fn a_dropped_flush_guard_counts_the_flush_done_and_wakes_the_waiter() {
-    use futures::FutureExt;
     let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let idle_notify = Arc::new(tokio::sync::Notify::new());
     let flushing = FlushInFlight::start(in_flight.clone(), idle_notify.clone());
     assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 1);
     let woken = idle_notify.notified();
+    tokio::pin!(woken);
+    woken.as_mut().enable();
 
     drop(flushing);
 
     assert_eq!(in_flight.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert!(woken.now_or_never().is_some(), "flush woken");
+}
+
+/// Sleeps first, so `flush` is already waiting when it panics.
+async fn exploding_flush() -> Flushed {
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    panic!("flush exploded")
+}
+
+/// A batch flush that panics still lets `flush` return, and its entities are recorded for retry.
+#[tokio::test]
+async fn a_flush_that_panics_lets_flush_return_and_records_its_entities_for_retry() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let prefix = unique();
+    let ids = [format!("{prefix}-a"), format!("{prefix}-b")];
+    let deployer = LiveSyncDeployer {
+        pool: pool.clone(),
+        ..lazy_deployer()
+    };
+    let entities = ids
+        .iter()
+        .map(|id| parse_entity_for_deploy(ENTITY_BODY, id, &Vec::new()).unwrap())
+        .collect();
+
+    spawn_flush_with(
+        pool.clone(),
+        None,
+        deployer.flush_sem.clone(),
+        deployer.in_flight.clone(),
+        deployer.idle_notify.clone(),
+        deployer.lost.clone(),
+        entities,
+        |_, _, _| Box::pin(exploding_flush()),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(30), deployer.flush())
+        .await
+        .expect("flush returned")
+        .unwrap();
+
+    let descriptions: Vec<String> = sqlx::query_scalar(
+        "SELECT error_description FROM content.failed_deployments WHERE entity_id = ANY($1)",
+    )
+    .bind(&ids[..])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(descriptions.len(), 2);
+    for description in &descriptions {
+        assert!(
+            description.contains("the batch flush panicked: flush exploded"),
+            "{description}"
+        );
+    }
+    assert_eq!(deployer.lost_count(), 0);
+    delete_entity_rows(&pool, &[&ids[0], &ids[1]]).await;
+}
+
+/// A panic while recording a failed flush counts lost only the entities named for recording
+/// that were not yet recorded, each id once.
+#[tokio::test]
+async fn a_panic_while_recording_counts_only_the_unrecorded_entities_lost() {
+    let Some(pool) = test_pool(2).await else {
+        return;
+    };
+    let prefix = unique();
+    let [committed, recorded, panics, unreached] =
+        ["committed", "recorded", "panics", "unreached"].map(|n| format!("{prefix}-{n}"));
+    let entities: Vec<ParsedEntity> = [&committed, &recorded, &panics, &unreached, &unreached]
+        .into_iter()
+        .map(|id| {
+            let mut entity = parse_entity_for_deploy(ENTITY_BODY, id, &Vec::new()).unwrap();
+            entity.report = Some(Arc::new(DeploymentReport::default()));
+            entity
+        })
+        .collect();
+    let lost = std::sync::atomic::AtomicU64::new(0);
+    let panicked = std::sync::atomic::AtomicBool::new(false);
+
+    record_flush_failures_or_count_lost(&pool, &lost, &entities, |id| {
+        if id == panics && !panicked.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            panic!("recording exploded");
+        }
+        (id != committed).then(|| "left out".to_string())
+    })
+    .await;
+
+    assert_eq!(lost.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let reported: Vec<u64> = entities
+        .iter()
+        .map(|e| e.report.as_ref().unwrap().lost())
+        .collect();
+    assert_eq!(reported, [0, 0, 1, 1, 0], "each id once, on its first copy");
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM content.failed_deployments WHERE entity_id = ANY($1)",
+    )
+    .bind([&committed, &recorded, &panics, &unreached])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, std::slice::from_ref(&recorded));
+    delete_entity_rows(&pool, &[&recorded]).await;
 }

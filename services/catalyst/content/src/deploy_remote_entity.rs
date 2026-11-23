@@ -388,28 +388,43 @@ fn eviction_locks() -> &'static parking_lot::Mutex<HashMap<String, Arc<tokio::sy
     LOCKS.get_or_init(Default::default)
 }
 
-async fn evict_corrupt_entity_file(storage: &Storage, entity_id: &str) -> &'static str {
-    let lock = {
-        let mut map = eviction_locks().lock();
-        map.entry(entity_id.to_string()).or_default().clone()
-    };
+/// An entity's entry in [`eviction_locks`], removed on drop (also on unwind or cancellation)
+/// once no other eviction holds it.
+struct EvictionLock {
+    entity_id: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
 
-    let outcome = {
-        let _guard = lock.lock().await;
-        evict_corrupt_entity_file_locked(storage, entity_id).await
-    };
-
-    {
-        let mut map = eviction_locks().lock();
-        if let Some(existing) = map.get(entity_id)
-            && Arc::ptr_eq(existing, &lock)
-            && Arc::strong_count(existing) == 2
-        {
-            map.remove(entity_id);
+impl EvictionLock {
+    fn of(entity_id: &str) -> Self {
+        let lock = eviction_locks()
+            .lock()
+            .entry(entity_id.to_string())
+            .or_default()
+            .clone();
+        Self {
+            entity_id: entity_id.to_string(),
+            lock,
         }
     }
+}
 
-    outcome
+impl Drop for EvictionLock {
+    fn drop(&mut self) {
+        let mut map = eviction_locks().lock();
+        if let Some(existing) = map.get(&self.entity_id)
+            && Arc::ptr_eq(existing, &self.lock)
+            && Arc::strong_count(existing) == 2
+        {
+            map.remove(&self.entity_id);
+        }
+    }
+}
+
+async fn evict_corrupt_entity_file(storage: &Storage, entity_id: &str) -> &'static str {
+    let entry = EvictionLock::of(entity_id);
+    let _held = entry.lock.lock().await;
+    evict_corrupt_entity_file_locked(storage, entity_id).await
 }
 
 async fn evict_corrupt_entity_file_locked(storage: &Storage, entity_id: &str) -> &'static str {
@@ -461,15 +476,12 @@ pub async fn deploy_entity_streaming(
     deployer: &LiveSyncDeployer,
     target: RemoteDeployment<'_>,
 ) -> Result<(), SyncError> {
-    use futures::FutureExt;
     // Unwind safe: every lock, permit and reservation it holds is RAII or poison-tolerant.
-    std::panic::AssertUnwindSafe(deploy_entity_streaming_unguarded(source, deployer, target))
-        .catch_unwind()
+    crate::jobs::catch_panic(deploy_entity_streaming_unguarded(source, deployer, target))
         .await
         .unwrap_or_else(|panic| {
             Err(SyncError::Other(format!(
-                "the deployment panicked: {}",
-                crate::jobs::panic_message(panic.as_ref())
+                "the deployment panicked: {panic}"
             )))
         })
 }
@@ -1609,6 +1621,30 @@ mod tests {
         assert!(!eviction_locks().lock().contains_key(&entity_id));
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[test]
+    fn an_eviction_that_unwinds_leaves_no_lock_entry() {
+        let entity_id = format!("bafy-eviction-unwinds-{}", std::process::id());
+        let unwound = std::panic::catch_unwind(|| {
+            let _entry = EvictionLock::of(&entity_id);
+            assert!(eviction_locks().lock().contains_key(&entity_id));
+            panic!("eviction panicked");
+        });
+        assert!(unwound.is_err());
+        assert!(!eviction_locks().lock().contains_key(&entity_id));
+    }
+
+    #[test]
+    fn an_eviction_lock_another_eviction_holds_stays_until_both_end() {
+        let entity_id = format!("bafy-eviction-shared-{}", std::process::id());
+        let first = EvictionLock::of(&entity_id);
+        let second = EvictionLock::of(&entity_id);
+        assert!(Arc::ptr_eq(&first.lock, &second.lock));
+        drop(first);
+        assert!(eviction_locks().lock().contains_key(&entity_id));
+        drop(second);
+        assert!(!eviction_locks().lock().contains_key(&entity_id));
     }
 
     #[cfg(unix)]

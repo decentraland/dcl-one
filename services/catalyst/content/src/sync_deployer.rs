@@ -37,6 +37,7 @@ use crate::failed_deployments_store::LiveFailedDeploymentsStore;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use serde_json::Value;
 use sqlx::PgPool;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
@@ -388,7 +389,41 @@ fn spawn_flush(
     lost: Arc<std::sync::atomic::AtomicU64>,
     entities: Vec<ParsedEntity>,
 ) {
-    use futures::FutureExt;
+    spawn_flush_with(
+        pool,
+        storage,
+        flush_sem,
+        in_flight,
+        idle_notify,
+        lost,
+        entities,
+        |pool, storage, entities| Box::pin(flush_batch(pool, storage, entities)),
+    );
+}
+
+/// The result of a batch flush: the entities it left out, each with the reason to record.
+type Flushed = Result<HashMap<String, String>, SyncError>;
+
+/// [`spawn_flush`] with the batch written by `flush` (the tests' seam).
+#[allow(clippy::too_many_arguments)]
+fn spawn_flush_with<F>(
+    pool: PgPool,
+    storage: Option<Arc<Storage>>,
+    flush_sem: Arc<Semaphore>,
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    idle_notify: Arc<tokio::sync::Notify>,
+    lost: Arc<std::sync::atomic::AtomicU64>,
+    entities: Vec<ParsedEntity>,
+    flush: F,
+) where
+    F: for<'a> FnOnce(
+            &'a PgPool,
+            Option<&'a Storage>,
+            &'a [ParsedEntity],
+        ) -> BoxFuture<'a, Flushed>
+        + Send
+        + 'static,
+{
     if entities.is_empty() {
         return;
     }
@@ -398,62 +433,82 @@ fn spawn_flush(
         let _permit = flush_sem.acquire().await;
         // A panic is a failed flush: its entities are recorded for retry.
         let flushed =
-            std::panic::AssertUnwindSafe(flush_batch(&pool, storage.as_deref(), &entities))
-                .catch_unwind()
+            crate::jobs::catch_panic(async { flush(&pool, storage.as_deref(), &entities).await })
                 .await
                 .unwrap_or_else(|panic| {
                     Err(SyncError::Other(format!(
-                        "the batch flush panicked: {}",
-                        crate::jobs::panic_message(panic.as_ref())
+                        "the batch flush panicked: {panic}"
                     )))
                 });
-        let recorded = match flushed {
+        let failed = match flushed {
             Ok(dropped) if dropped.is_empty() => return,
             Ok(dropped) => {
                 tracing::warn!(
                     count = dropped.len(),
                     "Batch flush left out entities whose files left the store; recorded for retry"
                 );
-                std::panic::AssertUnwindSafe(record_flush_failures(&pool, &lost, &entities, |id| {
-                    dropped.get(id).cloned()
-                }))
-                .catch_unwind()
-                .await
+                Ok(dropped)
             }
             Err(e) => {
                 tracing::error!(error = %e, count = entities.len(), "Batch flush failed");
-                let reason = format!("batch flush failed: {}", e);
-                std::panic::AssertUnwindSafe(record_flush_failures(&pool, &lost, &entities, |_| {
-                    Some(reason.clone())
-                }))
-                .catch_unwind()
-                .await
+                Err(format!("batch flush failed: {e}"))
             }
         };
-        // Which entities were recorded is unknown: every one counts lost, holding the frontier.
-        if let Err(panic) = recorded {
-            for entity in &entities {
-                lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if let Some(report) = &entity.report {
-                    report.record_lost();
-                }
-            }
-            tracing::error!(
-                count = entities.len(),
-                panic = crate::jobs::panic_message(panic.as_ref()),
-                "Recording a failed batch flush panicked; holding the sync frontier back"
-            );
-        }
+        record_flush_failures_or_count_lost(&pool, &lost, &entities, |id| match &failed {
+            Ok(dropped) => dropped.get(id).cloned(),
+            Err(reason) => Some(reason.clone()),
+        })
+        .await;
     });
 }
 
+/// [`record_flush_failures`], and when that panics, every entity `reason` names that it had not
+/// yet recorded or counted counts lost, which holds the sync frontier back.
+async fn record_flush_failures_or_count_lost(
+    pool: &PgPool,
+    lost: &std::sync::atomic::AtomicU64,
+    entities: &[ParsedEntity],
+    reason: impl Fn(&str) -> Option<String>,
+) {
+    let mut settled = HashSet::new();
+    let recorded = crate::jobs::catch_panic(record_flush_failures(
+        pool,
+        lost,
+        entities,
+        &reason,
+        &mut settled,
+    ))
+    .await;
+    let Err(panic) = recorded else {
+        return;
+    };
+    let mut unsettled = 0;
+    for entity in entities {
+        if reason(&entity.entity_id).is_none() || !settled.insert(entity.entity_id.clone()) {
+            continue;
+        }
+        unsettled += 1;
+        lost.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(report) = &entity.report {
+            report.record_lost();
+        }
+    }
+    tracing::error!(
+        count = unsettled,
+        panic,
+        "Recording a failed batch flush panicked; holding the sync frontier back"
+    );
+}
+
 /// Records each entity `reason` names (once per id, with the strongest retry state among its
-/// copies) in `content.failed_deployments`; one that cannot be recorded counts as lost.
+/// copies) in `content.failed_deployments`; one that cannot be recorded counts as lost. Each id
+/// recorded or counted lost joins `settled`.
 async fn record_flush_failures(
     pool: &PgPool,
     lost: &std::sync::atomic::AtomicU64,
     entities: &[ParsedEntity],
     reason: impl Fn(&str) -> Option<String>,
+    settled: &mut HashSet<String>,
 ) {
     let failed_store = LiveFailedDeploymentsStore::new(pool.clone());
     let mut strongest = strongest_retry_state(entities);
@@ -477,6 +532,7 @@ async fn record_flush_failures(
                     "Entity dropped by a failed batch flush has an unconvertible auth \
                      chain; counting it as lost instead of recording an un-retryable row"
                 );
+                settled.insert(entity.entity_id.clone());
                 continue;
             }
         };
@@ -493,6 +549,7 @@ async fn record_flush_failures(
                  failed deployment; holding the sync frontier back"
             );
         }
+        settled.insert(entity.entity_id.clone());
     }
 }
 
