@@ -67,7 +67,6 @@ impl Plugin for AvatarMovementPlugin {
         );
 
         app.init_resource::<AvatarMovementInfo>();
-        app.init_resource::<InputModifierBypass>();
         app.register_required_components::<PrimaryUser, LocomotionSpeeds>();
         app.register_required_components::<RendererSceneContext, MovementPeriod>();
         app.init_resource::<CollisionPush>();
@@ -142,13 +141,6 @@ fn update_locomotion_speeds(
         speeds.set_if_neq(locomotion_speeds(&base, settings));
     }
 }
-
-/// While set, the active `InputModifier` is left out of the avatar movement info, which every
-/// scene that reads that info gets (the movement scene among them), so the player moves as if no
-/// scene restricted it. `/walk --ignore-input-modifiers` sets it for the walk, in preview only.
-/// The component stays on the player for whatever else reads it.
-#[derive(Resource, Default)]
-pub struct InputModifierBypass(pub bool);
 
 fn update_priority_scene(
     player: Query<&ActivePlayerComponent<AvatarMovement>, With<PrimaryUser>>,
@@ -752,7 +744,7 @@ pub fn apply_movement(
 }
 
 /// How far above the ground the player may be and count as standing on it.
-pub const GROUNDED_METRES: f32 = 0.2;
+pub(crate) const GROUNDED_METRES: f32 = 0.2;
 
 /// Forget the take-off time once the player is back on the ground and no longer rising, so that
 /// `jump_time` marks a jump in flight (`<= 0.0` for none): the animation's take-off window and the
@@ -1007,14 +999,14 @@ fn broadcast_movement_info(
     feedback: Res<SceneDrivenAnimationFeedback>,
     mut scenes: Query<(&mut RendererSceneContext, &MovementPeriod)>,
     time: Res<Time>,
-    bypass: Res<InputModifierBypass>,
+    movement_control: Res<EngineMovementControl>,
     mut buf: Local<Vec<u8>>,
 ) {
     let (maybe_locomotion, maybe_modifier) = active_components.single().unwrap_or_default();
 
     info.0.active_avatar_locomotion_settings = maybe_locomotion.map(|l| l.component.0.clone());
     info.0.active_input_modifier = maybe_modifier
-        .filter(|_| !bypass.0)
+        .filter(|_| movement_control.suppress_input_modifier.is_empty())
         .and_then(|l| l.component.0.clone());
     info.0.active_animation_state = feedback.state.as_ref().map(|s| AvatarAnimationState {
         src: s.src.clone(),

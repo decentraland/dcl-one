@@ -3,7 +3,7 @@
 //! input script, so the movement scene reads them as it reads the keyboard: the gait is the walk
 //! (`IaWalk`) or run (`IaModifier`) binding held with them, jog neither. `--ignore-input-modifiers`
 //! keeps the active `InputModifier` out of the avatar movement info for the walk
-//! (`InputModifierBypass`); it overrides a scene's rule, so it is refused outside preview, as the
+//! (`EngineMovementControl::suppress_input_modifier`); it overrides a scene's rule, so it is refused outside preview, as the
 //! preview-only movement commands are absent there. `drive_walk` follows the walk frame by frame
 //! and answers once the player has settled:
 //!
@@ -23,7 +23,7 @@ use common::{
     inputs::{CommonInputAction, InputIdentifier, InputMap},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
-    structs::{OutOfWorld, PreviewMode, PrimaryUser},
+    structs::{EngineMovementControl, OutOfWorld, PreviewMode, PrimaryUser},
 };
 use console::{
     reply::{self, refusal},
@@ -37,17 +37,18 @@ use input_manager::{InputManager, InputPriority};
 use scene_runner::{update_world::avatar_modifier_area::InputModifier, vec3_to_parcel};
 use serde::Serialize;
 use serde_json::{json, Value};
-use user_input::avatar_movement::{ActivePlayerComponent, InputModifierBypass};
+use user_input::avatar_movement::ActivePlayerComponent;
 
 use super::{
     input::InputScript,
     pointer::{binding_error, binding_step},
 };
 
-/// The walk's name in `/gesture_state` and as the holder a second walk is refused with.
+/// The walk's name in `/gesture_state`, as the holder a second walk is refused with, and as its
+/// reason in `EngineMovementControl::suppress_input_modifier`.
 const WALK: &str = "walk";
 
-/// How long the jump key stays down at most: long enough for a full jump, short of a second one.
+/// How long the jump key stays down: long enough for a full jump, short of a second one.
 const JUMP_HOLD_SECONDS: f32 = 0.5;
 /// How fast the player may move, in metres a second, and count as still.
 const STILL_SPEED: f32 = 0.3;
@@ -87,7 +88,7 @@ impl Plugin for AutomationWalkPlugin {
 /// Walk the player camera-relative for --seconds (1 by default) by holding the movement keys, as
 /// the keyboard does: dx is right (+) or left (-), dy forward (+) or backward (-), each from -1 to
 /// 1, a component at least 0.3 from 0 pressing its key. --kind walk holds the walk key with them,
-/// run the run key, jog neither; --jump presses jump as the walk starts (held at most 0.5 s);
+/// run the run key, jog neither; --jump presses jump as the walk starts (held 0.5 s, or the walk if shorter);
 /// --ignore-input-modifiers keeps the scene's InputModifier out of the avatar movement info for
 /// the walk, in preview only. Answers, as JSON, once the player has settled after the keys are up
 /// (settled: false when it had not within 3 s): startPosition, endPosition, distance, parcel, the
@@ -219,7 +220,8 @@ struct Walk {
 }
 
 impl Walk {
-    /// What the walk is doing, for `/gesture_state`: its stage and the keys that are down.
+    /// What the walk is doing, for `/gesture_state`: its stage and its keys, which are queued while
+    /// pressing, down while holding and going up while releasing.
     fn status(&self) -> String {
         let down = match self.stage {
             Stage::Settling { .. } => None,
@@ -272,7 +274,7 @@ fn walk_cmd(
     mut input: ConsoleCommand<WalkCommand>,
     mut job: ResMut<WalkJob>,
     mut script: ResMut<InputScript>,
-    mut bypass: ResMut<InputModifierBypass>,
+    mut movement_control: ResMut<EngineMovementControl>,
     mut pending: ResMut<PendingConsoleResponses>,
     preview: Option<Res<PreviewMode>>,
     input_map: Res<InputMap>,
@@ -287,7 +289,7 @@ fn walk_cmd(
         preview.is_some_and(|preview| preview.is_preview),
         &mut job,
         &mut script,
-        &mut bypass,
+        &mut movement_control,
         &input_map,
         &input_manager,
         &player,
@@ -299,14 +301,14 @@ fn walk_cmd(
 }
 
 /// Checks everything that can refuse the walk, then presses its keys and, with
-/// `--ignore-input-modifiers`, sets the bypass. A refused walk changes nothing.
+/// `--ignore-input-modifiers`, withholds the `InputModifier`. A refused walk changes nothing.
 #[allow(clippy::too_many_arguments)]
 fn start_walk(
     command: &WalkCommand,
     preview: bool,
     job: &mut WalkJob,
     script: &mut InputScript,
-    bypass: &mut InputModifierBypass,
+    movement_control: &mut EngineMovementControl,
     input_map: &InputMap,
     input_manager: &InputManager,
     player: &Player,
@@ -375,7 +377,9 @@ fn start_walk(
             step = script.push(press);
         }
     }
-    bypass.0 = command.ignore_input_modifiers;
+    if command.ignore_input_modifiers {
+        movement_control.suppress_input_modifier.insert(WALK);
+    }
     let keys: Vec<String> = held.iter().chain(&jump).map(key_name).collect();
     let (reply, rx) = RpcResultSender::channel();
     job.0 = Some(Walk {
@@ -408,7 +412,7 @@ fn release(script: &mut InputScript, binding: &InputIdentifier) -> u64 {
 fn drive_walk(
     mut job: ResMut<WalkJob>,
     mut script: ResMut<InputScript>,
-    mut bypass: ResMut<InputModifierBypass>,
+    mut movement_control: ResMut<EngineMovementControl>,
     time: Res<Time>,
     player: Query<
         (
@@ -430,7 +434,7 @@ fn drive_walk(
                     release(&mut script, binding);
                 }
             }
-            bypass.0 = false;
+            withhold_no_more(&mut movement_control);
             walk.reply.send(Err(refusal(
                 "the player was removed during the walk",
                 Some(json!({ "stage": walk.stage.name() })),
@@ -453,12 +457,12 @@ fn drive_walk(
         // the steps of a frame are played in its `PreUpdate`, before this `Update`
         Stage::Pressing { step } if script.played() >= step => Stage::Holding { since: now },
         Stage::Holding { since } => {
-            if now - since >= walk.jump_hold {
+            // a release is played next frame: queue it a frame early
+            if now + frame_seconds - since >= walk.jump_hold {
                 if let Some(jump) = walk.jump.take() {
                     release(&mut script, &jump);
                 }
             }
-            // the release is played next frame: queue it a frame early
             if now + frame_seconds - since >= walk.hold {
                 let mut step = 0;
                 for binding in walk.jump.take().iter().chain(walk.held.iter().rev()) {
@@ -476,9 +480,11 @@ fn drive_walk(
         },
         Stage::Settling { since, still, held } => {
             // a speed, not a distance a frame, so "still" is the same at any frame rate; a frame
-            // that took no time says nothing
+            // that took no time says nothing, and leaves the count as it was
             let moved = position.distance(walk.last) as f64;
-            let still = if frame_seconds > 0.0 && moved / frame_seconds < STILL_SPEED as f64 {
+            let still = if frame_seconds <= 0.0 {
+                still
+            } else if moved / frame_seconds < STILL_SPEED as f64 {
                 still + 1
             } else {
                 0
@@ -494,11 +500,19 @@ fn drive_walk(
     walk.last = position;
 
     if let Some((held, settled)) = done {
-        bypass.0 = false;
+        withhold_no_more(&mut movement_control);
         if let Some(walk) = job.0.take() {
             let reply = walk_reply(&walk, position, held, settled);
             walk.reply.send(Ok(reply));
         }
+    }
+}
+
+/// Ends the walk's hold on the `InputModifier`, without marking the resource changed when the walk
+/// held none.
+fn withhold_no_more(movement_control: &mut ResMut<EngineMovementControl>) {
+    if movement_control.suppress_input_modifier.contains(WALK) {
+        movement_control.suppress_input_modifier.remove(WALK);
     }
 }
 
@@ -523,8 +537,9 @@ fn walk_reply(walk: &Walk, end: Vec3, held: f64, settled: bool) -> String {
     .unwrap_or_default()
 }
 
-/// Read the automation gestures that are running, as JSON: running (each gesture's command name
-/// with its stage and the keys it holds down) and inputModifierWithheld
+/// Read the running /walk, as JSON: running (walk, with its stage and its keys: the ones queued
+/// while pressing, down while holding, going up while releasing; empty when no walk runs) and
+/// inputModifierWithheld (the walk keeps the InputModifier out of the avatar movement info)
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/gesture_state")]
 struct GestureStateCommand;
@@ -532,19 +547,19 @@ struct GestureStateCommand;
 fn gesture_state_cmd(
     mut input: ConsoleCommand<GestureStateCommand>,
     job: Res<WalkJob>,
-    bypass: Res<InputModifierBypass>,
+    movement_control: Res<EngineMovementControl>,
 ) {
     let Some(Ok(_)) = input.take() else {
         return;
     };
-    input.reply_ok(gesture_state(&job, &bypass).to_string());
+    input.reply_ok(gesture_state(&job, &movement_control).to_string());
 }
 
-fn gesture_state(job: &WalkJob, bypass: &InputModifierBypass) -> Value {
+fn gesture_state(job: &WalkJob, movement_control: &EngineMovementControl) -> Value {
     let running: BTreeMap<&str, String> = job.0.iter().map(|walk| (WALK, walk.status())).collect();
     json!({
         "running": running,
-        "inputModifierWithheld": bypass.0,
+        "inputModifierWithheld": movement_control.suppress_input_modifier.contains(WALK),
         "unavailable": { "running.walk": "No walk is running." },
     })
 }
@@ -569,7 +584,7 @@ mod tests {
     type Start<'w, 's> = (
         ResMut<'w, WalkJob>,
         ResMut<'w, InputScript>,
-        ResMut<'w, InputModifierBypass>,
+        ResMut<'w, EngineMovementControl>,
         Res<'w, InputMap>,
         InputManager<'w, 's>,
         Player<'w, 's>,
@@ -587,7 +602,7 @@ mod tests {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<CumulativeAxisData>()
             .init_resource::<InputPriorities>()
-            .init_resource::<InputModifierBypass>()
+            .init_resource::<EngineMovementControl>()
             .init_resource::<WalkJob>()
             .init_resource::<Time>()
             .add_systems(PreUpdate, play_input_script)
@@ -616,14 +631,14 @@ mod tests {
         preview: bool,
     ) -> Result<RpcResultReceiver<Result<String, String>>, String> {
         let mut state = SystemState::<Start>::new(app.world_mut());
-        let (mut job, mut script, mut bypass, input_map, input_manager, player) =
+        let (mut job, mut script, mut movement_control, input_map, input_manager, player) =
             state.get_mut(app.world_mut());
         start_walk(
             command,
             preview,
             &mut job,
             &mut script,
-            &mut bypass,
+            &mut movement_control,
             &input_map,
             &input_manager,
             &player,
@@ -662,7 +677,10 @@ mod tests {
     }
 
     fn bypassed(app: &App) -> bool {
-        app.world().resource::<InputModifierBypass>().0
+        app.world()
+            .resource::<EngineMovementControl>()
+            .suppress_input_modifier
+            .contains(WALK)
     }
 
     fn refused(text: &str) -> Value {
@@ -685,7 +703,7 @@ mod tests {
         assert_eq!(
             gesture_state(
                 app.world().resource::<WalkJob>(),
-                app.world().resource::<InputModifierBypass>()
+                app.world().resource::<EngineMovementControl>()
             )["running"]["walk"],
             "holding KeyW"
         );
@@ -717,7 +735,7 @@ mod tests {
         assert_eq!(
             gesture_state(
                 app.world().resource::<WalkJob>(),
-                app.world().resource::<InputModifierBypass>()
+                app.world().resource::<EngineMovementControl>()
             )["running"],
             json!({})
         );
@@ -748,11 +766,14 @@ mod tests {
             status(&app).as_deref(),
             Some("holding ShiftLeft KeyW Space")
         );
-        // half a second later the jump key is released; the others stay down
-        frame(&mut app);
+        // its release is queued a frame before half a second is up; the others stay down
         frame(&mut app);
         assert_eq!(status(&app).as_deref(), Some("holding ShiftLeft KeyW"));
         assert_eq!(queued(&app), 1);
+        // and played in the next, half a second after the hold began
+        frame(&mut app);
+        assert_eq!(queued(&app), 0);
+        assert_eq!(stage(&app), Some("holding"));
     }
 
     #[test]

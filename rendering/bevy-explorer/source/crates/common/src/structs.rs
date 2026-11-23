@@ -1856,6 +1856,11 @@ pub struct EngineMovementControl {
     pub suppress_clipping: HashSet<&'static str>,
     /// Non-empty means avatar physics movement systems are suppressed (e.g. "move_player_to" during interpolation)
     pub suppress_avatar_physics: HashSet<&'static str>,
+    /// Non-empty means the active `InputModifier` is left out of the avatar movement info, which
+    /// every scene that reads that info gets (the movement scene among them), so the player moves
+    /// as if no scene restricted it (e.g. "walk" during `/walk --ignore-input-modifiers`, in
+    /// preview only). The component stays on the player for whatever else reads it.
+    pub suppress_input_modifier: HashSet<&'static str>,
     /// Scene-driven `AvatarMovement` is ignored (physics suppressed) until a tick
     /// initiated strictly after this time (engine dispatch clock, `last_sent` secs)
     /// is received. Set by `movePlayerTo` when it imposes a facing, so the imposed

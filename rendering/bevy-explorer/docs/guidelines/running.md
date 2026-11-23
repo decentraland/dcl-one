@@ -422,9 +422,9 @@ The HUD and input:
   left (-), `dy` forward (+) or backward (-), each from -1 to 1, and a component at least 0.3 from
   0 presses its key. The movement scene sets the gait from the actions held with them: `IaWalk`
   for `walk`, `IaModifier` for `run`, neither for `jog` (the default). `--jump` presses jump as
-  the walk starts and holds it at most 0.5 s. The movement scene applies the active
+  the walk starts and holds it 0.5 s (the walk's length if that is shorter). The movement scene applies the active
   `InputModifier`, which the engine passes in the avatar movement info;
-  `--ignore-input-modifiers` leaves it out of that info for the walk (`InputModifierBypass`), for
+  `--ignore-input-modifiers` leaves it out of that info for the walk (`EngineMovementControl::suppress_input_modifier`), for
   every scene that reads it. That overrides a scene's rule, so the flag works in preview only, as
   `/noclip`, `/speed` and `/jump` do: outside preview the walk is refused (`cause.flag`
   `ignore-input-modifiers`). Because the keys
@@ -454,10 +454,12 @@ The HUD and input:
   `/camera_state` and `/movement_state` each report a part of, rounded to hundredths; `velocity`
   is the engine's own (`AvatarDynamicState`), where `/movement_state` reports what the movement
   scene sent back.
-- `/gesture_state` (`src/automation/walk.rs`): JSON `running` (each running automation
-  gesture by command name, with its stage and the keys it holds down now, the gait key first,
-  such as `{"walk": "holding ShiftLeft KeyW"}`; empty when none runs) and
-  `inputModifierWithheld`. The debug panel's "Automation gestures" section reads
+- `/gesture_state` (`src/automation/walk.rs`): JSON `running` (the running `/walk`, under
+  `walk`, with its stage and its keys, the gait key first: the keys queued while `pressing`, down
+  while `holding`, going up while `releasing`, none while `settling`, such as
+  `{"walk": "holding ShiftLeft KeyW"}`; empty when no walk runs; a running `/hover_entity` or
+  `/click_entity` is not listed) and `inputModifierWithheld` (a walk with
+  `--ignore-input-modifiers` is running). The debug panel's "Automation gestures" section reads
   it.
 - `/raycast_stats` (JSON: the capped tier's `budgetMs`, `ran`, `deferred` and `spentMs`, and the
   uncapped tier's `uncappedRan` and `uncappedSpentMs`, each for its last frame with raycasts to
