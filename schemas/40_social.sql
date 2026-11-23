@@ -1556,13 +1556,15 @@ CREATE TABLE social.first_wear_outbox (
     address text NOT NULL,
     urn text NOT NULL,
     wearer text,
-    attempted_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    attempts integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    retry_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
     CONSTRAINT first_wear_outbox_pkey PRIMARY KEY (address, urn),
     CONSTRAINT first_wear_outbox_history_fkey FOREIGN KEY (address, urn)
         REFERENCES social.worn_history (address, urn) ON DELETE CASCADE
 );
-CREATE INDEX first_wear_outbox_attempt_idx
-    ON social.first_wear_outbox (attempted_at, address, urn);
+CREATE INDEX first_wear_outbox_due_idx
+    ON social.first_wear_outbox (retry_at, address, urn);
 
 -- A wallet with a row is eligible; its first profile seen seeds worn_history
 -- silently (an empty outfit still gets a row, or its real first wear would be

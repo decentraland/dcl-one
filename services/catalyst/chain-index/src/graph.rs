@@ -209,8 +209,30 @@ pub async fn graph_query(
     query: &str,
     variables: Value,
 ) -> Result<Value, String> {
+    graph_query_classified(state, url, query, variables)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum GraphQueryError {
+    #[error("{0}")]
+    Transient(String),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// Retains the transport/response distinction for durable retry queues.
+pub async fn graph_query_classified(
+    state: &ChainIndex,
+    url: &str,
+    query: &str,
+    variables: Value,
+) -> Result<Value, GraphQueryError> {
     if !state.upstream_allowed(url) {
-        return Err("subgraph URL is not a publicly routable http(s) endpoint".to_string());
+        return Err(GraphQueryError::Invalid(
+            "subgraph URL is not a publicly routable http(s) endpoint".into(),
+        ));
     }
     let client = &state.http;
     let body = json!({ "query": query, "variables": variables });
@@ -256,19 +278,30 @@ pub async fn graph_query(
         }
     })
     .await
-    .map_err(|e| e.to_string())?;
-    let body = outcome.ok_or_else(|| "subgraph unavailable after retries".to_string())?;
+    .map_err(|e| {
+        if e.downcast_ref::<reqwest::Error>().is_some() {
+            // Interrupted response bodies are retryable after headers were received.
+            GraphQueryError::Transient(e.to_string())
+        } else {
+            GraphQueryError::Invalid(e.to_string())
+        }
+    })?;
+    let body = outcome
+        .ok_or_else(|| GraphQueryError::Transient("subgraph unavailable after retries".into()))?;
     if let Some(errors) = body
         .get("errors")
         .and_then(Value::as_array)
         .filter(|e| !e.is_empty())
     {
-        return Err(format!("subgraph errors: {}", Value::Array(errors.clone())));
+        return Err(GraphQueryError::Invalid(format!(
+            "subgraph errors: {}",
+            Value::Array(errors.clone())
+        )));
     }
     body.get("data")
         .cloned()
         .filter(|d| !d.is_null())
-        .ok_or_else(|| format!("subgraph response without data: {body}"))
+        .ok_or_else(|| GraphQueryError::Invalid(format!("subgraph response without data: {body}")))
 }
 
 const QUERY_OWNED: &str = r#"

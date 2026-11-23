@@ -10,6 +10,7 @@
 use crate::shared::now_utc;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::NaiveDateTime;
 use serde_json::{Value as Json, json};
@@ -19,7 +20,9 @@ use uuid::Uuid;
 use super::store::{NewNotification, insert_notifications, ms_to_naive, naive_to_ms};
 use crate::badges::jobs::{IdSource, Keyed, Pass, ProcessorSettings, read_ids};
 use crate::chain_index::ChainIndex;
-use crate::chain_index::graph::{Network, graph_query, normalize_urn as graph_urn};
+use crate::chain_index::graph::{
+    GraphQueryError, Network, graph_query_classified, normalize_urn as graph_urn,
+};
 use crate::identity::Address;
 
 pub const POLL_SECS: u64 = 60;
@@ -232,6 +235,12 @@ const MAX_STORAGE_LAG_HOURS: i64 = 24;
 /// [`FirstWearSettings::batch_size`] deployments (`BADGES_PROCESSOR_BATCH_SIZE`,
 /// as for the badge processor's id cursors), with the id cursor's gap grace.
 const MAX_BATCHES_PER_PASS: usize = 50;
+const INTAKE_HIGH_WATER_MARK: i64 = 5_000;
+const OUTBOX_PAGE_SIZE: i64 = 16;
+const DRAIN_BUDGET: Duration = Duration::from_secs(60);
+const ITEM_LOOKUP_BUDGET: Duration = Duration::from_secs(20);
+const RECIPIENT_LOCK: &str =
+    "SELECT pg_advisory_xact_lock(hashtextextended('social.first_wear_recipient_gate', 0))";
 
 /// Every deployment by `id`, the profile metadata only: reading only the
 /// profiles would leave every other deployment's id as a gap to re-read.
@@ -264,6 +273,7 @@ impl Keyed for Deployment {
 /// A durable first-wear obligation, independent of source deployment retention.
 #[derive(sqlx::FromRow)]
 struct FirstWear {
+    attempts: i32,
     address: Address,
     wearer: Option<String>,
     urn: String,
@@ -279,7 +289,6 @@ pub async fn run_once(
     market: Option<&ChainIndex>,
     settings: &FirstWearSettings,
 ) -> anyhow::Result<u64> {
-    let experiment = FfwExperiment::default();
     let pass = Pass {
         pool: pool.clone(),
         asset_base: String::new(),
@@ -289,38 +298,56 @@ pub async fn run_once(
         },
         pinned_xmin: None,
     };
-    for _ in 0..MAX_BATCHES_PER_PASS {
-        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM social.first_wear_outbox")
-            .fetch_one(pool)
-            .await?;
-        if pending >= 5_000 || !claim_batch(&pass).await? {
-            break;
+    // A cursor or source-table failure must not strand already committed work.
+    let intake = async {
+        for _ in 0..MAX_BATCHES_PER_PASS {
+            let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM social.first_wear_outbox")
+                .fetch_one(pool)
+                .await?;
+            if pending >= INTAKE_HIGH_WATER_MARK || !claim_batch(&pass).await? {
+                break;
+            }
         }
+        anyhow::Ok(())
     }
+    .await;
+    let emitted = drain_outbox(pool, market, settings).await?;
+    intake?;
+    crate::badges::jobs::report_id_lag(pool, &READ).await;
+    Ok(emitted)
+}
+
+async fn drain_outbox(
+    pool: &PgPool,
+    market: Option<&ChainIndex>,
+    settings: &FirstWearSettings,
+) -> anyhow::Result<u64> {
+    let experiment = FfwExperiment::default();
+    sqlx::query("DELETE FROM social.first_wear_outbox WHERE created_at <= timezone('UTC', now()) - interval '24 hours'")
+        .execute(pool).await?;
     let cutoff: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
         .fetch_one(pool)
         .await?;
-    let mut emitted = 0u64;
+    let deadline = tokio::time::Instant::now() + DRAIN_BUDGET;
+    let mut emitted = 0;
     for _ in 0..MAX_BATCHES_PER_PASS {
-        let pending =
-            pending_wears_before(pool, settings.batch_size.clamp(1, 10_000), Some(cutoff)).await?;
+        let pending: Vec<FirstWear> = sqlx::query_as(
+            "WITH due AS (SELECT address, urn FROM social.first_wear_outbox
+                WHERE retry_at <= $1 ORDER BY retry_at, address, urn LIMIT $2 FOR UPDATE SKIP LOCKED)
+             UPDATE social.first_wear_outbox q SET retry_at = timezone('UTC', clock_timestamp()) + interval '2 minutes'
+             FROM due WHERE (q.address, q.urn) = (due.address, due.urn)
+             RETURNING q.address, q.urn, q.wearer, q.attempts"
+        ).bind(cutoff).bind(OUTBOX_PAGE_SIZE).fetch_all(pool).await?;
         if pending.is_empty() {
             break;
         }
         for wear in pending {
-            // Mark beyond this pass's cutoff before external IO: each obligation
-            // is attempted at most once per pass, including after failure.
-            sqlx::query("UPDATE social.first_wear_outbox SET attempted_at = GREATEST(timezone('UTC', clock_timestamp()), $3::timestamp + interval '1 microsecond') WHERE address = $1 AND urn = $2")
-                .bind(&wear.address).bind(&wear.urn).bind(cutoff).execute(pool).await?;
-            match notify(pool, market, settings, &experiment, &wear).await {
-                Ok(n) => emitted += n,
-                Err(e) => {
-                    tracing::warn!(urn = %wear.urn, error = %e, "first wear retained for retry")
-                }
+            if tokio::time::Instant::now() >= deadline {
+                return Ok(emitted);
             }
+            emitted += notify(pool, market, settings, &experiment, &wear).await?;
         }
     }
-    crate::badges::jobs::report_id_lag(pool, &READ).await;
     Ok(emitted)
 }
 
@@ -437,7 +464,42 @@ async fn notify(
         );
         return complete_wear(pool, wear, &[]).await;
     };
-    let Some(item) = resolve_buyable_item(market, urn).await? else {
+    let result = tokio::time::timeout(ITEM_LOOKUP_BUDGET, resolve_buyable_item(market, urn))
+        .await
+        .unwrap_or_else(|_| {
+            Err(GraphQueryError::Transient(
+                "first wear lookup timed out".into(),
+            ))
+        });
+    let item = match result {
+        Ok(item) => item,
+        Err(GraphQueryError::Invalid(error)) => {
+            tracing::warn!(urn, %error, "invalid first wear lookup");
+            return complete_wear(pool, wear, &[]).await;
+        }
+        Err(GraphQueryError::Transient(error)) => {
+            let attempts = wear.attempts + 1;
+            if attempts >= super::delivery::MAX_ATTEMPTS {
+                tracing::warn!(urn, attempts, %error, "first wear lookup retries exhausted");
+                return complete_wear(pool, wear, &[]).await;
+            }
+            let delay = super::delivery::backoff(attempts).as_secs() as f64;
+            sqlx::query(
+                "UPDATE social.first_wear_outbox SET attempts = $3,
+                retry_at = timezone('UTC', clock_timestamp()) + make_interval(secs => $4)
+                WHERE address = $1 AND urn = $2 AND attempts = $3 - 1",
+            )
+            .bind(address)
+            .bind(urn)
+            .bind(attempts)
+            .bind(delay)
+            .execute(pool)
+            .await?;
+            tracing::warn!(urn, attempts, %error, "first wear lookup scheduled for retry");
+            return Ok(0);
+        }
+    };
+    let Some(item) = item else {
         tracing::debug!(
             urn,
             "first wear not notifiable (item unknown or not buyable)"
@@ -459,30 +521,12 @@ async fn notify(
     let image = repoint_image(item.image.clone(), settings.image_base.as_deref());
     let now_ms = chrono::Utc::now().timestamp_millis();
 
-    let gates = friend_gates(pool, &friends).await?;
     let mut batch = Vec::new();
     for friend in &friends {
         let rule = experiment.rule_for(friend.as_str());
-        let (last_emit, last_fetch) = gates.get(friend.as_str()).copied().unwrap_or((None, None));
-        let allowed = !experiment.killed
-            && rate_allows(
-                rule,
-                last_emit.map(naive_to_ms),
-                last_fetch.map(naive_to_ms),
-                now_ms,
-            );
-        if !allowed {
-            let reason = if experiment.killed {
-                "killed"
-            } else if rule == FfwRule::Off {
-                "arm_off"
-            } else {
-                "rate"
-            };
-            tracing::debug!(friend = %friend, rule = rule.as_str(), reason, "ffw suppressed");
+        if experiment.killed || rule == FfwRule::Off {
             continue;
         }
-
         let nid = Uuid::new_v4();
         let link = format!(
             "{}{}?src=ffw&nid={}",
@@ -515,18 +559,10 @@ async fn notify(
     complete_wear(pool, wear, &batch).await
 }
 
-async fn pending_wears_before(
-    pool: &PgPool,
-    limit: i64,
-    cutoff: Option<NaiveDateTime>,
-) -> sqlx::Result<Vec<FirstWear>> {
-    sqlx::query_as("SELECT address, wearer, urn FROM social.first_wear_outbox WHERE ($2::timestamp IS NULL OR attempted_at <= $2) ORDER BY attempted_at, address, urn LIMIT $1")
-        .bind(limit).bind(cutoff).fetch_all(pool).await
-}
-
 #[cfg(test)]
 async fn pending_wears(pool: &PgPool, limit: i64) -> sqlx::Result<Vec<FirstWear>> {
-    pending_wears_before(pool, limit, None).await
+    sqlx::query_as("SELECT attempts, address, wearer, urn FROM social.first_wear_outbox ORDER BY retry_at, address, urn LIMIT $1")
+        .bind(limit).fetch_all(pool).await
 }
 
 // Short completion transactions serialize recipient gates, never external IO.
@@ -536,16 +572,16 @@ async fn complete_wear(
     batch: &[NewNotification],
 ) -> anyhow::Result<u64> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(728162492)")
-        .execute(&mut *tx)
-        .await?;
+    if !batch.is_empty() {
+        sqlx::query(RECIPIENT_LOCK).execute(&mut *tx).await?;
+    }
     let completed =
         sqlx::query("DELETE FROM social.first_wear_outbox WHERE address = $1 AND urn = $2")
             .bind(&wear.address)
             .bind(&wear.urn)
             .execute(&mut *tx)
             .await?;
-    let emitted = if completed.rows_affected() == 1 {
+    let emitted = if completed.rows_affected() == 1 && !batch.is_empty() {
         let friends: Vec<Address> = batch.iter().map(|notice| notice.address.clone()).collect();
         let gates = friend_gates(&mut *tx, &friends).await?;
         let filtered: Vec<NewNotification> = batch
@@ -626,7 +662,7 @@ async fn seed_history(
 async fn resolve_buyable_item(
     market: &ChainIndex,
     urn: &str,
-) -> anyhow::Result<Option<ResolvedItem>> {
+) -> Result<Option<ResolvedItem>, GraphQueryError> {
     let Some(network) = Network::of_urn(urn) else {
         return Ok(None);
     };
@@ -638,10 +674,8 @@ async fn resolve_buyable_item(
         return Ok(None);
     };
     let doc = "query($urn: String!) { items(first: 1, where: { urn: $urn }) { id available searchIsStoreMinter creator image metadata { wearable { name } emote { name } } } }";
-    let answer = graph_query(market, url, doc, json!({ "urn": graph_urn(urn) }))
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let item = &answer["data"]["items"][0];
+    let answer = graph_query_classified(market, url, doc, json!({ "urn": graph_urn(urn) })).await?;
+    let item = &answer["items"][0];
     if item.is_null() {
         return Ok(None);
     }
@@ -664,17 +698,14 @@ async fn resolve_buyable_item(
         true
     } else {
         let now = chrono::Utc::now().timestamp().to_string();
-        let orders = graph_query(
+        let orders = graph_query_classified(
             market,
             url,
             "query($item: String!, $now: BigInt!) { orders(first: 1, where: { item: $item, status: open, expiresAt_gt: $now }) { id } }",
             json!({ "item": item_id, "now": now }),
         )
-        .await
-        .map_err(anyhow::Error::msg)?;
-        orders["data"]["orders"]
-            .as_array()
-            .is_some_and(|o| !o.is_empty())
+        .await?;
+        orders["orders"].as_array().is_some_and(|o| !o.is_empty())
     };
     if !buyable {
         return Ok(None);
@@ -767,15 +798,17 @@ pub fn spawn(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
         crate::jobs::PeriodicCfg::every(std::time::Duration::from_secs(POLL_SECS))
             .with_jitter(std::time::Duration::from_secs(10))
             .with_error_backoff(std::time::Duration::from_secs(900)),
-        move |_ctx| {
+        move |ctx| {
             let state = state.clone();
             async move {
-                let emitted = run_once(
+                let emitted = tokio::select! {
+                    _ = ctx.cancel.cancelled() => return Ok(()),
+                    result = run_once(
                     state.store.pool(),
                     state.market.as_deref(),
                     &state.settings.first_wear,
-                )
-                .await?;
+                ) => result?,
+                };
                 if emitted > 0 {
                     tracing::info!(emitted, "friend_first_wear notifications emitted");
                 }
@@ -937,6 +970,7 @@ mod pg_tests {
 
     async fn queued_wear(pool: &PgPool, urn: &str) -> FirstWear {
         let wear = FirstWear {
+            attempts: 0,
             address: fresh_address(),
             wearer: Some("Wearer".into()),
             urn: urn.into(),
@@ -1014,65 +1048,125 @@ mod pg_tests {
             FIRST_WEAR_TYPE,
             json!({"arm":"limit_1h"}),
         )];
-        let (a, b) = tokio::join!(
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query(RECIPIENT_LOCK)
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let (a, b, ()) = tokio::join!(
             complete_wear(&pool, &a, &first),
-            complete_wear(&pool, &b, &second)
+            complete_wear(&pool, &b, &second),
+            async {
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    loop {
+                        let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity
+                            WHERE datname = current_database() AND wait_event = 'advisory' AND query = $1")
+                            .bind(RECIPIENT_LOCK).fetch_one(&pool).await.unwrap();
+                        if waiting == 2 { break; }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }).await.expect("both completions waiting for the recipient lock");
+                held.commit().await.unwrap();
+            }
         );
         assert_eq!(a.unwrap() + b.unwrap(), 1);
         assert!(pending_wears(&pool, 10).await.unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn failed_resolution_survives_restart_and_continuous_arrivals() {
+    async fn transient_lookup_backs_off_and_stops_at_the_attempt_limit() {
         let Some(pool) = private_pool("ffw_retry").await else {
             return;
         };
         let failed = queued_wear(&pool, "urn:decentraland:matic:collections-v2:0xeee:1").await;
-        let settings = FirstWearSettings {
-            batch_size: 1,
-            ..FirstWearSettings::default()
-        };
+        let market = mock_market(axum::Router::new().route(
+            "/",
+            axum::routing::post(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
+        ))
+        .await;
+        let settings = FirstWearSettings::default();
+        run_once(&pool, Some(&market), &settings).await.unwrap();
+        let (attempts, delayed): (i32, bool) = sqlx::query_as(
+            "SELECT attempts, retry_at > timezone('UTC', now()) FROM social.first_wear_outbox",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((attempts, delayed), (1, true));
+        run_once(&pool, Some(&market), &settings).await.unwrap();
+        assert_eq!(pending_wears(&pool, 1).await.unwrap()[0].attempts, 1);
+        sqlx::query(
+            "UPDATE social.first_wear_outbox SET attempts = $1, retry_at = timezone('UTC', now())",
+        )
+        .bind(super::super::delivery::MAX_ATTEMPTS - 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+        run_once(&pool, Some(&market), &settings).await.unwrap();
+        assert!(pending_wears(&pool, 1).await.unwrap().is_empty());
+        assert_eq!(worn(&pool, &failed.address).await, vec![failed.urn]);
+    }
+
+    async fn mock_market(router: axum::Router) -> ChainIndex {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let market = ChainIndex::new(
             crate::http::Outbound::for_tests(),
             crate::chain_index::IndexSettings {
-                matic_collections_subgraph_url: Some("http://127.0.0.1:9/graph".into()),
+                matic_collections_subgraph_url: Some(url),
                 ..crate::chain_index::IndexSettings::for_tests()
             },
         );
-        run_once(&pool, Some(&market), &settings).await.unwrap();
-        assert_eq!(
-            pending_wears(&pool, 1).await.unwrap()[0].address,
-            failed.address
-        );
-        for _ in 0..3 {
-            let before: NaiveDateTime = sqlx::query_scalar(
-                "SELECT attempted_at FROM social.first_wear_outbox WHERE address = $1",
-            )
-            .bind(&failed.address)
-            .fetch_one(&pool)
+        market.allow_loopback_for_tests();
+        market
+    }
+
+    #[tokio::test]
+    async fn buyable_item_reads_graph_data_and_open_orders() {
+        let market = mock_market(axum::Router::new().route(
+            "/",
+            axum::routing::post(|axum::Json(body): axum::Json<Json>| async move {
+                axum::Json(if body["query"].as_str().unwrap().contains("orders(") {
+                    json!({"data": {"orders": [{"id": "order"}]}})
+                } else {
+                    json!({"data": {"items": [{"id":"123","metadata":{"wearable":{"name":"hat"}},
+                        "available":"0","searchIsStoreMinter":false}]}})
+                })
+            }),
+        ))
+        .await;
+        let item = resolve_buyable_item(&market, "urn:decentraland:matic:collections-v2:0xeee:1")
             .await
+            .unwrap()
             .unwrap();
-            for n in 0..200 {
-                queued_wear(&pool, &format!("urn:fresh:{n}")).await;
-            }
-            run_once(&pool, Some(&market), &settings).await.unwrap();
-            let after: NaiveDateTime = sqlx::query_scalar(
-                "SELECT attempted_at FROM social.first_wear_outbox WHERE address = $1",
-            )
-            .bind(&failed.address)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-            assert!(after > before, "older retry precedes fresh arrivals");
-            sqlx::query("DELETE FROM social.first_wear_outbox WHERE address <> $1")
-                .bind(&failed.address)
-                .execute(&pool)
-                .await
-                .unwrap();
-        }
-        // A terminal no-reader outcome completes the retained work, including after restart.
+        assert_eq!(item.item_id, "123");
+        assert_eq!(item.name, "hat");
+    }
+
+    #[tokio::test]
+    async fn full_queue_pauses_intake_until_old_obligations_expire() {
+        let Some(pool) = private_pool("ffw_bound").await else {
+            return;
+        };
+        let settings = FirstWearSettings::default();
         run_once(&pool, None, &settings).await.unwrap();
-        assert!(pending_wears(&pool, 10).await.unwrap().is_empty());
+        let before = cursor(&pool).await;
+        let wearer = fresh_address();
+        deploy_profile(&pool, &wearer, now_utc(), &[]).await;
+        sqlx::query("WITH history AS (
+            INSERT INTO social.worn_history (address, urn, first_seen)
+            SELECT $1, i::text, timezone('UTC', now()) FROM generate_series(1, $2) i RETURNING address, urn)
+            INSERT INTO social.first_wear_outbox (address, urn, created_at, retry_at)
+            SELECT address, urn, timezone('UTC', now()) - interval '25 hours', timezone('UTC', now()) + interval '1 hour' FROM history")
+            .bind(&wearer).bind(INTAKE_HIGH_WATER_MARK as i32).execute(&pool).await.unwrap();
+        run_once(&pool, None, &settings).await.unwrap();
+        assert_eq!(cursor(&pool).await, before);
+        assert!(pending_wears(&pool, 1).await.unwrap().is_empty());
+        run_once(&pool, None, &settings).await.unwrap();
+        assert!(has_baseline(&pool, &wearer).await);
     }
 
     #[tokio::test]
@@ -1093,10 +1187,12 @@ mod pg_tests {
             &["urn:decentraland:matic:collections-v2:0xabc:1"],
         )
         .await;
+        queued_wear(&pool, "already-queued").await;
         sqlx::raw_sql("CREATE FUNCTION social.fail_first_wear_enqueue() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected enqueue failure'; END $$;
             CREATE TRIGGER fail_first_wear_enqueue BEFORE INSERT ON social.first_wear_outbox FOR EACH ROW EXECUTE FUNCTION social.fail_first_wear_enqueue();")
             .execute(&pool).await.unwrap();
         assert!(run_once(&pool, None, &settings).await.is_err());
+        assert!(pending_wears(&pool, 1).await.unwrap().is_empty());
         assert_eq!(cursor(&pool).await, before);
         assert!(worn(&pool, &wearer).await.is_empty());
         sqlx::query("DROP TRIGGER fail_first_wear_enqueue ON social.first_wear_outbox")
@@ -1328,8 +1424,8 @@ mod pg_tests {
         );
         assert_eq!(
             pending_wears(&pool, 10).await.unwrap().len(),
-            6,
-            "every failed resolution remains durable after source progress"
+            0,
+            "invalid reader configuration is terminal"
         );
         for wearer in &wearers {
             assert_eq!(
@@ -1349,7 +1445,7 @@ mod pg_tests {
             batch_size: 1,
             ..FirstWearSettings::default()
         };
-        for n in 0..3 {
+        for n in 0..(OUTBOX_PAGE_SIZE + 1) {
             queued_wear(&pool, &format!("urn:wear:{n}")).await;
         }
         run_once(&pool, None, &settings).await.unwrap();

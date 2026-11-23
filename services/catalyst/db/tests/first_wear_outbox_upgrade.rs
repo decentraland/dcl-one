@@ -27,7 +27,11 @@ impl OwnedDatabase {
             .connect_with(options.clone().database("postgres"))
             .await
             .unwrap();
-        let name = format!("catalyst_test_progress_{}", uuid::Uuid::new_v4().simple());
+        let name = format!(
+            "catalyst_test_lib_{}_ffw_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
             .execute(&admin)
             .await
@@ -102,12 +106,11 @@ async fn first_wear_outbox_upgrade_preserves_legacy_facts_and_is_idempotent() {
         )),
         "{done:?}"
     );
-    let indexed: bool = sqlx::query_scalar(
-        "SELECT to_regclass('social.first_wear_outbox_attempt_idx') IS NOT NULL",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
+    let indexed: bool =
+        sqlx::query_scalar("SELECT to_regclass('social.first_wear_outbox_due_idx') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap();
     assert!(indexed);
     assert_eq!(legacy_facts(pool).await, before);
     let prior_ledger_after: Vec<(String, String, bool)> =
@@ -119,7 +122,7 @@ async fn first_wear_outbox_upgrade_preserves_legacy_facts_and_is_idempotent() {
     // Exercise the migrated defaults rather than only checking object names.
     let scheduled: bool = sqlx::query_scalar(
         "INSERT INTO social.first_wear_outbox (address, urn, wearer)
-         VALUES ('legacy-wallet', 'urn:existing', 'Wearer') RETURNING attempted_at IS NOT NULL",
+         VALUES ('legacy-wallet', 'urn:existing', 'Wearer') RETURNING attempts = 0 AND retry_at IS NOT NULL AND created_at IS NOT NULL",
     )
     .fetch_one(pool)
     .await
