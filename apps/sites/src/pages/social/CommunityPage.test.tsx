@@ -260,6 +260,35 @@ describe("CommunityPage", () => {
         });
       });
 
+      describe("and the visitor opens an event on a sign-in return that is still pending", () => {
+        let router: Router;
+        let entry: string;
+
+        beforeEach(async () => {
+          net.fetchCommunityEvents.mockResolvedValue({ events: [upcomingEvent()], total: 1, received: 1 });
+          const nonce = rememberAction(ID, "join");
+          entry = `?action=join&nonce=${nonce}`;
+          router = show(`/social/communities/${ID}${entry}`);
+          await userEvent.click(await screen.findByRole("link", { name: "Takeover Tuesday" }));
+        });
+
+        it("should name only the event in the detail's URL", async () => {
+          await screen.findByRole("dialog");
+          expect(router.state.location.search).toBe("?event=ev-1");
+        });
+
+        describe("and closes the detail", () => {
+          beforeEach(async () => {
+            await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: /close/i }));
+          });
+
+          it("should go back to the sign-in return, which still carries its action", async () => {
+            await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+            expect(router.state.location.search).toBe(entry);
+          });
+        });
+      });
+
       describe("and the link is a sign-in return with an action", () => {
         let nonce: string | null;
         let router: Router;
@@ -428,6 +457,24 @@ describe("CommunityPage", () => {
             expect(await screen.findByRole("dialog")).toBeTruthy();
             await act(async () => {});
             expect(telemetry.track).not.toHaveBeenCalled();
+          });
+
+          describe("and the visitor jumps in", () => {
+            // Keeps jsdom from following the link.
+            const stay = (click: MouseEvent) => click.preventDefault();
+
+            beforeEach(async () => {
+              window.addEventListener("click", stay);
+              await userEvent.click(within(await screen.findByRole("dialog")).getAllByRole("link", { name: /Jump In/ })[0]!);
+            });
+
+            afterEach(() => {
+              window.removeEventListener("click", stay);
+            });
+
+            it("should record no Jump In", () => {
+              expect(telemetry.track).not.toHaveBeenCalled();
+            });
           });
         });
 

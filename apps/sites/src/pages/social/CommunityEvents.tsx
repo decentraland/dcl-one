@@ -15,6 +15,7 @@ import { useCreatorProfiles } from "@/features/events/useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders } from "@/features/events/useEventReminders";
 import { creatorWallets, eventHref, upcomingCardProps } from "@/features/events/view";
 import { useLoadMore } from "@/features/social/community/useLoadMore";
+import { ACTION_PARAM, NONCE_PARAM } from "@/features/social/community/view";
 
 import { listMore, listStatus } from "./list-state";
 
@@ -95,6 +96,9 @@ export function useCommunityEvents(
       // A second click before the dialog covers the card would push a second entry for the same event.
       if (id === eventId) return;
       const next = new URLSearchParams(location.search);
+      // A sign-in return's action stays on the entry it arrived on, which Close goes back to.
+      next.delete(ACTION_PARAM);
+      next.delete(NONCE_PARAM);
       next.set(EVENT_PARAM, id);
       void navigate({ search: `?${next}` }, { preventScrollReset: true, state: { [OPENED_HERE]: THIS_DOCUMENT } });
     },
