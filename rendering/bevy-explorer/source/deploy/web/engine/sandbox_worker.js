@@ -565,7 +565,8 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   if (!got) throw new Error("no scene in the relay queue");
   // from the engine's side, not the scene runtime's
   sceneId = BigInt.asUintN(64, enter(() => relay.relay_scene_id()));
-  // the word the engine bumps when it sends this scene something; undefined: sleep as before
+  // the word the engine bumps when it sends this scene something; undefined: the relay polls on a
+  // 1 ms sleep
   // an i32 without the glue: as unsigned, for an address past 2 GiB
   const wakePtr = enter(() => relay.relay_wake_ptr()) >>> 0;
   const wakeView =
@@ -596,8 +597,8 @@ async function relayStart(compiledModule, sharedMemory, sceneModule) {
   // prototype, so reading its members can't reach anything scene code defined.
   const sleep = (ms, f) =>
     relayPostTask ? relayPostTask(f, { __proto__: null, delay: ms }) : relaySetTimeout(f, ms);
-  // idle wait for the engine's send: as long as the sleep it replaces, which also covers what
-  // wakes no one (global updates, the kill flag, the scene's own replies)
+  // idle wait for the engine's send: at most the poll's 1 ms, so what wakes no one (global updates,
+  // the kill flag, the scene's own replies) is still seen within a poll interval
   const RELAY_IDLE_MS = 1;
   const step = () => {
     if (done) return;

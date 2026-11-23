@@ -437,7 +437,7 @@ initEngine()
     // An invalid hash throws here and fails the boot, rather than the engine quietly connecting
     // on CA trust.
     if (window.__bevyPulseCertificateHash) engine_set_pulse_certificate_hash(window.__bevyPulseCertificateHash)
-    // the scene loop's scheduling mode, for comparing builds' behaviour in one build
+    // the scene loop's scheduling mode, a diagnostic switch read once per page load
     // (crates/dcl_wasm/src/scene_loop_mode.rs)
     const sceneLoop = new URLSearchParams(window.location.search).get('sceneLoop')
     if (sceneLoop && !engine_set_scene_loop_mode(sceneLoop)) console.warn(`[engine] unknown sceneLoop=${sceneLoop}`)
