@@ -341,6 +341,9 @@ pub(crate) enum WithoutL1 {
 
 /// The node's EIP-1654 validator, its historical block taken from the access checks' L1
 /// search ([`onchain::OnChainAccess::l1_verification_block`]). A failed search is undecidable.
+/// The block is chosen even when the inner validator's own selector answers `None`: an inner
+/// validator without history then fails the call there (undecidable) instead of its latest
+/// refusal standing.
 pub(crate) struct AtEntityTime<'a> {
     pub(crate) inner: &'a dyn Eip1654Validator,
     pub(crate) access: &'a onchain::OnChainAccess,

@@ -337,8 +337,9 @@ impl Chain {
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }
 
-    /// The blocks of an entity timestamp, searched once per timestamp while
-    /// the memo holds them; only final answers are kept.
+    /// The blocks of an entity timestamp. Only final answers are memoized: a
+    /// timestamp whose bounds reach past the head (a fresh deploy) is searched
+    /// again, one `latest` read per access check.
     async fn blocks_for(&self, timestamp_ms: i64) -> Result<Blocks, ValidatorError> {
         if let Some((found, blocks)) = self.memo.lock().get(&timestamp_ms)
             && found.elapsed() < BLOCKS_MEMO_TTL
