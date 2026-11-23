@@ -2,7 +2,10 @@ import { collectCampaignParams, type CampaignParams } from "@/core/lib/telemetry
 import { track } from "@/core/lib/telemetry/track";
 import { trackedUserDropped } from "@/core/lib/telemetry/tracked-user";
 
-import { downloadCtaClicked, readDownloadClickCorrelation, type DownloadClickSession } from "./download-click";
+import { downloadCtaClicked, readDownloadClickCorrelation } from "./download-click";
+
+/** Who the funnel event is about. Every funnel event is a conversion, so it needs no deferral scope. */
+export type FunnelSession = { sid: string; userId?: string | null };
 
 // The legacy site's Explorer download funnel (decentraland/sites `downloadTracking.ts`, `downloadFunnelExit.ts`,
 // `downloadPageExit.ts`, `pages/DownloadSuccess`). Warehouse models read these rows by name and property, so every
@@ -95,7 +98,7 @@ function audit(): Audit {
   return { track_called_at: now, track_delivered_at: now, track_deferred: true };
 }
 
-function sendContext({ sid, userId }: DownloadClickSession) {
+function sendContext({ sid, userId }: FunnelSession) {
   // A sign-out in progress leaves the account out before root's data has reloaded without it.
   const user = userId && !trackedUserDropped() ? userId : undefined;
   return { sid, ...(user ? { userId: user } : {}), legacy: true, conversion: true } as const;
@@ -174,7 +177,7 @@ export type DownloadTracker = {
 };
 
 /** One attempt's `download_started`, `download_success` and `download_failed`, timed from `started()`. */
-export function createDownloadTracker(attempt: DownloadAttempt, session: DownloadClickSession): DownloadTracker {
+export function createDownloadTracker(attempt: DownloadAttempt, session: FunnelSession): DownloadTracker {
   let startedAt: number | null = null;
   return {
     started() {
@@ -215,7 +218,7 @@ export function createDownloadTracker(attempt: DownloadAttempt, session: Downloa
 type Arrival = { os: FunnelOs; arch: FunnelArch; place: FunnelPlace; revisit: number; authenticated: boolean };
 
 /** Sent on arrival at /download_success, before anything else; `place` is kept even when unknown. */
-export function sendDownloadSuccessArrived(arrival: Arrival, session: DownloadClickSession): void {
+export function sendDownloadSuccessArrived(arrival: Arrival, session: FunnelSession): void {
   const now = Date.now();
   track(
     "download_success_arrived",
@@ -250,7 +253,7 @@ export type FunnelExit = {
 };
 
 /** The /download_success snapshot on each hide: no audit fields, no `utm_*`. */
-export function sendDownloadFunnelExit(exit: FunnelExit, session: DownloadClickSession): void {
+export function sendDownloadFunnelExit(exit: FunnelExit, session: FunnelSession): void {
   const clickId = readDownloadClickCorrelation()?.click_id;
   track(
     "download_funnel_exit",
@@ -272,7 +275,7 @@ export function sendDownloadFunnelExit(exit: FunnelExit, session: DownloadClickS
 }
 
 /** The /download snapshot on each hide: whether a download control was clicked since the page mounted. */
-export function sendDownloadPageExit(msOnPage: number, session: DownloadClickSession): void {
+export function sendDownloadPageExit(msOnPage: number, session: FunnelSession): void {
   track("download_page_exit", { cta_clicked: downloadCtaClicked(), ms_on_page: msOnPage, ...collectCampaignParams() }, sendContext(session));
 }
 

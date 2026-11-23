@@ -10,6 +10,7 @@ import SitesLayout from "../components/chrome/SitesLayout";
 import type { Installer } from "@/data/lib/download/installers";
 
 import { trackDownloadClick, type DownloadClick } from "./download-click";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { resolveAnonUserId } from "./download-funnel";
 import { useDownloadPageExit } from "./download-success-funnel";
 import { legacySuccessHref } from "./installers";
@@ -66,8 +67,9 @@ const CLICKS = {
 type OptionsProps = Pick<DownloadPageProps, "primary" | "secondary" | "downloads" | "sid" | "userId"> & { googlePlay: string; search: string };
 
 function DownloadOptions({ primary, secondary, downloads, sid, userId, googlePlay, search }: OptionsProps) {
+  const scope = useLegacyTrackScope();
   if (!primary?.url) return null;
-  const send = (click: DownloadClick) => () => trackDownloadClick(click, { sid, userId });
+  const send = (click: DownloadClick) => () => trackDownloadClick(click, { sid, userId, scope });
   // The legacy page's links: `place=download-page` for both installers, with the architecture.
   const successHref = (installer: Installer) =>
     legacySuccessHref(installer.os, "download-page", { anonUserId: resolveAnonUserId(null, sid), arch: installer.arch, search });
@@ -157,6 +159,7 @@ export default function DownloadPage({
   googlePlay = googlePlayHref(),
   search = "",
 }: DownloadPageProps) {
+  const scope = useLegacyTrackScope();
   const auth = useChromeAuth();
   useDownloadPageExit({ sid, userId });
   const signedIn = auth.signedIn && !!auth.account;
@@ -203,7 +206,7 @@ export default function DownloadPage({
           href={android ? googlePlay : APP_STORE_URL}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={() => trackDownloadClick(android ? CLICKS.googlePlay : CLICKS.appStore, { sid, userId })}
+          onClick={() => trackDownloadClick(android ? CLICKS.googlePlay : CLICKS.appStore, { sid, userId, scope })}
         >
           <img className={styles.storeBadge} src={android ? googlePlayBadge : appStoreBadge} alt={android ? "Get it on Google Play" : "Download on the App Store"} />
         </a>

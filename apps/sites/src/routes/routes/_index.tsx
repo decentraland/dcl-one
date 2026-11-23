@@ -19,7 +19,7 @@ import { resolveAnonUserId } from "@/features/download/download-funnel";
 import { campaignSearch } from "@/features/download/installers";
 import { trackDownloadClick } from "@/features/download/download-click";
 import { homeClicks } from "@/features/home/clicks";
-import { trackLegacyClick } from "@/core/lib/telemetry/legacy-click";
+import { trackLegacyClick, useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
 import {
@@ -87,6 +87,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
   const copy = homeCopy[locale];
   const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
   const viewed = useRef(false);
   useEffect(() => {
     if (viewed.current) return;
@@ -96,10 +97,10 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   const { hero, hangOut, store, alternateStore, hangOutStore } = withDownloadClicks(
     homeDownloadActions(platform, downloads, installers, copy.download, googlePlay),
-    (click) => trackDownloadClick(click, { sid, userId }),
+    (click) => trackDownloadClick(click, { sid, userId, scope }),
     { anonUserId: resolveAnonUserId(null, sid), search },
   );
-  const clicks = homeClicks((click) => trackLegacyClick(click, { sid, userId }));
+  const clicks = homeClicks((click) => trackLegacyClick(click, { sid, userId, scope }));
   const labels = {
     previous: copy.slides.previous,
     next: copy.slides.next,

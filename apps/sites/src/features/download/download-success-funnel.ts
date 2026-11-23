@@ -1,6 +1,6 @@
 import { useEffect, useRef, type MouseEvent } from "react";
 
-import { resetDownloadCtaClicked, type DownloadClickSession } from "./download-click";
+import { resetDownloadCtaClicked } from "./download-click";
 import {
   createDownloadTracker,
   funnelExtra,
@@ -13,11 +13,12 @@ import {
   sendDownloadPageExit,
   sendDownloadSuccessArrived,
   type FunnelArch,
+  type FunnelSession,
   type FunnelPlace,
 } from "./download-funnel";
 import { deliverInstaller, installerFilename } from "./installer-delivery";
 
-export type DownloadSuccessFunnel = DownloadClickSession & {
+export type DownloadSuccessFunnel = FunnelSession & {
   /** The installer this page starts. */
   href: string;
   os: "windows" | "macos";
@@ -134,7 +135,7 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
 }
 
 /** /download's `download_page_exit` on every hide, counting from mount; a click made elsewhere does not count. */
-export function useDownloadPageExit(session: DownloadClickSession): void {
+export function useDownloadPageExit(session: FunnelSession): void {
   const latest = useRef(session);
   latest.current = session;
   const loadedAt = useRef(Date.now());

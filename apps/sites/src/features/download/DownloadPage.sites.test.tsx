@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { track } from "@/core/lib/telemetry/track";
 
+import { createLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { trackDownloadClick } from "./download-click";
 import DownloadPage from "./DownloadPage";
 import { googlePlayHref } from "./google-play";
@@ -183,7 +184,7 @@ describe("download_page_exit (legacy inventory 2.2)", () => {
   });
 
   it("does not count a click made before this page mounted", () => {
-    trackDownloadClick({ place: "Landing Hero", event: "Download", download_target: "desktop_installer" }, { sid: "s1" });
+    trackDownloadClick({ place: "Landing Hero", event: "Download", download_target: "desktop_installer" }, { sid: "s1", scope: createLegacyTrackScope() });
     render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" />);
     setHidden(true);
     expect(exits()[0]![1]).toMatchObject({ cta_clicked: false });

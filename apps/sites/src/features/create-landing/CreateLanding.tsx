@@ -1,9 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useId, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import { docsUrl } from "@web-core/docs";
-import { trackLegacyClick, trackSectionViewed, type LegacyClick, type LegacySectionViewed, type LegacySession } from "@/core/lib/telemetry/legacy-click";
+import { trackLegacyClick, trackSectionViewed, useLegacyTrackScope, type LegacyClick, type LegacySectionViewed, type LegacySession } from "@/core/lib/telemetry/legacy-click";
 import { latestPostsQuery, type BlogPostSummary } from "@/data/lib/create-landing/blog-posts";
 import { liveScenesQuery, selectLiveScenes, type HotScene } from "@/data/lib/create-landing/live-scenes";
 
@@ -22,7 +22,7 @@ import {
   type ConnectCardData,
   type CreateCardData,
 } from "./content";
-import { useMediaQuery } from "@ui/data/hooks/useMediaQuery";
+import { useMediaQuery } from "../creators/hooks/useMediaQuery";
 import discordIcon from "./assets/discord.svg?url";
 import dclLogo from "./assets/dcl-logo.svg?url";
 import styles from "./CreateLanding.module.css";
@@ -38,8 +38,9 @@ type CreateLandingProps = {
 };
 
 export default function CreateLanding({ downloads = null, sid = "", userId = "" }: CreateLandingProps) {
+  const session = useMemo(() => ({ sid, userId }), [sid, userId]);
   return (
-    <SessionContext.Provider value={{ sid, userId }}>
+    <SessionContext.Provider value={session}>
       <main className={styles.landing}>
         <Hero downloads={downloads} sid={sid} userId={userId} />
         <Why />
@@ -54,12 +55,16 @@ export default function CreateLanding({ downloads = null, sid = "", userId = "" 
   );
 }
 
-const SessionContext = createContext<LegacySession>({ sid: "" });
+const SessionContext = createContext<Omit<LegacySession, "scope">>({ sid: "" });
 
-/** Sends a control's legacy `Click` (decentraland/sites `useTrackClick` on the reference's `Create/*` sections). */
+/**
+ * Sends a control's legacy `Click` (decentraland/sites `useTrackClick` on the reference's `Create/*` sections),
+ * deferred in this component's scope as the legacy hook's queue was.
+ */
 function useClick(): (click: LegacyClick) => void {
   const session = useContext(SessionContext);
-  return useCallback((click: LegacyClick) => trackLegacyClick(click, session), [session]);
+  const scope = useLegacyTrackScope();
+  return useCallback((click: LegacyClick) => trackLegacyClick(click, { ...session, scope }), [session, scope]);
 }
 
 /**
@@ -69,8 +74,9 @@ function useClick(): (click: LegacyClick) => void {
  */
 function useSectionViewed(section: LegacySectionViewed) {
   const session = useContext(SessionContext);
-  const latest = useRef(session);
-  latest.current = session;
+  const scope = useLegacyTrackScope();
+  const latest = useRef({ ...session, scope });
+  latest.current = { ...session, scope };
   const sent = useRef(false);
   const observer = useRef<IntersectionObserver | null>(null);
   return useCallback(

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { track } from "@/core/lib/telemetry/track";
 import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
@@ -287,13 +288,13 @@ describe("the CTA flag download_page_exit reads (legacy markDownloadCtaClicked)"
   const CLICK = { place: "Creators Hero", event: "Download", download_target: "creator_hub" } as const;
 
   it("is set by a conversion click, with or without a correlation", () => {
-    trackDownloadClick(CLICK, { sid: "s1" }, { correlate: false });
+    trackDownloadClick(CLICK, { sid: "s1", scope: createLegacyTrackScope() }, { correlate: false });
     expect(downloadCtaClicked()).toBe(true);
     expect(sessionStorage.getItem(DOWNLOAD_CLICK_STORAGE_KEY)).toBeNull();
   });
 
   it("is not set by a non-conversion click (the legacy useTrackClick controls)", () => {
-    trackDownloadClick({ ...CLICK, place: "Download" }, { sid: "s1" }, { conversion: false, correlate: false });
+    trackDownloadClick({ ...CLICK, place: "Download" }, { sid: "s1", scope: createLegacyTrackScope() }, { conversion: false, correlate: false });
     expect(downloadCtaClicked()).toBe(false);
   });
 });
