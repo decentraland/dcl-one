@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 
-import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
+import { fetchMemberProfiles } from "../catalyst/social/member-profiles";
 
 import type { AuthIdentity } from "../auth/types";
 import { normalizeAddress } from "../catalyst/social/profile";
@@ -56,7 +56,7 @@ export const friendProfilesQuery = (identity: AuthIdentity, addresses: readonly 
     queryKey: [...friendsKeys.list(identity.signer), "profiles", sorted] as const,
     staleTime: FRIENDS_STALE_MS,
     enabled: sorted.length > 0,
-    queryFn: ({ signal }) => fetchCommunityProfiles(sorted, { signal }),
+    queryFn: ({ signal }) => fetchMemberProfiles(sorted, { signal }),
   });
 };
 

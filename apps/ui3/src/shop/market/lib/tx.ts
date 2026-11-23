@@ -34,8 +34,59 @@ export function isTxPending(e: unknown): e is TxPendingError {
   return (e as { name?: string } | null)?.name === "TxPendingError";
 }
 
+/** A buy dialog's answer when the sale went out and its wait ran out: it may still complete, and is never sent again. */
+export const SALE_STILL_PENDING = "The purchase was sent and is still confirming. It was not sent twice; check your activity in a moment.";
+
 /** A buy dialog's answer when the wait that ran out was the MANA approval's: the sale itself was never sent. */
 export const APPROVAL_STILL_PENDING = "Your MANA approval is still confirming, so nothing was bought yet. Close this and buy again once it confirms.";
+
+/** A buy dialog's answer when the MANA approval reverted: the sale was never sent. */
+export const APPROVAL_REVERTED = "Your MANA approval failed on-chain, so nothing was bought. Buy again to send a new one.";
+
+/**
+ * The wallet is no longer on the account a write was decided for: that write was not signed or sent. `approvalSent`
+ * says a MANA approval had already gone out for the purchase it stopped.
+ */
+export class WalletAccountChangedError extends Error {
+  override name = "WalletAccountChangedError";
+  readonly approvalSent: boolean;
+  constructor(opts: { approvalSent?: boolean } = {}) {
+    super(
+      opts.approvalSent
+        ? "Your MANA approval went out, but your wallet then switched accounts, so the purchase stopped before it was sent and nothing was bought. Switch back to the account you started with and buy again."
+        : "Your wallet switched accounts during the purchase. Nothing was sent; switch back to the account you started with and try again.",
+    );
+    this.approvalSent = !!opts.approvalSent;
+  }
+}
+
+/** An earlier MANA approval decision for the same account and spender has not ended (a wallet prompt, or its receipt). */
+export class ApprovalBusyError extends Error {
+  override name = "ApprovalBusyError";
+  constructor() {
+    super("Another MANA approval for this account is still in progress. Try again after it finishes. This attempt sent nothing.");
+  }
+}
+
+/** How long one chain read may take before it counts as a failed read. */
+export const READ_TIMEOUT_MS = 15_000;
+
+/** A wallet or chain read that did not answer in time: the step waiting on it went no further. */
+export class ReadTimeoutError extends Error {
+  override name = "ReadTimeoutError";
+  constructor() {
+    super("Your wallet or the network took too long to answer, so this step was not sent. Try again in a moment.");
+  }
+}
+
+/** `read`, or a ReadTimeoutError once `ms` have passed without an answer (the read itself is left to finish). */
+export function bounded<T>(read: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ReadTimeoutError()), ms);
+  });
+  return Promise.race([read, late]).finally(() => clearTimeout(timer));
+}
 
 export function isTxReverted(e: unknown): e is TxRevertedError {
   return (e as { name?: string } | null)?.name === "TxRevertedError";
@@ -49,15 +100,17 @@ export function declined(e: unknown): boolean {
 
 /**
  * How a MANA buy (approve, then the sale) that threw ended, for its dialog. `sent` is the sale's hash once its
- * `onSubmitted` had it: only that says the sale went out. A wait that ran out before it was the MANA approval's,
- * and a second Buy then would send a second approval, so that answer offers none.
+ * `onSubmitted` had it: only that says the sale went out. A wait that ran out or a revert before it was the MANA
+ * approval's. An approval still confirming carries its hash, and a second Buy then would send a second approval,
+ * so that answer offers none.
  */
-export type PurchaseFailure = { kind: "pending"; txHash: string } | { kind: "approval-pending" } | { kind: "error"; message: string };
+export type PurchaseFailure = { kind: "pending"; txHash: string } | { kind: "approval-pending"; txHash: string } | { kind: "error"; message: string };
 
 export function purchaseFailure(e: unknown, sent: string | null): PurchaseFailure {
-  if (isTxPending(e)) return sent ? { kind: "pending", txHash: sent } : { kind: "approval-pending" };
+  if (isTxPending(e)) return sent ? { kind: "pending", txHash: sent } : { kind: "approval-pending", txHash: e.txHash };
   if (declined(e)) return { kind: "error", message: "You cancelled the request in your wallet. Nothing was bought." };
-  if (isTxReverted(e)) return { kind: "error", message: "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." };
+  if (isTxReverted(e))
+    return { kind: "error", message: sent ? "The purchase failed on-chain: the listing may have been sold or cancelled. Nothing was bought." : APPROVAL_REVERTED };
   if (sent) return { kind: "pending", txHash: sent };
   return { kind: "error", message: (e as Error)?.message || "We couldn't complete the purchase. Nothing was bought." };
 }
@@ -76,12 +129,18 @@ export type WriteCall = {
   functionName: string;
   args: readonly unknown[];
   value?: bigint;
+  /** The account this call was decided for: another one on the wallet throws WalletAccountChangedError, unprompted. */
+  account?: string;
+  /** Bound on the wallet's network and account reads before the prompt: a late answer ends the call unprompted. */
+  readTimeoutMs?: number;
 };
 
 /** Sends one contract call from the wallet. Throws WrongNetworkError without prompting on another chain. */
 export async function sendCall(provider: Eip1193Provider, call: WriteCall): Promise<string> {
-  await requireChain(provider, call.chainId);
-  const from = await walletAccount(provider);
+  const read = <T>(r: Promise<T>) => (call.readTimeoutMs !== undefined ? bounded(r, call.readTimeoutMs) : r);
+  await read(requireChain(provider, call.chainId));
+  const from = await read(walletAccount(provider));
+  if (call.account && from !== call.account.toLowerCase()) throw new WalletAccountChangedError();
   const data = encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args } as never);
   const tx: Record<string, string> = { from, to: call.to, data };
   if (call.value) tx.value = `0x${call.value.toString(16)}`;
@@ -92,7 +151,14 @@ export async function sendCall(provider: Eip1193Provider, call: WriteCall): Prom
 
 type Receipt = { status?: string; transactionHash?: string; blockNumber?: string } | null;
 
-export type WaitOptions = { timeoutMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number };
+export type WaitOptions = {
+  timeoutMs?: number;
+  pollMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  /** Bound on each read (READ_TIMEOUT_MS by default): a read that takes longer counts as a failed one. */
+  readTimeoutMs?: number;
+};
 
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -106,9 +172,9 @@ export async function waitForReceipt(chainId: ChainId, txHash: string, what = "T
   for (;;) {
     let receipt: Receipt = null;
     try {
-      receipt = await rpc<Receipt>(chainId, "eth_getTransactionReceipt", [txHash]);
+      receipt = await bounded(rpc<Receipt>(chainId, "eth_getTransactionReceipt", [txHash]), opts.readTimeoutMs ?? READ_TIMEOUT_MS);
     } catch {
-      // A failed read is not a revert: keep waiting until the deadline.
+      // A failed (or unanswered) read is not a revert: keep waiting until the deadline.
     }
     if (receipt?.status === "0x1") return txHash;
     if (receipt?.status === "0x0") throw new TxRevertedError(txHash);

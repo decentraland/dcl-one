@@ -149,7 +149,12 @@ function Card({
           ) : null}
           {card.jumpHref ? (
             <div className={styles.jumpBox}>
-              <JumpInCTA className={styles.jump} href={card.jumpHref} label={labels.jumpIn} onClick={onJumpInClick} />
+              <JumpInCTA
+                className={styles.jump}
+                href={card.jumpHref}
+                label={labels.jumpIn}
+                onClick={onJumpInClick}
+              />
             </div>
           ) : null}
         </div>
@@ -186,7 +191,13 @@ function WhatsOn({
       </h2>
       <ul className={styles.grid}>
         {cards.map((card) => (
-          <Card key={card.id} card={card} labels={labels} onClick={click(card)} onJumpInClick={jumpIn(card)} />
+          <Card
+            key={card.id}
+            card={card}
+            labels={labels}
+            onClick={click(card)}
+            onJumpInClick={jumpIn(card)}
+          />
         ))}
       </ul>
       <Carousel
@@ -196,7 +207,15 @@ function WhatsOn({
         getKey={(card) => card.id}
         labelledBy={titleId}
         labels={carouselLabels}
-        renderSlide={(card) => <Card card={card} labels={labels} as="div" onClick={click(card)} onJumpInClick={jumpIn(card)} />}
+        renderSlide={(card) => (
+          <Card
+            card={card}
+            labels={labels}
+            as="div"
+            onClick={click(card)}
+            onJumpInClick={jumpIn(card)}
+          />
+        )}
       />
       <Button
         variant="tertiary"

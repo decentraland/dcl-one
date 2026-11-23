@@ -7,7 +7,7 @@ export type MiscEvents = {
     event?: "Download";
     mac_arch?: "apple_silicon" | "intel" | "unknown";
     os?: "Android" | "Windows" | "iOS" | "macOS";
-    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "Referrer Invite First Hero" | "Referrer Invite Second Hero" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
     section?: string;
     tab?: string;
     title?: string;
@@ -20,29 +20,6 @@ export type MiscEvents = {
     utm_org?: string;
     utm_source?: string;
     utm_term?: string;
-  };
-  "Legacy Events Redirected": {
-    destination: string;
-    origin: "events";
-    preservedParams: Record<string, string>;
-    source: string;
-    timestamp: string;
-  };
-  "Legacy Places Redirected": {
-    destination: string;
-    origin: "places";
-    preservedParams: Record<string, string>;
-    source: string;
-    timestamp: string;
-  };
-  "Report Player Submit Failed": {
-    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
-  };
-  "Report Player Submit Started": {
-    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
-  };
-  "Report Player Submitted": {
-    reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
   };
   "Section Viewed": {
     mobile: boolean;

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
@@ -22,7 +22,7 @@ import {
   type ConnectCardData,
   type CreateCardData,
 } from "./content";
-import { useMediaQuery } from "@ui/data/hooks/useMediaQuery";
+import { useMediaQuery } from "../creators/hooks/useMediaQuery";
 import discordIcon from "./assets/discord.svg?url";
 import dclLogo from "./assets/dcl-logo.svg?url";
 import styles from "./CreateLanding.module.css";
@@ -38,8 +38,9 @@ type CreateLandingProps = {
 };
 
 export default function CreateLanding({ downloads = null, sid = "", userId = "" }: CreateLandingProps) {
+  const session = useMemo(() => ({ sid, userId }), [sid, userId]);
   return (
-    <SessionContext.Provider value={{ sid, userId }}>
+    <SessionContext.Provider value={session}>
       <main className={styles.landing}>
         <Hero downloads={downloads} sid={sid} userId={userId} />
         <Why />

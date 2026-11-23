@@ -81,8 +81,6 @@
             "Landing Explore",
             "Landing Hero",
             "Landing Weekly Rituals",
-            "Referrer Invite First Hero",
-            "Referrer Invite Second Hero",
             "come-hang-out",
             "come-hang-out-platform-switch",
             "download-page",
@@ -138,113 +136,6 @@
         "utm_term": {
           "kind": "string",
           "optional": true
-        }
-      }
-    },
-    "Legacy Events Redirected": {
-      "loose": false,
-      "props": {
-        "destination": {
-          "kind": "string",
-          "optional": false
-        },
-        "origin": {
-          "kind": "enum-string",
-          "values": [
-            "events"
-          ],
-          "optional": false
-        },
-        "preservedParams": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "source": {
-          "kind": "string",
-          "optional": false
-        },
-        "timestamp": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "Legacy Places Redirected": {
-      "loose": false,
-      "props": {
-        "destination": {
-          "kind": "string",
-          "optional": false
-        },
-        "origin": {
-          "kind": "enum-string",
-          "values": [
-            "places"
-          ],
-          "optional": false
-        },
-        "preservedParams": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "source": {
-          "kind": "string",
-          "optional": false
-        },
-        "timestamp": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "Report Player Submit Failed": {
-      "loose": false,
-      "props": {
-        "reason": {
-          "kind": "enum-string",
-          "values": [
-            "",
-            "cheating",
-            "harassment",
-            "illegal_content",
-            "impersonation",
-            "scam_phishing"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "Report Player Submit Started": {
-      "loose": false,
-      "props": {
-        "reason": {
-          "kind": "enum-string",
-          "values": [
-            "",
-            "cheating",
-            "harassment",
-            "illegal_content",
-            "impersonation",
-            "scam_phishing"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "Report Player Submitted": {
-      "loose": false,
-      "props": {
-        "reason": {
-          "kind": "enum-string",
-          "values": [
-            "",
-            "cheating",
-            "harassment",
-            "illegal_content",
-            "impersonation",
-            "scam_phishing"
-          ],
-          "optional": false
         }
       }
     },
