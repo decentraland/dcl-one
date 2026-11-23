@@ -1410,6 +1410,7 @@ class PlayImportTests(unittest.TestCase):
                     patch.object(play, 'api', return_value={'workflow_runs': [failed]}) as api, \
                     patch.object(play, 'current_pr', return_value=pr), \
                     patch.object(play, 'inputs_at', return_value=base) as inputs_at, \
+                    patch.object(contract, 'inputs', return_value='ours'), \
                     self.assertRaisesRegex(RuntimeError, error):
                 play.fetch()
             self.assertEqual([call.args[0] for call in inputs_at.call_args_list], ['b' * 40])
@@ -1798,13 +1799,13 @@ class PlayImportTests(unittest.TestCase):
                 patch.object(play, 'download_run') as download, \
                 patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
                 patch.object(play.time, 'sleep', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
-                self.assertRaisesRegex(RuntimeError, r'Bevy CI run 42 has not passed after the 300 s wait\. '
+                self.assertRaisesRegex(RuntimeError, r'Bevy CI run 42 has not passed after the 330 s wait\. '
                                        'Rerun this job when it has') as failure:
-            play.fetch(wait=300, production=True)
+            play.fetch(wait=330, production=True)
         self.assertNotIn('Refresh main with:', str(failure.exception))  # a second main run is no help
-        self.assertEqual(api.call_count, 4)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 120])
-        self.assertEqual(clock[0], 300)
+        self.assertEqual(api.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 120, 30])
+        self.assertEqual(clock[0], 330)
         download.assert_not_called()
 
 
