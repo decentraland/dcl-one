@@ -146,6 +146,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           E2E_CONTENT_URL: https://builder-items.decentraland.zone
 
+      - name: No live secrets, so the live tier is skipped
+        if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS != 'true'
+        run: echo "::warning::E2E_PRIVATE_KEY is not available to this run, so the @live specs did not run."
       - name: e2e live tier (reuses the app packaged above)
         if: inputs.creator-hub-live && env.HAS_LIVE_SECRETS == 'true'
         run: make test-creator-hub-e2e-ci-live

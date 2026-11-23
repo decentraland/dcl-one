@@ -90,6 +90,22 @@ class SelectionTest(unittest.TestCase):
                 got = resolve(path)
                 self.assertEqual((got.inspector, got.offline, got.live), (set(), True, True))
 
+    def test_the_app_build_scripts_require_the_offline_suite(self):
+        for path in ('apps/creator-hub/scripts/rolldown.js', 'apps/creator-hub/scripts/rolldown-env.js',
+                     'apps/ui3/src/shop/pageOverride.ts'):
+            with self.subTest(path=path):
+                got = resolve(path)
+                self.assertEqual((got.creator_hub, got.offline), (True, True))
+
+    def test_what_the_live_specs_run_on_requires_the_live_suite(self):
+        for path in ('apps/creator-hub/patches/@dcl__sdk-commands@7.29.0.patch', CH + 'playwright.config.ts',
+                     CH + 'e2e/fixtures.ts', CH + 'e2e/helpers/app.ts', CH + 'e2e/pages/EditorPage.ts',
+                     CH + 'e2e/pages/ScenesPage.ts', CH + 'e2e/pages/Auth.ts', 'apps/creator-hub/pnpm-lock.yaml',
+                     'apps/creator-hub/Makefile', '.github/workflows/creator-hub-e2e.yml'):
+            with self.subTest(path=path):
+                got = resolve(path)
+                self.assertEqual((got.offline, got.live), (True, True))
+
     def test_an_atom_shared_by_both_bundles_requires_both_suites(self):
         got = resolve('apps/ui3/src/atoms/Button.tsx', impact=None)
         self.assertEqual((got.inspector, got.offline), (ci.ALL, True))
@@ -138,6 +154,24 @@ class PlanTest(unittest.TestCase):
     def test_a_rerun_after_the_label_is_put_back_runs(self):
         out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='synchronize', attempt=2)
         self.assertEqual((out['run'], out['remove-label']), ('true', 'false'))
+
+    def test_reopening_takes_the_label_off(self):
+        out = pull_request(E2E + 'Transform.spec.ts', labels=['ci:creator-hub-e2e'], action='reopened')
+        self.assertEqual((out['run'], out['state'], out['remove-label']), ('false', 'pending', 'true'))
+
+    def test_a_spec_name_unsafe_for_the_shell_runs_the_whole_suite(self):
+        for name in ('test/e2e/a;b.spec.ts', 'test/e2e/a b.spec.ts', 'test/e2e/$(id).spec.ts'):
+            with self.subTest(name=name):
+                path = E2E + name.removeprefix('test/e2e/')
+                out = ci.plan('pull_request', 'opened', 1, [path], ['ci:creator-hub-e2e'], ci.load_selection(),
+                              None, {path: {name}})
+                self.assertEqual((out['inspector'], out['inspector-specs']), ('true', ''))
+
+    def test_no_output_carries_a_newline_from_a_file_name(self):
+        path = E2E + 'a\nrun=true.spec.ts'
+        out = pull_request(path, labels=['ci:creator-hub-e2e'])
+        out.pop('rows')
+        self.assertFalse([key for key, value in out.items() if '\n' in value])
 
     def test_the_whole_suite_passes_no_spec_filter(self):
         out = pull_request(INSPECTOR + 'build.js', labels=['ci:creator-hub-e2e'])

@@ -34,6 +34,7 @@ on:
       - 'apps/ui3/src/atoms/**'
       - 'apps/ui3/src/shop/land/**'
       - 'apps/ui3/src/shop/checkout/chain/**'
+      - 'apps/ui3/src/shop/pageOverride.ts'
       - 'apps/ui3/src/explorer/components/MapSurface.tsx'
       - 'apps/ui3/src/explorer/components/mapsurface.css'
       - 'apps/ui3/src/data/**'
@@ -61,7 +62,7 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       pull-requests: write
@@ -100,7 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/ci%3Acreator-hub-e2e" --silent
+        run: gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR/labels/ci%3Acreator-hub-e2e" --silent || true
       - name: Report what e2e this change requires
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
@@ -114,8 +115,13 @@ jobs:
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           if [ "$STATE" = pending ]; then echo "::notice::$DESCRIPTION"; fi
       - name: Point at the desktop build labels
-        if: github.event_name == 'pull_request' && steps.plan.outputs.creator-hub == 'true' && !contains(github.event.pull_request.labels.*.name, 'ci:desktop')
-        run: echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS, Windows and Linux on this pull request, or ci:linux for Linux alone."
+        if: github.event_name == 'pull_request' && steps.plan.outputs.creator-hub == 'true'
+        env:
+          DESKTOP: ${{ contains(github.event.pull_request.labels.*.name, 'ci:desktop') }}
+        run: |
+          if [ "$DESKTOP" != true ]; then
+            echo "::notice::The desktop builds run on main. Add the ci:desktop label to build the desktop app for macOS, Windows and Linux on this pull request, or ci:linux for Linux alone."
+          fi
       # A push is one merged pull request, so its labels are read from the pushed commit. The
       # labels are read when the job runs: a run started again after the label is added releases.
       - name: Does this run release the installers?
@@ -168,7 +174,7 @@ jobs:
     name: e2e status
     needs: [ changes, e2e ]
     if: always() && github.event_name == 'pull_request' && needs.changes.outputs.e2e == 'true' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    runs-on: ubuntu-26.04
     permissions:
       statuses: write
     steps:

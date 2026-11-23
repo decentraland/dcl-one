@@ -176,7 +176,7 @@ Our team will add appropriate labels:
 - \`breaking-change\` - Breaking changes
 
 CI labels run the expensive jobs on demand:
-- \`ci:creator-hub-e2e\` - Runs the e2e suites this pull request requires, as soon as it is added. The \`Creator Hub e2e\` status names them and stays pending until the label runs them; a push takes the label off.
+- \`ci:creator-hub-e2e\` - Runs the e2e suites this pull request requires, as soon as it is added. The \`Creator Hub e2e\` status names them and stays pending until the label runs them; a push or a reopen takes the label off.
 - \`ci:desktop\` / \`ci:linux\` - Build the desktop app for macOS, Windows and Linux, or Linux alone.
 
 For \`ci:desktop\` and \`ci:linux\`, add the label, then push or reopen.

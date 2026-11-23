@@ -231,12 +231,14 @@ Each tier maps to a package script (all drive the packaged app, so they build/pa
 the CI form (packages with `electron-builder --dir` but skips the Vite rebuild that the
 `download-build` action already provides) and runs **`@offline` only**; `test:e2e:ci:live` runs
 `@live` against the app `test:e2e:ci` already packaged. `e2e.yml` runs that step on `main`, on a
-manual run, and on a pull request whose changes touch the deploy flow (`creator-hub-live` in
-`apps/creator-hub/e2e-selection.json`) only once a maintainer adds the `ci:creator-hub-e2e` label:
+manual run, and on a pull request whose changes touch the deploy flow or what the live specs run on
+(`creator-hub-live` and `every-suite` in `apps/creator-hub/e2e-selection.json`) only once a maintainer adds the `ci:creator-hub-e2e` label:
 real `.zone` deploys never run on a pull request without that admission, a fork's pull request has
-no secrets and skips it, and the offline step is given no secrets at all. Every live run uses the
+no secrets and skips it (a run without the secrets warns that live did not run), and the offline
+step is given no secrets at all. Every live run uses the
 same wallet, world and LAND, so the job holds one repository-wide concurrency group while live is
-selected; a third run waiting on it cancels the pending one, which a re-run recovers.
+selected, `main` included; a third run waiting on it cancels the pending one, which a re-run
+recovers, and a cancelled `main` run fails `Creator Hub CI` until it is re-run.
 `test:e2e:live` runs only `@live` locally. **`@scene` is
 deliberately not in those scripts** — creating a scene runs a live `npm install`, so it can fail on
 registry outages rather than real regressions, which would make it a flaky PR gate. Run it on demand

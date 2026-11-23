@@ -7,6 +7,7 @@
     "apps/ui3/src/atoms/**",
     "apps/ui3/src/shop/land/**",
     "apps/ui3/src/shop/checkout/chain/**",
+    "apps/ui3/src/shop/pageOverride.ts",
     "apps/ui3/src/explorer/components/MapSurface.tsx",
     "apps/ui3/src/explorer/components/mapsurface.css",
     "apps/ui3/src/data/**",
@@ -59,6 +60,7 @@
     ]
   },
   "creator-hub-live": [
+    "apps/creator-hub/patches/**",
     "apps/creator-hub/packages/creator-hub/renderer/src/modules/store/deployment/**",
     "apps/creator-hub/packages/creator-hub/renderer/src/lib/deploy.ts",
     "apps/creator-hub/packages/creator-hub/renderer/src/hooks/useDeploy.ts",
@@ -69,7 +71,10 @@
     "apps/creator-hub/packages/creator-hub/e2e/specs/publish-*",
     "apps/creator-hub/packages/creator-hub/e2e/specs/signed-in.spec.ts",
     "apps/creator-hub/packages/creator-hub/e2e/setup/**",
-    "apps/creator-hub/packages/creator-hub/e2e/pages/PublishModal.ts",
+    "apps/creator-hub/packages/creator-hub/e2e/pages/**",
+    "apps/creator-hub/packages/creator-hub/e2e/fixtures.ts",
+    "apps/creator-hub/packages/creator-hub/e2e/helpers/app.ts",
+    "apps/creator-hub/packages/creator-hub/playwright.config.ts",
     "apps/creator-hub/packages/creator-hub/e2e/helpers/auth-identity.ts",
     "apps/creator-hub/packages/creator-hub/e2e/helpers/wallet-setup.ts",
     "apps/creator-hub/packages/creator-hub/e2e/helpers/subgraph.ts"
@@ -77,11 +82,14 @@
   "creator-hub-offline": [
     "apps/creator-hub/packages/creator-hub/**",
     "apps/creator-hub/packages/zip-extract/**",
+    "apps/creator-hub/scripts/rolldown.js",
+    "apps/creator-hub/scripts/rolldown-env.js",
     "apps/ui3/package.json",
     "apps/ui3/tsconfig.json",
     "apps/ui3/src/atoms/**",
     "apps/ui3/src/shop/land/**",
     "apps/ui3/src/shop/checkout/chain/**",
+    "apps/ui3/src/shop/pageOverride.ts",
     "apps/ui3/src/explorer/components/MapSurface.tsx",
     "apps/ui3/src/explorer/components/mapsurface.css",
     "apps/ui3/src/data/**",

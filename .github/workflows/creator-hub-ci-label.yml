@@ -5,15 +5,14 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: creator-hub-ci-label-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   rerun:
     name: run the required e2e
     if: github.event.label.name == 'ci:creator-hub-e2e' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    concurrency:
+      group: creator-hub-ci-label-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       actions: write
@@ -23,7 +22,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
+          if [ "$(gh pr view "$PR" --json headRefOid --jq .headRefOid)" != "$HEAD" ]; then
+            echo "::notice::$HEAD is no longer the head of this pull request; a push takes the label off, so add it again."
+            exit 0
+          fi
           read -r id status < <(gh run list --workflow creator-hub-ci.yml --event pull_request --commit "$HEAD" \
             --limit 1 --json databaseId,status --jq '.[0] | "\(.databaseId) \(.status)"')
           if [ -z "${id:-}" ] || [ "$id" = null ]; then
@@ -31,7 +35,7 @@ jobs:
             exit 0
           fi
           if [ "$status" != completed ]; then
-            gh run cancel "$id"
+            gh run cancel "$id" || true
             gh run watch "$id" --interval 10 > /dev/null || true
           fi
           gh run rerun "$id"

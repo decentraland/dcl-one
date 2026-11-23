@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SELECTION = ROOT / 'apps/creator-hub/e2e-selection.json'
 STATUS_LIMIT = 140
 ALL = frozenset({'*'})
+SAFE_SPEC = re.compile(r'[\w./-]+')
 
 _PATHS = importlib.util.spec_from_file_location('ci_paths', Path(__file__).with_name('ci_paths.py'))
 paths = importlib.util.module_from_spec(_PATHS)
@@ -103,7 +104,7 @@ def resolve(changed, selection, impact, importers):
             continue
         outcomes = []
         if matches(path, selection['every-suite']):
-            inspector, reason, offline, live = ALL, 'every suite', True, False
+            inspector, reason, offline, live = ALL, 'every suite', True, True
         else:
             inspector, reason = _inspector(path, selection, impact, importers)
             live = matches(path, selection['creator-hub-live'])
@@ -130,6 +131,12 @@ def _suites(required):
     return ' + '.join(names)
 
 
+def _spec_args(specs):
+    if specs == ALL or not all(SAFE_SPEC.fullmatch(spec) for spec in specs):
+        return ''
+    return ' '.join(sorted(specs))
+
+
 def plan(event, action, attempt, changed, labels, selection, impact, importers):
     """Outputs for the workflow: what to run and what the `Creator Hub e2e` status says."""
     label = selection['label']
@@ -138,7 +145,7 @@ def plan(event, action, attempt, changed, labels, selection, impact, importers):
                 'inspector-specs': '', 'creator-hub-offline': 'true', 'creator-hub-live': 'true',
                 'remove-label': 'false', 'state': 'pending', 'description': 'Running every suite', 'rows': []}
     required = resolve(changed, selection, impact, importers)
-    pushed = action == 'synchronize' and int(attempt) == 1
+    pushed = action in ('synchronize', 'reopened') and int(attempt) == 1
     labelled = label in labels and not pushed
     needed = bool(required.inspector or required.offline or required.live)
     run = needed and labelled
@@ -152,7 +159,7 @@ def plan(event, action, attempt, changed, labels, selection, impact, importers):
     return {
         'creator-hub': flag(required.creator_hub), 'required': flag(needed), 'run': flag(run),
         'inspector': flag(run and required.inspector),
-        'inspector-specs': '' if required.inspector == ALL else ' '.join(sorted(required.inspector)),
+        'inspector-specs': _spec_args(required.inspector),
         'creator-hub-offline': flag(run and required.offline), 'creator-hub-live': flag(run and required.live),
         'remove-label': flag(pushed and label in labels),
         'state': 'pending' if needed else 'success', 'description': description[:STATUS_LIMIT],
