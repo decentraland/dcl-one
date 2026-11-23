@@ -124,9 +124,11 @@ in every `?sceneLoop=` mode but `legacy` a reply also ends the wait: each relay 
 forwards to the engine and wakes the loop (`dcl_wasm::scene_replies`). A reply that arrives
 before the deadline is then received in the same frame. In those modes the loop also records
 how late each timed-out wait woke, and no timed wait ends closer to the deadline than the 90th
-percentile of the last 32 (`WebLoopPacing::wait_lateness`; zero until 8 are recorded); it spins
-through the rest, as on native. The loop's schedule runs on the single-threaded executor: a
-pass is a chain of systems that mostly find nothing to do.
+percentile of the last 32 (`WaitLateness`); it spins through the rest, as on native. A wait
+counts for 1 s (`LATENESS_AGE`): a margin that leaves the loop no timed wait also stops the
+measurement, so a burst of late wakes, such as a background tab's, would otherwise keep the
+loop spinning for the rest of the session. The loop's schedule runs on the single-threaded
+executor: a pass is a chain of systems that mostly find nothing to do.
 
 Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the

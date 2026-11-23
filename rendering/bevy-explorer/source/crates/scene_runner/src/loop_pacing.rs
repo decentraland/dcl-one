@@ -77,15 +77,68 @@ impl TailEstimate {
             return None;
         }
         let mut sorted = self.ring;
-        let sorted = &mut sorted[..self.len];
-        sorted.sort_unstable();
-        Some(sorted[(self.len * 9).div_ceil(10) - 1])
+        Some(p90(&mut sorted[..self.len]))
     }
 
     /// What the deadline mode leaves for the tail: its 90th percentile plus
     /// [`TAIL_MARGIN_SHARE`] of the frame target.
     pub fn reserve(&self, frame: Duration) -> Option<Duration> {
         self.p90().map(|p90| p90 + frame.mul_f64(TAIL_MARGIN_SHARE))
+    }
+}
+
+// the nearest-rank 90th percentile of a non-empty set
+fn p90(values: &mut [Duration]) -> Duration {
+    values.sort_unstable();
+    values[(values.len() * 9).div_ceil(10) - 1]
+}
+
+/// Timed-out waits for a reply the lateness estimate covers.
+pub const LATENESS_WAITS: usize = 32;
+/// How long a timed-out wait's lateness counts. A wait is timed only while the margin leaves room
+/// for one, so without this a margin at or above the loop's budget, after a burst of late wakes
+/// (a background tab's coarse timers, a busy start), would stop the waits that measure it and
+/// keep the loop spinning through its whole budget for the rest of the session.
+pub const LATENESS_AGE: Duration = Duration::from_secs(1);
+
+/// How much later than asked the scene loop's last [`LATENESS_WAITS`] timed-out waits for a reply
+/// woke (web), each counted for [`LATENESS_AGE`]. No timed wait ends closer to the deadline than
+/// their 90th percentile ([`WaitLateness::wait_end`]).
+#[derive(Clone, Debug, Default)]
+pub struct WaitLateness {
+    ring: [Option<(Instant, Duration)>; LATENESS_WAITS],
+    next: usize,
+}
+
+impl WaitLateness {
+    /// A wait that timed out at `at`, `late` after it was due.
+    pub fn push(&mut self, at: Instant, late: Duration) {
+        self.ring[self.next] = Some((at, late));
+        self.next = (self.next + 1) % LATENESS_WAITS;
+    }
+
+    /// The nearest-rank 90th percentile of the waits at most [`LATENESS_AGE`] before `now`; None
+    /// without one. A few waits give their maximum: a margin too large spins longer, one too
+    /// small ends the loop late, and either lasts at most [`LATENESS_AGE`].
+    pub fn p90(&self, now: Instant) -> Option<Duration> {
+        let mut recent = [Duration::ZERO; LATENESS_WAITS];
+        let mut len = 0;
+        for (at, late) in self.ring.iter().flatten() {
+            if now.saturating_duration_since(*at) <= LATENESS_AGE {
+                recent[len] = *late;
+                len += 1;
+            }
+        }
+        (len > 0).then(|| p90(&mut recent[..len]))
+    }
+
+    /// The last moment a timed wait of a loop that starts at `loop_start` may end: `deadline` less
+    /// the 90th percentile, and not before the loop's start (then no wait is timed).
+    pub fn wait_end(&self, deadline: Instant, loop_start: Instant) -> Instant {
+        deadline
+            .checked_sub(self.p90(loop_start).unwrap_or_default())
+            .unwrap_or(loop_start)
+            .max(loop_start)
     }
 }
 
@@ -96,10 +149,7 @@ pub struct WebLoopPacing {
     pub frame_start: Option<Instant>,
     pub loop_end: Option<Instant>,
     pub tail: TailEstimate,
-    /// How much later than asked the loop's last timed-out waits for a reply woke: the same
-    /// window and percentile, over waits instead of frames. No timed wait ends closer to the
-    /// deadline than its 90th percentile.
-    pub wait_lateness: TailEstimate,
+    pub wait_lateness: WaitLateness,
 }
 
 /// The frame's work after its scene loop: from the loop's end to the handoff to the render
@@ -257,5 +307,59 @@ mod tests {
             tail.push(ms(2.0));
         }
         assert!(close(tail.p90().unwrap(), ms(2.0)));
+    }
+
+    /// A burst of late wakes leaves the loop no timed wait, so nothing measures the lateness
+    /// again; once the burst ages out the loop waits, and a fresh wait sets the margin.
+    #[test]
+    fn a_burst_of_late_wakes_stops_the_waits_only_until_it_ages_out() {
+        let burst = Instant::now();
+        let mut lateness = WaitLateness::default();
+        assert_eq!(lateness.p90(burst), None);
+        // a background tab: every timed wait wakes 10 ms late
+        for _ in 0..LATENESS_WAITS {
+            lateness.push(burst, ms(10.0));
+        }
+        // back in front, 8 ms budgets: the margin leaves no timed wait, frame after frame
+        let mut loop_start = burst;
+        while loop_start - burst <= LATENESS_AGE {
+            assert_eq!(lateness.wait_end(loop_start + ms(8.0), loop_start), loop_start);
+            loop_start += T;
+        }
+        // the burst aged out: the loop waits up to its deadline, and its first timed-out wait
+        // gives the margin
+        assert_eq!(lateness.p90(loop_start), None);
+        assert_eq!(
+            lateness.wait_end(loop_start + ms(8.0), loop_start),
+            loop_start + ms(8.0)
+        );
+        lateness.push(loop_start + ms(1.0), ms(1.0));
+        loop_start += T;
+        assert!(close(
+            lateness.wait_end(loop_start + ms(8.0), loop_start) - loop_start,
+            ms(7.0)
+        ));
+    }
+
+    #[test]
+    fn the_wait_lateness_is_the_90th_percentile_of_the_recent_waits() {
+        let start = Instant::now();
+        let mut lateness = WaitLateness::default();
+        // a few waits give their maximum
+        lateness.push(start, ms(0.2));
+        lateness.push(start, ms(1.5));
+        assert_eq!(lateness.p90(start), Some(ms(1.5)));
+        // 1..=32 ms: rank ceil(0.9 * 32) = 29; the window holds the last 32
+        for i in 1..=LATENESS_WAITS {
+            lateness.push(start, ms(i as f64));
+        }
+        assert!(close(lateness.p90(start).unwrap(), ms(29.0)));
+        // only the waits within the age count
+        let later = start + LATENESS_AGE / 2;
+        for _ in 0..3 {
+            lateness.push(later, ms(1.0));
+        }
+        let now = start + LATENESS_AGE + ms(1.0);
+        assert_eq!(lateness.p90(now), Some(ms(1.0)));
     }
 }

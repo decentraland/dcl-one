@@ -582,14 +582,10 @@ fn run_scene_loop(world: &mut World) {
     // web: a timed wait can wake late too, by as much as the recent timed waits did
     #[cfg(target_arch = "wasm32")]
     let last_wait_end = if mode.loop_waits_for_replies() {
-        let lateness = world
+        world
             .resource::<loop_pacing::WebLoopPacing>()
             .wait_lateness
-            .p90()
-            .unwrap_or_default();
-        target_end_time
-            .checked_sub(lateness)
-            .unwrap_or(start_loop_time)
+            .wait_end(target_end_time, start_loop_time)
     } else {
         target_end_time
     };
@@ -631,11 +627,11 @@ fn run_scene_loop(world: &mut World) {
                 #[cfg(target_arch = "wasm32")]
                 if mode.loop_waits_for_replies() {
                     if dcl_wasm::scene_replies::REPLIES.wait(replies_seen, wait) {
-                        let late = Instant::now().saturating_duration_since(next_pass);
+                        let now = Instant::now();
                         world
                             .resource_mut::<loop_pacing::WebLoopPacing>()
                             .wait_lateness
-                            .push(late);
+                            .push(now, now.saturating_duration_since(next_pass));
                     }
                 } else {
                     std::thread::sleep(wait);
