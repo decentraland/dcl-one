@@ -6210,7 +6210,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/avatarSaveApi.test.ts",
-      "sha256": "e640c5cdb4176ebf39366080435e16ac32c76f3d36050a80cb41b32bc56b1276"
+      "sha256": "40be313455ce471e2dd8849fa1501ecf20841aaa208f255cf7ae95b7ea3b70cb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",

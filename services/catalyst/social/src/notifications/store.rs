@@ -1223,9 +1223,11 @@ mod pg_tests {
         let hidden = NewNotification::now(address.clone(), "events_started", serde_json::json!({}));
         let visible =
             NewNotification::now(address.clone(), "events_starts_soon", serde_json::json!({}));
-        insert_event_notifications(c.pool(), &[hidden.clone(), visible.clone()])
+        let mut tx = c.pool().begin().await.unwrap();
+        insert_event_notifications(&mut tx, &[hidden.clone(), visible.clone()])
             .await
             .unwrap();
+        tx.commit().await.unwrap();
         let hidden_flags: (bool, bool, bool) = sqlx::query_as(
             "SELECT in_app,read,read_at IS NOT NULL FROM social.notifications WHERE id=$1",
         )
