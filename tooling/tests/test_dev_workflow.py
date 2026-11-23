@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from cache_sweep_fixture import FakeGh
+
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'
 CLEANUP = WORKFLOW.with_name('closed-pr-cache.yml')
@@ -322,26 +324,26 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 5, 'ref': 'refs/pull/150/merge'},
             {'id': 'unsafe', 'ref': 'refs/pull/150/merge'},
         ]}]
+        gh = FakeGh(pages)
         with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
                                      'GITHUB_EVENT_NAME': 'pull_request'}), \
-                patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=gh), patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-            request = listing.call_args.args[0]
+            [request] = gh.listings()
             self.assertIn('ref=refs/pull/150/merge', request)
             self.assertIn('--paginate', request)
-            self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+            # A targeted cleanup needs no PR state: the merge ref names the PR.
+            self.assertEqual(gh.state_lookups(), [])
+            self.assertEqual(gh.deleted(), [
                 'repos/decentraland/dcl-one/actions/caches/3',
                 'repos/decentraland/dcl-one/actions/caches/5',
             ])
             for number in ('', '0', '-1', '../main', '150; echo unsafe'):
                 with self.subTest(number=number), patch.dict(os.environ, {'PR_NUMBER': number}):
-                    listing.reset_mock()
-                    deletion.reset_mock()
+                    gh.calls.clear()
                     with self.assertRaises(ValueError):
                         exec(compile(script, str(CLEANUP), 'exec'), {})
-                    listing.assert_not_called()
-                    deletion.assert_not_called()
+                    self.assertEqual(gh.calls, [])
 
     def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
@@ -376,20 +378,12 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
-        def api(args, **kwargs):
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': caches}])
-            if args[-1].endswith('/pulls/10'):
-                return json.dumps({'state': 'closed'})
-            if args[-1].endswith('/pulls/11'):
-                return json.dumps({'state': 'open'})
-            self.fail(f'Unexpected API call: {args}')
+        gh = FakeGh([{'actions_caches': caches}], closed=('10',))
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=gh), patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+        self.assertEqual(gh.deleted(), [
             'repos/decentraland/dcl-one/actions/caches/1',
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
@@ -401,7 +395,29 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
         ])
-        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
+        # One GraphQL lookup covers both PRs, however many caches each has.
+        [lookup] = gh.state_lookups()
+        query = next(arg for arg in lookup if arg.startswith('query='))
+        self.assertEqual(re.findall(r'p([0-9]+): pullRequest', query), ['10', '11'])
+
+    def test_a_sweep_leaves_the_rest_of_ci_its_rate_budget(self):
+        script = textwrap.dedent(CLEANUP.read_text().split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
+        pages = [{'actions_caches': [{'id': 1, 'ref': 'refs/pull/150/merge'}]}]
+        env = {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one', 'GITHUB_EVENT_NAME': 'pull_request'}
+        # Below the reserve plus the listing's cost, the sweep does not start.
+        gh = FakeGh(pages, remaining=110)
+        with patch.dict(os.environ, env), patch('subprocess.run', side_effect=gh), patch('builtins.print'):
+            with self.assertRaises(SystemExit) as stop:
+                exec(compile(script, str(CLEANUP), 'exec'), {})
+        self.assertEqual(stop.exception.code, 0)
+        self.assertEqual((gh.listings(), gh.deleted()), ([], []))
+        # The primary hourly limit while listing ends the sweep cleanly, deleting nothing.
+        gh = FakeGh(pages, listing_error='gh: API rate limit already exceeded for installation ID 1 (HTTP 403)')
+        with patch.dict(os.environ, env), patch('subprocess.run', side_effect=gh), patch('builtins.print'):
+            with self.assertRaises(SystemExit) as stop:
+                exec(compile(script, str(CLEANUP), 'exec'), {})
+        self.assertEqual(stop.exception.code, 0)
+        self.assertEqual((len(gh.listings()), gh.deleted()), (1, []))
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         command = re.search(r'^          source=(.*)$', jobs()['smoke'], re.M).group(1)
