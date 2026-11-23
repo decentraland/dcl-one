@@ -2672,8 +2672,8 @@ identities (100 per network). No production rate is measured.
   WHERE status = 'signed' FOR UPDATE) RETURNING` moves it to `fulfilled` and
   clears `outcome`, `params` and `challenge`, so a concurrent poller on any
   replica waits on the row, finds it fulfilled and answers 410. A request
-  expires 5 minutes after its creation; the read that finds it expired
-  deletes it and answers 410, and the sweep drops the rest 5 minutes later.
+  expires 5 minutes after its creation. Reads answer 404 after expiry, and
+  the periodic sweep deletes expired rows.
 - `auth_identities`: one row per parked identity, keyed by its UUID, holding
   the identity document with its ephemeral private key for at most an hour.
   The key is stored in clear, as the upstream auth server keeps it in Redis:
@@ -2711,7 +2711,7 @@ per table (`hashtextextended('explore_api.auth_requests:admission', 0)` and the
 identities' twin), counts the live rows and those of its network in one pass
 and inserts in the same transaction, so concurrent creates on every replica
 admit one at a time and never overshoot. A full request table first drops
-requests past their grace, then the oldest delivered ones, just enough to admit
+expired requests, then the oldest delivered ones, just enough to admit
 one more. The count scans the table, bounded by the caps to about 10,000 rows;
 sign-in creates are rare enough that serializing them on the lock costs nothing
 measurable.

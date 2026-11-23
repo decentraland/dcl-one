@@ -8,9 +8,10 @@
 
 use crate::shared::routing::{erase, get, post};
 use axum::Extension;
+#[cfg(test)]
 use axum::body::Body;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Path, Request, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
@@ -41,8 +42,6 @@ use validation::{
 };
 
 const REQUEST_TTL_SECONDS: i64 = 300;
-/// An expired request still answers 410 for this long before the sweep drops it.
-const REQUEST_EXPIRED_GRACE_SECONDS: i64 = 300;
 const MAX_PENDING_REQUESTS: usize = 10_000;
 const MAX_REQUESTS_PER_SOURCE: usize = 100;
 const DEFAULT_BODY_SIZE_BYTES: usize = 16 * 1024;
@@ -245,35 +244,21 @@ async fn insert_request(conn: &mut PgConnection, record: &ChallengeRecord) -> sq
     .map(drop)
 }
 
-/// A request as stored, or why there is none to work with: an expired
-/// request is deleted on the read that finds it and answers 410 once.
-enum Loaded {
-    Missing,
-    Expired,
-    Found(ChallengeRecord),
-}
-
-async fn load_request(state: &AppState, id: &str, now: DateTime<Utc>) -> sqlx::Result<Loaded> {
+async fn load_request(
+    state: &AppState,
+    id: &str,
+    now: DateTime<Utc>,
+) -> sqlx::Result<Option<ChallengeRecord>> {
     let row: Option<RequestRow> = sqlx::query_as(concat!(
         "SELECT ",
         request_columns!(),
-        " FROM explore_api.auth_requests WHERE request_id = $1"
+        " FROM explore_api.auth_requests WHERE request_id = $1 AND expiration >= $2"
     ))
     .bind(id)
+    .bind(naive(now))
     .fetch_optional(&state.pool)
     .await?;
-    let Some(record) = row.map(RequestRow::into_record) else {
-        return Ok(Loaded::Missing);
-    };
-    if record.expiration >= now {
-        return Ok(Loaded::Found(record));
-    }
-    sqlx::query("DELETE FROM explore_api.auth_requests WHERE request_id = $1 AND expiration < $2")
-        .bind(id)
-        .bind(naive(now))
-        .execute(&state.pool)
-        .await?;
-    Ok(Loaded::Expired)
+    Ok(row.map(RequestRow::into_record))
 }
 
 #[derive(Debug, Deserialize)]
@@ -394,27 +379,33 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/identities", post(create_identity))
         .route("/identities/{id}", get(get_identity))
-        .layer(middleware::from_fn(cors_preflight))
         .layer(middleware::from_fn(enforce_body_cap))
         .layer(middleware::from_fn(record_request_telemetry))
+        .layer(middleware::from_fn(crate::shared::cors::decentraland_cors))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_SIZE_BYTES))
 }
 
-async fn cors_preflight(req: Request, next: Next) -> Response {
-    if req.method() == Method::OPTIONS {
-        return Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, OPTIONS")
-            .header(
-                header::ACCESS_CONTROL_ALLOW_HEADERS,
-                "content-type, x-dcl-client, x-correlation-id, x-identity-verifier",
-            )
-            .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, CORRELATION_HEADER)
-            .header(header::ACCESS_CONTROL_MAX_AGE, "3600")
-            .body(Body::empty())
-            .expect("static preflight response");
+struct RelayJson<T>(T);
+
+impl<S, T> FromRequest<S> for RelayJson<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(value)| Self(value))
+            .map_err(|error| {
+                if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    payload_too_large()
+                } else {
+                    bad_request("Invalid request body")
+                }
+            })
     }
-    next.run(req).await
 }
 
 async fn enforce_body_cap(req: Request, next: Next) -> Response {
@@ -583,14 +574,13 @@ async fn health_live() -> impl IntoResponse {
     })
 }
 
-/// Drops the requests past their expiry and its 410 grace window.
+/// Drops requests past their expiry.
 pub async fn sweep_expired_requests(
     conn: &mut PgConnection,
     now: DateTime<Utc>,
 ) -> sqlx::Result<u64> {
-    let horizon = now - Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS);
     sqlx::query("DELETE FROM explore_api.auth_requests WHERE expiration < $1")
-        .bind(naive(horizon))
+        .bind(naive(now))
         .execute(conn)
         .await
         .map(|done| done.rows_affected())
@@ -743,7 +733,7 @@ async fn create_request(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
-    Json(body): Json<CreateRequestBody>,
+    RelayJson(body): RelayJson<CreateRequestBody>,
 ) -> Response {
     let validated = match validate_request_message(&body) {
         Ok(validated) => validated,
@@ -896,16 +886,6 @@ async fn admit_request(
     Ok(None)
 }
 
-fn expired(id: &str) -> Response {
-    (
-        StatusCode::GONE,
-        Json(ErrorBody {
-            error: format!("Request with id \"{}\" has expired", id),
-        }),
-    )
-        .into_response()
-}
-
 /// The answer for a request that is not there to work with, or the record.
 async fn found_request(
     state: &AppState,
@@ -913,9 +893,8 @@ async fn found_request(
     now: DateTime<Utc>,
 ) -> Result<ChallengeRecord, Box<Response>> {
     match load_request(state, id, now).await {
-        Ok(Loaded::Found(record)) => Ok(record),
-        Ok(Loaded::Missing) => Err(Box::new(not_found(id))),
-        Ok(Loaded::Expired) => Err(Box::new(expired(id))),
+        Ok(Some(record)) => Ok(record),
+        Ok(None) => Err(Box::new(not_found(id))),
         Err(err) => Err(Box::new(internal_error(
             "auth-api: reading the request",
             err,
@@ -960,11 +939,12 @@ async fn get_request_outcome(State(state): State<AppState>, Path(id): Path<Strin
         "UPDATE explore_api.auth_requests AS r \
          SET status = 'fulfilled', outcome = NULL, params = '[]', challenge = '' \
          FROM (SELECT request_id, outcome FROM explore_api.auth_requests \
-               WHERE request_id = $1 AND status = 'signed' FOR UPDATE) AS signed \
+               WHERE request_id = $1 AND status = 'signed' AND expiration >= $2 FOR UPDATE) AS signed \
          WHERE r.request_id = signed.request_id \
          RETURNING signed.outcome::text",
     )
     .bind(&id)
+    .bind(naive(now_micros()))
     .fetch_optional(&state.pool)
     .await;
     match delivered {
@@ -991,7 +971,7 @@ async fn post_request_outcome(
     peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     path: Path<String>,
-    body: Json<HttpOutcomeMessage>,
+    body: RelayJson<HttpOutcomeMessage>,
 ) -> Response {
     submit_outcome(state, peer, headers, path, body).await
 }
@@ -1001,7 +981,7 @@ async fn post_request_outcome_legacy(
     peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     path: Path<String>,
-    body: Json<HttpOutcomeMessage>,
+    body: RelayJson<HttpOutcomeMessage>,
 ) -> Response {
     submit_outcome(state, peer, headers, path, body).await
 }
@@ -1021,7 +1001,7 @@ async fn submit_outcome(
     peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(body): Json<HttpOutcomeMessage>,
+    RelayJson(body): RelayJson<HttpOutcomeMessage>,
 ) -> Response {
     if let Err(msg) = validate_outcome_body(&body) {
         return bad_request(&msg);
@@ -1056,7 +1036,7 @@ async fn submit_outcome(
 
     let outcome = OutcomeResponseMessage {
         request_id: id.clone(),
-        sender: body.sender.to_lowercase(),
+        sender: body.sender,
         result: body.result,
         error: body.error,
         auth_chain: body.auth_chain,
@@ -1069,10 +1049,11 @@ async fn submit_outcome(
     // once, the second finds it signed.
     let stored = sqlx::query(
         "UPDATE explore_api.auth_requests SET status = 'signed', outcome = $2::json \
-         WHERE request_id = $1 AND status = 'pending'",
+         WHERE request_id = $1 AND status = 'pending' AND expiration >= $3",
     )
     .bind(&id)
     .bind(outcome)
+    .bind(naive(now_micros()))
     .execute(&state.pool)
     .await;
     match stored {
@@ -1082,7 +1063,7 @@ async fn submit_outcome(
             }
             StatusCode::OK.into_response()
         }
-        Ok(_) => match found_request(&state, &id, now).await {
+        Ok(_) => match found_request(&state, &id, now_micros()).await {
             Ok(record) => already_answered(&id, record.status),
             Err(answer) => *answer,
         },
@@ -1103,9 +1084,10 @@ async fn post_request_validation(
     }
     let marked = sqlx::query(
         "UPDATE explore_api.auth_requests SET requires_validation = true \
-         WHERE request_id = $1 AND status <> 'fulfilled'",
+         WHERE request_id = $1 AND status <> 'fulfilled' AND expiration >= $2",
     )
     .bind(&id)
+    .bind(naive(now_micros()))
     .execute(&state.pool)
     .await;
     match marked {
@@ -1336,7 +1318,8 @@ mod tests {
 
         let app = Router::new()
             .route("/", get(|| async { StatusCode::NO_CONTENT }))
-            .layer(middleware::from_fn(record_request_telemetry));
+            .layer(middleware::from_fn(record_request_telemetry))
+            .layer(middleware::from_fn(crate::shared::cors::decentraland_cors));
         let supplied = "4ef97fa3-9dcf-4630-9bc4-5f742706e87a";
         let response = app
             .clone()
@@ -2174,10 +2157,8 @@ mod tests {
         .await;
         assert_eq!(v["requiresValidation"], true);
 
-        let outcome = serde_json::to_vec(
-            &json!({ "sender": "0x1234567890123456789012345678901234567890", "result": "0xsig" }),
-        )
-        .unwrap();
+        let sender = "0xabcdefABCDEFabcdefABCDEFabcdefABCDEFabcd";
+        let outcome = serde_json::to_vec(&json!({ "sender": sender, "result": "0xsig" })).unwrap();
         let (status, _) = call(
             &app,
             json_post(
@@ -2196,6 +2177,7 @@ mod tests {
         let (status, answered) = call(&app, get_req(&format!("/auth-api/requests/{id}"))).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(answered["result"], "0xsig");
+        assert_eq!(answered["sender"], sender);
         assert_eq!(answered["requestId"], id);
         let (status, gone) = call(&app, get_req(&format!("/auth-api/requests/{id}"))).await;
         assert_eq!(status, StatusCode::GONE);
@@ -2514,7 +2496,7 @@ mod tests {
         assert_eq!(
             refusal(&state, Some("new"), now).await,
             None,
-            "expired requests in their grace window hold no slot"
+            "expired requests hold no slot"
         );
         let live = now + Duration::seconds(REQUEST_TTL_SECONDS);
         sqlx::query("UPDATE explore_api.auth_requests SET expiration = $1")
@@ -2614,32 +2596,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_sweep_keeps_requests_through_their_grace_window() {
+    async fn the_sweep_removes_expired_requests() {
         let Some((db, state)) = replica().await else {
             return;
         };
         let now = now_micros();
         let mut conn = state.pool.acquire().await.unwrap();
         for (id, expiration) in [
-            (
-                "old",
-                now - Duration::seconds(REQUEST_EXPIRED_GRACE_SECONDS + 1),
-            ),
-            ("grace", now - Duration::seconds(1)),
+            ("old", now - Duration::seconds(300)),
+            ("just-expired", now - Duration::seconds(1)),
             ("live", now + Duration::seconds(60)),
         ] {
             insert_request(&mut conn, &record(id, "", expiration))
                 .await
                 .unwrap();
         }
-        assert_eq!(sweep_expired_requests(&mut conn, now).await.unwrap(), 1);
+        assert_eq!(sweep_expired_requests(&mut conn, now).await.unwrap(), 2);
         assert_eq!(
             sweep_expired_requests(&mut conn, now).await.unwrap(),
             0,
             "a second sweep, as another replica runs it, finds nothing"
         );
         drop(conn);
-        assert_eq!(request_ids(&state).await, ["grace", "live"]);
+        assert_eq!(request_ids(&state).await, ["live"]);
         db.teardown().await;
     }
 
@@ -2858,7 +2837,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_expired_request_answers_410_once_then_404_on_any_replica() {
+    async fn an_expired_request_answers_404_on_any_replica() {
         let Some((db, state)) = replica().await else {
             return;
         };
@@ -2873,8 +2852,8 @@ mod tests {
         .unwrap();
         drop(conn);
         let (status, body) = call(&b, get_req("/auth-api/v2/requests/expired")).await;
-        assert_eq!(status, StatusCode::GONE);
-        assert_eq!(body["error"], "Request with id \"expired\" has expired");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "Request with id \"expired\" not found");
         let (status, _) = call(&a, get_req("/auth-api/requests/expired")).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         db.teardown().await;
@@ -2925,32 +2904,74 @@ mod tests {
         db.teardown().await;
     }
 
-    /// A cross-origin client may send its verifier on pickup.
     #[tokio::test]
-    async fn the_preflight_allows_the_identity_verifier_header() {
+    async fn auth_routes_use_the_allowlist_for_preflight_and_responses() {
         use tower::ServiceExt;
-        let res = Router::new()
-            .nest(
-                "/auth-api",
-                routes().with_state(crate::api::tests_support::state_without_db().await),
-            )
-            .oneshot(
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = crate::api::router(state);
+        for (origin, allowed) in [
+            ("https://decentraland.org", true),
+            ("http://localhost:3000", true),
+            ("https://decentraland.org.example.com", false),
+            ("null", false),
+        ] {
+            let preflight = Request::builder()
+                .method("OPTIONS")
+                .uri("/auth-api/identities/0f007385-b6f9-44b7-aeb2-748605afe1a9")
+                .header(header::ORIGIN, origin)
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(
+                    header::ACCESS_CONTROL_REQUEST_HEADERS,
+                    "x-identity-verifier",
+                )
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(preflight).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(
+                response.headers().get(header::ACCESS_CONTROL_ALLOW_HEADERS),
+                allowed
+                    .then(|| HeaderValue::from_static("x-identity-verifier"))
+                    .as_ref(),
+            );
+            let request = Request::builder()
+                .uri("/auth-api/health")
+                .header(header::ORIGIN, origin)
+                .body(Body::empty())
+                .unwrap();
+            for response in [response, app.clone().oneshot(request).await.unwrap()] {
+                assert_eq!(
+                    response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+                    allowed.then(|| HeaderValue::from_static(origin)).as_ref(),
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_json_bodies_use_the_relay_error_envelope() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = app(&state);
+        for uri in [
+            "/auth-api/requests",
+            "/auth-api/requests/test",
+            "/auth-api/v2/requests/test/outcome",
+            "/auth-api/identities",
+        ] {
+            for request in [
+                json_post(uri, b"{".to_vec()),
+                json_post(uri, b"[]".to_vec()),
                 Request::builder()
-                    .method("OPTIONS")
-                    .uri("/auth-api/identities/0f007385-b6f9-44b7-aeb2-748605afe1a9")
-                    .body(Body::empty())
+                    .method("POST")
+                    .uri(uri)
+                    .body(Body::from("{}"))
                     .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::NO_CONTENT);
-        let allowed = res.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS]
-            .to_str()
-            .unwrap();
-        assert!(
-            allowed.split(", ").any(|h| h == "x-identity-verifier"),
-            "{allowed}"
-        );
+            ] {
+                let (status, body) = call(&app, request).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+                assert_eq!(body, json!({ "error": "Invalid request body" }));
+            }
+        }
     }
 
     /// An identity bound to a deep-link request is served to the verifier it
