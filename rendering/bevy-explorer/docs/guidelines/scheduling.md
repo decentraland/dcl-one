@@ -78,9 +78,10 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
 The loop runs at least once per frame, then repeats while time remains and there are eligible
 scenes or replies outstanding. When no scene can be started (none is queued, or `scene_threads`
 are all in flight) and replies are outstanding, it sleeps so that the next pass starts
-`SCENE_REPLY_POLL` (250 µs) after this one started, or at the deadline if that is sooner. The
-loop's schedule runs on the single-threaded executor: a pass is a chain of systems that mostly
-find nothing to do.
+`SCENE_REPLY_POLL` (250 µs) after this one started, or at the deadline if that is sooner. On
+native no sleep ends closer to the deadline than the spin sleeper's accuracy, because a native
+sleep can wake that late; the loop spins through that last stretch. The loop's schedule runs
+on the single-threaded executor: a pass is a chain of systems that mostly find nothing to do.
 
 Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the

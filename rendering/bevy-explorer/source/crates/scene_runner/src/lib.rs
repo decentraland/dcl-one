@@ -450,8 +450,8 @@ impl Plugin for SceneRunnerPlugin {
         );
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);
-        // every system in a pass is ordered behind the one before it or does almost
-        // nothing, so handing each to a worker costs more than running it
+        // most passes find nothing to do, so handing each system to a worker costs more
+        // than running it
         scene_schedule.set_executor_kind(ExecutorKind::SingleThreaded);
 
         scene_schedule.configure_sets(
@@ -544,6 +544,13 @@ fn run_scene_loop(world: &mut World) {
     let latest_end = start_loop_time + frame_target_duration.max(Duration::from_millis(1));
     let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
     loop_schedule.next_frame_end = target_end_time + frame_target_duration;
+    // a native sleep can wake late by the sleeper's accuracy, so no wait for replies ends
+    // closer to the deadline than that
+    #[cfg(not(target_arch = "wasm32"))]
+    let last_wait_end =
+        target_end_time - Duration::new(0, loop_schedule.sleeper.native_accuracy_ns());
+    #[cfg(target_arch = "wasm32")]
+    let last_wait_end = target_end_time;
 
     let mut updates = world.resource_mut::<SceneUpdates>();
     updates.loop_end_time = target_end_time;
@@ -569,7 +576,7 @@ fn run_scene_loop(world: &mut World) {
         if !updates.jobs_in_flight.is_empty()
             && updates.next_scene_to_start(scene_threads).is_none()
         {
-            let next_pass = (pass_start + SCENE_REPLY_POLL).min(target_end_time);
+            let next_pass = (pass_start + SCENE_REPLY_POLL).min(last_wait_end);
             if let Some(wait) = next_pass.checked_duration_since(Instant::now()) {
                 std::thread::sleep(wait);
             }
