@@ -1464,15 +1464,20 @@ pub async fn serve(
 
 /// The base of `/hot-scenes` thumbnails, the server the scenes are read from, as
 /// upstream Stats uses one URL for both. Trailing slashes are stripped from
-/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does, so
-/// `{base}/contents/{hash}` never holds `//` (the nested `/content` route does not
-/// match it).
+/// `CONTENT_URL` and this node's own `/content/` alike, as upstream does since
+/// archipelago-workers#141, so `{base}/contents/{hash}` never holds `//` (the nested
+/// `/content` route does not match it). Unlike upstream, whitespace is trimmed and
+/// an all-slash `CONTENT_URL` falls back to this node's `/content`.
 fn stats_content_url(configured: Option<&str>, content_public_url: &str) -> String {
+    let strip = |url: &str| {
+        url.trim()
+            .trim_end_matches(|c: char| c == '/' || c.is_whitespace())
+            .to_string()
+    };
     configured
-        .map(|url| url.trim().trim_end_matches('/'))
+        .map(strip)
         .filter(|url| !url.is_empty())
-        .unwrap_or_else(|| content_public_url.trim_end_matches('/'))
-        .to_string()
+        .unwrap_or_else(|| strip(content_public_url))
 }
 
 #[cfg(test)]
@@ -1504,6 +1509,13 @@ mod stats_content_url_tests {
             stats_content_url(
                 Some("https://cdn.example/content/// "),
                 "https://node.example/content/"
+            ),
+            "https://cdn.example/content"
+        );
+        assert_eq!(
+            stats_content_url(
+                Some("https://cdn.example/content/ /"),
+                "https://node.example/"
             ),
             "https://cdn.example/content"
         );
