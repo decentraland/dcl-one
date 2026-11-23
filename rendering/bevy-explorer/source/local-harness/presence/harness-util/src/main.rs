@@ -4,10 +4,16 @@
 //! - `bus --url U --seed N --room R --scene-hash H --message M`: join a room and publish
 //!   an rfc4 scene bus packet declaring `scene-hash` (equal to the room's scene for a
 //!   legitimate message, different for a forgery attempt)
+//! - `join (--url U --token-env VARIABLE | --connection-string-env VARIABLE) [--publish-microphone]`:
+//!   join a room and print every observation as one JSON line on standard output, until
+//!   standard input closes or says `leave` (`status` prints the room as seen now). The token
+//!   comes from the named environment variable and is never printed
 
 #![forbid(unsafe_code)]
 
 use anyhow::{anyhow, Context};
+
+mod join;
 
 fn seed_wallet(seed: u64) -> wallet::Wallet {
     // must match headless.rs finalize_guest_wallet: seed LE bytes into [0..8] of [u8; 32]
@@ -96,7 +102,7 @@ fn main() -> anyhow::Result<()> {
     let mut args = pico_args::Arguments::from_env();
     let sub = args
         .subcommand()?
-        .ok_or_else(|| anyhow!("usage: harness-util <address|token|bus> ..."))?;
+        .ok_or_else(|| anyhow!("usage: harness-util <address|token|bus|join> ..."))?;
 
     match sub.as_str() {
         "address" => {
@@ -136,6 +142,36 @@ fn main() -> anyhow::Result<()> {
                 .enable_all()
                 .build()?
                 .block_on(send_bus(&url, &token, &scene_hash, &message))?;
+        }
+        "join" => {
+            let publish_microphone = args.contains("--publish-microphone");
+            let connection_variable: Option<String> =
+                args.opt_value_from_str("--connection-string-env")?;
+            let (url, token) = match connection_variable {
+                Some(variable) => {
+                    let connection = std::env::var(&variable).with_context(|| {
+                        format!("the environment variable {variable} is not set")
+                    })?;
+                    join::parse_connection_string(&connection)?
+                }
+                None => {
+                    let url: String = args.value_from_str("--url")?;
+                    let variable: String = args.value_from_str("--token-env")?;
+                    let token = std::env::var(&variable).with_context(|| {
+                        format!("the environment variable {variable} is not set")
+                    })?;
+                    (url, token)
+                }
+            };
+            let code = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(join::run(join::JoinArguments {
+                    url,
+                    token,
+                    publish_microphone,
+                }));
+            std::process::exit(code);
         }
         other => return Err(anyhow!("unknown subcommand {other}")),
     }

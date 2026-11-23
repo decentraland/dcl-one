@@ -268,13 +268,57 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "description": "Content-hash version from an emitted thumbnail URL; selects the long cache lifetime when it matches.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "PNG thumbnail",
+            "description": "Thumbnail image (PNG, JPEG, GIF or WebP)",
             "content": {
               "image/png": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified: `If-None-Match` matches the current ETag",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
                 "schema": {
                   "type": "string"
                 }
@@ -301,7 +345,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Serves the stored thumbnail. With `v` equal to the stored content hash the response is `Cache-Control: public, max-age=86400, immutable`; without `v` or with another value it is `public, max-age=60`. Both carry an `ETag` (the content hash) and answer `If-None-Match` with 304. A 404 is cached for 60 s and a 500 is `no-store`."
       }
     },
     "/v1/admin/communities": {

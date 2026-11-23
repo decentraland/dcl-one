@@ -20,3 +20,5 @@ overrides:
   'viem>ws': '-'
   'isows>ws': '-'
   '@walletconnect/jsonrpc-ws-connection>ws': '-'
+  # unstorage loads anymatch only in its fs driver; WalletConnect uses fs-lite or the browser's IndexedDB.
+  'unstorage>anymatch': '-'

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button,
   GeneralAudio,
@@ -21,7 +21,7 @@ import {
   type TitleBarSection
 } from '@dcl/one-ui'
 import type { GalleryEntry } from '../registry'
-import { covers, face, people } from './data'
+import { covers, people, placeholderFace } from './data'
 import layout from './layout.module.css'
 
 const publicSections = decentralandPublicNavSections('explore', '/explore', {
@@ -120,6 +120,90 @@ function PanelTabsDemo({ variant }: { variant: 'underline' | 'compact' | 'pill' 
         />
       ))}
     </TabsBar>
+  )
+}
+
+// Selecting runs the tabs' selection motion; a demo link selects in place instead of navigating the canvas.
+function stay(event: MouseEvent) {
+  if ((event.target as Element).closest('a')) event.preventDefault()
+}
+
+function TabsVariantDemo({ variant }: { variant: 'underline' | 'compact' | 'pill' }) {
+  const [selected, setSelected] = useState('wearables')
+  return (
+    <TabsBar label={`${variant} tabs`} variant={variant}>
+      {['wearables', 'emotes'].map((id) => (
+        <Tabs
+          key={id}
+          label={id[0]!.toUpperCase() + id.slice(1)}
+          variant={variant}
+          selected={selected === id}
+          onClick={() => setSelected(id)}
+        />
+      ))}
+    </TabsBar>
+  )
+}
+
+function TabsDeviceDemo({ device }: { device: 'mobile' | 'desktop' }) {
+  const [selected, setSelected] = useState('button')
+  return (
+    <TabsBar label={`${device} tabs`} onClick={stay} scrollable>
+      <Tabs
+        label={`${device} button`}
+        device={device}
+        selected={selected === 'button'}
+        onClick={() => setSelected('button')}
+      />
+      <Tabs
+        label={`${device} link`}
+        device={device}
+        href="#tab"
+        selected={selected === 'link'}
+        onClick={() => setSelected('link')}
+      />
+    </TabsBar>
+  )
+}
+
+function TabsRouteDemo() {
+  const [current, setCurrent] = useState('overview')
+  return (
+    <nav aria-label="Route tabs" className={layout.row} onClick={stay}>
+      {[
+        { id: 'overview', label: 'Overview' },
+        { id: 'collections', label: 'Collections' }
+      ].map(({ id, label }) => (
+        <Tabs
+          key={id}
+          mode="navigation"
+          label={label}
+          href={`#${id}`}
+          selected={current === id}
+          onClick={() => setCurrent(id)}
+        />
+      ))}
+    </nav>
+  )
+}
+
+function RouteTabsBarDemo({
+  initial,
+  shop
+}: {
+  initial: string
+  shop?: { search: ReactNode; actions: ReactNode }
+}) {
+  const [activeId, setActiveId] = useState(initial)
+  const common = { items: routeItems, activeId, onSelect: setActiveId }
+  return (
+    <div onClick={stay}>
+      {shop ? (
+        <TabsBar mode="navigation" page="shop" {...common} {...shop} />
+      ) : (
+        <TabsBar mode="navigation" {...common} />
+      )}
+    </div>
   )
 }
 
@@ -257,8 +341,8 @@ export const navigationEntries: GalleryEntry[] = [
         title: 'Face picture, fallback and name colour',
         render: () => (
           <div className={layout.row}>
-            <NavProfileButton imageUrl={people.ada.picture} fallbackSrc={face('?', 0)} />
-            <NavProfileButton fallbackSrc={face('?', 0)} color={people.grace.color} />
+            <NavProfileButton imageUrl={people.ada.picture} fallbackSrc={placeholderFace} />
+            <NavProfileButton fallbackSrc={placeholderFace} color={people.grace.color} />
           </div>
         )
       }
@@ -273,13 +357,11 @@ export const navigationEntries: GalleryEntry[] = [
       {
         id: 'variants',
         title: 'Underline, compact and pill',
+        note: 'Click or use the arrow keys to select a tab.',
         render: () => (
           <div className={layout.stack}>
             {(['underline', 'compact', 'pill'] as const).map((variant) => (
-              <TabsBar key={variant} label={`${variant} tabs`} variant={variant}>
-                <Tabs label="Selected" variant={variant} selected />
-                <Tabs label="Other" variant={variant} />
-              </TabsBar>
+              <TabsVariantDemo key={variant} variant={variant} />
             ))}
           </div>
         )
@@ -288,12 +370,9 @@ export const navigationEntries: GalleryEntry[] = [
         id: 'devices',
         title: 'Fixed device sizes',
         render: () => (
-          <div className={layout.stack}>
+          <div className={layout.rows}>
             {(['mobile', 'desktop'] as const).map((device) => (
-              <TabsBar key={device} label={`${device} tabs`}>
-                <Tabs label={`${device} selected`} device={device} selected />
-                <Tabs label={`${device} link`} device={device} href="#tab" />
-              </TabsBar>
+              <TabsDeviceDemo key={device} device={device} />
             ))}
           </div>
         )
@@ -301,12 +380,8 @@ export const navigationEntries: GalleryEntry[] = [
       {
         id: 'navigation',
         title: 'Navigation mode',
-        render: () => (
-          <nav aria-label="Route tabs" className={layout.row}>
-            <Tabs mode="navigation" label="Overview" href="#overview" selected />
-            <Tabs mode="navigation" label="Collections" href="#collections" />
-          </nav>
-        )
+        note: 'Clicking a route moves the current page here without navigating.',
+        render: () => <TabsRouteDemo />
       }
     ]
   },
@@ -327,23 +402,22 @@ export const navigationEntries: GalleryEntry[] = [
         id: 'navigation-create',
         title: 'Navigation, create page',
         note: 'The last route is hidden on narrow layouts.',
-        render: () => <TabsBar mode="navigation" items={routeItems} activeId="overview" />
+        render: () => <RouteTabsBarDemo initial="overview" />
       },
       {
         id: 'navigation-shop',
         title: 'Navigation, shop page with search and actions',
         render: () => (
-          <TabsBar
-            mode="navigation"
-            page="shop"
-            items={routeItems}
-            activeId="collections"
-            search={<Search />}
-            actions={
-              <Button size="sm" variant="iconOnly" aria-label="Cart">
-                <ShopCart size={20} aria-hidden="true" />
-              </Button>
-            }
+          <RouteTabsBarDemo
+            initial="collections"
+            shop={{
+              search: <Search />,
+              actions: (
+                <Button size="sm" variant="iconOnly" aria-label="Cart">
+                  <ShopCart size={20} aria-hidden="true" />
+                </Button>
+              )
+            }}
           />
         )
       }

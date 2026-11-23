@@ -164,6 +164,11 @@ the published LAND manager index or its configured document source. Without a
 document source, only ownership at that parcel grants authority; scene-admin
 roles do not grant storage authority.
 
+Adding a Genesis place to a community reads the same LAND state: the place
+belongs to the owner of its base parcel (or of the estate that holds it), never
+to the owner its scene metadata names
+([decision](docs/adr/2026-11-21-community-genesis-place-owner.md)).
+
 Storage collaborators are wallets in an active local world deployment's or
 active Genesis deployment's `metadata.logsPermissions`; Genesis deployments
 accepted through peer sync are eligible too. Per-key and list `/values*` and `/players*`
@@ -278,7 +283,17 @@ scenes in that world (expected up to a few hundred).
 World quotas and usage exclude recorded retired identities, and exclude the
 parked legacy `world` bucket once that world has an active identity; unknown
 other legacy scopes still count. Storage rows remain retained and inaccessible
-through new scene scopes. Verify migration and recovery limits and measure quota-query costs before acceptance.
+through new scene scopes.
+
+The partial `world_scene_place_retired_identity_idx` on
+`(world_name, (identity::text)) WHERE NOT active` bounds the quota exclusion to
+retired identities in the requested world. It keeps the UUID-to-text comparison:
+legacy namespaces need not parse as UUIDs. The object pass blocks writes to the table until the migration transaction
+commits. For a concurrent build ahead of migration, use the definition from
+`schemas/21_world_scene_places.sql` and verify both `pg_index.indisvalid` and
+`pg_get_indexdef(indexrelid)`. Migration, bootstrap and status check only the
+name. Drop and rebuild any invalid or mismatched index before migration.
+See the [quota plan measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
 
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
@@ -546,6 +561,26 @@ contention. Community opt-out UUIDs are canonicalized on write and lookup;
 event and community delivery recognize existing non-canonical UUID scopes too.
 Lookup binds optional UUID parameters parsed in Rust, preserving opaque legacy
 scope IDs without relying on guarded casts of SQL parameters.
+All six event notice kinds use one `(address, broadcast_key)` per event and
+type. A repeated notice refreshes only when `metadata.occurredAt` is strictly
+newer; equal source times keep the first payload. Visibility and read state stay
+as first stored, and only a new row creates a delivery. Notification rows remain
+the durable deduplication evidence after intent and terminal delivery cleanup.
+Runtime and the notification import hold the same transaction locks through
+historical identity adoption and upsert. Each wallet maps to one of 256 buckets:
+`(1163284052, (hashtextextended(address, 0) & 255)::integer)` in PostgreSQL's
+two-integer advisory namespace. Distinct buckets are locked in numeric order,
+bounding retained event locks at 256 even during whole-transaction dry runs. An existing keyed carrier
+wins; otherwise the earliest exact native event match retains its ID. Existing
+historical duplicates are not deleted. The import also recognizes exact source
+IDs, retains event keys and never creates email deliveries.
+
+History adoption performs up to 100 wallet/type/event probes per recipient page.
+`notifications_event_history_idx` indexes only unkeyed rows with an eventId, in
+wallet/type/event and creation order. New carriers leave the partial index;
+unrelated notices without that field do not enter it. The index is a new object
+installed by the schema object pass on existing databases, without a reset.
+
 Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
 [event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
@@ -563,6 +598,17 @@ The read projection materializes the normalized preview once per event row and
 excludes SQL-null preview entries. Local membership probes retain the
 `event_attendance_local` primary-key lookup; cancellation and going deltas share
 that preview instead of expanding its JSON separately for every local RSVP.
+
+The Events import records the exact timestamp and payload it wrote in
+`dcl_migration.event_attendance_loaded`, keyed by event and signer. Its whole-set
+attendance reconciliation deletes an upstream-missing row only while it still
+has that imported `going` state, timestamp and payload. Later local changes and
+unrecorded local rows are retained; an empty source requires explicit approval
+through the importer's `--allow-empty` option. Pre-ledger imported rows already
+missing upstream require an earlier authoritative export before activation;
+current rows alone do not establish their origin. The notification import needs
+a full restart from retained source history to repair older missing event keys.
+Missing source notice identities likewise require earlier export evidence.
 
 Event authoring distinguishes generated posters from explicit images and clears
 inside the existing event document. Generated images may follow location
@@ -948,11 +994,14 @@ they do not establish equal latency with the source's combined lookup.
 Community ranking reads current membership, posts, places and thumbnail facts in
 pages of 100 communities. Five lifetime counters on `social.communities` retain
 photos, ended events, event attendees, ended streams and ended voice chats. The
-ranking job updates local authoritative communities only. Mirrored ranking scores
+ranking job updates scores for local authoritative communities and preserves their
+`updated_at` timestamps for import conflict resolution. Mirrored ranking scores
 remain upstream facts. `ranking_tracking_since` bounds local event occurrences
-eligible for collection; zero counter defaults do not reconstruct history. An
-authoritative cutover must import the lifetime counters, collection watermark and
-local producer receipts together before enabling local ranking ownership.
+eligible for collection; zero counter defaults do not reconstruct history. The
+social-service-ea import copies the lifetime counters and moves
+`ranking_tracking_since` to the moment it read them, so the collector counts only
+occurrences that end later; it imports no producer receipts. See "Community ranking"
+in `tooling/migration/sources/social-service-ea/MAPPING.md`.
 
 The existing leased event collector keeps a scalar source-key cursor and a
 recurrence ordinal window. It selects 100 event keys through the existing primary
@@ -1055,6 +1104,27 @@ credentials and compliance metric outcomes. Delayed DNS, combined network phases
 and deployed providers remain unverified; the probes do not establish exhaustive
 provider equivalence.
 
+## Community place ids
+
+`social.community_places.place_id` holds a places catalogue id or a world name,
+lowercased on every write (REST add, community create and edit, federated add)
+because explore keys both lowercased. Until the release below runs, a row written
+before this rule still answers: an add skips a place held in another case, removal
+and the edit's held-place diff match `lower(place_id)`, and an edit lowercases the
+places it keeps in place (adder and time kept) in the same transaction as its
+removals and inserts.
+
+The release script `schemas/releases/community-place-ids-lowercase.sql` collapses
+case variants of one id in a community to one row (the lowercase spelling, else
+the earliest added) and lowercases the survivor. It also adds the check
+`community_places_place_id_lowercase` (`place_id = lower(place_id)`, declared in
+`schemas/40_social.sql` for a new database) as `NOT VALID` when missing and
+validates it after the merge, so no later writer stores another case. Run it after the updated
+binaries replace every old replica: an old replica's mixed-case write fails once
+the check exists. It needs no maintenance window, sets a 10 s `lock_timeout`,
+holds an exclusive lock on the table while its first run adds the check, and is
+rerunnable. Rollback needs the matching backup.
+
 ## Shared social registry profile facts
 
 RPC and community profile readers share `social.registry_profile_cache` through
@@ -1155,6 +1225,20 @@ traffic is low-rate two-wallet writes and indexed existence probes, with at most
 one pending per normalized wallet; retained media depends on its connection and
 cleanup lifecycle. Capacity and production latency are not established by the
 functional tests.
+
+Wallet-scoped media probes use `private_voice_chat_participants_address_idx`
+and `community_voice_chat_users_address_idx`, both nonunique B-trees on
+`address`. These are separate from the pending-call party indexes. They retain
+every status so expiry predicates can use their existing timestamps without
+time-dependent partial indexes. See the [wallet probe measurements](METRICS.md#wallet-presence-and-world-quota-lookups).
+
+The object pass builds missing wallet indexes in the migration transaction,
+blocking writes to the indexed tables until the transaction commits. To build
+ahead, run each definition from `schemas/40_social.sql` with `CREATE INDEX
+CONCURRENTLY` outside a transaction. Migration, bootstrap and schema status
+check the index name only. Before migrating, verify `pg_index.indisvalid` and
+compare `pg_get_indexdef(indexrelid)` with the schema. Drop and rebuild an
+invalid or mismatched index before relying on it.
 
 Community detail, listing and member-request reads fetch voice status separately
 through the existing comms `VoiceDb` on the same pool and presence configuration.
@@ -2054,14 +2138,36 @@ storage order (a local deploy may be signed up to 15 minutes ahead, a synced
 one long before), and a cursor on it would skip every profile stored after
 one signed later and every tie past a page edge. Its first pass starts at the
 head. A batch seeds baselines and claims first wears (`social.worn_history`)
-in the transaction that advances the cursor, and notifies after it commits,
-so a restart never re-notifies a claim. Its batch is
+and stores their notification obligations in `social.first_wear_outbox`
+in the transaction that advances the cursor. The queue retains the wearer
+name and URN independently of deployment retention. Its batch is
 `BADGES_PROCESSOR_BATCH_SIZE` deployments, its gap grace the id cursors'
 (600 s), and it publishes the same lag and gap gauges under its source. A profile the
 node stored more than 24 hours after its entity timestamp is history a
 syncing node caught up on and is passed without effect; the lag is measured
 at storage, so a stalled producer still works through its backlog.
 `social.first_wear_cursor` is no longer read.
+
+First-wear intake pauses at 5,000 queued obligations. A final deployment batch
+can cross this threshold. The queue continues to drain when intake is paused or
+fails. The worker claims up to 16 due wears in one statement, ordered by
+`(retry_at, address, urn)`. A two-minute reservation makes interrupted work
+eligible again. It starts at most 50 pages and stops starting items after one
+minute per drain. Each item's marketplace lookup has a 20-second timeout.
+Losing the job lease cancels the pass.
+
+Failed transport or timed-out lookups retry after the notification delivery
+backoff (30 seconds, doubling per failure). The fifth failure ends the
+obligation. Each drain expires obligations 24 hours after the wear's signed timestamp
+or enqueue time, whichever came first. The worker logs expiry counts and pauses
+in intake. Two consecutive transient failures on one network pause lookups on
+that network for the rest of the drain, leaving the other network eligible. Invalid reader URLs,
+invalid subgraph responses, missing readers, unknown or unbuyable items,
+no active friends and suppressed recipients also complete without a notice.
+The wear stays in history after completion. External reads run outside the
+completion transaction. A transaction advisory lock serializes recipient rate
+checks with notice insertion, delivery intents and removal of the obligation.
+The foreign key cascades removal of a history row to its obligation.
 
 ### Presence badges flow
 
@@ -3062,3 +3168,67 @@ The upgrade requires stopping old writers and finishing offline imports before
 the coordinated startup, so identities cannot retire before this backfill.
 Noncanonical imported rooms and scenes already retired before the upgrade
 remain outside exact recovery; pending authority stays retryable where available.
+
+## Shop reconciliation and availability sweeps
+
+The broker purchase, NAME transfer and escrow-action receipt workers read up
+to 100 unsettled rows per chain and pass, the escrow release worker 50 due
+grants, the credit-revocation worker 20 unfinished revocations per chain,
+and the availability watcher 500 distinct pending item keys. A pending
+receipt, malformed grant or unknown mirrored item remains an obligation;
+it must not permanently occupy a bounded query's first page.
+
+`shop.worker_progress` stores each worker's position and a frozen upper key
+for its current sweep, scoped by chain where applicable. The workers use
+indexed bigint ids, credit hashes, or `(contract_address, item_id)` pairs
+without converting indexed columns to another type. Selection and cursor
+advance share a short transaction under the progress row's lock. Chain
+calls, release attempts and item observations run after that transaction
+commits. A crash after selection defers that page until the next sweep;
+it does not delete work, spend an attempt or mark a receipt successful.
+The item watcher also freezes the largest request identity and excludes
+later request ids even if their item keys sort inside the lexical range.
+Revocations freeze a database clock cutoff and exclude rows created after
+it; their sole enqueue path uses the database `created_at` default and does
+not backdate new work. A transaction already open at that cutoff can still
+commit an earlier-dated row, which is revisited on wrap if its key was
+passed. Newly started transactions cannot extend the cohort. New arrivals
+outside these bounds wait for the next sweep, so continuous arrivals
+cannot indefinitely delay retry of a blocked prefix. Rows that
+commit or become due behind the position are also revisited after wrap.
+The existing status, attempt limits, settlement grace and observation
+timestamps keep their meanings. Existing idempotent writes and job leases
+still govern effects; the sweep cursor is not an external-call lease.
+
+The table has no foreign keys to individual obligations: completed or
+deleted source rows may disappear between pages. An empty remainder ends
+the cohort and starts another. Its size is one row per worker and chain,
+not one row per obligation. The schema object pass installs the new table
+from the bootstrap definition. The credit worker uses `credits.revocations_chain_hash_idx`
+on `(chain_id, credit_hash)` for both its upper bound and each hash-ordered
+page. If new arrivals greatly outnumber rows eligible for an ongoing sweep,
+the page query can instead use `credits.revocations_due_idx` to select just
+the rows created on or before the sweep's fixed start time, then sort those
+hashes. Both indexes contain only pending and sent rows. The partial index adds write
+work when revocations enter or leave those states. See [the measured query
+plans](METRICS.md#credit-revocation-sweep).
+
+The object pass creates the index in the migration transaction, which blocks
+writes to `credits.revocations` until commit. On a busy database it can be
+built before migration using the schema definition:
+
+```sql
+CREATE INDEX CONCURRENTLY revocations_chain_hash_idx ON credits.revocations
+    (chain_id, credit_hash) WHERE status IN ('pending', 'sent');
+```
+
+Verify the definition and `pg_index.indisvalid` before running migrate.
+The object pass checks its name. Drop an invalid index before retrying.
+
+Escrow reconciliation applies its missing-grant `NOT EXISTS` predicate
+before `LIMIT 500`. Any grant with that reference satisfies the check. Catalogue
+and rental pages count their filtered set independently of page offset in
+the same SQL statement. The count remains present even
+when the page is empty. Both sides therefore use one snapshot and one
+filter definition. Production query latencies and cardinalities for these
+repairs remain unmeasured.

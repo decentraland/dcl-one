@@ -250,8 +250,12 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
           },
         ],
       });
+      analytics.track(Event.ADD_SMART_ITEM_TRIGGER, {
+        triggersCount: triggers.length + 1,
+        itemPath: GltfContainer.getOrNull(entityId)?.src,
+      });
     },
-    [addTrigger],
+    [addTrigger, triggers.length, entityId],
   );
 
   const handleRemoveTrigger = useCallback(

@@ -3,7 +3,8 @@
 //! and decentraland-gatsby@9.0.1). Existing clients use plain JSON plus
 //! signed-fetch headers; federation envelopes remain supported.
 //!
-//! - `GET /api/profiles/settings` (rows holding permissions, for a moderator;
+//! - `GET /api/profiles/settings` (rows holding permissions, for a moderator
+//!   or an `edit_any_profile` grantee;
 //!   `ProfileSettings/routes/listProfileSettings.ts`),
 //!   `GET`/`PATCH /api/profiles/me/settings` (the signer's own;
 //!   `getAuthProfileSettings.ts`, `updateMyProfileSettings.ts`) and
@@ -20,12 +21,11 @@
 //!   `entities/Profile/routes.js`).
 //!
 //! "isAdmin" (gatsby's `ADMIN_ADDRESSES`) is a wallet in `explore.moderators`;
-//! the `edit_any_*` permissions count once a moderator granted them
-//! (`permissions_granted`), except `edit_any_profile`: private profile reads
-//! and permission grants stay moderator-only, the grant is stored and listed
-//! but delegates nothing. A plain signed-fetch body needs no
-//! `x-identity-metadata`; when it carries `body_sha256` the body must match
-//! it, and when it carries a `nonce` a replay answers 409.
+//! the `edit_any_*` permissions count once granted (`permissions_granted`);
+//! an `edit_any_profile` grantee reads and edits other profiles' settings as
+//! a moderator does (`ProfileSettings/utils.ts:4-11`). A plain signed-fetch
+//! body needs no `x-identity-metadata`; when it carries `body_sha256` the body
+//! must match it, and when it carries a `nonce` a replay answers 409.
 //! Every write is logged in `explore.signed_actions` and applied in one
 //! transaction: the signer's own settings and subscriptions behind
 //! `DATA_WRITES_ENABLED`, schedule and profile administration behind
@@ -120,13 +120,11 @@ async fn has_granted(pool: &PgPool, signer: &str, permission: &str) -> Result<bo
     .await?)
 }
 
-/// The readers and editors of other profiles: a moderator only. The old
-/// service also admits an `edit_any_profile` grant (`getProfileSettings.ts:14-16`,
-/// `listProfileSettings.ts:11-13`, `ProfileSettings/utils.ts:4-11`); here the
-/// grant reads no email and grants nothing (accepted entries
-/// `events.profiles.*_edit_any_profile`).
+/// The readers and editors of other profiles: `isAdmin(req.auth) ||
+/// canEditAnyProfile(profile)` (`getProfileSettings.ts:13-16`,
+/// `listProfileSettings.ts:10-13`, `ProfileSettings/utils.ts:4-11`).
 async fn require_profile_admin(pool: &PgPool, signer: &str) -> Result<(), ApiError> {
-    if is_moderator(pool, signer).await? {
+    if has_granted(pool, signer, "edit_any_profile").await? {
         Ok(())
     } else {
         Err(ApiError::forbidden("Forbidden"))
@@ -622,8 +620,8 @@ fn profile_address(raw: &str) -> Result<String, ApiError> {
 }
 
 /// `GET /api/profiles/settings`: the rows holding permissions
-/// (`ProfileSettingsModel.list()`, `model.ts:47-57`), for a moderator
-/// (fixtures `events.profiles.list_*`).
+/// (`ProfileSettingsModel.list()`, `model.ts:47-57`), for a moderator or an
+/// `edit_any_profile` grantee (fixtures `events.profiles.list_*`).
 pub async fn list_profile_settings(
     State(state): State<SharedState>,
     method: Method,
@@ -830,7 +828,7 @@ pub(super) async fn event_permissions(
 }
 
 /// `GET /api/profiles/{profile_id}/settings` (`getProfileSettings.ts:12-27`):
-/// a moderator's read of the stored row,
+/// a moderator's or `edit_any_profile` grantee's read of the stored row,
 /// `null` when there is none; a non-address is 404 (fixtures
 /// `events.profiles.get_by_id_*`).
 pub async fn get_profile_settings(
@@ -850,7 +848,7 @@ pub async fn get_profile_settings(
 }
 
 /// `PATCH /api/profiles/{profile_id}/settings` (`updateProfileSettings.ts:19-50`):
-/// the target's `permissions`, by a moderator,
+/// the target's `permissions`, by a moderator or `edit_any_profile` grantee,
 /// with the Slack notice when the set changed (fixtures
 /// `events.profiles.patch_by_id_*`). The `ProfileSettingsUpdate` envelope,
 /// which may also set the target's own fields, stays a moderator's.
@@ -1551,11 +1549,12 @@ mod tests {
     }
 
     /// `listProfileSettings.ts`, `getProfileSettings.ts`, `updateProfileSettings.ts`:
-    /// a moderator ("isAdmin") reads and administers other profiles; the list
-    /// holds the rows with permissions; an `edit_any_profile` grantee is listed
-    /// but stays 403 like a plain user, who cannot grant itself through `/me`.
+    /// a moderator ("isAdmin") or an `edit_any_profile` grantee
+    /// (`canEditAnyProfile`) reads and administers other profiles; the list
+    /// holds the rows with permissions; a plain user is 403 and cannot grant
+    /// itself through `/me`.
     #[tokio::test]
-    async fn profile_administration_is_moderator_only_and_lists_the_granted_rows() {
+    async fn profile_administration_is_for_moderators_and_edit_any_profile_grantees() {
         // Queues moderation-outbox rows: serialized with the outbox tests.
         let _outbox = crate::moderation_hooks::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -1612,24 +1611,99 @@ mod tests {
             body["data"]["permissions"],
             json!(["edit_any_profile", "edit_any_event"])
         );
-        // The grant is listed but delegates nothing: the grantee stays 403 on
-        // the list, the read and the write of other profiles. The old service
-        // admits it (`ProfileSettings/utils.ts:4-11`): accepted entries
-        // `events.profiles.*_edit_any_profile`.
-        let target_lower = format!("/api/profiles/{}/settings", address(&target));
+        // The grantee administers profiles as a moderator does
+        // (`listProfileSettings.ts:11`, `getProfileSettings.ts:14`,
+        // `updateProfileSettings.ts:21`): the list carries the rows' emails,
+        // the read answers the stored row and the write grants any permission,
+        // `edit_any_profile` included (`types.ts:59-77`).
+        let other = Wallet::random();
+        let other_path = format!("/api/profiles/{}/settings", address(&other));
+        let (status, body) = call(
+            &app,
+            &other,
+            "patch",
+            "/api/profiles/me/settings",
+            Some(&json!({"email":"other@example.org"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = call(
+            &app,
+            &editor,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":["edit_any_profile","approve_any_event"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        assert_eq!(body["data"]["email"], "other@example.org");
+        let (status, body) = call(&app, &editor, "get", "/api/profiles/settings", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let row = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["user"] == address(&other))
+            .cloned()
+            .expect("granted row listed");
+        assert_eq!(row["email"], "other@example.org");
+        let (status, body) = call(&app, &editor, "get", &other_path, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        // A non-permission key is 400 for the grantee too, and changes nothing.
+        let (status, answer) = call(
+            &app,
+            &editor,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":[],"email":"x@example.com"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        let (_, body) = call(&app, &editor, "get", &other_path, None).await;
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        assert_eq!(body["data"]["email"], "other@example.org");
+        // A stored but ungranted `edit_any_profile` (a row the moderator never
+        // granted, `permissions_granted` false) delegates nothing.
+        let ungranted = Wallet::random();
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\", permissions, permissions_granted) VALUES ($1, '[\"edit_any_profile\"]'::jsonb, false)")
+            .bind(address(&ungranted)).execute(&pool).await.unwrap();
         for (verb, path, body) in [
             ("get", "/api/profiles/settings".to_owned(), None),
-            ("get", target_lower.clone(), None),
-            (
-                "patch",
-                target_lower,
-                Some(json!({"permissions":["edit_any_schedule"]})),
-            ),
+            ("get", other_path.clone(), None),
+            ("patch", other_path.clone(), Some(json!({"permissions":[]}))),
         ] {
-            let (status, answer) = call(&app, &editor, verb, &path, body.as_ref()).await;
+            let (status, answer) = call(&app, &ungranted, verb, &path, body.as_ref()).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
             assert_eq!(answer["error"], "Forbidden");
         }
+        let (_, body) = call(&app, &moderator, "get", &other_path, None).await;
+        assert_eq!(
+            body["data"]["permissions"],
+            json!(["edit_any_profile", "approve_any_event"])
+        );
+        // Once the grant is withdrawn the old grantee is 403 again.
+        let (status, body) = call(
+            &app,
+            &moderator,
+            "patch",
+            &other_path,
+            Some(&json!({"permissions":["approve_any_event"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, answer) = call(&app, &other, "get", "/api/profiles/settings", None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
         let (status, body) = call(&app, &moderator, "get", "/api/profiles/settings", None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         let listed: Vec<&str> = body["data"]
@@ -1737,8 +1811,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(lost, 1);
-        sqlx::query("DELETE FROM explore.moderation_hooks WHERE channel='events' AND kind='profile_permissions' AND subject IN ($1,$2)")
-            .bind(address(&editor)).bind(address(&target)).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM explore.moderation_hooks WHERE channel='events' AND kind='profile_permissions' AND subject IN ($1,$2,$3)")
+            .bind(address(&editor)).bind(address(&target)).bind(address(&other)).execute(&pool).await.unwrap();
     }
 
     /// `updateMyProfileSettings.ts:26-78` and `types.ts:79-101`: the body's

@@ -9,6 +9,7 @@ use bevy::{
 };
 use common::structs::{
     sun_cascades, AppConfig, PrimaryCameraRes, ShadowSetting, ShadowlessLight, StageLight,
+    SUN_LOW_MAX_DISTANCE,
 };
 
 use super::{AppSetting, EnumAppSetting, IntAppSetting};
@@ -50,7 +51,7 @@ impl AppSetting for ShadowSetting {
         format!("How shadows are rendered in the world.\n\n{}", 
         match self {
             ShadowSetting::Off => "Off: No shadows are rendered. Fastest",
-            ShadowSetting::Low => "Low: A single shadow map covering the shadow distance, with hardware 2x2 filtering. Fast, but outlines are blocky, particularly at high shadow distances.",
+            ShadowSetting::Low => "Low: A single shadow map covering the shadow distance up to 40 m, with hardware 2x2 filtering. Fast, but outlines are blocky, particularly at high shadow distances.",
             ShadowSetting::High => "High: Four cascaded soft shadow maps for sharper shadows near the player and better quality at higher shadow distances, but more GPU intensive.",
         })
     }
@@ -173,7 +174,7 @@ impl AppSetting for ShadowDistanceSetting {
     }
 
     fn description(&self) -> String {
-        "Shadow Distance\n\nDistance up to which to render shadows. To ensure that shadows are rendered even for large scenes which are at the edge of the loaded area, this can be set to a higher value (e.g. 2x) than the scene load distance. Higher values increase GPU time slightly, and may result in lower quality shadows at closer distances (particularly with Low shadow quality).".to_owned()
+        format!("Shadow Distance\n\nDistance up to which to render shadows. With Low shadow quality, shadows stop at {SUN_LOW_MAX_DISTANCE} m however far this is set. To ensure that shadows are rendered even for large scenes which are at the edge of the loaded area, this can be set to a higher value (e.g. 2x) than the scene load distance. Higher values increase GPU time slightly, and may result in lower quality shadows at closer distances (particularly with Low shadow quality).")
     }
 
     fn load(config: &AppConfig) -> Self {

@@ -92,6 +92,21 @@ class GitHubReadTests(unittest.TestCase):
                 play.api('actions/runs/42', deadline=500)
             self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 80])
             self.assertEqual(clock[0], 500)
+        # A long wait for a Bevy build does not become a wait for the token budget: five tries, then fail.
+        for failure in limited:
+            clock = [0]
+            with self.subTest(failure=failure.stderr), \
+                    patch.object(play.subprocess, 'check_output', side_effect=failure) as get, \
+                    patch.object(play.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    patch.object(play.time, 'sleep',
+                                 side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)) as sleep, \
+                    patch('sys.stderr', new_callable=io.StringIO) as stderr:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    play.api('actions/runs/42', deadline=5400)
+                self.assertEqual(get.call_count, 5)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 120, 240, 240])
+                self.assertEqual(clock[0], 660)
+                self.assertIn('rerun this job once its API budget resets', stderr.getvalue())
 
     def test_invalid_json_does_not_retry_or_become_a_successful_read(self):
         with patch.object(play.subprocess, 'check_output', return_value='not JSON') as get, \
@@ -362,8 +377,8 @@ class PlayImportTests(unittest.TestCase):
     def test_the_in_tree_crates_are_engine_inputs_in_git_and_in_the_nix_contract(self):
         bevy = 'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'
         self.write(bevy, 'fn spawn() {}\n')
-        crate = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
-        self.write(crate, 'pub fn import() {}\n')
+        crate = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
+        self.write(crate, 'pub fn layout() {}\n')
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -386,13 +401,13 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertEqual(key, contract.engine_inputs(self.root))
-        self.write(crate, 'pub fn import_sliced() {}\n')
+        self.write(crate, 'pub fn layout_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
     def test_an_in_tree_crate_edit_invalidates_the_artifact(self):
-        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
+        # bevy_dui and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
         # filtered contract takes.
-        name = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        name = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
         key = contract.engine_inputs(self.root)
         self.write(name, name + ' changed\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))

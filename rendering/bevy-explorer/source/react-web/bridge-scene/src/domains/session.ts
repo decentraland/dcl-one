@@ -78,7 +78,7 @@ export function registerSession(ctx: Ctx): void {
         // the identity. A refused code or address keeps its code in the error's text.
         case 'emailStart': await emailLoginStart(msg.params?.email ?? '', THIRDWEB_HEADERS); break
         case 'emailComplete': value = await emailLoginComplete(msg.params?.email ?? '', msg.params?.code ?? '', THIRDWEB_HEADERS); break
-        case 'logout': BevyApi.logout(); break
+        case 'logout': identity.logout(); BevyApi.logout(); break
         default: throw new Error(`unsupported method ${String(msg.method)}`)
       }
       // A completed sign-in says the (possibly same) account is back and must be announced again,

@@ -1923,7 +1923,14 @@ mod lease_tests {
         let Some(pool) = catalyst_db::scratch::pool(6).await else {
             return;
         };
-        let settings = settings("overlap");
+        // Every lease statement here (each session's connect included) runs
+        // under the keepalive bound, and nothing here waits on it: on a
+        // loaded runner the 100 ms one timed the second session's connect
+        // out. A bound beyond any CI stall keeps the test on the guard.
+        let settings = LeaseSettings {
+            keepalive: Duration::from_secs(30),
+            ..settings("overlap")
+        };
         let leases = Arc::new(Leases::new(pool.clone(), settings.clone()));
         let (first, second) = tokio::join!(leases.try_acquire("name"), leases.try_acquire("name"));
         let guards: Vec<LeaseGuard> = [first.unwrap(), second.unwrap()]

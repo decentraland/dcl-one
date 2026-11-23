@@ -478,6 +478,21 @@ describe('when running AI turns', () => {
       expect(queued()).toEqual([]);
     });
 
+    it('should name the conversation by the chat it was sent from', async () => {
+      await runTurn(shared);
+
+      expect(queued()[0].conversationId).toBe('s1');
+    });
+
+    it.each([
+      ['no chat id', undefined],
+      ['an empty chat id', ''],
+    ])('should record nothing for a turn sent with %s', async (_, sessionId) => {
+      await runTurn({ ...shared, sessionId });
+
+      expect(queued()).toEqual([]);
+    });
+
     it('should record nothing without saved consent, even if the renderer asks', async () => {
       mocks.settings = {};
       await runTurn(shared);

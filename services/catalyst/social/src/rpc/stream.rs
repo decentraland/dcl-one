@@ -906,13 +906,13 @@ fn spawn_stream(
     );
     crate::shared::task::spawn(async move {
         // Upstream waits for the socket to drain before each event.
-        let mut hand_off = async |data: Value| {
-            buffered.wait_for(|waiting| *waiting == 0).await.is_ok()
-                && tx.send(Outgoing::Event { serial, data }).await.is_ok()
-        };
         if stream == Stream::FriendConnectivity {
             for friend in online_friends(&ctx, &me).await {
-                if !hand_off(json!({ "address": friend, "status": "online" })).await {
+                if buffered.wait_for(|waiting| *waiting == 0).await.is_err() {
+                    return;
+                }
+                let data = json!({ "address": friend, "status": "online" });
+                if tx.send(Outgoing::Event { serial, data }).await.is_err() {
                     return;
                 }
             }
@@ -921,15 +921,65 @@ fn spawn_stream(
             if matches!(&*event, SocialEvent::ConnectivityResync) {
                 break;
             }
-            let Some(data) = event_data(&ctx, &me, stream, &event).await else {
-                continue;
-            };
-            if !hand_off(data).await {
+            if hand_off_live_event(&tx, &mut buffered, serial, || {
+                event_data(&ctx, &me, stream, &event)
+            })
+            .await
+            .is_err()
+            {
                 return;
             }
         }
         let _ = tx.send(Outgoing::Completed { serial }).await;
     })
+}
+
+/// Check the live event again whenever handing it to the socket loop would block.
+async fn hand_off_live_event<F>(
+    tx: &mpsc::Sender<Outgoing>,
+    buffered: &mut watch::Receiver<usize>,
+    serial: u64,
+    mut event_data: impl FnMut() -> F,
+) -> Result<(), ()>
+where
+    F: std::future::Future<Output = Option<Value>>,
+{
+    loop {
+        buffered
+            .wait_for(|waiting| *waiting == 0)
+            .await
+            .map_err(|_| ())?;
+        let Some(data) = event_data().await else {
+            return Ok(());
+        };
+        // A presence check can await SQL. Retry it after any new backpressure.
+        if *buffered.borrow() != 0 {
+            continue;
+        }
+        match tx.try_send(Outgoing::Event { serial, data }) {
+            Ok(()) => return Ok(()),
+            Err(mpsc::error::TrySendError::Closed(_)) => return Err(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Keep the reserved slot through validation so waiting streams
+                // can each send once capacity becomes available.
+                let permit = tx.reserve().await.map_err(|_| ())?;
+                if *buffered.borrow() != 0 {
+                    continue;
+                }
+                let Some(data) = event_data().await else {
+                    return Ok(());
+                };
+                if *buffered.borrow() != 0 {
+                    continue;
+                }
+                if tx.is_closed() {
+                    return Err(());
+                }
+                permit.send(Outgoing::Event { serial, data });
+                return Ok(());
+            }
+        }
+    }
 }
 
 /// The friends online when the subscription starts, one `online` event each,
@@ -1058,16 +1108,11 @@ async fn event_data(ctx: &Context, me: &str, stream: Stream, event: &SocialEvent
             }
             Some(json!({ "address": friend.address, "status": connectivity_name(update.status)? }))
         }
-        (Stream::CommunityMemberConnectivity, SocialEvent::CommunityMemberStatus(update)) => {
-            Some(json!({
-                "communityId": update.community_id,
-                "memberAddress": update.member.as_ref()?.address,
-                "status": connectivity_name(update.status)?,
-            }))
-        }
         (
             Stream::CommunityMemberConnectivity,
-            SocialEvent::CommunityMember(update) | SocialEvent::TopologyCommunityMember(update, _),
+            SocialEvent::CommunityMember(update)
+            | SocialEvent::TopologyCommunityMember(update, _)
+            | SocialEvent::CommunityMemberStatus(update),
         ) => {
             if !allowed(ctx.event_delivery_guard(me, event)?).await {
                 return None;
@@ -1108,6 +1153,121 @@ pub(crate) async fn captured_event_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn live_event_is_revalidated_after_socket_drain() {
+        let (buffered_bytes, mut buffered) = watch::channel(0);
+        let (tx, mut rx) = mpsc::channel(1);
+        let (finish_check, wait_for_check) = tokio::sync::oneshot::channel();
+        let mut wait_for_check = Some(wait_for_check);
+        let online = std::cell::Cell::new(true);
+
+        {
+            let mut handoff = std::pin::pin!(hand_off_live_event(&tx, &mut buffered, 7, || {
+                let checked_online = online.get();
+                let wait_for_check = wait_for_check.take();
+                async move {
+                    if let Some(wait_for_check) = wait_for_check {
+                        wait_for_check.await.unwrap();
+                    }
+                    checked_online.then(|| json!("stale"))
+                }
+            }));
+            assert!(futures::poll!(&mut handoff).is_pending());
+
+            // The socket becomes busy while the check is awaiting its result.
+            buffered_bytes.send(1).unwrap();
+            online.set(false);
+            finish_check.send(()).unwrap();
+            assert!(futures::poll!(&mut handoff).is_pending());
+            assert!(matches!(
+                rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+
+            buffered_bytes.send(0).unwrap();
+            assert_eq!(futures::poll!(&mut handoff), std::task::Poll::Ready(Ok(())));
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn live_event_is_revalidated_after_handoff_capacity_returns() {
+        let (_buffered_bytes, mut buffered) = watch::channel(0);
+        let (tx, mut rx) = mpsc::channel(1);
+        assert!(tx.try_send(Outgoing::Completed { serial: 6 }).is_ok());
+        let online = std::cell::Cell::new(true);
+
+        {
+            let mut handoff =
+                std::pin::pin!(hand_off_live_event(&tx, &mut buffered, 7, || async {
+                    online.get().then(|| json!("stale"))
+                }));
+            assert!(futures::poll!(&mut handoff).is_pending());
+
+            online.set(false);
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(Outgoing::Completed { serial: 6 })
+            ));
+            assert_eq!(futures::poll!(&mut handoff), std::task::Poll::Ready(Ok(())));
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+
+        assert!(tx.try_send(Outgoing::Completed { serial: 8 }).is_ok());
+        let mut next = std::pin::pin!(hand_off_live_event(&tx, &mut buffered, 7, || async {
+            Some(json!("current"))
+        }));
+        assert!(futures::poll!(&mut next).is_pending());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Outgoing::Completed { serial: 8 })
+        ));
+        assert_eq!(futures::poll!(&mut next), std::task::Poll::Ready(Ok(())));
+        let Ok(Outgoing::Event { serial: 7, data }) = rx.try_recv() else {
+            panic!("valid frame did not reach the socket loop");
+        };
+        assert_eq!(data, json!("current"));
+    }
+
+    #[tokio::test]
+    async fn waiting_live_events_each_make_progress_when_handoff_capacity_returns() {
+        let (_buffered_bytes, mut first_buffered) = watch::channel(0);
+        let mut second_buffered = first_buffered.clone();
+        let (tx, mut rx) = mpsc::channel(1);
+        assert!(tx.try_send(Outgoing::Completed { serial: 10 }).is_ok());
+
+        let mut first = std::pin::pin!(hand_off_live_event(&tx, &mut first_buffered, 11, || {
+            std::future::ready(Some(json!("first")))
+        }));
+        let mut second = std::pin::pin!(hand_off_live_event(&tx, &mut second_buffered, 12, || {
+            std::future::ready(Some(json!("second")))
+        }));
+        assert!(futures::poll!(&mut first).is_pending());
+        assert!(futures::poll!(&mut second).is_pending());
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Outgoing::Completed { serial: 10 })
+        ));
+        assert_eq!(futures::poll!(&mut first), std::task::Poll::Ready(Ok(())));
+        let Ok(Outgoing::Event { serial: 11, data }) = rx.try_recv() else {
+            panic!("first waiting producer did not deliver its frame");
+        };
+        assert_eq!(data, json!("first"));
+
+        assert_eq!(futures::poll!(&mut second), std::task::Poll::Ready(Ok(())));
+        let Ok(Outgoing::Event { serial: 12, data }) = rx.try_recv() else {
+            panic!("second waiting producer did not deliver its frame");
+        };
+        assert_eq!(data, json!("second"));
+    }
 
     fn parse(raw: &str) -> Result<ClientMessage, ProtocolError> {
         parse_message(raw.as_bytes())

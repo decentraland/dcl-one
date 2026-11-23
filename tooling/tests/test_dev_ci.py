@@ -35,7 +35,7 @@ class DevCiTest(unittest.TestCase):
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
-                        ['schemas/50_create.sql']):
+                        ['schemas/50_create.sql'], ['apps/creator-hub/packages/zip-extract/index.js']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 

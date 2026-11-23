@@ -322,6 +322,14 @@ describe("ProfilePhotosScreen", () => {
           expect(screen.getByText("1 photo")).toBeTruthy();
         });
 
+        it("should keep sharing actions off the private photo dialog", async () => {
+          await user.click(screen.getByRole("button", { name: `${tileName(1)}, private` }));
+          const dialog = await screen.findByRole("dialog");
+          expect(within(dialog).queryByRole("button", { name: "Copy link" })).toBeNull();
+          expect(within(dialog).queryByRole("link", { name: "Share to X" })).toBeNull();
+          expect(within(dialog).getByRole("link", { name: "Download photo" })).toBeTruthy();
+        });
+
         describe("and then picks All", () => {
           beforeEach(async () => {
             await user.click(screen.getByRole("tab", { name: "All" }));

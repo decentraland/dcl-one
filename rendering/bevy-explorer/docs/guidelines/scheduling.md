@@ -12,6 +12,8 @@ A per-frame time budget is a share of the target frame (`SceneUpdates::frame_tar
 frame of 60 fps when the frame rate is uncapped): a tenth for capped raycasts, a quarter for
 instantiation. A fixed duration is a different share at 30, 60 and 144 fps. Budget from the
 target, not the measured frame, so a slow frame does not raise the next frame's budget.
+Avatar processing (`process_avatar`) is measured and deliberately not budgeted: see
+[decisions](decisions.md#deliberate-choices-that-look-like-mistakes) before adding one.
 
 All set types live in `crates/common/src/sets.rs`; the chains are configured in
 `crates/scene_runner/src/lib.rs` (`SceneSets`, `SceneLoopSets`) and
@@ -31,6 +33,15 @@ flowchart LR
   end
   Update --> PostUpdate
 ```
+
+`PreUpdate`, `RunFixedMainLoop`, `Update`, `SpawnScene` and `Last` run their systems one
+after another on the thread that runs the schedule (the engine worker on the web), in an order
+that still honours every `before`, `after` and set chain (`run_small_schedules_in_order`,
+`src/lib.rs`). Most of their systems take microseconds, and handing one to a compute thread and
+waiting for it costs more than running it. `PostUpdate` keeps the multi-threaded executor: its
+systems (transform propagation, visibility) are large enough to gain from the compute threads.
+A system in one of the in-order schedules cannot rely on running beside another: order what
+must be ordered.
 
 `SceneSets`, chained in `Update`:
 
@@ -76,7 +87,15 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    the system. Only transforms and text shapes have hand-written loop systems.
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
-scenes or replies outstanding. Priority: the scenes the player is in (the one they stand in,
+scenes or replies outstanding. When no scene can be started (none is queued, or the next queued
+scene must wait for a thread: only priority scenes bypass the `scene_threads` limit) and replies
+are outstanding, it sleeps so that the next pass starts `SCENE_REPLY_POLL` (250 µs) after this
+one started, or at the deadline if that is sooner. On native no sleep ends closer to the
+deadline than the spin sleeper's accuracy, because a native sleep can wake that late; the loop
+spins through that last stretch. The loop's schedule runs on the single-threaded executor: a
+pass is a chain of systems that mostly find nothing to do.
+
+Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the
 player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
 `update_scene_partitions`); both are divided by the time since the scene was last sent, so a
@@ -145,6 +164,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
     instances already in progress first, and reveals each when its last node is done;
   - `spawn_timing`'s `start_spawner` before the spawner, `finish_spawner` between the spawner and
     processing, and `finish_processing` after processing: they measure both into diagnostics.
+    The avatar crate measures `process_avatar`, which runs in `Update`, into a third, from
+    `PostUpdate`.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
   profiler's frame fold and the benchmark summary.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).

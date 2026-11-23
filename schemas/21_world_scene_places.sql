@@ -52,6 +52,10 @@ $$;
 CREATE TRIGGER world_scene_binding_retained AFTER UPDATE OR DELETE ON explore.world_scene_place
 FOR EACH ROW EXECUTE FUNCTION explore.retain_world_scene_binding();
 
+-- Quota excludes retired UUID namespaces while accepting arbitrary legacy text.
+CREATE INDEX world_scene_place_retired_identity_idx
+    ON explore.world_scene_place (world_name, (identity::text)) WHERE NOT active;
+
 -- Upgrade copy, NOT a recovery/rebuild source: this executes whenever the
 -- shared table is newly created, not once for the lifetime of the database.
 -- After cutover the legacy table is stale. Never drop/recreate the shared table
