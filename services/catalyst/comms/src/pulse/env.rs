@@ -169,7 +169,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_CLUSTERS_ID_PREFIX",
-        "prefix of every minted cluster id, so two Pulse instances on one broker never mint the same one (default C)",
+        "prefix of every boot-scoped cluster ID (default C)",
     ),
     (
         "PULSE_CLUSTERS_SESSION_RETENTION_PASSES",

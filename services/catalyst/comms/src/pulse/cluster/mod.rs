@@ -253,6 +253,8 @@ pub struct ClusterTracker {
     actual_peer_capacity: usize,
 
     pass_number: u64,
+    /// Existing LiveKit rooms can outlive the tracker and its counter.
+    boot_id: uuid::Uuid,
     next_cluster_number: u64,
     /// Passes in a row that overran their share of the tick; warned from the second.
     consecutive_overruns: u32,
@@ -288,6 +290,7 @@ impl ClusterTracker {
             control: control::ControlSnapshot::default(),
             actual_peer_capacity: max_peers,
             pass_number: 0,
+            boot_id: uuid::Uuid::new_v4(),
             next_cluster_number: 0,
             consecutive_overruns: 0,
         }
@@ -757,7 +760,12 @@ impl ClusterTracker {
     /// pass's assignments, so a freshly minted ID cannot be contested within its own pass.
     fn mint_cluster_id(&mut self) -> String {
         self.next_cluster_number += 1;
-        let id = format!("{}{}", self.options.id_prefix, self.next_cluster_number);
+        let id = format!(
+            "{}{}-{}",
+            self.options.id_prefix,
+            self.boot_id.simple(),
+            self.next_cluster_number
+        );
         self.cluster_records.insert(
             id.clone(),
             ClusterRecord {
