@@ -358,8 +358,8 @@ pub fn relay_wake_ptr() -> u32 {
     with_relay(|relay| relay.wake.word() as *const AtomicI32 as usize as u32).unwrap_or(0)
 }
 
-/// 1 when the worker should wait for the engine's send between pumps, 0 to sleep as before: in a
-/// mode that wakes relays, for a scene the engine wakes. The worker asks before each pump, which
+/// 1 when the worker should wait for the engine's send between pumps, 0 to keep its 1 ms poll: in
+/// a mode that wakes relays, for a scene the engine wakes. The worker asks before each pump, which
 /// registers the waker only then.
 #[wasm_bindgen]
 pub fn relay_wake_mode() -> u32 {

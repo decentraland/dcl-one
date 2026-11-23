@@ -71,7 +71,7 @@ to the deadline.
 
 The deadline is bounded below by 1 ms after the loop starts and above by one frame target
 (`crates/scene_runner/src/loop_pacing.rs`). Natively it stays on a grid of frame targets
-(`legacy_deadline`): a long frame leaves the next loop what remains of the grid. On the web the
+(`grid_deadline`): a long frame leaves the next loop what remains of the grid. On the web the
 browser paces the frame, and the loop ends one frame target after the frame's start, less the
 time the frame still needs after the loop (`frame_deadline`). That reserve is the 90th
 percentile, over the last 32 frames, of the time from the loop's end to the handoff to the

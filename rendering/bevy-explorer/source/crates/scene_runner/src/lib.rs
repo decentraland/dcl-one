@@ -544,7 +544,7 @@ fn run_scene_loop(world: &mut World) {
         Duration::from_nanos((1e9 / fps) as u64)
     };
     let start_loop_time = Instant::now();
-    let (target_end_time, next_frame_end) = loop_pacing::legacy_deadline(
+    let (target_end_time, next_frame_end) = loop_pacing::grid_deadline(
         loop_schedule.next_frame_end,
         start_loop_time,
         frame_target_duration,

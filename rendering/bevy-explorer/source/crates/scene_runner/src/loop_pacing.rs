@@ -1,13 +1,13 @@
 //! Where the scene loop ends each frame.
 //!
-//! The native rule ([`legacy_deadline`]) keeps the deadline on a grid of frame targets: after a
-//! long frame the loop gets what is left of the grid, down to a 1 ms floor, and keeps the loss
-//! for the next frames (B_n = clamp(B_{n-1} + T - I_n, 1 ms, T)). On the web, the deadline mode
-//! ([`frame_deadline`], scene loop mode `both`, the default, or `deadline`,
-//! `dcl_wasm::scene_loop_mode`) instead ends the loop a frame target after the frame's start, less what the frame still needs
-//! after the loop: the 90th percentile of that tail over the last frames ([`TailEstimate`]) plus
-//! a share of the frame target. The tail is the frame's work, without its waits for the render worker
-//! ([`frame_tail`]). Natively the scene loop is unchanged; only the wasm build reads the mode.
+//! [`grid_deadline`] keeps the deadline on a grid of frame targets: after a long frame the loop
+//! gets what is left of the grid, down to a 1 ms floor, and keeps the loss for the next frames
+//! (B_n = clamp(B_{n-1} + T - I_n, 1 ms, T)). Native builds always use it. On the web, the
+//! deadline mode ([`frame_deadline`], scene loop mode `both`, the default, or `deadline`,
+//! `dcl_wasm::scene_loop_mode`) ends the loop a frame target after the frame's start, less what
+//! the frame still needs after the loop: the 90th percentile of that tail over the last frames
+//! ([`TailEstimate`]) plus a share of the frame target. The tail is the frame's work, without its
+//! waits for the render worker ([`frame_tail`]). Only the wasm build reads the mode.
 
 use std::time::Duration;
 
@@ -24,11 +24,11 @@ pub const TAIL_MARGIN_SHARE: f64 = 0.06;
 /// The scene loop always runs at least this long.
 pub const LOOP_FLOOR: Duration = Duration::from_millis(1);
 
-/// The current rule: the deadline on the grid of frame targets (`next_frame_end`), bounded so a
-/// loop neither burns through a backlog after a hitch (a deadline already in the past still
-/// leaves the floor) nor runs longer than a frame target when the deadline is stale (an fps
-/// change, an uncapped frame). Returns the deadline and the next frame's grid point.
-pub fn legacy_deadline(
+/// The deadline on the grid of frame targets (`next_frame_end`), bounded so a loop neither burns
+/// through a backlog after a hitch (a deadline already in the past still leaves the floor) nor
+/// runs longer than a frame target when the deadline is stale (an fps change, an uncapped frame).
+/// Returns the deadline and the next frame's grid point.
+pub fn grid_deadline(
     next_frame_end: Instant,
     loop_start: Instant,
     frame: Duration,
@@ -40,7 +40,7 @@ pub fn legacy_deadline(
 }
 
 /// The deadline mode: a frame target after the frame's start, less the frame's tail after the
-/// loop, within the same bounds as [`legacy_deadline`].
+/// loop, within the same bounds as [`grid_deadline`].
 pub fn frame_deadline(
     frame_start: Instant,
     loop_start: Instant,
@@ -168,7 +168,7 @@ impl WebLoopPacing {
 
     /// The deadline mode's deadline for a loop that starts at `loop_start`: from the frame's start
     /// ([`frame_deadline`]) once the tail is measured and the frame rate is capped (`frame`, its
-    /// target), else `grid` ([`legacy_deadline`]).
+    /// target), else `grid` ([`grid_deadline`]).
     pub fn deadline(&self, grid: Instant, loop_start: Instant, frame: Option<Duration>) -> Instant {
         match (frame, self.frame_start) {
             (Some(frame), Some(frame_start)) => match self.tail.reserve(frame) {
@@ -323,9 +323,9 @@ mod tests {
 
     /// B_n = clamp(B_{n-1} + T - I_n, 1 ms, T), over a run with long frames and short ones.
     #[test]
-    fn the_legacy_budget_carries_each_frames_loss() {
+    fn the_grid_budget_carries_each_frames_loss() {
         let mut s = Instant::now();
-        let (target, mut next) = legacy_deadline(s, s, T);
+        let (target, mut next) = grid_deadline(s, s, T);
         let mut budget = target - s;
         assert_eq!(budget, LOOP_FLOOR);
         for interval in [
@@ -333,7 +333,7 @@ mod tests {
         ] {
             let interval = ms(interval);
             s += interval;
-            let (target, n) = legacy_deadline(next, s, T);
+            let (target, n) = grid_deadline(next, s, T);
             next = n;
             let expected = (budget + T)
                 .checked_sub(interval)
@@ -345,16 +345,16 @@ mod tests {
         }
     }
 
-    /// After a frame twice the target, the legacy budget sits on the floor; the deadline mode
+    /// After a frame twice the target, the grid budget sits on the floor; the deadline mode
     /// gives the frame what its start and tail leave.
     #[test]
     fn after_a_long_frame_the_deadline_follows_the_frames_start() {
         let s0 = Instant::now();
-        let (_, next) = legacy_deadline(s0 + T, s0, T);
+        let (_, next) = grid_deadline(s0 + T, s0, T);
         let frame_start = s0 + 2 * T;
         let s = frame_start + ms(4.7);
-        let (legacy, _) = legacy_deadline(next, s, T);
-        assert_eq!(legacy - s, LOOP_FLOOR);
+        let (grid, _) = grid_deadline(next, s, T);
+        assert_eq!(grid - s, LOOP_FLOOR);
         let tail = ms(5.0);
         let deadline = frame_deadline(frame_start, s, T, tail);
         assert_eq!(deadline, frame_start + T - tail);
