@@ -200,6 +200,7 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
   const [draftSaveFailed, setDraftSaveFailed] = useState(false);
   const [confirmingSignIn, setConfirmingSignIn] = useState(false);
   const signInTrigger = useRef<HTMLElement | null>(null);
+  const resumeSignIn = useRef<(() => void) | null>(null);
   const cancelSignIn = useRef<HTMLButtonElement>(null);
   const discardConfirmed = useRef(false);
   useEffect(() => {
@@ -226,10 +227,11 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
     restoreSignInDraft();
   }, []);
 
-  const saveBrowserDraft = useEffectEvent((destination: string) => {
+  const saveBrowserDraft = useEffectEvent((destination: string, resume: () => void) => {
     if (destination !== returnTo) return;
     if (evidence.length && !discardConfirmed.current) {
       signInTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      resumeSignIn.current = resume;
       setConfirmingSignIn(true);
       return false;
     }
@@ -241,18 +243,21 @@ export default function ReportForm({ trackCtx }: { trackCtx: TrackContext }) {
       return false;
     }
   });
-  useEffect(() => onBeforeBrowserSignIn((destination) => saveBrowserDraft(destination)), []);
+  useEffect(() => onBeforeBrowserSignIn((destination, resume) => saveBrowserDraft(destination, resume)), []);
 
   function keepEditing() {
+    resumeSignIn.current = null;
     setConfirmingSignIn(false);
     signInTrigger.current?.focus();
   }
 
   function continueSignIn() {
+    const resume = resumeSignIn.current;
+    resumeSignIn.current = null;
     setConfirmingSignIn(false);
     discardConfirmed.current = true;
     try {
-      openSignIn();
+      resume?.();
     } finally {
       discardConfirmed.current = false;
     }

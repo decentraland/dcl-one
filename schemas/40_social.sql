@@ -743,6 +743,11 @@ CREATE INDEX notifications_address_time_idx
 -- partial predicate, and carries the keyset tie-breaker).
 CREATE INDEX notifications_unread_idx
     ON social.notifications (address, occurred_at DESC, id DESC) WHERE NOT read;
+-- Event history adoption probes one wallet/type/event in created order.
+-- Keyed carriers leave this index; other producers without an eventId do not enter it.
+CREATE INDEX notifications_event_history_idx
+    ON social.notifications (address, type, (metadata->>'eventId'), created_at, id)
+    WHERE broadcast_key IS NULL AND metadata->>'eventId' IS NOT NULL;
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;

@@ -110,8 +110,9 @@ upstream. Private and unlisted communities, which the mirror never sees, are imp
   replacement keeps the replacement. A pending request the node already holds wins, a status
   the node made terminal is never reopened, and no pending request is added for a wallet the
   node bans there.
-- Kept on the node: `suspended*`. A local edit newer than upstream's `updated_at` is kept.
-  Ranking is the next section.
+- The node owns suspension. Suspending or unsuspending a community preserves the
+  metadata edit timestamp. A newer local metadata edit is kept. Editor's Choice is
+  imported metadata, so a local change to that flag advances `updated_at`.
 - Imported communities have no `social.community_signed_actions` entries, so they appear
   in the federation feeds only from their next signed action.
 
@@ -141,6 +142,28 @@ there too.
 
 Order: `run` (communities before community_ranking_metrics), then `blobs social-service-ea`,
 then start or restart the node, whose ranking job scores on acquiring its lease and daily.
+
+### Reconcile timestamps from earlier ranking passes
+
+Earlier ranking passes and suspension changes could advance `updated_at`, causing
+the importer to skip upstream metadata edits. The same timestamp also records real
+local edits. Identify the affected imported community IDs and their last genuine
+metadata edit timestamps from a pre-change backup or audit history. Verify the
+current metadata against that evidence, including ownership and Editor's Choice.
+Leave ambiguous rows for manual reconciliation.
+
+Deploy the timestamp-preserving ranking and suspension code before the repair.
+Pause community metadata writes and imports. For the verified IDs, restore only
+`updated_at` and condition each update on the current timestamp matching the
+value observed during review. Then replay the communities step from the beginning
+so it reads edits behind the saved checkpoint.
+
+```sh
+python3 tooling/migration/migrate.py run social-service-ea --step communities --restart
+```
+
+Verify that the skipped upstream edits now appear and that newer local edits and
+suspensions were preserved before resuming writes.
 
 ## Community places
 

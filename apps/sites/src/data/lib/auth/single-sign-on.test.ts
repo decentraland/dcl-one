@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { privateKeyToAccount } from "viem/accounts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { clearShared, freshestShared, fromShared, storeShared, toShared } from "./single-sign-on";
+import { clearShared, freshestShared, fromShared, saveWalletSession, sharedIdentityFor, storeShared, toShared, walletSessionFor } from "./single-sign-on";
 import type { AuthIdentity } from "./types";
 
 const SIGNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
@@ -75,5 +75,18 @@ describe("the session decentraland.org's dapps share", () => {
     await import("viem/accounts");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(localStorage.getItem(`single-sign-on-${SIGNER}`)).toBeNull();
+  });
+});
+
+describe("when Sites saves a previously selected wallet", () => {
+  beforeEach(() => {
+    storeShared(identity(OTHER));
+    saveWalletSession(identity(SIGNER));
+  });
+
+  it("should expose only the active wallet through shared sign-in", () => {
+    expect(sharedIdentityFor(OTHER)?.signer).toBe(OTHER);
+    expect(sharedIdentityFor(SIGNER)).toBeNull();
+    expect(walletSessionFor(SIGNER)?.signer).toBe(SIGNER);
   });
 });
