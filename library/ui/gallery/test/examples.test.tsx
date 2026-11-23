@@ -50,6 +50,20 @@ describe('when the gallery renders its examples with deterministic data', () => 
     vi.restoreAllMocks()
   })
 
+  // A page opens where the reviewer's focus is: the sidebar link they pressed Enter on keeps it.
+  it.each(examples)('should leave focus where it was when %s mounts', (_, example) => {
+    const sidebar = document.createElement('a')
+    sidebar.href = '#sidebar'
+    document.body.append(sidebar)
+    sidebar.focus()
+    try {
+      mount(example)
+      expect(document.activeElement).toBe(sidebar)
+    } finally {
+      sidebar.remove()
+    }
+  })
+
   it.each(examples)('should render %s without network access or errors', (_, example) => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)

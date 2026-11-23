@@ -2,35 +2,26 @@ import { createRoot } from 'react-dom/client'
 import { BlogCard } from '@dcl/one-ui'
 import '../../foundations/foundations.css'
 
-// A loaded card and its skeleton side by side, each in its own 300px column, so neither takes the other's height:
-// the loaded card has the content a Sites card has (a date, a two-line title, a 24px badge, an author).
+// A loaded card and its skeleton side by side, each in its own column, so neither takes the other's height. The
+// columns are as wide as the gallery's Blog grids make them at the viewport under test (`?standard=…&related=…`), and
+// the loaded card carries what a loading card reserves: the gallery's two-line title and a 24px category badge.
+const query = new URLSearchParams(location.search)
+const width = (name: string) => Number(query.get(name) ?? 300)
 const badge = (
   <span style={{ display: 'inline-flex', alignItems: 'center', height: 24 }}>Guides</span>
 )
-const column = {
-  width: 300,
-  display: 'flex',
-  flexDirection: 'column' as const,
-  alignItems: 'stretch'
-}
+const column = (px: number) => ({ width: px, display: 'flex', flexDirection: 'column' as const })
 const cover = (
   <img
     alt=""
     src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
   />
 )
-const title = 'Builders meet at Genesis Plaza for the new season'
+const title = 'Creator Fund: rewards for indie game creators'
 
 createRoot(document.getElementById('root')!).render(
-  <main
-    style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(4, 300px)',
-      gap: 16,
-      alignItems: 'start'
-    }}
-  >
-    <div id="standard-loaded" style={column}>
+  <main style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
+    <div id="standard-loaded" style={column(width('standard'))}>
       <BlogCard
         title={title}
         href="#post"
@@ -40,10 +31,10 @@ createRoot(document.getElementById('root')!).render(
         author="Ada"
       />
     </div>
-    <div id="standard-loading" style={column}>
+    <div id="standard-loading" style={column(width('standard'))}>
       <BlogCard loading />
     </div>
-    <div id="related-loaded" style={column}>
+    <div id="related-loaded" style={column(width('related'))}>
       <BlogCard
         variant="related"
         title={title}
@@ -53,7 +44,7 @@ createRoot(document.getElementById('root')!).render(
         category={badge}
       />
     </div>
-    <div id="related-loading" style={column}>
+    <div id="related-loading" style={column(width('related'))}>
       <BlogCard variant="related" loading loadingLabel="Loading a related post" />
     </div>
   </main>

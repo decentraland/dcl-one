@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   BackpackUpperBody,
   BlogBanner,
   BlogCard,
+  Button,
   CardActionButton,
   CommunityCard,
   EventCard,
@@ -83,27 +84,40 @@ const blogPosts = [
   }
 ]
 
-// Keyboard focus draws the card's hover treatment, so this card shows it with no pointer over it.
+// A title that takes two lines in every grid column, from a phone to the widest desktop: what a loading card reserves.
+const loadedTitle = 'Creator Fund: rewards for indie game creators'
+
+// Keyboard focus draws the card's hover treatment. The page never moves focus on its own: the reviewer asks for it, as
+// keyboard users reach the card by Tab.
 function FocusedBlogCard() {
   const card = useRef<HTMLUListElement>(null)
-  useEffect(() => {
-    card.current
-      ?.querySelector<HTMLAnchorElement>('h3 a')
-      ?.focus({ preventScroll: true, focusVisible: true } as FocusOptions)
-  }, [])
   return (
-    <ul ref={card} className={layout.blogIndex}>
-      <li>
-        <BlogCard
-          title="Focused like a hovered card"
-          href="#post"
-          cover={<img src={covers.gallery} alt="" />}
-          category="Events"
-          metadata="Nov 20, 2025"
-          author={people.grace.name}
+    <div className={layout.blogGrids}>
+      <div className={layout.row}>
+        <Button
+          variant="secondary"
+          size="sm"
+          label="Focus the card"
+          onClick={() =>
+            card.current
+              ?.querySelector<HTMLAnchorElement>('h3 a')
+              ?.focus({ preventScroll: true, focusVisible: true } as FocusOptions)
+          }
         />
-      </li>
-    </ul>
+      </div>
+      <ul ref={card} className={layout.blogIndex}>
+        <li>
+          <BlogCard
+            title="Focused like a hovered card"
+            href="#post"
+            cover={<img src={covers.gallery} alt="" />}
+            category="Events"
+            metadata="Nov 20, 2025"
+            author={people.grace.name}
+          />
+        </li>
+      </ul>
+    </div>
   )
 }
 
@@ -487,16 +501,16 @@ export const cardEntries: GalleryEntry[] = [
       {
         id: 'loading',
         title: 'Loading',
-        note: 'loading draws a skeleton in the box the post will take, marked busy, beside a loaded card in each grid.',
+        note: 'loading draws a busy skeleton sized for a post with a two-line title and a 24px category badge, as Sites cards carry; the loaded card beside it has that content, so the two match.',
         render: () => (
           <div className={layout.blogGrids}>
             <ul className={layout.blogIndex}>
               <li>
                 <BlogCard
-                  title={blogPosts[0]!.title}
+                  title={loadedTitle}
                   href="#post"
                   cover={<img src={blogPosts[0]!.cover} alt="" />}
-                  category={blogPosts[0]!.category}
+                  category={<span className={layout.blogBadge}>Announcements</span>}
                   metadata={blogPosts[0]!.date}
                   author={people.ada.name}
                 />
@@ -512,10 +526,10 @@ export const cardEntries: GalleryEntry[] = [
               <li>
                 <BlogCard
                   variant="related"
-                  title={blogPosts[1]!.title}
+                  title={loadedTitle}
                   href="#post"
                   cover={<img src={blogPosts[1]!.cover} alt="" />}
-                  category={blogPosts[1]!.category}
+                  category={<span className={layout.blogBadge}>Guides</span>}
                   metadata={blogPosts[1]!.date}
                 />
               </li>
@@ -532,7 +546,7 @@ export const cardEntries: GalleryEntry[] = [
       {
         id: 'focus',
         title: 'Hover and keyboard focus',
-        note: 'At 768px or wider, hover or keyboard focus raises the card, strengthens its border and underlines the title. This card shows it through keyboard focus, without a pointer.',
+        note: 'At 768px or wider, hover or keyboard focus raises the card, strengthens its border and underlines the title. Focus the card shows it through keyboard focus, without a pointer.',
         render: () => <FocusedBlogCard />
       }
     ]

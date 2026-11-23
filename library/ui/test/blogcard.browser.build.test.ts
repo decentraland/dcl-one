@@ -6,14 +6,14 @@ const browser = productionBrowser('test/consumer/blogcard-browser.tsx')
 
 type Box = { width: number; height: number; titleLines: number }
 
-async function boxes(width: number) {
+async function boxes(width: number, standard: number, related: number) {
   await browser.session.send('Emulation.setDeviceMetricsOverride', {
     width,
     height: 900,
     deviceScaleFactor: 1,
     mobile: width < 768
   })
-  await browser.session.navigate(browser.origin)
+  await browser.session.navigate(`${browser.origin}?standard=${standard}&related=${related}`)
   return browser.evaluate<Record<string, Box>>(`(async () => {
     for (let n = 0; n < 100 && !document.querySelector('#related-loading article'); n++) await new Promise((r) => setTimeout(r, 20))
     await document.fonts.ready
@@ -33,11 +33,16 @@ async function boxes(width: number) {
 }
 
 describe('when a BlogCard loads', () => {
-  it.each([390, 1440])(
-    'should keep the loaded card size while loading at %ipx, in both variants',
-    async (width) => {
-      const cards = await boxes(width)
-      // The loaded cards carry the content the skeleton stands for: a two-line title.
+  // The column widths the gallery's Blog grids give each variant at that viewport (measured on the BlogCard page).
+  it.each([
+    [390, 324, 324],
+    [768, 332, 332],
+    [1440, 421, 377]
+  ])(
+    'should keep the size of a loaded card with a two-line title and a 24px category at %ipx, in both variants',
+    async (width, standard, related) => {
+      const cards = await boxes(width, standard, related)
+      // The loaded cards carry the content the skeleton is sized for.
       expect(cards['standard-loaded']!.titleLines).toBe(2)
       expect(cards['related-loaded']!.titleLines).toBe(2)
       for (const variant of ['standard', 'related']) {
