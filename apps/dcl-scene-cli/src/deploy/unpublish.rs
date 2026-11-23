@@ -45,6 +45,7 @@ pub async fn unpublish(opts: &UnpublishOptions) -> Result<()> {
         None,
         true,
         TargetConsent::default(),
+        None,
     )
     .await?;
     let path = format!("{}/scenes/{parcel}", url_path(&base));

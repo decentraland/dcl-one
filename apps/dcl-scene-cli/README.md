@@ -508,8 +508,9 @@ dcl-scene-cli world access add|remove <name> --user U | --community C
 
 `deploy` signs in a browser on the preview server, or headlessly with `--sign-key FILE` or
 `DCL_PRIVATE_KEY` (the flag wins; every signing command, `unpublish`, `sync`, `storage` and the
-`world` writes included, takes both). Worlds go to the worlds server, parcels to the first healthy
-public catalyst (`--target-server` / `DCL_SCENE_CLI_TARGET_SERVER` override); only content missing
+`world` writes included, takes both). Worlds go to the worlds server; parcels go to the first healthy
+public catalyst when signing in a browser and to `https://peer.decentraland.org` when signing with a
+key (`--target-server` / `DCL_SCENE_CLI_TARGET_SERVER` override both); only content missing
 from `/available-content` is uploaded (`--force-upload` or `DCL_SCENE_CLI_UPLOAD_ALL=1` sends all).
 Before signing, scene.json's media permissions and the 50 MB per-file limit are checked;
 `--skip-validations` skips both, as a custom `--target-server` does implicitly (its limits are its

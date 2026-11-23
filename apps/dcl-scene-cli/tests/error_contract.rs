@@ -348,16 +348,13 @@ fn g8_port_already_in_use() {
 }
 
 #[test]
-fn g9_headless_key_requires_explicit_target() {
+fn g9_headless_key_unpublish_requires_explicit_target() {
     let f = Fixture::new("g9");
-    f.write("scene.json", SCENE_OK);
-    f.write("bin/index.js", "module.exports = {}\n");
     let key = (
         "DCL_PRIVATE_KEY",
         "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
     );
-    let dir = f.dir_arg();
-    let args = ["deploy", "--dir", &dir, "--skip-build"];
+    let args = ["unpublish", "--parcel", "0,0"];
     let out = run(&args, &[key]);
     assert_contract(&out, f.path(), "no deploy target given");
     let err = stderr_of(&out);

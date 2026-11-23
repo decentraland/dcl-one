@@ -683,16 +683,20 @@ pub(super) async fn resolve_target(
         world,
         headless,
         TargetConsent::from_opts(opts),
+        Some(super::DEFAULT_GENESIS_CONTENT_SERVER),
     )
     .await
 }
 
+/// `key_default` is the content server a key-signed LAND command uses when
+/// nothing names one; with `None` such a command refuses instead.
 pub(super) async fn resolve_target_from(
     target: Option<&str>,
     target_content: Option<&str>,
     world: Option<&str>,
     headless: bool,
     consent: TargetConsent,
+    key_default: Option<&str>,
 ) -> Result<String> {
     let base = match (target, target_content) {
         (Some(_), Some(_)) => {
@@ -716,14 +720,22 @@ pub(super) async fn resolve_target_from(
                 }
                 DEFAULT_WORLDS_TARGET_SERVER.to_string()
             }
-            (None, None) if headless => return Err(UserError::new(
-                "no deploy target given for key-based signing",
-                TrySteps::one("pass --target-server <catalyst domain or content-server URL>")
-                    .and("or set DCL_SCENE_CLI_TARGET_SERVER for this run")
-                    .and("browser signing (no key) picks a healthy public catalyst automatically"),
-            )
-            .why("key-signed deploys never pick a server implicitly")
-            .into()),
+            (None, None) if headless => match key_default {
+                Some(server) => {
+                    target_content_url(server, "the Genesis City catalyst", false).await?
+                }
+                None => {
+                    return Err(UserError::new(
+                        "no deploy target given for key-based signing",
+                        TrySteps::one(
+                            "pass --target-server <catalyst domain or content-server URL>",
+                        )
+                        .and("or set DCL_SCENE_CLI_TARGET_SERVER for this run"),
+                    )
+                    .why("a key-signed unpublish never picks a server implicitly")
+                    .into());
+                }
+            },
             (None, None) => rotation_content_url(consent).await?,
         },
     };
@@ -2189,6 +2201,7 @@ mod tests {
             Some("w.dcl.eth"),
             true,
             TargetConsent::default(),
+            None,
         )
         .await;
         let err = format!(
@@ -2200,7 +2213,8 @@ mod tests {
 
     async fn resolved(raw: Option<&str>, world: Option<&str>, headless: bool) -> Result<String> {
         set_env(raw);
-        let out = resolve_target_from(None, None, world, headless, TargetConsent::default()).await;
+        let out =
+            resolve_target_from(None, None, world, headless, TargetConsent::default(), None).await;
         set_env(None);
         out
     }
@@ -2277,10 +2291,29 @@ mod tests {
             Some("gather.dcl.eth"),
             true,
             TargetConsent::default(),
+            None,
         )
         .await;
         set_env(None);
         assert_eq!(target.unwrap(), "https://example.org");
+    }
+
+    /// A CI job that deploys a LAND scene with a key and names no target
+    /// publishes to Genesis City; a target in the environment still wins.
+    #[tokio::test]
+    async fn a_key_signed_land_deploy_defaults_to_the_genesis_catalyst() {
+        let _guard = ENV_LOCK.lock().await;
+        let genesis = Some(super::super::DEFAULT_GENESIS_CONTENT_SERVER);
+        set_env(None);
+        let target =
+            resolve_target_from(None, None, None, true, TargetConsent::default(), genesis).await;
+        assert_eq!(target.unwrap(), "https://peer.decentraland.org/content");
+
+        set_env(Some("http://127.0.0.1:9/content"));
+        let target =
+            resolve_target_from(None, None, None, true, TargetConsent::default(), genesis).await;
+        set_env(None);
+        assert_eq!(target.unwrap(), "http://127.0.0.1:9/content");
     }
 
     /// The exact shape `unpublish.rs` resolves with: land-only, so the worlds

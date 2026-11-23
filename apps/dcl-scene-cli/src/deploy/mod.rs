@@ -123,6 +123,10 @@ pub const UPSTREAM_CATALYST_HOSTS: [&str; 8] = [
 /// it does not answer.
 pub const DEFAULT_GENESIS_TARGET_SERVER: &str = "https://peer.decentraland.org";
 
+/// Where a key-signed LAND deploy that names no target publishes: the
+/// content server of [`DEFAULT_GENESIS_TARGET_SERVER`], used verbatim.
+pub const DEFAULT_GENESIS_CONTENT_SERVER: &str = "https://peer.decentraland.org/content";
+
 /// The rotation named by DCL_SCENE_CLI_CATALYST_ROTATION (comma-separated), or
 /// `None`. Callers that must not reach a public catalyst on their own read
 /// this rather than `catalyst_rotation`.
