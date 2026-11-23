@@ -1,15 +1,19 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { GeneralFavorites, Button, JumpInCTA, type PlaceCardCreator, type PlaceCardLinkProps } from "@dcl/one-ui";
-
 import {
   OWNER_EMPTY_TITLE,
   PlacesOwnerEmpty,
   ProfilePlaces,
   type PlacesPanelState,
-} from "@dcl/one-ui/apps/sites/profile/ProfilePlaces";
-import { EmptyMessage } from "@dcl/one-ui/apps/sites/profile/EmptyMessage";
+  EmptyMessage,
+  GeneralFavorites,
+  Button,
+  JumpInCTA,
+  type PlaceCardCreator,
+  type PlaceCardLinkProps,
+} from "@dcl/one-ui";
+
 
 import { track } from "@/core/lib/telemetry/track";
 import { useAuth } from "@/data/lib/auth/index";

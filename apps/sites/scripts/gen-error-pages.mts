@@ -47,6 +47,7 @@ const vite = await createServer({
     dedupe: ["react", "react-dom"],
     alias: [
       { find: /^@dcl\/one-ui$/, replacement: join(oneUi, "index.ts") },
+      { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations/typography/text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: oneUi },
     ],
   },

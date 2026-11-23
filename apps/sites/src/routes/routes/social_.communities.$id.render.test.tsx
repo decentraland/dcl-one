@@ -5,8 +5,7 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
-import { SitesLocaleContext, type SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import { useEventsCopy, SitesLocaleContext, type SitesLocale } from "@dcl/one-ui";
 
 import CommunityDetailRoute, { shouldRevalidate } from "./social_.communities.$id";
 

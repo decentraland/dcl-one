@@ -17,7 +17,15 @@ import "@dcl/one-ui/foundations/spacing/spacing.css";
 import "@dcl/one-ui/foundations/layout/layout.css";
 import "@dcl/one-ui/apps/sites/profile-tokens.css";
 import "@ui/atoms/primitives.css";
-import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
+import {
+  dclLogoUrl as logo,
+  StatusPage,
+  SitesLocaleContext,
+  sitesLanguage,
+  type SitesLocale,
+  type SitesLocaleHandle,
+  ThumbnailPublicBase,
+} from "@dcl/one-ui";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
@@ -27,14 +35,11 @@ import EmbedBridge from "@/features/components/chrome/EmbedBridge";
 import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
 import { sessionChangePending, useSessionChangeRevalidation } from "@/data/lib/auth/session-change";
 import NotFoundPage from "@/features/not-found/NotFoundPage";
-import { StatusPage } from "@dcl/one-ui/apps/sites/status/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
-import { ThumbnailPublicBase } from "@dcl/one-ui";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { isPublicResponsePath, pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { useNotFoundPageView, useRoutePageView } from "@/core/lib/telemetry/page-view";
 import { sitesSegmentPublicConfig } from "@/core/lib/telemetry/public-config.server";
-import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";

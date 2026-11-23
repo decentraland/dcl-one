@@ -1,4 +1,4 @@
-import type { PhotoViewerDetails, PhotoViewerPerson } from "@dcl/one-ui/apps/sites/profile/PhotoViewer";
+import type { PhotoViewerDetails, PhotoViewerPerson } from "@dcl/one-ui";
 
 import { playUrl } from "@/data/lib/catalyst/bases";
 import { parsePosition } from "@/data/lib/catalyst/jump/jump";

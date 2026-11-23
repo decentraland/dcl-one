@@ -1,6 +1,16 @@
 import { useState } from "react";
 
 import {
+  CollectiblesItem,
+  CollectiblesPanel,
+  NameRow,
+  useCategoryTabs,
+  useFocusNewRows,
+  type CategoryOption,
+  type CollectiblesState,
+  AssetCard,
+  NameActions,
+  EmptyMessage,
   BackpackUpperBody,
   GeneralGrid,
   GeneralMapPin,
@@ -9,17 +19,6 @@ import {
   Button,
 } from "@dcl/one-ui";
 
-import {
-  CollectiblesItem,
-  CollectiblesPanel,
-  NameRow,
-  useCategoryTabs,
-  useFocusNewRows,
-  type CategoryOption,
-  type CollectiblesState,
-} from "@dcl/one-ui/apps/sites/profile/collectibles";
-import { AssetCard, NameActions } from "@dcl/one-ui/apps/sites/profile/ProfileAssetCard";
-import { EmptyMessage } from "@dcl/one-ui/apps/sites/profile/EmptyMessage";
 
 import { assetPage, SHOP_BASE } from "@/core/lib/shop/redirects";
 import {

@@ -7,9 +7,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Carousel, type CarouselLabels } from "@dcl/one-ui/apps/sites/shared/Carousel";
-import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
-import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
+import { Carousel, type CarouselLabels, CatchTheVibe, ComeHangOut } from "@dcl/one-ui";
 import { downloadActions } from "../download/actions";
 
 vi.hoisted(() =>

@@ -32,18 +32,24 @@ class UiStandardsTest(unittest.TestCase):
             "import type { IconProps } from '@dcl/one-ui/foundations/icons'\n"
             'export { theme } from "@dcl/one-ui/foundations"\n'
             'const page = await import("@dcl/one-ui/components/NavBar/NavBar")\n'
-            'vi.mock("@dcl/one-ui/components/AppChrome/chrome-nav", () => ({}))\n')
+            'vi.mock("@dcl/one-ui/components/AppChrome/chrome-nav", () => ({}))\n'
+            'import { EventsPage } from "@dcl/one-ui/apps/sites/events/EventsPage"\n'
+            'import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url"\n'
+            'import { shopFlags } from "@dcl/one-ui/apps/shopping/flags"\n')
         self.assertEqual(found, ['@dcl/one-ui/components/AppChrome/chrome-auth', '@dcl/one-ui/foundations/icons',
                                  '@dcl/one-ui/foundations', '@dcl/one-ui/components/NavBar/NavBar',
-                                 '@dcl/one-ui/components/AppChrome/chrome-nav'])
+                                 '@dcl/one-ui/components/AppChrome/chrome-nav',
+                                 '@dcl/one-ui/apps/sites/events/EventsPage',
+                                 '@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url',
+                                 '@dcl/one-ui/apps/shopping/flags'])
 
-    def test_deep_shared_imports_allow_stylesheets_app_ui_and_comments(self):
+    def test_deep_shared_imports_allow_stylesheets_shop_and_hud_ui_and_comments(self):
         self.assertEqual(ui_standards.deep_shared_imports(
             'import "@dcl/one-ui/foundations.css"\n'
             'import "@dcl/one-ui/foundations/colors/colors.css"\n'
             'import styles from "@dcl/one-ui/text-styles.module.css"\n'
             'import { shopSession } from "@dcl/one-ui/apps/shop/session"\n'
-            'import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url"\n'
+            'import { ARM_MS } from "@dcl/one-ui/apps/hud/design"\n'
             '// import { NavBar } from "@dcl/one-ui/components/NavBar/NavBar"\n'
             'const ALIAS = "@dcl/one-ui/"\n'
             'const other = "@dcl/one-ui-extra/components/X"\n'), [])

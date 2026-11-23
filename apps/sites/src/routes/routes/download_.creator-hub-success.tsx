@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
+import { DownloadSuccess } from "@dcl/one-ui";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";

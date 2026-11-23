@@ -24,10 +24,10 @@ either kind, which is the floor of an unlisted one.
 
 `--shared-imports` is a check over the whole tree: a script under apps/, library/
 (outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
-fails, because shared foundations and components come from the `@dcl/one-ui`
-entry (docs/ui-standards.md, "Shared foundations and components"). Stylesheets
-(`.css`) and the app-scoped UI under `@dcl/one-ui/apps/` are not shared components
-and stay importable by path.
+fails, because shared UI comes only from the `@dcl/one-ui` entry
+(docs/ui-standards.md, "Shared UI: library/ui"). Stylesheets (`.css`) keep their
+paths. The in-world Shop and HUD UI (`@dcl/one-ui/apps/shop/`, `apps/hud/`) are
+not exported yet: they resolve their host's aliases, which the entry cannot.
 """
 import argparse
 import json
@@ -363,12 +363,18 @@ def check(base='HEAD', staged=False):
 
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
-SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
-# Files PR #2028 rewrites; it moves their foundation imports to @dcl/one-ui and empties this list.
+SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
+# Files PR #2028 rewrites; it moves their imports to @dcl/one-ui and empties this list.
 SHARED_IMPORT_PENDING = frozenset({
+    'apps/sites/scripts/gen-error-pages.test.mts',
+    'apps/sites/src/features/not-found/NotFoundPage.test.tsx',
     'apps/sites/src/features/not-found/NotFoundPage.tsx',
+    'apps/sites/src/features/social/report/ReportForm.test.tsx',
     'apps/sites/src/features/social/report/ReportForm.tsx',
+    'apps/sites/src/features/social/report/ReportSuccess.test.tsx',
     'apps/sites/src/features/social/report/ReportSuccess.tsx',
+    'apps/sites/src/routes/routes/_index.tsx',
+    'apps/ui3/src/web/pages/StInvite.tsx',
 })
 
 
