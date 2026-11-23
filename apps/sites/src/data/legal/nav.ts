@@ -30,7 +30,7 @@ const SLUGS = Object.fromEntries(
 ) as Record<LegalKey, string>;
 
 // Paths that name a document by neither its slug nor its key.
-const LEGAL_ALIASES: Readonly<Record<string, LegalKey>> = {
+export const LEGAL_ALIASES: Readonly<Record<string, LegalKey>> = {
   "content-policy": "content",
 };
 
