@@ -32,6 +32,22 @@ describe('when Button owns content layout in a production bundle', () => {
   afterEach(() => {
     expect(b.session.runtimeErrors.slice(caseErrorStart)).toEqual([])
   })
+  it('should size the secondary-light icon and loading indicator for each button size', async () => {
+    await ready()
+    const metrics = await b.evaluate(
+      `Array.from(document.querySelectorAll('[data-variant="secondaryLight"]'), button => [
+        button.dataset.size,
+        button.querySelector('svg').getBoundingClientRect().width,
+        button.querySelector('[data-loading-indicator]').offsetWidth
+      ])`
+    )
+    expect(metrics).toEqual([
+      ['xl', 24, 27],
+      ['lg', 24, 23],
+      ['md', 20, 23],
+      ['sm', 16, 18]
+    ])
+  })
   it('should preserve intrinsic shrink wrapping and place fill icons at both content edges', async () => {
     await ready()
     const layout = await b.evaluate<

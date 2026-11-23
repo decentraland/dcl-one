@@ -72,6 +72,7 @@
     --button-background: var(--dcl-transparencies-white-10);
     --button-color: var(--dcl-text-primary);
     --button-hover: var(--dcl-transparencies-white-20);
+    /* The secondary-light pressed state in Figma uses 5% white. The shared pressed token is 20%. */
     --button-pressed: color-mix(in srgb, var(--dcl-neutrals-white) 5%, transparent);
     --button-icon-size: 24px;
     --button-spinner-size: 27px;

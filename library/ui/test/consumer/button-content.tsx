@@ -70,6 +70,11 @@ function Fixture() {
       >
         Native destination
       </Button>
+      {(['xl', 'lg', 'md', 'sm'] as const).map((size) => (
+        <Button key={size} variant="secondaryLight" size={size} startIcon={<svg />} loading>
+          Remind me
+        </Button>
+      ))}
       <output>{calls}</output>
       <span id="target">Destination</span>
     </main>

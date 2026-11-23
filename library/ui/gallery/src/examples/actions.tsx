@@ -5,6 +5,7 @@ import {
   CopyFeedback,
   FriendCTA,
   GeneralAdd,
+  GeneralBell,
   GeneralCopy,
   GeneralRightArrow,
   MenusShare,
@@ -114,6 +115,9 @@ export const actionEntries: GalleryEntry[] = [
         render: () => (
           <div className={layout.stack}>
             <div className={layout.row}>
+              <Button variant="secondaryLight" size="md" leadingIcon={<GeneralBell size={20} />}>
+                Remind me
+              </Button>
               <Button size="md" leadingIcon={<GeneralAdd size={20} aria-hidden="true" />}>
                 Leading icon
               </Button>

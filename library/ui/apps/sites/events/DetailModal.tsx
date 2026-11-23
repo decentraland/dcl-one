@@ -212,7 +212,8 @@ function EventDetailModal(props: EventDetailModalProps) {
               size="md"
               startIcon={<GeneralBell size={20} aria-hidden="true" />}
               aria-pressed={remind.active}
-              disabled={remind.pending}
+              className={styles.reminder}
+              aria-disabled={remind.pending}
               onClick={remind.onToggle}
             >
               {text('Remind me')}

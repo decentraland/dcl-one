@@ -110,11 +110,26 @@ a.location:hover {
   gap: var(--dcl-space-12);
 }
 
+.actions:has(.reminder) {
+  --event-action-size: 40px;
+}
+
+.reminder {
+  --button-icon-size: 20px;
+  min-height: var(--event-action-size);
+}
+
+@media (max-width: 767px) {
+  .actions:has(.reminder) {
+    --event-action-size: var(--dcl-space-48);
+  }
+}
+
 .iconButton {
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
+  width: var(--event-action-size, 46px);
+  height: var(--event-action-size, 46px);
   padding: 0;
   border: 0;
   border-radius: var(--dcl-radius-md);
