@@ -281,8 +281,8 @@ pub async fn index_confirms(
                 "claim_rental" => "claimed",
                 _ => "asset_index_updated",
             };
-            // The receipt identifies the exact block of these logs. Bound the
-            // lookup by the event primary key instead of scanning its history.
+            // The receipt block bounds this lookup to the (network, block_number)
+            // prefix of the event primary key.
             sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM shop.rental_event WHERE network = $1 AND tx_hash = $2 AND kind = $3 AND block_number = $4)")
                 .bind(net.db_name())
                 .bind(&row.tx_hash)
@@ -1000,8 +1000,8 @@ mod tests {
                     .unwrap(),
                 Some(false)
             );
-            sqlx::query("UPDATE shop.rental_event SET kind = $1, signature = CASE WHEN $1 = 'rented' THEN '0xsignature' END, tenant = CASE WHEN $1 = 'rented' THEN rentals_address END, rental_days = CASE WHEN $1 = 'rented' THEN 1 END, price_per_day = CASE WHEN $1 = 'rented' THEN 1 END, new_index = CASE WHEN $1 = 'asset_index_updated' THEN 1 END")
-                .bind(event_kind).execute(&db.pool).await.unwrap();
+            sqlx::query("UPDATE shop.rental_event SET kind = $1, signature = CASE WHEN $1 = 'rented' THEN '0xsignature' END, tenant = CASE WHEN $1 = 'rented' THEN rentals_address END, rental_days = CASE WHEN $1 = 'rented' THEN 1 END, price_per_day = CASE WHEN $1 = 'rented' THEN 1 END, new_index = CASE WHEN $1 = 'asset_index_updated' THEN 1 END WHERE network = 'ethereum' AND block_number = $2 AND log_index = 0")
+                .bind(event_kind).bind(receipt_block).execute(&db.pool).await.unwrap();
             assert_eq!(
                 index_confirms(&db.pool, chain, &execution, receipt_block)
                     .await
