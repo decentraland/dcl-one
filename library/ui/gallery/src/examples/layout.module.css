@@ -43,3 +43,36 @@
   width: 100%;
   max-width: 420px;
 }
+
+/* The grids Sites puts BlogCards in (apps/sites/blog): the Blog index, whose content is 1312px at most (1440px less
+   its 64px margins), and an article's related posts, 1180px at most. Three columns, two below 1024px, one below
+   768px. */
+.blogIndex,
+.blogRelated {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--dcl-space-24);
+  max-width: 1312px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.blogRelated {
+  max-width: 1180px;
+}
+
+@media (max-width: 1023px) {
+  .blogIndex,
+  .blogRelated {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .blogIndex,
+  .blogRelated {
+    grid-template-columns: 1fr;
+    gap: var(--dcl-space-16);
+  }
+}

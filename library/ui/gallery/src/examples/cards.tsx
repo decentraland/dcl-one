@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   BackpackUpperBody,
   BlogBanner,
@@ -59,6 +59,51 @@ function SelectableShopCard() {
       onSelect={() => setSelected((value) => !value)}
       price={<ShopCardPrice kind="credits" amount="120" />}
     />
+  )
+}
+
+const blogPosts = [
+  {
+    title: "What's new in Decentraland this season",
+    cover: covers.blog,
+    category: 'Announcements',
+    date: 'Jan 2, 2026'
+  },
+  {
+    title: 'A walk through Genesis Plaza',
+    cover: covers.plaza,
+    category: 'Guides',
+    date: 'Dec 18, 2025'
+  },
+  {
+    title: 'Career Mondays: meet the builders',
+    cover: covers.festival,
+    category: 'Events',
+    date: 'Dec 4, 2025'
+  }
+]
+
+// Keyboard focus draws the card's hover treatment, so this card shows it with no pointer over it.
+function FocusedBlogCard() {
+  const card = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    card.current
+      ?.querySelector<HTMLAnchorElement>('h3 a')
+      ?.focus({ preventScroll: true, focusVisible: true } as FocusOptions)
+  }, [])
+  return (
+    <ul ref={card} className={layout.blogIndex}>
+      <li>
+        <BlogCard
+          title="Focused like a hovered card"
+          href="#post"
+          cover={<img src={covers.gallery} alt="" />}
+          category="Events"
+          metadata="Nov 20, 2025"
+          author={people.grace.name}
+        />
+      </li>
+    </ul>
   )
 }
 
@@ -387,28 +432,63 @@ export const cardEntries: GalleryEntry[] = [
     components: ['BlogCard'],
     examples: [
       {
-        id: 'variants',
-        title: 'Standard and related',
+        id: 'index',
+        title: 'Blog index grid',
+        note: "In the Blog index's grid: three columns up to 1312px, two below 1024px, one below 768px. Hover a card with a pointer at 768px or wider.",
         render: () => (
-          <div className={layout.cards}>
-            <BlogCard
-              title="What's new in Decentraland"
-              href="#post"
-              cover={<img src={covers.blog} alt="" />}
-              category="Announcements"
-              metadata="Jan 2, 2026"
-              author={people.ada.name}
-            />
-            <BlogCard
-              variant="related"
-              title="A related post"
-              href="#post"
-              cover={<img src={covers.plaza} alt="" />}
-              category="Guides"
-            />
-            <BlogCard title="Without a cover" href="#post" metadata="5 min read" />
-          </div>
+          <ul className={layout.blogIndex}>
+            {blogPosts.map((post) => (
+              <li key={post.title}>
+                <BlogCard
+                  title={post.title}
+                  href="#post"
+                  cover={<img src={post.cover} alt="" />}
+                  category={post.category}
+                  metadata={post.date}
+                  author={people.ada.name}
+                />
+              </li>
+            ))}
+          </ul>
         )
+      },
+      {
+        id: 'related',
+        title: 'Related posts',
+        note: 'variant="related" in an article\'s related grid, up to 1180px.',
+        render: () => (
+          <ul className={layout.blogRelated}>
+            {blogPosts.map((post) => (
+              <li key={post.title}>
+                <BlogCard
+                  variant="related"
+                  title={post.title}
+                  href="#post"
+                  cover={<img src={post.cover} alt="" />}
+                  category={post.category}
+                  metadata={post.date}
+                />
+              </li>
+            ))}
+          </ul>
+        )
+      },
+      {
+        id: 'no-cover',
+        title: 'Without a cover',
+        render: () => (
+          <ul className={layout.blogIndex}>
+            <li>
+              <BlogCard title="Release notes" href="#post" metadata="5 min read" />
+            </li>
+          </ul>
+        )
+      },
+      {
+        id: 'focus',
+        title: 'Hover and keyboard focus',
+        note: 'At 768px or wider, hover or keyboard focus raises the card, strengthens its border and underlines the title. This card shows it through keyboard focus, without a pointer.',
+        render: () => <FocusedBlogCard />
       }
     ]
   },

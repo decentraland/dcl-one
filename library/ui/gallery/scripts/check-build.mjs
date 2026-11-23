@@ -5,7 +5,8 @@
 //   1. the gallery entry (<prefix>gallery/) lists runtime and generated pages, labelled by source;
 //   2. every runtime page draws every example in its iframe canvas with a nonzero box and no example error, and at
 //      1280px and 375px keeps its layout (LAYOUT): the page fits the viewport, every picture loads and paints inside
-//      its own box, and no in-flow text covers other text; so do the foundations pages and the HUD Showcase;
+//      its own box, and no in-flow text covers other text; so do the foundations pages and the HUD Showcase; at 375px
+//      the gallery page around it fits a 375px window too;
 //   3. the canvas is a real viewport: NavBar shows its menu button at 375px and hides it at 1280px;
 //   4. every runtime foundations page renders;
 //   5. the HUD section lists the Explorer HUD's Showcase first, then its pages; the Showcase page draws every page
@@ -335,6 +336,16 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
     const examples = []
     for (const name of listed.runtime) {
       for (const width of [1280, 375]) {
+        // At 375px the gallery page itself is a phone window too, so its header (the summary, the export names, the
+        // width controls) must wrap within it.
+        if (width === 375)
+          await session.send('Emulation.setDeviceMetricsOverride', {
+            width,
+            height: 900,
+            deviceScaleFactor: 1,
+            mobile: false
+          })
+        else await session.send('Emulation.clearDeviceMetricsOverride')
         await open(`?component=${encodeURIComponent(name)}&width=${width}`)
         const drawn = await waitFor(
           session,
@@ -346,9 +357,20 @@ async function checkGallery({ dist, prefix = '/', hosted = false, browser } = {}
           if (!example.drawn) throw new Error(`${name} ${example.id} draws nothing`)
         }
         await checkLayout(session, `${name} at ${width}px`)
+        if (width === 375) {
+          const page = await session.evaluate(
+            `[document.documentElement.scrollWidth, innerWidth, [...document.querySelectorAll('header *')].filter((node) => node.getBoundingClientRect().right > innerWidth + 1).map((node) => node.tagName.toLowerCase() + ' ' + (node.textContent ?? '').trim().slice(0, 40))]`
+          )
+          if (page[0] > page[1] + 1 || page[2].length)
+            throw new Error(
+              `the ${name} gallery page is ${page[0]}px wide in a ${page[1]}px window: ${page[2].join('; ') || 'the canvas'}`
+            )
+        }
         if (width === 1280) examples.push(...drawn.map((example) => `${name}/${example.id}`))
       }
     }
+
+    await session.send('Emulation.clearDeviceMetricsOverride')
 
     const menuShown = async (width) => {
       await open(`?component=NavBar&width=${width}`)
