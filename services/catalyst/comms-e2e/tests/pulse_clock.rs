@@ -1,7 +1,8 @@
 //! `pulse-handshake-clock` against a Pulse server in this process, whose clock is this machine's.
 //! Pulse accepts a handshake signed up to its window (`MAX_TIMESTAMP_SKEW_MS`) either side of its
-//! own now, so the probe signs its first handshake at the far edge of that window: a server on
-//! this clock accepts it, and the notes say so.
+//! own now: a server on this clock accepts the probe's handshake signed at this machine's now and
+//! its first rung, at the far edge of that window, and the notes say so. A server on another
+//! clock is scripted from that check, against the verdict alone.
 
 mod support;
 
@@ -9,7 +10,131 @@ use catalyst_comms::pulse::handshake::MAX_TIMESTAMP_SKEW_MS;
 use catalyst_comms_e2e::engine::{Outcome, RunOptions, run_scenarios};
 use catalyst_comms_e2e::identity::now_ms;
 use catalyst_comms_e2e::pulse::{ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot};
-use catalyst_comms_e2e::scenarios::pulse_clock::{BEHIND_MS, HANDSHAKE_CLOCK, signed_at};
+use catalyst_comms_e2e::scenarios::pulse_clock::{
+    Attempt, BEHIND_MS, HANDSHAKE_CLOCK, signed_at, verdict,
+};
+
+/// Whether a Pulse server whose clock is `offset_ms` off this machine's (ahead when positive)
+/// accepts a handshake signed `signed_ahead_ms` ahead of this machine's now that took
+/// `one_way_ms` to reach it: the server's own check, `now.abs_diff(ts) > window` refused.
+fn accepts(offset_ms: i64, signed_ahead_ms: i64, one_way_ms: i64) -> bool {
+    (signed_ahead_ms - (offset_ms + one_way_ms)).abs() <= MAX_TIMESTAMP_SKEW_MS
+}
+
+/// The attempts the probe records against such a server: the handshake signed at this
+/// machine's now, then the ladder up to its first accepted rung.
+fn scripted(offset_ms: i64) -> (Attempt, Vec<Attempt>) {
+    let (one_way_ms, round_trip_ms) = (10, 20);
+    let at_now = Attempt {
+        behind_edge_ms: MAX_TIMESTAMP_SKEW_MS,
+        accepted: accepts(offset_ms, 0, one_way_ms),
+        round_trip_ms,
+    };
+    let mut ladder = Vec::new();
+    for behind in BEHIND_MS {
+        let accepted = accepts(offset_ms, MAX_TIMESTAMP_SKEW_MS - behind, one_way_ms);
+        ladder.push(Attempt {
+            behind_edge_ms: *behind,
+            accepted,
+            round_trip_ms,
+        });
+        if accepted {
+            break;
+        }
+    }
+    (at_now, ladder)
+}
+
+#[test]
+fn a_server_70_s_behind_fails_as_behind_though_a_deeper_rung_is_accepted() {
+    let (at_now, ladder) = scripted(-70_000);
+    assert!(!at_now.accepted);
+    assert_eq!(ladder.last().map(|attempt| attempt.accepted), Some(true));
+    let failure = verdict(&at_now, &ladder).unwrap_err();
+    assert!(failure.contains("behind"), "{failure}");
+    assert!(!failure.contains("ahead of this machine's by"), "{failure}");
+    // the last refused rung and the accepted one with its round trip bound it
+    assert!(failure.contains("more than 60000 ms"), "{failure}");
+    assert!(failure.contains("at most 92020 ms"), "{failure}");
+}
+
+#[test]
+fn a_server_90_s_ahead_fails_as_ahead_though_the_first_rung_is_accepted() {
+    let (at_now, ladder) = scripted(90_000);
+    assert!(!at_now.accepted);
+    assert_eq!(ladder.len(), 1);
+    assert!(ladder[0].accepted);
+    let failure = verdict(&at_now, &ladder).unwrap_err();
+    assert!(failure.contains("ahead"), "{failure}");
+    assert!(failure.contains("more than 59980 ms"), "{failure}");
+    assert!(failure.contains("at most 120000 ms"), "{failure}");
+}
+
+#[test]
+fn a_server_5_s_behind_or_ahead_or_on_time_passes() {
+    for offset in [-5_000, 0, 5_000] {
+        let (at_now, ladder) = scripted(offset);
+        assert!(at_now.accepted, "{offset}");
+        assert_eq!(verdict(&at_now, &ladder), Ok(()), "{offset}");
+    }
+}
+
+#[test]
+fn a_server_out_of_the_ladders_reach_fails_naming_both_ways() {
+    for offset in [-200_000, 200_000] {
+        let (at_now, ladder) = scripted(offset);
+        assert!(ladder.iter().all(|attempt| !attempt.accepted), "{offset}");
+        let failure = verdict(&at_now, &ladder).unwrap_err();
+        assert!(failure.contains("behind"), "{failure}");
+        assert!(failure.contains("ahead"), "{failure}");
+    }
+}
+
+/// Checks that every `<n> s window` in `text` names the server's window in whole seconds, and
+/// returns how many there are.
+fn window_mentions(text: &str) -> usize {
+    let window_s = (MAX_TIMESTAMP_SKEW_MS / 1000).to_string();
+    let mut found = 0;
+    for (at, _) in text.match_indices(" s window") {
+        let mut digits: Vec<char> = text[..at]
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        digits.reverse();
+        assert_eq!(digits.into_iter().collect::<String>(), window_s, "{text}");
+        found += 1;
+    }
+    found
+}
+
+#[test]
+fn the_numbers_typed_in_the_summary_and_the_readme_are_the_servers() {
+    assert!(window_mentions(HANDSHAKE_CLOCK.summary) > 0);
+    assert!(
+        HANDSHAKE_CLOCK.summary.contains(&format!(
+            "this machine's clock plus {} s",
+            MAX_TIMESTAMP_SKEW_MS / 1000
+        )),
+        "{}",
+        HANDSHAKE_CLOCK.summary
+    );
+    let deepest_s = BEHIND_MS.last().unwrap() / 1000;
+    assert!(
+        HANDSHAKE_CLOCK
+            .summary
+            .contains(&format!(" {deepest_s} s behind")),
+        "{}",
+        HANDSHAKE_CLOCK.summary
+    );
+    let readme = include_str!("../README.md");
+    let mentions: usize = readme
+        .lines()
+        .filter(|line| line.contains("`pulse-handshake-clock`"))
+        .map(window_mentions)
+        .sum();
+    assert!(mentions > 0, "the README names no window for the probe");
+}
 
 #[test]
 fn the_ladder_starts_at_the_windows_edge_and_reaches_past_this_machines_now() {
@@ -94,6 +219,10 @@ async fn a_server_on_this_clock_accepts_the_first_rung() {
     let attempts = attempts.as_array().unwrap();
     assert_eq!(attempts.len(), 1, "{attempts:?}");
     assert_eq!(attempts[0]["outcome"], "accepted");
+    // and the handshake signed at this machine's now, the verdict's own
+    let at_now = note("signed_at_now");
+    assert_eq!(at_now["outcome"], "accepted");
+    assert_eq!(at_now["signed_ahead_ms"].as_i64(), Some(0));
     assert_eq!(
         attempts[0]["signed_ahead_ms"].as_i64(),
         Some(MAX_TIMESTAMP_SKEW_MS)
