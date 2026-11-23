@@ -131,6 +131,10 @@ pub struct WindowReport {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Totals {
+    /// The RPC's logs in the compared prefixes.
+    pub rpc_logs: usize,
+    /// The portal's logs in the compared prefixes that the exact filters keep.
+    pub portal_logs: usize,
     pub missing: usize,
     pub extra: usize,
     pub mismatch: usize,
@@ -637,6 +641,8 @@ async fn compare_range(
             return Ok(());
         };
         let t = &mut out.totals;
+        t.rpc_logs += outcome.rpc_logs;
+        t.portal_logs += outcome.portal_logs;
         t.missing += outcome.missing;
         t.extra += outcome.extra;
         t.mismatch += outcome.mismatch;

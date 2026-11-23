@@ -17,7 +17,7 @@ export type ChatCommand =
   | { kind: 'send'; text: string }
   /** `/goto x,y` — teleport to a parcel. */
   | { kind: 'goto'; x: number; y: number }
-  /** `/goto genesis|main` — change to the default (Genesis) realm. */
+  /** `/goto genesis|main` — go to Genesis Plaza, in the default (Genesis) realm. */
   | { kind: 'genesis' }
   /** `/goto <world>` or `/world <world>` — jump to a world's realm (normalized to `.dcl.eth`). */
   | { kind: 'world'; realm: string }

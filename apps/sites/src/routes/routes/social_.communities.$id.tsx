@@ -3,9 +3,9 @@ import { HydrationBoundary } from "@tanstack/react-query";
 import { useState } from "react";
 import { isRouteErrorResponse, useParams } from "react-router";
 
-import { CommunityErrorView } from "@/features/social/community/CommunityErrorView";
-import { CommunityPage } from "@/features/social/community/CommunityPage";
 import { communityHref } from "@/features/social/community/view";
+import { CommunityErrorPage } from "@/pages/social/CommunityErrorPage";
+import { CommunityPage } from "@/pages/social/CommunityPage";
 
 import { communityLoader } from "../lib/community-loader.server";
 import { absoluteImage, absoluteUrl, notFoundMeta, oneLine, publicBase, socialMeta } from "../lib/social-meta";
@@ -45,7 +45,7 @@ export function meta({ loaderData, error, params, matches }: Route.MetaArgs) {
 }
 
 export function ErrorBoundary() {
-  return <CommunityErrorView />;
+  return <CommunityErrorPage />;
 }
 
 export default function CommunityDetailRoute({ loaderData }: Route.ComponentProps) {
