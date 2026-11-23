@@ -32,7 +32,7 @@ vi.mock("livekit-client", () => ({
     on() {}
   },
 }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/data/lib/auth/signer", () => ({ signedFetch: (...args: unknown[]) => signedFetch(...args) }));

@@ -1,6 +1,6 @@
 import { generatePrivateKey } from "viem/accounts";
 
-import { check } from "@ui/validate";
+import { check } from "@web-core/validate";
 
 import { DevSignerKeySchema } from "../persisted-schemas";
 

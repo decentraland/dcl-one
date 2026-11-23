@@ -45,7 +45,7 @@ impl From<RpcError> for IndexError {
         match error {
             RpcError::Budget { upper, requests } => Self::Budget { upper, requests },
             RpcError::Transport(message) => Self::Transport(message),
-            RpcError::Rpc(message) => Self::Rpc(message),
+            RpcError::Rpc(message) | RpcError::Malformed(message) => Self::Rpc(message),
         }
     }
 }

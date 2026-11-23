@@ -454,7 +454,7 @@ PRIMITIVES_CSS = ROOT / 'apps' / 'ui3' / 'src' / 'atoms' / 'primitives.css'
 # The parity pages, their chrome and the shared components: surfaces that have moved onto library/ui.
 FLOOR_PATHS = ('apps/sites/src/features', 'apps/sites/src/pages', 'apps/ui3/src/web', 'apps/ui3/src/explorer/pages',
                'apps/ui3/src/landings', 'library/ui/components', 'library/ui/apps/sites/profile',
-               'library/ui/apps/sites/CopyAddress.module.css')
+               'library/ui/apps/sites/CopyAddress.module.css', 'library/ui/apps/sites/cast')
 PROPERTY_DEFINITION = re.compile(r'(?<![\w-])(--[\w-]+)\s*:')
 VAR_USE = re.compile(r'var\(\s*(--[\w-]+)')
 

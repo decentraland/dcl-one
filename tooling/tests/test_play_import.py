@@ -362,8 +362,8 @@ class PlayImportTests(unittest.TestCase):
     def test_the_in_tree_crates_are_engine_inputs_in_git_and_in_the_nix_contract(self):
         bevy = 'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'
         self.write(bevy, 'fn spawn() {}\n')
-        crate = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
-        self.write(crate, 'pub fn import() {}\n')
+        crate = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
+        self.write(crate, 'pub fn layout() {}\n')
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -386,13 +386,13 @@ class PlayImportTests(unittest.TestCase):
         self.assertEqual(key, contract.engine_inputs(filtered))
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertEqual(key, contract.engine_inputs(self.root))
-        self.write(crate, 'pub fn import_sliced() {}\n')
+        self.write(crate, 'pub fn layout_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
     def test_an_in_tree_crate_edit_invalidates_the_artifact(self):
-        # bevy_dui, boimp and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
+        # bevy_dui and rpc-rust are compiled from tracked bytes. No .git here: the walk Nix's
         # filtered contract takes.
-        name = 'rendering/bevy-explorer/vendor/boimp/src/lib.rs'
+        name = 'rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs'
         key = contract.engine_inputs(self.root)
         self.write(name, name + ' changed\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
@@ -513,6 +513,10 @@ class PlayImportTests(unittest.TestCase):
             'http://sites:5212/play/bridge/about': json.dumps({'configurations': {
                 'scenesUrn': [f'urn:decentraland:entity:{entity}?=&baseUrl='
                              'http://sites:5212/play/bridge-scene/static/']}}).encode(),
+            'http://sites:5212/ui-gallery/': b'<meta name="robots" content="noindex" />'
+                                             b'<script type="module" crossorigin src="./assets/index-a1.js">',
+            'http://sites:5212/ui-gallery/assets/index-a1.js': b'fixture',
+            'http://sites:5212/ui-gallery/hud.html': b'fixture',
         })
         requested = []
         bootstraps = 0
@@ -528,19 +532,42 @@ class PlayImportTests(unittest.TestCase):
                 url, mode = args[-2:]
                 requested.append(url)
                 data = responses[url]
+                if data is None:
+                    return subprocess.CompletedProcess(args, 1, '', '')
                 stdout = json.dumps({'bytes': len(data), 'sha256': contract.digest(data),
-                                     'body': json.loads(data) if mode == 'json' else None})
+                                     'body': json.loads(data) if mode == 'json'
+                                     else data.decode() if mode == 'text' else None})
             elif args[-2:] == ('schema', 'apply'):
                 bootstraps += 1
                 status = int(bootstraps > 1)
             elif args[-1] == 'SELECT value FROM public.image_smoke':
                 stdout = 'preserved\n'
             return subprocess.CompletedProcess(args, status, stdout, '')
-        output = io.StringIO()
-        with patch.object(smoke, 'ROOT', self.root), patch.object(smoke, 'docker', docker), \
-                patch('sys.argv', ['image-smoke', '--play', str(self.build)]), \
-                patch('sys.stdout', output):
-            smoke.main()
+        def run():
+            nonlocal bootstraps
+            bootstraps = 0
+            output = io.StringIO()
+            with patch.object(smoke, 'ROOT', self.root), patch.object(smoke, 'docker', docker), \
+                    patch('sys.argv', ['image-smoke', '--play', str(self.build)]), \
+                    patch('sys.stdout', output):
+                smoke.main()
+            return output
+        # The gallery must answer, keep its noindex page and serve its assets and HUD canvas.
+        gallery = {url: responses[url] for url in responses if '/ui-gallery/' in url}
+        for url, broken, message in (
+                ('http://sites:5212/ui-gallery/', None, 'serve the UI gallery'),
+                ('http://sites:5212/ui-gallery/', b'<script type="module" src="./assets/index-a1.js">', 'serve the UI gallery'),
+                ('http://sites:5212/ui-gallery/assets/index-a1.js', None, 'assets must resolve'),
+                ('http://sites:5212/ui-gallery/hud.html', None, 'HUD canvas')):
+            with self.subTest(url=url, broken=broken), self.assertRaisesRegex(AssertionError, message):
+                responses.update(gallery)
+                responses[url] = broken
+                run()
+        responses.update(gallery)
+        requested.clear()
+        output = run()
+        for url in gallery:
+            self.assertIn(url, requested)
         self.assertIn('/nix/store/fixture-cast-bot/bin/cast-bot', requested)
         self.assertIn('http://sites:5212/play/bridge/about', requested)
         self.assertIn(f'http://sites:5212/play/bridge-scene/static/{entity}', requested)

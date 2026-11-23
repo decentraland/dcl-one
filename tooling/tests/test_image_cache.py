@@ -188,7 +188,8 @@ class CompileWorkflowTest(unittest.TestCase):
 
     def test_the_lookups_use_the_keys_of_the_image_build_and_download_nothing(self):
         for lookup, restore in (('Look for the compiled APIs package', 'Restore the compiled APIs package'),
-                                ('Look for the compiled Sites app', 'Restore the compiled Sites app')):
+                                ('Look for the compiled Sites app', 'Restore the compiled Sites app'),
+                                ('Look for the compiled UI gallery', 'Restore the compiled UI gallery')):
             with self.subTest(step=lookup):
                 self.assertIn('          lookup-only: true\n', self.packages[lookup])
                 self.assertNotIn('lookup-only', self.build[restore])
@@ -199,7 +200,7 @@ class CompileWorkflowTest(unittest.TestCase):
     def test_it_compiles_only_when_this_attempt_can_save_a_missing_entry(self):
         plan = self.packages['Decide what this job compiles']
         self.assertIn('if [ "$SAVE" = true ] && [ "$GITHUB_RUN_ATTEMPT" = 1 ] && '
-                      '{ [ "$APIS" != true ] || [ "$SITES_APP" != true ]; }; then\n', plan)
+                      '{ [ "$APIS" != true ] || [ "$SITES_APP" != true ] || [ "$UI_GALLERY" != true ]; }; then\n', plan)
         self.assertIn('SAVE: ${{ steps.cache-keys.outputs.save }}\n', plan)
         names = list(self.packages)
         for name in names[names.index('Decide what this job compiles') + 1:]:
@@ -207,7 +208,7 @@ class CompileWorkflowTest(unittest.TestCase):
                 condition = re.search(r'(?m)^        if: (.+)$', self.packages[name]).group(1)
                 self.assertRegex(condition, r"^steps\.(plan\.outputs\.work|cache-writer\.outputs\.allowed) == 'true'")
         compile_step = self.packages['Compile the APIs and the Sites apps']
-        for target in ('catalyst', 'sites-app', 'sites-app-polygon-credits'):
+        for target in ('catalyst', 'sites-app', 'sites-app-polygon-credits', 'ui-gallery'):
             # The flake reference of the image build: another one gives other derivations and other keys.
             self.assertIn(f"'git+file:.?lfs=1#{target}'", compile_step)
         self.assertIn("'git+file:.?lfs=1#image-apis'", self.build['Build the APIs and Sites images with our Bevy artifact'])
@@ -237,7 +238,9 @@ class CompileWorkflowTest(unittest.TestCase):
                    'Export the compiled APIs package': 'Export the tested APIs package',
                    'Save the compiled APIs package': 'Save the tested APIs package',
                    'Export the compiled Sites app': 'Export the tested Sites app',
-                   'Save the compiled Sites app': 'Save the tested Sites app'}
+                   'Save the compiled Sites app': 'Save the tested Sites app',
+                   'Export the compiled UI gallery': 'Export the tested UI gallery',
+                   'Save the compiled UI gallery': 'Save the tested UI gallery'}
         for ours, theirs in {**same, **renamed}.items():
             with self.subTest(step=ours):
                 self.assertEqual(self.body(self.packages[ours]), self.body(self.build[theirs]))
@@ -303,6 +306,16 @@ class WorkflowSetupTest(unittest.TestCase):
                      'library/ui/.agent-work/private.txt'):
             with self.subTest(path=path):
                 self.assertFalse(included(path), f'Sites archive includes tooling/private input: {path}')
+
+    def test_sites_source_archive_required_paths_exist(self):
+        repo = Path(__file__).parents[2]
+        source = (repo / 'infra/packages/sites.nix').read_text()
+        archive = source.split('  src = lib.fileset.toSource {', 1)[1].split('  # A build', 1)[0]
+        archive = re.sub(r'lib\.fileset\.maybeMissing \(.*?\)', '', archive)
+        aliases = {'sites': repo / 'apps/sites', 'ui': repo / 'apps/ui3', 'root': repo}
+        for alias, path in re.findall(r'\((sites|ui|root) \+ /([^\s)]+)\)', archive):
+            with self.subTest(alias=alias, path=path):
+                self.assertTrue((aliases[alias] / path).exists(), f'Sites archive input is missing: {alias}/{path}')
 
     def test_sites_media_guard_rejects_pointer_text_and_accepts_materialized_binary(self):
         source = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
@@ -414,7 +427,8 @@ class WorkflowSetupTest(unittest.TestCase):
         toolchain = self.build.index('      - name: Build the complete Sites toolchain and dependencies\n')
         self.assertIn("if: steps.compiled.outputs.sites-app != 'true'",
                       self.build[toolchain:].split('      - name:', 2)[1])
-        self.assertIn('.cache/catalyst-nix .cache/sites-nix .cache/apis-nix .cache/sites-app-nix', self.build)
+        self.assertIn('.cache/catalyst-nix .cache/sites-nix .cache/apis-nix .cache/sites-app-nix .cache/ui-gallery-nix',
+                      self.build)
         step = self.build.split('        id: compiled\n', 1)[1].split('      - name:', 1)[0]
         script = '\n'.join(line[10:] for line in step.split('        run: |\n', 1)[1].splitlines())
         for matched, expected in [('', 'false'), ('images-v2-pr-93-apis-amd64-abc', 'true'),
@@ -424,10 +438,11 @@ class WorkflowSetupTest(unittest.TestCase):
                 output = Path(directory) / 'outputs'
                 env = dict(os.environ, GITHUB_OUTPUT=str(output),
                            APIS=f'images-v2-pr-93-apis-amd64-abc {matched}',
-                           SITES_APP=f'images-v2-pr-93-sites-app-amd64-abc {matched}')
+                           SITES_APP=f'images-v2-pr-93-sites-app-amd64-abc {matched}',
+                           UI_GALLERY=f'images-v2-pr-93-ui-gallery-amd64-abc {matched}')
                 subprocess.run(['bash', '-e', '-c', script], env=env, check=True, capture_output=True)
                 self.assertEqual(dict(line.split('=') for line in output.read_text().splitlines()),
-                                 {'apis': expected, 'sites-app': expected})
+                                 {'apis': expected, 'sites-app': expected, 'ui-gallery': expected})
 
     def test_stale_dependency_hits_fall_back_to_the_newest_main_entry_and_still_save(self):
         for group in ('catalyst', 'sites'):
@@ -450,7 +465,7 @@ class WorkflowSetupTest(unittest.TestCase):
         script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('      - name:', 1)[0])
         self.assertIn("if: steps.cache-keys.outputs.save == 'true'", step.split('        run:', 1)[0])
         self.assertLess(self.build.index('tooling/image-smoke.py'), self.build.index('id: cache-writer'))
-        self.assertEqual(self.build.count("steps.cache-writer.outputs.allowed == 'true'"), 8)
+        self.assertEqual(self.build.count("steps.cache-writer.outputs.allowed == 'true'"), 10)
         self.assertIn('PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}', step.split('        run:', 1)[0])
         main_cases = [('1', 'newer', '1', True, False, ''),
                       ('2', 'head', '0', False, False, '')]
@@ -533,10 +548,10 @@ class WorkflowSetupTest(unittest.TestCase):
                 with self.subTest(matched=matched, skipped=skipped), tempfile.TemporaryDirectory() as directory:
                     output = Path(directory) / 'outputs'
                     env = dict(os.environ, GITHUB_OUTPUT=str(output), SKIPPED=skipped)
-                    for group in ('CATALYST', 'SITES', 'APIS', 'SITES_APP'):
-                        env[group] = f'images-v2-pr-93-catalyst-amd64-abc {matched}'
+                    for group in cache.PACKAGES:
+                        env[group.upper().replace('-', '_')] = f'images-v2-pr-93-catalyst-amd64-abc {matched}'
                     subprocess.run(['bash', '-e', '-c', script], env=env, check=True, capture_output=True)
-                    decided = dict.fromkeys(('catalyst', 'sites', 'apis', 'sites-app'), expected)
+                    decided = dict.fromkeys(cache.PACKAGES, expected)
                     for group in skipped.split():
                         decided[group.lower()] = 'false'
                     self.assertEqual(dict(line.split('=') for line in output.read_text().splitlines()), decided)
@@ -570,7 +585,7 @@ class ImageRetentionTest(unittest.TestCase):
     def test_two_generations_per_group_architecture_and_ref(self):
         rows, expected = [], set()
         for scope in ('main', 'pr-93', 'pr-94'):
-            for group in ('catalyst', 'sites', 'apis', 'sites-app'):
+            for group in cache.PACKAGES:
                 for arch in ('amd64', 'arm64'):
                     start = len(rows) + 1
                     rows += [self.entry(i, scope, group, arch) for i in range(start, start + 3)]

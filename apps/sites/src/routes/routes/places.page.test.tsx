@@ -12,7 +12,9 @@ import { pageSid } from "@/core/lib/telemetry/session";
 import { usePrivateQueryLifecycle } from "@/features/components/chrome/usePrivateQueryLifecycle";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
-import Places from "./places";
+import { primeRemoteFlags } from "@dcl/one-ui/apps/shop/remote-flags";
+
+import Places, { clientLoader, resetPlacesFlagsRead } from "./places";
 import { track } from "@/core/lib/telemetry/track";
 
 vi.hoisted(() =>
@@ -26,7 +28,7 @@ const auth = vi.hoisted(() => ({ current: { isConnected: false, identity: null a
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth.current }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@/data/lib/catalyst/places/destinations", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/destinations")>()),
   fetchDestinations: vi.fn(),
@@ -48,7 +50,7 @@ function serve(feeds: Feeds) {
 
 function Location() {
   const location = useLocation();
-  return <output data-testid="location">{location.pathname + location.search}</output>;
+  return <output aria-label="Location">{location.pathname + location.search}</output>;
 }
 
 function SessionFrame() {
@@ -57,7 +59,7 @@ function SessionFrame() {
   return <Outlet />;
 }
 
-function renderPage(url = "/places", platform: object = DESKTOP, unavailable = false, loaderSid: string | null = "sid") {
+function renderPage(url = "/places", platform: object = DESKTOP, unavailable = false, loaderSid: string | null = "sid", liveMinUsers?: number) {
   const Stub = createRoutesStub([
     {
       id: "root",
@@ -75,7 +77,7 @@ function renderPage(url = "/places", platform: object = DESKTOP, unavailable = f
               <Location />
             </>
           ),
-          loader: () => ({ sid: loaderSid ?? undefined, platform, dehydratedState: undefined, unavailable }),
+          loader: () => ({ sid: loaderSid ?? undefined, platform, dehydratedState: undefined, unavailable, liveMinUsers }),
         },
       ],
     },
@@ -90,7 +92,23 @@ function renderPage(url = "/places", platform: object = DESKTOP, unavailable = f
   return { user: userEvent.setup(), client };
 }
 
-const location = () => screen.getByTestId("location").textContent ?? "";
+const location = () => screen.getByRole("status", { name: "Location" }).textContent ?? "";
+
+beforeEach(() => {
+  resetPlacesFlagsRead();
+  auth.current = { isConnected: false, identity: null };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json([])),
+  );
+  Element.prototype.scrollIntoView = vi.fn();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.resetAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const pageOf = (prefix: string) => Array.from({ length: 48 }, (_, i) => destination({ id: `${prefix}${i}`, title: `Place ${i}` }));
 const owner = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
@@ -737,5 +755,79 @@ describe("Places page", () => {
         expect(screen.queryByRole("dialog")).toBeNull();
       });
     });
+  });
+});
+
+describe("when the flags set Live Now's head count", () => {
+  it("should leave out scenes under the loader's head count", async () => {
+    serve({ browse: [], live: [destination({ id: "busy", title: "Busy", user_count: 6 }), destination({ id: "quiet", title: "Quiet", user_count: 2 })] });
+    renderPage("/places", DESKTOP, false, "sid", 5);
+    const group = await screen.findByRole("group", { name: "Live Now" });
+    expect(within(group).getByRole("link", { name: "Busy" })).toBeTruthy();
+    expect(within(group).queryByRole("link", { name: "Quiet" })).toBeNull();
+  });
+
+  it("should keep every scene when the loader hands no head count", async () => {
+    serve({ browse: [], live: [destination({ id: "plaza", title: "Plaza", user_count: 0 })] });
+    renderPage();
+    const group = await screen.findByRole("group", { name: "Live Now" });
+    expect(within(group).getByRole("link", { name: "Plaza" })).toBeTruthy();
+  });
+});
+
+describe("when navigating to /places in the browser", () => {
+  const FLAG = "dapps-places-live-min-user";
+
+  beforeEach(() => {
+    resetPlacesFlagsRead();
+    primeRemoteFlags(null);
+  });
+
+  it("should read the head count from this server's flags once per document", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ flags: { [FLAG]: true }, variants: { [FLAG]: "5" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 5 });
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 5 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/internal/feature-flags?variants=1", expect.anything());
+  });
+
+  it("should hand 0 while the flag is off", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ flags: { [FLAG]: false }, variants: { [FLAG]: "5" } })));
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 0 });
+  });
+
+  describe("and the server already rendered this document with a head count", () => {
+    let fetchMock: ReturnType<typeof vi.fn>;
+
+    beforeEach(async () => {
+      serve({ browse: [], live: [destination({ id: "busy", title: "Busy", user_count: 6 })] });
+      renderPage("/places", DESKTOP, false, "sid", 5);
+      await screen.findByRole("group", { name: "Live Now" });
+      fetchMock = vi.fn(async () => new Response("down", { status: 503 }));
+      vi.stubGlobal("fetch", fetchMock);
+    });
+
+    it("should keep the server's head count on the next navigation without reading the flags", async () => {
+      await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 5 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it("should keep the head count of a successful read when a later navigation follows", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ flags: { [FLAG]: true }, variants: { [FLAG]: "5" } })));
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 5 });
+    const failing = vi.fn(async () => new Response("down", { status: 503 }));
+    vi.stubGlobal("fetch", failing);
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 5 });
+    expect(failing).not.toHaveBeenCalled();
+  });
+
+  it("should hand 0 and not ask again on the next navigation when the flags cannot be read", async () => {
+    const fetchMock = vi.fn(async () => new Response("down", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 0 });
+    await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 0 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

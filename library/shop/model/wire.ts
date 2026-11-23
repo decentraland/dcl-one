@@ -199,7 +199,20 @@ export function decodePurchaseOffer(value: unknown): PurchaseOffer | null {
     if (typeof c.discountPpm !== "number" || !Number.isSafeInteger(c.discountPpm) || c.discountPpm <= 0 || c.discountPpm >= 1_000_000) return null;
     coupon = { id: c.id, couponAddress: address, discountPpm: c.discountPpm };
   }
-  return { asset, kind, sale, bundle: v.bundle, eligibility, quotes, unavailable, settlement, available, quotedAt, ...(coupon ? { coupon } : {}) };
+  return {
+    asset,
+    kind,
+    sale,
+    bundle: v.bundle,
+    eligibility,
+    quotes,
+    unavailable,
+    settlement,
+    available,
+    quotedAt,
+    ...(coupon ? { coupon } : {}),
+    ...(v.splittable === true ? { splittable: true } : {}),
+  };
 }
 
 export function encodePurchaseOffer(offer: PurchaseOffer): Json {

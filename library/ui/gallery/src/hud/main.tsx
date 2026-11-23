@@ -1,3 +1,5 @@
+// First: the HUD modules below must never see this origin's storage.
+import './isolateStorage'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { installHudScale } from '@explorer-core/lib/hudScale'

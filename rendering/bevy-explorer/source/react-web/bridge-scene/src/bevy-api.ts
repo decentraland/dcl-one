@@ -256,7 +256,7 @@ export type BevyApiInterface = {
    *  JPEG bytes (no `data:` prefix). `path` is relative to the tile source. Rejects on failure;
    *  absent in builds without tile decoding. */
   getSatelliteTile?: (path: string) => Promise<string>
-  setAvatar: (data: SetAvatarData) => Promise<unknown>
+  setAvatar: (data: SetAvatarData) => Promise<number>
   /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest, when `address`
    *  is not the signed-in account, or when the catalyst refuses it. */
   deployOutfits: (address: string, outfits: OutfitsData) => Promise<void>

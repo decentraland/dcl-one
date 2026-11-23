@@ -44,6 +44,8 @@
       - library/**
       - apps/sites/**
       - apps/ui3/**
+      # the bridge scene's install copies it (react-web/bridge-scene/pnpm-workspace.yaml)
+      - apps/creator-hub/packages/zip-extract/**
       - tooling/image-*
       - tooling/ci-publication.py
       - tooling/tests/test_ci_publication.py
@@ -94,6 +96,8 @@
       - library/**
       - apps/sites/**
       - apps/ui3/**
+      # the bridge scene's install copies it (react-web/bridge-scene/pnpm-workspace.yaml)
+      - apps/creator-hub/packages/zip-extract/**
       - tooling/image-*
       - tooling/ci-publication.py
       - tooling/tests/test_ci_publication.py

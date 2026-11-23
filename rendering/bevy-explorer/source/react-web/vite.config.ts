@@ -1,11 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
+import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_SOURCES, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
 // default systemScene in dev, with scene hot-reload) alongside vite, so `pnpm run dev` is the ONE
@@ -200,11 +200,33 @@ function reactProfilingBuild(): Plugin {
   }
 }
 
-// The design modules: this app's own (src), the shared HUD's and the Explorer page core's.
-const DESIGN = /\/(src|apps\/hud|explorer-core)\/design\//
-const DESIGN_ENTRY = /\/(src|apps\/hud|explorer-core)\/design\/index\.ts$/
-// The dev-only Showcase (?showcase=1) and the index of its sections.
-const SHOWCASE = /\/design\/Showcase/
+// The design folders the HUD is built from: the shared HUD's (library/ui/apps/hud/design). Absolute and resolved, so
+// a dependency's own design/ folder (node_modules/<pkg>/src/design) is never one of them, and a folder that does not
+// exist fails the config instead of matching nothing.
+function sharedSource(alias: string): string {
+  const root = SHARED_SOURCES[alias]
+  if (root == null) throw new Error(`vite.shared.ts has no ${alias} source`)
+  return root
+}
+export const DESIGN_ROOTS = [join(sharedSource('@hud'), 'design')].map(
+  (folder) => `${realpathSync(folder).replaceAll('\\', '/')}/`
+)
+const designPath = (id: string): string | null => {
+  const root = DESIGN_ROOTS.find((folder) => id.startsWith(folder))
+  return root == null ? null : id.slice(root.length)
+}
+const isDesign = (id: string): boolean => designPath(id) != null
+const isDesignEntry = (id: string): boolean => designPath(id) === 'index.ts'
+// The heavy full-screen menu pages, in the shared HUD and the Explorer page core: one chunk, out of the core HUD
+// chunk. Resolved like the design folder, so a dependency's own features/ folder is never one of them.
+const MENU_ROOTS = [sharedSource('@hud'), sharedSource('@explorer-core')].map(
+  (root) => `${realpathSync(join(root, 'features')).replaceAll('\\', '/')}/`
+)
+const MENUS = /^(map|backpack|communities|gallery|places)\//
+export const isMenu = (id: string): boolean =>
+  MENU_ROOTS.some((root) => id.startsWith(root) && MENUS.test(id.slice(root.length)))
+/** The dev-only Showcase (?showcase=1) and the index of its sections: design modules whose name starts Showcase. */
+export const isShowcase = (id: string): boolean => designPath(id)?.startsWith('Showcase') ?? false
 
 /** The part of the module graph a chunk group's `name` reads. */
 interface ModuleGraph {
@@ -222,7 +244,7 @@ export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
     if (!words.has(entry)) {
       let found: Set<string> | null = new Set()
       for (const importer of graph.getModuleInfo(entry)?.importers ?? []) {
-        if (SHOWCASE.test(importer)) continue
+        if (isShowcase(importer)) continue
         const code = graph.getModuleInfo(importer)?.code
         if (code == null) {
           found = null
@@ -243,23 +265,69 @@ export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
       info != null &&
       info.importers.length > 0 &&
       info.importers.every((importer) => {
-        if (SHOWCASE.test(importer)) return true
-        if (DESIGN_ENTRY.test(importer)) {
+        if (isShowcase(importer)) return true
+        if (isDesignEntry(importer)) {
           const named = namedBeside(importer)
           return named != null && !info.exports.some((name) => named.has(name))
         }
-        return DESIGN.test(importer) && only(importer)
+        return isDesign(importer) && only(importer)
       })
     decided.set(id, result)
     return result
   }
-  return (id) => DESIGN.test(id) && !DESIGN_ENTRY.test(id) && !SHOWCASE.test(id) && only(id)
+  return (id) => isDesign(id) && !isDesignEntry(id) && !isShowcase(id) && only(id)
 }
 const showcaseOnlyByGraph = new WeakMap<ModuleGraph, (id: string) => boolean>()
 
 /** `false` for the design modules (no effect when imported), the Showcase aside; the default for the rest. */
 export const designSideEffects = (id: string): false | undefined =>
-  DESIGN.test(id) && /\.tsx?$/.test(id) && !SHOWCASE.test(id) ? false : undefined
+  isDesign(id) && /\.tsx?$/.test(id) && !isShowcase(id) ? false : undefined
+
+/** The part of a written bundle the Showcase check reads. */
+type BundleFile =
+  | { type: 'chunk'; fileName: string; name: string; isEntry: boolean; facadeModuleId: string | null; imports: string[]; moduleIds: string[] }
+  | { type: 'asset'; fileName: string; source: string | Uint8Array }
+
+/** Why `page` would load the Showcase eagerly: a chunk its entry reaches by static imports, or one its HTML
+ *  references (script, modulepreload), that holds the Showcase. Empty when the Showcase stays behind its lazy
+ *  import. A bundle with no entry for `page` is a problem too, so the check cannot pass by reading nothing. */
+export function showcaseInEagerGraph(bundle: Record<string, BundleFile>, page: string): string[] {
+  const chunks = Object.values(bundle).flatMap((file) => (file.type === 'chunk' ? [file] : []))
+  const entry = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.replaceAll('\\', '/').endsWith(`/${page}`))
+  if (entry == null) return [`the bundle has no entry chunk for ${page}, so its imports cannot be checked`]
+  const holdsShowcase = (chunk: BundleFile & { type: 'chunk' }) =>
+    chunk.name === 'Showcase' || chunk.moduleIds.some((id) => isShowcase(id))
+  const problems: string[] = []
+  const reached = new Set<string>()
+  const walk = (fileName: string): void => {
+    if (reached.has(fileName)) return
+    reached.add(fileName)
+    const chunk = bundle[fileName]
+    if (chunk?.type !== 'chunk') return
+    if (holdsShowcase(chunk)) problems.push(`${page} statically imports ${fileName}, which holds the Showcase`)
+    chunk.imports.forEach(walk)
+  }
+  walk(entry.fileName)
+  const html = bundle[page]
+  const source =
+    html?.type !== 'asset' ? '' : typeof html.source === 'string' ? html.source : new TextDecoder().decode(html.source)
+  for (const chunk of chunks)
+    if (holdsShowcase(chunk) && source.includes(chunk.fileName)) problems.push(`${page} references ${chunk.fileName}, which holds the Showcase`)
+  return problems
+}
+
+/** Fails the build when app.html would load the dev-only Showcase (?showcase=1) eagerly: its split depends on the
+ *  rules above and on the bundler dropping unused side-effect-free modules, so a change to either shows here. */
+function showcaseStaysLazy(): Plugin {
+  return {
+    name: 'showcase-stays-lazy',
+    apply: 'build',
+    writeBundle(_, bundle) {
+      const problems = showcaseInEagerGraph(bundle as Record<string, BundleFile>, 'app.html')
+      if (problems.length) this.error(problems.join('\n'))
+    }
+  }
+}
 
 // The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
 function hudBuild(): string {
@@ -290,6 +358,7 @@ export default defineConfig(({ command, mode }) => ({
     react(),
     ...(HUD_REACT_PROFILING && mode !== 'native' ? [reactProfilingBuild()] : []),
     bridgeScenePreview(),
+    showcaseStaysLazy(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),
     // The service worker, at the ROOT so its scope covers the page (like prod): page isolation
@@ -359,9 +428,8 @@ export default defineConfig(({ command, mode }) => ({
                 if (id.includes('emojis_complete.json') || id.includes('/chat/emojiData')) return 'emoji'
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
-                // The shared HUD (library/ui/apps/hud, library/explorer-core) is split the same way as this app's own sources.
-                if (/\/(src|apps\/hud|explorer-core)\/design\//.test(id) && !id.includes('Showcase')) return 'design'
-                if (/\/(src|apps\/hud|explorer-core)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
+                if (isDesign(id) && !isShowcase(id)) return 'design'
+                if (isMenu(id)) return 'menus'
                 return null
               }
             }

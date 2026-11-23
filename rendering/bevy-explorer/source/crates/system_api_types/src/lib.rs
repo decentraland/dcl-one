@@ -71,8 +71,8 @@ impl ClearableColor3 {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
 pub struct SetAvatarData {
-    /// Body shape, colors and name. An empty `body_shape_urn` and absent colors are "unchanged",
-    /// so a name-only edit needn't restate the avatar.
+    /// An empty body shape or name and absent colors keep their current values.
+    /// Only a nonempty name can change the claimed-name flag.
     #[ts(optional)]
     pub base: Option<PbAvatarBase>,
     #[ts(optional)]

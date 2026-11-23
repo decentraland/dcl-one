@@ -19,6 +19,7 @@ import type {
 import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
+import type { AuthIdentity } from "@/data/lib/auth/types";
 import type { Event } from "@/data/lib/catalyst/places/events";
 import {
   calendarQuery,
@@ -34,11 +35,13 @@ import {
 import { track } from "@/core/lib/telemetry/track";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
+import { useSignInRequired } from "../components/auth/useSignInRequired";
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
 import { useCreatorProfiles } from "./useCreatorProfiles";
 import { REMIND_FAILED, useEventReminders, type Reminder } from "./useEventReminders";
+import { myEventCards, myEventsQuery } from "./my-events";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
 import { formatTime, heroWhen, scheduleLine, type Zone } from "../components/event-schedule";
 import {
@@ -76,6 +79,8 @@ const STORY: StoryId = "admin/whats-on";
 const DETAIL_STORY: StoryId = "admin/whats-on-detail";
 const LEARN_MORE_PATH = "/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
 const CREATE_HREF = "/events/new-event";
+/** The All Events section, which arriving at My Events scrolls to. */
+const ALL_EVENTS_ID = "all-events";
 
 export type EventsViewProps = {
   sid: string;
@@ -196,7 +201,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   );
 
   const upcomingEvents = useMemo(() => upcoming.data ?? [], [upcoming.data]);
-  const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
+  const mine = useMyEventsTab(identity);
+  const reminders = useEventReminders(identity, () => openSignIn());
 
   const notice = reminders.failed ? text(REMIND_FAILED) : undefined;
 
@@ -215,12 +221,15 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       creatorWallets(upcomingEvents),
       creatorWallets(buckets.flat().map((occurrence) => occurrence.event)),
       creatorWallets(detail.data ? [detail.data] : place.data ? [place.data] : []),
+      creatorWallets(mine.events ?? []),
     ],
-    [liveItems, upcomingEvents, buckets, detail.data, place.data],
+    [liveItems, upcomingEvents, buckets, detail.data, place.data, mine.events],
   );
   const profiles = useCreatorProfiles(creatorGroups);
   // Counted once both reads settled, so a client navigation never reports the empty first render.
-  useViewedOnce(sid, !live.isPending && !upcoming.isPending, liveItems.length, upcomingEvents.length, offset);
+  // Genesis Plaza shown because nothing is live is not a live item.
+  const liveCount = liveItems.filter((item) => !(item.kind === "place" && item.fallback)).length;
+  useViewedOnce(sid, !live.isPending && !upcoming.isPending, liveCount, upcomingEvents.length, offset);
   const liveCards: LiveEventCardProps[] = liveItems.map((item): LiveEventCardProps => {
     if (item.kind === "event") {
       const href = eventHref(item.event.id, search);
@@ -303,6 +312,12 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       { preventScrollReset: true },
     );
 
+  const myCards = useMemo(
+    () =>
+      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, profiles, locale }) : [],
+    [identity, mine.events, now, zone, profiles, locale],
+  );
+
   const calendarStatus = calendar.data ? "ready" : calendar.isError || initial?.unavailable ? "unavailable" : "loading";
 
   return (
@@ -339,6 +354,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       <LiveNow cards={liveCards} />
       <Upcoming cards={upcomingCards} />
       <AllEvents
+        id={ALL_EVENTS_ID}
         days={allDays}
         layout={columns === 1 ? "list" : "columns"}
         canGoBack={offset > 0}
@@ -348,16 +364,25 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         views={
           identity
             ? {
-                active: "all",
+                active: mine.active ? "my" : "all",
                 hrefs: { all: EVENTS_PATH, my: `${EVENTS_PATH}?${TAB_PARAM}=my` },
                 onFollow: (_view, event) => {
                   if (!isPlainClick(event)) return;
                   event.preventDefault();
-                  void navigate(event.currentTarget.getAttribute("href") ?? EVENTS_PATH);
+                  // The tabs swap the section in place, as source: the page keeps its scroll.
+                  void navigate(event.currentTarget.getAttribute("href") ?? EVENTS_PATH, {
+                    preventScrollReset: true,
+                  });
                 },
               }
             : undefined
         }
+        mine={{
+          cards: myCards,
+          status: mine.status,
+          createHref: CREATE_HREF,
+          onRetry: mine.retry,
+        }}
         status={calendarStatus}
         onRetry={() => void calendar.refetch()}
       />
@@ -463,6 +488,52 @@ function PlaceDetail({
       onClose={onClose}
     />
   );
+}
+
+/**
+ * `?tab=my`, as source: a signed-out visitor is sent to sign in and back; a member who signs out while
+ * on it falls back to All Events. Arriving at it scrolls to the section once the member's events load.
+ */
+function useMyEventsTab(identity: AuthIdentity | null) {
+  const [params, setParams] = useSearchParams();
+  const wanted = params.get(TAB_PARAM) === "my";
+  const [hadIdentity, setHadIdentity] = useState(false);
+  useSignInRequired(wanted && !hadIdentity, Boolean(identity));
+  useEffect(() => {
+    if (identity) setHadIdentity(true);
+    else if (wanted && hadIdentity)
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete(TAB_PARAM);
+          return next;
+        },
+        { replace: true, preventScrollReset: true },
+      );
+  }, [identity, wanted, hadIdentity, setParams]);
+
+  const active = wanted && Boolean(identity);
+  const query = useQuery({ ...myEventsQuery(identity), enabled: active });
+
+  const scrolled = useRef(false);
+  const settled = active && !query.isPending;
+  useEffect(() => {
+    if (!active) {
+      scrolled.current = false;
+      return;
+    }
+    if (!settled || scrolled.current) return;
+    scrolled.current = true;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    document.getElementById(ALL_EVENTS_ID)?.scrollIntoView?.({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, [active, settled]);
+
+  return {
+    active,
+    events: active ? query.data : undefined,
+    status: query.data ? ("ready" as const) : query.isError ? ("unavailable" as const) : ("loading" as const),
+    retry: () => void query.refetch(),
+  };
 }
 
 /** One view event per day window the visitor looks at, as the What's On feed reported per filter. */
