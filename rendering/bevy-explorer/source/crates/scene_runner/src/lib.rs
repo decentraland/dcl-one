@@ -578,6 +578,10 @@ fn run_scene_loop(world: &mut World) {
         {
             let next_pass = (pass_start + SCENE_REPLY_POLL).min(last_wait_end);
             if let Some(wait) = next_pass.checked_duration_since(Instant::now()) {
+                // the sleep the sleeper's accuracy is for
+                #[cfg(not(target_arch = "wasm32"))]
+                spin_sleep::native_sleep(wait);
+                #[cfg(target_arch = "wasm32")]
                 std::thread::sleep(wait);
             }
         }
