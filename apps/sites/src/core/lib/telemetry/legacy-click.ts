@@ -65,8 +65,9 @@ export type LegacySession = { sid: string; userId?: string | null; scope: Legacy
  * The legacy `useDeferredTrack` transport. `track_deferred` is true when the call came before the document's
  * analytics was ready (`legacyAnalyticsReady`). A conversion leaves at once, as the legacy beacon did; anything
  * else waits for readiness inside the emitting component's scope, so a bot or an exempt session never sends it
- * and an unmount drops it. `immediate` leaves at once too, for a click whose page is about to be replaced (the
- * legacy non-conversion beacon), still behind the bot and exempt gates. `send` builds the event, so the contract
+ * and an unmount drops it. `immediate` leaves at once too, delivered at its call, for a click made before
+ * readiness whose page is about to be replaced (the legacy non-conversion beacon), still behind the bot and
+ * exempt gates. `send` builds the event, so the contract
  * harvests each caller's literal name and shape.
  */
 export function sendLegacyDeferred(

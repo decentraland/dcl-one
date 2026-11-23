@@ -59,7 +59,9 @@ describe("trackNavbarClick", () => {
   it("sends the legacy navbar Click once analytics is ready, with no utm_* and not deferred", async () => {
     const { page, trackNavbarClick } = await loadDocument("/events?utm_source=newsletter");
     page("/events", {}, { sid: "sid-1" });
-    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    // An advancing clock: the warm click's delivery is stamped when it leaves, after its call.
+    let clock = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock++);
     trackNavbarClick(EVENTS, { ...SESSION, userId: "0xAbC" });
 
     const [click] = await clicks();
@@ -70,10 +72,11 @@ describe("trackNavbarClick", () => {
       action: "events",
       section: "discover",
       href: "/events",
-      track_called_at: 1_700_000_000_000,
-      track_delivered_at: 1_700_000_000_000,
+      track_called_at: expect.any(Number),
+      track_delivered_at: expect.any(Number),
       track_deferred: false,
     });
+    expect(click!.properties.track_delivered_at).toBeGreaterThan(click!.properties.track_called_at as number);
   });
 
   it("sends a click without a link (Sign in) with no section or href", async () => {
@@ -89,15 +92,14 @@ describe("trackNavbarClick", () => {
 
   it("sends a click that replaces the page before analytics is ready at once, deferred", async () => {
     const { trackNavbarClick } = await loadDocument("/");
-    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    // Even with an advancing clock, the beacon's delivery is its call, as the legacy beacon stamped it.
+    let clock = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock++);
     trackNavbarClick(EVENTS, SESSION);
 
     const [click] = await clicks();
-    expect(click!.properties).toMatchObject({
-      track_called_at: 1_700_000_000_000,
-      track_delivered_at: 1_700_000_000_000,
-      track_deferred: true,
-    });
+    expect(click!.properties).toMatchObject({ track_called_at: 1_700_000_000_000, track_deferred: true });
+    expect(click!.properties.track_delivered_at).toBe(click!.properties.track_called_at);
   });
 
   it("holds a click that keeps the page until analytics is ready, then sends it deferred", async () => {

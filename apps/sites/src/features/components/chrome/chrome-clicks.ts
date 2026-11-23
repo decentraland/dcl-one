@@ -146,7 +146,9 @@ export function trackNavbarClick(
     sendLegacyDeferred(
       (audit, ctx) => track("Click", { place: "Landing Navbar", event: "click", action, ...link, ...audit }, ctx),
       session,
-      { immediate: leavesPage },
+      // Only a cold click that replaces the page took the legacy beacon, stamped at its call; once ready, the
+      // legacy queue sent it at once with its own delivery time.
+      { immediate: leavesPage && !legacyAnalyticsReady() },
     );
   } catch {
     // Telemetry never breaks navigation.
