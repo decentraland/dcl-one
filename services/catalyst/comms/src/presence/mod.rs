@@ -23,6 +23,7 @@ mod recovery_tests;
 
 pub(crate) const PUBLIC_TTL: Duration = Duration::from_secs(90);
 const ADMISSION_TTL: Duration = Duration::from_secs(5);
+const AUTHORITATIVE_SERVER_IDENTITY: &str = "authoritative-server";
 
 #[derive(Debug, Clone, Copy)]
 pub struct CommsStats {
@@ -177,7 +178,7 @@ impl Default for Presence {
 }
 
 pub(crate) fn counts_as_player(identity: &str) -> bool {
-    identity != "authoritative-server"
+    identity != AUTHORITATIVE_SERVER_IDENTITY
 }
 
 impl Presence {
@@ -271,7 +272,7 @@ impl Presence {
     /// missing timestamps, select the first world in name order.
     pub fn get_peer_world(&self, wallet: &str) -> Result<Option<String>, PresenceUnavailable> {
         let view = self.visible()?;
-        if !counts_as_player(wallet) {
+        if wallet.eq_ignore_ascii_case(AUTHORITATIVE_SERVER_IDENTITY) {
             return Ok(None);
         }
         Ok(view
@@ -281,7 +282,9 @@ impl Presence {
             .flat_map(|room| {
                 room.participants
                     .iter()
-                    .filter(|p| p.identity.eq_ignore_ascii_case(wallet))
+                    .filter(|p| {
+                        counts_as_player(&p.identity) && p.identity.eq_ignore_ascii_case(wallet)
+                    })
                     .map(|p| (p.joined_at_ms, std::cmp::Reverse(room.realm.as_str())))
             })
             .max()

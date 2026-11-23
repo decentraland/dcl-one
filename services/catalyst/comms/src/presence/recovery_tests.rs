@@ -730,6 +730,12 @@ async fn baseline_world_lobby_and_scene_counts_remain_scoped() {
         axum::http::StatusCode::OK
     );
     assert_eq!(
+        get(&app, "/wallet/Authoritative-Server/connected-world")
+            .await
+            .0,
+        axum::http::StatusCode::NOT_FOUND
+    );
+    assert_eq!(
         get(&app, "/wallet/shared-wallet/connected-world").await.0,
         axum::http::StatusCode::NOT_FOUND
     );

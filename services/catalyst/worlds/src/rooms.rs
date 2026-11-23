@@ -423,7 +423,11 @@ pub async fn classify_room(
     if room.to_lowercase() != room {
         return Ok(refused_room(room, R::Noncanonical));
     }
-    let world = lobby.and_then(|raw| WorldName::parse(raw).ok());
+    let world = lobby.and_then(|raw| {
+        WorldName::parse(raw)
+            .ok()
+            .filter(|world| raw == world.key())
+    });
     let candidates: Vec<String> = legacy_names
         .into_iter()
         .flatten()
@@ -701,6 +705,12 @@ mod tests {
         };
         assert_eq!(lobby.scene_id, None);
         assert_eq!(lobby.room, room);
+        for alias in [format!("{room} "), format!("world- {}", full.key())] {
+            assert!(matches!(
+                classify_room(&pool, &alias).await.unwrap(),
+                C::RelevantRefused { .. }
+            ));
+        }
         assert_eq!(
             resolve(&pool, RoomRequest::WorldLobby { world: &full })
                 .await
