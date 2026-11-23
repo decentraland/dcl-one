@@ -525,3 +525,17 @@ fn local_storage_refuses_an_oversized_item() {
     drop(runtime);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn compile_function_is_disabled() {
+    run_in_child("compile_function_is_disabled", || {
+        let mut runtime = client_runtime();
+        let err = eval(
+            &mut runtime,
+            r#"Deno.core.ops.op_compile_function("", "f", [1])"#.to_owned(),
+        )
+        .unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+        err
+    });
+}
