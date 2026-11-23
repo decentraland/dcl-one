@@ -2741,11 +2741,9 @@ once per window when that happens. During an RPC outage, after 20 failed calls
 minute.
 
 Expiry compares the stored instant with the handling replica's clock, so
-replicas need synchronized clocks (NTP); a second of skew moves the 410 by a
-second. The periodic `auth-api-identity-sweep` job runs on every replica
-every 30 seconds: three idempotent `DELETE`s by expiry (requests past their
-grace, identities past their hour, tombstones past 14 days), so replicas
-sweeping at once delete each row once. The expiry indexes
+replicas need synchronized clocks (NTP). The periodic `auth-api-identity-sweep` job runs on every replica
+every 30 seconds. It deletes expired requests, expired identities and
+tombstones older than 14 days. Each row is deleted once across replicas. The expiry indexes
 (`auth_requests_expiration_idx`, `auth_identities_expiration_idx`,
 `auth_identity_tombstones_created_idx`) serve those deletes; every other read
 and write is by primary key. Nothing references these rows and they

@@ -8,7 +8,7 @@
 
 use crate::shared::routing::{erase, get, post};
 use axum::Extension;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
@@ -396,17 +396,25 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state)
-            .await
-            .map(|Json(value)| Self(value))
-            .map_err(|error| {
-                if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                    payload_too_large()
-                } else {
-                    bad_request("Invalid request body")
-                }
-            })
+        let body = Bytes::from_request(req, state).await.map_err(|error| {
+            if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                payload_too_large()
+            } else {
+                invalid_json_body()
+            }
+        })?;
+        serde_json::from_slice(&body)
+            .map(Self)
+            .map_err(|_| invalid_json_body())
     }
+}
+
+fn invalid_json_body() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "Bad request", "message": "Invalid JSON body" })),
+    )
+        .into_response()
 }
 
 async fn enforce_body_cap(req: Request, next: Next) -> Response {
@@ -3072,8 +3080,29 @@ mod tests {
             ] {
                 let (status, body) = call(&app, request).await;
                 assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
-                assert_eq!(body, json!({ "error": "Invalid request body" }));
+                assert_eq!(
+                    body,
+                    json!({ "error": "Bad request", "message": "Invalid JSON body" })
+                );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn request_json_is_decoded_without_a_json_content_type() {
+        let state = crate::api::tests_support::state_without_db().await;
+        let app = app(&state);
+        for content_type in [None, Some("text/plain")] {
+            let mut request = Request::builder().method("POST").uri("/auth-api/requests");
+            if let Some(content_type) = content_type {
+                request = request.header(header::CONTENT_TYPE, content_type);
+            }
+            let request = request
+                .body(Body::from(r#"{"method":"eth_sendTransaction"}"#))
+                .unwrap();
+            let (status, body) = call(&app, request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body, json!({ "error": "params is required" }));
         }
     }
 

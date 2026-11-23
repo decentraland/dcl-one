@@ -90,6 +90,22 @@ class HostAliasTest(unittest.TestCase):
                 self.assertEqual(route(host + ".example.test", path), (f"/{host}{path}", path))
 
 
+    def test_auth_relay_owns_cors_on_both_mounts(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        config = gateway.render(TABLE, cfg, "/mime.types")
+        maps = nginx_map.parse(config)
+        for host, path, expected in [
+            ("example.test", "/auth-api/x", ""),
+            ("example.test", "/auth-api", ""),
+            ("auth-api.example.test", "/x", ""),
+            ("example.test", "/places/x", "*"),
+        ]:
+            with self.subTest(host=host, path=path):
+                uri, _ = nginx_map.route(config, host, path)
+                request = nginx_map.Request(maps, uri=uri, upstream_http_access_control_allow_origin="")
+                self.assertEqual(request["cors_fallback"], expected)
+
+
 class AccountHostTest(unittest.TestCase):
     def test_account_host_reaches_the_sites_confirmation_pages(self):
         root = Path(__file__).parents[3]
