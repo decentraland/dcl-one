@@ -62,37 +62,34 @@ test.describe('UI Designer left panel', () => {
   test("filter both GUIs and Nodes from the one search box, keeping a match's ancestors", async () => {
     await UIDesigner.search('container1');
 
-    await page
-      .locator(`${UIDesigner.railSelector} .ui-designer-roots-list`)
-      .waitFor({ state: 'detached', timeout: 5_000 });
+    await expect.poll(() => UIDesigner.rootNames()).toEqual([]);
     await expect(UIDesigner.nodeLabels()).resolves.toEqual(['Container', 'Container1']);
 
     await UIDesigner.clearSearch();
-    await page
-      .locator(`${UIDesigner.railSelector} .ui-designer-roots-list`)
-      .waitFor({ state: 'attached', timeout: 5_000 });
+    await expect.poll(() => UIDesigner.rootNames()).toEqual([ROOT]);
   });
 
-  test('hide the Nodes section when only a GUI matches', async () => {
+  test('keep the Nodes header, with an empty list, when only a GUI matches', async () => {
     await UIDesigner.search(ROOT.toLowerCase());
 
-    await page.locator(UIDesigner.treeSelector).waitFor({ state: 'detached', timeout: 5_000 });
+    await expect.poll(() => UIDesigner.nodeLabels()).toEqual([]);
     await expect(UIDesigner.rootNames()).resolves.toEqual([ROOT]);
+    await expect(UIDesigner.isSectionVisible('Nodes')).resolves.toBe(true);
 
     await UIDesigner.clearSearch();
-    await page.locator(UIDesigner.treeSelector).waitFor({ state: 'attached', timeout: 5_000 });
+    await expect.poll(() => UIDesigner.nodeLabels()).not.toEqual([]);
   });
 
-  test('hide both sections when nothing matches', async () => {
+  test('keep both headers, over empty lists, when nothing matches', async () => {
     await UIDesigner.search('nothingmatchesthis');
 
-    await page.locator(UIDesigner.treeSelector).waitFor({ state: 'detached', timeout: 5_000 });
-    await page
-      .locator(`${UIDesigner.railSelector} .ui-designer-roots-list`)
-      .waitFor({ state: 'detached', timeout: 5_000 });
+    await expect.poll(() => UIDesigner.nodeLabels()).toEqual([]);
+    await expect(UIDesigner.rootNames()).resolves.toEqual([]);
+    await expect(UIDesigner.isSectionVisible('GUIs')).resolves.toBe(true);
+    await expect(UIDesigner.isSectionVisible('Nodes')).resolves.toBe(true);
 
     await UIDesigner.clearSearch();
-    await page.locator(UIDesigner.treeSelector).waitFor({ state: 'attached', timeout: 5_000 });
+    await expect.poll(() => UIDesigner.rootNames()).toEqual([ROOT]);
   });
 
   test('gray a hidden node and keep its eye visible without hover', async () => {

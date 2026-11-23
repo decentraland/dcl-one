@@ -134,7 +134,7 @@ class UIDesignerPageObject {
   /** Add a widget under the current selection via the Nodes "+" picker. */
   async addWidget(widget: 'Container' | 'Image' | 'Label' | 'Button' | 'Input' | 'Dropdown') {
     const before = (await this.nodeLabels()).length;
-    const trigger = page.locator(`${RAIL} [aria-label="Add widget"]`);
+    const trigger = page.locator(`${RAIL} [aria-label="Add Node"]`);
     const row = this.pickerRow(widget);
     await openThenSelect(
       trigger,

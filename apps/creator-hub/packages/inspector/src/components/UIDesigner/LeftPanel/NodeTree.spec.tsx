@@ -228,3 +228,13 @@ describe('NodeTree row actions', () => {
     });
   });
 });
+
+describe('when the search matches no node', () => {
+  it('should render an empty list, keeping the section in place', () => {
+    mocks.tree = node();
+    const { container } = render(<NodeTree filter="zzz" />);
+
+    expect(container.querySelector('.ui-designer-nodetree')).not.toBeNull();
+    expect(container.querySelectorAll('.row-icon')).toHaveLength(0);
+  });
+});
