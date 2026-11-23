@@ -10,7 +10,7 @@ import { useProfileIdentity } from "@/data/lib/auth/use-profile-name";
 import { watchBrowserWalletAccount } from "@/data/lib/auth/wallet-account-switch";
 import { NOTIFICATIONS_PREFIX } from "@/data/lib/catalyst/bases";
 import { catalystBase } from "@/data/lib/catalyst/client";
-import { loginPath } from "@/features/auth/login/redirect";
+import { loginPath } from "../../auth/login/redirect";
 import { navigateForAccountChange, openSignIn } from "../auth/signin-store";
 import { hubAccountActions } from "./explorer-host";
 import { usePrivateQueryLifecycle } from "./usePrivateQueryLifecycle";
