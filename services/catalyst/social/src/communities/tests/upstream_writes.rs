@@ -1338,7 +1338,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     )
     .await
     .unwrap();
-    let image = format!("http://cdn.test/social/communities/{c}/raw-thumbnail.png");
+    let image = format!("http://cdn.test/social/communities/{c}/raw-thumbnail.png?v=bafythumb");
     let started = match &*to_member.try_recv().unwrap() {
         SocialEvent::CommunityVoice(u) => u.clone(),
         _ => panic!("not a voice update"),
