@@ -1,12 +1,16 @@
 export type MiscEvents = {
   Click: {
+    card?: string;
     click_id?: string;
     clicked_at?: number;
     download_target?: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
     event?: "Download";
     mac_arch?: "apple_silicon" | "intel" | "unknown";
     os?: "Android" | "Windows" | "iOS" | "macOS";
-    place: "Creator Hub Success Footer" | "Creators Hero" | "Download" | "Landing Come Hang Out" | "Landing Hero" | "Referrer Invite First Hero" | "Referrer Invite Second Hero" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "Referrer Invite First Hero" | "Referrer Invite Second Hero" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    section?: string;
+    tab?: string;
+    title?: string;
     track_called_at: number;
     track_deferred: boolean;
     track_delivered_at: number;
@@ -39,6 +43,13 @@ export type MiscEvents = {
   };
   "Report Player Submitted": {
     reason: "" | "cheating" | "harassment" | "illegal_content" | "impersonation" | "scam_phishing";
+  };
+  "Section Viewed": {
+    mobile: boolean;
+    section_viewed: "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Learn" | "Creators Live Scenes" | "Creators Why";
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
   };
   catalyst_schema_drift: {
     issues_count: number;
