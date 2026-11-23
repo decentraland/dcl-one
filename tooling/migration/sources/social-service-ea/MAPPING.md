@@ -224,7 +224,11 @@ Legacy login state outside PostgreSQL is not imported. At cutover, in this order
    counted), only where `tier_granted` is false and the status is not
    `rejected_ip_match`. Skipped, those invitees count again from the node's own days.
 
-Logins that reach this node before step 2 find no progress row and are not counted.
+Before step 1 ends, the legacy consumer still grants. Keep `SOCIAL_WRITES_ENABLED` off until
+step 2: with it off, neither `client-login` nor the `/ws` handshake credits a login. With it on,
+a login for an invitee an earlier `referral_progress` import already brought in counts here,
+and the same invitee can be granted on both sides, with two accepted notifications and two
+reward requests. Invitees not yet imported have no progress row and are not counted.
 
 After upgrading an earlier import, restart `referral_progress` to populate fields whose
 source watermark has not changed. The reward-image step has its own checkpoint.

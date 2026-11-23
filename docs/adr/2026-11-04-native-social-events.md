@@ -5,7 +5,7 @@
 - Status changed: 2026-11-04
 - Decided by: user, through the explicit instruction to remove SQS/SNS and retain NATS.
 - Supersedes: [Bounded referral Slack effects](2026-11-04-referral-slack-effect-budget.md), for native login delivery ordering; its provider time and retry bounds remain.
-- Amended by: [Referral logins from the comms handshake](2026-11-23-referral-logins-from-comms-handshake.md), for unchanged clients.
+- Amended by: [Referral logins from the comms handshake](2026-11-23-referral-logins-from-comms-handshake.md), for unchanged clients and for `client-login` on a date already counted (204, no receipt).
 - Decision: Replace internal SQS/SNS transport with native monorepo integration; retain NATS and preserve external client contracts.
 
 ## Context

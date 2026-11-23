@@ -25,13 +25,14 @@ When a wallet completes the `/ws` handshake, comms credits one login of that wal
 
 - The login ID is a UUID v5 of the handshake's challenge, so it is unique per handshake. The occurrence is the server's time. One login day per UTC date still applies.
 - The credit runs on a spawned task after the welcome. It never delays or fails the handshake.
-  - Concurrency and backlog are bounded; past the backlog, a credit is dropped.
+  - Concurrent attempts and the backlog are bounded; past the backlog, a credit is dropped and counted. A credit waiting to retry holds no attempt slot.
   - Each attempt has a timeout.
-  - A transient failure is retried with the same login ID. A refused login is logged.
+  - A transient failure (a server error or a timeout) is retried with the same login ID. A refused login (an invalid wallet, the quota, an occurrence outside the window) is not retried; it is logged and counted.
+  - At shutdown the job `archipelago-login-credits` ends the pending credits and counts them as dropped. The clients reconnect to the next primary, and that handshake credits again.
 - `serve` builds one `Referral` and hands it to both comms and social. Comms depends only on the interface.
-- Only the primary `serve` runs `/ws`, so only the primary credits.
+- Only the primary `serve` runs `/ws`, so only the primary credits. A node with `SOCIAL_WRITES_ENABLED` off credits nothing, as its `client-login` answers 503.
 - Reconnects count as logins here, but a login on a date already counted stores no receipt and takes no slot of the 120-per-day quota. This changes the earlier rule that room admissions are not logins, but only for referral days: several handshakes on one date are still one day.
-- `POST /v1/client-login` is unchanged.
+- `POST /v1/client-login` shares that rule. A login on a date already counted, while the threshold is not reached, answers 204 and stores no receipt; it used to store one, and to answer 429 once the quota was full. Without a receipt, the same signed request replayed after UTC midnight, inside the signed-fetch time window, counts the new date. The signer could sign that login anyway, so this gains nothing; storing a receipt that takes no quota slot would need a new receipt column.
 
 ## Consequences
 
