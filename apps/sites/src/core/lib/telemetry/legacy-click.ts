@@ -11,13 +11,14 @@ export type LegacySession = { sid: string; userId?: string | null };
 /**
  * The legacy `useDeferredTrack` transport. `track_deferred` is true when the call came before the document's
  * analytics was ready (`legacyAnalyticsReady`). A conversion leaves at once, as the legacy beacon did; anything
- * else waits for readiness, so a bot or an exempt session never sends it. `send` builds the event, so the
- * contract harvests each caller's literal name and shape.
+ * else waits for readiness, so a bot or an exempt session never sends it. `immediate` leaves at once too, for a
+ * click whose page is about to be replaced (the legacy non-conversion beacon), still behind the bot and exempt
+ * gates. `send` builds the event, so the contract harvests each caller's literal name and shape.
  */
 export function sendLegacyDeferred(
   send: (audit: LegacyAudit, ctx: TrackContext) => void,
   { sid, userId }: LegacySession,
-  { conversion = false }: { conversion?: boolean } = {},
+  { conversion = false, immediate = false }: { conversion?: boolean; immediate?: boolean } = {},
 ): void {
   const calledAt = Date.now();
   const deferred = !legacyAnalyticsReady();
@@ -29,7 +30,7 @@ export function sendLegacyDeferred(
       { sid, ...(user ? { userId: user } : {}), legacy: true, ...(conversion ? { conversion: true } : {}) },
     );
   };
-  if (conversion) fire();
+  if (conversion || immediate) fire();
   else whenLegacyAnalyticsReady(fire);
 }
 

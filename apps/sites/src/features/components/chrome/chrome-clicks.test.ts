@@ -239,11 +239,11 @@ describe("isSameTabNavigation", () => {
   }
   const keys = { ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
 
-  it.each([{}, { target: "_self" }, { target: "_TOP" }, { target: "" }])("is true for a same-tab link %j", (attributes) => {
+  it.each<Record<string, string>>([{}, { target: "_self" }, { target: "_TOP" }, { target: "" }])("is true for a same-tab link %j", (attributes) => {
     expect(isSameTabNavigation({ currentTarget: anchor(attributes), ...keys })).toBe(true);
   });
 
-  it.each([{ target: "_blank" }, { target: "named" }, { download: "" }])("is false for a link %j", (attributes) => {
+  it.each<Record<string, string>>([{ target: "_blank" }, { target: "named" }, { download: "" }])("is false for a link %j", (attributes) => {
     expect(isSameTabNavigation({ currentTarget: anchor(attributes), ...keys })).toBe(false);
   });
 

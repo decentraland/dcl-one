@@ -73,7 +73,11 @@ describe('SitesFooter without click callbacks', () => {
         <SitesFooter docsUrl={docsUrl} onSubscribe={subscribe} />
       </ChromeNavContext.Provider>
     )
-    await user.click(within(screen.getByRole('contentinfo')).getAllByRole('link', { name: 'Download Decentraland' })[0]!)
+    await user.click(
+      within(screen.getByRole('contentinfo')).getAllByRole('link', {
+        name: 'Download Decentraland'
+      })[0]!
+    )
     expect(navigate).toHaveBeenCalledWith('/download')
   })
 })

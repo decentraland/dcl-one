@@ -2,8 +2,8 @@ import { useMemo, type MouseEvent } from "react";
 import { useLocation } from "react-router";
 
 import { isOutsideLegacySites, useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
-import { legacyAnalyticsReady, track, whenLegacyAnalyticsReady } from "@/core/lib/telemetry/track";
-import { trackedUserDropped } from "@/core/lib/telemetry/tracked-user";
+import { sendLegacyDeferred, type LegacySession } from "@/core/lib/telemetry/legacy-click";
+import { legacyAnalyticsReady, track, type TrackContext } from "@/core/lib/telemetry/track";
 
 // The legacy site's navbar and footer `Click` events (decentraland/sites `LandingNavbar.tsx` `trackNavbar` and
 // `LandingFooter.tsx` `trackFooter`). Warehouse models group these rows by `place`, `action`, `section`,
@@ -131,69 +131,49 @@ export function isSameTabNavigation(
   );
 }
 
-/** Who clicked: the session id, and the server-verified wallet when the visitor is signed in. */
-export type ChromeClickSession = { sid: string; userId?: string | null };
-
-function trackContext({ sid, userId }: ChromeClickSession) {
-  // A sign-out in progress leaves the account out before root's data has reloaded without it.
-  const user = userId && !trackedUserDropped() ? userId : undefined;
-  return { sid, ...(user ? { userId: user } : {}), legacy: true };
-}
-
 /**
  * The legacy `trackNavbar`. Once the document's analytics is ready the click is sent at once with
  * `track_deferred: false`. Before that, a click that replaces the page is sent at once with `track_deferred: true`
  * (the legacy beacon), and one that keeps the page (a new tab, a middle click) waits for readiness (the legacy
- * queue). A bot or an exempt session sends nothing either way.
+ * queue). Unlike the other legacy clicks it carries no `utm_*`. A bot or an exempt session sends nothing.
  */
 export function trackNavbarClick(
   { action, link }: NavbarClick,
-  session: ChromeClickSession,
+  session: LegacySession,
   { leavesPage = true }: { leavesPage?: boolean } = {},
 ): void {
   try {
-    const calledAt = Date.now();
-    const ready = legacyAnalyticsReady();
-    const fire = () => {
-      track(
-        "Click",
-        {
-          place: "Landing Navbar",
-          event: "click",
-          action,
-          ...link,
-          track_called_at: calledAt,
-          track_delivered_at: Date.now(),
-          track_deferred: !ready,
-        },
-        trackContext(session),
-      );
-    };
-    if (ready || leavesPage) fire();
-    else whenLegacyAnalyticsReady(fire);
+    sendLegacyDeferred(
+      (audit, ctx) => track("Click", { place: "Landing Navbar", event: "click", action, ...link, ...audit }, ctx),
+      session,
+      { immediate: leavesPage },
+    );
   } catch {
     // Telemetry never breaks navigation.
   }
 }
 
-/** The legacy footer's social icon click: sent only once analytics is ready, with no deferral fields. */
-export function trackFooterSocialClick(platform: string, session: ChromeClickSession): void {
+/**
+ * The legacy footer's `trackFooter` called analytics directly, guarded by `isInitialized`: a click before analytics
+ * is ready is dropped, and none carries the deferral fields.
+ */
+function sendFooterClick(send: (ctx: TrackContext) => void, session: LegacySession): void {
   try {
     if (!legacyAnalyticsReady()) return;
-    track("Click", { place: "Landing Footer Social", event: "click", platform }, trackContext(session));
+    sendLegacyDeferred((_audit, ctx) => send(ctx), session);
   } catch {
     // Telemetry never breaks navigation.
   }
 }
 
-/** The legacy footer's link click, with the link's label in the shown language: same gate as the social icons. */
-export function trackFooterLinkClick(link: string, session: ChromeClickSession): void {
-  try {
-    if (!legacyAnalyticsReady()) return;
-    track("Click", { place: "Landing Footer Link", event: "click", link }, trackContext(session));
-  } catch {
-    // Telemetry never breaks navigation.
-  }
+/** The legacy footer's social icon click. */
+export function trackFooterSocialClick(platform: string, session: LegacySession): void {
+  sendFooterClick((ctx) => track("Click", { place: "Landing Footer Social", event: "click", platform }, ctx), session);
+}
+
+/** The legacy footer's link click, with the link's label in the shown language. */
+export function trackFooterLinkClick(link: string, session: LegacySession): void {
+  sendFooterClick((ctx) => track("Click", { place: "Landing Footer Link", event: "click", link }, ctx), session);
 }
 
 export type ChromeClicks = {

@@ -1,4 +1,11 @@
-import { useContext, useEffect, useRef, useState, type FormEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent
+} from 'react'
 import {
   chromeLinkProps,
   useChromeNav,
