@@ -87,6 +87,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
 
   function select(id: string | null) {
     setError(null);
+    if (id) setClosing(null);
     setParams((current) => {
       const next = new URLSearchParams(current);
       if (id) next.set("id", id);
