@@ -3,11 +3,20 @@
 //! `dcl_wasm::scene_loop_mode`) ends the loop a frame target after the frame's start, less what
 //! the frame still needs after the loop: the 90th percentile of that tail over the last frames
 //! ([`TailEstimate`]) plus a share of the frame target. The tail is the frame's work, without its
-//! waits for the render worker ([`frame_tail`]).
+//! waits for the render worker ([`frame_tail`]). The tail is measured with the pipelined-rendering
+//! diagnostics (`PipelinedRenderingDiagnosticsPlugin`, which the explorer's performance plugin
+//! adds on the web); without them no tail is measured, the deadline mode keeps the grid deadline,
+//! and the scene runner warns at startup ([`warn_without_tail_diagnostics`]).
 
 use std::time::Duration;
 
-use web_time::Instant;
+use bevy::platform::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use bevy::{
+    diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore},
+    prelude::{Res, ResMut, World},
+    render::pipelined_rendering::diagnostics::{WAIT_HANDOFF, WAIT_RENDER},
+};
 
 use super::LOOP_FLOOR;
 
@@ -257,33 +266,35 @@ pub fn frame_tail(loop_end: Instant, handoff: Instant, waits: Duration) -> Optio
 /// takes no order in `First`; a system there that runs before it moves the frame's start, and the
 /// deadline, later by its own time.
 #[cfg(target_arch = "wasm32")]
-pub fn web_frame_start(
-    mut pacing: bevy::prelude::ResMut<WebLoopPacing>,
-    store: Option<bevy::prelude::Res<bevy::diagnostic::DiagnosticsStore>>,
-) {
-    use bevy::{
-        diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore},
-        render::pipelined_rendering::diagnostics::{WAIT_HANDOFF, WAIT_RENDER},
-    };
-
+pub fn web_frame_start(mut pacing: ResMut<WebLoopPacing>, store: Res<DiagnosticsStore>) {
     fn last<'a>(
-        store: Option<&'a DiagnosticsStore>,
+        store: &'a DiagnosticsStore,
         path: &DiagnosticPath,
     ) -> Option<&'a DiagnosticMeasurement> {
-        store?.get(path)?.measurement()
+        store.get(path)?.measurement()
     }
 
-    let now = Instant::now();
-    let store = store.as_deref();
-    let handoff = last(store, &WAIT_HANDOFF)
-        // bevy's own Instant: carried over as its age
-        .and_then(|measurement| now.checked_sub(measurement.time.elapsed()));
+    let handoff = last(&store, &WAIT_HANDOFF).map(|measurement| measurement.time);
     let waits = [WAIT_RENDER, WAIT_HANDOFF]
         .iter()
-        .filter_map(|path| last(store, path))
+        .filter_map(|path| last(&store, path))
         .map(|measurement| Duration::from_secs_f64(measurement.value.max(0.0) / 1000.0))
         .sum();
-    pacing.frame_started(now, handoff, waits);
+    pacing.frame_started(Instant::now(), handoff, waits);
+}
+
+/// At startup: without the pipelined-rendering diagnostics no frame's tail is measured, and the
+/// deadline mode keeps the grid deadline for the whole session.
+#[cfg(target_arch = "wasm32")]
+pub fn warn_without_tail_diagnostics(world: &World) {
+    let measured = world
+        .get_resource::<DiagnosticsStore>()
+        .is_some_and(|store| store.get(&WAIT_HANDOFF).is_some());
+    if !measured {
+        bevy::log::warn!(
+            "no pipelined-rendering diagnostics (PipelinedRenderingDiagnosticsPlugin): the web              scene loop keeps the grid deadline"
+        );
+    }
 }
 
 #[cfg(test)]

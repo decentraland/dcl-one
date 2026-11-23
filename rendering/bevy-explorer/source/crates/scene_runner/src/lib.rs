@@ -516,6 +516,13 @@ impl Plugin for SceneRunnerPlugin {
 
         app.add_systems(PostUpdate, consume_toasts);
     }
+
+    // web: the deadline mode measures the frame's tail with the pipelined-rendering diagnostics,
+    // which another plugin adds
+    #[cfg(target_arch = "wasm32")]
+    fn finish(&self, app: &mut App) {
+        loop_pacing::warn_without_tail_diagnostics(app.world());
+    }
 }
 
 fn run_scene_loop(world: &mut World) {

@@ -8,12 +8,12 @@
 
 use std::time::Duration;
 
-use web_time::Instant;
+use bevy::platform::time::Instant;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod web;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use web::{web_frame_start, WebLoopPacing};
+pub(crate) use web::{warn_without_tail_diagnostics, web_frame_start, WebLoopPacing};
 
 /// The scene loop always runs at least this long.
 pub const LOOP_FLOOR: Duration = Duration::from_millis(1);

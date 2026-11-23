@@ -73,14 +73,17 @@ The deadline is bounded below by 1 ms after the loop starts and above by one fra
 (`crates/scene_runner/src/loop_pacing.rs`). Natively it stays on a grid of frame targets
 (`grid_deadline`): a long frame leaves the next loop what remains of the grid. On the web the
 browser paces the frame, and the loop ends one frame target after the frame's start, less the
-time the frame still needs after the loop (`frame_deadline`). That reserve is the 90th
-percentile, over the last 32 frames, of the time from the loop's end to the handoff to the
-render worker less the frame's waits for that worker (`frame_tail`: `WAIT_RENDER` for the render
-app to come back, `WAIT_HANDOFF` for its animation frame to take the handoff), plus 6 % of the
-frame target (`TAIL_MARGIN_SHARE`). The waits shrink when the loop runs longer, so they are left
-out. Until 32 frames are measured, and with an uncapped frame rate, the web uses the grid: with
-fewer frames the 90th percentile is their maximum, and a few heavy frames at the start would
-hold the loop on its floor.
+time the frame still needs after the loop (`frame_deadline`, `loop_pacing/web.rs`). That reserve
+is the 90th percentile, over the last 32 frames, of the time from the loop's end to the handoff
+to the render worker less the frame's waits for that worker (`frame_tail`: `WAIT_RENDER` for the
+render app to come back, `WAIT_HANDOFF` for its animation frame to take the handoff), plus 6 %
+of the frame target (`TAIL_MARGIN_SHARE`). The waits shrink when the loop runs longer, so they
+are left out. The pipelined-rendering diagnostics (`PipelinedRenderingDiagnosticsPlugin`, added
+by the explorer's performance plugin on the web) measure the handoff and the waits; without them
+no tail is measured, the web keeps the grid, and the scene runner warns at startup. Until 32
+frames are measured, and with an uncapped frame rate, the web uses the grid: with fewer frames
+the 90th percentile is their maximum, and a few heavy frames at the start would hold the loop on
+its floor.
 
 On the web each scene runs in a sandbox worker whose relay moves messages between the engine
 and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`,
