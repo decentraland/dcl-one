@@ -27,10 +27,12 @@ use crate::shared::client_ip::{
     client_ip, is_internal, is_trusted_proxy, normalize_ip, single_real_ip, source_key,
 };
 
+mod accounts;
 mod contract_checks;
 mod identities;
 mod validation;
 
+pub(crate) use accounts::MagicDeletion;
 pub use contract_checks::ContractChecks;
 use contract_checks::{Budgeted, Offline, Spent};
 
@@ -114,6 +116,9 @@ pub fn spawn_identity_sweeper(state: &AppState, jobs: &crate::jobs::Jobs) {
                     sweep_expired_identities(&mut conn, now).await?;
                     sweep_identity_tombstones(&mut conn, now).await?;
                     sweep_expired_requests(&mut conn, now).await?;
+                    if state.settings.magic_deletion.is_some() {
+                        accounts::sweep_attempts(&mut conn).await?;
+                    }
                 }
                 Ok(())
             }
@@ -365,6 +370,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health/live", get(health_live))
         .route("/health", get(health_live))
+        .route("/accounts", axum::routing::delete(accounts::delete_account))
         .route("/requests", post(create_request))
         .route(
             "/requests/{id}",

@@ -135,6 +135,13 @@ CREATE TABLE explore_api.auth_identity_tombstones (
 
 CREATE INDEX auth_identity_tombstones_created_idx ON explore_api.auth_identity_tombstones (created_at);
 
+CREATE TABLE IF NOT EXISTS explore_api.magic_deletion_attempts (
+    token_key bytea PRIMARY KEY,
+    requested_at timestamptz NOT NULL DEFAULT now(),
+    status text NOT NULL DEFAULT 'requested'
+        CHECK (status IN ('requested', 'processed', 'unprocessed', 'rate_limited', 'upstream_error'))
+);
+
 -- POST /onboarding/checkpoint: one row per (user, checkpoint 1-7), the
 -- auth server's onboarding_checkpoints. reached_at is the first `reached`
 -- and never moves; completed_at is set once (by `completed`, or by reaching

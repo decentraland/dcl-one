@@ -97,6 +97,23 @@ pub struct NodeConfig {
     #[arg(long, env = "ONBOARDING_API_KEY", hide_env_values = true)]
     pub onboarding_api_key: Option<String>,
 
+    /// Magic application audience for account deletion.
+    #[arg(long, env = "MAGIC_CLIENT_ID")]
+    pub magic_client_id: Option<String>,
+
+    /// Magic admin credential for account deletion, or MAGIC_SECRET_KEY_FILE.
+    #[arg(long, env = "MAGIC_SECRET_KEY", hide_env_values = true)]
+    pub magic_secret_key: Option<String>,
+
+    /// Exact browser origins authorized to request Magic account deletion.
+    #[arg(
+        long,
+        env = "ACCOUNT_DELETION_ALLOWED_ORIGINS",
+        value_delimiter = ';',
+        default_value = "https://decentraland.org;https://account.decentraland.org;https://play.decentraland.org"
+    )]
+    pub account_deletion_allowed_origins: Vec<String>,
+
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this
     /// node's own `<PUBLIC_URL>/api`. `NODE_POSTURE=mirror` sets

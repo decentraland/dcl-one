@@ -2716,6 +2716,14 @@ one more. The count scans the table, bounded by the caps to about 10,000 rows;
 sign-in creates are rare enough that serializing them on the lock costs nothing
 measurable.
 
+Magic account deletion inserts one short-lived row per verified request into
+`explore_api.magic_deletion_attempts`. A digest of the wallet address and Magic
+token ID is the unique key. The insert commits before the outbound operation
+so that concurrent requests across replicas cannot reuse the same token. The
+row records whether Magic processed it, and a periodic sweep expires it after
+one day. A row still marked requested can represent an interrupted operation.
+The table holds neither DID tokens nor Magic response payloads.
+
 Contract-wallet budget: contract-wallet calls (`isValidSignature`, including
 those of the signed-fetch chain on `POST /identities`) are budgeted in process
 memory (no table), since a forged chain stores no row for the caps to count: 20

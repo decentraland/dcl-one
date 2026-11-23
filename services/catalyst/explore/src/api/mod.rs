@@ -226,6 +226,7 @@ pub struct Settings {
     pub opensea: opensea::Settings,
     /// `ONBOARDING_API_KEY`: the bearer of `/onboarding/*`; unset, both routes answer 401.
     pub onboarding_api_key: Option<String>,
+    pub(crate) magic_deletion: Option<auth_api::MagicDeletion>,
     /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
     pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
@@ -344,6 +345,7 @@ impl Settings {
                 .onboarding_api_key
                 .clone()
                 .filter(|k| !k.trim().is_empty()),
+            magic_deletion: auth_api::MagicDeletion::from_config(config),
             trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
@@ -386,6 +388,7 @@ impl Settings {
                 ..opensea::Settings::defaults()
             },
             onboarding_api_key: None,
+            magic_deletion: None,
             trusted_proxy_cidrs: Vec::new(),
         }
     }
