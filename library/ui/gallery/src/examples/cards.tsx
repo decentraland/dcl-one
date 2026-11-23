@@ -485,6 +485,51 @@ export const cardEntries: GalleryEntry[] = [
         )
       },
       {
+        id: 'loading',
+        title: 'Loading',
+        note: 'loading draws a skeleton in the box the post will take, marked busy, beside a loaded card in each grid.',
+        render: () => (
+          <div className={layout.blogGrids}>
+            <ul className={layout.blogIndex}>
+              <li>
+                <BlogCard
+                  title={blogPosts[0]!.title}
+                  href="#post"
+                  cover={<img src={blogPosts[0]!.cover} alt="" />}
+                  category={blogPosts[0]!.category}
+                  metadata={blogPosts[0]!.date}
+                  author={people.ada.name}
+                />
+              </li>
+              <li>
+                <BlogCard loading loadingLabel="Loading a post" />
+              </li>
+              <li>
+                <BlogCard loading loadingLabel="Loading a post" />
+              </li>
+            </ul>
+            <ul className={layout.blogRelated}>
+              <li>
+                <BlogCard
+                  variant="related"
+                  title={blogPosts[1]!.title}
+                  href="#post"
+                  cover={<img src={blogPosts[1]!.cover} alt="" />}
+                  category={blogPosts[1]!.category}
+                  metadata={blogPosts[1]!.date}
+                />
+              </li>
+              <li>
+                <BlogCard variant="related" loading loadingLabel="Loading a related post" />
+              </li>
+              <li>
+                <BlogCard variant="related" loading loadingLabel="Loading a related post" />
+              </li>
+            </ul>
+          </div>
+        )
+      },
+      {
         id: 'focus',
         title: 'Hover and keyboard focus',
         note: 'At 768px or wider, hover or keyboard focus raises the card, strengthens its border and underlines the title. This card shows it through keyboard focus, without a pointer.',

@@ -170,3 +170,33 @@
       background-color 150ms ease;
   }
 }
+
+/* Loading: each skeleton line is one line box of the text it stands for (`1lh`), so the loaded card takes the same
+   size. The category row is the 24px Sites gives its card badge. */
+.loading {
+  pointer-events: none;
+}
+
+.skeletonCover {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+.skeletonLine {
+  display: block;
+  width: 100%;
+  height: 1lh;
+  border-radius: var(--dcl-radius-sm);
+}
+
+.skeletonShort {
+  width: 40%;
+}
+
+.skeletonCategory {
+  display: block;
+  width: 30%;
+  line-height: 24px;
+}
