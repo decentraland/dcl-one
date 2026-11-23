@@ -27,7 +27,12 @@ export type BlogCmsCategory = BlogCategory & { id: string; description: string; 
 export type BlogCmsAuthor = { id: string; slug: string; name: string; description: string; imageId: string };
 
 /** A post card plus what only the article page needs. */
-export type BlogCmsPost = BlogCard & { id: string; body: BlogRichTextNode | null };
+export type BlogCmsPost = BlogCard & {
+  id: string;
+  body: BlogRichTextNode | null;
+  /** The CMS's own `publishedDate`, unchanged (an ISO date-time with its offset), or "": the page view sends it. */
+  publishedDate: string;
+};
 
 /** Assets the caller fetched, by id; null for one the CMS did not return. */
 export type AssetLookup = ReadonlyMap<string, BlogImage | null>;
@@ -208,6 +213,7 @@ export function mapPost(entry: CmsEntry, lookups: PostLookups): BlogCmsPost | nu
     title,
     description: decoded(fields.description),
     publishedAt: publishedAt(fields.publishedDate),
+    publishedDate: text(fields.publishedDate),
     readMinutes: readMinutes(body),
     category: category ? { slug: category.slug, title: category.title } : UNCATEGORIZED,
     author: author
@@ -221,9 +227,10 @@ export function mapPost(entry: CmsEntry, lookups: PostLookups): BlogCmsPost | nu
 
 /** A card without the body, for lists. */
 export function toCard(post: BlogCmsPost): BlogCard {
-  const { id: _id, body: _body, ...card } = post;
+  const { id: _id, body: _body, publishedDate: _publishedDate, ...card } = post;
   void _id;
   void _body;
+  void _publishedDate;
   return card;
 }
 

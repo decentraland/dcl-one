@@ -142,10 +142,6 @@ pinned callers build. Each is a known difference, not an approval.
 - Browser origins are the old services' per-router allow-lists rather than the reflecting
   CORS the shared crate offers. `EXPLORE_CORS_ORIGINS` appends a deployment's own origins
   to every list.
-- Private profile reads and permission grants are moderator-only. The old events service
-  also admits a wallet holding `edit_any_profile`; dcl-one stores and lists that grant
-  without effect, so no grantee reads emails or passes the grant on (accepted entries
-  `events.profiles.*_edit_any_profile`).
 - The `:runner:` upcoming-event Slack notice is off by default; `EVENTS_UPCOMING_SUMMARIES_ENABLED=true`
   queues one per reminded occurrence through the outbox. The old events service posted it
   whenever a webhook was configured.

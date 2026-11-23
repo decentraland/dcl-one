@@ -725,6 +725,7 @@ impl MarketplaceState {
         );
         transfer_notices::spawn(self, jobs);
         crate::rentals::notices::spawn(self, jobs);
+        crate::rentals::status::spawn(self, jobs);
     }
 
     /// The JSON-RPC endpoint the chain indexes and the coupon reader use on
