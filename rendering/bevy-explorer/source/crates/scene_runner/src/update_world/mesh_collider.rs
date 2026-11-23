@@ -1,4 +1,8 @@
-use std::{f64::consts::FRAC_1_SQRT_2, marker::PhantomData};
+use std::{
+    f64::consts::FRAC_1_SQRT_2,
+    marker::PhantomData,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use bevy::{
     diagnostic::FrameCount,
@@ -240,6 +244,26 @@ pub struct SceneColliderData {
     disabled: HashSet<ColliderHandle>,
     bounds: ColliderBounds,
     volume: SceneVolume,
+    /// per collision layer bit, the stamp of the last change to a collider on that layer
+    layer_stamps: [u64; 32],
+}
+
+/// Stamps for [`SceneColliderData::layers_version`], shared by every collider set so a stamp is
+/// never reused and each new one is larger than any before it.
+static NEXT_LAYER_STAMP: AtomicU64 = AtomicU64::new(1);
+
+/// Records a change to a collider in `groups` on each layer it belongs to or filters on.
+fn stamp_layers(layer_stamps: &mut [u64; 32], groups: InteractionGroups) {
+    let bits = groups.memberships.bits() | groups.filter.bits();
+    if bits == 0 {
+        return;
+    }
+    let stamp = NEXT_LAYER_STAMP.fetch_add(1, Ordering::Relaxed);
+    for (bit, layer_stamp) in layer_stamps.iter_mut().enumerate() {
+        if bits & (1 << bit) != 0 {
+            *layer_stamp = stamp;
+        }
+    }
 }
 
 impl SceneColliderData {
@@ -262,6 +286,19 @@ impl SceneColliderData {
     /// The height above which the scene's colliders are off; none when they have no limit.
     pub(crate) fn height_limit(&self) -> Option<f64> {
         self.bounds.height()
+    }
+
+    /// Changes whenever a collider on any layer in `mask` is added, removed, moved, reshaped or
+    /// switched on or off, so a query filtered to `mask` returns what it returned while this
+    /// value holds.
+    pub fn layers_version(&self, mask: u32) -> u64 {
+        self.layer_stamps
+            .iter()
+            .enumerate()
+            .filter(|(bit, _)| mask & (1 << bit) != 0)
+            .map(|(_, stamp)| *stamp)
+            .max()
+            .unwrap_or_default()
     }
 
     /// Colliders that are off because they reach outside the scene's bounds.
@@ -348,6 +385,7 @@ impl SceneColliderData {
             },
         );
 
+        stamp_layers(&mut self.layer_stamps, new_collider.collision_groups());
         let handle = self.collider_set.insert(new_collider);
         self.changed_colliders.insert(handle);
         self.scaled_collider.insert(id.to_owned(), handle);
@@ -463,6 +501,7 @@ impl SceneColliderData {
                     != (init_scale, init_rotation, init_translation)
                 {
                     self.changed_colliders.insert(handle);
+                    stamp_layers(&mut self.layer_stamps, collider.collision_groups());
 
                     let initial_transform = Transform {
                         translation: *init_translation,
@@ -508,6 +547,7 @@ impl SceneColliderData {
                 let enabled = state_mut.large_enough && state_mut.in_bounds;
                 if enabled != collider.is_enabled() {
                     collider.set_enabled(enabled);
+                    stamp_layers(&mut self.layer_stamps, collider.collision_groups());
                     // the bvh skips a collider that is off, so one turned off has to leave it
                     if enabled {
                         self.removed_colliders.remove(&handle);
@@ -1155,12 +1195,14 @@ impl SceneColliderData {
 
     pub fn remove_collider(&mut self, id: &ColliderId) {
         if let Some(handle) = self.scaled_collider.get_by_left(id) {
-            self.collider_set.remove(
+            if let Some(removed) = self.collider_set.remove(
                 *handle,
                 &mut self.dummy_rapier_structs.0,
                 &mut self.dummy_rapier_structs.1,
                 false,
-            );
+            ) {
+                stamp_layers(&mut self.layer_stamps, removed.collision_groups());
+            }
             self.removed_colliders.insert(*handle);
         }
 
