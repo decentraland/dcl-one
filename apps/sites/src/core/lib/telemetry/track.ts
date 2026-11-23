@@ -160,6 +160,18 @@ function runtimeEnv(name: string): string | undefined {
   return v && v !== "" ? v : undefined;
 }
 
+/**
+ * Fills the Sites transport keys `window.__DCL_PUBLIC__` lacks (a document rendered without the root
+ * loader publishes them empty) from values the server answered; a key already set is kept.
+ */
+export function adoptSitesSegmentConfig(config: { segmentWriteKey?: string; segmentApiHost?: string }): void {
+  if (typeof window === "undefined") return;
+  const w = window as unknown as { __DCL_PUBLIC__?: Record<string, string> };
+  const pub = (w.__DCL_PUBLIC__ ??= {});
+  if (!pub.SEGMENT_WRITE_KEY && config.segmentWriteKey) pub.SEGMENT_WRITE_KEY = config.segmentWriteKey;
+  if (!pub.SEGMENT_API_HOST && config.segmentApiHost) pub.SEGMENT_API_HOST = config.segmentApiHost;
+}
+
 function setting(
   name: "SEGMENT_WRITE_KEY" | "SHOP_SEGMENT_WRITE_KEY" | "SEGMENT_API_HOST",
 ): string | undefined {

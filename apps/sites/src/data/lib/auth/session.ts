@@ -3,6 +3,7 @@ import { check } from "@web-core/validate";
 import { AuthIdentitySchema } from "../persisted-schemas";
 
 import { isIdentityExpired } from "./expiry";
+import { signedOutElsewhere } from "./session-change";
 import { clearAllShared, clearShared, freshestShared, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
 import type { AuthIdentity } from "./types";
 import { clearWalletCookie, serializeWalletCookie, walletInCookies } from "./wallet-cookie";
@@ -177,8 +178,11 @@ function onStorage(e: StorageEvent) {
     }
   }
   if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY || shared)) {
+    const before = current;
     current = readStorage();
     syncWalletCookie(current);
+    // Signed out in another tab: this tab's page views stop naming the account at once.
+    if (before && !current) signedOutElsewhere();
     emit();
   }
 }
