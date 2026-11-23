@@ -3,8 +3,9 @@
 //! `/world/{name}/permissions`, `/contents/{hash}`) on a scratch database and a
 //! temp blob store: a complete
 //! pass with its marker, the read routes over the mirrored rows, an unchanged
-//! pass making no /about calls, a local publish refused (never overwritten,
-//! also when it lands mid-download), a world unlisted upstream retired, an
+//! pass making no /about calls, a newer local publish refused (never
+//! overwritten, also when it lands mid-download) and an older one replaced by
+//! the upstream's newer deployment (last deploy wins), a world unlisted upstream retired, an
 //! interrupted pass resumed from its persisted cursor, the loop/hash guards,
 //! and the deploy times, signed chains, world settings, thumbnails and access
 //! setting a pass copies, also for a world whose scenes are all held.
@@ -686,9 +687,9 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     );
     assert_eq!(node.pass_row("scenes").await.2, 2);
 
-    // 4. A local publish is refused, never overwritten, and stays served; the
-    //    mirrored scene written before it is retired, since the mirror never
-    //    refreshes the world again.
+    // 4. A local publish newer than the upstream's scenes is refused, never
+    //    overwritten, and stays served; the mirrored scene written before it is
+    //    retired, since the mirror does not refresh the world while it stands.
     sqlx::query(
         r#"INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
            VALUES ('a.dcl.eth', 'bafkreilocal', '[]', '{"pointers":["9,9"],"metadata":{"scene":{"base":"9,9"}}}', '0xabc', '{9,9}', 1, NULL)"#,
@@ -2358,6 +2359,337 @@ async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
     .await
     .unwrap();
     assert!(pinned.contains(&cid));
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+// ── last deploy wins against a local publish ───────────────────────────────
+
+const LOCAL_OWNER: &str = "0x00000000000000000000000000000000000000ab";
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// A local publish as `deploy_scene` leaves it: the world row local, the scene row with
+/// `timestamp` and `parcels`, and its place identity, which this returns.
+async fn publish_here(
+    pool: &PgPool,
+    world: &str,
+    id: &str,
+    parcels: &[&str],
+    timestamp: i64,
+) -> uuid::Uuid {
+    sqlx::query(
+        "INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2) \
+         ON CONFLICT (name) DO UPDATE SET mirror_source = NULL",
+    )
+    .bind(world)
+    .bind(LOCAL_OWNER)
+    .execute(pool)
+    .await
+    .unwrap();
+    let entity = json!({"timestamp": timestamp, "pointers": parcels,
+        "metadata": {"scene": {"base": parcels[0], "parcels": parcels}}});
+    sqlx::query(
+        r#"INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
+           VALUES ($1, $2, '[]', $3, '0xabc', $4::text[], 1, NULL)"#,
+    )
+    .bind(world)
+    .bind(id)
+    .bind(&entity)
+    .bind(parcels)
+    .execute(pool)
+    .await
+    .unwrap();
+    let parcels: Vec<String> = parcels.iter().map(|p| p.to_string()).collect();
+    let mut conn = pool.acquire().await.unwrap();
+    catalyst::explore::places::scene_identity::assign(&mut conn, world, id, &parcels)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+/// Lists an upstream scene on `parcels` whose entity carries `timestamp`; returns its id and
+/// the bytes of its one file.
+fn deploy_upstream(
+    state: &mut Upstream,
+    world: &str,
+    title: &str,
+    parcels: &[&str],
+    timestamp: i64,
+) -> (String, Vec<u8>) {
+    let file = format!("{title}()").into_bytes();
+    let mut entity = scene_entity(state, world, title, parcels[0], &[("game.js", &file)]);
+    entity["timestamp"] = json!(timestamp);
+    entity["pointers"] = json!(parcels);
+    entity["metadata"]["scene"]["parcels"] = json!(parcels);
+    (push_scene(state, world, entity), file)
+}
+
+async fn world_mirror_source(pool: &PgPool, world: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT mirror_source FROM worlds.worlds WHERE name = $1")
+        .bind(world)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn active_identity(pool: &PgPool, world: &str, id: &str) -> Option<uuid::Uuid> {
+    sqlx::query_scalar(
+        "SELECT identity FROM explore.world_scene_place WHERE world_name = $1 AND entity_id = $2 AND active",
+    )
+    .bind(world)
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
+async fn retired_ids(pool: &PgPool, world: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT entity_id FROM worlds.retired_world_scenes WHERE world_name = $1 ORDER BY entity_id",
+    )
+    .bind(world)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// The whole world is compared: an upstream scene newer than every local one replaces them all,
+/// the one it partly overlaps (whose place identity it keeps) and the one it does not touch, as a
+/// newer publish replaces every mirrored scene. A second pass changes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_newer_upstream_deployment_replaces_a_local_publish_once() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "supersede").await;
+    let world = "n.dcl.eth";
+    let now = now_ms();
+    let overlapped = publish_here(
+        &node.pool,
+        world,
+        "bafkreilocaloverlapped",
+        &["0,0", "1,0"],
+        now - 3_600_000,
+    )
+    .await;
+    publish_here(
+        &node.pool,
+        world,
+        "bafkreilocalaside",
+        &["5,5"],
+        now - 7_200_000,
+    )
+    .await;
+    let (upstream, file) = deploy_upstream(
+        &mut fake.state.lock(),
+        world,
+        "U",
+        &["1,0", "2,0"],
+        now - 600_000,
+    );
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.superseded_local
+        ),
+        (1, 0, 2),
+        "{summary:?}"
+    );
+    assert_eq!(
+        node.scene_rows(world).await,
+        vec![(
+            upstream.clone(),
+            ZERO_ADDRESS.to_string(),
+            Some(fake.base.clone())
+        )]
+    );
+    assert_eq!(
+        world_mirror_source(&node.pool, world).await,
+        Some(fake.base.clone())
+    );
+    assert_eq!(
+        retired_ids(&node.pool, world).await,
+        vec!["bafkreilocalaside", "bafkreilocaloverlapped"],
+        "the local scenes are retired as a replacing publish retires them"
+    );
+    assert_eq!(
+        active_identity(&node.pool, world, &upstream).await,
+        Some(overlapped),
+        "the scene overlapping exactly one local scene keeps its place identity"
+    );
+    assert!(node.storage.exist(&hash_bytes_v1(&file)).await.unwrap());
+    let stamps = |pool: PgPool| async move {
+        sqlx::query_as::<_, (String, chrono::NaiveDateTime)>(
+            "SELECT entity_id, updated_at FROM worlds.world_scenes WHERE world_name = $1",
+        )
+        .bind(world)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stamps(node.pool.clone()).await;
+
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (
+            summary.scenes.unchanged,
+            summary.scenes.synced,
+            summary.scenes.superseded_local
+        ),
+        (1, 0, 0),
+        "{summary:?}"
+    );
+    assert_eq!(
+        stamps(node.pool.clone()).await,
+        before,
+        "a second pass writes no scene"
+    );
+    assert_eq!(retired_ids(&node.pool, world).await.len(), 2);
+    assert_eq!(
+        active_identity(&node.pool, world, &upstream).await,
+        Some(overlapped)
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// An upstream scene older than a local one it partly overlaps leaves the world local, pass
+/// after pass, without downloading it; so does one dated in the future past its listed deploy
+/// time, which counts at that deploy time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_older_upstream_deployment_leaves_a_local_publish() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "older").await;
+    let now = now_ms();
+    publish_here(
+        &node.pool,
+        "o.dcl.eth",
+        "bafkreilocalo",
+        &["0,0", "1,0"],
+        now - 600_000,
+    )
+    .await;
+    publish_here(
+        &node.pool,
+        "f.dcl.eth",
+        "bafkreilocalf",
+        &["0,0"],
+        now - 600_000,
+    )
+    .await;
+    let (older, older_file, future_file) = {
+        let mut st = fake.state.lock();
+        let (older, older_file) =
+            deploy_upstream(&mut st, "o.dcl.eth", "O", &["1,0", "2,0"], now - 3_600_000);
+        let (future, future_file) =
+            deploy_upstream(&mut st, "f.dcl.eth", "F", &["0,0"], now + 86_400_000);
+        let listed = chrono::DateTime::from_timestamp_millis(now - 3_600_000).unwrap();
+        scene_mut(&mut st, "f.dcl.eth", &future).created_at = Some(listed.to_rfc3339());
+        (older, older_file, future_file)
+    };
+
+    let ctx = node.ctx().await;
+    for _ in 0..2 {
+        let summary = node.pass(&ctx).await;
+        assert_eq!(
+            (
+                summary.scenes.refused,
+                summary.scenes.synced,
+                summary.scenes.superseded_local
+            ),
+            (2, 0, 0),
+            "{summary:?}"
+        );
+        assert_eq!(
+            node.scene_rows("o.dcl.eth").await,
+            vec![("bafkreilocalo".to_string(), "0xabc".to_string(), None)]
+        );
+        assert_eq!(
+            node.scene_rows("f.dcl.eth").await,
+            vec![("bafkreilocalf".to_string(), "0xabc".to_string(), None)]
+        );
+        assert_eq!(world_mirror_source(&node.pool, "o.dcl.eth").await, None);
+        assert_eq!(world_mirror_source(&node.pool, "f.dcl.eth").await, None);
+    }
+    assert!(retired_ids(&node.pool, "o.dcl.eth").await.is_empty());
+    for (file, what) in [(older_file, "older"), (future_file, "future-dated")] {
+        assert!(
+            !node.storage.exist(&hash_bytes_v1(&file)).await.unwrap(),
+            "the {what} scene's files are never fetched"
+        );
+    }
+    assert!(!node.storage.exist(&older).await.unwrap());
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Equal timestamps go to the byte-wise greater entity id, as a publish orders them; the same
+/// entity on both sides (a publish this node forwarded, an imported row) keeps the world local.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn equal_timestamps_go_to_the_greater_entity_id() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "tie").await;
+    let at = now_ms() - 3_600_000;
+    // Every upstream id starts `bafkrei`: `bafkrea…` sorts before it, `bafkrez…` after.
+    publish_here(&node.pool, "lower.dcl.eth", "bafkrealocal", &["0,0"], at).await;
+    publish_here(&node.pool, "higher.dcl.eth", "bafkrezlocal", &["0,0"], at).await;
+    let (lower_up, same_up) = {
+        let mut st = fake.state.lock();
+        let (lower_up, _) = deploy_upstream(&mut st, "lower.dcl.eth", "L", &["0,0"], at);
+        deploy_upstream(&mut st, "higher.dcl.eth", "H", &["0,0"], at);
+        let (same_up, _) = deploy_upstream(&mut st, "same.dcl.eth", "S", &["0,0"], at);
+        (lower_up, same_up)
+    };
+    publish_here(&node.pool, "same.dcl.eth", &same_up, &["0,0"], at).await;
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (
+            summary.scenes.synced,
+            summary.scenes.refused,
+            summary.scenes.superseded_local
+        ),
+        (1, 2, 1),
+        "{summary:?}"
+    );
+    assert_eq!(
+        node.scene_rows("lower.dcl.eth").await,
+        vec![(lower_up, ZERO_ADDRESS.to_string(), Some(fake.base.clone()))],
+        "the upstream's greater id wins the tie"
+    );
+    assert_eq!(
+        node.scene_rows("higher.dcl.eth").await,
+        vec![("bafkrezlocal".to_string(), "0xabc".to_string(), None)],
+        "the local greater id keeps the world"
+    );
+    assert_eq!(
+        node.scene_rows("same.dcl.eth").await,
+        vec![(same_up, "0xabc".to_string(), None)],
+        "the same entity stays the local publish"
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

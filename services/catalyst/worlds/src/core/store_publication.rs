@@ -58,8 +58,8 @@ pub async fn ensure_world(
 /// rule (`scene_identity`). A world this node only mirrored
 /// becomes local here: every mirrored scene goes, overlapping or not, and
 /// the world row's `mirror_source` is cleared in the same transaction, so
-/// the row says what its scenes are (the mirror refuses to write a world
-/// with a local scene from then on, `worlds::mirror`).
+/// the row says what its scenes are (the mirror leaves the world local until
+/// the upstream deploys a newer scene, `worlds::mirror`).
 /// The refusal for the first key the scene names that the store no longer holds.
 async fn missing_stored_file(
     storage: &Storage,
@@ -455,6 +455,54 @@ pub async fn newer_scene_deployed(
     .bind(timestamp)
     .fetch_one(conn)
     .await
+}
+
+/// Whether a locally published scene of `world` (its key) stands against the upstream's newest
+/// deployment `(timestamp, entity_id)` (`None`: none with a usable time), so the worlds mirror
+/// leaves the world local. A local scene counts at the lower of its entity timestamp and its
+/// row's write, its write alone without a numeric timestamp (as [`newer_scene_deployed`]
+/// stores it); it stands when that is later, on a tie when its entity id is byte-wise greater
+/// or equal, and always when it is the same entity.
+pub async fn local_scene_stands(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    upstream: Option<(f64, &str)>,
+) -> Result<bool, sqlx::Error> {
+    let (timestamp, entity_id) = upstream.unzip();
+    sqlx::query_scalar(
+        r#"WITH local AS (
+             SELECT entity_id,
+                    LEAST(CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
+                               THEN (entity->>'timestamp')::float8 END,
+                          (extract(epoch FROM updated_at) * 1000)::float8) AS ts
+             FROM worlds.world_scenes
+             WHERE world_name = $1 AND mirror_source IS NULL)
+           SELECT EXISTS (SELECT 1 FROM local
+             WHERE $2::float8 IS NULL OR entity_id = $3 OR ts > $2::float8
+                OR (ts = $2::float8 AND entity_id COLLATE "C" > $3))"#,
+    )
+    .bind(world)
+    .bind(timestamp)
+    .bind(entity_id)
+    .fetch_one(conn)
+    .await
+}
+
+/// Retires (into `worlds.retired_world_scenes`, as a replacing publish does) every locally
+/// published scene of `world` (its key) but `keep`, the ids the caller writes in their place.
+pub async fn retire_local_scenes(
+    conn: &mut sqlx::PgConnection,
+    world: &str,
+    keep: &[&str],
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(retiring!(
+        "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NULL AND entity_id <> ALL($2::text[])"
+    ))
+    .bind(world)
+    .bind(keep)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
