@@ -181,7 +181,7 @@ impl Plugin for AvatarRenderPlugin {
         app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
-        app.init_resource::<processing_timing::AvatarProcessingRun>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -233,7 +233,6 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(pause_hidden::PauseHiddenAvatarsPlugin);
-        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_systems(
             Update,
             (
@@ -1507,9 +1506,7 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
-    #[cfg(any(feature = "explorer", test))]
     let started = bevy::platform::time::Instant::now();
-    #[cfg(any(feature = "explorer", test))]
     let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
@@ -1526,10 +1523,7 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
-        #[cfg(any(feature = "explorer", test))]
-        {
-            processed += 1;
-        }
+        processed += 1;
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
@@ -2134,9 +2128,7 @@ fn process_avatar(
         });
     }
     *run = processing_timing::AvatarProcessingRun {
-        #[cfg(any(feature = "explorer", test))]
         spent: started.elapsed(),
-        #[cfg(any(feature = "explorer", test))]
         processed,
     };
 }

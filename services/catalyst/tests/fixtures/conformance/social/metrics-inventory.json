@@ -887,7 +887,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/metrics.rs",
-          "line": 162,
+          "line": 173,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1026,7 +1026,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/service/mod.rs",
-          "line": 187,
+          "line": 188,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [

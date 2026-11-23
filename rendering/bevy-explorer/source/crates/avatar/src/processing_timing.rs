@@ -1,68 +1,51 @@
 //! What avatar processing (`process_avatar`) takes of a frame.
 //!
-//! The renderer reports each run into [`AvatarProcessingRun`]. The Explorer measures it into the
-//! `instantiation/avatar_processing` diagnostic ([`AvatarProcessingTimingPlugin`]). Nothing limits
-//! avatar processing: `docs/guidelines/decisions.md` has the measurement behind that.
+//! The renderer reports each run into [`AvatarProcessingRun`]. Its timing plugin records the
+//! result in the `instantiation/avatar_processing` diagnostic.
+//! `docs/guidelines/decisions.md` explains why avatar processing has no frame budget.
 
-#[cfg(any(feature = "explorer", test))]
 use std::time::Duration;
 
-use bevy::prelude::*;
+use bevy::{
+    diagnostic::{Diagnostic, Diagnostics, RegisterDiagnostic},
+    prelude::*,
+};
+use common::perf::AVATAR_PROCESSING;
 
 /// The last run of `process_avatar`.
 #[derive(Resource, Default)]
 pub(crate) struct AvatarProcessingRun {
     /// How long it took.
-    #[cfg(any(feature = "explorer", test))]
     pub(crate) spent: Duration,
     /// The avatars it processed.
-    #[cfg(any(feature = "explorer", test))]
     pub(crate) processed: usize,
 }
 
-#[cfg(feature = "explorer")]
-pub(crate) use explorer::AvatarProcessingTimingPlugin;
+/// A frame's avatar processing is logged from this long.
+const LOGGED_FROM: Duration = Duration::from_millis(1);
 
-#[cfg(feature = "explorer")]
-mod explorer {
-    use std::time::Duration;
+pub(crate) struct AvatarProcessingTimingPlugin;
 
-    use bevy::{
-        diagnostic::{Diagnostic, Diagnostics, RegisterDiagnostic},
-        prelude::*,
-    };
-    use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
-
-    use super::AvatarProcessingRun;
-
-    /// A frame's avatar processing is logged from this long.
-    const LOGGED_FROM: Duration = Duration::from_millis(1);
-
-    pub(crate) struct AvatarProcessingTimingPlugin;
-
-    impl Plugin for AvatarProcessingTimingPlugin {
-        fn build(&self, app: &mut App) {
-            app.register_diagnostic(Diagnostic::new(AVATAR_PROCESSING).with_suffix("ms"))
-                // `process_avatar` ran in `Update`: no ordering against it is needed here
-                .add_systems(PostUpdate, measure_avatar_processing);
-        }
+impl Plugin for AvatarProcessingTimingPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<AvatarProcessingRun>()
+            .register_diagnostic(Diagnostic::new(AVATAR_PROCESSING).with_suffix("ms"))
+            // `process_avatar` ran in `Update`: no ordering against it is needed here
+            .add_systems(PostUpdate, measure_avatar_processing);
     }
+}
 
-    /// Measures what `process_avatar` took this frame; with `spawn_timing=debug` in the log
-    /// filter, logs a frame that took a millisecond or more.
-    pub(super) fn measure_avatar_processing(
-        run: Res<AvatarProcessingRun>,
-        mut diagnostics: Diagnostics,
-    ) {
-        let milliseconds = run.spent.as_secs_f64() * 1000.0;
-        diagnostics.add_measurement(&AVATAR_PROCESSING, || milliseconds);
-        if run.spent >= LOGGED_FROM {
-            debug!(
-                target: "spawn_timing",
-                "avatar processing this frame: {milliseconds:.1} ms for {} avatars",
-                run.processed,
-            );
-        }
+/// Measures what `process_avatar` took this frame; with `spawn_timing=debug` in the log
+/// filter, logs a frame that took a millisecond or more.
+fn measure_avatar_processing(run: Res<AvatarProcessingRun>, mut diagnostics: Diagnostics) {
+    let milliseconds = run.spent.as_secs_f64() * 1000.0;
+    diagnostics.add_measurement(&AVATAR_PROCESSING, || milliseconds);
+    if run.spent >= LOGGED_FROM {
+        debug!(
+            target: "spawn_timing",
+            "avatar processing this frame: {milliseconds:.1} ms for {} avatars",
+            run.processed,
+        );
     }
 }
 

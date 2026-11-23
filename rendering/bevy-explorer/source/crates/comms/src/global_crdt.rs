@@ -2198,6 +2198,65 @@ mod tests {
         assert!(topics_rx.try_recv().is_err());
     }
 
+    #[test]
+    fn unpublished_own_profile_does_not_delay_peer_version_events() {
+        use crate::profile::{process_profile_events, CurrentUserProfile, ProfileCache};
+        use bevy::asset::{io::memory::MemoryAssetReader, AssetPlugin};
+        use ipfs::{IpfsIo, IpfsResource};
+
+        let (mut app, context) = presence_app();
+        let owner = Address::repeat_byte(7);
+        let mut wallet = wallet::Wallet::default();
+        wallet.finalize_remote(owner, owner, vec![], false);
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .insert_resource(wallet)
+            .init_resource::<CurrentUserProfile>()
+            .init_resource::<ProfileCache>()
+            .insert_resource(IpfsResource {
+                inner: Arc::new(IpfsIo::new(
+                    false,
+                    Box::new(MemoryAssetReader { root: default() }),
+                    None,
+                    default(),
+                    1,
+                    mpsc::unbounded_channel().0,
+                )),
+            })
+            .add_systems(Update, process_profile_events);
+        let transport = spawn_transport(&mut app, context);
+        queue_joined(&mut app, context, transport, Address::repeat_byte(8));
+        app.update();
+        let peer = app
+            .world_mut()
+            .query_filtered::<Entity, With<ForeignPlayer>>()
+            .single(app.world())
+            .unwrap();
+
+        for event in [
+            ProfileEventType::Request {
+                request: rfc4::ProfileRequest {
+                    address: format!("{owner:#x}"),
+                    ..default()
+                },
+                transport,
+            },
+            ProfileEventType::Version(rfc4::AnnounceProfileVersion { profile_version: 3 }),
+        ] {
+            app.world_mut().send_event(ProfileEvent {
+                sender: peer,
+                event,
+            });
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<ForeignPlayer>(peer)
+                .unwrap()
+                .profile_version,
+            3
+        );
+    }
+
     /// Each foreign player's presence set.
     fn foreign_players(app: &mut App) -> Vec<HashSet<Entity>> {
         app.world_mut()

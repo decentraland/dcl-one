@@ -1,0 +1,18 @@
+name       = "boimp"
+upstream   = "https://github.com/robtfm/boimp"
+commit     = "dd1953bf0ccb1cbf692b75b000b940fbfeb34f72"
+ref        = "feat/composite-bake-via-storage-texture"
+origin     = "https://github.com/robtfm/boimp"
+origin_rev = "dd1953bf0ccb1cbf692b75b000b940fbfeb34f72"
+license    = "MIT OR Apache-2.0"
+paths      = [
+    "Cargo.toml",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "src",
+]
+exclude    = []
+base_tree  = "9e1708c6f6217d92ecf8356d2f19582fb278b5bb"
+tree       = "a14e9c8b4f733254b307e3bf5523e3702ab03970"
+rev        = "fb8df51cf64664a8e3987b0ae585f68d80f4b3ff"
+nix_hash   = "sha256-Sa+LZQ2wxt4jsCrvUU4Cln5Gr0iqBuC3JDe5EcAluRQ="

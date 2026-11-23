@@ -12,7 +12,7 @@ type EngineWindow = Window & {
   engine_console_command?: (line: string) => Promise<string>
   __bevyReadyToLaunch?: boolean
   __bevyLaunch?: (realm?: string, position?: string, host?: LaunchHostOptions) => void
-  __bevyHomeScene?: () => { realm: string | null; parcel: string } | null
+  __bevyHomeScene?: () => { realm: string | null; parcel: string; pinned: boolean } | null
   __bevyTermsAccepted?: () => boolean | null
   __bevyLoadProgress?: number
   __bevyLoadStep?: string | null
@@ -65,11 +65,11 @@ export class EngineRpc {
     this.win?.__bevyLaunch?.(realm, position, host)
   }
 
-  /** The engine's persisted home scene: the pinned realm (null = none pinned; the caller uses
-   *  its own default realm) + "x,y" parcel. Available alongside readyToLaunch — i.e. BEFORE
+  /** The home that applies at startup: the pinned realm (null = none pinned; the caller uses
+   *  its own default realm), the "x,y" parcel and whether a home is pinned. Available alongside readyToLaunch — i.e. BEFORE
    *  launch, which is what lets the places picker's Skip target home. Null until the engine
    *  module is up. */
-  homeScene(): { realm: string | null; parcel: string } | null {
+  homeScene(): { realm: string | null; parcel: string; pinned: boolean } | null {
     return this.win?.__bevyHomeScene?.() ?? null
   }
 

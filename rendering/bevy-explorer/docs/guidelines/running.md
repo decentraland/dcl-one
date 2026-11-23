@@ -318,6 +318,16 @@ State, in every build:
   `closed` event is still to come; such a scene's next request is `WAS_ALREADY_OPEN`). No price,
   balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
   `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
+- `/home_state`: the home as JSON, the Home debug section's source: `account` (the signed-in
+  wallet address, the key of its home; `null` before sign-in and for a guest with no account),
+  `pinned` (that account's home as
+  `<realm> x,y`; `null` when it has none), `startup` (the home the engine starts in: the stored
+  sign-in's account's, else the last account's), `lastAccount` (the account a home was last read
+  for) and `unadopted` (true while the config still holds a home kept for no account, which the
+  first account to sign in takes). Reading it writes nothing. `/home_clear` takes the signed-in
+  account's home back, and refuses when no account is signed in or the account has no home. The
+  HUD is not told: its home pin and Set as Home stay on until it reads the home again (the lobby
+  opening, a Set as Home press, a reload).
 - `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
   social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
   platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,

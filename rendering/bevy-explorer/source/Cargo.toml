@@ -289,12 +289,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
 ] }
 kira = "0.9.6"
-zip = { version = "2", default-features = false }
-# the browser leg reads deflated zips; zip 2 would pull zopfli for that and the lock holds
-# none, while this release is in the lock with flate2
-zip06 = { package = "zip", version = "0.6", default-features = false, features = [
-  "deflate",
-] }
+zip = { version = "9", default-features = false }
 image = "0.25"
 multipart = { version = "0.18.0", default-features = false, features = [
   "client",
@@ -341,7 +336,8 @@ rand = "0.8.5"
 futures-util = "0.3.28"
 futures-channel = "0.3"
 async-native-tls = { version = "0.5", features = ["runtime-async-std"] }
-boimp = { path = "../vendor/boimp" }
+# Not on crates.io. The rev is the commit that ../patches/boimp/source.toml names.
+boimp = { git = "https://github.com/decentraland/dcl-one", rev = "fb8df51cf64664a8e3987b0ae585f68d80f4b3ff" }
 crc = "3"
 num-traits = "0.2"
 async-compat = "0.2"

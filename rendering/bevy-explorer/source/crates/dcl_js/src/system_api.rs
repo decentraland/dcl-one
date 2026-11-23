@@ -21,10 +21,10 @@ use system_bridge::{
     FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
     ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
     PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetItemPurchaseState,
-    SetPermanentPermission, SetSinglePermission, SystemApi, TextureOptimizationStatus,
-    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
-    WorldAccessVerdict,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
+    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent, WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -234,16 +234,20 @@ pub async fn op_kernel_fetch_headers(
 
 pub async fn op_set_avatar(
     state: Rc<RefCell<impl State>>,
+    owner: String,
     avatar: SetAvatarData,
-) -> Result<u32, anyhow::Error> {
+) -> Result<SetAvatarResult, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("setAvatar is only available to the system scene");
+    }
     let (sx, rx) = RpcResultSender::channel();
 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetAvatar(avatar, sx))?;
+        .send(SystemApi::SetAvatar(owner, avatar, sx))?;
 
-    rx.await?.map_err(|e| anyhow::anyhow!(e))
+    Ok(rx.await?)
 }
 
 pub async fn op_deploy_outfits(
@@ -476,7 +480,20 @@ pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }))
+        .send(SystemApi::SetHomeScene(HomeScene {
+            realm,
+            parcel,
+            pinned: true,
+            pinnable: true,
+        }))
+        .unwrap();
+}
+
+pub fn op_clear_home_scene(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::ClearHomeScene)
         .unwrap();
 }
 
@@ -722,9 +739,8 @@ pub async fn op_read_bridge_stream(
     Ok(read_stream(state, rid).await.unwrap_or_default())
 }
 
-/// Any user's full profile (own, nearby, or remote) as the engine holds it, resolved through the
-/// same cache and fetch cascade as nametags and `getPlayerData` — but unlike the latter, not
-/// squeezed into the SDK's `UserData`, so `extra_fields`, `name_color` and emotes survive.
+/// The local player's last confirmed profile, or a nearby or remote player's full profile
+/// resolved through the same cache and fetch cascade as nametags and `getPlayerData`.
 /// Rejects once the cascade has concluded with nothing.
 /// Only the system scene may call it (the web worker exposes every op to every scene): other
 /// scenes read players through `getPlayerData`.
@@ -743,9 +759,9 @@ pub async fn op_get_user_profile(
 
     state
         .borrow_mut()
-        .borrow_mut::<RpcCalls>()
-        .push(RpcCall::GetUserData {
-            user: Some(address),
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetUserProfile {
+            address,
             response: sx,
         })?;
 
@@ -1804,7 +1820,7 @@ mod profile_read_tests {
     use crate::test_state::TestState;
     use futures_lite::future::{block_on, poll_once};
 
-    fn scene(system: bool) -> Rc<RefCell<TestState>> {
+    fn ordinary_scene() -> Rc<RefCell<TestState>> {
         let mut state = TestState::default();
         state.put(RpcCalls::default());
         state.put(CrdtContext::new(
@@ -1815,29 +1831,80 @@ mod profile_read_tests {
             false,
             false,
         ));
-        if system {
-            state.put(SuperUserScene(tokio::sync::mpsc::unbounded_channel().0));
-        }
         Rc::new(RefCell::new(state))
     }
 
     #[test]
     fn the_system_scene_reads_profiles() {
-        let state = scene(true);
-        let full = op_get_user_profile(state.clone(), "0x1".to_owned());
-        assert!(block_on(poll_once(full)).is_none());
+        let state = ordinary_scene();
+        let (system, mut events) = tokio::sync::mpsc::unbounded_channel();
+        state.borrow_mut().put(SuperUserScene(system));
+        let mut full = std::pin::pin!(op_get_user_profile(state.clone(), "0x1".to_owned()));
+        assert!(block_on(poll_once(full.as_mut())).is_none());
+        assert!(state.borrow().borrow::<RpcCalls>().is_empty());
+        let SystemApi::GetUserProfile { address, response } = events.try_recv().unwrap() else {
+            panic!("expected a profile read on the system channel");
+        };
+        assert_eq!(address, "0x1");
+        let profile = SerializedProfile::default();
+        response.send(Ok(profile.clone()));
+        assert_eq!(block_on(full).unwrap(), profile);
+
         let compact = op_get_compact_profiles(state.clone(), vec!["0x1".to_owned()]);
         assert!(block_on(poll_once(compact)).is_none());
 
         let state = state.borrow();
         let calls = state.borrow::<RpcCalls>();
-        assert!(matches!(calls[0], RpcCall::GetUserData { .. }));
-        assert!(matches!(calls[1], RpcCall::GetCompactProfiles { .. }));
+        assert!(matches!(calls[0], RpcCall::GetCompactProfiles { .. }));
+    }
+
+    #[test]
+    fn a_save_preserves_the_observed_owner_and_serializes_a_committed_profile_on_failure() {
+        let state = ordinary_scene();
+        let (system, mut events) = tokio::sync::mpsc::unbounded_channel();
+        state.borrow_mut().put(SuperUserScene(system));
+        let owner = "0xabcdef0000000000000000000000000000000001";
+        let patch = serde_json::from_value(serde_json::json!({})).unwrap();
+        let mut save = std::pin::pin!(op_set_avatar(state, owner.to_owned(), patch));
+        assert!(block_on(poll_once(save.as_mut())).is_none());
+        let SystemApi::SetAvatar(observed, _, response) = events.try_recv().unwrap() else {
+            panic!("expected a profile edit");
+        };
+        assert_eq!(observed, owner);
+        let profile = SerializedProfile {
+            eth_address: owner.to_owned(),
+            name: "Saved name".to_owned(),
+            version: 3,
+            ..Default::default()
+        };
+        response.send(Err(system_bridge::SetAvatarError {
+            message: "deploy failed".to_owned(),
+            account_changed: false,
+            profile: Some(Box::new(profile.clone())),
+        }));
+        let result = block_on(save).unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({ "Err": { "message": "deploy failed", "accountChanged": false, "profile": profile } })
+        );
+    }
+
+    #[test]
+    fn ordinary_identity_reads_keep_the_scene_profile() {
+        let state = ordinary_scene();
+        let own = crate::user_identity::op_get_user_data(state.clone());
+        let player = crate::user_identity::op_get_player_data(state.clone(), "0x1".into());
+        assert!(block_on(poll_once(own)).is_none());
+        assert!(block_on(poll_once(player)).is_none());
+        let state = state.borrow();
+        let calls = state.borrow::<RpcCalls>();
+        assert!(matches!(&calls[0], RpcCall::GetUserData { user: None, .. }));
+        assert!(matches!(&calls[1], RpcCall::GetUserData { user: Some(id), .. } if id == "0x1"));
     }
 
     #[test]
     fn an_ordinary_scene_reads_no_profiles() {
-        let state = scene(false);
+        let state = ordinary_scene();
         let address = || "0x1".to_owned();
         assert!(block_on(op_get_user_profile(state.clone(), address())).is_err());
         assert!(block_on(op_get_compact_profiles(state.clone(), vec![address()])).is_err());

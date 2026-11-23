@@ -925,6 +925,11 @@ impl PreAuthAdmission {
     }
 
     pub fn try_admit(&mut self, peer_index: u32, ip: &str) -> AdmitResult {
+        let canonical = ip
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .map(|addr| addr.to_canonical().to_string());
+        let ip = canonical.as_deref().unwrap_or(ip);
         let per_ip = *self.per_ip_counts.get(ip).unwrap_or(&0);
 
         if self.per_ip_cap > 0 && per_ip >= self.per_ip_cap {
@@ -972,8 +977,6 @@ pub fn pre_auth_refusal_reason(result: AdmitResult) -> Option<DisconnectReason> 
 }
 
 pub const DEFAULT_PRE_AUTH_BUDGET: i64 = 512;
-
-pub const DEFAULT_PRE_AUTH_BUDGET_WT: i64 = 512;
 
 pub const DEFAULT_MAX_CONCURRENT_PRE_AUTH_PER_IP: i64 = 32;
 

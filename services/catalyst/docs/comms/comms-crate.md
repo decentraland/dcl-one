@@ -151,25 +151,28 @@ unverified pending acceptance evidence.
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
 re-announce sweep's 30 s cadence), beyond it 503 with `Retry-After: 5`; sockets that have not
-completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter); when
-that share is full a new socket closes the oldest pending one instead of being refused, so
-handshakes held open cannot refuse new joins. An evicted handshake closes without a close frame,
-like one past its deadline; the Explorer (`rendering/bevy-explorer`, `comms/src/archipelago.rs`)
-treats that, a 503 on the upgrade and any other handshake failure alike as transient and
-reconnects after 1, 2, 4, then 5 s, and does not read `Retry-After` on `/ws`.
+completed the handshake hold at most `WS_MAX_PENDING_HANDSHAKES` of it (default a quarter).
+A full pending share makes room for an otherwise admissible socket by closing the oldest
+pending handshake without a close frame, as at the handshake deadline. The Bevy Explorer
+treats an eviction or an HTTP 429 or 503 on upgrade as transient. It reconnects after 1, 2, 4,
+then 5 s and ignores `Retry-After` on `/ws`.
 `comms_ws_pending_evictions_total` counts evictions (a steady rate under normal load means the
 share is too small for the join rate) and `comms_ws_pending_handshakes` the sockets in the
 handshake. Each client source, counted like the per-source socket cap, holds at most
 `WS_MAX_PENDING_HANDSHAKES_PER_IP` pending handshakes (default 8, 0 unlimited), beyond that 429;
 a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (default 10 s) of opening and its signed challenge
 within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
-`WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64)
-attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
-list, or no `X-Real-IP`) is not counted, logs one warning and increments
-`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
-for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; one 64-item output budget across assignment mailboxes, validation and the physical writer;
-accepted assignments retain arrival order, exhaustion rejects new mailbox assignments, and
-`kicked` has a separate terminal slot. Full for 10 s closes
+`WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) limits sockets per attributable client
+source (IPv4 address or IPv6 /64), with 429 beyond the limit. Catalyst uses a valid `X-Real-IP`
+from a proxy in `HTTP_TRUSTED_PROXY_CIDRS` or the address of an unlisted public TCP peer.
+Both per-source limits skip upgrades without an attributable address. With
+`WS_MAX_SOCKETS_PER_IP` enabled, the first such upgrade logs a warning and each increments
+`comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_`
+series on `SERVE_METRICS_BIND`). Positions coalesce for ownership control to
+one per 500 ms. Statistical observations retain every decoded position. A flooding socket
+closes with 1008. Assignment mailboxes, validation and the physical writer share one
+64-item output budget. Accepted assignments retain arrival order. Exhaustion rejects new
+mailbox assignments, and `kicked` has a separate terminal slot. Full for 10 s closes
 with 1013, including when accepted mailbox work cannot advance during handler stalls,
 not only when the wire is slow. Direct output waiting for credit advances accepted mailbox
 work into the writer without taking another credit. Rejected assignments remain eligible
@@ -177,6 +180,22 @@ for the short reconciliation rounds even after older accepted assignments flush.
 `/stats/health` appends `feed_assignment_full`, counting rejected mailbox assignments;
 `feed_assignment_coalesced` remains zero for response compatibility.
 Undecodable frames close with 1007; restart closes every socket with 1012.
+
+**Connector capacity.** All connector mounts share the primary's socket budget.
+API replicas add read capacity for statistics. The pinned
+[standalone Archipelago connector](https://github.com/decentraland/archipelago-workers/blob/47d92d5621862a38e7fb35a733b668880a9e5375/ws-connector/src/controllers/handlers/ws-handler.ts#L43-L60)
+supports distributing sockets across replicas and has no equivalent socket admission
+caps. Catalyst bounds total socket use and the share each attributable client source
+can hold. Attributed players behind a shared NAT count against the same per-source
+limits and can receive 429 with `Retry-After: 5` while the primary still has free slots.
+
+Peak-load sizing remains open in [#1543](https://github.com/decentraland/dcl-one/issues/1543).
+Size the limits using a mounted primary behind the deployment's gateway. Verify that the
+gateway is in `HTTP_TRUSTED_PROXY_CIDRS` and supplies each client's `X-Real-IP`. With
+`WS_MAX_SOCKETS_PER_IP` enabled, confirm `comms_ws_unattributed_upgrades_total` stays flat
+during the run. Cover the expected peak of connected clients and bursts of joins and
+reconnects, including clients behind a shared NAT. Record the active socket count,
+handshake success and latency, upgrade 429 and 503 responses, and pending-handshake evictions.
 
 **Deployment.**
 - One primary is a release gate. Every API replica sets `FLEET_JOBS_ENABLED=false` (default true). Only the primary serves WebSockets; every serve supplies read-only statistics, about and realms from its retained complete snapshot. Stop the primary before its successor starts.
@@ -322,8 +341,13 @@ its protobuf types belong above Comms in the module layers.
 The version-1 envelope contains a process UUID and a tagged event: a normalized
 recipient plus friendship, block or private-call protobuf; community voice plus
 scope and optional excluded creator; community membership status; community
-deletion; or an immutable payload reference. The decoder checks version, kind,
-UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
+deletion; an accepted friendship's two wallets, which each replica announces to
+its own sockets from its own topology; or an immutable payload reference. The
+decoder checks version, kind, UUIDs, normalized wallet identities, status enums
+and the permitted protobuf arm. A message it rejects increments
+`social_event_delivery_dropped` (`undecodable_inbound`). During a rolling
+upgrade, a replica that predates an event kind rejects it, so its sockets miss
+that event until the replica is upgraded.
 Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
 and neither private parties nor closure notices can be added by another arm.
 Private acceptance reads the caller's credential before publishing ACCEPTED, then

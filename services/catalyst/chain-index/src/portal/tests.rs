@@ -574,3 +574,61 @@ async fn a_wide_page_is_held_to_the_absolute_line_cap() {
         Err(PortalError::TooLarge("lines"))
     ));
 }
+
+#[test]
+fn a_coverage_answer_is_decoded_or_refused_whole() {
+    let ok = json!({"schemaVersion": 1, "dataset": "polygon-mainnet", "chainId": 137,
+        "coverageRevision": "AB".repeat(32), "finalized": {"number": 150, "hash": h(150)},
+        "contracts": [{"address": "0x00000000000000000000000000000000000000A1", "from": 7}]});
+    let c = decode_coverage(&ok).unwrap();
+    assert_eq!(
+        (c.dataset.as_str(), c.chain_id, c.revision.as_str()),
+        ("polygon-mainnet", 137, "ab".repeat(32).as_str())
+    );
+    assert_eq!(
+        c.finalized,
+        Some(Head {
+            number: 150,
+            hash: h(150)
+        })
+    );
+    assert_eq!(c.from.get(A), Some(&7), "addresses are kept lowercase");
+    let mut none = ok.clone();
+    none["finalized"] = Value::Null;
+    assert_eq!(decode_coverage(&none).unwrap().finalized, None);
+    for (key, bad) in [
+        ("schemaVersion", json!(2)),
+        ("coverageRevision", json!("not-a-digest")),
+        ("chainId", json!("137")),
+        ("finalized", json!({"number": 150})),
+        (
+            "contracts",
+            json!([{"address": A, "from": 1}, {"address": A, "from": 2}]),
+        ),
+        ("contracts", json!([{"address": "0xnope", "from": 1}])),
+    ] {
+        let mut v = ok.clone();
+        v[key] = bad;
+        assert!(
+            matches!(decode_coverage(&v), Err(PortalError::Malformed(_))),
+            "{key}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_page_names_its_revision_only_when_it_is_a_digest() {
+    let page = |revision: &str| {
+        let body = format!("{}\n", json!({"header": header_line(10)}));
+        format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\n{REVISION_HEADER}: {revision}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    };
+    let (origin, _) = fake(vec![page(&"CD".repeat(32)), page("abc")]).await;
+    let r = PortalReader::new(&origin, "polygon-mainnet", None, 100.0).unwrap();
+    let named = r.page(10, 10, &[], false).await.unwrap();
+    assert_eq!(named.revision, Some("cd".repeat(32)));
+    let unnamed = r.page(10, 10, &[], false).await.unwrap();
+    assert_eq!(unnamed.revision, None);
+}

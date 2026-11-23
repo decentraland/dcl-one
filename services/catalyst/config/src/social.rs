@@ -231,7 +231,9 @@ pub struct SocialConfig {
     #[arg(long, env = "RESTRICTED_NAMES", default_value = "")]
     pub restricted_names: String,
 
-    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL.
+    /// Base of community thumbnail URLs (old CDN_URL); default PUBLIC_URL. Emitted URLs carry
+    /// `?v=<hash>` and are long-cached: a caching CDN here must key on the `v` parameter only
+    /// and strip other query parameters.
     #[arg(long, env = "COMMUNITIES_CDN_URL")]
     pub communities_cdn_url: Option<String>,
 

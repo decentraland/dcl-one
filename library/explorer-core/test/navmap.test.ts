@@ -535,9 +535,10 @@ describe('map panel handle', () => {
 
 describe('home', () => {
   it('reads a default-realm home as a parcel and any other realm as a world', () => {
-    expect(homeOf({ realm: null, parcel: '3,4' })).toEqual({ parcel: { x: 3, y: 4 }, world: null })
-    expect(homeOf({ realm: 'mansion.dcl.eth', parcel: '0,0' })).toEqual({ parcel: null, world: 'mansion.dcl.eth' })
+    expect(homeOf({ realm: null, parcel: '3,4', pinned: true })).toEqual({ parcel: { x: 3, y: 4 }, world: null })
+    expect(homeOf({ realm: 'mansion.dcl.eth', parcel: '0,0', pinned: true })).toEqual({ parcel: null, world: 'mansion.dcl.eth' })
     expect(homeOf(null)).toEqual(NO_HOME)
+    expect(homeOf({ realm: null, parcel: '0,0', pinned: false })).toEqual(NO_HOME)
   })
 
   it('counts any parcel of a place as home, and a world by its name', () => {
