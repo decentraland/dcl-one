@@ -827,7 +827,8 @@ describe("CommunityPage", () => {
         });
 
         it("should not join while the detail is open", async () => {
-          await act(async () => {});
+          // The member's standing has resolved: the card offers Join behind the dialog.
+          expect(await screen.findByRole("button", { name: "Join", hidden: true })).toBeTruthy();
           expect(net.joinCommunity).not.toHaveBeenCalled();
           expect(router.state.location.search).toBe("?event=ev-1");
         });

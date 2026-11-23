@@ -97,7 +97,7 @@ export function useCommunityEvents(
       if (id === eventId) return;
       const next = new URLSearchParams(location.search);
       // A sign-in return's action stays on the entry it arrived on: it is deferred until the visitor comes
-      // back to that entry (Close), and leaving the detail another way, or past the action's expiry, drops it.
+      // back to that entry (Close, or Back later), and runs only if that happens before the action expires.
       next.delete(ACTION_PARAM);
       next.delete(NONCE_PARAM);
       next.set(EVENT_PARAM, id);
