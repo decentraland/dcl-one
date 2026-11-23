@@ -5,7 +5,7 @@ import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@dcl/
 import { homeCopy } from "@/features/home/locale";
 import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
 import { parseCookies } from "@/core/lib/telemetry/session";
-import { AnimatedBackground } from "@dcl/one-ui/components/AnimatedBackground/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";

@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { AnimatedBackground } from "@dcl/one-ui/components/AnimatedBackground/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui";
 import SitesLayout from "../../components/chrome/SitesLayout";
 
 import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";

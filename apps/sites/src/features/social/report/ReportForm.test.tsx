@@ -24,7 +24,10 @@ vi.mock("@/data/lib/auth/context", () => ({
 vi.mock("../../components/chrome/SitesLayout", () => ({
   default: ({ children }: { children?: ReactNode }) => <>{children}</>,
 }));
-vi.mock("@dcl/one-ui/components/AnimatedBackground/AnimatedBackground", () => ({ AnimatedBackground: () => null }));
+vi.mock("@dcl/one-ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@dcl/one-ui")>()),
+  AnimatedBackground: () => null,
+}));
 
 afterEach(() => {
   cleanup();

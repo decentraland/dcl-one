@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { Button } from "@dcl/one-ui";
-import { AnimatedBackground } from "@dcl/one-ui/components/AnimatedBackground/AnimatedBackground";
+import { AnimatedBackground, Button } from "@dcl/one-ui";
 import { asset } from "../../asset";
 import { docsUrl } from "@web-core/docs";
 import SitesChrome from "../frames/SitesChrome";

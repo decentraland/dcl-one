@@ -6,7 +6,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import NotFoundPage from "./NotFoundPage";
 
 vi.hoisted(() => Object.assign(window, { __vite_plugin_react_preamble_installed__: true }));
-vi.mock("@dcl/one-ui/components/AnimatedBackground/AnimatedBackground", () => ({
+vi.mock("@dcl/one-ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@dcl/one-ui")>()),
   AnimatedBackground: () => <div data-testid="animated-background" />,
 }));
 
