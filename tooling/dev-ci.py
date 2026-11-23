@@ -251,6 +251,9 @@ def web_plan(event, base, head):
                    for path in paths for reference in references):
                 return {'run-web-unit-tests': True,
                         'reason': 'Frontend sources or helpers reference changed backend inputs'}
+        if all(path.startswith('apps/sites/src/') for path in paths):
+            return {'run-web-unit-tests': True,
+                    'reason': 'Sites source only; candidate for Sites units alone. Both suites still run'}
         return {
             'run-web-unit-tests': not backend_only,
             'reason': ('Known backend implementation changes only; contracts and smoke still run'
