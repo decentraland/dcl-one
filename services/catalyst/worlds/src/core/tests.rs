@@ -8210,7 +8210,7 @@ async fn the_quota_pass_blocks_owners_over_their_allowance_and_lifts_stale_block
 }
 
 #[tokio::test]
-async fn malformed_permission_allow_lists_leave_grants_unchanged() {
+async fn permission_allow_lists_reject_malformed_wallets_and_clear_on_null() {
     use super::notices::{PERMISSION_GRANTED, PERMISSION_REVOKED};
 
     let Some(f) = fixture().await else { return };
@@ -8233,11 +8233,7 @@ async fn malformed_permission_allow_lists_leave_grants_unchanged() {
             204,
         )
         .await;
-        for wallets in [
-            json!(other.display()),
-            Value::Null,
-            json!([other.display(), 42]),
-        ] {
+        for wallets in [json!(other.display()), json!([other.display(), 42])] {
             let invalid = json!({ "type": "allow-list", "wallets": wallets }).to_string();
             expect(
                 &f.app,
@@ -8253,8 +8249,23 @@ async fn malformed_permission_allow_lists_leave_grants_unchanged() {
                 json!([granted.address.as_str()]),
             );
         }
+
+        let clear = json!({ "type": "allow-list", "wallets": null }).to_string();
+        expect(
+            &f.app,
+            Case::new("post", &edit_path)
+                .signed_meta(&owner, &clear)
+                .await,
+            204,
+        )
+        .await;
+        let permissions = expect(&f.app, Case::new("get", &permissions_path), 200).await;
+        assert_eq!(permissions["permissions"][permission]["wallets"], json!([]));
     }
-    assert!(notices_of(&f, PERMISSION_REVOKED, &granted.address).is_empty());
+    assert_eq!(
+        notices_of(&f, PERMISSION_REVOKED, &granted.address).len(),
+        2
+    );
     assert!(notices_of(&f, PERMISSION_GRANTED, &other.address).is_empty());
 }
 

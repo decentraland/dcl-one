@@ -327,7 +327,7 @@ fn metadata_strings(meta: &Value, key: &str) -> Vec<String> {
 }
 
 fn metadata_wallets(meta: &Value) -> Result<Vec<Address>, ApiError> {
-    let Some(wallets) = meta.get("wallets") else {
+    let Some(wallets) = meta.get("wallets").filter(|wallets| !wallets.is_null()) else {
         return Ok(Vec::new());
     };
     wallets
