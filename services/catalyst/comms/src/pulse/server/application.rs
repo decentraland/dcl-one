@@ -55,6 +55,7 @@ impl PulseServer {
         let mut retire = VecDeque::from(retire);
         let mut retired = HashSet::new();
         let mut noticed = HashSet::new();
+        let mut departures = Ok(());
         loop {
             while let Some(peer) = retire.pop_front() {
                 if !retired.insert(peer) {
@@ -63,18 +64,18 @@ impl PulseServer {
                 if let Some(relay) = self.application_relay.as_mut() {
                     queue.extend(relay.disconnect(peer));
                 }
-                let notify = self.remove_peer_state(peer);
-                transports
+                let observers = self.remove_peer_state(peer);
+                let disconnected = transports
                     .disconnect_now(peer, DisconnectReason::AuthFailed.code())
-                    .await?;
+                    .await;
                 // ENet resets immediately and emits no local Disconnect callback. WT keeps
                 // its slot until its worker emits Disconnect, so retain that reservation.
-                if !transports.owns_wt(peer) {
+                if disconnected.is_ok() && !transports.owns_wt(peer) {
                     self.ip_limiter.release(peer);
                 }
-                if notify {
-                    self.notify_player_left(transports, peer).await?;
-                }
+                let departure = self.notify_player_left(transports, peer, observers).await;
+                departures = departures.and(departure);
+                disconnected?;
             }
             let Some(delivery) = queue.pop_front() else {
                 break;
@@ -130,7 +131,7 @@ impl PulseServer {
             }
         }
         transports.flush();
-        Ok(())
+        departures
     }
 }
 
@@ -439,6 +440,10 @@ mod tests {
                                 .unwrap()
                                 .message
                                 .unwrap();
+                            if matches!(message, server_message::Message::PlayerLeft(_)) {
+                                assert_eq!(packet.channel, channel::RELIABLE);
+                                assert!(packet.flags.is_reliable());
+                            }
                             if message == marker {
                                 *done = true;
                             } else {
@@ -463,6 +468,201 @@ mod tests {
             }
             seen
         }
+    }
+
+    fn avatar_initial_state(realm: &str) -> PlayerInitialState {
+        PlayerInitialState {
+            state: Some(Default::default()),
+            realm: realm.into(),
+            ..Default::default()
+        }
+    }
+
+    fn avatar(wallet: &str, realm: &str, duplicate_of: Option<u32>) -> Action {
+        Action::Authenticated {
+            wallet: wallet.into(),
+            session: String::new(),
+            duplicate_of,
+            initial_state: Some(Box::new(avatar_initial_state(realm))),
+            features: 0,
+        }
+    }
+
+    async fn admit_avatar_peer(rig: &mut Rig, peer: u32, action: Action, now: u32) {
+        rig.server
+            .connect_pending(peer, "127.0.0.1".into(), now)
+            .unwrap();
+        rig.server
+            .apply(&mut rig.transports, peer, action, now)
+            .await
+            .unwrap();
+    }
+
+    /// Expect the exact ordered join/leave stream for these subjects on each wire connection.
+    async fn assert_presence(rig: &mut Rig, subjects: &[u32], expected: &[(u32, &str, u32)]) {
+        let observed = rig.observe(&[]).await;
+        let mut actual = Vec::new();
+        for (&observer, events) in rig.peers.iter().zip(&observed) {
+            for event in events {
+                let Seen::Message(message) = event else {
+                    continue;
+                };
+                let (kind, subject) = match message.as_ref() {
+                    server_message::Message::PlayerJoined(join) => {
+                        ("joined", join.state.as_ref().unwrap().subject_id)
+                    }
+                    server_message::Message::PlayerLeft(left) => ("left", left.subject_id),
+                    _ => continue,
+                };
+                if subjects.contains(&subject) {
+                    actual.push((observer, kind, subject));
+                }
+            }
+        }
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn retained_view_disconnects_follow_joins_through_wallet_takeover_and_relay_retirement() {
+        // Only the observers need wire connections. The old and replacement players occupy
+        // distinct server slots while the old transport is closing.
+        let mut rig = Rig::connect(5).await;
+        let [near, far, subscribed, unsubscribed, closing] = rig.peers[..] else {
+            unreachable!()
+        };
+        let (old, replacement, pending) = (5, 6, 7);
+        let subjects = [old, replacement, pending];
+        let listener = |parcel| Action::AuthenticatedListener {
+            wallet: format!("listener-{parcel}"),
+            session: String::new(),
+            duplicate_of: None,
+            listener: Arc::new(SceneListenerState::from_parcels(
+                [("a".into(), [parcel].into_iter().collect())]
+                    .into_iter()
+                    .collect(),
+                &rig.server.encoder,
+                &SceneListenerCellMapper::new(&rig.server.grids, &rig.server.encoder),
+            )),
+            features: 0,
+        };
+        for (peer, action) in [
+            (near, avatar("near", "a", None)),
+            (far, avatar("far", "b", None)),
+            (subscribed, listener(0)),
+            (unsubscribed, listener(1)),
+            (closing, avatar("closing", "a", None)),
+            (old, avatar("wallet", "a", None)),
+        ] {
+            admit_avatar_peer(&mut rig, peer, action, 0).await;
+        }
+        rig.server.run_tick(&mut rig.transports, 50).await.unwrap();
+        assert_presence(
+            &mut rig,
+            &subjects,
+            &[
+                (near, "joined", old),
+                (subscribed, "joined", old),
+                (closing, "joined", old),
+            ],
+        )
+        .await;
+
+        // The player leaves the AoI. Both authenticated holders retain their join until the
+        // takeover, while a third holder has started disconnecting and can no longer receive it.
+        rig.server
+            .seed_initial_state(old, 100, &avatar_initial_state("away"));
+        rig.server.run_tick(&mut rig.transports, 100).await.unwrap();
+        assert_presence(&mut rig, &subjects, &[]).await;
+        rig.server
+            .reject_gameplay(closing, DisconnectReason::PacketCorrupted);
+        rig.server
+            .connect_pending(pending, "127.0.0.1".into(), 100)
+            .unwrap();
+        rig.server
+            .on_disconnect(&mut rig.transports, pending)
+            .await
+            .unwrap();
+        admit_avatar_peer(&mut rig, replacement, avatar("wallet", "a", Some(old)), 100).await;
+        rig.server
+            .on_disconnect(&mut rig.transports, old)
+            .await
+            .unwrap();
+
+        // The old subject's leave is on the wire before the tick that introduces the new slot.
+        assert_presence(
+            &mut rig,
+            &subjects,
+            &[(near, "left", old), (subscribed, "left", old)],
+        )
+        .await;
+        rig.server.run_tick(&mut rig.transports, 150).await.unwrap();
+        let joined = [
+            (near, "joined", replacement),
+            (subscribed, "joined", replacement),
+        ];
+        assert_presence(&mut rig, &subjects, &joined).await;
+
+        rig.server
+            .deliver_application(&mut rig.transports, vec![], vec![replacement])
+            .await
+            .unwrap();
+        rig.server
+            .on_disconnect(&mut rig.transports, replacement)
+            .await
+            .unwrap();
+        assert_presence(
+            &mut rig,
+            &subjects,
+            &[
+                (near, "left", replacement),
+                (subscribed, "left", replacement),
+            ],
+        )
+        .await;
+
+        // A fresh occupant with the same wallet in the same slot must acquire fresh views.
+        admit_avatar_peer(&mut rig, replacement, avatar("wallet", "a", None), 200).await;
+        rig.server.run_tick(&mut rig.transports, 200).await.unwrap();
+        assert_presence(&mut rig, &subjects, &joined).await;
+        rig.server
+            .seed_initial_state(replacement, 250, &avatar_initial_state("b"));
+        for tick in 5..=100 {
+            rig.server
+                .run_tick(&mut rig.transports, tick * 50)
+                .await
+                .unwrap();
+        }
+        assert_presence(
+            &mut rig,
+            &subjects,
+            &[
+                (near, "left", replacement),
+                (far, "joined", replacement),
+                (subscribed, "left", replacement),
+            ],
+        )
+        .await;
+
+        // Only the remaining holder needs this ordinary transport departure, even though the
+        // subject itself has already stopped accepting gameplay.
+        rig.server
+            .reject_gameplay(replacement, DisconnectReason::PacketCorrupted);
+        rig.server
+            .on_disconnect(&mut rig.transports, replacement)
+            .await
+            .unwrap();
+        rig.server
+            .on_disconnect(&mut rig.transports, replacement)
+            .await
+            .unwrap();
+        assert_presence(&mut rig, &subjects, &[(far, "left", replacement)]).await;
+        for tick in 101..=200 {
+            rig.server
+                .run_tick(&mut rig.transports, tick * 50)
+                .await
+                .unwrap();
+        }
+        assert_presence(&mut rig, &subjects, &[]).await;
     }
 
     #[tokio::test]

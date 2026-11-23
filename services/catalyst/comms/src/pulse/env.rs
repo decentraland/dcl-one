@@ -14,6 +14,7 @@ use super::cluster::nats::{
 use super::cluster::{
     ClusterOptions, ClusterTracker, DEFAULT_CLUSTERS_ENABLED, DEFAULT_DWELL_PASSES,
     DEFAULT_ID_PREFIX, DEFAULT_PASS_INTERVAL_MS, DEFAULT_SESSION_RETENTION_PASSES,
+    format_cluster_id,
 };
 use super::handshake::MAX_TIMESTAMP_SKEW_MS;
 use super::hardening::{
@@ -169,7 +170,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ),
     (
         "PULSE_CLUSTERS_ID_PREFIX",
-        "prefix of every minted cluster id, so two Pulse instances on one broker never mint the same one (default C)",
+        "prefix of every boot-scoped cluster ID, up to 75 ASCII letters, digits, hyphens, or underscores (default C)",
     ),
     (
         "PULSE_CLUSTERS_SESSION_RETENTION_PASSES",
@@ -550,6 +551,22 @@ fn webtransport_config_from_env() -> anyhow::Result<Option<WtConfig>> {
     }))
 }
 
+fn cluster_id_prefix_from(raw: Result<String, VarError>) -> anyhow::Result<String> {
+    const KEY: &str = "PULSE_CLUSTERS_ID_PREFIX";
+    let prefix = parse_or(KEY, env_value(KEY, raw)?, DEFAULT_ID_PREFIX.to_string())?;
+    // Reserve room for the longest cluster number the tracker can mint.
+    let cluster = format_cluster_id(&prefix, uuid::Uuid::nil(), u64::MAX);
+    let room = crate::rooms::island_room_name(&cluster);
+    anyhow::ensure!(
+        matches!(
+            crate::rooms::room_scope(&room),
+            Some(crate::rooms::RoomScope::Island(_))
+        ),
+        "{KEY} must be at most 75 bytes and contain only ASCII letters, digits, hyphens, or underscores"
+    );
+    Ok(prefix)
+}
+
 /// The cluster tracker, or `None` when clustering is off entirely -- which leaves every cluster
 /// path out of the server loop rather than running a tracker that publishes nothing. Publishing
 /// nothing is the separate, and far more common, stats-only mode: clustering on with no broker URL.
@@ -574,7 +591,7 @@ fn clusters_from_env_with_generation(
         enabled: true,
         pass_interval_ms,
         dwell_passes: env_or("PULSE_CLUSTERS_DWELL_PASSES", DEFAULT_DWELL_PASSES)?,
-        id_prefix: env_or("PULSE_CLUSTERS_ID_PREFIX", DEFAULT_ID_PREFIX.to_string())?,
+        id_prefix: cluster_id_prefix_from(std::env::var("PULSE_CLUSTERS_ID_PREFIX"))?,
         session_retention_passes: env_or(
             "PULSE_CLUSTERS_SESSION_RETENTION_PASSES",
             DEFAULT_SESSION_RETENTION_PASSES,
@@ -756,6 +773,24 @@ fn read_pem(inline_key: &str, path_key: &str) -> anyhow::Result<Option<String>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cluster_id_prefix_keeps_worst_case_island_rooms_valid() {
+        for raw in [Err(VarError::NotPresent), Ok(" \t ".to_string())] {
+            assert_eq!(cluster_id_prefix_from(raw).unwrap(), DEFAULT_ID_PREFIX);
+        }
+
+        let longest = format!("{}0_-", "a".repeat(72));
+        assert_eq!(
+            cluster_id_prefix_from(Ok(longest.clone())).unwrap(),
+            longest
+        );
+
+        for invalid in ["a".repeat(76), "a.b".into(), "a b".into(), "é".into()] {
+            let error = cluster_id_prefix_from(Ok(invalid)).unwrap_err().to_string();
+            assert!(error.starts_with("PULSE_CLUSTERS_ID_PREFIX"), "{error}");
+        }
+    }
 
     fn auth_raw(raw: Option<&str>) -> Result<String, VarError> {
         raw.map(str::to_owned).ok_or(VarError::NotPresent)
