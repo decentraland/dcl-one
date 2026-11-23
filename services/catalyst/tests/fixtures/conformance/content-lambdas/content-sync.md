@@ -702,6 +702,18 @@ Upstream: `decentraland/catalyst:src/controllers/handlers/get-entity-thumbnail-h
   (lookup is case-insensitive).
 - `emission` is optional.
 - No auth.
+- The same handler answers at `/lambdas/collections/standard/erc721/:chainId/:contract/:option/:emission?`,
+  the base URI a standard collection stores on chain:
+  - Upstream: the peer's gateway proxies that path to `/queries/erc721/`
+    (`decentraland/catalyst-owner@1866250d:local/nginx/include/lambdas.conf`). On the production
+    peer both paths answer the same status, body and headers, including the content CORS
+    (`access-control-allow-origin: *`, `access-control-expose-headers: *`,
+    `x-content-type-options: nosniff`) and no `cache-control`, for a deployed item, an unknown
+    contract (404), a non-numeric or unknown chain id (400) and a contract that is not an address
+    (404).
+  - dcl-one: content's router mounts both forms beside `/lambdas/collections/contents/*`
+    (`services/catalyst/content/src/lib.rs` `build_router`), and `routing::content_cors` gives the
+    prefix the content CORS. MATCH.
 
 ### Responses
 

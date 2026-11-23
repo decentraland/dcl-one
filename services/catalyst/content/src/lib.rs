@@ -950,6 +950,14 @@ pub fn build_router(state: SharedState) -> Router {
             "/lambdas/collections/contents/{pointer}/image",
             get(entity_thumbnail::get_entity_image).head(entity_thumbnail::get_entity_image),
         )
+        .route(
+            "/lambdas/collections/standard/erc721/{chainId}/{contract}/{option}",
+            get(validator::erc721::get_erc721_entity),
+        )
+        .route(
+            "/lambdas/collections/standard/erc721/{chainId}/{contract}/{option}/{emission}",
+            get(validator::erc721::get_erc721_entity),
+        )
         .merge(content_routes(&state, max_deploy_body))
         .nest("/content", content_routes(&state, max_deploy_body))
         .fallback(not_found)

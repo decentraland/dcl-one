@@ -6,6 +6,7 @@ import { ContractName, getContract } from './chain/contracts'
 import { encodeAbiParameters, getAbiItem, toFunctionSelector, toHex, type AbiFunction } from 'viem'
 import { config } from './config'
 import { toBytes32 } from './bytes32'
+import { erc721BaseUri } from './catalyst'
 import type { ContractCall } from './auth'
 import { BuilderServerError, COLLECTION_LOCKED_STATUS, isRefusedRequest } from './builder'
 import { isCollectionLocked, type Collection } from './collections'
@@ -110,7 +111,7 @@ export function buildCreateCollectionArgs(
     collection.salt,
     collection.name,
     getCollectionSymbol(collection.name),
-    config.get('ERC721_COLLECTION_BASE_URI'),
+    erc721BaseUri(),
     creator,
     toInitializeItems(items)
   ]

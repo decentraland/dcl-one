@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import './test/setup'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchCatalystContent, fetchEntitiesByPointers, peerUrl } from './catalyst'
+import { erc721BaseUri, fetchCatalystContent, fetchEntitiesByPointers, peerUrl } from './catalyst'
 
 const fetchMock = vi.fn()
 vi.stubGlobal('fetch', fetchMock)
@@ -120,6 +120,37 @@ describe('peerUrl', () => {
   describe('when the page is on a Decentraland host', () => {
     it("should be that environment's peer", () => {
       expect(peerUrl('decentraland.zone')).toBe('https://peer.decentraland.zone')
+    })
+  })
+})
+
+describe('erc721BaseUri', () => {
+  const ERC721_PATH = '/lambdas/collections/standard/erc721/'
+
+  describe('when the page is served by this deployment, as on localhost or its own domain', () => {
+    afterEach(() => {
+      delete (window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__
+    })
+
+    it("should be the token metadata route of the node behind the page's origin", () => {
+      expect(erc721BaseUri()).toBe(`${window.location.origin}${ERC721_PATH}`)
+      expect(erc721BaseUri('dcl.example')).toBe(`${window.location.origin}${ERC721_PATH}`)
+    })
+
+    it('should be the token metadata route of the public node base when the page names one', () => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = 'https://node.example/'
+      expect(erc721BaseUri()).toBe(`https://node.example${ERC721_PATH}`)
+    })
+
+    it.each(['dcl.dev', 'dcl.live'])("should be the node's token metadata route on a %s page", host => {
+      ;(window as Window & { __CATALYST_BASE__?: string }).__CATALYST_BASE__ = `https://${host}`
+      expect(erc721BaseUri(host)).toBe(`https://${host}${ERC721_PATH}`)
+    })
+  })
+
+  describe('when the page is on a Decentraland host', () => {
+    it("should be that environment's base URI", () => {
+      expect(erc721BaseUri('decentraland.zone')).toBe(`https://peer.decentraland.zone${ERC721_PATH}`)
     })
   })
 })

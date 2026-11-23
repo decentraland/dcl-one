@@ -10,6 +10,15 @@ import { getBaseWearableName, type BaseWearable } from './avatar'
 export const peerUrl = (host = typeof window === 'undefined' ? '' : window.location.host) =>
   isDecentralandHost(host) ? config.get('PEER_URL') : catalystUrl()
 
+/**
+ * The token metadata base a standard collection is initialized with: the environment's on a Decentraland
+ * host, else the node's `/lambdas/collections/standard/erc721/`.
+ */
+export const erc721BaseUri = (host = typeof window === 'undefined' ? '' : window.location.host) =>
+  isDecentralandHost(host)
+    ? config.get('ERC721_COLLECTION_BASE_URI')
+    : `${catalystUrl()}/lambdas/collections/standard/erc721/`
+
 const contentUrl = () => `${peerUrl()}/content`
 
 /** The active entities deployed under the given pointers (item URNs). Pointers with no entity are simply absent. */

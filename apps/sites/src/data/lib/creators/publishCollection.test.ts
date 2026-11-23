@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 import './test/setup'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContractName, getContract } from './chain/contracts'
-import { decodeAbiParameters, maxUint256, parseAbiParameters, toFunctionSelector } from 'viem'
+import { decodeAbiParameters, maxUint256, parseAbiParameters, slice, toFunctionSelector, type Hex } from 'viem'
 import { decodeCall, toTransaction } from './test/chain'
 import { BuilderServerError } from './builder'
 import type { Collection } from './collections'
 import { CreditsServerError } from './credits'
 import { ItemType, type Item, BODY_SHAPE_FEMALE } from './items'
 import { getPublicationFee } from './publishFee'
+import { buildCollectionInitializeData } from './saveCollection'
 import { WrongAccountError, WrongChainError } from './walletErrors'
 import {
   MAX_PUBLISH_ITEMS,
@@ -126,6 +127,10 @@ function makeDeps(overrides: Partial<PublishDeps> = {}): PublishDeps & { calls: 
   }
 }
 
+const onDecentralandHost = () => vi.stubGlobal('location', { ...window.location, host: 'decentraland.zone' })
+
+afterEach(() => vi.unstubAllGlobals())
+
 describe('getPublishBlocker', () => {
   it('only lets a draft with 1..50 items publish', () => {
     expect(getPublishBlocker(collection, 3, [])).toBeNull()
@@ -215,13 +220,24 @@ describe('createCollection encoding', () => {
     expect(args[7][0][0]).toBe('legendary')
   })
 
+  it("carries the base URI the save's initialize data names, which the collection's address is derived from", () => {
+    const [, , baseUri] = decodeAbiParameters(
+      parseAbiParameters('string, string, string'),
+      slice(buildCollectionInitializeData(collection, items, ADDRESS) as Hex, 4)
+    )
+    const args = buildCreateCollectionArgs(collection, items, ADDRESS, CHAIN_ID)
+    expect(args[5]).toBe(`${window.location.origin}/lambdas/collections/standard/erc721/`)
+    expect(args[5]).toBe(baseUri)
+  })
+
   it('refuses a collection the server has not given a salt to', () => {
     expect(() => buildCreateCollectionArgs({ ...collection, salt: undefined }, items, ADDRESS, CHAIN_ID)).toThrow(
       PublishCollectionError
     )
   })
 
-  it('encodes the external call the credits server co-signs', () => {
+  it('encodes the external call the credits server co-signs on a Decentraland host', () => {
+    onDecentralandHost()
     const args = buildCreateCollectionArgs(collection, items, ADDRESS, CHAIN_ID)
     const now = 1_700_000_000_000
     const call = buildCollectionManagerExternalCall(CHAIN_ID, args, now, '0x' + '22'.repeat(32))
@@ -340,7 +356,8 @@ describe('publishCollection', () => {
     expect(result.collection.contractAddress).toBe('0xc0ffee')
   })
 
-  it('charges the fee in cents and sends the useCredits transaction to the CreditsManager', async () => {
+  it('charges the fee in cents and sends the useCredits transaction to the CreditsManager on a Decentraland host', async () => {
+    onDecentralandHost()
     vi.useFakeTimers({ now: 1_700_000_000_000, toFake: ['Date'] })
     const authorize = vi.fn().mockResolvedValue(authorization)
     const send = vi.fn().mockResolvedValue('0xtx')
@@ -469,7 +486,8 @@ describe('publishCollection', () => {
     })
   })
 
-  it('pays with MANA by calling createCollection directly', async () => {
+  it('pays with MANA by calling createCollection directly on a Decentraland host', async () => {
+    onDecentralandHost()
     const send = vi.fn().mockResolvedValue('0xtx')
     const deps = makeDeps({ sendTransaction: send })
     await publishCollection({ ...params, paymentMethod: 'mana' }, deps)
