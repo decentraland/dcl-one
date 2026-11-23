@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Profiler, Suspense, use, type ReactNode } from "react";
+import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
@@ -25,6 +27,31 @@ const PATH = "/events/admin/pending-events";
 const SETTINGS = "/events/api/profiles/me/settings";
 const EVENTS = "/events/api/events";
 const moderation = (id: string, body: unknown) => ["/events/api/events/" + id, body, expect.objectContaining({ method: "PATCH" })];
+
+/**
+ * The page as each commit leaves it: the names of the open dialogs and the toast. The router commits a
+ * URL change in a transition of its own, after the page's state, so a frame between the two only shows
+ * up when every commit is read, not when a test polls the settled DOM.
+ */
+function watchCommits(hold?: Promise<void>) {
+  const frames: { dialogs: string[]; toast: string }[] = [];
+  const record = () => frames.push({
+    dialogs: [...document.querySelectorAll("[role=dialog]")].map((dialog) =>
+      document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent ?? ""),
+    toast: document.querySelector("[data-tone=success]")?.textContent ?? "",
+  });
+  const page = hold ? <Suspense fallback={null}><HoldBareUrl until={hold}><PendingEventsPage /></HoldBareUrl></Suspense> : <PendingEventsPage />;
+  return { frames, page: <Profiler id="pending-events" onRender={record}>{page}</Profiler> };
+}
+
+/**
+ * Holds the router's transition to the bare page URL open until `until` settles. It suspends above the
+ * page, so the held transition never renders the page and leaves no trace in its state.
+ */
+function HoldBareUrl({ until, children }: { until: Promise<void>; children: ReactNode }) {
+  if (!useLocation().search) use(until);
+  return children;
+}
 
 // Records each dialog named `name` that React adds to the page from now on, including one that a
 // later commit removes again: a synchronous query after the action sees only the final page.
@@ -439,6 +466,105 @@ describe("when opening the Pending Events page", () => {
       expect(approve.disabled).toBe(false);
       await user.click(approve);
       expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
+    });
+  });
+
+  // The review's `?id` leaves the URL in the router's own transition, committed after the page's state.
+  describe.each([
+    { mode: "", strict: false },
+    { mode: " in StrictMode", strict: true },
+  ])("and a moderation closes the review$mode", ({ strict }) => {
+    it("should never show a dialog beside the rejection's toast", async () => {
+      const { frames, page } = watchCommits();
+      renderAdminPage(page, PATH, { strict });
+      await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reject" }));
+      const reject = screen.getByRole("dialog", { name: "Reject Reason*" });
+      await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
+      const submitted = frames.length;
+      await user.click(within(reject).getByRole("button", { name: "Submit" }));
+      await waitFor(() => expect(currentPath()).toBe(PATH));
+      expect(screen.getByText("Event/Experience rejected successfully")).toBeTruthy();
+      const after = frames.slice(submitted);
+      expect(after.some((frame) => frame.toast === "Event/Experience rejected successfully")).toBe(true);
+      expect(after.filter((frame) => frame.toast && frame.dialogs.length)).toEqual([]);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should never show the review beside the approval's toast", async () => {
+      const { frames, page } = watchCommits();
+      renderAdminPage(page, PATH, { strict });
+      await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+      const approving = frames.length;
+      await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
+      await waitFor(() => expect(currentPath()).toBe(PATH));
+      expect(screen.getByText("Event/Experience approved successfully")).toBeTruthy();
+      const after = frames.slice(approving);
+      expect(after.some((frame) => frame.toast === "Event/Experience approved successfully")).toBe(true);
+      expect(after.filter((frame) => frame.toast && frame.dialogs.length)).toEqual([]);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("should keep the reason dialog through a failed rejection, with no toast", async () => {
+      api.failNext.moderate = new Error("Rejection not applied");
+      const { frames, page } = watchCommits();
+      renderAdminPage(page, PATH, { strict });
+      await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reject" }));
+      const reject = screen.getByRole("dialog", { name: "Reject Reason*" });
+      await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
+      const submitted = frames.length;
+      await user.click(within(reject).getByRole("button", { name: "Submit" }));
+      expect((await within(reject).findByRole("alert")).textContent).toBe("Rejection not applied");
+      expect(frames.length).toBeGreaterThan(submitted);
+      expect(frames.slice(submitted).every((frame) => frame.dialogs.join() === "Reject Reason*" && !frame.toast)).toBe(true);
+      expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+    });
+
+    it("should keep the review through a failed approval, with no toast", async () => {
+      api.failNext.moderate = new Error("The hangout changed. Refresh.");
+      const { frames, page } = watchCommits();
+      renderAdminPage(page, PATH, { strict });
+      await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+      const review = screen.getByRole("dialog", { name: "Moon concert" });
+      const approving = frames.length;
+      await user.click(within(review).getByRole("button", { name: "Approve" }));
+      expect((await within(review).findByRole("alert")).textContent).toBe("The hangout changed. Refresh.");
+      expect(frames.length).toBeGreaterThan(approving);
+      expect(frames.slice(approving).every((frame) => frame.dialogs.join() === "Moon concert" && !frame.toast)).toBe(true);
+      expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+    });
+
+    it("should keep the closed review closed when another card is opened before its URL change commits", async () => {
+      api.events = [makeEvent(), makeEvent({ id: "pending-two", name: "Sun festival" })];
+      // The closed review's `?id` stays in the URL while the next card is opened.
+      let release!: () => void;
+      const { frames, page } = watchCommits(new Promise<void>((resolve) => { release = resolve; }));
+      renderAdminPage(page, `${PATH}?id=pending-one`, { strict });
+      const review = await screen.findByRole("dialog", { name: "Moon concert" });
+      await user.click(within(review).getByRole("button", { name: "Approve" }));
+      expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
+      expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const opening = frames.length;
+      await user.click(screen.getByRole("link", { name: "Sun festival" }));
+      expect(await screen.findByRole("dialog", { name: "Sun festival" })).toBeTruthy();
+      expect(currentPath()).toBe(`${PATH}?id=pending-two`);
+      const after = frames.slice(opening);
+      expect(after.length).toBeGreaterThan(0);
+      expect(after.filter((frame) => frame.dialogs.includes("Moon concert"))).toEqual([]);
+      release();
+    });
+
+    it("should open the review again from its card after it was closed", async () => {
+      renderAdminPage(<PendingEventsPage />, PATH, { strict });
+      await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+      expect(screen.getByRole("dialog", { name: "Moon concert" })).toBeTruthy();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await user.click(screen.getByRole("link", { name: "Moon concert" }));
+      expect(await screen.findByRole("dialog", { name: "Moon concert" })).toBeTruthy();
+      expect(currentPath()).toBe(`${PATH}?id=pending-one`);
     });
   });
 });
