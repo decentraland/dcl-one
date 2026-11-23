@@ -171,6 +171,19 @@ impl SyncProgress {
     }
 }
 
+/// An entity's queue slot: released, then `on_idle` woken, even when its task panics.
+struct InFlight {
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    idle_notify: Arc<tokio::sync::Notify>,
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        self.idle_notify.notify_waiters();
+    }
+}
+
 pub struct BatchDeployer {
     config: BatchDeployerConfig,
     http_client: crate::http::CheckedRedirectClient,
@@ -332,6 +345,10 @@ impl BatchDeployer {
         }
 
         tokio::spawn(async move {
+            let slot = InFlight {
+                permit: Some(slot),
+                idle_notify,
+            };
             let result = super::deploy_remote_entity::deploy_entity_streaming(
                 super::deploy_remote_entity::ContentSource {
                     client: &http_client,
@@ -407,7 +424,6 @@ impl BatchDeployer {
             }
 
             drop(slot);
-            idle_notify.notify_waiters();
             progress.maybe_summarize(
                 queue_depth - queue.available_permits(),
                 lost.load(Ordering::SeqCst) + deployer.lost_count(),
