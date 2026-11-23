@@ -217,11 +217,20 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
     pub marketplace_index_chain_id_matic: i64,
 
-    /// `rpc` (default) or `shadow`: in shadow, each window the RPC walk
-    /// accepts is also read from the portal (`CHAIN_LOGS_PORTAL_URL`) in the
-    /// background and compared; the walk still reads and commits RPC data only.
-    #[arg(long, env = "CHAIN_LOGS_SOURCE", default_value = "rpc", value_parser = ["rpc", "shadow"])]
+    /// `rpc` (default), `shadow` or `portal`. In shadow, each window the RPC
+    /// walk accepts is also read from the portal (`CHAIN_LOGS_PORTAL_URL`) in
+    /// the background and compared; the walk still reads and commits RPC data
+    /// only. In portal, the logs of the windows and addresses chain-lake's
+    /// coverage answer admits are read from the portal, and everything else
+    /// (the other logs, headers, heads) from the RPC.
+    #[arg(long, env = "CHAIN_LOGS_SOURCE", default_value = "rpc", value_parser = ["rpc", "shadow", "portal"])]
     pub chain_logs_source: String,
+
+    /// In portal mode, how long one window's coverage read and portal pages
+    /// (limiter waits included) may take before it is read from the RPC
+    /// (1 to 600).
+    #[arg(long, env = "CHAIN_LOGS_PORTAL_DEADLINE_SECS", default_value_t = 20)]
+    pub chain_logs_portal_deadline_secs: u64,
 
     /// The origin of a portal speaking the SQD portal protocol (the SQD
     /// portal, or chain-lake's): https, or http on loopback; no path.

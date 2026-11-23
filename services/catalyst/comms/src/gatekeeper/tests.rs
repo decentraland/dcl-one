@@ -4855,3 +4855,347 @@ async fn community_voice_status_routes_answer_inactive_when_the_store_fails() {
         serde_json::json!({ "userAddress": member.as_str(), "isInCommunityVoiceChat": false })
     );
 }
+
+/// The webhook replica applies the room event and publishes it for every other
+/// replica; a refused publish never fails the webhook.
+#[tokio::test]
+async fn a_verified_room_event_is_applied_and_published_and_a_refused_publish_is_still_acknowledged()
+ {
+    use super::webhook::test_support::webhook_jwt;
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType, SUBJECT};
+    let event = |id: &str, kind: &str| {
+        serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": 1718900000, "event": kind, "room": { "name": "world-w.dcl.eth" }, "participant": { "identity": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sid": "PA_published" } })).unwrap()
+    };
+    let settings = Settings::for_tests();
+    let (key, secret) = (
+        settings.livekit.api_key.clone(),
+        settings.livekit.api_secret.clone(),
+    );
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let state = Arc::new(
+        CommsState::new(
+            PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects"),
+            Outbound::for_tests(),
+            settings,
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(known_lobby_scenes("w.dcl.eth")),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_bus(bus.clone()),
+    );
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let app = super::router(state);
+    let joined = event("published-join", "participant_joined");
+    assert_eq!(
+        post_webhook(&app, Some(&webhook_jwt(&joined, &key, &secret)), &joined).await,
+        StatusCode::OK
+    );
+    let published = bus.published();
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].0, SUBJECT);
+    let decoded = RoomEvent::decode(&published[0].1).unwrap();
+    assert_eq!(decoded.kind, RoomEventKind::Joined as i32);
+    assert_eq!(decoded.room_type, RoomType::World as i32);
+    assert_eq!(decoded.realm_name, "w.dcl.eth");
+    assert_eq!(decoded.event_id, "published-join");
+    assert!(
+        topology.snapshot().is_online(wallet),
+        "applied here at once"
+    );
+
+    bus.refuse_publishes(true);
+    let left = event("refused-leave", "participant_left");
+    assert_eq!(
+        post_webhook(&app, Some(&webhook_jwt(&left, &key, &secret)), &left).await,
+        StatusCode::OK
+    );
+    assert!(
+        !topology.snapshot().is_online(wallet),
+        "applied here even when the publish is refused"
+    );
+}
+
+/// One replica whose webhook feeds an attached online view over `bus`.
+fn presence_webhook_state(
+    bus: Arc<super::bus::InProcessBus>,
+    scenes: Arc<dyn crate::interfaces::SceneIdentity>,
+) -> (
+    axum::Router,
+    Arc<crate::topology::Topology>,
+    Arc<RecordingSink>,
+) {
+    let sink = Arc::new(RecordingSink::default());
+    let state = Arc::new(
+        CommsState::new(
+            PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects"),
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            scenes,
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_bus(bus)
+        .with_room_event_sink(sink.clone()),
+    );
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    (super::router(state), topology, sink)
+}
+
+async fn signed_participant_event(
+    app: &axum::Router,
+    id: &str,
+    kind: &str,
+    room: &str,
+    sid: &str,
+    at: i64,
+) {
+    use super::webhook::test_support::webhook_jwt;
+    let settings = Settings::for_tests();
+    let body = serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sid": sid } })).unwrap();
+    let jwt = webhook_jwt(
+        &body,
+        &settings.livekit.api_key,
+        &settings.livekit.api_secret,
+    );
+    assert_eq!(post_webhook(app, Some(&jwt), &body).await, StatusCode::OK);
+}
+
+/// An old session's leave that the webhook's own ordering supersedes (the
+/// player reconnected) is still applied and published, and leaves the newer
+/// session online.
+#[tokio::test]
+async fn a_superseded_late_leave_is_published_and_the_reconnected_wallet_stays_online() {
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, SUBJECT};
+    let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let (app, topology, _) =
+        presence_webhook_state(bus.clone(), Arc::new(known_lobby_scenes("w.dcl.eth")));
+    let room = "world-w.dcl.eth";
+    signed_participant_event(
+        &app,
+        "join-a",
+        "participant_joined",
+        room,
+        "PA_a",
+        1718900000,
+    )
+    .await;
+    signed_participant_event(
+        &app,
+        "join-b",
+        "participant_joined",
+        room,
+        "PA_b",
+        1718900001,
+    )
+    .await;
+    signed_participant_event(
+        &app,
+        "late-leave-a",
+        "participant_left",
+        room,
+        "PA_a",
+        1718900002,
+    )
+    .await;
+    let published: Vec<_> = bus
+        .published()
+        .into_iter()
+        .filter(|(subject, _)| subject == SUBJECT)
+        .map(|(_, payload)| RoomEvent::decode(&payload).unwrap())
+        .collect();
+    assert_eq!(published.len(), 3);
+    assert_eq!(published[2].event_id, "late-leave-a");
+    assert_eq!(published[2].kind, RoomEventKind::Left as i32);
+    assert!(topology.snapshot().is_online(wallet), "PA_b is still live");
+}
+
+/// A room whose LiveKit name is not its canonical name is one occupancy reads
+/// refuse; its events still reach the access log but never online status.
+#[tokio::test]
+async fn an_event_in_a_room_reads_refuse_is_neither_applied_nor_published() {
+    /// Resolves every room to the world's canonical scene room under another name.
+    struct Renamed;
+    #[async_trait::async_trait]
+    impl crate::interfaces::SceneIdentity for Renamed {
+        async fn classify_room(
+            &self,
+            _: &str,
+        ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+            let world = crate::world_identity::WorldName::parse("w.dcl.eth").unwrap();
+            Ok(crate::rooms::RoomClassification::Canonical(
+                crate::rooms::ResolvedRoom {
+                    room: "w1:9:w.dcl.ethbafycanonical".into(),
+                    realm: crate::world_identity::RealmId::World(world),
+                    scene_id: Some(crate::world_identity::SceneId::parse("bafycanonical").unwrap()),
+                    deployment: None,
+                },
+            ))
+        }
+        async fn resolve(
+            &self,
+            _: crate::rooms::RoomRequest<'_>,
+        ) -> Result<crate::rooms::ResolvedRoom, crate::rooms::ResolveError> {
+            Err(crate::rooms::ResolveError::UnresolvedRoom("fixture".into()))
+        }
+        async fn world_scene(
+            &self,
+            _: &crate::world_identity::WorldName,
+            _: &crate::world_identity::SceneId,
+        ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+            Ok(None)
+        }
+        async fn world_active_scene(
+            &self,
+            _: &crate::world_identity::WorldName,
+        ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+            Ok(None)
+        }
+    }
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let (app, topology, sink) = presence_webhook_state(bus.clone(), Arc::new(Renamed));
+    signed_participant_event(
+        &app,
+        "legacy-join",
+        "participant_joined",
+        "scene-w.dcl.eth-bafylegacy",
+        "PA_legacy",
+        1718900000,
+    )
+    .await;
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        1,
+        "the access log still gets it"
+    );
+    assert!(bus.published().is_empty());
+    assert!(topology.snapshot().wallets.is_empty());
+}
+
+/// Kicks a seated wallet through the moderator route against a
+/// RemoveParticipant fixture answering `status`; returns the route's
+/// outcome and the presence rows left.
+async fn kick_with_removal_status(
+    status: StatusCode,
+) -> Option<(Result<serde_json::Value, super::errors::ApiError>, usize)> {
+    let pool = scratch().await?;
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/RemoveParticipant",
+        axum::routing::post(move || async move {
+            (status, Json(serde_json::json!({ "code": "unavailable" })))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let state = state_with(pool.clone(), settings);
+    let community = seed_community(&pool).await;
+    let member = wallet();
+    state
+        .voice_db
+        .join_user_to_community_room(community, &member, false)
+        .await
+        .unwrap();
+    let outcome = voice::community_kick_player(
+        State(state.clone()),
+        Path((community.to_string(), member.as_str().to_owned())),
+    )
+    .await
+    .map(|Json(body)| body);
+    server.abort();
+    let rows = state
+        .voice_db
+        .community_users_in_room(community)
+        .await
+        .unwrap()
+        .len();
+    Some((outcome, rows))
+}
+
+#[tokio::test]
+async fn community_kick_reports_failed_livekit_removal() {
+    let Some((outcome, rows)) = kick_with_removal_status(StatusCode::SERVICE_UNAVAILABLE).await
+    else {
+        return;
+    };
+    let error = outcome.unwrap_err();
+    assert_eq!(error.code, 500);
+    assert!(error.message.contains("livekit remove participant"));
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn community_kick_of_absent_participant_succeeds() {
+    let Some((outcome, rows)) = kick_with_removal_status(StatusCode::NOT_FOUND).await else {
+        return;
+    };
+    assert_eq!(
+        outcome.unwrap()["message"],
+        "User kicked from voice chat successfully"
+    );
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn community_rpc_kick_reports_failed_livekit_removal() {
+    use super::voice::rooms::{VoiceRooms, VoiceUnavailable};
+    let Some(pool) = scratch().await else { return };
+    let member = wallet();
+    let identity = member.as_str().to_owned();
+    let fixture = axum::Router::new()
+        .route(
+            "/twirp/livekit.RoomService/GetParticipant",
+            axum::routing::post(move || {
+                let identity = identity.clone();
+                async move { Json(serde_json::json!({ "identity": identity })) }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/RemoveParticipant",
+            axum::routing::post(|| async {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "code": "unavailable" })),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = Settings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let state = comms_state(pool.clone(), settings);
+    let community = seed_community(&pool).await;
+    state
+        .voice_db
+        .join_user_to_community_room(community, &member, false)
+        .await
+        .unwrap();
+    let outcome = state
+        .kick_player(community.as_uuid(), member.as_str())
+        .await;
+    server.abort();
+    assert!(
+        matches!(&outcome, Err(VoiceUnavailable::Failed(m)) if m.contains("livekit remove participant")),
+        "{outcome:?}"
+    );
+    assert!(
+        state
+            .voice_db
+            .community_users_in_room(community)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
