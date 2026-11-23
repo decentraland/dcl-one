@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import { renderHook } from "@testing-library/react";
+import { createElement, StrictMode, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { legacyAnalyticsReady, track, whenLegacyAnalyticsReady } from "./track";
 import { dropTrackedUser, restoreTrackedUser } from "./tracked-user";
-import { createLegacyTrackScope, sendLegacyDeferred, trackLegacyClick, trackSectionViewed } from "./legacy-click";
+import { createLegacyTrackScope, sendLegacyDeferred, trackLegacyClick, trackSectionViewed, useLegacyTrackScope } from "./legacy-click";
 
 // The document's readiness (its first page view) is driven here; `legacy-click.wire.test.ts` covers the real gates.
 let ready = true;
@@ -225,6 +227,26 @@ describe("the emitting component's scope", () => {
     left.close();
     becomeReady();
     expect(sent().props).toMatchObject({ title: "stays" });
+  });
+
+  it("accepts deferrals again once reopened, as the Strict Mode remount does (close, then open)", () => {
+    ready = false;
+    const scope = createLegacyTrackScope();
+    scope.close();
+    scope.open();
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1", scope });
+    becomeReady();
+    expect(sent().props).toMatchObject({ place: "Creators Hero", track_deferred: true });
+  });
+
+  it("drops a held click once the Strict Mode component really unmounts", () => {
+    ready = false;
+    const strict = ({ children }: { children: ReactNode }) => createElement(StrictMode, null, children);
+    const { result, unmount } = renderHook(() => useLegacyTrackScope(), { wrapper: strict });
+    trackLegacyClick({ place: "Creators Hero" }, { sid: "sid-1", scope: result.current });
+    unmount();
+    becomeReady();
+    expect(track).not.toHaveBeenCalled();
   });
 
   it("sends a conversion at once whatever the scope", () => {

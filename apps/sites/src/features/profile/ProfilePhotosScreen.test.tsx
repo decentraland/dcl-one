@@ -13,7 +13,7 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const net = vi.hoisted(() => ({ fetchUserPhotos: vi.fn(), fetchPhoto: vi.fn(), fetchCommunityProfiles: vi.fn() }));
+const net = vi.hoisted(() => ({ fetchUserPhotos: vi.fn(), fetchPhoto: vi.fn(), fetchMemberProfiles: vi.fn() }));
 const auth = vi.hoisted(() => {
   type State = { identity: unknown; isConnected: boolean; address: string | null };
   const listeners = new Set<() => void>();
@@ -36,7 +36,10 @@ vi.mock("@/data/lib/catalyst/social/photos", async (original) => ({
   fetchUserPhotos: net.fetchUserPhotos,
   fetchPhoto: net.fetchPhoto,
 }));
-vi.mock("@ui/data/hooks/useCommunityProfiles", () => ({ fetchCommunityProfiles: net.fetchCommunityProfiles }));
+vi.mock("@/data/lib/catalyst/social/member-profiles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/lib/catalyst/social/member-profiles")>()),
+  fetchMemberProfiles: net.fetchMemberProfiles,
+}));
 vi.mock("@/data/lib/auth/index", async () => {
   const { useSyncExternalStore } = await import("react");
   return { useAuth: () => useSyncExternalStore(auth.subscribe, () => auth.state) };
@@ -108,7 +111,7 @@ beforeEach(() => {
     { id: "photos", label: "Photos", href: `/profile/${A}/photos` },
   ];
   auth.state = { identity: null, isConnected: false, address: null };
-  net.fetchCommunityProfiles.mockResolvedValue({});
+  net.fetchMemberProfiles.mockResolvedValue({});
   user = userEvent.setup();
 });
 afterEach(() => {
@@ -513,7 +516,7 @@ describe("ProfilePhotosScreen", () => {
           { name: "", address: "0x2222222222222222222222222222222222222222", isGuest: true },
           { name: "Ghost", address: "not-a-wallet", isGuest: true },
         ];
-        net.fetchCommunityProfiles.mockResolvedValue({ [FRIEND]: { name: "Alice", picture: "https://faces.example/alice.png" } });
+        net.fetchMemberProfiles.mockResolvedValue({ [FRIEND]: { name: "Alice", picture: "https://faces.example/alice.png" } });
       });
 
       describe("and the gallery holds two photos", () => {
@@ -538,7 +541,7 @@ describe("ProfilePhotosScreen", () => {
           expect(within(dialog).getAllByText("guest")).toHaveLength(2);
           expect(within(dialog).getByRole("link", { name: "Download photo" }).getAttribute("href")).toBe("https://reel.example/p-0.jpg");
           await waitFor(() => expect(within(dialog).getByRole("img", { name: "Alice", hidden: true }).getAttribute("src")).toBe("https://faces.example/alice.png"));
-          expect(net.fetchCommunityProfiles.mock.calls[0]?.[0]).toEqual([FRIEND, "0x2222222222222222222222222222222222222222"].sort());
+          expect(net.fetchMemberProfiles.mock.calls[0]?.[0]).toEqual([FRIEND, "0x2222222222222222222222222222222222222222"].sort());
         });
       });
 

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SHOP_QUERY_KEYS } from "../../checkout/lib/after-purchase";
 import { createDemo, DemoShell } from "../../checkout/demo";
-import { APPROVAL_STILL_PENDING, TxPendingError } from "../../market/lib/tx";
+import { APPROVAL_REVERTED, APPROVAL_STILL_PENDING, TxPendingError, TxRevertedError } from "../../market/lib/tx";
 import { executeLegacyOrder } from "../../market/purchase/executeOrder";
 import { BOOK } from "@shop/payment/fixtures";
 import LegacyOrderBuy from "./LegacyOrderBuy";
@@ -78,9 +78,20 @@ describe("LegacyOrderBuy", () => {
     vi.mocked(executeLegacyOrder).mockRejectedValueOnce(new TxPendingError(`0x${"a".repeat(64)}`, "The MANA approval"));
     await buy();
     await screen.findByText(APPROVAL_STILL_PENDING);
+    // The approval to watch, on the order's chain.
+    expect(screen.getByRole("link", { name: "View transaction" }).getAttribute("href")).toBe(`https://polygonscan.com/tx/0x${"a".repeat(64)}`);
     expect(screen.queryByText(/The purchase was sent/)).toBeNull();
     // No second Buy while the approval confirms: it would send a second approval.
     expect(screen.queryByTestId("order-buy")).toBeNull();
+    expect(invalidated(balance)).toBe(false);
+    expect(onPending).not.toHaveBeenCalled();
+  });
+
+  it("an approval that reverted sent no sale: it says so, and reads nothing again", async () => {
+    vi.mocked(executeLegacyOrder).mockRejectedValueOnce(new TxRevertedError(`0x${"a".repeat(64)}`));
+    await buy();
+    await screen.findByText(APPROVAL_REVERTED);
+    expect(screen.queryByText(/listing may have been sold/)).toBeNull();
     expect(invalidated(balance)).toBe(false);
     expect(onPending).not.toHaveBeenCalled();
   });
