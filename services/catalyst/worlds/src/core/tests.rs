@@ -2534,6 +2534,18 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
         assert_eq!(err.status(), 400, "{err:?}");
         err.public_message()
     };
+    let take_pending_refresh = |world: &WorldName| {
+        let pool = f.pool.clone();
+        let world = world.key().to_owned();
+        async move {
+            sqlx::query("DELETE FROM explore.world_place_updates WHERE world_name = $1")
+                .bind(world)
+                .execute(&pool)
+                .await
+                .unwrap()
+                .rows_affected()
+        }
+    };
 
     let spawnless = world_name();
     let err = store::update_world_settings(
@@ -2567,6 +2579,11 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     )
     .await
     .unwrap();
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "deploy queues refresh"
+    );
     let err = store::update_world_settings(
         &f.pool,
         &world,
@@ -2578,6 +2595,11 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     .await
     .expect_err("a spawn outside the world shape is refused");
     assert!(bad_request(err).contains("must be within the world shape rectangle"));
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        0,
+        "rejected spawn queues nothing"
+    );
     assert_eq!(
         store::get_world_settings(&f.pool, &world)
             .await
@@ -2599,6 +2621,25 @@ async fn settings_spawn_validation_runs_inside_the_update_transaction() {
     .expect("in-shape spawn");
     assert_eq!(updated.spawn_coordinates.as_deref(), Some("0,1"));
     assert_eq!(old_spawn.as_deref(), Some("0,0"));
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "spawn edit queues refresh"
+    );
+    store::store_access_for_owner(&f.pool, &world, &owner, &AccessSetting::Unrestricted)
+        .await
+        .unwrap();
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "access edit queues refresh"
+    );
+    assert_eq!(store::undeploy_world(&f.pool, &world).await.unwrap(), 1);
+    assert_eq!(
+        take_pending_refresh(&world).await,
+        1,
+        "undeploy queues refresh"
+    );
 }
 
 #[tokio::test]
