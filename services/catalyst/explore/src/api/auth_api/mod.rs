@@ -8,7 +8,6 @@
 
 use crate::shared::routing::{erase, get, post};
 use axum::Extension;
-#[cfg(test)]
 use axum::body::Body;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
