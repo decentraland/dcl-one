@@ -16,7 +16,13 @@ vi.mock("@/data/lib/auth/thirdweb/api", async (original) => ({
 import { readVerifiedWallet } from "@/core/lib/telemetry/session";
 import { createIdentityFromPrivateKey, createIdentityWith } from "@/data/lib/auth/identity";
 import { signRequest } from "@/data/lib/auth/signer";
-import { confirmSignIn, postAuthCallback, resetSessionChangeForTests } from "@/data/lib/auth/session-change";
+import { restoreTrackedUser, trackedUserDropped } from "@/core/lib/telemetry/tracked-user";
+import {
+  confirmSignIn,
+  postAuthCallback,
+  resetSessionChangeForTests,
+  switchSignedInAccount,
+} from "@/data/lib/auth/session-change";
 
 import { action } from "./auth.callback";
 
@@ -58,6 +64,7 @@ beforeEach(() => {
   posts = 0;
   offline = false;
   resetSessionChangeForTests();
+  restoreTrackedUser();
   thirdweb.getWalletForToken.mockImplementation(async (token: string) => (token === EMAIL_TOKEN ? wallet : null));
   vi.stubGlobal(
     "fetch",
@@ -169,5 +176,40 @@ describe("the cookie a signed sign-in sets", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, address: wallet });
     expect(response.headers.get("Set-Cookie")).toBe(`dcl_wallet_verified=${wallet}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly; Secure`);
+  });
+});
+
+describe("a wallet switching the session to another account", () => {
+  const PREVIOUS = `0x${"9".repeat(40)}`;
+
+  beforeEach(() => jar.set("dcl_wallet_verified", PREVIOUS));
+
+  it("names the new account once the server verified it", async () => {
+    expect(await switchSignedInAccount(await createIdentityFromPrivateKey(key))).toEqual({ ok: true, status: 200 });
+    expect(userId()).toBe(wallet);
+    expect(trackedUserDropped()).toBe(false);
+  });
+
+  it("leaves no cookie naming the previous account when the new one is refused", async () => {
+    const other = privateKeyToAccount(generatePrivateKey());
+    const forged = await createIdentityWith(wallet, (message) => other.signMessage({ message }));
+    expect(await switchSignedInAccount(forged)).toEqual({ ok: false, status: 401 });
+    expect(userId()).toBeNull();
+    expect(trackedUserDropped()).toBe(true);
+  });
+
+  it("clears the previous account when the new session cannot sign", async () => {
+    const expired = await createIdentityFromPrivateKey(key, { expirationMs: -1_000 });
+    expect(await switchSignedInAccount(expired)).toBeNull();
+    expect(posts).toBe(1);
+    expect(userId()).toBeNull();
+  });
+
+  it("names no account in page views when the network fails both posts", async () => {
+    offline = true;
+    expect(await switchSignedInAccount(await createIdentityFromPrivateKey(key))).toBeNull();
+    expect(posts).toBe(2);
+    // The cookie could not be cleared; page views leave the account out for this document.
+    expect(trackedUserDropped()).toBe(true);
   });
 });

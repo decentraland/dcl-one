@@ -35,8 +35,37 @@ let watch: typeof import("./wallet-account-switch").watchBrowserWalletAccount;
 let onChange: ReturnType<typeof vi.fn<Parameters<typeof watch>[1]>>;
 let stop: (() => void) | undefined;
 
+/** The verified-wallet cookie as the server keeps it; it starts naming the signed-in account A. */
+let verified: string | null;
+let callbacks: Array<{ signedBy?: string; signout?: true }>;
+/** How the server answers a sign-in post: as it does, a refusal (which clears the cookie), or the network failing. */
+let server: "answer" | "refuse" | "offline";
+
+async function authCallback(_url: string, init: RequestInit = {}): Promise<Response> {
+  const body = JSON.parse(String(init.body)) as { signout?: true };
+  if (body.signout) {
+    callbacks.push({ signout: true });
+    if (server === "offline") throw new TypeError("Failed to fetch");
+    verified = null;
+    return Response.json({ ok: true });
+  }
+  const signedBy = (JSON.parse(new Headers(init.headers).get("x-identity-auth-chain-0") ?? "{}") as { payload?: string }).payload;
+  callbacks.push({ signedBy });
+  if (server === "offline") throw new TypeError("Failed to fetch");
+  if (server === "refuse" || !signedBy) {
+    verified = null;
+    return Response.json({ ok: false }, { status: 401 });
+  }
+  verified = signedBy;
+  return Response.json({ ok: true, address: signedBy });
+}
+
 beforeEach(async () => {
   vi.resetModules();
+  verified = A;
+  callbacks = [];
+  server = "answer";
+  vi.stubGlobal("fetch", vi.fn(authCallback));
   localStorage.clear();
   sessionStorage.clear();
   wallet = provider();
@@ -66,23 +95,68 @@ describe("when the Sites session belongs to a browser wallet", () => {
       localStorage.setItem(`single-sign-on-${B}`, JSON.stringify(toShared(identity(B, 3 * 86_400_000), PUBLIC_KEY)));
     });
 
-    it("should activate the selected account and update the wallet cookie", () => {
+    it("should activate the selected account and update the wallet cookie", async () => {
+      wallet.request.mockResolvedValue([B]);
       wallet.emit([B.toUpperCase().replace("0X", "0x")]);
       expect(session.getIdentity()?.signer).toBe(B);
       expect(document.cookie).toContain(B);
       expect(onChange).toHaveBeenCalledWith("activated");
+      await vi.waitFor(() => expect(verified).toBe(B));
+    });
+
+    it("should name the new account to Segment once the server verified it, and none before", async () => {
+      const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+      // The wallet now exposes B, to the event and to the next probe alike.
+      wallet.request.mockResolvedValue([B]);
+      wallet.emit([B]);
+      // Until the server answers, the cookie still names A: page views leave the account out.
+      expect(trackedUserDropped()).toBe(true);
+      await vi.waitFor(() => expect(trackedUserDropped()).toBe(false));
+      expect(callbacks).toEqual([{ signedBy: B }]);
+      expect(verified).toBe(B);
+    });
+
+    it("should leave no cookie naming the old account when the server refuses the new one", async () => {
+      const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+      server = "refuse";
+      // The wallet now exposes B, to the event and to the next probe alike.
+      wallet.request.mockResolvedValue([B]);
+      wallet.emit([B]);
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signedBy: B }]));
+      await vi.waitFor(() => expect(verified).toBeNull());
+      expect(trackedUserDropped()).toBe(true);
+      expect(session.getIdentity()?.signer).toBe(B);
+    });
+
+    it("should keep page views from naming any account when the post never reaches the server", async () => {
+      const { trackedUserDropped } = await import("@/core/lib/telemetry/tracked-user");
+      server = "offline";
+      // The wallet now exposes B, to the event and to the next probe alike.
+      wallet.request.mockResolvedValue([B]);
+      wallet.emit([B]);
+      // The proof failed on the way, so the old account's cookie is cleared too (that fails here as well).
+      await vi.waitFor(() => expect(callbacks).toEqual([{ signedBy: B }, { signout: true }]));
+      expect(trackedUserDropped()).toBe(true);
+      expect(session.getIdentity()?.signer).toBe(B);
     });
 
     describe("and the reader returns to the previous account", () => {
-      beforeEach(() => {
+      beforeEach(async () => {
+        wallet.request.mockResolvedValue([B]);
         wallet.emit([B]);
+        await vi.waitFor(() => expect(verified).toBe(B));
         onChange.mockClear();
+        callbacks = [];
       });
 
       it("should reuse the saved session and expose it as the Explorer's sign-in", async () => {
+        wallet.request.mockResolvedValue([A]);
         wallet.emit([A]);
         expect(session.getIdentity()?.signer).toBe(A);
         expect(onChange).toHaveBeenCalledExactlyOnceWith("activated");
+        // Switching back is a switch too: the server names A again.
+        await vi.waitFor(() => expect(verified).toBe(A));
+        expect(callbacks).toEqual([{ signedBy: A }]);
         const { getStoredLogin } = await import("@explorer-core/features/auth/sso");
         expect(getStoredLogin()?.address).toBe(A);
       });
@@ -105,12 +179,16 @@ describe("when the Sites session belongs to a browser wallet", () => {
   });
 
   describe("and the provider stops exposing accounts", () => {
-    it("should suspend the session until the wallet exposes the account again", () => {
+    it("should suspend the session until the wallet exposes the account again", async () => {
       wallet.emit([]);
       expect(session.getIdentity()).toBeNull();
       expect(onChange).not.toHaveBeenCalled();
       wallet.emit([A]);
       expect(session.getIdentity()?.signer).toBe(A);
+      // The same account came back: the cookie still names it, so nothing is posted.
+      await Promise.resolve();
+      expect(callbacks).toEqual([]);
+      expect(verified).toBe(A);
     });
   });
 

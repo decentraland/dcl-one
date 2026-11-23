@@ -110,7 +110,10 @@ export async function postAuthCallback(
  * the wallet that signed it. Resolves as `postAuthCallback` does; null as well when the session could
  * not sign (expired), which posts nothing.
  */
-export async function confirmSignIn(identity: AuthIdentity): Promise<AuthCallbackAnswer | null> {
+export async function confirmSignIn(
+  identity: AuthIdentity,
+  opts: { revalidate?: boolean } = {},
+): Promise<AuthCallbackAnswer | null> {
   let headers: Record<string, string>;
   try {
     const { signRequest } = await import("./signer");
@@ -118,7 +121,21 @@ export async function confirmSignIn(identity: AuthIdentity): Promise<AuthCallbac
   } catch {
     return null;
   }
-  return post({}, headers, {});
+  return post({}, headers, opts);
+}
+
+/**
+ * The wallet moved the session to another account without a sign-in page: page views leave the
+ * account out until the server names the new one, then root's data reloads in place. A wrong account
+ * is worse than none, so when the new one cannot be proven (its session could not sign, the post
+ * never arrived) the cookie naming the previous one is cleared; a refusal clears it on its own.
+ */
+export async function switchSignedInAccount(identity: AuthIdentity): Promise<AuthCallbackAnswer | null> {
+  signOutAnswered = 0;
+  dropTrackedUser();
+  const answer = await confirmSignIn(identity, { revalidate: true });
+  if (answer === null) await postAuthCallback({ signout: true }, { revalidate: true });
+  return answer;
 }
 
 async function post(

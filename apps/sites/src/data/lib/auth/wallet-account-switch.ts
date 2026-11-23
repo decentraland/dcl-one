@@ -6,6 +6,7 @@ import {
   subscribe,
   suspendWalletIdentity,
 } from "./session";
+import { switchSignedInAccount } from "./session-change";
 import { browserWalletRdnsFor, recordSignIn, UNRECORDED_BROWSER_WALLET } from "./signin-kind";
 import { sharedIdentityFor, walletSessionFor } from "./single-sign-on";
 import { browserWalletProvider, selectWallet } from "./wallet";
@@ -66,6 +67,8 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
           : sharedIdentityFor(account) ?? walletSessionFor(account);
         if (next) {
           setBrowserWalletIdentity(next, rdns, true);
+          // The verified-wallet cookie still names the previous account (routes/auth.callback.tsx).
+          if (account !== signer) void switchSignedInAccount(next);
           onChange("activated");
         } else if (pendingAccount !== account) {
           pendingAccount = account;
