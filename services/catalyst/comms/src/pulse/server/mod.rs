@@ -227,7 +227,7 @@ pub struct PulseServer {
     // driver actually releases the peer ID.
     admitted_connections: HashSet<u32>,
     pub(super) max_admitted_connections: usize,
-    pub pre_auth: PreAuthAdmission,
+    pre_auth: PreAuthAdmission,
 
     pub max_emote_duration_ms: u32,
 
@@ -272,6 +272,13 @@ impl PulseServer {
             &DEFAULT_SIMULATION_STEPS,
             false,
         )
+    }
+
+    /// Replaces the pre-auth admission limits. For a server that has admitted no connection yet:
+    /// the replacement starts with nothing in flight.
+    pub fn with_pre_auth_limits(mut self, per_ip_cap: i64, global_budget: i64) -> Self {
+        self.pre_auth = PreAuthAdmission::new(per_ip_cap, global_budget);
+        self
     }
 
     pub fn with_config(

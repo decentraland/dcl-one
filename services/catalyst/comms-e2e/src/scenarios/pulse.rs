@@ -1210,7 +1210,11 @@ async fn handshake_swarm(ctx: Ctx) -> Result<()> {
         }
         leave_all(&ctx, over.admitted).await?;
 
-        // (c) the same number again, spread over two addresses: the limit is per address
+        // (c) the same number again, spread over two addresses: the limit is per address. macOS
+        // has one loopback address, so there is nothing to spread over there.
+        if cfg!(target_os = "macos") {
+            return Ok(());
+        }
         let addresses: [IpAddr; 2] = ["127.0.0.2".parse()?, "127.0.0.3".parse()?];
         let spread = swarm(&ctx, 300, cap * 2, &addresses).await;
         if !spread.hung.is_empty() || !spread.refused.is_empty() || spread.admitted.len() != cap * 2
