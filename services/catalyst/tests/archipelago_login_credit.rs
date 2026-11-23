@@ -266,22 +266,39 @@ async fn handshakes_on_one_day_count_one_login_day() {
     };
     let referral = referral(&scratch.pool, 3.0).await;
     let port = serve(referral.clone()).await;
-    let wallet = PrivateKeySigner::random();
-    let referrer = invite(&referral, &wallet).await;
+    // A run that crosses UTC midnight counts two days; run it again with a fresh wallet.
+    for _ in 0..2 {
+        let day = utc_date(&scratch.pool).await;
+        let wallet = PrivateKeySigner::random();
+        let referrer = invite(&referral, &wallet).await;
 
-    log_in(port, &wallet).await;
-    eventually_progress(&scratch.pool, &wallet, 1).await;
-    // Reconnects on a counted date add no day and take no quota slot.
-    for _ in 0..3 {
         log_in(port, &wallet).await;
+        eventually_progress(&scratch.pool, &wallet, 1).await;
+        // Reconnects on a counted date add no day and take no quota slot.
+        for _ in 0..3 {
+            log_in(port, &wallet).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (progress, notices) = (
+            progress(&scratch.pool, &wallet).await,
+            accepted_notices(&scratch.pool, &referrer).await,
+        );
+        if utc_date(&scratch.pool).await != day {
+            continue;
+        }
+        assert_eq!(progress, ("pending".into(), 1, 1));
+        assert_eq!(notices, 0);
+        scratch.teardown().await;
+        return;
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(
-        progress(&scratch.pool, &wallet).await,
-        ("pending".into(), 1, 1)
-    );
-    assert_eq!(accepted_notices(&scratch.pool, &referrer).await, 0);
-    scratch.teardown().await;
+    panic!("two runs crossed UTC midnight");
+}
+
+async fn utc_date(pool: &sqlx::PgPool) -> chrono::NaiveDate {
+    sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

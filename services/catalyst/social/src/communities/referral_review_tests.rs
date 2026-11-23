@@ -1153,6 +1153,56 @@ async fn logins_on_a_counted_date_leave_the_next_days_first_login_its_quota() {
 }
 
 #[tokio::test]
+async fn the_login_recorder_retries_only_server_errors() {
+    use crate::comms::interfaces::{LoginRecordError, LoginRecorder};
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referrer, invited) = (wallet(), wallet());
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), Settings::for_tests());
+    referral
+        .create(&referrer, &invited, "192.0.2.1")
+        .await
+        .unwrap();
+
+    let invalid = referral
+        .record_login("not-a-wallet", uuid::Uuid::new_v4())
+        .await;
+    assert!(
+        matches!(invalid, Err(LoginRecordError::Refused(_))),
+        "400: {invalid:?}"
+    );
+
+    // A held progress row runs into the login's lock timeout.
+    let mut holder = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
+        .bind(&invited)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    let busy = referral
+        .record_login(invited.as_str(), uuid::Uuid::new_v4())
+        .await;
+    assert!(
+        matches!(busy, Err(LoginRecordError::Transient(_))),
+        "503: {busy:?}"
+    );
+    holder.rollback().await.unwrap();
+
+    sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) SELECT $1,gen_random_uuid(),timezone('UTC',now())+interval '1 day',timezone('UTC',now()) FROM generate_series(1,120)")
+        .bind(&invited).execute(&pool).await.unwrap();
+    let full = referral
+        .record_login(invited.as_str(), uuid::Uuid::new_v4())
+        .await;
+    assert!(
+        matches!(full, Err(LoginRecordError::Refused(_))),
+        "429: {full:?}"
+    );
+    database.drop().await;
+}
+
+#[tokio::test]
 async fn earlier_native_receipts_upgrade_preserves_retries_and_server_quota() {
     let Some(database) = reward_database_with_legacy_receipts(true).await else {
         return;
