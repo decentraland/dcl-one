@@ -8169,6 +8169,55 @@ async fn the_quota_pass_blocks_owners_over_their_allowance_and_lifts_stale_block
 }
 
 #[tokio::test]
+async fn malformed_permission_allow_lists_leave_grants_unchanged() {
+    use super::notices::{PERMISSION_GRANTED, PERMISSION_REVOKED};
+
+    let Some(f) = fixture().await else { return };
+    let (world, owner, granted, other) = (
+        world_name(),
+        Wallet::random(),
+        Wallet::random(),
+        Wallet::random(),
+    );
+    f.names.set(&owner.address, world.label());
+    let permissions_path = format!("/world/{}/permissions", world.display());
+    for permission in ["deployment", "streaming"] {
+        let edit_path = format!("{permissions_path}/{permission}");
+        let valid = json!({ "type": "allow-list", "wallets": [granted.display()] }).to_string();
+        expect(
+            &f.app,
+            Case::new("post", &edit_path)
+                .signed_meta(&owner, &valid)
+                .await,
+            204,
+        )
+        .await;
+        for wallets in [
+            json!(other.display()),
+            Value::Null,
+            json!([other.display(), 42]),
+        ] {
+            let invalid = json!({ "type": "allow-list", "wallets": wallets }).to_string();
+            expect(
+                &f.app,
+                Case::new("post", &edit_path)
+                    .signed_meta(&owner, &invalid)
+                    .await,
+                400,
+            )
+            .await;
+            let permissions = expect(&f.app, Case::new("get", &permissions_path), 200).await;
+            assert_eq!(
+                permissions["permissions"][permission]["wallets"],
+                json!([granted.address.as_str()]),
+            );
+        }
+    }
+    assert!(notices_of(&f, PERMISSION_REVOKED, &granted.address).is_empty());
+    assert!(notices_of(&f, PERMISSION_GRANTED, &other.address).is_empty());
+}
+
+#[tokio::test]
 async fn permission_edits_notify_each_address_actually_changed() {
     use super::notices::{PERMISSION_GRANTED, PERMISSION_REVOKED};
     let Some(f) = fixture().await else { return };
