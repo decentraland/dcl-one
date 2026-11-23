@@ -100,6 +100,14 @@ fn decode_proto<T: Message + Default>(payload: &str) -> Option<T> {
     }
     T::decode(bytes.as_slice()).ok()
 }
+/// The kind of a rejected message, for logging; an oversized one is never parsed.
+fn rejected_kind(bytes: &[u8]) -> Option<String> {
+    if bytes.len() > MAX_BYTES {
+        return None;
+    }
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    value["event"]["kind"].as_str().map(str::to_owned)
+}
 fn address(value: &str) -> bool {
     wallet_token(value).as_deref() == Some(value)
 }
@@ -254,9 +262,7 @@ impl Event {
             }
             _ => {
                 // An older replica rejects a newer kind; count it rather than drop silently.
-                let kind = serde_json::from_slice::<serde_json::Value>(bytes)
-                    .ok()
-                    .and_then(|value| value["event"]["kind"].as_str().map(str::to_owned));
+                let kind = rejected_kind(bytes);
                 tracing::debug!(?kind, len = bytes.len(), "undecodable social event dropped");
                 metrics::counter!("social_event_delivery_dropped", "reason" => "undecodable_inbound")
                     .increment(1);
@@ -515,6 +521,17 @@ mod tests {
             invalid["event"][field] = value;
             assert!(Event::decode(&serde_json::to_vec(&invalid).unwrap(), local).is_none());
         }
+    }
+    #[test]
+    fn rejected_kind_is_read_only_within_the_wire_cap() {
+        let unknown = br#"{"version":1,"source":"00000000-0000-0000-0000-000000000000","event":{"kind":"future_kind"}}"#;
+        assert!(Event::decode(unknown, Uuid::new_v4()).is_none());
+        assert_eq!(rejected_kind(unknown).as_deref(), Some("future_kind"));
+        let mut oversized = unknown.to_vec();
+        oversized.resize(MAX_BYTES + 1, b' ');
+        assert!(Event::decode(&oversized, Uuid::new_v4()).is_none());
+        assert_eq!(rejected_kind(&oversized), None);
+        assert_eq!(rejected_kind(b"not json"), None);
     }
     #[test]
     fn friendship_accepted_carries_two_distinct_wallets() {
