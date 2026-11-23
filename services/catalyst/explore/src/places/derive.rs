@@ -420,14 +420,22 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
     WHERE l.raw->>'source' = 'worlds'
 "#;
 
-/// A world this node publishes is listed once, from the local leg: the mirrored
-/// row of the same world goes (the places mirror skips it while the local row
-/// stands, `mirror::UPSERT`). `$1` scopes the deletion to a targeted refresh.
+/// The mirror skips published worlds already listed locally or blocked here
+/// (`mirror::UPSERT`). Remove any mirror rows predating those conditions.
+/// `$1` scopes the deletion to a targeted refresh.
 const DISPLACE_MIRRORED_WORLDS: &str = r#"
-    DELETE FROM explore.place p USING explore.place_world_local l
-    WHERE l.raw->>'source' = 'worlds' AND p.world IS TRUE
-      AND (p.id = l.id OR lower(p.world_name) = l.id)
-      AND ($1::text[] IS NULL OR l.id = ANY($1))
+    DELETE FROM explore.place p USING (
+        SELECT l.id AS name FROM explore.place_world_local l
+        WHERE l.raw->>'source' = 'worlds'
+          AND ($1::text[] IS NULL OR l.id = ANY($1))
+        UNION ALL
+        SELECT w.name FROM worlds.worlds w
+        WHERE w.mirror_source IS NULL AND w.blocked_since IS NOT NULL
+          AND ($1::text[] IS NULL OR w.name = ANY($1))
+          AND EXISTS (SELECT 1 FROM worlds.world_scenes ws
+                      WHERE ws.world_name = w.name AND ws.mirror_source IS NULL)
+    ) local
+    WHERE p.world IS TRUE AND (p.id = local.name OR lower(p.world_name) = local.name)
 "#;
 
 /// The local world rows a pass did not stamp (every local scene unpublished,
@@ -449,9 +457,9 @@ pub async fn mark_world_dirty(conn: &mut PgConnection, world_name: &str) -> sqlx
     Ok(())
 }
 
-/// The two projection paths normally share a job lease. A transaction lock
-/// also serializes writes already sent to Postgres around a lease loss.
-async fn lock_world_projection(conn: &mut PgConnection) -> sqlx::Result<()> {
+/// Serialize the local projection and world mirror upserts. The transaction
+/// lock also orders writes already sent to PostgreSQL around a lease loss.
+pub(super) async fn lock_world_projection(conn: &mut PgConnection) -> sqlx::Result<()> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext('explore.world_place_projection'), 0)")
         .execute(conn)
         .await?;
@@ -480,7 +488,7 @@ async fn refresh_queued_worlds(pool: &PgPool, content_public_url: &str) -> sqlx:
                 .fetch_all(&mut *tx)
                 .await?;
         sqlx::query(DISPLACE_MIRRORED_WORLDS)
-            .bind(&refreshed)
+            .bind(&worlds)
             .execute(&mut *tx)
             .await?;
         sqlx::query(
@@ -1618,6 +1626,43 @@ mod tests {
             )]
         };
         let mirrored = |id: &str| vec![(id.to_string(), None, Some("upstream".to_string()))];
+
+        let blocked_alias = json!({
+            "id": "separate-world-id",
+            "world_name": "Blocked.DCL.ETH",
+            "title": "upstream",
+        });
+        super::super::mirror::upsert_world(&pool, &blocked_alias)
+            .await
+            .unwrap();
+        world(&pool, "blocked.dcl.eth", None, "unrestricted").await;
+        let mut edit = pool.begin().await.unwrap();
+        sqlx::query(
+            "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now())
+             WHERE name = 'blocked.dcl.eth'",
+        )
+        .execute(&mut *edit)
+        .await
+        .unwrap();
+        mark_world_dirty(&mut edit, "blocked.dcl.eth")
+            .await
+            .unwrap();
+        edit.commit().await.unwrap();
+        assert_eq!(
+            listed("blocked.dcl.eth").await,
+            mirrored("separate-world-id")
+        );
+        assert_eq!(
+            refresh_queued_worlds(&pool, "https://node.example/content")
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(listed("blocked.dcl.eth").await.is_empty());
+        super::super::mirror::upsert_world(&pool, &blocked_alias)
+            .await
+            .unwrap();
+        assert!(listed("blocked.dcl.eth").await.is_empty());
 
         run_once(&pool, DeriveScope::Local, "https://node.example/content/")
             .await

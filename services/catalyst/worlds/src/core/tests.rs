@@ -8511,6 +8511,11 @@ async fn the_owner_reconcile_follows_a_name_transfer() {
         200,
     )
     .await;
+    sqlx::query("DELETE FROM explore.world_place_updates WHERE world_name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
         .bind(world.key())
         .execute(&f.pool)
@@ -8550,6 +8555,14 @@ async fn the_owner_reconcile_follows_a_name_transfer() {
         stored_owner(&f.pool, &world).await.as_deref(),
         Some(new.address.as_str())
     );
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.world_place_updates WHERE world_name = $1)",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(queued, "the reconciled owner queues a place refresh");
     assert_eq!(
         stored_owner(&f.pool, &unresolved).await.as_deref(),
         Some(ens_owner.address.as_str()),

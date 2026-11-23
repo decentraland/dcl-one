@@ -311,7 +311,8 @@ adds scene rows to the aggregate catalogue. Upstream mirrored catalogue IDs
 remain external IDs, never storage authority.
 
 World publication, undeployment, settings (including spawn), access and block
-edits mark one row in `explore.world_place_updates` in the source transaction.
+edits, and owner reconciliation mark one row in `explore.world_place_updates`
+in the source transaction.
 This relation holds at most one pending row per changed world. Coalescing takes
 the pending row's lock without losing its original queue position, so a worker
 cannot consume a mark before its source update commits. The leased
@@ -320,8 +321,10 @@ oldest entries with `SKIP LOCKED`; the update or removal of the corresponding
 aggregate and the consumption of its mark commit together. The worker reads
 world and scene rows without taking row locks. A failed refresh rolls back
 both effects. A full reconciliation runs at its configured interval and can
-delay processing queued edits while it runs. The projection transaction uses an
-advisory lock so a lease change cannot overlap projection writes from two workers.
+delay processing queued edits while it runs. The local projection and mirror
+upserts of worlds share an advisory transaction lock. The mirror checks for
+local authority after acquiring the lock, so it cannot reinsert a world
+displaced by the local projection. The lock also orders work during lease changes.
 
 The old `worlds.world_scene_identity` table is a frozen upgrade source only: creating
 the new Places relation copies its UUIDs and retained records during object
