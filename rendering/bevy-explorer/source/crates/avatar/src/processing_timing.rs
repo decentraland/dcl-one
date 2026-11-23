@@ -4,18 +4,19 @@
 //! `instantiation/avatar_processing` diagnostic ([`AvatarProcessingTimingPlugin`]). Nothing limits
 //! avatar processing: `docs/guidelines/decisions.md` has the measurement behind that.
 
+#[cfg(any(feature = "explorer", test))]
 use std::time::Duration;
 
 use bevy::prelude::*;
 
 /// The last run of `process_avatar`.
-// only the Explorer's measurement reads it
-#[cfg_attr(not(feature = "explorer"), allow(dead_code))]
 #[derive(Resource, Default)]
 pub(crate) struct AvatarProcessingRun {
     /// How long it took.
+    #[cfg(any(feature = "explorer", test))]
     pub(crate) spent: Duration,
     /// The avatars it processed.
+    #[cfg(any(feature = "explorer", test))]
     pub(crate) processed: usize,
 }
 

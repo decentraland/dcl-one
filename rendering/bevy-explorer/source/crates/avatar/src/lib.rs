@@ -1507,7 +1507,9 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
+    #[cfg(any(feature = "explorer", test))]
     let started = bevy::platform::time::Instant::now();
+    #[cfg(any(feature = "explorer", test))]
     let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
@@ -1524,7 +1526,10 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
-        processed += 1;
+        #[cfg(any(feature = "explorer", test))]
+        {
+            processed += 1;
+        }
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
@@ -2129,7 +2134,9 @@ fn process_avatar(
         });
     }
     *run = processing_timing::AvatarProcessingRun {
+        #[cfg(any(feature = "explorer", test))]
         spent: started.elapsed(),
+        #[cfg(any(feature = "explorer", test))]
         processed,
     };
 }
