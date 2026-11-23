@@ -151,7 +151,7 @@ itself. Neither the gatekeeper client nor the room-service client follows a redi
 
 | Group | Scenarios, each with its other tags | Need |
 |---|---|---|
-| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-handshake-clock` (`refusals`, `probe`: how far the server's clock is behind this machine's, read at the far edge of its 60 s window), `pulse-crowd` (`crowd`), `crowd-visit` (`crowd`, `visit`), `pulse-webtransport-bursts` (`webtransport`, `slow`) | Pulse. All but the last run on either transport (`--transport`). `crowd-visit` also needs a visit plan, see below. |
+| `pulse` | `pulse-smoke` (`smoke`), `pulse-refusal-codes` (`refusals`), `pulse-auth-timeout` (`refusals`, `slow`), `pulse-rate-limits` (`limits`), `pulse-same-wallet-race` (`races`), `pulse-handshake-swarm` (`limits`, `swarm`), `pulse-churn` (`churn`), `pulse-realm-round-trip` (`realms`), `pulse-emote-lifecycle` (`emotes`), `pulse-resync-requests` (`resync`), `pulse-stall-and-resume` (`faults`, `slow`), `pulse-scene-listener` (`listeners`), `pulse-handshake-clock` (`refusals`, `probe`: how far the server's clock is behind this machine's, read at the far edge of its 60 s window), `pulse-crowd` (`crowd`), `crowd-visit` (`crowd`, `visit`), `pulse-webtransport-bursts` (`webtransport`, `slow`) | Pulse. All but the last run on either transport (`--transport`). `crowd-visit` also needs a visit plan and the API (the realm description), see below. |
 | `connections` | `connect-full-stack` (`connect`), `second-device-takeover` (`session`, `races`: Pulse ends the older device; the archipelago keeps one socket per session key and leaves the older socket open), `stale-socket-reconnect` (`session`, `faults`), `assignment-order` (`assignment`, `races`), `mints-under-churn` (`gatekeeper`, `races`), `ban-eviction` (`moderation`, `slow`), `stationary-credentials` (`restart`, `slow`), `livekit-same-identity` (`livekit`), `crowd-discovery` (`crowd`) | The API; LiveKit for the room joins, which are left out, with a note, without a LiveKit client |
 | `explorer` | `explorer-uplink-stall` (`battle`, `faults`), `explorer-out-of-grid` (`battle`), `explorer-past-the-east-edge` (`battle`), `explorer-sleep-wake` (`battle`, `faults`), `explorer-port-unreachable` (`battle`, `faults`), `explorer-two-devices` (`races`), `explorer-resync` (`faults`). Probes: `explorer-replaced-by-another-device`, `explorer-replaces-another-device` (`probe`, `races`), `explorer-long-uplink-stall`, `explorer-reconnect-outside-grid` (`probe`, `faults`). The uplink over a slow path: `explorer-uplink-cadence` (`uplink`), `explorer-walk-800ms-round-trip`, `explorer-walk-1200ms-round-trip`, `explorer-walk-lossy-link`, `explorer-queued-stall-1200ms-round-trip`, `explorer-queued-stall-2000ms-round-trip` (`uplink`, `faults`) | The API and a headless explorer build |
 
@@ -180,13 +180,42 @@ selected; its crowd is the crowd scenarios' (`CE2E_CROWD_PLAYERS`, at most 30 he
 | `CE2E_VISIT_PARCEL` | The parcel, `x,y`, the crowd stands around (on a grid 2 m apart, at most 30 players) |
 | `CE2E_VISIT_SECONDS` | How long it stays, walking back and forth, before it leaves (120 unless given, 1 to 900); give `--deadline` above it |
 | `CE2E_VISIT_EXPECT` | Wallets, comma-separated, every player must catch a Pulse join event of |
+| `CE2E_VISIT_LABEL` | The crowd's label (`ce2e-visit` unless given; 1 to 32 lowercase letters, digits and dashes): its wallets come from it |
 
 The report notes every join event each player caught (`visitor_joins_by_player` for wallets
 outside the crowd, `crowd_join_events_caught_by_player` for the crowd itself), for each expected
 wallet how many players caught it (`expected_caught_by`), the crowd's wallets by player
-(`crowd_wallets`) and samples of what each player held while it stayed (`held_samples`). The
-crowd has no deployed profiles: a client that draws a player only from its profile draws none of
-them.
+(`crowd_wallets`) and samples of what each player held while it stayed (`held_samples`).
+
+**Profiles.** A client draws another player only once it has that player's profile, which it
+reads from a catalyst's lambdas. So before the crowd enters, each player makes sure the realm
+serves a profile for its wallet: it reads the realm description (`<api>/about`) for the content
+server (`content.publicUrl`) and the lambdas (`lambdas.publicUrl`), asks the lambdas for the
+wallet's profile, and deploys one to `POST <content.publicUrl>/entities` only when they do not
+serve its version. The deployment is the one the explorer makes for its own profile: an entity
+file with no files attached, named by its CIDv1 and signed by the wallet. The profile is named
+`ce2e-visit-NN` (`NN` the player's index), claims no name, wears base avatars only, its body shape
+and colours varied by index, and has no snapshots. Each player then announces that profile's
+version: in its handshake and in a profile announcement before it enters the realm, so every join
+event Pulse sends of it carries the version, which the scenario checks. Other scenarios announce
+no profile.
+
+- A player's wallet comes from the crowd label and its index, not from the run: every visit under
+  one label is the same crowd, and its profiles are deployed once however many visits are made.
+  Two visits at the same time need different labels: under one label they are the same wallets
+  and sessions twice, and each ends the other's players.
+- Deploying writes to a server. Only `crowd-visit` does it, after the host guard has admitted the
+  run, and the content server and the lambdas the realm description names must pass the same
+  guard: loopback, or a host `--allow-host` names. A refused deployment fails the visit before
+  anyone enters; a 429 or 503 that says when to come back (`Retry-After`, up to 60 s) is sent once
+  more. The report notes `profiles_deployed`, `profiles_already_served`,
+  `profiles_sent_again_after_retry_after` and, after a deployment, how many the lambdas served
+  before the crowd entered (`profiles_served_before_entering`, waited for up to 30 s).
+- What a visit leaves behind on a deployment: one profile entity per wallet of each label used,
+  `ce2e-visit-00` to `ce2e-visit-NN`, in the content server's history and active entities, served
+  by its lambdas to anyone who asks. A content server deletes no entity; a later deployment for the
+  same wallet replaces the active profile, and only a deployment's own operators can remove it.
+  The wallets' keys derive from the label and are not secret: anyone can deploy for them.
 
 Races repeat by default and take their order and gaps from the seed, so a failure replays.
 
