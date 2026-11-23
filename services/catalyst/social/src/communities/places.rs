@@ -35,6 +35,23 @@ pub(super) fn place_ids_within_bounds(place_ids: &[String]) -> bool {
             .all(|id| id.chars().count() <= MAX_PLACE_ID_CHARS)
 }
 
+/// A place id as stored: explore keys catalogue ids and world names lowercased.
+pub(super) fn canonical_place_id(id: &str) -> String {
+    id.to_lowercase()
+}
+
+/// [`canonical_place_id`] of each id, first spelling kept, case variants dropped.
+pub(super) fn canonical_place_ids<'a>(ids: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in ids {
+        let id = canonical_place_id(id);
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
 macro_rules! try_resp {
     ($e:expr) => {
         match $e {
@@ -101,7 +118,8 @@ fn is_uuid_shaped(id: &str) -> bool {
 /// places and the catalogue's worlds, each keyed by its lowercased name
 /// (places `Place/model.ts:149`, `World/model.ts:132-135,466-469`): a `*.eth`
 /// row is its catalogue world, while a world scene's UUID, a `*.eth` name the
-/// catalogue lacks, an id stored in uppercase or a disabled place stays bare.
+/// catalogue lacks or a disabled place stays bare (ids are stored lowercased,
+/// [`canonical_place_id`]).
 /// A failed lookup answers the bare rows. `addedBy` and `addedAt` stay on
 /// every row (ui3 reads them); explore's own `kind` does not (production's
 /// destination has none, nothing here reads it).
@@ -237,19 +255,19 @@ pub async fn add_places(
     if parsed.place_ids.is_empty() {
         return err_json(StatusCode::BAD_REQUEST, "placeIds is required");
     }
-    if let Err(e) = state
-        .validate_places_ownership(&parsed.place_ids, &signer)
-        .await
-    {
+    let place_ids = canonical_place_ids(&parsed.place_ids);
+    if let Err(e) = state.validate_places_ownership(&place_ids, &signer).await {
         return e.into_response();
     }
     try_resp!(map_db(
         sqlx::query(
             "INSERT INTO social.community_places (place_id, community_id, added_by) \
              SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
+             WHERE NOT EXISTS (SELECT 1 FROM social.community_places e \
+               WHERE e.community_id = $2 AND lower(e.place_id) = p) \
              ON CONFLICT (place_id, community_id) DO NOTHING",
         )
-        .bind(&parsed.place_ids)
+        .bind(&place_ids)
         .bind(uuid)
         .bind(&signer)
         .execute(&state.pool)
@@ -288,9 +306,11 @@ pub async fn remove_place(
         )
         .await
     );
+    let canonical = canonical_place_id(&place_id);
+    // lower(): rows written before ids were canonicalized still match
     let attached: bool = try_resp!(map_db(
-        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.community_places WHERE community_id = $1 AND place_id = $2)")
-            .bind(uuid).bind(&place_id).fetch_one(&state.pool).await
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.community_places WHERE community_id = $1 AND lower(place_id) = $2)")
+            .bind(uuid).bind(&canonical).fetch_one(&state.pool).await
     ));
     if !attached {
         return CommError::not_found(format!(
@@ -299,16 +319,16 @@ pub async fn remove_place(
         .into_response();
     }
     if let Err(e) = state
-        .validate_places_ownership(std::slice::from_ref(&place_id), &signer)
+        .validate_places_ownership(std::slice::from_ref(&canonical), &signer)
         .await
     {
         return e.into_response();
     }
     let del = try_resp!(map_db(
         sqlx::query(
-            "DELETE FROM social.community_places WHERE place_id = $1 AND community_id = $2"
+            "DELETE FROM social.community_places WHERE lower(place_id) = $1 AND community_id = $2"
         )
-        .bind(&place_id)
+        .bind(&canonical)
         .bind(uuid)
         .execute(&state.pool)
         .await

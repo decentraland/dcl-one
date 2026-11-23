@@ -20,6 +20,9 @@ import {
 } from "@/data/lib/profile/queries";
 import { isRouteFatal, type ProfileErrorReason } from "@/features/profile/errors";
 import { isOwnProfile, profileHref, readProfileTab, type ProfileTab } from "@/features/profile/tabs";
+import { faceUrl } from "@/features/social/community/view";
+
+import { oneLine } from "./social-meta";
 
 export type ProfileLoaderData = {
   sid: string;
@@ -27,7 +30,28 @@ export type ProfileLoaderData = {
   /** Whether the signed-in wallet's cookie names this profile, so the first render matches the server. */
   own: boolean;
   dehydratedState: DehydratedState;
+  /** What the page's link-preview card shows of the profile. */
+  card: ProfileCard;
 };
+
+/** A profile's link-preview card: each part missing falls back to the generic profile card's. */
+export type ProfileCard = { name?: string; description?: string; image?: string };
+
+/**
+ * The name every Decentraland client shows (an unclaimed name carries the address's last four
+ * characters), the description on one line and the square face, as decentraland.org's profile card.
+ */
+export function profileCard(profile: ProfileVM | null): ProfileCard {
+  if (!profile) return {};
+  const name = profile.name.trim();
+  // A profile without a name of its own is named after its address, which says nothing in a card.
+  const named = name && name !== profile.address;
+  return {
+    name: named ? (profile.hasClaimedName ? name : `${name}#${profile.address.slice(-4)}`) : undefined,
+    description: oneLine(profile.bio),
+    image: faceUrl(profile.avatarUrl),
+  };
+}
 
 /** The body of the status-bearing response the route's boundary renders on a document request. */
 export type ProfileErrorData = { address: string; reason: ProfileErrorReason };
@@ -146,7 +170,7 @@ export async function profileLoader(
   const dehydratedState = dehydrate(client);
   client.clear();
 
-  return session.wrap({ sid: session.sid, address, own, dehydratedState } satisfies ProfileLoaderData);
+  return session.wrap({ sid: session.sid, address, own, dehydratedState, card: profileCard(profile) } satisfies ProfileLoaderData);
 }
 
 /** `/profile`, `/profile/me[/:tab]`: the signed-in member's own profile, or sign-in first. */

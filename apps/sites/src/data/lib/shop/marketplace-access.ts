@@ -1,12 +1,12 @@
 // Whether Sites chrome can offer Marketplace links, using the same session and rollout rules as Shop.
 import { useSyncExternalStore } from "react";
 
-import { hostOr } from "@ui/shop/discovery/flags";
-import { REMOTE_FLAG, useRemoteFlagState } from "@ui/shop/discovery/lib/remoteFlags";
+import { hostOr } from "@dcl/one-ui/apps/shop/flags";
+import { REMOTE_FLAG, useRemoteFlagState } from "@dcl/one-ui/apps/shop/remote-flags";
 import { marketplaceAccess, marketplaceSession } from "@shop/market/access-rule";
 import { SIGNED_OUT } from "@shop/model/settlement";
-import { useShopCapabilities } from "@ui/shop/seller/lib/featureFlags";
-import { shopSession } from "@ui/shop/wallet/session";
+import { useShopCapabilities } from "@dcl/one-ui/apps/shop/capabilities";
+import { shopSession } from "@dcl/one-ui/apps/shop/session";
 
 import { useAuth } from "../auth/index";
 import { primeDappsFlags } from "../feature-flags.browser";

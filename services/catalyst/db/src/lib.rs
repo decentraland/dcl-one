@@ -1266,6 +1266,7 @@ mod tests {
         let plan: Vec<(String,)> = sqlx::query_as(
             "EXPLAIN SELECT urn, token_id FROM shop.usage_grants \
              WHERE grantee_address = lower($1) AND status = 'active' \
+               AND unlock_at > timezone('UTC', now()) \
                AND (urn = ANY($2) OR urn LIKE ANY($3))",
         )
         .bind("0xAB")

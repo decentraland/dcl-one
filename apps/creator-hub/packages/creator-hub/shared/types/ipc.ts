@@ -27,6 +27,7 @@ import type {
   OptimizeScanResult,
   OptimizeToolsInfo,
 } from './optimizer';
+import type { RecordingResult, RecordingStartResult, RecordingToolsStatus } from './recording';
 
 export type IpcResult<T> = {
   success: true;
@@ -225,12 +226,27 @@ export interface Ipc {
   'electron.logDeployment': (entry: DeploymentLogEntry) => Promise<void>;
   'electron.logRendererError': (entry: RendererErrorLogEntry) => Promise<void>;
   'electron.copyToClipboard': (text: string) => Promise<void>;
+  // Bring the calling window to the front (a dialog opened there from another window).
+  'electron.focusWindow': () => Promise<void>;
   'oxc.parse': (filename: string, source: string) => Promise<OxcParseResult>;
   'optimizer.scan': (path: string) => Promise<OptimizeScanResult>;
   'optimizer.run': (path: string, options: OptimizeOptions) => Promise<OptimizeResult>;
   'optimizer.revert': (path: string) => Promise<{ restored: number }>;
   'optimizer.tools': () => Promise<OptimizeToolsInfo>;
   'optimizer.installTools': (path: string) => Promise<OptimizeToolsInfo>;
+  'recording.start': (
+    projectPath: string,
+    projectTitle: string,
+    language: string,
+  ) => Promise<RecordingStartResult>;
+  'recording.stop': (sessionId: string) => Promise<RecordingResult>;
+  'recording.abort': (sessionId: string) => Promise<void>;
+  'recording.cancel': (sessionId: string) => Promise<void>;
+  'recording.skipTranscription': (sessionId: string) => Promise<void>;
+  'recording.toolsStatus': (language: string) => Promise<RecordingToolsStatus>;
+  'recording.installTools': (language: string) => Promise<void>;
+  'recording.discard': (dir: string) => Promise<void>;
+  'recording.combinedContext': (dirs: string[]) => Promise<string>;
   'metrics.request': (request: MetricsRequest) => Promise<MetricsResponse>;
 
   // Opt-in AI conversation sharing: the on-disk queue of redacted turn records. Main fills it;

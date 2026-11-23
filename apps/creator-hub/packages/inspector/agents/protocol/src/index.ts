@@ -91,6 +91,20 @@ export interface BrokenAsset {
 }
 
 /**
+ * What the user does in the viewport, for the session recorder — the bus form of the
+ * inspector's `RendererActivity`. Positions are scene-local (the agent subtracts the
+ * scene offset); `entity` 0 = nothing pickable. `meshName` is the raycast hit's glTF
+ * mesh name, when the engine reports one.
+ *  - `pointerTarget`: the scene entity under the pointer changed (deduped by the agent).
+ *  - `sceneClick`: a pointer-down that reached the RUNNING scene (editing off).
+ *  - `playerMove`: the player moved while the scene runs (throttled).
+ */
+export type BusActivity =
+  | { kind: 'pointerTarget'; entity: number; point?: BusVec3; meshName?: string }
+  | { kind: 'sceneClick'; entity: number; point?: BusVec3; meshName?: string }
+  | { kind: 'playerMove'; position: BusVec3 };
+
+/**
  * agent → inspector (`to: 'page'`). Viewport interaction results:
  *  - `pick`: entity under the click (entity 0 = clean miss / deselect).
  *  - `gizmoCommit`: the committed transform(s) of a gizmo drag (position only
@@ -173,7 +187,11 @@ export type AgentToPage =
   // engine's own hover-hint HUD isn't mounted in the editor. `entity` 0 = pointer
   // over nothing / cleared. Only the id is sent; the host reads the hoverText/key
   // from its own ECS (the agent's separate engine can't read the scene's values).
-  | { kind: 'hover'; entity: number };
+  | { kind: 'hover'; entity: number }
+  // Session-recorder activity, sent only while the host has turned reporting on
+  // (`set-activity-reporting`). Wrapped rather than flattened so its own `kind`
+  // can't collide with the bus message kinds.
+  | { kind: 'activity'; activity: BusActivity };
 
 /** One selected entity's world pose, supplied by the inspector (the agent can't
  * read the inspected scene's Transform from its own engine). */
@@ -303,7 +321,12 @@ export type PageToScene =
   // transform gizmo or the spawn-point handle; `set-selection` and
   // `set-spawn-gizmo` still update its state, and re-enabling draws the latest.
   // The selection outline stays. The host re-sends it on every `editor-ready`.
-  | { kind: 'set-editing-enabled'; enabled: boolean };
+  | { kind: 'set-editing-enabled'; enabled: boolean }
+  // Turn session-recorder activity reporting on/off. Off by default: reporting
+  // costs a hover raycast every few frames even while editing, so the agent only
+  // runs it while the host has a recorder subscribed. Not persisted — an agent
+  // reboot comes back off, so the host re-sends it on `editor-ready`.
+  | { kind: 'set-activity-reporting'; enabled: boolean };
 
 /** Every message is wrapped so a peer ignores its own posts / the wrong direction. */
 export interface BusEnvelope {

@@ -1,5 +1,6 @@
-// The gallery's URL contract. The runtime source reads `component` or `foundations` and `width`; the generated
-// source forwards every other parameter unchanged to the generated Review, so its deep links keep working.
+// The gallery's URL contract. The runtime source reads `component`, `foundations` or `hud` (a section of the Explorer
+// HUD's Showcase) and `width`; the generated source forwards every other parameter unchanged to the generated Review,
+// so its deep links keep working.
 
 export const MIN_WIDTH = 240
 export const MAX_WIDTH = 3840
@@ -8,11 +9,12 @@ export const PHONE_WIDTH = 360
 
 export type Width = number | 'fill'
 export type WidthPreset = { id: string; label: string; width: Width }
+export type View = 'component' | 'foundations' | 'hud'
 
 export type Route =
   | {
       source: 'runtime'
-      view: 'component' | 'foundations'
+      view: View
       name: string
       width: Width
       /** The requested page when it does not exist; the route then shows `name`. */
@@ -21,6 +23,9 @@ export type Route =
       alias?: string
     }
   | { source: 'generated'; query: string }
+
+/** The HUD's pages (the `hud` parameter), the one a missing name falls back to first, and its aliases. */
+export type HudPages = { pages: readonly string[]; aliases?: Readonly<Record<string, string>> }
 
 /** One preset per foundations breakpoint (at its minimum width, the phone width for 0), then fill. */
 export function widthPresets(breakpoints: Readonly<Record<string, number>>): WidthPreset[] {
@@ -43,14 +48,30 @@ export function parseWidth(value: string | null): Width {
 }
 
 /**
+ * The page each export opens when it is not a page of its own: the first page that lists it, so an export shown on
+ * another page (EventCardHost on EventCard) opens by its own name.
+ */
+export function pageAliases(
+  pages: readonly { name: string; components: readonly string[] }[]
+): Record<string, string> {
+  const names = new Set(pages.map((page) => page.name))
+  const aliases: Record<string, string> = {}
+  for (const page of pages)
+    for (const name of page.components)
+      if (!names.has(name) && !Object.hasOwn(aliases, name)) aliases[name] = page.name
+  return aliases
+}
+
+/**
  * `components` are the page names; `aliases` maps an export shown on another page (EventCardHost) to that page, so
- * it opens by its own name.
+ * it opens by its own name. `hud` names the HUD's pages the same way.
  */
 export function parseRoute(
   search: string,
   components: readonly string[],
   foundations: readonly string[],
-  aliases: Readonly<Record<string, string>> = {}
+  aliases: Readonly<Record<string, string>> = {},
+  hud: HudPages = { pages: [] }
 ): Route {
   const params = new URLSearchParams(search)
   if (params.get('source') === 'generated') {
@@ -68,6 +89,13 @@ export function parseRoute(
       width,
       ...(name === foundation ? {} : { missing: foundation })
     }
+  }
+  const section = params.get('hud')
+  if (section !== null && hud.pages.length) {
+    if (hud.pages.includes(section)) return { source: 'runtime', view: 'hud', name: section, width }
+    if (hud.aliases && Object.hasOwn(hud.aliases, section))
+      return { source: 'runtime', view: 'hud', name: hud.aliases[section]!, width, alias: section }
+    return { source: 'runtime', view: 'hud', name: hud.pages[0]!, width, missing: section }
   }
   const component = params.get('component')
   if (component !== null && !components.includes(component) && Object.hasOwn(aliases, component))
@@ -97,9 +125,12 @@ export function galleryHref(params: Record<string, string | number | undefined>)
   return text ? `?${text}` : './'
 }
 
-/** The canvas page for a runtime route, relative to the gallery page. */
-export function canvasHref(view: 'component' | 'foundations', name: string): string {
-  return `frame.html?${new URLSearchParams({ [view]: name }).toString()}`
+/**
+ * The canvas page for a runtime route, relative to the gallery page: the HUD's sections render in their own document,
+ * which loads the HUD's tokens and host styles.
+ */
+export function canvasHref(view: View, name: string): string {
+  return `${view === 'hud' ? 'hud' : 'frame'}.html?${new URLSearchParams({ [view]: name }).toString()}`
 }
 
 /** The generated Review page for a forwarded query. `review` is its URL, ending in `/`. */

@@ -11,6 +11,108 @@
     }
   },
   "events": {
+    "Click": {
+      "loose": false,
+      "props": {
+        "click_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "clicked_at": {
+          "kind": "number",
+          "optional": true
+        },
+        "download_target": {
+          "kind": "enum-string",
+          "values": [
+            "app_store",
+            "creator_hub",
+            "desktop_installer",
+            "epic",
+            "google_play"
+          ],
+          "optional": false
+        },
+        "event": {
+          "kind": "enum-string",
+          "values": [
+            "Download"
+          ],
+          "optional": true
+        },
+        "mac_arch": {
+          "kind": "enum-string",
+          "values": [
+            "apple_silicon",
+            "intel",
+            "unknown"
+          ],
+          "optional": true
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "Android",
+            "Windows",
+            "iOS",
+            "macOS"
+          ],
+          "optional": true
+        },
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "Creator Hub Success Footer",
+            "Creators Hero",
+            "Download",
+            "Landing Come Hang Out",
+            "Landing Hero",
+            "come-hang-out",
+            "come-hang-out-platform-switch",
+            "download-page",
+            "landing-hero-epic",
+            "landing-hero-platform-switch"
+          ],
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "utm_campaign": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_content": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_medium": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_org": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_source": {
+          "kind": "string",
+          "optional": true
+        },
+        "utm_term": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
     "bd_activity_opened": {
       "loose": false,
       "props": {
@@ -3380,102 +3482,6 @@
             "security",
             "terms"
           ],
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_cancelled": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "stub": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_cancelling": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_confirmed": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_error": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "reason": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_going": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "stub": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_signin": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "simulated": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_started": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_submitting": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
           "optional": false
         }
       }

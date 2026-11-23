@@ -1,18 +1,9 @@
-import { createContext, useContext, type ReactNode } from "react";
-import ChromeLink from "./ChromeLink";
+import { useContext } from "react";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
 import "./profilenavigation.css";
-import { useSiteLayout } from "./SiteLayout";
+import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
 
-type ProfileTab = { id: string; label: ReactNode; href?: string };
-type ProfileNavigationProps = {
-  tabs: readonly ProfileTab[];
-  active?: string;
-  onTab?: (id: string) => void;
-  label?: string;
-};
-
-// The route supplies real destinations once for the shared secondary navigation.
-export const ProfileNavigationContext = createContext<ProfileNavigationProps | null>(null);
+import { ProfileNavigationContext, type ProfileNavigationProps } from "@dcl/one-ui/apps/sites/chrome/profile-navigation";
 
 export default function ProfileNavigation(props: ProfileNavigationProps) {
   const route = useContext(ProfileNavigationContext);

@@ -27,10 +27,10 @@ export function useBrowsePlaces(filters: BrowseFilters, enabled: boolean) {
   return { ...query, rows, pageRows };
 }
 
-/** Live Now: the busiest four from the live feed. Not read while a search collapses the section. */
-export function useLiveRail(enabled: boolean) {
+/** Live Now: the busiest four with at least `minUsers` people. Not read while a search collapses the section. */
+export function useLiveRail(enabled: boolean, minUsers: number) {
   const query = useQuery({ ...liveFeedQuery(), enabled });
-  const rail = useMemo(() => selectLiveRail(query.data?.data ?? []), [query.data]);
+  const rail = useMemo(() => selectLiveRail(query.data?.data ?? [], minUsers), [query.data, minUsers]);
   return { ...query, rail };
 }
 

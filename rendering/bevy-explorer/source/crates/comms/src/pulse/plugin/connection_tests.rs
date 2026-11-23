@@ -313,6 +313,7 @@ impl Harness {
     /// The profile has loaded, at `version`.
     fn profile(&mut self, version: u32) {
         self.world.insert_resource(CurrentUserProfile {
+            is_deployed: true,
             profile: Some(UserProfile {
                 version,
                 ..default()

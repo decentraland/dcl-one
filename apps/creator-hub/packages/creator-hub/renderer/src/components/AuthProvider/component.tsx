@@ -259,6 +259,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (wallet && creatorFundEnabled) void dispatch(creatorFundActions.fetchEnrollment());
   }, [wallet, creatorFundEnabled, dispatch]);
 
+  const payoutSetupNeeded = useSelector(
+    state =>
+      state.featureFlags.flags[FeatureFlag.CREATOR_FUND_PAYOUT] === true &&
+      state.creatorFund.enrollment.data?.status === 'active',
+  );
+  const payoutWalletIdle = useSelector(state => state.creatorFund.payoutWallet.status === 'idle');
+  const activePlaceIdle = useSelector(state => state.creatorFund.hasActivePlace.status === 'idle');
+  useEffect(() => {
+    if (!wallet || !payoutSetupNeeded) return;
+    if (payoutWalletIdle) void dispatch(creatorFundActions.fetchPayoutWallet());
+    if (activePlaceIdle) void dispatch(creatorFundActions.fetchHasActivePlace());
+  }, [wallet, payoutSetupNeeded, payoutWalletIdle, activePlaceIdle, dispatch]);
+
   useEffect(() => {
     const handleOnline = () => {
       signInAttemptCountRef.current = 0;

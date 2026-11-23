@@ -47,6 +47,7 @@ import { ai, analytics, editor as editorApi } from '#preload';
 import { useDispatch, useSelector } from '#store';
 import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { useAiSession } from '/@/hooks/useAiSession';
+import { useSessionRecorder } from '/@/hooks/useSessionRecorder';
 import { actions as snackbarActions } from '/@/modules/store/snackbar';
 import { actions as optimizerActions } from '/@/modules/store/optimizer';
 import {
@@ -61,6 +62,7 @@ import { ConnectionStatusIndicator } from '../ConnectionStatusIndicator';
 import { MobileQRCode } from '../Modals/MobileQRCode';
 import { AssistantIcon } from '../Icons';
 import { AiChatPanel } from '../AiChatPanel';
+import { RecordButton, RecordingConsentModal } from '../SessionRecorder';
 import { DetachedPlaceholder } from '../AiChatPanel/DetachedPlaceholder';
 import { OptimizeModal } from '../OptimizeModal';
 import type { SplitButtonHandle } from '../SplitButton';
@@ -187,11 +189,25 @@ export function EditorPage() {
   // on, independent of whether the chat is shown inline or popped out. It also relays the
   // detached window's "clear selection" back to the inspector here.
   const [aiOpen, setAiOpen] = useState(false);
+  const [inspectorReadyNonce, setInspectorReadyNonce] = useState(0);
+  const recorder = useSessionRecorder({
+    enabled: aiChatEnabled,
+    project,
+    rpcRef: iframeRef,
+    inspectorReadyNonce,
+    onFinished: () => setAiOpen(true),
+  });
   const {
     detachedOpen: aiDetached,
     openDetached: openAiWindow,
     closeDetached: closeAiWindow,
-  } = useAiSession(aiChatEnabled, project?.path, handleClearAiSelection, () => setAiOpen(false));
+  } = useAiSession(aiChatEnabled, project?.path, {
+    onClearSelection: handleClearAiSelection,
+    onCloseAssistant: () => setAiOpen(false),
+    onToggleRecording: recorder.press,
+    onCancelRecording: recorder.cancel,
+    onSendRecording: recorder.send,
+  });
   // A prompt seeded from the inspector (Trigger Area "describe a reaction"). Open the inline
   // panel on it; ChatView copies the text into the composer and clears the draft.
   const aiDraftPrompt = useSelector(state => state.ai.draftPrompt);
@@ -217,10 +233,6 @@ export function EditorPage() {
   // screen can offer Back + Open code + the error message (#1380).
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadTimedOut, setLoadTimedOut] = useState(false);
-  // Counts the inspector's "scene RPC ready" reports. The iframe ref is stable across
-  // "Reload scene from disk", so the hooks that push state into the inspector key on this
-  // to re-apply it to the fresh iframe.
-  const [inspectorReadyNonce, setInspectorReadyNonce] = useState(0);
   // A "Reload scene from disk" or a renderer switch reloads the inspector iframe in place.
   // The iframe paints black until its content boots (a long wait under Bevy, #1652), so we
   // cover it with the loader until the inspector reports its scene RPC server ready again.
@@ -894,6 +906,17 @@ export function EditorPage() {
               </Tooltip>
             </>
             <div className="actions">
+              {/* The Record button lives in the assistant panel. With the panel closed, a
+                  running recording keeps a visible control up here. */}
+              {aiChatEnabled && !aiOpen && recorder.status !== 'idle' && (
+                <RecordButton
+                  status={recorder.status}
+                  startedAt={recorder.startedAt}
+                  micLabel={recorder.micLabel}
+                  tools={recorder.tools}
+                  onClick={recorder.press}
+                />
+              )}
               {aiChatEnabled && (
                 <Tooltip
                   label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
@@ -1076,6 +1099,9 @@ export function EditorPage() {
                   <DetachedPlaceholder
                     onDock={closeAiWindow}
                     width={aiPanelWidth}
+                    onToggleRecording={recorder.press}
+                    onCancelRecording={recorder.cancel}
+                    onSendRecording={recorder.send}
                   />
                 ) : (
                   <AiChatPanel
@@ -1083,6 +1109,9 @@ export function EditorPage() {
                     onPopOut={openAiWindow}
                     onClearSelection={handleClearAiSelection}
                     width={aiPanelWidth}
+                    onToggleRecording={recorder.press}
+                    onCancelRecording={recorder.cancel}
+                    onSendRecording={recorder.send}
                   />
                 )}
               </>
@@ -1095,6 +1124,12 @@ export function EditorPage() {
             initialStep={modalState.initialStep}
           />
           <OptimizeModal project={project} />
+          <RecordingConsentModal
+            open={recorder.consent !== null}
+            downloadMb={recorder.consent?.downloadMb ?? 0}
+            onAccept={recorder.acceptConsent}
+            onCancel={recorder.dismissConsent}
+          />
           {mobileQRData && (
             <MobileQRCode
               open={!!mobileQRData}

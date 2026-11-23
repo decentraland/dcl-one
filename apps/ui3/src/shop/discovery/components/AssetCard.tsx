@@ -20,7 +20,7 @@ import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { genderIcon } from "../lib/itemIcons";
 import { isListingForSale } from "../lib/pricing";
-import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";
+import { addressAvatarColor, avatarInitial } from "@web-core/profile/avatarColor";
 import { rarityCardPalette, rarityDescription, rarityLabel } from "@shop/discovery/lib/rarity";
 import { detailRouteFor } from "../lib/routes";
 import { saleDiscountPct, saleUnitsHint } from "@shop/discovery/lib/sale";

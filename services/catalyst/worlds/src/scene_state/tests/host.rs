@@ -374,11 +374,11 @@ async fn a_genesis_scene_stored_by_the_content_deployer_resolves_with_its_metada
 
     let Some(h) = host(false).await else { return };
     let pool = &h.state.pool;
-    let id = format!("bafyD{}", Uuid::new_v4().simple());
     let x = 30_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
     let parcels = [format!("{x},7"), format!("{x},8"), format!("{},7", x + 1)];
     let declared = parcels[2].clone();
-    let code_hash = hash_bytes_v1(id.as_bytes());
+    // The flush writes a deployment only while the store holds its files.
+    let code_hash = store(&h.state, Uuid::new_v4().as_bytes()).await;
     let entity = serde_json::to_vec(&serde_json::json!({
         "version": "v3",
         "type": "scene",
@@ -393,11 +393,17 @@ async fn a_genesis_scene_stored_by_the_content_deployer_resolves_with_its_metada
         }
     }))
     .unwrap();
+    let id = store(&h.state, &entity).await;
     let chain = serde_json::from_value(
         create_simple_auth_chain(&Wallet::from_hex(VISITOR_KEY).unwrap(), &id).unwrap(),
     )
     .unwrap();
-    let deployer = LiveSyncDeployer::new(pool.clone(), 1, SyncValidation::AuthChainOnly);
+    let deployer = LiveSyncDeployer::new(
+        pool.clone(),
+        h.state.storage.clone(),
+        1,
+        SyncValidation::AuthChainOnly,
+    );
     deployer
         .deploy_entity(&entity, &id, &chain, DeploymentContext::Synced, None, None)
         .await
@@ -1459,6 +1465,52 @@ async fn seed_parked_genesis(h: &Host, id: &str, parcels: &[String]) {
             .await
             .unwrap();
     }
+}
+
+/// The socket and the sweep read a Genesis scene's bans on its place, the
+/// key the gatekeeper writes, not on the entity id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_genesis_scene_refuses_a_wallet_banned_on_its_place() {
+    let Some(h) = host(false).await else { return };
+    let x = 40_000 + (Uuid::new_v4().as_u128() % 10_000) as i32;
+    let id = format!("bafyBanned{}", Uuid::new_v4().simple());
+    let (base, side) = (format!("{x},1"), format!("{x},2"));
+    seed_parked_genesis(&h, &id, &[base.clone(), side.clone()]).await;
+    let key = SceneKey::GenesisParcel(Parcel::parse(&side).unwrap());
+    h.state.load(&key).await.unwrap();
+    let scene = h.state.hosted(&key).await.unwrap();
+    let wallet = Address::parse(&format!("0x{:040x}", Uuid::new_v4().as_u128())).unwrap();
+    let admit = || {
+        crate::scene_state::ws::admit(
+            &h.state,
+            &scene.identity,
+            &wallet,
+            None,
+            None,
+            chrono::Utc::now().naive_utc(),
+        )
+    };
+    let ban = |place: String| {
+        let pool = h.state.pool.clone();
+        let wallet = wallet.clone();
+        async move {
+            sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+                .bind(place)
+                .bind(&wallet)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    ban(id.clone()).await;
+    assert_eq!(admit().await, Ok(None), "the entity id keys no ban");
+    ban(base).await;
+    assert_eq!(
+        admit().await,
+        Err(crate::scene_state::ws::AdmissionRefused::Banned(
+            crate::comms::access::Ban::Scene
+        ))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

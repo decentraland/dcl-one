@@ -23,7 +23,6 @@ WITH mapping AS (
                social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}')
           FROM content.deployments d
          WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL
-           AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id)
     ) m
      WHERE place IS NOT NULL AND entity_id IN (SELECT place_id FROM social.scene_admins)
 ), moved AS (

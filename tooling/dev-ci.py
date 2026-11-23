@@ -31,7 +31,7 @@ MACOS = ('tooling/dev*', 'tooling/catalyst-test*', 'tooling/tests/test_catalyst_
          '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
 # Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
 # source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
-LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**',
+LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'apps/creator-hub/packages/zip-extract/**',
               'tooling/*.py', 'tooling/tests/**', 'tooling/migration/**', 'services/catalyst/**', 'library/**', 'schemas/**')
 # What the Rust job reads besides the paths its Rust sources name: the crates it compiles, the SQL, protocol
 # and API contract they embed, the toolchain, the dev shell and stack, and the scripts and tests

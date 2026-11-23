@@ -16,8 +16,8 @@ Pinned at `33d2e28aefad26b72902a8c5d694129df0de3b77` (`src/migrations/` up to
 Scene identity: import Places and worlds first. Upstream scene admins and bans
 use Places UUIDs, but the target checks scene admins by place (a Genesis
 scene's effective base parcel, a world scene's `explore.world_scene_place`
-identity, which is the upstream UUID), Genesis bans by entity ID, and world
-bans by `world_name:effective_base`. Resolve Genesis
+identity, which is the upstream UUID), Genesis bans by the same base parcel,
+and world bans by `world_name:effective_base`. Resolve Genesis
 UUIDs through `explore.place.raw.deployment_id` to a live content deployment
 with active pointers. Resolve world UUIDs through the active
 `explore.world_scene_place` association and its `worlds.world_scenes` row.
@@ -29,7 +29,7 @@ declared base is read where content stores it, at `entity_metadata` `v`
 
 Both moderation steps read the complete source set in one transaction, so
 aliases of one target identity cannot land in separate batches and overwrite
-each other. Active/newest admin grants and earliest bans win deterministically.
+each other. Active/newest admin grants and the newest ban win deterministically, as in the node's ban release scripts.
 Size the cutover transaction for the complete moderation set.
 
 Missing or ambiguous bindings, including old world-name keys, abort the batch

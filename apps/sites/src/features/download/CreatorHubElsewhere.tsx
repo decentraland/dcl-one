@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { docsUrl } from "@ui/data/docs";
+import { docsUrl } from "@web-core/docs";
 
 import { track } from "@/core/lib/telemetry/track";
 

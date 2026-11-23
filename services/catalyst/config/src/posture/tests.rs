@@ -193,6 +193,32 @@ fn a_mirror_refuses_a_blank_nft_worker() {
     check_of(&[db, (ENV, "journey")]).unwrap();
 }
 
+/// A mirror walks the chain every 30 s and keeps tracking open MANA
+/// executions every 5 s; island and journey keep the binary's pace.
+#[test]
+fn a_mirror_walks_the_chain_every_30_seconds() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let mirror = parsed(&[db, (ENV, "mirror")]);
+    assert_eq!(
+        (
+            mirror.marketplace.marketplace_index_interval_secs,
+            mirror
+                .marketplace
+                .marketplace_executions_track_interval_secs
+        ),
+        (30, 5)
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert!(!expanded(posture, &[]).contains_key("MARKETPLACE_INDEX_INTERVAL_SECS"));
+    }
+    let own = parsed(&[
+        db,
+        (ENV, "mirror"),
+        ("MARKETPLACE_INDEX_INTERVAL_SECS", "5"),
+    ]);
+    assert_eq!(own.marketplace.marketplace_index_interval_secs, 5);
+}
+
 /// O-1: a mirror lists the approved third-party providers from lamb2's
 /// default registry and may not blank it; island and journey name none.
 #[test]
@@ -239,27 +265,46 @@ fn a_mirror_reads_the_third_party_registry() {
     refuse_remote_secrets(&mut c).unwrap();
 }
 
+/// Escrow leases are a dcl-one extension: the explorer backpack lists them
+/// and a local deploy counts them as item ownership only when the operator
+/// opts in, under every posture and without one.
 #[test]
-fn a_mirror_explorer_lists_chain_owned_items_only() {
-    assert_eq!(
-        expanded(Posture::Mirror, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
-        "false"
-    );
-    for posture in [Posture::Island, Posture::Journey] {
-        assert_eq!(
-            expanded(posture, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
-            "true"
+fn escrow_leases_count_only_on_an_operator_opt_in() {
+    for posture in Posture::ALL {
+        for key in [
+            "EXPLORER_ESCROW_GRANTS_ENABLED",
+            "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED",
+        ] {
+            assert_eq!(expanded(posture, &[])[key], "false", "{key}");
+        }
+    }
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    for posture in [None, Some("mirror"), Some("island"), Some("journey")] {
+        let mut pairs = vec![db];
+        pairs.extend(posture.map(|p| (ENV, p)));
+        let c = parsed(&pairs);
+        assert!(
+            !c.market_upstreams.explorer_escrow_grants_enabled,
+            "{posture:?}"
+        );
+        assert!(
+            !c.validator.content_escrow_lease_ownership_enabled,
+            "{posture:?}"
+        );
+        pairs.extend([
+            ("EXPLORER_ESCROW_GRANTS_ENABLED", "true"),
+            ("CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "true"),
+        ]);
+        let c = parsed(&pairs);
+        assert!(
+            c.market_upstreams.explorer_escrow_grants_enabled,
+            "{posture:?}"
+        );
+        assert!(
+            c.validator.content_escrow_lease_ownership_enabled,
+            "{posture:?}"
         );
     }
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
-    assert!(!c.market_upstreams.explorer_escrow_grants_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
-    assert!(c.market_upstreams.explorer_escrow_grants_enabled);
-    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
-    assert!(
-        c.market_upstreams.explorer_escrow_grants_enabled,
-        "without a posture the binary default lists them"
-    );
 }
 
 #[test]
@@ -365,7 +410,6 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
             let allowed = [
                 "SERVE_UNSYNCED",
                 "PHASED_SYNC",
-                "EXPLORER_ESCROW_GRANTS_ENABLED",
                 "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
             ];
             assert!(
@@ -514,8 +558,8 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
         Some(
-            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
-             137=https://rpc.decentraland.org/polygon?project=catalyst-content"
+            "1=https://rpc.decentraland.org/mainnet?project=dcl-one,\
+             137=https://rpc.decentraland.org/polygon?project=dcl-one"
         )
     );
     assert!(c.content.content_history_prune_enabled);
@@ -746,7 +790,7 @@ fn a_polygon_endpoint_from_its_file_still_makes_the_trade_list() {
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
         Some(
-            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
+            "1=https://rpc.decentraland.org/mainnet?project=dcl-one,\
              137=https://polygon.example.org/key"
         )
     );
@@ -1093,13 +1137,26 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     let pair = |l1: &str, l2: &str| {
         let url = |chain: &str| {
             Some(format!(
-                "https://rpc.decentraland.org/{chain}?project=catalyst-content"
+                "https://rpc.decentraland.org/{chain}?project=dcl-one"
             ))
         };
         (url(l1), url(l2))
     };
     assert_eq!(rpcs(&[]), pair("mainnet", "polygon"));
     assert_eq!(rpcs(&[(ENV, "mirror")]), pair("mainnet", "polygon"));
+    // Guard: the tag is never derived from PUBLIC_URL. It would tie the node's
+    // address, public or internal, to its RPC activity.
+    for public_url in [
+        "https://node.example.org",
+        "http://192.0.2.7:5000",
+        "http://catalyst.test",
+    ] {
+        assert_eq!(
+            rpcs(&[(ENV, "mirror"), ("PUBLIC_URL", public_url)]),
+            pair("mainnet", "polygon"),
+            "{public_url}"
+        );
+    }
     assert_eq!(rpcs(&[("ETH_NETWORK", "sepolia")]), pair("sepolia", "amoy"));
     assert_eq!(
         rpcs(&[(ENV, "mirror"), ("ETH_NETWORK", "sepolia")]),

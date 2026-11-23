@@ -815,6 +815,18 @@ class FakeResponse(io.BytesIO):
     pass
 
 
+class ShortResponse(io.BytesIO):
+    """An HTTP body whose connection dropped: `length` still counts what its Content-Length promised."""
+
+    def __init__(self, sent, promised):
+        super().__init__(sent)
+        self.promised = promised
+
+    @property
+    def length(self):
+        return self.promised - self.tell()
+
+
 class BadgeArt(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -870,6 +882,73 @@ class BadgeArt(unittest.TestCase):
         self.answers['https://cdn.example/a/2d/normal.png'] = [b'<html>']
         self.assertEqual(blobs.copy_art(self.source, self.art, 'a/2d/normal.png').status, 'corrupt')
         self.assertFalse((self.tmp / 'art/a').exists())
+
+
+class CommunityThumbnails(unittest.TestCase):
+    ID = '0b0e2c3a-1111-4222-8333-444455556666'
+    URL = f'https://cdn.example/social/communities/{ID}/raw-thumbnail.png'
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.store = blobs.Store(self.tmp / 'node')
+        self.answers = {}
+        self.source = blobs.HttpArtSource('https://cdn.example/', opener=self.open)
+
+    def open(self, request, timeout):
+        answer = self.answers[request.full_url].pop(0)
+        if isinstance(answer, int):
+            raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
+        return answer if isinstance(answer, ShortResponse) else FakeResponse(answer)
+
+    def copy(self):
+        return blobs.copy_community_thumbnail(self.source, self.store, self.ID)
+
+    def test_when_hashing_a_thumbnail_it_should_mint_the_nodes_key(self):
+        # hash.rs::hash_bytes, which the node's thumbnail upload keys the blob by
+        self.assertEqual(blobs.hash_bytes_v0(b'hello world'), 'QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdT3L4')
+
+    def test_when_upstream_has_a_thumbnail_it_should_store_it_under_its_hash(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [image]
+        outcome = self.copy()
+        cid = blobs.hash_bytes_v0(image)
+        self.assertEqual((outcome.status, outcome.cid, outcome.size), ('copied', cid, len(image)))
+        self.assertEqual(self.store.path(cid).read_bytes(), image)
+        self.assertEqual(list(self.store.contents.rglob('*.tmp')), [])
+        self.answers[self.URL] = [image]
+        self.assertEqual(self.copy().status, 'present')
+
+    def test_when_upstream_has_none_it_should_say_so_and_store_nothing(self):
+        self.answers[self.URL] = [404]
+        self.assertEqual(self.copy().status, 'missing')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_upstream_answers_something_else_than_an_image_it_should_store_nothing(self):
+        self.answers[self.URL] = [b'<html>not found</html>']
+        self.assertEqual(self.copy().status, 'corrupt')
+        self.assertFalse(self.store.contents.exists())
+
+    def test_when_upstream_fails_once_it_should_retry(self):
+        self.answers[self.URL] = [503, b'\xff\xd8\xff' + b'j' * 10]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            self.assertEqual(self.copy().status, 'copied')
+
+    def test_when_the_body_is_cut_short_it_should_retry_and_never_store_the_part(self):
+        image = blobs.PNG_MAGIC + b'x' * 2000
+        self.answers[self.URL] = [ShortResponse(image[:100], len(image)), ShortResponse(image[:100], len(image)),
+                                  ShortResponse(image[:100], len(image))]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            outcome = self.copy()
+        self.assertEqual(outcome.status, 'failed', outcome.reason)
+        self.assertIn('cut short', outcome.reason)
+        self.assertFalse(self.store.contents.exists())
+        self.answers[self.URL] = [ShortResponse(image[:100], len(image)), ShortResponse(image, len(image))]
+        with unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0):
+            self.assertEqual(self.copy().status, 'copied')
+
+    def test_when_the_id_is_not_a_community_id_it_should_read_nothing(self):
+        self.assertEqual(blobs.copy_community_thumbnail(self.source, self.store, '../x').status, 'invalid')
 
 
 class MissingThreshold(unittest.TestCase):

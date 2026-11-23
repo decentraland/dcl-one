@@ -1,3 +1,4 @@
+import plazaThumbnail from "@dcl/one-ui/apps/sites/assets/genesis-plaza.webp";
 import { eventText, type EventsLocale } from "@dcl/one-ui/apps/sites/events/locale";
 import type { EventCardCreator, UpcomingEventCardProps } from "@dcl/one-ui/apps/sites/events/types";
 
@@ -95,6 +96,24 @@ export function eventPageShareUrl(origin: string, event: Pick<Event, "id" | "liv
   return url.toString();
 }
 
+/**
+ * An event cover as the page renders it. The API names an uploaded poster under its public base, which is
+ * http on a local or preview node, and the library's images take only root-relative paths and https: an
+ * http cover on the page's own origin (`pageOrigin`, the origin the browser loaded the page from) becomes
+ * its path. Anything else, https covers included, is unchanged and left to the library's check.
+ */
+export function eventImage(image: string | null | undefined, pageOrigin: string): string | null {
+  if (!image || !pageOrigin) return image ?? null;
+  try {
+    const url = new URL(image);
+    // A path starting `//` would read as another host once the origin is dropped.
+    if (url.protocol !== "http:" || url.origin !== new URL(pageOrigin).origin || url.pathname.startsWith("//")) return image;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return image;
+  }
+}
+
 export function placeShareUrl(origin: string, target: Target): string {
   return new URL(placeHref(target), origin).toString();
 }
@@ -148,8 +167,10 @@ export function usersLabel(count: number, locale: EventsLocale = "en"): string {
   return eventText(locale, "{count} online", { count });
 }
 
+/** `fallback` marks Genesis Plaza shown only because nothing is live; it is not a live item. */
 export type LiveNowItem =
-  { kind: "event"; event: Event; users: number } | { kind: "place"; place: Place; users: number };
+  | { kind: "event"; event: Event; users: number }
+  | { kind: "place"; place: Place; users: number; fallback?: true };
 
 /** The busy place a live event runs in: the World it names, else the place covering its parcel. */
 function placeOf(event: Event, places: readonly Place[]): Place | undefined {
@@ -159,12 +180,56 @@ function placeOf(event: Event, places: readonly Place[]): Place | undefined {
   return places.find((place) => !place.world && place.positions.includes(parcel));
 }
 
+/** Genesis Plaza as source shows it when the feed does not list it: the Foundation's, on parcel 0,0, empty. */
+export const GENESIS_PLAZA: Place = {
+  id: "genesis-plaza",
+  title: "Genesis Plaza",
+  description: null,
+  image: plazaThumbnail,
+  owner: null,
+  positions: ["0,0"],
+  base_position: "0,0",
+  updated_at: null,
+  created_at: null,
+  contact_name: FOUNDATION_CONTACT_NAME,
+  categories: [],
+  highlighted: false,
+  highlighted_image: null,
+  user_count: 0,
+  user_visits: 0,
+  favorites: 0,
+  likes: 0,
+  like_rate: null,
+  world: false,
+  world_name: null,
+};
+
+/**
+ * Genesis Plaza: the Genesis City scene on parcel 0,0, else one source names so, else the stand-in. The
+ * parcel goes first: any scene may carry the name ("Genesis Plaza Afterparty"), only the plaza covers 0,0.
+ */
+function genesisPlaza(places: readonly Place[]): Place {
+  const city = places.filter((place) => !place.world);
+  return (
+    city.find((place) => place.positions.includes("0,0")) ??
+    city.find((place) => place.title?.toLowerCase().includes("genesis plaza")) ??
+    GENESIS_PLAZA
+  );
+}
+
 /**
  * Source's Live Now: places with at least `minUsers` players, each shown as the live event running
  * there when there is one: events first, then the other places, each busiest first. A live event counts its place's players, so an event in an
- * empty scene does not make the rail.
+ * empty scene does not make the rail. When nothing qualifies, Genesis Plaza still opens the rail, as source does.
  */
 export function liveNowItems(data: LiveNowData, minUsers = DEFAULT_MIN_USERS): LiveNowItem[] {
+  const items = busyItems(data, minUsers);
+  if (items.length) return items;
+  const plaza = genesisPlaza(data.places);
+  return [{ kind: "place", place: plaza, users: plaza.user_count ?? 0, fallback: true }];
+}
+
+function busyItems(data: LiveNowData, minUsers: number): LiveNowItem[] {
   const busy = data.places.filter((place) => (place.user_count ?? 0) >= minUsers);
   const used = new Set<string>();
   const events: LiveNowItem[] = [];
@@ -342,14 +407,14 @@ export function readDayOffset(params: URLSearchParams): number {
  */
 export function upcomingCardProps(
   event: Event,
-  ctx: { href: string; now: number; zone: Zone; origin: string; profiles: CreatorProfiles; locale?: EventsLocale },
+  ctx: { href: string; now: number; zone: Zone; origin: string; pageOrigin: string; profiles: CreatorProfiles; locale?: EventsLocale },
 ): UpcomingEventCardProps {
   const locale = ctx.locale ?? "en";
   const start = event.next_start_at ?? event.start_at;
   return {
     id: event.id,
     title: event.name ?? eventText(locale, "Untitled event"),
-    image: event.image,
+    image: eventImage(event.image, ctx.pageOrigin),
     href: ctx.href,
     creator: eventCreator(event, ctx.profiles, locale),
     time: start ? { label: relativeStart(start, ctx.now, ctx.zone, locale), dateTime: start } : { label: eventText(locale, "Soon") },
