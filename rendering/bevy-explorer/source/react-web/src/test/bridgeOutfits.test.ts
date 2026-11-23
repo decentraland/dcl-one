@@ -561,6 +561,18 @@ describe('the bridge outfits domain', () => {
       )
     })
 
+    describe('and the Backpack closes while the wearables load', () => {
+      beforeEach(() => {
+        captureAvatarThumbnail.mockResolvedValue(null)
+      })
+
+      it('should leave the slot without a picture', async () => {
+        const { request } = await bridge()
+        await request({ kind: 'equipOutfit', slot: 0 })
+        expect(pictureWrites).toEqual([])
+      })
+    })
+
     describe('and the slot is deleted while the wearables load', () => {
       it('should not picture the deleted slot', async () => {
         const { request } = await bridge()

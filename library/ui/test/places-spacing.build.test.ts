@@ -1,9 +1,10 @@
-import path from 'node:path'
-import { createServer, type ViteDevServer } from 'vite'
+import type { ViteDevServer } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
+import { serveConsumerPage } from './consumer-page.helpers'
 
 let server: ViteDevServer
+let disruptions: string[] = []
 let session: Awaited<ReturnType<typeof openSession>>
 
 async function evaluate<T>(expression: string): Promise<T> {
@@ -21,25 +22,10 @@ async function evaluate<T>(expression: string): Promise<T> {
 }
 
 beforeAll(async () => {
-  server = await createServer({
-    configFile: false,
-    root: path.resolve(import.meta.dirname, '..'),
-    appType: 'custom',
-    logLevel: 'error',
-    resolve: { dedupe: ['react', 'react-dom'] },
-    server: { host: '127.0.0.1', port: 0 }
-  })
-  server.middlewares.use(async (request, response, next) => {
-    if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/') return next()
-    response.setHeader('Content-Type', 'text/html')
-    response.end(
-      await server.transformIndexHtml(
-        '/',
-        '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><div id="root"></div><script type="module" src="/test/consumer/places-spacing-browser.tsx"></script>'
-      )
-    )
-  })
-  await server.listen()
+  ;({ server, disruptions } = await serveConsumerPage(
+    'test/consumer/places-spacing-browser.tsx',
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style>'
+  ))
   session = await openSession(
     await findBrowser([
       process.env.BROWSER_PATH,
@@ -61,9 +47,11 @@ afterAll(async () => {
 })
 
 describe.each([390, 1440])('when Places renders at %ipx', (width) => {
-  it.each([false, true])(
-    'should reserve the section gap only for visible Live Now (%s)',
-    async (live) => {
+  describe.each([
+    { live: false, state: 'hidden' },
+    { live: true, state: 'visible' }
+  ])('and Live Now is $state', ({ live }) => {
+    it('should reserve the section gap only for visible Live Now', async () => {
       await session.send('Emulation.setDeviceMetricsOverride', {
         width,
         height: 844,
@@ -95,6 +83,14 @@ describe.each([390, 1440])('when Places renders at %ipx', (width) => {
       expect(geometry.mainTop).toBeCloseTo(pageTop, 1)
       expect(geometry.bandTop).toBeCloseTo(live ? geometry.liveBottom! + 48 : pageTop, 1)
       expect(geometry.contentTop - geometry.bandTop).toBeCloseTo(48, 1)
-    }
-  )
+    })
+  })
+})
+
+describe('when the Places page is served', () => {
+  // A failed dependency scan or a re-optimization reloads the page under the tests above, which then fail with
+  // "Inspected target navigated or closed".
+  it('should load it without a dependency scan error or a dependency reload', () => {
+    expect(disruptions).toEqual([])
+  })
 })

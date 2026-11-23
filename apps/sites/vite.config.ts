@@ -1,15 +1,25 @@
 import { reactRouter } from "@react-router/dev/vite";
 import { spawnSync } from "node:child_process";
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin, type ProxyOptions } from "vite";
-import { validateAliasObject } from "../ui3/vite.validate.js";
+import { validateAliasObject } from "../../library/web-core/validate/vite.mjs";
 
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+// The browser logic shared with ui3 (validation seam, auth signing, profile and notification views).
+const webCore = fileURLToPath(new URL("../../library/web-core", import.meta.url));
+// Decentraland's content hashes, which the creators code computes for the files and entities it publishes.
+const hashing = fileURLToPath(new URL("../../library/hashing/src/index.ts", import.meta.url));
+// Part of every cached item validation's key (data/lib/creators/validation/cache.ts).
+const validatorVersion = (
+  JSON.parse(
+    readFileSync(new URL("./node_modules/@dcl-regenesislabs/wearable-validator/package.json", import.meta.url), "utf8"),
+  ) as { version: string }
+).version;
 // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
@@ -262,7 +272,9 @@ function playBuild(): string {
 }
 
 export default defineConfig({
-  define: { __PLAY_BUILD__: JSON.stringify(playBuild()) },
+  define: { __PLAY_BUILD__: JSON.stringify(playBuild()), __VALIDATOR_VERSION__: JSON.stringify(validatorVersion) },
+  // ES workers can code-split, so the item validation worker loads its rule book as its own chunk.
+  worker: { format: "es" },
   plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the
@@ -283,7 +295,7 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core", "../../library/hashing", "../../library/web-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
@@ -293,10 +305,14 @@ export default defineConfig({
         "@ui": ui,
         "@catalyst-api": catalystApi,
         "@shop": shopCore,
+        "@web-core": webCore,
+        "@dcl/hashing": hashing,
         "@hud-host": hudHost,
         "@shop-host": shopHost,
         "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
+        "@noble/hashes/sha2.js": noble("hashes/sha2.js"),
         "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
+        "@noble/hashes/webcrypto.js": noble("hashes/webcrypto.js"),
         "@noble/hashes/utils.js": noble("hashes/utils.js"),
         "@hud": hud,
         "@explorer-core": explorerCore,
@@ -310,7 +326,7 @@ export default defineConfig({
       { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
     ],
-    dedupe: ["viem", "react", "react-dom", "zod"],
+    dedupe: ["viem", "react", "react-dom", "zod", "@walletconnect/sign-client"],
   },
   optimizeDeps: {
     include: ["@xstate/react", "xstate", "zod", "viem/accounts"],

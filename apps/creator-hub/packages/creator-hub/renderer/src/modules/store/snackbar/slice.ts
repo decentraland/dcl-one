@@ -11,6 +11,7 @@ import { actions as editorActions } from '../editor';
 import { actions as ensActions } from '../ens';
 import { actions as landActions } from '../land';
 import { actions as managementActions } from '../management';
+import { actions as placeAnalyticsActions } from '../placeAnalytics';
 import { actions as workspaceActions } from '../workspace';
 import { shouldNotifyUpdates } from '../workspace/utils';
 import { settleRequest } from '../requests';
@@ -165,6 +166,15 @@ export const slice = createSlice({
         state.notifications.push(
           createGenericNotification('error', translatedError, {
             requestId,
+          }),
+        );
+      })
+      .addCase(placeAnalyticsActions.togglePin.rejected, state => {
+        const id = 'watchlist-not-saved';
+        state.notifications = state.notifications.filter($ => $.id !== id);
+        state.notifications.push(
+          createGenericNotification('error', t('snackbar.generic.watchlist_not_saved'), {
+            requestId: id,
           }),
         );
       })

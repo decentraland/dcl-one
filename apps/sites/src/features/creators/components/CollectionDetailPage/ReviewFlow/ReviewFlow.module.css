@@ -1,0 +1,102 @@
+.notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--color-warning-overlay);
+  color: var(--color-warning-text);
+  font-size: 14px;
+  line-height: 1.43;
+
+  &[data-tone="info"] {
+    background: rgba(23, 100, 192, 0.25); /* info @ 25% */
+    color: var(--dcl-system-blue-light-2);
+  }
+
+  &[data-tone="error"] {
+    background: var(--color-error-overlay);
+    color: var(--dcl-system-red-light-2);
+
+    & > .noticeText > svg {
+      color: var(--dcl-system-red);
+    }
+  }
+}
+
+.noticeText {
+  display: flex;
+  flex: 1 1 320px;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+
+  & svg {
+    flex: none;
+  }
+}
+
+@keyframes notice-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.noticeSpinner {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: notice-spin 0.8s linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation-duration: 2s;
+  }
+}
+
+.requestNote {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.noticeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  @media (max-width: 768px) {
+    width: 100%;
+
+    & > * {
+      flex: 1 1 auto;
+      min-height: 44px;
+    }
+  }
+}
+
+.attempts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.limitAttempts {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+.commentCount {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: default;
+}

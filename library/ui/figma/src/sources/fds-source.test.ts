@@ -233,73 +233,119 @@ describe('when sealing and then fetching the pinned capture', () => {
     expect(files['library/ui/figma/only-here.mjs'].fds).toBeNull()
   })
 
-  it('should read the capture at the snapshot pin and the counterparts at the code base', async () => {
-    const work = path.join(scratch, 'fds')
-    await writeTree(work, { 'dcl-mcp-figma/src/a.ts': 'export const a = 2\n' })
-    git(work, 'commit', '--quiet', '--no-gpg-sign', '-am', 'newer code')
-    const newer = git(work, 'rev-parse', 'HEAD')
-    git(work, 'push', '--quiet', remote, 'HEAD:refs/heads/newer')
-    // The capture moves to the newer commit; the code base stays at the first one.
-    await writeLock({ revision }, newer)
-    await fetchCache({ seal: true })
+  describe('and the capture moves to a newer commit while the code base stays at the first one', () => {
+    let newer: string
 
-    const lock = JSON.parse(await readFile(lockFile, 'utf8'))
-    expect(lock.sources[0].revision).toBe(revision)
-    expect(lock.sources[0].snapshot.revision).toBe(newer)
-    expect(lock.sources[0].files['library/ui/figma/src/a.ts'].fds.sha256).toBe(
-      sha('export const a = 1\n')
-    )
-    const marker = JSON.parse(
-      await readFile(path.join(figmaRoot, 'figma-snapshot', MARKER), 'utf8')
-    )
-    expect(marker.revision).toBe(newer)
-  })
-
-  it("should overlay this tree's ledger and refuse one that carries more than asset paths and hashes", async () => {
-    const asset = {
-      path: 'figma/review/src/generated/components/assets/0a1b2c.svg',
-      sha256: 'd'.repeat(64)
-    }
-    await writeTree(figmaRoot, {
-      'ledger/orphaned-assets.json': JSON.stringify({ schema: 1, orphaned: [asset] }) + '\n'
+    beforeEach(async () => {
+      const work = path.join(scratch, 'fds')
+      await writeTree(work, { 'dcl-mcp-figma/src/a.ts': 'export const a = 2\n' })
+      git(work, 'commit', '--quiet', '--no-gpg-sign', '-am', 'newer code')
+      newer = git(work, 'rev-parse', 'HEAD')
+      git(work, 'push', '--quiet', remote, 'HEAD:refs/heads/newer')
+      await writeLock({ revision }, newer)
+      await fetchCache({ seal: true })
     })
-    await fetchCache({ seal: true })
-    expect(
-      JSON.parse(
-        await readFile(path.join(figmaRoot, 'figma-snapshot/orphaned-assets.json'), 'utf8')
+
+    it('should read the capture at the snapshot pin and the counterparts at the code base', async () => {
+      const lock = JSON.parse(await readFile(lockFile, 'utf8'))
+      expect(lock.sources[0].revision).toBe(revision)
+      expect(lock.sources[0].snapshot.revision).toBe(newer)
+      expect(lock.sources[0].files['library/ui/figma/src/a.ts'].fds.sha256).toBe(
+        sha('export const a = 1\n')
       )
-    ).toEqual({ schema: 1, orphaned: [asset] })
-
-    await writeTree(figmaRoot, {
-      'ledger/orphaned-assets.json': JSON.stringify({
-        schema: 1,
-        orphaned: [{ ...asset, nodeId: '1:2' }]
-      })
+      const marker = JSON.parse(
+        await readFile(path.join(figmaRoot, 'figma-snapshot', MARKER), 'utf8')
+      )
+      expect(marker.revision).toBe(newer)
     })
-    await expect(fetchCache({ seal: true })).rejects.toThrow('may hold only')
-    await writeTree(figmaRoot, {
-      'ledger/orphaned-assets.json': JSON.stringify({
-        schema: 1,
-        orphaned: [{ path: 'figma/figma-snapshot/components/Demo.json', sha256: 'd'.repeat(64) }]
-      })
-    })
-    await expect(fetchCache({ seal: true })).rejects.toThrow('may hold only')
   })
 
-  it("should overlay this tree's retirement ledger over figma-design-system's, so one ledger is effective", async () => {
+  describe("and this tree's ledger lists an orphaned asset", () => {
+    let asset: { path: string; sha256: string }
+
+    beforeEach(() => {
+      asset = {
+        path: 'figma/review/src/generated/components/assets/0a1b2c.svg',
+        sha256: 'd'.repeat(64)
+      }
+    })
+
+    describe('and it carries only the asset path and hash', () => {
+      beforeEach(async () => {
+        await writeTree(figmaRoot, {
+          'ledger/orphaned-assets.json': JSON.stringify({ schema: 1, orphaned: [asset] }) + '\n'
+        })
+        await fetchCache({ seal: true })
+      })
+
+      it("should overlay this tree's ledger onto the cache", async () => {
+        expect(
+          JSON.parse(
+            await readFile(path.join(figmaRoot, 'figma-snapshot/orphaned-assets.json'), 'utf8')
+          )
+        ).toEqual({ schema: 1, orphaned: [asset] })
+      })
+    })
+
+    describe('and it carries more than the asset path and hash', () => {
+      beforeEach(async () => {
+        await writeTree(figmaRoot, {
+          'ledger/orphaned-assets.json': JSON.stringify({
+            schema: 1,
+            orphaned: [{ ...asset, nodeId: '1:2' }]
+          })
+        })
+      })
+
+      it('should refuse the ledger', async () => {
+        await expect(fetchCache({ seal: true })).rejects.toThrow('may hold only')
+      })
+    })
+
+    describe('and its path is not an asset path', () => {
+      beforeEach(async () => {
+        await writeTree(figmaRoot, {
+          'ledger/orphaned-assets.json': JSON.stringify({
+            schema: 1,
+            orphaned: [
+              { path: 'figma/figma-snapshot/components/Demo.json', sha256: 'd'.repeat(64) }
+            ]
+          })
+        })
+      })
+
+      it('should refuse the ledger', async () => {
+        await expect(fetchCache({ seal: true })).rejects.toThrow('may hold only')
+      })
+    })
+  })
+
+  it("should cache this tree's empty retirement ledger instead of figma-design-system's", async () => {
     expect(
       JSON.parse(await readFile(path.join(figmaRoot, 'figma-snapshot/retirements.json'), 'utf8'))
     ).toEqual({ schema: 1, retired: [] })
+  })
 
-    const ledger = JSON.stringify({ schema: 1, retired: [retirement()] }, null, 2) + '\n'
-    await writeTree(figmaRoot, { 'ledger/retirements.json': ledger })
-    await fetchCache({ seal: true })
-    expect(await readFile(path.join(figmaRoot, 'figma-snapshot/retirements.json'), 'utf8')).toBe(
-      ledger
-    )
-    expect(
-      readFdsPin(JSON.parse(await readFile(lockFile, 'utf8'))).digests['retirements.json']
-    ).toBe(sha(ledger))
+  describe("and this tree's retirement ledger holds a record", () => {
+    let ledger: string
+
+    beforeEach(async () => {
+      ledger = JSON.stringify({ schema: 1, retired: [retirement()] }, null, 2) + '\n'
+      await writeTree(figmaRoot, { 'ledger/retirements.json': ledger })
+      await fetchCache({ seal: true })
+    })
+
+    it("should overlay it over figma-design-system's, so one ledger is effective", async () => {
+      expect(await readFile(path.join(figmaRoot, 'figma-snapshot/retirements.json'), 'utf8')).toBe(
+        ledger
+      )
+    })
+
+    it('should pin its digest in the lock', async () => {
+      expect(
+        readFdsPin(JSON.parse(await readFile(lockFile, 'utf8'))).digests['retirements.json']
+      ).toBe(sha(ledger))
+    })
   })
 
   it.each([
@@ -329,131 +375,214 @@ describe('when sealing and then fetching the pinned capture', () => {
     ).resolves.toBe(EMPTY_RETIREMENTS)
   })
 
-  it('should refuse a retirement ledger that is not JSON', async () => {
-    await writeTree(figmaRoot, { 'ledger/retirements.json': '{ not json' })
-    await expect(fetchCache({ seal: true })).rejects.toThrow(
-      'ledger/retirements.json is not valid JSON'
-    )
+  describe("and this tree's retirement ledger is not JSON", () => {
+    beforeEach(async () => {
+      await writeTree(figmaRoot, { 'ledger/retirements.json': '{ not json' })
+    })
+
+    it('should refuse the ledger', async () => {
+      await expect(fetchCache({ seal: true })).rejects.toThrow(
+        'ledger/retirements.json is not valid JSON'
+      )
+    })
   })
 
-  it('should fail when this tree has no retirement ledger', async () => {
-    await rm(path.join(figmaRoot, 'ledger/retirements.json'))
-    await expect(fetchCache()).rejects.toThrow()
+  describe('and this tree has no retirement ledger', () => {
+    beforeEach(async () => {
+      await rm(path.join(figmaRoot, 'ledger/retirements.json'))
+    })
+
+    it('should fail, naming the missing ledger', async () => {
+      await expect(fetchCache()).rejects.toThrow(/ENOENT.*ledger\/retirements\.json/)
+    })
   })
 
-  it('should fail when this tree has no ledger', async () => {
-    await rm(path.join(figmaRoot, 'ledger'), { recursive: true })
-    await expect(fetchCache()).rejects.toThrow()
+  describe('and this tree has no ledger folder', () => {
+    beforeEach(async () => {
+      await rm(path.join(figmaRoot, 'ledger'), { recursive: true })
+    })
+
+    it('should fail, naming the first missing ledger', async () => {
+      await expect(fetchCache()).rejects.toThrow(/ENOENT.*ledger\/orphaned-assets\.json/)
+    })
   })
 
-  it('should fail when the lock records another counterpart than the pinned commit holds', async () => {
-    const lock = JSON.parse(await readFile(lockFile, 'utf8'))
-    lock.sources[0].files['library/ui/figma/src/a.ts'].fds.sha256 = '0'.repeat(64)
+  // Rewrites the sealed lock in place through `edit`.
+  type SealedLock = {
+    sources: {
+      files: Record<string, { fds: { sha256: string } }>
+      snapshot: { revision: string; digests: Record<string, string> }
+    }[]
+  }
+  const editLock = async (edit: (lock: SealedLock) => void) => {
+    const lock = JSON.parse(await readFile(lockFile, 'utf8')) as SealedLock
+    edit(lock)
     await writeFile(lockFile, JSON.stringify(lock))
+  }
 
-    await expect(fetchCache()).rejects.toThrow(
-      '1 ported files record another figma-design-system counterpart'
-    )
+  describe('and the lock records another counterpart than the pinned commit holds', () => {
+    beforeEach(async () => {
+      await editLock((lock) => {
+        lock.sources[0]!.files['library/ui/figma/src/a.ts']!.fds.sha256 = '0'.repeat(64)
+      })
+    })
+
+    it('should fail the fetch', async () => {
+      await expect(fetchCache()).rejects.toThrow(
+        '1 ported files record another figma-design-system counterpart'
+      )
+    })
   })
 
-  it('should fetch again into a cache the consumer accepts', async () => {
-    await rm(path.join(figmaRoot, 'figma-snapshot'), { recursive: true })
+  describe('and the cache is removed', () => {
+    beforeEach(async () => {
+      await rm(path.join(figmaRoot, 'figma-snapshot'), { recursive: true })
+    })
 
-    expect(await fetchCache()).toMatchObject({ revision, files: 6, ported: 3, identical: 1 })
-    await expect(
-      verifyFdsCache(path.join(figmaRoot, 'figma-snapshot'), lockFile)
-    ).resolves.toBeUndefined()
+    it('should fetch again into a cache the consumer accepts', async () => {
+      expect(await fetchCache()).toMatchObject({ revision, files: 6, ported: 3, identical: 1 })
+      await expect(
+        verifyFdsCache(path.join(figmaRoot, 'figma-snapshot'), lockFile)
+      ).resolves.toBeUndefined()
+    })
   })
 
-  it('should refuse a capture that differs from the pinned digests and keep the previous cache', async () => {
-    const lock = JSON.parse(await readFile(lockFile, 'utf8'))
-    lock.sources[0].snapshot.digests['pages.json'] = '0'.repeat(64)
-    await writeFile(lockFile, JSON.stringify(lock))
-    const before = await readFile(path.join(figmaRoot, 'figma-snapshot/pages.json'))
+  describe('and the capture differs from the pinned digests', () => {
+    let before: Buffer
 
-    await expect(fetchCache()).rejects.toThrow('1 differing from the pinned digest')
-    expect(await readFile(path.join(figmaRoot, 'figma-snapshot/pages.json'))).toEqual(before)
-    expect(existsSync(`${path.join(figmaRoot, 'figma-snapshot')}.staging-${process.pid}`)).toBe(
-      false
-    )
+    beforeEach(async () => {
+      await editLock((lock) => {
+        lock.sources[0]!.snapshot.digests['pages.json'] = '0'.repeat(64)
+      })
+      before = await readFile(path.join(figmaRoot, 'figma-snapshot/pages.json'))
+    })
+
+    it('should refuse the capture and keep the previous cache', async () => {
+      await expect(fetchCache()).rejects.toThrow('1 differing from the pinned digest')
+      expect(await readFile(path.join(figmaRoot, 'figma-snapshot/pages.json'))).toEqual(before)
+      expect(existsSync(`${path.join(figmaRoot, 'figma-snapshot')}.staging-${process.pid}`)).toBe(
+        false
+      )
+    })
   })
 
-  it('should refuse a capture with a file the lock does not pin', async () => {
-    const lock = JSON.parse(await readFile(lockFile, 'utf8'))
-    delete lock.sources[0].snapshot.digests['icons/1-2.svg']
-    await writeFile(lockFile, JSON.stringify(lock))
+  describe('and the capture holds a file the lock does not pin', () => {
+    beforeEach(async () => {
+      await editLock((lock) => {
+        delete lock.sources[0]!.snapshot.digests['icons/1-2.svg']
+      })
+    })
 
-    await expect(fetchCache()).rejects.toThrow('1 unexpected')
+    it('should refuse the capture', async () => {
+      await expect(fetchCache()).rejects.toThrow('1 unexpected')
+    })
   })
 
   describe('and a consumer reads the cache', () => {
     const dir = () => path.join(figmaRoot, 'figma-snapshot')
 
-    it('should fail on an edited cache file', async () => {
-      await writeFile(path.join(dir(), 'pages.json'), '{}\n')
-      await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow(/differing.*fetch-source/)
+    describe('and a cache file was edited', () => {
+      beforeEach(async () => {
+        await writeFile(path.join(dir(), 'pages.json'), '{}\n')
+      })
+
+      it('should fail, pointing at fetch-source', async () => {
+        await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow(/differing.*fetch-source/)
+      })
     })
 
-    it('should fail on an extra cache file', async () => {
-      await writeFile(path.join(dir(), 'extra.json'), '{}\n')
-      await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow(/unexpected.*fetch-source/)
+    describe('and the cache holds an extra file', () => {
+      beforeEach(async () => {
+        await writeFile(path.join(dir(), 'extra.json'), '{}\n')
+      })
+
+      it('should fail, pointing at fetch-source', async () => {
+        await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow(/unexpected.*fetch-source/)
+      })
     })
 
-    it('should fail on a removed cache file', async () => {
-      await rm(path.join(dir(), 'icons/1-2.svg'))
-      await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow(/missing.*fetch-source/)
+    describe('and a cache file was removed', () => {
+      beforeEach(async () => {
+        await rm(path.join(dir(), 'icons/1-2.svg'))
+      })
+
+      it('should fail, pointing at fetch-source', async () => {
+        await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow(/missing.*fetch-source/)
+      })
     })
 
-    it('should fail when the lock now pins another capture commit', async () => {
-      const lock = JSON.parse(await readFile(lockFile, 'utf8'))
-      lock.sources[0].snapshot.revision = 'b'.repeat(40)
-      await writeFile(lockFile, JSON.stringify(lock))
-      await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow('another pin')
+    describe('and the lock now pins another capture commit', () => {
+      beforeEach(async () => {
+        await editLock((lock) => {
+          lock.sources[0]!.snapshot.revision = 'b'.repeat(40)
+        })
+      })
+
+      it('should fail on the changed pin', async () => {
+        await expect(verifyFdsCache(dir(), lockFile)).rejects.toThrow('another pin')
+      })
     })
   })
 })
 
 describe('when the cache or the pin is unusable', () => {
-  it('should tell the consumer to fetch when there is no cache', async () => {
-    await writeLock({ snapshot: { digests: { 'pages.json': 'a'.repeat(64) } } })
-    await expect(verifyFdsCache(path.join(figmaRoot, 'figma-snapshot'), lockFile)).rejects.toThrow(
-      'pnpm figma fetch-source'
-    )
+  describe('and there is no cache', () => {
+    beforeEach(async () => {
+      await writeLock({ snapshot: { digests: { 'pages.json': 'a'.repeat(64) } } })
+    })
+
+    it('should tell the consumer to fetch', async () => {
+      await expect(
+        verifyFdsCache(path.join(figmaRoot, 'figma-snapshot'), lockFile)
+      ).rejects.toThrow('pnpm figma fetch-source')
+    })
   })
 
-  it('should fail when the pinned commit is not on the remote', async () => {
-    await writeLock({ snapshot: { digests: { 'pages.json': 'a'.repeat(64) } } }, 'c'.repeat(40))
-    await expect(fetchCache()).rejects.toThrow(/git fetch failed/)
-    expect(existsSync(path.join(figmaRoot, 'figma-snapshot'))).toBe(false)
+  describe('and the pinned commit is not on the remote', () => {
+    beforeEach(async () => {
+      await writeLock({ snapshot: { digests: { 'pages.json': 'a'.repeat(64) } } }, 'c'.repeat(40))
+    })
+
+    it('should fail the fetch and write no cache', async () => {
+      await expect(fetchCache()).rejects.toThrow(/git fetch failed/)
+      expect(existsSync(path.join(figmaRoot, 'figma-snapshot'))).toBe(false)
+    })
+
+    it('should never print git output, which can echo capture content', async () => {
+      const error = await fetchCache().catch((caught: Error) => caught)
+      expect(String(error)).toMatch(/^Error: git fetch failed \(\d+\)$/)
+    })
   })
 
-  it('should refuse a lock without a full commit or without digests', () => {
+  describe('and the lock lacks a full commit or a digest table', () => {
     const lock = (source: Record<string, unknown>) => ({
       sources: [{ repository: 'https://github.com/decentraland/figma-design-system', ...source }]
     })
-    const capture = { revision: 'a'.repeat(40) }
-    expect(() => readFdsPin(lock({ revision: 'main', snapshot: capture }))).toThrow(
-      'full 40-hex commit'
-    )
-    expect(() => readFdsPin(lock({ revision: 'a'.repeat(40) }))).toThrow('snapshot.revision')
-    expect(() => readFdsPin(lock({ revision: 'a'.repeat(40), snapshot: capture }))).toThrow(
-      'digest table'
-    )
-    expect(() =>
-      readFdsPin(
+
+    it.each([
+      [
+        'a branch name instead of a commit',
+        lock({ revision: 'main', snapshot: { revision: 'a'.repeat(40) } }),
+        'full 40-hex commit'
+      ],
+      ['no snapshot pin', lock({ revision: 'a'.repeat(40) }), 'snapshot.revision'],
+      [
+        'no digest table',
+        lock({ revision: 'a'.repeat(40), snapshot: { revision: 'a'.repeat(40) } }),
+        'digest table'
+      ],
+      [
+        'a digest table with a path that leaves the capture',
         lock({
           revision: 'a'.repeat(40),
-          snapshot: { ...capture, digests: { '../x': 'a'.repeat(64) } }
-        })
-      )
-    ).toThrow('digest table')
-    expect(() => readFdsPin({ sources: [] })).toThrow('no figma-design-system source')
-  })
-
-  it('should never print git output, which can echo capture content', async () => {
-    await writeLock({ snapshot: { digests: { 'pages.json': 'a'.repeat(64) } } }, 'c'.repeat(40))
-    const error = await fetchCache().catch((caught: Error) => caught)
-    expect(String(error)).toMatch(/^Error: git fetch failed \(\d+\)$/)
+          snapshot: { revision: 'a'.repeat(40), digests: { '../x': 'a'.repeat(64) } }
+        }),
+        'digest table'
+      ],
+      ['no figma-design-system source', { sources: [] }, 'no figma-design-system source']
+    ])('should refuse a lock with %s', (_, value, message) => {
+      expect(() => readFdsPin(value)).toThrow(message)
+    })
   })
 })
 
@@ -508,11 +637,11 @@ describe('when the pinned tree lists a path outside the snapshot folder', () => 
 })
 
 describe('when rewriting one capture file', () => {
-  it('should keep the indentation and trailing newline of the source', () => {
-    const pretty = keylessSnapshotFile('pages.json', Buffer.from('{\n "a": 1\n}\n'))
-    expect(pretty.bytes.toString()).toBe('{\n "a": 1\n}\n')
-    const compact = keylessSnapshotFile('variables.json', Buffer.from('{"a":1}'))
-    expect(compact.bytes.toString()).toBe('{"a":1}')
+  it.each([
+    ['indented with a trailing newline', 'pages.json', '{\n "a": 1\n}\n'],
+    ['compact without a trailing newline', 'variables.json', '{"a":1}']
+  ])('should keep the layout of a source %s', (_, file, source) => {
+    expect(keylessSnapshotFile(file, Buffer.from(source)).bytes.toString()).toBe(source)
   })
 
   it('should leave file names outside components untouched', () => {
@@ -538,42 +667,57 @@ describe('when the cache swap fails after the old cache was moved aside', () => 
     before = await readCache()
   })
 
-  it('should restore the previous cache byte for byte and leave no previous folder behind', async () => {
-    const failingRename = async (from: string, to: string) => {
-      if (from.includes('.staging-')) throw new Error('injected rename failure')
-      await rename(from, to)
-    }
-    await expect(
-      fetchFdsSource({ figmaRoot, lockFile, remote: `file://${remote}`, rename: failingRename })
-    ).rejects.toThrow('injected rename failure')
-    expect(await readCache()).toEqual(before)
-    expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))).toEqual([])
-    expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.staging-'))).toEqual([])
+  describe('and the old cache can be moved back', () => {
+    let failingRename: (from: string, to: string) => Promise<void>
+
+    beforeEach(() => {
+      failingRename = async (from, to) => {
+        if (from.includes('.staging-')) throw new Error('injected rename failure')
+        await rename(from, to)
+      }
+    })
+
+    it('should restore the previous cache byte for byte and leave no previous folder behind', async () => {
+      await expect(
+        fetchFdsSource({ figmaRoot, lockFile, remote: `file://${remote}`, rename: failingRename })
+      ).rejects.toThrow('injected rename failure')
+      expect(await readCache()).toEqual(before)
+      expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))).toEqual([])
+      expect((await readdir(figmaRoot)).filter((entry) => entry.includes('.staging-'))).toEqual([])
+    })
   })
 
-  it('should keep the original failure as the cause and name the backup when moving it back also fails', async () => {
-    const restoreError = new Error('injected restore failure')
-    const failingRename = async (from: string, to: string) => {
-      if (from.includes('.staging-')) throw new Error('injected rename failure')
-      if (from.includes('.previous-')) throw restoreError
-      await rename(from, to)
-    }
-    const error = await fetchFdsSource({
-      figmaRoot,
-      lockFile,
-      remote: `file://${remote}`,
-      rename: failingRename
-    }).catch((caught: unknown) => caught)
-    expect(error).toBeInstanceOf(FdsCacheError)
-    expect(((error as Error).cause as Error).message).toBe('injected rename failure')
-    expect((error as { restoreError?: unknown }).restoreError).toBe(restoreError)
-    const backups = (await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))
-    expect(backups).toHaveLength(1)
-    const backup = path.join(figmaRoot, backups[0]!, 'figma-snapshot')
-    expect((error as Error).message).toContain(backup)
-    expect(existsSync(path.join(figmaRoot, 'figma-snapshot'))).toBe(false)
-    for (const [file, bytes] of before)
-      expect(await readFile(path.join(backup, file))).toEqual(bytes)
+  describe('and moving the old cache back also fails', () => {
+    let restoreError: Error
+    let failingRename: (from: string, to: string) => Promise<void>
+
+    beforeEach(() => {
+      restoreError = new Error('injected restore failure')
+      failingRename = async (from, to) => {
+        if (from.includes('.staging-')) throw new Error('injected rename failure')
+        if (from.includes('.previous-')) throw restoreError
+        await rename(from, to)
+      }
+    })
+
+    it('should keep the original failure as the cause and name the backup', async () => {
+      const error = await fetchFdsSource({
+        figmaRoot,
+        lockFile,
+        remote: `file://${remote}`,
+        rename: failingRename
+      }).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(FdsCacheError)
+      expect(((error as Error).cause as Error).message).toBe('injected rename failure')
+      expect((error as { restoreError?: unknown }).restoreError).toBe(restoreError)
+      const backups = (await readdir(figmaRoot)).filter((entry) => entry.includes('.previous-'))
+      expect(backups).toHaveLength(1)
+      const backup = path.join(figmaRoot, backups[0]!, 'figma-snapshot')
+      expect((error as Error).message).toContain(backup)
+      expect(existsSync(path.join(figmaRoot, 'figma-snapshot'))).toBe(false)
+      for (const [file, bytes] of before)
+        expect(await readFile(path.join(backup, file))).toEqual(bytes)
+    })
   })
 })
 
@@ -621,9 +765,11 @@ describe('when the lock names the figma-design-system repository', () => {
     )
   })
 
-  it('should not take a suffixed URL for the figma-design-system source', () => {
-    expect(() => readFdsPin(lock(`${FDS}.git`), { sealing: true })).toThrow(
-      'no figma-design-system source'
-    )
+  describe('and the URL carries a .git suffix', () => {
+    it('should not take it for the figma-design-system source', () => {
+      expect(() => readFdsPin(lock(`${FDS}.git`), { sealing: true })).toThrow(
+        'no figma-design-system source'
+      )
+    })
   })
 })

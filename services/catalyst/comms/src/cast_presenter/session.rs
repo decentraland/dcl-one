@@ -1,8 +1,8 @@
 //! Presentation sessions, in memory as upstream keeps them
 //! (`src/logic/presentation-manager/component.ts`): create (connect first,
 //! then render and publish), the data-channel commands, the state broadcast,
-//! stop, and the idle reaper (every 60 s, a session with no remote
-//! participant for 5 minutes stops).
+//! stop, and the idle reaper (every 60 s, a session with no audience for
+//! 5 minutes stops; other bots and the RTMP ingress are no audience).
 //!
 //! The bot token is checked here before anything else: signed by this
 //! node's LiveKit key, unexpired, a `presentation-bot:` identity in the room
@@ -12,9 +12,16 @@
 //!
 //! Every bot this node runs holds a slot of `MAX_CONCURRENT_PRESENTATIONS`:
 //! a session, a creation in progress, or the JSON path's credential check
-//! and download. A creation runs in its own task, so a client that goes
-//! away mid-request leaves either a running session or nothing. Multipart
-//! uploads being read hold an upload permit, as many as there are slots.
+//! and download. A room holds as many as there are slots, each with a bot
+//! token of its own: LiveKit gives a second bot of a token the place of the
+//! first, so a token that holds a slot answers 409 until its presentation
+//! stops. A creation runs in its own task, so a client that goes away
+//! mid-request leaves either a running session or nothing. Multipart uploads
+//! being read hold an upload permit, as many as there are slots.
+//!
+//! A bot that ends without leaving (its process killed) says nothing, and
+//! LiveKit keeps its participant and last slide for about 20 s: the node
+//! sends `presentation:stopped` in its place and removes the participant.
 //!
 //! The PDF load and each render run on [`RENDER_THREADS`] blocking threads
 //! at most. A render waits up to [`RENDER_WAIT`] for a thread; with none
@@ -25,19 +32,24 @@
 //! [`RENDER_THREADS`]: the creation or that render's session fails at once
 //! and releases its slot, while stuck renders take render capacity, never
 //! more of tokio's shared blocking pool.
+//!
+//! Client composition, with a public URL only: each render also gives the
+//! slide's PNG, the session keeps the last [`SLIDE_PICTURES`], and the state
+//! names the current one. A state names a slide only when its picture is
+//! kept; without one it has no composition field.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 
 use super::bot::{BotLauncher, BotLink, ConnectError, RoomData, RoomState};
-use super::render::{Frame, PdfDocument};
+use super::render::{Frame, PdfDocument, Picture};
 use super::wire::{
-    self, Command, DEFAULT_OVERLAY, FileType, Navigate, Overlay, PresentationInfo,
-    PresentationState, SlideVideo, VideoState,
+    self, Command, Composition, DEFAULT_OVERLAY, FileType, Navigate, Overlay, PresentationInfo,
+    PresentationState, Slide, SlideVideo, VideoState,
 };
 
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -50,6 +62,8 @@ pub const RENDER_WAIT: Duration = Duration::from_secs(10);
 /// The blocking threads PDF loads and renders take at once, timed-out ones
 /// included.
 pub const RENDER_THREADS: usize = 4;
+/// The slide pictures a session keeps (upstream's `SLIDE_IMAGE_CACHE_SIZE`).
+pub const SLIDE_PICTURES: usize = 8;
 /// `MAX_CONCURRENT_PRESENTATIONS` when unset.
 pub const DEFAULT_MAX_CONCURRENT: usize = 10;
 /// The identity prefix of the gatekeeper's presentation-bot tokens
@@ -64,6 +78,9 @@ pub enum CreateError {
     /// 429.
     #[error("Maximum concurrent presentations reached ({0})")]
     MaxConcurrent(usize),
+    /// 409: the token's bot holds a slot already.
+    #[error("This token already has a presentation")]
+    TokenInUse,
     /// 422: a slide failed to render.
     #[error("{0}")]
     SlideRender(String),
@@ -112,6 +129,13 @@ impl std::fmt::Debug for LiveKitTarget {
     }
 }
 
+/// Where a bot token puts its bot: the room and the participant identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seat {
+    pub room: String,
+    pub identity: String,
+}
+
 impl LiveKitTarget {
     /// From the gatekeeper's LiveKit; `None` without one.
     pub fn from_livekit(livekit: &crate::shared::livekit::LiveKit) -> Option<Self> {
@@ -131,11 +155,12 @@ impl LiveKitTarget {
         })
     }
 
-    /// Whether `token` is a presentation-bot token of this LiveKit at `now`
-    /// (unix seconds), or why not: signed with its key and valid then (as
-    /// LiveKit checks it), a `presentation-bot:<room>:` identity whose room
-    /// is the one its grant joins, and allowed to publish a screen share.
-    pub fn check_bot_token(&self, token: &str, now: u64) -> Result<(), &'static str> {
+    /// The seat of `token` when it is a presentation-bot token of this
+    /// LiveKit at `now` (unix seconds), or why it is not: signed with its key
+    /// and valid then (as LiveKit checks it), a `presentation-bot:<room>:`
+    /// identity whose room is the one its grant joins, and allowed to
+    /// publish a screen share.
+    pub fn check_bot_token(&self, token: &str, now: u64) -> Result<Seat, &'static str> {
         let claims = crate::shared::livekit::verify_access_token(
             &self.api_key,
             &self.api_secret,
@@ -181,7 +206,10 @@ impl LiveKitTarget {
         if flag("canPublish") == Some(false) || !screen_share {
             return Err("the grant cannot publish a screen share");
         }
-        Ok(())
+        Ok(Seat {
+            room: room.to_string(),
+            identity: identity.to_string(),
+        })
     }
 
     /// Whether `livekit_url` names this node's LiveKit (trailing `/` aside).
@@ -203,6 +231,12 @@ struct SessionState {
     /// The scene id of the last presenter command; packets the bot sends carry it.
     scene_id: String,
     presenters: HashSet<String>,
+    /// The last slides shown as pictures, the current one last; empty with
+    /// client composition off.
+    pictures: VecDeque<Picture>,
+    /// Whose camera clients draw: the request's `presenterIdentity`, then
+    /// the last presenter to claim it.
+    presenter_identity: Option<String>,
 }
 
 struct Session {
@@ -210,9 +244,13 @@ struct Session {
     file_name: String,
     file_type: FileType,
     slide_count: usize,
+    /// Where clients fetch slide pictures; `None` is client composition off.
+    public_url: Option<String>,
     doc: Arc<PdfDocument>,
     renders: Arc<RenderPool>,
     bot: Arc<dyn BotLink>,
+    /// Where the bot is.
+    seat: Seat,
     state: tokio::sync::Mutex<SessionState>,
     /// The room's metadata and participant count, as the bot reports them.
     room: watch::Receiver<RoomState>,
@@ -224,20 +262,30 @@ struct Session {
 pub struct Presenter {
     launcher: Arc<dyn BotLauncher>,
     livekit: LiveKitTarget,
+    /// `CAST_PRESENTER_PUBLIC_URL`: this router as clients reach it.
+    public_url: Option<String>,
     /// `None` is unlimited (`MAX_CONCURRENT_PRESENTATIONS=0`).
     max_concurrent: Option<usize>,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     /// Slots held by creations and credential checks.
     in_flight: AtomicUsize,
+    /// The bot identities that hold a slot: a session, a creation or a
+    /// credential check.
+    seats: Mutex<HashSet<String>>,
+    /// The gatekeeper's room service, set by `serve`: it evicts a bot that
+    /// ended without leaving.
+    room_service: OnceLock<Arc<dyn super::bot::Rooms>>,
     /// Multipart uploads being read; `None` when unlimited.
     uploads: Option<Arc<Semaphore>>,
     renders: Arc<RenderPool>,
 }
 
-/// A slot of the concurrency limit, released on drop unless a session took it.
+/// A bot's slot of the concurrency limit, released on drop unless a session
+/// took it.
 pub struct Slot {
     presenter: Arc<Presenter>,
     held: bool,
+    seat: Seat,
 }
 
 impl Slot {
@@ -254,7 +302,24 @@ impl Drop for Slot {
     fn drop(&mut self) {
         if self.held {
             self.presenter.in_flight.fetch_sub(1, Ordering::SeqCst);
+            self.presenter
+                .seats
+                .lock()
+                .unwrap()
+                .remove(&self.seat.identity);
         }
+    }
+}
+
+/// Frees a stopped session's token when dropped: after its bot shut down.
+struct SeatRelease<'a> {
+    seats: &'a Mutex<HashSet<String>>,
+    identity: &'a str,
+}
+
+impl Drop for SeatRelease<'_> {
+    fn drop(&mut self) {
+        self.seats.lock().unwrap().remove(self.identity);
     }
 }
 
@@ -321,13 +386,20 @@ impl RenderPool {
         }
     }
 
+    /// The slide, its video links and, when `picture`, its PNG.
     async fn render(
         &self,
         doc: &Arc<PdfDocument>,
         index: usize,
-    ) -> Result<(Frame, Vec<SlideVideo>), RenderError> {
+        picture: bool,
+    ) -> Result<(Frame, Vec<SlideVideo>, Option<Picture>), RenderError> {
         let doc = doc.clone();
-        match self.run(move || doc.render(index)).await {
+        let render = move || -> Result<_, String> {
+            let (frame, videos) = doc.render(index)?;
+            let picture = picture.then(|| frame.picture()).transpose()?;
+            Ok((frame, videos, picture))
+        };
+        match self.run(render).await {
             Ok(result) => result.map_err(RenderError::Failed),
             Err(RenderError::Failed(e)) => Err(RenderError::Failed(format!(
                 "Failed to render slide {index}: {e}"
@@ -355,14 +427,18 @@ impl Presenter {
         launcher: Arc<dyn BotLauncher>,
         livekit: LiveKitTarget,
         max_concurrent: usize,
+        public_url: Option<String>,
     ) -> Arc<Self> {
         let max_concurrent = (max_concurrent > 0).then_some(max_concurrent);
         Arc::new(Self {
             launcher,
             livekit,
+            public_url,
             max_concurrent,
             sessions: Mutex::new(HashMap::new()),
             in_flight: AtomicUsize::new(0),
+            seats: Mutex::default(),
+            room_service: OnceLock::new(),
             uploads: max_concurrent.map(|max| Arc::new(Semaphore::new(max))),
             renders: Arc::new(RenderPool::new(RENDER_THREADS, RENDER_WAIT, RENDER_TIMEOUT)),
         })
@@ -381,6 +457,27 @@ impl Presenter {
 
     pub fn livekit(&self) -> &LiveKitTarget {
         &self.livekit
+    }
+
+    pub fn set_room_service(&self, rooms: Arc<dyn super::bot::Rooms>) {
+        let _ = self.room_service.set(rooms);
+    }
+
+    /// For a bot that ended without leaving: `last` goes to its room, then
+    /// its participant is removed (no error when it left by itself).
+    async fn evict(&self, seat: &Seat, last: Option<&[u8]>) {
+        let Some(rooms) = self.room_service.get() else {
+            return;
+        };
+        let rooms = rooms.room_service();
+        if let Some(packet) = last
+            && let Err(e) = rooms.send_data(&seat.room, packet).await
+        {
+            tracing::warn!(room = %seat.room, "stop broadcast by the node failed: {e}");
+        }
+        if let Err(e) = rooms.remove_participant(&seat.room, &seat.identity).await {
+            tracing::warn!(room = %seat.room, "bot not removed from its room: {e}");
+        }
     }
 
     pub fn active_sessions(&self) -> usize {
@@ -416,9 +513,9 @@ impl Presenter {
         }
     }
 
-    /// 401 unless `token` is a presentation-bot token of this node's LiveKit
-    /// ([`LiveKitTarget::check_bot_token`]).
-    pub fn verify_token(&self, token: &str) -> Result<(), CreateError> {
+    /// The seat of `token`; 401 unless it is a presentation-bot token of this
+    /// node's LiveKit ([`LiveKitTarget::check_bot_token`]).
+    pub fn verify_token(&self, token: &str) -> Result<Seat, CreateError> {
         let now =
             crate::shared::livekit::unix_now().map_err(|e| CreateError::Internal(e.to_string()))?;
         self.livekit
@@ -426,16 +523,22 @@ impl Presenter {
             .map_err(|why| CreateError::InvalidCredentials(why.to_string()))
     }
 
-    /// A slot, or 429 when every one is taken.
-    pub fn reserve(self: &Arc<Self>) -> Result<Slot, CreateError> {
+    /// The slot of the bot `token` names: 401 for a token that is no bot
+    /// token, 429 when every slot is taken, 409 when that bot holds one.
+    pub fn reserve(self: &Arc<Self>, token: &str) -> Result<Slot, CreateError> {
+        let seat = self.verify_token(token)?;
         let sessions = self.sessions.lock().unwrap();
         if self.full(sessions.len()) {
             return Err(self.capacity_error());
+        }
+        if !self.seats.lock().unwrap().insert(seat.identity.clone()) {
+            return Err(CreateError::TokenInUse);
         }
         self.in_flight.fetch_add(1, Ordering::SeqCst);
         Ok(Slot {
             presenter: self.clone(),
             held: true,
+            seat,
         })
     }
 
@@ -467,26 +570,31 @@ impl Presenter {
         file: Vec<u8>,
         livekit_token: &str,
         file_name: &str,
+        presenter_identity: Option<String>,
     ) -> Result<PresentationInfo, CreateError> {
-        self.verify_token(livekit_token)?;
-        let slot = self.reserve()?;
-        self.create_reserved(slot, file, livekit_token, file_name)
+        let slot = self.reserve(livekit_token)?;
+        self.create_reserved(slot, file, livekit_token, file_name, presenter_identity)
             .await
     }
 
-    /// [`Self::create`] in a slot the caller holds.
+    /// [`Self::create`] in a slot the caller holds, with the slot's token.
     pub async fn create_reserved(
         self: &Arc<Self>,
         slot: Slot,
         file: Vec<u8>,
         livekit_token: &str,
         file_name: &str,
+        presenter_identity: Option<String>,
     ) -> Result<PresentationInfo, CreateError> {
-        self.verify_token(livekit_token)?;
+        if self.verify_token(livekit_token)? != slot.seat {
+            return Err(CreateError::Internal("not the slot's token".into()));
+        }
         let presenter = self.clone();
         let (token, file_name) = (livekit_token.to_string(), file_name.to_string());
         crate::shared::task::spawn_with(async move {
-            presenter.create_in(slot, file, &token, &file_name).await
+            presenter
+                .create_in(slot, file, &token, &file_name, presenter_identity)
+                .await
         })
         .await
         .map_err(|e| CreateError::Internal(e.to_string()))?
@@ -498,6 +606,7 @@ impl Presenter {
         file: Vec<u8>,
         livekit_token: &str,
         file_name: &str,
+        presenter_identity: Option<String>,
     ) -> Result<PresentationInfo, CreateError> {
         let id = uuid::Uuid::new_v4().to_string();
         let connected = self
@@ -506,13 +615,16 @@ impl Presenter {
             .await
             .map_err(|e| CreateError::Internal(e.to_string()))?;
         let bot = connected.link.clone();
-        let session = match self.start(&id, connected.room, file, file_name, &bot).await {
+        let started = self.start(&id, &slot.seat, connected.room, file, file_name, &bot);
+        let session = match started.await {
             Ok(session) => session,
             Err(e) => {
                 bot.shutdown().await;
+                self.evict(&slot.seat, None).await;
                 return Err(e);
             }
         };
+        session.state.lock().await.presenter_identity = presenter_identity;
         slot.admit(session.clone());
         tracing::info!(presentation = %id, slides = session.slide_count, "presentation created");
         session.broadcast_state().await;
@@ -529,6 +641,7 @@ impl Presenter {
     async fn start(
         &self,
         id: &str,
+        seat: &Seat,
         room: watch::Receiver<RoomState>,
         file: Vec<u8>,
         file_name: &str,
@@ -542,10 +655,14 @@ impl Presenter {
         if slide_count == 0 {
             return Err(CreateError::Internal("PDF contains no pages".into()));
         }
-        let (frame, slide_videos) = self.renders.render(&doc, 0).await.map_err(|e| match e {
-            RenderError::Busy => CreateError::Busy,
-            e => CreateError::SlideRender(e.message(0)),
-        })?;
+        let (frame, slide_videos, picture) = self
+            .renders
+            .render(&doc, 0, self.public_url.is_some())
+            .await
+            .map_err(|e| match e {
+                RenderError::Busy => CreateError::Busy,
+                e => CreateError::SlideRender(e.message(0)),
+            })?;
         bot.publish_video(frame.width, frame.height)
             .await
             .map_err(|e| CreateError::Internal(e.to_string()))?;
@@ -558,9 +675,11 @@ impl Presenter {
             file_name: super::files::presentation_name(file_name),
             file_type: FileType::Pdf,
             slide_count,
+            public_url: self.public_url.clone(),
             doc,
             renders: self.renders.clone(),
             bot: bot.clone(),
+            seat: seat.clone(),
             state: tokio::sync::Mutex::new(SessionState {
                 current_slide: 0,
                 slide_videos,
@@ -568,6 +687,8 @@ impl Presenter {
                 last_frame: frame,
                 scene_id: String::new(),
                 presenters,
+                pictures: picture.into_iter().collect(),
+                presenter_identity: None,
             }),
             room,
             last_active: Mutex::new(Instant::now()),
@@ -628,6 +749,11 @@ impl Presenter {
                     self.stop(&session.id).await;
                     break;
                 }
+                // Upstream ignores a claim with client composition off.
+                Command::Claim if session.public_url.is_some() => {
+                    session.state.lock().await.presenter_identity = Some(identity);
+                    session.broadcast_state().await;
+                }
                 Command::Overlay(patch) => {
                     patch.apply(&mut session.state.lock().await.overlay);
                     overlay_due.get_or_insert_with(|| {
@@ -648,16 +774,34 @@ impl Presenter {
         self.sessions.lock().unwrap().contains_key(id)
     }
 
+    /// The PNG of a slide a live session keeps, by its hash.
+    pub async fn slide_picture(&self, id: &str, hash: &str) -> Option<bytes::Bytes> {
+        let session = self.sessions.lock().unwrap().get(id).cloned()?;
+        let state = session.state.lock().await;
+        let (_, png) = state.pictures.iter().find(|(kept, _)| kept == hash)?;
+        Some(png.clone())
+    }
+
     /// Stops a session: removed first, then `presentation:stopped`, then the
-    /// bot disconnects. Stopping a stopped session does nothing.
+    /// bot disconnects. Stopping a stopped session does nothing. A bot that
+    /// cannot send `presentation:stopped` is evicted. Its token stays taken
+    /// (409) until the bot has shut down, and is free once this returns: a
+    /// retry with the same token gets a bot this cleanup no longer touches,
+    /// as the eviction removes the participant by that token's identity.
     pub async fn stop(&self, id: &str) {
         let Some(session) = self.sessions.lock().unwrap().remove(id) else {
             return;
         };
+        // Released on drop, so a cancelled stop never keeps the token.
+        let _seat = SeatRelease {
+            seats: &self.seats,
+            identity: &session.seat.identity,
+        };
         let scene_id = session.state.lock().await.scene_id.clone();
         let packet = wire::encode_packet(&wire::stopped_message(id), &scene_id);
-        if let Err(e) = session.bot.publish_data(packet).await {
+        if let Err(e) = session.bot.publish_data(packet.clone()).await {
             tracing::warn!(presentation = %id, "stop broadcast failed: {e}");
+            self.evict(&session.seat, Some(&packet)).await;
         }
         session.bot.shutdown().await;
         tracing::info!(presentation = %id, "presentation stopped");
@@ -712,6 +856,19 @@ impl Session {
             slide_videos: state.slide_videos.clone(),
             video_state: VideoState::Idle,
             overlay: state.overlay,
+            composition: self.public_url.as_ref().zip(state.pictures.back()).map(
+                |(base, (hash, _))| Composition {
+                    slide: Slide {
+                        url: format!("{base}/presentations/{}/slides/{hash}.png", self.id),
+                        width: state.last_frame.width,
+                        height: state.last_frame.height,
+                    },
+                    presenter_identity: state.presenter_identity.clone(),
+                    playing_video_index: (),
+                    video_position_ms: (),
+                    video_position_at: (),
+                },
+            ),
         }
     }
 
@@ -784,7 +941,7 @@ impl Session {
                 tracing::info!(presentation = %self.id, kind, "command not supported by this node");
             }
             // Handled by the session loop.
-            Command::Stop | Command::Overlay(_) => {}
+            Command::Stop | Command::Overlay(_) | Command::Claim => {}
         }
         true
     }
@@ -806,8 +963,12 @@ impl Session {
         if target == current {
             return Ok(());
         }
-        match self.renders.render(&self.doc, target).await {
-            Ok((frame, videos)) => {
+        let rendered = self
+            .renders
+            .render(&self.doc, target, self.public_url.is_some())
+            .await;
+        match rendered {
+            Ok((frame, videos, picture)) => {
                 if let Err(e) = self.bot.push_frame(&frame).await {
                     tracing::warn!(presentation = %self.id, "frame push failed: {e}");
                 }
@@ -816,6 +977,13 @@ impl Session {
                     state.current_slide = target;
                     state.slide_videos = videos;
                     state.last_frame = frame;
+                    if let Some(picture) = picture {
+                        state.pictures.retain(|(hash, _)| *hash != picture.0);
+                        state.pictures.push_back(picture);
+                        if state.pictures.len() > SLIDE_PICTURES {
+                            state.pictures.pop_front();
+                        }
+                    }
                 }
                 tracing::info!(presentation = %self.id, slide = target, "navigated");
                 self.broadcast_state().await;

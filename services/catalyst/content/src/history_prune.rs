@@ -242,7 +242,12 @@ async fn unlink(storage: &Storage, key: &str) -> Result<u64, crate::storage::Sto
 }
 
 /// The keys of a pruned batch that no domain names any more are unlinked;
-/// the reference check runs right before the unlink, after the rows are gone.
+/// the reference check runs right before the unlink, after the rows are gone,
+/// under the exclusive store lock. Every content writer that commits a
+/// deployment (local deploys, the peer-sync and read-through flush) takes its
+/// shared side and checks there that the files it names are stored, so a
+/// blob such a writer reuses is either named by its committed rows here or
+/// found gone by that writer, which then does not commit it.
 async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,
@@ -724,7 +729,7 @@ mod tests {
     #[tokio::test]
     async fn a_superseded_local_profile_is_pruned_and_the_active_one_stays() {
         use crate::write_deployer::WriteDeployer;
-        use alloy::signers::{Signer, local::PrivateKeySigner};
+        use catalyst_shared::test_keys::{ENTITY_KEY, address_of, signed_chain};
 
         let Some((pool, admin, name)) = own_database().await else {
             return;
@@ -734,11 +739,7 @@ mod tests {
             uuid::Uuid::new_v4().simple()
         ));
         let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
-        let key: PrivateKeySigner =
-            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-                .parse()
-                .unwrap();
-        let signer = format!("{:#x}", key.address());
+        let signer = address_of(ENTITY_KEY);
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         let mut ids = Vec::new();
@@ -753,11 +754,7 @@ mod tests {
             });
             let bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
             let id = crate::auth::hash::hash_bytes_v1(&bytes);
-            let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
-            let chain = serde_json::json!([
-                {"type": "SIGNER", "payload": signer},
-                {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
-            ]);
+            let chain = serde_json::to_value(signed_chain(ENTITY_KEY, &id).await).unwrap();
             // A fresh deployer per deploy: the profile rate limit is per instance.
             WriteDeployer::with_partial_validation_for_tests(pool.clone(), storage.clone(), None)
                 .deploy_entity(vec![bytes], &id, chain, "LOCAL")

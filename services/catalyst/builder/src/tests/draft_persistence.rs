@@ -5,7 +5,7 @@ use crate::drafts::{CollectionDraft, ItemDraft};
 use crate::items::ItemsComponent;
 use dcl_auth::{hash_bytes_v1, verify_hash};
 
-use super::support::{cleanup, scratch_component, unique};
+use super::support::{cleanup, scratch_component, temp_storage, unique};
 
 const OWNER: &str = "0x1111111111111111111111111111111111111111";
 const OTHER: &str = "0x2222222222222222222222222222222222222222";
@@ -316,4 +316,90 @@ async fn drafts_and_files_persist_with_owner_and_publication_guards() {
     linked.urn = Some(format!("{provider}:bad suffix"));
     assert!(linked.validate(linked_id, OWNER).is_err());
     cleanup(&store, &[collection, linked_id], &[hash]).await;
+}
+
+/// A file found stored is not unlinked between the upload's existence check
+/// and its rows: the upload waits while an unlink batch holds the exclusive
+/// store lock, then stores again what the batch removed.
+#[tokio::test]
+async fn item_files_wait_for_an_unlink_batch_and_store_what_it_removed() {
+    let Some(store) = scratch_component().await else {
+        return;
+    };
+    let collection = Uuid::new_v4();
+    let draft =
+        serde_json::from_value(json!({ "id": collection, "name": "Unlink fixture" })).unwrap();
+    store.save_collection_draft(OWNER, &draft).await.unwrap();
+    let item: ItemDraft = serde_json::from_value(json!({
+        "id": Uuid::new_v4(), "name": "Staged elsewhere", "type": "wearable",
+        "collection_id": collection, "data": { "category": "upper_body" },
+    }))
+    .unwrap();
+    store.save_item_draft(OWNER, &item).await.unwrap();
+    let bytes = unique("staged model");
+    let hash = hash_bytes_v1(&bytes);
+    store
+        .blobs
+        .store(&hash, bytes.clone().into())
+        .await
+        .unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(store.pool())
+        .await
+        .unwrap();
+    let upload = store.save_item_files(OWNER, item.id, vec![("model.glb".into(), bytes)]);
+    tokio::pin!(upload);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut upload)
+            .await
+            .is_err(),
+        "the upload waits for the unlink batch"
+    );
+    store.blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+    let files = upload.await.unwrap();
+    assert_eq!(files["model.glb"], hash);
+    assert!(
+        store.blobs.exist(&hash).await.unwrap(),
+        "the row names a stored file"
+    );
+    cleanup(&store, &[collection], &[hash]).await;
+}
+
+/// Behind an unlink batch that outlasts the store lock wait, an item file
+/// upload answers 503 and releases the item's row lock.
+#[tokio::test]
+async fn item_files_behind_a_long_unlink_batch_answer_503() {
+    // A database of its own: the held lock would turn other tests' uploads away.
+    let Some(pool) = crate::db::scratch::isolated_pool(4).await else {
+        return;
+    };
+    let store = ItemsComponent::new(pool, temp_storage().await);
+    let collection = Uuid::new_v4();
+    let draft =
+        serde_json::from_value(json!({ "id": collection, "name": "Blocked fixture" })).unwrap();
+    store.save_collection_draft(OWNER, &draft).await.unwrap();
+    let item: ItemDraft = serde_json::from_value(json!({
+        "id": Uuid::new_v4(), "name": "Blocked", "type": "wearable",
+        "collection_id": collection, "data": { "category": "upper_body" },
+    }))
+    .unwrap();
+    store.save_item_draft(OWNER, &item).await.unwrap();
+    let bytes = unique("blocked model");
+    let hash = hash_bytes_v1(&bytes);
+
+    let batch = crate::storage::gc::lock_store_exclusive(store.pool())
+        .await
+        .unwrap();
+    let upload = store.save_item_files(OWNER, item.id, vec![("model.glb".into(), bytes)]);
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(10), upload)
+        .await
+        .expect("bounded wait");
+    batch.commit().await.unwrap();
+    assert_eq!(answered.err().map(|e| e.status()), Some(503));
+    assert!(
+        !store.blobs.exist(&hash).await.unwrap(),
+        "nothing was stored"
+    );
+    cleanup(&store, &[collection], &[hash]).await;
 }

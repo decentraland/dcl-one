@@ -46,8 +46,8 @@ use super::deploy::{
 use super::metrics as worlds_metrics;
 use super::store::{PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
 use super::upload_limits;
-use super::upload_spool::SpooledFile;
 use super::{CoreState, SharedState};
+use catalyst_storage::upload_spool::SpooledFile;
 
 pub const QUERY_WITHOUT_FIELD_MESSAGE: &str =
     "The 'partial=true' query parameter requires the 'partial=true' form field";

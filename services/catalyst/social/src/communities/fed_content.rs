@@ -172,8 +172,17 @@ async fn register_upload(
             "content upload budget exhausted; retry later",
         )));
     }
-    if !state.storage.exist(cid).await? {
-        state.storage.store(cid, body).await?;
+    // Under the store lock's shared side until the rows commit: an unlink
+    // batch either ran before the existence check or sees the rows.
+    match crate::storage::gc::store_for_row(&mut tx, &state.storage, cid, body).await {
+        Ok(_) => {}
+        Err(crate::storage::gc::GcError::LockTimeout) => {
+            return Ok(Some(err_json(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the content store is being collected; retry shortly",
+            )));
+        }
+        Err(e) => return Err(e.into()),
     }
     sqlx::query(
         "INSERT INTO social.community_contents (content_hash, cid, size) VALUES ($1, $2, $3) \

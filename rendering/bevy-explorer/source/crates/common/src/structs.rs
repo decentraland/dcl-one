@@ -2,7 +2,7 @@ use std::{
     f32::consts::PI,
     marker::PhantomData,
     num::ParseIntError,
-    ops::{Deref, Range},
+    ops::{Deref, Range, RangeInclusive},
     str::FromStr,
     sync::{atomic::AtomicU32, Arc},
 };
@@ -543,6 +543,10 @@ pub struct PrimaryPlayerRes(pub Entity);
 #[derive(Resource)]
 pub struct PrimaryCameraRes(pub Entity);
 
+/// A camera that draws the lens flare of the directional light (`visuals::lens_flare`).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
+
 /// World-space head gaze angles, in degrees. On the local player, written each frame
 /// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
 /// remote players, written from the incoming rfc4::Movement head-sync fields. The
@@ -603,6 +607,13 @@ pub struct PreviousLogin {
 pub fn default_home_realm() -> String {
     crate::base_domain::url(crate::base_domain::Service::RealmProvider, "/main")
 }
+/// The values the "Live Scene Ring" setting takes, in parcel rings.
+pub const LIVE_SCENE_RINGS: RangeInclusive<u16> = 0..=3;
+/// The values the "Near LOD Ring" setting takes, in parcel rings.
+pub const NEAR_LOD_RINGS: RangeInclusive<u16> = 1..=8;
+/// The values the "Far LOD Ring" setting takes, in parcel rings.
+pub const FAR_LOD_RINGS: RangeInclusive<u16> = 5..=40;
+
 // app configuration
 #[derive(Serialize, Deserialize, Resource, Clone)]
 #[serde(default)]
@@ -633,6 +644,18 @@ pub struct AppConfig {
     /// behind the camera together: the nearest in view start first, and with none free one
     /// behind the camera makes way for one in view. A near LOD's colliders take no place.
     pub max_near_lods: usize,
+    /// How many scenes may load or show a far LOD (the asset pipeline's simplified mesh) at once,
+    /// in view and behind the camera together, as `max_near_lods` counts near LODs.
+    pub max_far_lods: usize,
+    /// Scenes within this Chebyshev parcel ring of the player's parcel go live whatever the load
+    /// distance, and are kept one ring further. Within [`LIVE_SCENE_RINGS`].
+    pub live_scene_ring: u16,
+    /// A scene that is not live starts a near LOD within this ring, kept one ring further; far
+    /// LODs start past that. Within [`NEAR_LOD_RINGS`].
+    pub near_lod_ring: u16,
+    /// The outer bound of far LODs; the imposter tiles may end them sooner. Within
+    /// [`FAR_LOD_RINGS`].
+    pub far_lod_ring: u16,
     pub scene_imposter_distances: Vec<f32>,
     pub scene_imposter_multisample: bool,
     pub scene_imposter_multisample_amount: f32,
@@ -704,6 +727,10 @@ impl Default for AppConfig {
             scene_load_distance: 10.0,
             scene_unload_extra_distance: 10.0,
             max_near_lods: 12,
+            max_far_lods: 200,
+            live_scene_ring: 1,
+            near_lod_ring: 3,
+            far_lod_ring: 20,
             scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
             scene_imposter_multisample: false,
             scene_imposter_multisample_amount: 0.0,
@@ -823,6 +850,7 @@ impl AppConfig {
         self.scene_load_distance = default.scene_load_distance;
         self.scene_unload_extra_distance = default.scene_unload_extra_distance;
         self.max_near_lods = default.max_near_lods;
+        self.max_far_lods = default.max_far_lods;
         self.scene_imposter_distances = default.scene_imposter_distances.clone();
         self.scene_imposter_multisample = default.scene_imposter_multisample;
         self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
@@ -1026,8 +1054,6 @@ pub struct GraphicsSettings {
     pub sky_reflections: SkyReflectionSetting,
     pub oob: f32,
     pub ambient_brightness: i32,
-    /// cel-shade avatars (toon shading) instead of standard PBR
-    pub cel_shading: bool,
     /// draw the dark edge outline around avatars
     pub avatar_outline: bool,
     /// show a hologram ghost where an avatar is still loading
@@ -1039,6 +1065,8 @@ pub struct GraphicsSettings {
     /// share of the window's device pixels the world renders at, upscaled to the window with FSR
     /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
+    /// draw the lens flare of the sun by day and of the moon at night (`visuals::lens_flare`)
+    pub lens_flare: bool,
 }
 
 /// The ambient brightness setting at which the Trilight ambient is the sky preset's
@@ -1093,12 +1121,12 @@ impl Default for GraphicsSettings {
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
             ambient_brightness: AMBIENT_BRIGHTNESS_DEFAULT,
-            cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
             spring_bones: false,
             gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
+            lens_flare: true,
         }
     }
 }
@@ -1116,6 +1144,7 @@ impl GraphicsSettings {
         self.shadow_distance = preset.shadow_distance;
         self.light_count = preset.light_count;
         self.shadow_caster_count = preset.shadow_caster_count;
+        self.lens_flare = preset.lens_flare;
         self.dof = preset.dof;
         self.ssao = preset.ssao;
         self.fog = preset.fog;
@@ -1130,6 +1159,8 @@ pub struct SessionGraphics {
     pub fps_target: Option<usize>,
     pub parcel_grass: Option<ParcelGrassSetting>,
     pub render_scale: Option<f32>,
+    /// Set by the preview's `/avatar_demo cap`, which takes values past the setting's range.
+    pub max_avatars: Option<usize>,
 }
 
 impl SessionGraphics {
@@ -1140,6 +1171,10 @@ impl SessionGraphics {
 
     pub fn fps_target(&self, config: &AppConfig) -> usize {
         self.fps_target.unwrap_or(config.graphics.fps_target)
+    }
+
+    pub fn max_avatars(&self, config: &AppConfig) -> usize {
+        self.max_avatars.unwrap_or(config.max_avatars)
     }
 
     /// The frame rate the explorer paces to: the session's target, else the player's, and with
@@ -1259,6 +1294,11 @@ pub const MIN_CASCADE: f32 = 0.1;
 /// shadows on or off.
 #[derive(Component)]
 pub struct StageLight;
+
+/// A light that never casts shadows (a photo booth's key light): the shadow settings leave it
+/// alone.
+#[derive(Component)]
+pub struct ShadowlessLight;
 
 /// The camera that shows the lobby stage, drawn with no post-processing: the bloom setting
 /// leaves it alone.
@@ -2373,6 +2413,16 @@ pub struct ServerConfiguration {
     pub local_scene_parcels: Option<Vec<String>>,
 }
 
+impl ServerConfiguration {
+    /// Whether the realm lists its scenes up front: a World, and also some previews and the
+    /// editor's realm. A city lists none and resolves its scenes around the player.
+    pub fn lists_scenes(&self) -> bool {
+        self.scenes_urn
+            .as_ref()
+            .is_some_and(|urns| !urns.is_empty())
+    }
+}
+
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MapData {
@@ -2511,6 +2561,19 @@ pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPas
 mod tests {
     use super::*;
     use crate::inputs::CommonInputAction;
+
+    /// the removed `cel_shading` field in a saved config must not stop it loading
+    #[test]
+    fn old_config_with_cel_shading_still_loads() {
+        let mut graphics = serde_json::to_value(GraphicsSettings::default()).unwrap();
+        graphics["cel_shading"] = serde_json::Value::Bool(false);
+        let config: AppConfig =
+            serde_json::from_value(serde_json::json!({ "graphics": graphics })).unwrap();
+        assert_eq!(
+            serde_json::to_value(&config.graphics).unwrap(),
+            serde_json::to_value(GraphicsSettings::default()).unwrap()
+        );
+    }
 
     #[test]
     fn out_of_bounds_geometry_shows_in_the_editor_in_preview_and_on_a_loopback_realm() {
@@ -2880,11 +2943,12 @@ mod tests {
         (g.vsync, g.fps_target, g.render_scale) = (false, 144, 0.5);
         (g.msaa, g.bloom, g.dof) = (AaSetting::FxaaLow, BloomSetting::High, DofSetting::Off);
         (g.shadow_distance, g.light_count, g.shadow_caster_count) = (200.0, 32, 8);
-        (g.ambient_brightness, g.oob, g.cel_shading) = (10, 0.0, false);
+        g.lens_flare = false;
+        (g.ambient_brightness, g.oob) = (10, 0.0);
         config.reset_outdated_settings();
 
         let mut medium = GraphicsSettings::default();
-        (medium.ambient_brightness, medium.oob, medium.cel_shading) = (10, 0.0, false);
+        (medium.ambient_brightness, medium.oob) = (10, 0.0);
         assert_eq!(
             serde_json::to_value(&config.graphics).unwrap(),
             serde_json::to_value(&medium).unwrap()
@@ -3153,6 +3217,14 @@ mod tests {
                 "{toggles}"
             );
         }
+    }
+
+    #[test]
+    fn a_realm_lists_scenes_only_with_a_scene_in_its_list() {
+        let config = |json: &str| serde_json::from_str::<ServerConfiguration>(json).unwrap();
+        assert!(config(r#"{"scenesUrn":["urn:decentraland:entity:a"]}"#).lists_scenes());
+        assert!(!config(r#"{"scenesUrn":[]}"#).lists_scenes());
+        assert!(!config(r#"{"realmName":"main"}"#).lists_scenes());
     }
 
     #[test]

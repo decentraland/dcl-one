@@ -319,10 +319,6 @@ impl FfmpegContext for AudioContext {
         Ok(())
     }
 
-    fn has_frame(&self) -> bool {
-        !self.buffer.is_empty()
-    }
-
     fn buffered_time(&self) -> f64 {
         self.buffer.len() as f64 / self.rate
     }

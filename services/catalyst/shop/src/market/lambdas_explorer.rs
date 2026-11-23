@@ -3,8 +3,8 @@
 //! sorted (UCA order, rarest or newest first) and paged in Rust exactly as
 //! the old handler did: the base wearables (content entities), the owner's
 //! on-chain copies (the collections subgraph readers, plus the active escrow
-//! grants of `shop.usage_grants` unless `EXPLORER_ESCROW_GRANTS_ENABLED` is
-//! off, as under the mirror posture; the item type from the `items`
+//! grants of `shop.usage_grants` where the operator turns
+//! `EXPLORER_ESCROW_GRANTS_ENABLED` on; the item type from the `items`
 //! mirror, the definitions from the content entities) and the third-party
 //! wearables (`third_party`). The old on-chain leg read the squid's `nft`
 //! table; without the subgraph readers this route answers the unavailable
@@ -210,7 +210,8 @@ async fn fetch_owned_items(
         })
         .collect();
     // lamb2 lists chain-owned tokens only (explorer-handler.ts:74-104):
-    // `EXPLORER_ESCROW_GRANTS_ENABLED`, off under the mirror posture.
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` adds escrow grants, off unless the
+    // operator opts in.
     let grants = if state.settings.explorer_escrow_grants {
         sqlx::query(
             "SELECT urn, COALESCE(token_id, '') AS token_id, extract(epoch FROM granted_at)::bigint AS granted_at \

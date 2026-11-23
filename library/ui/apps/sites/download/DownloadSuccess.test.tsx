@@ -1,7 +1,9 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { DownloadSuccess } from './DownloadSuccess'
+
+type DownloadSuccessProps = Parameters<typeof DownloadSuccess>[0]
 
 const steps = [
   { title: 'Open the file', text: 'Find it in your downloads.' },
@@ -9,7 +11,7 @@ const steps = [
   { title: 'Jump in', text: 'Sign in and play.' }
 ]
 
-function renderPage(props: Partial<Parameters<typeof DownloadSuccess>[0]> = {}) {
+function renderPage(props: Partial<DownloadSuccessProps> = {}) {
   return render(
     <DownloadSuccess
       title="Your download has started"
@@ -23,35 +25,44 @@ function renderPage(props: Partial<Parameters<typeof DownloadSuccess>[0]> = {}) 
 }
 
 describe('DownloadSuccess', () => {
-  describe('when rendered', () => {
-    it('should expose one main landmark with the title as the page heading', () => {
-      renderPage()
+  let container: HTMLElement
 
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
+  describe('when rendered', () => {
+    let item: HTMLElement
+
+    beforeEach(() => {
+      ;({ container } = renderPage())
+      item = within(screen.getByRole('list', { name: 'Install steps' })).getAllByRole(
+        'listitem'
+      )[1]!
+    })
+
+    it('should expose one main landmark', () => {
       expect(screen.getByRole('main')).toBeInTheDocument()
+    })
+
+    it('should use the title as the page heading', () => {
       expect(
         screen.getByRole('heading', { level: 1, name: 'Your download has started' })
       ).toBeInTheDocument()
     })
 
-    it('should render the steps as a named ordered list, each with its label and heading', () => {
-      renderPage()
-
-      const items = within(screen.getByRole('list', { name: 'Install steps' })).getAllByRole(
-        'listitem'
-      )
-      expect(items).toHaveLength(3)
-      expect(within(items[1]!).getByText('Step 2')).toBeInTheDocument()
+    it('should render the steps as a named ordered list', () => {
       expect(
-        within(items[1]!).getByRole('heading', { level: 2, name: 'Install' })
-      ).toBeInTheDocument()
+        within(screen.getByRole('list', { name: 'Install steps' })).getAllByRole('listitem')
+      ).toHaveLength(3)
+    })
+
+    it('should render each step with its label and heading', () => {
+      expect(within(item).getByText('Step 2')).toBeInTheDocument()
+      expect(within(item).getByRole('heading', { level: 2, name: 'Install' })).toBeInTheDocument()
     })
 
     it('should put the step label, heading and text before the step image, as source does', () => {
-      renderPage()
-
-      const item = within(screen.getByRole('list', { name: 'Install steps' })).getAllByRole(
-        'listitem'
-      )[1]!
       const order = [
         within(item).getByText('Step 2'),
         within(item).getByRole('heading', { level: 2, name: 'Install' }),
@@ -65,30 +76,36 @@ describe('DownloadSuccess', () => {
       }
     })
 
-    it('should describe a step image when alt text is given', () => {
-      renderPage({
-        steps: [{ title: 'Find', text: 'x', image: '/s1.webp', imageAlt: 'Browser downloads' }]
-      })
-
-      expect(screen.getByRole('img', { name: 'Browser downloads' })).toHaveAttribute(
-        'src',
-        '/s1.webp'
-      )
-    })
-
     it('should render the logo and step images as decorative', () => {
-      const { container } = renderPage()
-
       const images = container.querySelectorAll('img')
       expect(images).toHaveLength(2)
       for (const image of images) expect(image).toHaveAttribute('alt', '')
     })
   })
 
+  describe('when a step image has alt text', () => {
+    beforeEach(() => {
+      renderPage({
+        steps: [{ title: 'Find', text: 'x', image: '/s1.webp', imageAlt: 'Browser downloads' }]
+      })
+    })
+
+    it('should describe the step image', () => {
+      expect(screen.getByRole('img', { name: 'Browser downloads' })).toHaveAttribute(
+        'src',
+        '/s1.webp'
+      )
+    })
+  })
+
   describe('when footer lines are given', () => {
-    it('should render each line around a named link it styles itself, reachable and activated from the keyboard', async () => {
-      const onClick = vi.fn((event: { preventDefault: () => void }) => event.preventDefault())
-      const user = userEvent.setup()
+    let onClick: Mock<(event: { preventDefault: () => void }) => void>
+    let user: ReturnType<typeof userEvent.setup>
+    let retry: HTMLElement
+
+    beforeEach(() => {
+      onClick = vi.fn((event: { preventDefault: () => void }) => event.preventDefault())
+      user = userEvent.setup()
       renderPage({
         footerLines: [
           {
@@ -101,40 +118,71 @@ describe('DownloadSuccess', () => {
           }
         ]
       })
+      retry = screen.getByRole('link', { name: 'Try again' })
+    })
 
-      const retry = screen.getByRole('link', { name: 'Try again' })
+    it('should render the first line around its named link', () => {
       expect(retry).toHaveAttribute('href', '/installer.exe')
       expect(retry.closest('p')).toHaveTextContent("Download didn't start? Try again")
+    })
+
+    it('should render the second line with its named link', () => {
       expect(screen.getByRole('link', { name: 'Support' })).toHaveAttribute('href', '/docs/')
-      await user.tab()
-      expect(retry).toHaveFocus()
-      await user.keyboard('{Enter}')
-      expect(onClick).toHaveBeenCalledTimes(1)
+    })
+
+    describe('and the first link is reached and activated from the keyboard', () => {
+      beforeEach(async () => {
+        await user.tab()
+      })
+
+      it('should focus the link', () => {
+        expect(retry).toHaveFocus()
+      })
+
+      it('should activate the link on Enter', async () => {
+        await user.keyboard('{Enter}')
+        expect(onClick).toHaveBeenCalledTimes(1)
+      })
     })
   })
 
   describe('when the installer is transferring', () => {
-    it('should announce it with a determinate progress bar when progress is known', () => {
-      renderPage({ downloading: { label: 'Downloading', progress: 40 } })
+    describe('and the progress is known', () => {
+      beforeEach(() => {
+        renderPage({ downloading: { label: 'Downloading', progress: 40 } })
+      })
 
-      expect(screen.getByRole('status')).toHaveTextContent('Downloading')
-      expect(screen.getByRole('progressbar', { name: 'Downloading' })).toHaveAttribute(
-        'value',
-        '40'
-      )
+      it('should announce the transfer', () => {
+        expect(screen.getByRole('status')).toHaveTextContent('Downloading')
+      })
+
+      it('should render a determinate progress bar', () => {
+        expect(screen.getByRole('progressbar', { name: 'Downloading' })).toHaveAttribute(
+          'value',
+          '40'
+        )
+      })
     })
 
-    it('should render an indeterminate progress bar when progress is unknown', () => {
-      renderPage({ downloading: { label: 'Downloading', progress: null } })
+    describe('and the progress is unknown', () => {
+      beforeEach(() => {
+        renderPage({ downloading: { label: 'Downloading', progress: null } })
+      })
 
-      expect(screen.getByRole('progressbar', { name: 'Downloading' })).not.toHaveAttribute('value')
+      it('should render an indeterminate progress bar', () => {
+        expect(screen.getByRole('progressbar', { name: 'Downloading' })).not.toHaveAttribute(
+          'value'
+        )
+      })
     })
   })
 
   describe('when no transfer is running', () => {
-    it('should not render the overlay', () => {
+    beforeEach(() => {
       renderPage({ downloading: null })
+    })
 
+    it('should not render the overlay', () => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument()
     })
   })

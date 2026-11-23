@@ -107,13 +107,16 @@ pub(crate) mod input {
 
     use super::*;
     use bevy::input::{
-        keyboard::{Key, KeyboardInput, NativeKeyCode},
+        keyboard::{Key, KeyboardInput},
         mouse::MouseButtonInput,
         ButtonState,
     };
     use bevy::window::PrimaryWindow;
     use common::rpc::RpcResultSender;
-    use console::PendingConsoleResponses;
+    use console::{
+        reply::{self, Screen},
+        PendingConsoleResponses,
+    };
 
     /// Input queued by `/press_key`, `/click_at`, `/click_entity` and the standalone's
     /// `/hud_fill`, one step a frame so each lands as a frame of its own, the way a person's key or
@@ -155,13 +158,15 @@ pub(crate) mod input {
     /// Type `text` a key at a time, as a keyboard would: each character's press carries it as its
     /// text, on a key code that binds nothing, so the world acts on none of it. `reply` answers
     /// with `message` once the last key is up. For `/hud_fill` (react_hud_cef/automation.rs).
-    #[cfg_attr(not(feature = "react-hud-cef"), allow(dead_code))]
+    #[cfg(any(all(not(target_arch = "wasm32"), feature = "react-hud-cef"), test))]
     pub fn queue_typing(
         script: &mut InputScript,
         text: &str,
         reply: RpcResultSender<Result<String, String>>,
         message: String,
     ) {
+        use bevy::input::keyboard::NativeKeyCode;
+
         for c in text.chars() {
             let (key_code, logical_key, text) = match c {
                 '\n' => (KeyCode::Enter, Key::Enter, "\r".to_owned()),
@@ -292,8 +297,11 @@ pub(crate) mod input {
 
     // --- /click_at ---
 
-    /// Click at a window position, in logical pixels from the top left, as the mouse would: the
-    /// HUD gets it where it is opaque, the world elsewhere. Moves the system cursor there
+    /// Click at a window position, in logical pixels from the top left (or, with --normalized,
+    /// 0 to 1 of the window from the top left), as the mouse would: the HUD gets it where it is
+    /// opaque, the world elsewhere. Moves the system cursor there. Replies JSON {"x", "y"} in
+    /// pixels, "normalized" {"x", "y"}, "button" and the window's "screen" {"width", "height",
+    /// "scale"}
     #[derive(clap::Parser, ConsoleCommand)]
     #[command(name = "/click_at")]
     pub struct ClickAtCommand {
@@ -302,14 +310,22 @@ pub(crate) mod input {
         /// `left` (default), `right` or `middle`
         #[arg(long)]
         button: Option<String>,
+        /// x and y are 0 to 1 of the window from the top left, not pixels
+        #[arg(long)]
+        normalized: bool,
     }
 
     pub fn click_at_cmd(
         mut input: ConsoleCommand<ClickAtCommand>,
+        windows: Query<&Window, With<PrimaryWindow>>,
         mut script: ResMut<InputScript>,
         mut pending: ResMut<PendingConsoleResponses>,
     ) {
         let Some(Ok(command)) = input.take() else {
+            return;
+        };
+        let Some(screen) = Screen::primary(&windows) else {
+            input.reply_failed("no primary window");
             return;
         };
         let button = match command.button.as_deref() {
@@ -323,7 +339,17 @@ pub(crate) mod input {
                 return;
             }
         };
-        let position = Vec2::new(command.x, command.y);
+        let position = if command.normalized {
+            match reply::normalized_point(command.x, command.y) {
+                Ok(point) => screen.to_pixels(point),
+                Err(e) => {
+                    input.reply_failed(e);
+                    return;
+                }
+            }
+        } else {
+            Vec2::new(command.x, command.y)
+        };
         for step in [
             Step::Cursor(position),
             Step::Button(button, ButtonState::Pressed),
@@ -334,9 +360,32 @@ pub(crate) mod input {
         let (reply, rx) = RpcResultSender::channel();
         script.push(Step::Done(
             reply,
-            format!("clicked at ({}, {})", command.x, command.y),
+            click_at_reply(position, button, &screen).to_string(),
         ));
         pending.push_receiver(rx, |result| result, input.take_responder());
+    }
+
+    /// `/click_at`'s reply: where it clicked, in pixels and normalized, and on what window.
+    pub(crate) fn click_at_reply(
+        position: Vec2,
+        button: MouseButton,
+        screen: &Screen,
+    ) -> serde_json::Value {
+        let normalized = screen.to_normalized(position);
+        serde_json::json!({
+            "x": reply::round(position.x),
+            "y": reply::round(position.y),
+            "normalized": {
+                "x": reply::round_fine(normalized.x),
+                "y": reply::round_fine(normalized.y),
+            },
+            "button": match button {
+                MouseButton::Right => "right",
+                MouseButton::Middle => "middle",
+                _ => "left",
+            },
+            "screen": screen.to_json(),
+        })
     }
 
     const LETTERS: [KeyCode; 26] = [
@@ -548,18 +597,6 @@ pub mod remote {
         }
     }
 
-    /// `/name arg arg` -> (`/name`, args), split on whitespace as the page's console RPC splits it.
-    pub(super) fn split_command_line(line: &str) -> Option<(String, Vec<String>)> {
-        let mut parts = line.split_whitespace();
-        let cmd = parts.next()?;
-        let cmd = if cmd.starts_with('/') {
-            cmd.to_owned()
-        } else {
-            format!("/{cmd}")
-        };
-        Some((cmd, parts.map(String::from).collect()))
-    }
-
     fn invalid_params(message: &str) -> BrpError {
         BrpError {
             code: error_codes::INVALID_PARAMS,
@@ -595,12 +632,13 @@ pub mod remote {
             .and_then(|p| p.get("command"))
             .and_then(Value::as_str)
             .ok_or_else(|| invalid_params("expected {\"command\": \"/name args\"}"))?;
-        let (cmd, args) =
-            split_command_line(line).ok_or_else(|| invalid_params("empty command"))?;
+        if line.trim().is_empty() {
+            return Err(invalid_params("empty command"));
+        }
         let (sx, rx) = RpcResultSender::channel();
         bridge
             .sender
-            .send(SystemApi::ConsoleCommand(cmd, args, sx))
+            .send(SystemApi::ConsoleLine(line.to_owned(), sx))
             .map_err(|_| BrpError {
                 code: error_codes::INTERNAL_ERROR,
                 message: "engine channel closed".to_owned(),
@@ -642,6 +680,23 @@ pub mod remote {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_click_replies_where_it_landed_and_on_what_window() {
+        let screen = console::reply::Screen {
+            width: 1600.0,
+            height: 900.0,
+            scale: 2.0,
+        };
+        let reply = input::click_at_reply(Vec2::new(800.0, 225.0), MouseButton::Right, &screen);
+        assert_eq!(reply["x"], 800.0);
+        assert_eq!(reply["y"], 225.0);
+        assert_eq!(reply["normalized"]["x"], 0.5);
+        assert_eq!(reply["normalized"]["y"], 0.25);
+        assert_eq!(reply["button"], "right");
+        assert_eq!(reply["screen"]["width"], 1600.0);
+        assert_eq!(reply["screen"]["scale"], 2.0);
+    }
 
     #[test]
     fn key_codes_name_keys_as_the_dom_does() {
@@ -697,22 +752,6 @@ mod tests {
 
         use super::*;
         use crate::DecentralandArguments;
-
-        #[test]
-        fn a_command_line_splits_like_the_pages_console_rpc() {
-            assert_eq!(
-                remote::split_command_line("  teleport 10   20 "),
-                Some((
-                    "/teleport".to_owned(),
-                    vec!["10".to_owned(), "20".to_owned()]
-                ))
-            );
-            assert_eq!(
-                remote::split_command_line("/world_state"),
-                Some(("/world_state".to_owned(), vec![]))
-            );
-            assert_eq!(remote::split_command_line("   "), None);
-        }
 
         #[test]
         fn the_remote_console_needs_the_runs_token() {

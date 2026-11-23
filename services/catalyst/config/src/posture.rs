@@ -320,15 +320,11 @@ const ROWS: &[Row] = &[
         "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/tpr-matic-mainnet",
     ),
-    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
-    // answers the same; island and journey also list this node's escrow grants.
-    row(
-        "lambdas",
-        "EXPLORER_ESCROW_GRANTS_ENABLED",
-        Is("false"),
-        Is("true"),
-        Is("true"),
-    ),
+    // lamb2's explorer backpack lists chain-owned tokens only; listing this
+    // node's escrow grants too stays an operator's opt-in under every posture,
+    // island and journey included: set `EXPLORER_ESCROW_GRANTS_ENABLED=true`
+    // with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED=true`.
+    same("lambdas", "EXPLORER_ESCROW_GRANTS_ENABLED", "false"),
     // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
     // and `textSearch` only: a mirror answers the same; island and journey
     // also take this node's extended filters.
@@ -349,6 +345,7 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_COMMITTEE_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
@@ -358,6 +355,16 @@ const ROWS: &[Row] = &[
     mirrored("indexes", "LAND_AUTHZ_INDEX_ENABLED"),
     mirrored("indexes", "CREDITS_USAGE_INDEX_ENABLED"),
     mirrored("indexes", "SHOP_RENTALS_INDEX_ENABLED"),
+    // A pass of these walks makes its eth_getLogs calls (seven for Polygon's
+    // collections alone) whether or not a block held an event. A mirror pauses
+    // 30 s between the end of one pass and the start of the next, not 5 s.
+    row(
+        "indexes",
+        "MARKETPLACE_INDEX_INTERVAL_SECS",
+        Is("30"),
+        Default("5"),
+        Default("5"),
+    ),
     row(
         "indexes",
         "CREDITS_MANAGER_CONTRACT",
@@ -380,18 +387,14 @@ const ROWS: &[Row] = &[
     row(
         "upstreams",
         "ETH_RPC_URL",
-        Default(
-            "https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content by ETH_NETWORK",
-        ),
+        Default("https://rpc.decentraland.org/<mainnet|sepolia>?project=dcl-one by ETH_NETWORK"),
         Is(""),
         Is(""),
     ),
     row(
         "upstreams",
         "RPC_ENDPOINT_POLYGON",
-        Default(
-            "https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content by ETH_NETWORK",
-        ),
+        Default("https://rpc.decentraland.org/<polygon|amoy>?project=dcl-one by ETH_NETWORK"),
         Is(""),
         Is(""),
     ),
@@ -438,6 +441,14 @@ const ROWS: &[Row] = &[
         "upstreams",
         "ABGEN_UPSTREAM_AB_CDN",
         "https://ab-cdn.decentraland.org",
+    ),
+    // Temporary: imposter tiles the /bvimposters store lacks, read through
+    // from the community CDN the explorer's tiles were baked into, until this
+    // node bakes its own (decentraland/dcl-one#1711); then this row goes.
+    upstream(
+        "upstreams",
+        "BVIMPOSTERS_UPSTREAM_URL",
+        "https://bevy-imposters.dclregenesislabs.xyz",
     ),
     // Avatar faces of profiles whose snapshot files this node does not hold
     // (current clients deploy none) when no renderer runs here.
@@ -554,6 +565,11 @@ const ROWS: &[Row] = &[
         Is("false"),
         Is("true"),
     ),
+    // Peers check item ownership on chain only and reject an entity that
+    // wears an item held only by an escrow lease, so counting leases stays an
+    // operator's opt-in under every posture (set it with
+    // `EXPLORER_ESCROW_GRANTS_ENABLED`).
+    same("writes", "CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED", "false"),
     // PRESENCE_COLLECTOR_ENABLED stays unset: the headcount archive writes
     // to the database, so it follows DATA_WRITES_ENABLED.
 ];
@@ -702,6 +718,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
     config.content.denylist_urls()?;
+    config.content.check_upload_limits()?;
     let Some(posture) = posture else {
         return Ok(());
     };
@@ -737,6 +754,29 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
         refuse_chain_read_third_party(config, env)?;
     }
     Ok(())
+}
+
+/// A DCL NAME world's owner is its NAME's holder, read from
+/// `MARKETPLACE_SUBGRAPH_URL`; without it no DCL NAME world has an owner. A
+/// `serve` taking world writes is refused without the reader, unless it
+/// skips the chain checks (`IGNORE_BLOCKCHAIN_ACCESS_CHECKS`), which gets the
+/// warning returned here and serves personal worlds only. The indexer takes
+/// no world writes, so only `serve` runs this.
+pub fn worlds_names_reader(config: &Config) -> anyhow::Result<Option<&'static str>> {
+    if !config.worlds.worlds_writes_enabled
+        || Config::non_empty(&config.market_upstreams.marketplace_subgraph_url).is_some()
+    {
+        return Ok(None);
+    }
+    if !config.validator.ignore_blockchain_access_checks {
+        anyhow::bail!(
+            "WORLDS_WRITES_ENABLED=true needs MARKETPLACE_SUBGRAPH_URL, the DCL NAME holder reader: \
+             set it, or IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true on a node without chain access"
+        );
+    }
+    Ok(Some(
+        "MARKETPLACE_SUBGRAPH_URL is unset: DCL NAME worlds have no owner here, only personal worlds take owner writes",
+    ))
 }
 
 /// A mirror replaces a Catalyst whose lambdas always check the profiles'
@@ -898,6 +938,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("NOTIFICATIONS_CDN_URL", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),
+    ("MAP_DISSOLVED_ESTATE_IMAGE_URL", LINK),
     ("CAMERA_REEL_API_URL", LINK),
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),

@@ -156,12 +156,22 @@ describe('generated public component contracts', () => {
       expect(await lintAsPromoted('DemoNav', source)).toEqual([])
     })
 
-    it('should fail that lint if a suppressed prop were bound to an unused alias (control)', async () => {
-      const aliased = source.replace('  forceState,\n', '  label: _label,\n  forceState,\n')
-      expect(aliased).not.toBe(source)
-      expect(await lintAsPromoted('DemoNav', aliased)).toContainEqual(
-        expect.stringContaining('@typescript-eslint/no-unused-vars')
-      )
+    describe('and a suppressed prop were bound to an unused alias (control)', () => {
+      let aliased: string
+
+      beforeEach(() => {
+        aliased = source.replace('  forceState,\n', '  label: _label,\n  forceState,\n')
+      })
+
+      it('should change the generated source', () => {
+        expect(aliased).not.toBe(source)
+      })
+
+      it('should fail the library lint', async () => {
+        expect(await lintAsPromoted('DemoNav', aliased)).toContainEqual(
+          expect.stringContaining('@typescript-eslint/no-unused-vars')
+        )
+      })
     })
 
     it('should regenerate byte-identically from a fresh capture read', async () => {
@@ -191,37 +201,54 @@ describe('generated public component contracts', () => {
       delete spec.exposeTextSlots
     })
 
-    it('should suppress nothing when every text override is public', () => {
-      const source = sourceFor(spec)
-      expect(source).not.toContain('SuppressedProps')
-      expect(source).not.toContain('suppressed=')
+    describe('and the setting is omitted', () => {
+      let source: string
+
+      beforeEach(() => {
+        source = sourceFor(spec)
+      })
+
+      it('should suppress no text override', () => {
+        expect(source).not.toContain('SuppressedProps')
+        expect(source).not.toContain('suppressed=')
+      })
+
+      it('should preserve text overrides', () => {
+        expect(
+          contractDiagnostics(source, 'const props: DemoNavProps = { label: "Explore" };')
+        ).toEqual([])
+      })
     })
 
-    it('should preserve text overrides if the setting is omitted', () => {
-      expect(
-        contractDiagnostics(sourceFor(spec), 'const props: DemoNavProps = { label: "Explore" };')
-      ).toEqual([])
-    })
+    describe('and the setting is explicitly enabled', () => {
+      let source: string
 
-    it('should preserve text overrides if the setting is explicitly enabled', () => {
-      expect(
-        contractDiagnostics(
-          sourceFor({ ...spec, exposeTextSlots: true }),
-          'const props: DemoNavProps = { label: "Explore" };'
-        )
-      ).toEqual([])
+      beforeEach(() => {
+        source = sourceFor({ ...spec, exposeTextSlots: true })
+      })
+
+      it('should preserve text overrides', () => {
+        expect(
+          contractDiagnostics(source, 'const props: DemoNavProps = { label: "Explore" };')
+        ).toEqual([])
+      })
     })
   })
 })
 
 describe('when a variant value contains a line terminator', () => {
-  it('should emit a parsable union type', async () => {
+  let source: string
+
+  beforeEach(async () => {
     const spec = await demoNavSpec()
     const prop = spec.props.find((item) => item.kind === 'enum')!
     const hostile = 'one\ntwo\rthree\u2028four\u2029five'
     prop.default = hostile
     for (const view of spec.views) view.values[prop.name] = hostile
-    const source = sourceFor(spec)
+    source = sourceFor(spec)
+  })
+
+  it('should emit a parsable union type', () => {
     const parsed = ts.createSourceFile(
       'generated.tsx',
       source,
@@ -235,9 +262,15 @@ describe('when a variant value contains a line terminator', () => {
 
 describe('when a JavaScript caller supplies suppressed text slots', () => {
   // The runtime drops them before the DOM (figma-runtime.dom.test.tsx renders that); the type forbids them.
-  it('should type each as never and list it for the runtime to drop', async () => {
-    const spec = await demoNavSpec()
-    const source = sourceFor(spec)
+  let spec: ComponentSpec
+  let source: string
+
+  beforeEach(async () => {
+    spec = await demoNavSpec()
+    source = sourceFor(spec)
+  })
+
+  it('should type each as never and list it for the runtime to drop', () => {
     const suppressed =
       /const demoNavSuppressedProps = Object\.freeze\(\[([^\]]*)\] as const\)/.exec(source)?.[1] ??
       ''
@@ -326,18 +359,32 @@ describe('when a component binds text roles', () => {
     expect(source).not.toMatch(/labelHref|LabelHref/)
   })
 
-  it('should fail generation when a declared href takes the name of a semantic handler', async () => {
-    const spec = await demoNavWithRoles({ ...HREFS, shopLabel: 'onMenu' })
-    expect(() => sourceFor(spec)).toThrow('DemoNav: generated prop onMenu is declared twice')
+  describe('and a declared href takes the name of a semantic handler', () => {
+    let spec: ComponentSpec
+
+    beforeEach(async () => {
+      spec = await demoNavWithRoles({ ...HREFS, shopLabel: 'onMenu' })
+    })
+
+    it('should fail generation', () => {
+      expect(() => sourceFor(spec)).toThrow('DemoNav: generated prop onMenu is declared twice')
+    })
   })
 
-  it('should fail generation when a role under a linked action declares no href', async () => {
-    const { shopLabel: _shop, ...withoutShop } = HREFS
-    void _shop
-    const spec = await demoNavWithRoles(withoutShop)
-    expect(() => sourceFor(spec)).toThrow(
-      'Text role shopLabel sits under the linked action MenuTab: declare its href in textRoles'
-    )
+  describe('and a role under a linked action declares no href', () => {
+    let spec: ComponentSpec
+
+    beforeEach(async () => {
+      const { shopLabel: _shop, ...withoutShop } = HREFS
+      void _shop
+      spec = await demoNavWithRoles(withoutShop)
+    })
+
+    it('should fail generation', () => {
+      expect(() => sourceFor(spec)).toThrow(
+        'Text role shopLabel sits under the linked action MenuTab: declare its href in textRoles'
+      )
+    })
   })
 
   it('should accept a count with its label, or neither', () => {

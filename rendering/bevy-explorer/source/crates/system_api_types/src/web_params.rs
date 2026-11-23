@@ -84,7 +84,8 @@ fn delivery(field: &str) -> Delivery {
         | "log_fps"
         | "gpu_bytes_per_frame"
         | "compute_threads"
-        | "autopilot" => Launch,
+        | "autopilot"
+        | "ff" => Launch,
         "editor" | "hold_world" | "session_id" | "campaign_anon_user_id" => Host,
         "base_domain" => Resolved,
         other => {

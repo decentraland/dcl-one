@@ -40,13 +40,6 @@ pub fn validate_url(address: &str) -> Result<Url, InvalidAdapter> {
     }
 }
 
-/// The installation identifier is shared only with trusted HTTPS services.
-pub(crate) fn allows_device_identifier(address: &str) -> bool {
-    validate_url(address).is_ok_and(|url| {
-        url.scheme() == "https" && common::base_domain::decentraland_domain(url.as_str()).is_some()
-    })
-}
-
 pub fn livekit_credentials(address: &str) -> Result<(String, String), InvalidAdapter> {
     let mut url = validate_url(address)?;
     if !matches!(url.scheme(), "ws" | "wss") {

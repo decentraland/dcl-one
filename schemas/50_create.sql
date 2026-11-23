@@ -298,8 +298,8 @@ CREATE TABLE builder.newsletter_subscriptions (
 -- UUID-prefixed basenames when retained, and hashes for older rows. `metadata` is the
 -- client document (`Metadata`: userName, userAddress, dateTime, realm,
 -- scene, visiblePeople, placeId) returned as a unit; `place_id` is its
--- placeId projected for the place galleries and names an explore.place row
--- by key (no FK: mirrored catalogue, different lifecycle). `user_address` is
+-- placeId projected verbatim for the place galleries: a catalogue ID or an
+-- explore.world_scene_place identity (no FK: different lifecycles). `user_address` is
 -- the verified signer (the write path refuses a metadata.userAddress that is
 -- not the signer; the CHECK holds the pair together). `review_status` is the
 -- moderator's: `rejected` hides the row from public galleries and metadata
@@ -533,10 +533,10 @@ CREATE TABLE builder.asset_contents (
 -- ==== end section: builder ====
 
 -- ==== section: camera_reel ====
--- World-name galleries (`name.dcl.eth`) resolve to place ids through
--- explore.place_indexed (lower(world_name) = lower($1), without the world's
--- catalogue row `id = lower(world_name)`), the old HTTP hop to the places
--- API made a local read; no cache table.
+-- World-name galleries (`name.dcl.eth`) resolve catalogue IDs and active scene
+-- identities bound to their current deployment, independently of listing
+-- visibility. See DATABASE.md, "Camera reel World gallery lookup", for the
+-- shared reads, eligibility rules and in-process cache; no cache table.
 --
 -- A blob this node withholds everywhere because the camera reel's moderation
 -- said so: the image and thumbnail hashes of a rejected row (`reason` =

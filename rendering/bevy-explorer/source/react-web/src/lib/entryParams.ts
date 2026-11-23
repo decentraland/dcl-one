@@ -8,6 +8,7 @@ import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
 import { THIRDWEB_GUEST_PARAM } from '@explorer-core/features/auth/guestWalletParam'
 import type { AcceptedParam } from '@explorer-core/hostContract'
 import { WEB_PARAMS } from '@explorer-core/engine/generated'
+import { DEBUG_PANEL_PARAM } from '@explorer-core/lib/debugPanelLauncher'
 import { MOCK_SWITCHES } from '@explorer-core/engine/mockSwitches'
 import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@explorer-core/lib/analytics'
 import { BENCHMARK_PARAMS } from './bootMode'
@@ -43,6 +44,7 @@ export function entryRealm(q: URLSearchParams): string | null {
 const INTERNAL_PARAMS = [
   'native',
   'nativeProfileImageBase',
+  DEBUG_PANEL_PARAM,
   'hud',
   'mock',
   'showcase',

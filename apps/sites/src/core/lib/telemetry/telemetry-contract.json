@@ -11,218 +11,1555 @@
     }
   },
   "events": {
-    "bd_create_collection_completed": {
+    "bd_activity_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_approval_error_copied": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_approval_flow_completed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "mode": {
+          "kind": "enum-string",
+          "values": [
+            "approve",
+            "deploy_missing",
+            "enable"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_approval_flow_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "step": {
+          "kind": "enum-string",
+          "values": [
+            "approve",
+            "changed",
+            "deploy",
+            "prepare",
+            "rescue"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_approval_flow_started": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "mode": {
+          "kind": "enum-string",
+          "values": [
+            "approve",
+            "deploy_missing",
+            "enable"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_approve_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_approved": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_collaborators_set": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_collaborators_set_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_delete_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_deleted": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_enable_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_enabled": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_opened_by_contract": {
       "loose": false,
       "props": {
         "collection_id": {
           "kind": "string",
           "optional": true
         },
-        "contract_address": {
-          "kind": "string",
-          "optional": true
-        },
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "stub": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "type": {
+        "outcome": {
           "kind": "enum-string",
           "values": [
-            "linked",
-            "standard"
+            "error",
+            "found",
+            "invalid",
+            "not_found"
           ],
           "optional": false
         }
       }
     },
-    "bd_create_collection_items_added": {
+    "bd_collection_ownership_transfer_failed": {
       "loose": false,
       "props": {
-        "count": {
-          "kind": "number",
+        "collection_id": {
+          "kind": "string",
           "optional": false
-        }
-      }
-    },
-    "bd_create_collection_named": {
-      "loose": false,
-      "props": {
-        "name": {
+        },
+        "error": {
           "kind": "string",
           "optional": false
         }
       }
     },
-    "bd_create_collection_review_reached": {
+    "bd_collection_ownership_transferred": {
       "loose": false,
       "props": {
-        "cost_mana": {
-          "kind": "number",
+        "collection_id": {
+          "kind": "string",
           "optional": false
         },
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "type": {
-          "kind": "enum-string",
-          "values": [
-            "linked",
-            "standard"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "bd_create_collection_started": {
-      "loose": false,
-      "props": {
-        "type": {
-          "kind": "enum-string",
-          "values": [
-            "linked",
-            "standard"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "bd_create_collection_submitted": {
-      "loose": false,
-      "props": {
-        "cost_mana": {
-          "kind": "number",
-          "optional": false
-        },
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "type": {
-          "kind": "enum-string",
-          "values": [
-            "linked",
-            "standard"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "bd_curation_assigned": {
-      "loose": false,
-      "props": {
-        "id": {
+        "new_owner": {
           "kind": "string",
           "optional": false
         }
       }
     },
-    "bd_curation_comment_added": {
+    "bd_collection_reject_failed": {
       "loose": false,
       "props": {
-        "decision": {
-          "kind": "enum-string",
-          "values": [
-            "approved",
-            "rejected"
-          ],
-          "optional": true
+        "collection_id": {
+          "kind": "string",
+          "optional": false
         },
-        "has_comment": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_rejected": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_save_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_saved": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_senders_set": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_collection_senders_set_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_credits_buy_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "shortfall": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_credits_checkout_canceled": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "order_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_credits_checkout_settled": {
+      "loose": false,
+      "props": {
+        "credits": {
           "kind": "unknown",
           "optional": false
         },
-        "id": {
+        "order_id": {
           "kind": "string",
-          "optional": true
-        },
-        "length": {
-          "kind": "number",
           "optional": false
-        },
-        "stub": {
-          "kind": "unknown",
-          "optional": false
-        },
-        "topic_id": {
-          "kind": "unknown",
-          "optional": false
-        }
-      }
-    },
-    "bd_curation_decided": {
-      "loose": false,
-      "props": {
-        "has_comment": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "id": {
-          "kind": "string",
-          "optional": true
         },
         "status": {
           "kind": "enum-string",
           "values": [
-            "approved",
-            "rejected"
+            "abandoned",
+            "credited",
+            "crediting",
+            "failed",
+            "initiated",
+            "pending",
+            "processing"
           ],
-          "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
           "optional": false
-        },
-        "updated": {
-          "kind": "number",
-          "optional": true
         }
       }
     },
-    "bd_curation_filtered": {
+    "bd_credits_checkout_started": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "credits": {
+          "kind": "number",
+          "optional": false
+        },
+        "order_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "pack_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "quantity": {
+          "kind": "number",
+          "optional": false
+        },
+        "resume_saved": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "shortfall": {
+          "kind": "number",
+          "optional": false
+        },
+        "usd": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_appeal_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_appealed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "has_note": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_approved": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "has_note": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_filter_changed": {
+      "loose": false,
+      "props": {
+        "filter": {
+          "kind": "string",
+          "optional": false
+        },
+        "value": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_push_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_pushed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "first_review": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "has_note": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_reject_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_rejected": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "first_review": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "reasons": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "bd_curator_assign_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curator_assigned": {
       "loose": false,
       "props": {
         "assignee": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "collection_id": {
           "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curator_unassigned": {
+      "loose": false,
+      "props": {
+        "assignee": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_abandoned": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "last_step": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_create_failed": {
+      "loose": false,
+      "props": {
+        "capped": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "discount_pct": {
+          "kind": "number",
+          "optional": false
+        },
+        "discounted_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "duration_days": {
+          "kind": "number",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_created": {
+      "loose": false,
+      "props": {
+        "capped": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "discount_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "discount_pct": {
+          "kind": "number",
+          "optional": false
+        },
+        "discounted_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "duration_days": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_end_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "discount_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_ended": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "discount_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "trigger": {
+          "kind": "enum-string",
+          "values": [
+            "header",
+            "menu"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_discount_reviewed": {
+      "loose": false,
+      "props": {
+        "capped": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "discount_pct": {
+          "kind": "number",
+          "optional": false
+        },
+        "duration_days": {
+          "kind": "number",
+          "optional": false
+        },
+        "mana_items": {
+          "kind": "number",
+          "optional": false
+        },
+        "scheduled": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_emote_played": {
+      "loose": false,
+      "props": {
+        "emote_played_base": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "emote_played_item_id": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "emote_played_name": {
+          "kind": "string",
+          "optional": false
+        },
+        "previewed_wearable_item_id": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "previewed_wearable_name": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "bd_entities_deploy_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_entities_deployed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_error_page_shown": {
+      "loose": false,
+      "props": {}
+    },
+    "bd_forum_assignee_post_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_forum_post_create_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "trigger": {
+          "kind": "enum-string",
+          "values": [
+            "publish",
+            "recovery"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_forum_post_created": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "existing": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "trigger": {
+          "kind": "enum-string",
+          "values": [
+            "publish",
+            "recovery"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_forum_post_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "surface": {
+          "kind": "enum-string",
+          "values": [
+            "curation_list",
+            "detail",
+            "detail_menu",
+            "review_verdict"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_item_changes_reset": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_changes_reset_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_delete_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_deleted": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_editor_save_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_editor_saved": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_file_change_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_file_changed": {
+      "loose": false,
+      "props": {
+        "body_shape": {
+          "kind": "enum-string",
+          "values": [
+            "both",
+            "female",
+            "male"
+          ],
+          "optional": false
+        },
+        "file_kind": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "mode": {
+          "kind": "enum-string",
+          "values": [
+            "add_representation",
+            "replace_all",
+            "replace_shape"
+          ],
+          "optional": false
+        },
+        "thumbnail_regenerated": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_listing_remove_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_listing_removed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_listing_set": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "is_giveaway": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "is_update": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "price_kind": {
+          "kind": "enum-string",
+          "values": [
+            "credits",
+            "free",
+            "mana"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_item_listing_set_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "is_giveaway": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "is_update": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "price_kind": {
+          "kind": "enum-string",
+          "values": [
+            "credits",
+            "free",
+            "mana"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_item_metrics_repaired": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "saved": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_move_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_moved": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_preview_processed": {
+      "loose": false,
+      "props": {
+        "attempts": {
+          "kind": "number",
+          "optional": false
+        },
+        "batch_size": {
+          "kind": "number",
+          "optional": false
+        },
+        "duration_ms": {
+          "kind": "number",
+          "optional": false
+        },
+        "flow": {
+          "kind": "enum-string",
+          "values": [
+            "add_items",
+            "item_file_change"
+          ],
+          "optional": false
+        },
+        "item_type": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "outcome": {
+          "kind": "enum-string",
+          "values": [
+            "error",
+            "ok",
+            "timeout"
+          ],
+          "optional": false
+        },
+        "renderer": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_previewed": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "item_is_third_party": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "item_name": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_type": {
+          "kind": "enum-string",
+          "values": [
+            "emote",
+            "wearable"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_item_validation_details_opened": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "unknown",
           "optional": false
         },
         "status": {
           "kind": "enum-string",
           "values": [
-            "ALL_STATUS",
-            "approved",
-            "rejected",
-            "to_review",
-            "under_review"
+            "errors",
+            "idle",
+            "loading",
+            "pass",
+            "warnings"
           ],
           "optional": false
         },
-        "type": {
-          "kind": "enum-string",
-          "values": [
-            "ALL_TYPES",
-            "standard",
-            "third_party"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "bd_curation_review_opened": {
-      "loose": false,
-      "props": {
-        "id": {
+        "trigger": {
           "kind": "string",
           "optional": false
         }
       }
     },
-    "bd_curation_viewed": {
+    "bd_item_validation_rerun": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "new_status": {
+          "kind": "enum-string",
+          "values": [
+            "errors",
+            "idle",
+            "loading",
+            "pass",
+            "warnings"
+          ],
+          "optional": false
+        },
+        "previous_status": {
+          "kind": "enum-string",
+          "values": [
+            "errors",
+            "idle",
+            "loading",
+            "pass",
+            "warnings"
+          ],
+          "optional": false
+        },
+        "trigger": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_items_add_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_items_added": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "enum-string",
+          "values": [
+            "duplicate_urn",
+            "generic",
+            "locked",
+            "published",
+            "too_big",
+            "urn_taken"
+          ],
+          "optional": true
+        },
+        "failed_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "origin": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_items_rescue_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_items_rescued": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_items_send_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "copies": {
+          "kind": "number",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "recipient_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_items_sent": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "copies": {
+          "kind": "number",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "recipient_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_changes_push_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "items": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_changes_pushed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "failed": {
+          "kind": "number",
+          "optional": false
+        },
+        "items": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_cheque_signed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "qty": {
+          "kind": "number",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_approve_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": true
+        },
+        "items": {
+          "kind": "number",
+          "optional": true
+        },
+        "step": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_approve_started": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_approved": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "items": {
+          "kind": "number",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_contract_edited": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "from_address": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "from_network": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "items": {
+          "kind": "number",
+          "optional": false
+        },
+        "to_address": {
+          "kind": "string",
+          "optional": false
+        },
+        "to_network": {
+          "kind": "enum-string",
+          "values": [
+            "amoy",
+            "ape_caldera",
+            "ape_mainnet",
+            "base_mainnet",
+            "base_sepolia",
+            "mainnet",
+            "matic",
+            "monad_mainnet",
+            "monad_testnet",
+            "sepolia"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_created": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "collection_name": {
+          "kind": "string",
+          "optional": false
+        },
+        "linked_contract_address": {
+          "kind": "string",
+          "optional": false
+        },
+        "linked_contract_network": {
+          "kind": "enum-string",
+          "values": [
+            "amoy",
+            "ape_caldera",
+            "ape_mainnet",
+            "base_mainnet",
+            "base_sepolia",
+            "mainnet",
+            "matic",
+            "monad_mainnet",
+            "monad_testnet",
+            "sepolia"
+          ],
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "bd_linked_collection_reject_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_rejected": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "items": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_urn_changed": {
+      "loose": false,
+      "props": {
+        "new_urn": {
+          "kind": "string",
+          "optional": false
+        },
+        "old_urn": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_collection_viewed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "network": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "bd_linked_collections_filtered": {
       "loose": false,
       "props": {
         "count": {
@@ -231,148 +1568,149 @@
         }
       }
     },
-    "bd_item_category_set": {
+    "bd_linked_contract_copied": {
       "loose": false,
       "props": {
-        "category": {
+        "collection_id": {
           "kind": "string",
           "optional": false
         },
-        "item": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "bd_item_editor_opened": {
-      "loose": false,
-      "props": {
-        "collection": {
-          "kind": "string",
-          "optional": false
-        },
-        "item": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "bd_item_model_set": {
-      "loose": false,
-      "props": {
-        "item": {
-          "kind": "string",
-          "optional": false
-        },
-        "model": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "bd_item_price_set": {
-      "loose": false,
-      "props": {
-        "free": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "item": {
-          "kind": "string",
-          "optional": false
-        },
-        "price": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "bd_item_rarity_set": {
-      "loose": false,
-      "props": {
-        "item": {
-          "kind": "string",
-          "optional": false
-        },
-        "max_supply": {
-          "kind": "number",
-          "optional": false
-        },
-        "rarity": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "bd_item_reverted": {
-      "loose": false,
-      "props": {
-        "item": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "bd_item_saved": {
-      "loose": false,
-      "props": {
-        "item": {
-          "kind": "string",
-          "optional": false
-        },
-        "price": {
-          "kind": "string",
-          "optional": false
-        },
-        "rarity": {
-          "kind": "string",
-          "optional": false
-        },
-        "stub": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "urn": {
+        "network": {
           "kind": "string",
           "optional": true
         }
       }
     },
-    "bd_publish_collection_cost_shown": {
+    "bd_linked_item_mapping_edited": {
       "loose": false,
       "props": {
-        "mana": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "bd_publish_collection_started": {
-      "loose": false,
-      "props": {
-        "id": {
+        "item_id": {
           "kind": "string",
           "optional": false
         },
-        "itemCount": {
+        "mapping_type": {
+          "kind": "enum-string",
+          "values": [
+            "any",
+            "multiple",
+            "range",
+            "single"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_item_urn_changed": {
+      "loose": false,
+      "props": {
+        "new_urn": {
+          "kind": "string",
+          "optional": false
+        },
+        "old_urn": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "bd_linked_items_all_selected": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "filter": {
+          "kind": "enum-string",
+          "values": [
+            "all",
+            "draft",
+            "pending_mapping",
+            "pending_migration",
+            "published",
+            "ready_to_push",
+            "under_review"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_items_edited": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "failed_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "item_count": {
           "kind": "number",
           "optional": false
         }
       }
     },
-    "bd_publish_collection_terms_accepted": {
-      "loose": false,
-      "props": {}
-    },
-    "bd_publish_fee_paid": {
+    "bd_linked_items_publish_failed": {
       "loose": false,
       "props": {
-        "mana": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "step": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_items_publish_started": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "items": {
           "kind": "number",
           "optional": false
         },
-        "simulated": {
-          "kind": "boolean",
+        "pushed": {
+          "kind": "number",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_linked_items_published": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "items": {
+          "kind": "number",
+          "optional": false
+        },
+        "pushed": {
+          "kind": "number",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
           "optional": false
         },
         "tx_hash": {
@@ -381,23 +1719,642 @@
         }
       }
     },
-    "bd_publish_submitted": {
+    "bd_linked_merkle_root_set": {
       "loose": false,
       "props": {
-        "id": {
+        "collection_id": {
           "kind": "string",
           "optional": false
         },
-        "itemCount": {
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_live_preview_added_to_collection": {
+      "loose": false,
+      "props": {
+        "item_type": {
+          "kind": "string",
+          "optional": false
+        },
+        "push_count": {
           "kind": "number",
           "optional": false
         },
-        "mana": {
-          "kind": "number",
+        "signed_in": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_live_preview_connect_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "enum-string",
+          "values": [
+            "bridge_response",
+            "invalid_state",
+            "model_fetch",
+            "permission_denied",
+            "unreachable"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_live_preview_connected": {
+      "loose": false,
+      "props": {
+        "long_poll": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_live_preview_model_received": {
+      "loose": false,
+      "props": {
+        "category": {
+          "kind": "string",
           "optional": true
         },
-        "stub": {
+        "item_type": {
+          "kind": "enum-string",
+          "values": [
+            "emote",
+            "wearable"
+          ],
+          "optional": true
+        },
+        "since_last_ms": {
+          "kind": "number",
+          "optional": true
+        }
+      }
+    },
+    "bd_live_preview_tuned": {
+      "loose": false,
+      "props": {
+        "control": {
+          "kind": "enum-string",
+          "values": [
+            "category",
+            "hides",
+            "loop",
+            "spring_bones"
+          ],
+          "optional": false
+        },
+        "item_type": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_modal_closed": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_modal_opened": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_preview_in_world_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "launched": {
           "kind": "boolean",
+          "optional": false
+        },
+        "trigger": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_preview_renderer_picked": {
+      "loose": false,
+      "props": {
+        "measured_mbps": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "connection-ok",
+            "flag-off",
+            "gpu-capability",
+            "low-device-memory",
+            "optimistic-default",
+            "save-data",
+            "slow-connection",
+            "url-override"
+          ],
+          "optional": false
+        },
+        "renderer": {
+          "kind": "enum-string",
+          "values": [
+            "babylon",
+            "unity"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_collection_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "is_fiat": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "is_retry": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "used_credits": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_collection_reverted": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        },
+        "used_credits": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_collection_started": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "email_source": {
+          "kind": "string",
+          "optional": false
+        },
+        "name_changed": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_collection_submitted": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "credits_amount": {
+          "kind": "number",
+          "optional": false
+        },
+        "is_fiat": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "is_retry": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        },
+        "used_credits": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_validation_resolved": {
+      "loose": false,
+      "props": {
+        "action": {
+          "kind": "enum-string",
+          "values": [
+            "back",
+            "continue"
+          ],
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "errors": {
+          "kind": "number",
+          "optional": false
+        },
+        "flow": {
+          "kind": "enum-string",
+          "values": [
+            "publish",
+            "push_changes"
+          ],
+          "optional": false
+        },
+        "warnings": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_validation_result": {
+      "loose": false,
+      "props": {
+        "blocking": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "duration_ms": {
+          "kind": "number",
+          "optional": false
+        },
+        "errors": {
+          "kind": "number",
+          "optional": false
+        },
+        "flow": {
+          "kind": "enum-string",
+          "values": [
+            "publish",
+            "push_changes"
+          ],
+          "optional": false
+        },
+        "items_with_issues": {
+          "kind": "number",
+          "optional": false
+        },
+        "oversized_items": {
+          "kind": "number",
+          "optional": false
+        },
+        "warnings": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_validation_started": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "flow": {
+          "kind": "enum-string",
+          "values": [
+            "publish",
+            "push_changes"
+          ],
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_recipients_pasted": {
+      "loose": false,
+      "props": {
+        "added": {
+          "kind": "number",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "cut": {
+          "kind": "number",
+          "optional": false
+        },
+        "invalid": {
+          "kind": "number",
+          "optional": false
+        },
+        "repeated": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_review_comment_post_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "role": {
+          "kind": "enum-string",
+          "values": [
+            "creator",
+            "curator"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_review_comment_posted": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "has_item": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "length": {
+          "kind": "number",
+          "optional": false
+        },
+        "role": {
+          "kind": "enum-string",
+          "values": [
+            "creator",
+            "curator"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_review_modal_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "modal": {
+          "kind": "enum-string",
+          "values": [
+            "activity",
+            "additional",
+            "issues",
+            "limit",
+            "request",
+            "reviewing",
+            "sent"
+          ],
+          "optional": false
+        },
+        "stage": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "bd_review_preview_in_world_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "launched": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_review_validation_opened": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "status": {
+          "kind": "enum-string",
+          "values": [
+            "errors",
+            "idle",
+            "loading",
+            "pass",
+            "warnings"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_review_validation_result": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "duration_ms": {
+          "kind": "number",
+          "optional": false
+        },
+        "errors": {
+          "kind": "number",
+          "optional": false
+        },
+        "item_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "items_with_issues": {
+          "kind": "number",
+          "optional": false
+        },
+        "warnings": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_sales_enable_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_sales_enabled": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_scene_boundaries_toggled": {
+      "loose": false,
+      "props": {
+        "trigger": {
+          "kind": "enum-string",
+          "values": [
+            "editor",
+            "live_preview"
+          ],
+          "optional": false
+        },
+        "visible": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "bd_sign_in_opened": {
+      "loose": false,
+      "props": {}
+    },
+    "bd_third_party_disable_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_third_party_disabled": {
+      "loose": false,
+      "props": {
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_third_party_enable_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_third_party_enabled": {
+      "loose": false,
+      "props": {
+        "third_party_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_validation_request_failed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_validation_requested": {
+      "loose": false,
+      "props": {
+        "attempts_left": {
+          "kind": "number",
+          "optional": false
+        },
+        "collection_id": {
+          "kind": "string",
           "optional": false
         }
       }
@@ -675,10 +2632,6 @@
         }
       }
     },
-    "ch_curate_signin_clicked": {
-      "loose": false,
-      "props": {}
-    },
     "ch_mp_paired": {
       "loose": false,
       "props": {}
@@ -764,28 +2717,6 @@
           "optional": false
         }
       }
-    },
-    "cl_explore_opened": {
-      "loose": false,
-      "props": {
-        "place_count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "cl_open_jumped_in": {
-      "loose": false,
-      "props": {
-        "place_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "cl_open_screen_shown": {
-      "loose": false,
-      "props": {}
     },
     "client_error": {
       "loose": false,
@@ -875,64 +2806,6 @@
         }
       }
     },
-    "creator_collection_detail_viewed": {
-      "loose": false,
-      "props": {
-        "id": {
-          "kind": "string",
-          "optional": false
-        },
-        "itemCount": {
-          "kind": "number",
-          "optional": false
-        },
-        "missing": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "source": {
-          "kind": "enum-string",
-          "values": [
-            "catalyst",
-            "empty"
-          ],
-          "optional": false
-        },
-        "tab": {
-          "kind": "enum-string",
-          "values": [
-            "emotes",
-            "wearables"
-          ],
-          "optional": false
-        }
-      }
-    },
-    "creator_collection_item_clicked": {
-      "loose": false,
-      "props": {
-        "id": {
-          "kind": "string",
-          "optional": false
-        },
-        "itemId": {
-          "kind": "string",
-          "optional": false
-        },
-        "kind": {
-          "kind": "string",
-          "optional": false
-        },
-        "tab": {
-          "kind": "enum-string",
-          "values": [
-            "emotes",
-            "wearables"
-          ],
-          "optional": false
-        }
-      }
-    },
     "creator_collection_published": {
       "loose": false,
       "props": {
@@ -943,19 +2816,6 @@
         "source_event": {
           "kind": "string",
           "optional": true
-        }
-      }
-    },
-    "creator_collection_tab_changed": {
-      "loose": false,
-      "props": {
-        "tab": {
-          "kind": "enum-string",
-          "values": [
-            "emotes",
-            "wearables"
-          ],
-          "optional": false
         }
       }
     },
@@ -982,32 +2842,6 @@
         "source_event": {
           "kind": "string",
           "optional": true
-        }
-      }
-    },
-    "creator_item_detail_viewed": {
-      "loose": false,
-      "props": {
-        "fallback": {
-          "kind": "boolean",
-          "optional": false
-        },
-        "id": {
-          "kind": "string",
-          "optional": false
-        },
-        "type": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "creator_item_edit_clicked": {
-      "loose": false,
-      "props": {
-        "id": {
-          "kind": "string",
-          "optional": false
         }
       }
     },
@@ -1073,45 +2907,6 @@
         "source_event": {
           "kind": "string",
           "optional": true
-        }
-      }
-    },
-    "creator_wearables_card_clicked": {
-      "loose": false,
-      "props": {
-        "id": {
-          "kind": "string",
-          "optional": false
-        },
-        "kind": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "creator_wearables_home_viewed": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        }
-      }
-    },
-    "creator_wearables_signin_clicked": {
-      "loose": false,
-      "props": {}
-    },
-    "creator_wearables_view_changed": {
-      "loose": false,
-      "props": {
-        "view": {
-          "kind": "enum-string",
-          "values": [
-            "grid",
-            "list"
-          ],
-          "optional": false
         }
       }
     },
@@ -1270,6 +3065,10 @@
         }
       }
     },
+    "lp_creatorhub_docs_clicked": {
+      "loose": false,
+      "props": {}
+    },
     "lp_creatorhub_download_clicked": {
       "loose": false,
       "props": {
@@ -1337,6 +3136,19 @@
         },
         "version": {
           "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_creatorhub_link_shared": {
+      "loose": false,
+      "props": {
+        "method": {
+          "kind": "enum-string",
+          "values": [
+            "copy",
+            "share"
+          ],
           "optional": false
         }
       }
@@ -1568,102 +3380,6 @@
             "security",
             "terms"
           ],
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_cancelled": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "stub": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_cancelling": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_confirmed": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_error": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "reason": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_going": {
-      "loose": false,
-      "props": {
-        "count": {
-          "kind": "number",
-          "optional": false
-        },
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "stub": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_signin": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "simulated": {
-          "kind": "boolean",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_started": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
-          "optional": false
-        }
-      }
-    },
-    "lp_rsvp_submitting": {
-      "loose": false,
-      "props": {
-        "event_id": {
-          "kind": "string",
           "optional": false
         }
       }

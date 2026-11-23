@@ -1,12 +1,12 @@
 // Whether Sites chrome can offer Marketplace links, using the same session and rollout rules as Shop.
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
-import { hostOr } from "@ui/shop/discovery/flags";
-import { REMOTE_FLAG, useRemoteFlagState } from "@ui/shop/discovery/lib/remoteFlags";
+import { hostOr } from "@dcl/one-ui/apps/shop/flags";
+import { REMOTE_FLAG, useRemoteFlagState } from "@dcl/one-ui/apps/shop/remote-flags";
 import { marketplaceAccess, marketplaceSession } from "@shop/market/access-rule";
 import { SIGNED_OUT } from "@shop/model/settlement";
-import { useShopCapabilities } from "@ui/shop/seller/lib/featureFlags";
-import { shopSession } from "@ui/shop/wallet/session";
+import { useShopCapabilities } from "@dcl/one-ui/apps/shop/capabilities";
+import { shopSession } from "@dcl/one-ui/apps/shop/session";
 
 import { useAuth } from "../auth/index";
 import { primeDappsFlags } from "../feature-flags.browser";
@@ -22,10 +22,7 @@ export function useMarketplaceHere(chromeSigner: string | null): boolean {
   const enabled = hydrated && identity !== null;
   // These pages are not the Shop's, so nothing primed the flags: the service would tell this site's own Referer that
   // every flag is off, so they come from this server's reading, as a client navigation into the Shop does.
-  useEffect(() => {
-    if (enabled) void primeDappsFlags();
-  }, [enabled]);
-  const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures, enabled));
+  const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures, enabled, primeDappsFlags));
   const caps = useShopCapabilities();
   const kind = enabled ? currentWalletKind(identity) : null;
   // The Shop's own session rule (an expired identity is signed out), then its Marketplace rule: a guessed web3 is web2.

@@ -1,7 +1,9 @@
 // from: shop@94584a5c:app/src/config/index.ts (chainId, rpcUrl, ethereumChainId, ethereumRpcUrl, relayerUrl),
 //       app/src/config/env/{prod,dev}.json, app/src/lib/gasless-config.ts
 import { catalystBase } from "../../../data/catalyst/client";
+import { selectEthereumChain, selectSettlementChain } from "@shop/checkout/chain/selection";
 import { CHAIN, type ChainId } from "@shop/model/chain";
+import { parseShopChainId, shopChainEnvironment } from "@web-core/shop-chain-env";
 import { pageOverride } from "../../pageOverride";
 
 export type ShopChainOverrides = {
@@ -33,19 +35,12 @@ function overrides(): ShopChainOverrides {
   return fromWindow();
 }
 
-function numberFrom(value: string | undefined): number | undefined {
-  const n = value === undefined ? NaN : Number(value);
-  return Number.isSafeInteger(n) && n > 0 ? n : undefined;
-}
-
 export function settlementChainId(): ChainId {
-  return overrides().settlementChainId ?? numberFrom(env("VITE_SHOP_CHAIN_ID")) ?? CHAIN.POLYGON;
+  return selectSettlementChain(shopChainEnvironment());
 }
 
 export function ethereumChainId(): ChainId {
-  const settle = settlementChainId();
-  const fallback = settle === CHAIN.AMOY ? CHAIN.SEPOLIA : CHAIN.ETHEREUM;
-  return overrides().ethereumChainId ?? numberFrom(env("VITE_SHOP_ETHEREUM_CHAIN_ID")) ?? fallback;
+  return selectEthereumChain(shopChainEnvironment());
 }
 
 export function rpcUrl(chainId: ChainId): string | null {
@@ -73,7 +68,7 @@ export function rpcUrl(chainId: ChainId): string | null {
 export function configuredCreditsManager(chainId: ChainId): string | null {
   const value = env("VITE_SHOP_CREDITS_MANAGER");
   if (!value || !/^0x[0-9a-fA-F]{40}$/.test(value)) return null;
-  return numberFrom(env("VITE_SHOP_CHAIN_ID")) === chainId ? value.toLowerCase() : null;
+  return parseShopChainId(env("VITE_SHOP_CHAIN_ID")) === chainId ? value.toLowerCase() : null;
 }
 
 export function relayerUrl(): string {
