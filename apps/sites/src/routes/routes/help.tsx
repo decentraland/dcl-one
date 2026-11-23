@@ -1,7 +1,9 @@
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { useEffect, useRef } from "react";
 
+import { trackLegacyClick, useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { pageLoader, type PageDefaults } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import { helpConfig } from "@/data/lib/help/config.server";
@@ -26,6 +28,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function Help({ loaderData }: Route.ComponentProps) {
   const { services, statusPageUrl, intercomAppId, sid, variant } = loaderData;
   const context: TrackContext = { sid, story: STORY, variant };
+  const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
 
   const viewed = useRef(false);
   useEffect(() => {
@@ -41,7 +45,11 @@ export default function Help({ loaderData }: Route.ComponentProps) {
         services={services}
         statusPageUrl={statusPageUrl}
         intercomAppId={intercomAppId}
-        onCreatorFundClick={(button) => track("lp_help_creator_fund_clicked", { button }, context)}
+        onCreatorFundClick={(button) => {
+          track("lp_help_creator_fund_clicked", { button }, context);
+          // decentraland.org's own `Click` for the same control (its Creator Fund tab of /help, `help-center`).
+          trackLegacyClick({ place: "Creator Fund", section: "help-center", button }, { sid, userId, scope });
+        }}
       />
     </SitesLayout>
   );

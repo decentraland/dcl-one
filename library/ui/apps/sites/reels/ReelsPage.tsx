@@ -9,16 +9,25 @@ import styles from './ReelsPage.module.css'
 export function ReelsPage({
   title,
   children,
-  gallery = false
+  gallery = false,
+  onHomeClick
 }: {
   title: string
   children: ReactNode
   gallery?: boolean
+  /** Runs before the Decentraland logo's link to the home page is followed. */
+  onHomeClick?: () => void
 }) {
   return (
     <main className={styles.page}>
       <header className={styles.header}>
-        <Button href="/" variant="text" iconOnly aria-label="Decentraland home">
+        <Button
+          href="/"
+          variant="text"
+          iconOnly
+          aria-label="Decentraland home"
+          onClick={onHomeClick}
+        >
           <GeneralDecentralandColor size={28} aria-hidden="true" />
         </Button>
         <h1 className={styles.title}>{title}</h1>
@@ -31,11 +40,14 @@ export function ReelsPage({
 export function ReelsGallery({
   photos,
   total,
-  linkComponent: Link
+  linkComponent: Link,
+  onPhotoClick
 }: {
   photos: { id: string; href: string; label: string; thumbnail: string; image: string }[]
   total: number
   linkComponent: ComponentType<PlaceCardLinkProps>
+  /** Runs, with the photo's id, before its link is followed. */
+  onPhotoClick?: (id: string) => void
 }) {
   return (
     <>
@@ -47,7 +59,12 @@ export function ReelsGallery({
       <ul className={styles.grid}>
         {photos.map((photo) => (
           <li key={photo.id}>
-            <Link to={photo.href} className={styles.tile} aria-label={photo.label}>
+            <Link
+              to={photo.href}
+              className={styles.tile}
+              aria-label={photo.label}
+              onClick={() => onPhotoClick?.(photo.id)}
+            >
               <CardImage src={photo.thumbnail} fallbackSrc={photo.image} alt="" />
             </Link>
           </li>

@@ -1,6 +1,7 @@
 import { ReelsEmpty, ReelsGallery, ReelsPage } from "@dcl/one-ui/apps/sites/reels/ReelsPage";
 
 import { CollectibleLink } from "@/features/profile/collectibles";
+import { useReelThumbnailClick } from "@/features/reels/telemetry";
 
 import { REELS_TITLE, ReelErrorBoundary } from "../lib/reels-route";
 import { loadReelGallery, reelHeaders } from "../lib/reels-loader.server";
@@ -25,6 +26,7 @@ export function meta() {
 }
 
 export default function ReelsList({ loaderData, params }: Route.ComponentProps) {
+  const onPhotoClick = useReelThumbnailClick();
   const { photos: rows, total } = loaderData;
   const name = rows[0]?.author.name || params.address;
   const photos = rows.map((photo) => ({
@@ -37,7 +39,7 @@ export default function ReelsList({ loaderData, params }: Route.ComponentProps) 
   return (
     <ReelsPage title={`Reels by ${name}`} gallery>
       {photos.length ? (
-        <ReelsGallery photos={photos} total={total} linkComponent={CollectibleLink} />
+        <ReelsGallery photos={photos} total={total} linkComponent={CollectibleLink} onPhotoClick={onPhotoClick} />
       ) : (
         <ReelsEmpty reason="gallery" />
       )}

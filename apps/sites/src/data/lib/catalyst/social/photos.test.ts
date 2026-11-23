@@ -81,8 +81,16 @@ describe("fetchUserPhotos", () => {
             dateTime: "1794327859",
             realm: "main",
             scene: { name: "Genesis Plaza", x: "0", y: "1" },
-            author: { name: "Alice", address: OWNER },
-            people: [{ name: "kurd", address: "0xe5104e449950180c459447f2971c8a760456b635", isGuest: false }],
+            // The service's own spelling is kept beside the lowercased address when it differs.
+            author: { name: "Alice", address: OWNER, sourceAddress: OWNER.toUpperCase().replace("0X", "0x") },
+            people: [
+              {
+                name: "kurd",
+                address: "0xe5104e449950180c459447f2971c8a760456b635",
+                sourceAddress: "0xE5104E449950180C459447F2971C8A760456B635",
+                isGuest: false,
+              },
+            ],
           },
         ],
         received: 1,

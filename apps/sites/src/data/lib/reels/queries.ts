@@ -15,7 +15,8 @@ const NETWORKS = {
 } as const;
 
 type Network = (typeof NETWORKS)[keyof typeof NETWORKS];
-export type ReelWearable = { id: string; label: string; image?: string; href?: string };
+/** `urn` is the photo's first URN for this item, as worn (token id included). */
+export type ReelWearable = { id: string; label: string; image?: string; href?: string; urn?: string };
 
 export function wearableRef(urn: string): { key: string; id: string; chain: Network } | undefined {
   const match = /^urn:decentraland:(ethereum|mainnet|matic):collections-v2:(0x[0-9a-f]{40}):(\d{1,78})(?::\d{1,78})?$/i.exec(
@@ -34,7 +35,9 @@ export function reelWearables(urns: readonly string[], items: Record<string, Ree
   for (const urn of urns) {
     const key = wearableRef(urn)?.key;
     const item = key ? items[key] : undefined;
-    if (item) byId.set(item.id, item);
+    if (item) {
+      if (!byId.has(item.id)) byId.set(item.id, { ...item, urn });
+    }
     else if (key) unresolved = true;
   }
   if (unresolved) byId.set("unavailable", { id: "unavailable", label: "Some collectible details are unavailable." });

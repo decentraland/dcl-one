@@ -1,13 +1,14 @@
 export type MiscEvents = {
   Click: {
+    button?: string;
     card?: string;
     click_id?: string;
     clicked_at?: number;
     download_target?: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
-    event?: "Download";
+    event?: "Download" | "Reels Click Decentraland Logo";
     mac_arch?: "apple_silicon" | "intel" | "unknown";
     os?: "Android" | "Windows" | "iOS" | "macOS";
-    place: "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    place?: "Creator Fund" | "Creator Hub Success Footer" | "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Hero" | "Creators Learn" | "Creators Live Scenes" | "Creators Why" | "Download" | "Landing Catch The Vibe" | "Landing Come Hang Out" | "Landing Explore" | "Landing Hero" | "Landing Weekly Rituals" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
     section?: string;
     tab?: string;
     title?: string;
@@ -20,6 +21,45 @@ export type MiscEvents = {
     utm_org?: string;
     utm_source?: string;
     utm_term?: string;
+  };
+  "Reels Click Place": {
+    x: string;
+    y: string;
+  };
+  "Reels Click Profile": {
+    legacyProfileUrl?: string;
+    userAddress: string;
+  };
+  "Reels Click Thumbnail": {
+    imageId: string;
+  };
+  "Reels Click Wearable": {
+    wearableUrn: string;
+  };
+  "Reels Copy Link": {
+    imageId: string;
+  };
+  "Reels Download": {
+    imageId: string;
+  };
+  "Reels Hide Metadata": {
+    imageId: string;
+  };
+  "Reels Hide Wearables": {
+    userAddress: string;
+  };
+  "Reels Jump In": {
+    x: string;
+    y: string;
+  };
+  "Reels Share": {
+    imageId: string;
+  };
+  "Reels Show Metadata": {
+    imageId: string;
+  };
+  "Reels Show Wearables": {
+    userAddress: string;
   };
   "Section Viewed": {
     mobile: boolean;

@@ -30,6 +30,9 @@ async function loadDocument(path = "/") {
     trackLegacyClick: (click: LegacyClick, session: Session) => legacy.trackLegacyClick(click, { ...session, scope }),
     trackSectionViewed: (section: LegacySectionViewed, session: Session) =>
       legacy.trackSectionViewed(section, { ...session, scope }),
+    /** A Reels event through the legacy direct transport, as `features/reels/telemetry.ts` sends it. */
+    reelsShare: (imageId: string, session: Session) =>
+      legacy.sendLegacyDirect((ctx) => telemetry.track("Reels Share", { imageId }, ctx), session),
   };
 }
 
@@ -130,5 +133,83 @@ describe("Section Viewed", () => {
     page("/create", {}, { sid: "sid-1" });
     trackSectionViewed("Creators Faqs", { sid: "sid-1" });
     expect(await tracks()).toEqual([]);
+  });
+});
+
+describe("a legacy Click with a place-less control or a button", () => {
+  it("sends the Reels logo's Click with only its event and the URL's utm, as decentraland.org did", async () => {
+    const { page, trackLegacyClick } = await loadDocument("/reels/abc?utm_source=x&utm_campaign=y");
+    page("/reels/abc", {}, { sid: "sid-1" });
+    trackLegacyClick({ event: "Reels Click Decentraland Logo" }, { sid: "sid-1" });
+    const [click] = await tracks();
+    expect(click!.event).toBe("Click");
+    expect(Object.keys(click!.properties)).toEqual([
+      "utm_source",
+      "utm_campaign",
+      "event",
+      "track_called_at",
+      "track_delivered_at",
+      "track_deferred",
+    ]);
+    expect(click!.properties).toMatchObject({
+      utm_source: "x",
+      utm_campaign: "y",
+      event: "Reels Click Decentraland Logo",
+      track_deferred: false,
+    });
+  });
+
+  it("sends the help center's Creator Fund Click with place, section and button", async () => {
+    const { page, trackLegacyClick } = await loadDocument("/help");
+    page("/help", {}, { sid: "sid-1" });
+    trackLegacyClick({ place: "Creator Fund", section: "help-center", button: "Email Creator Fund" }, { sid: "sid-1" });
+    const [click] = await tracks();
+    const { track_called_at, track_delivered_at, ...rest } = click!.properties;
+    expect(rest).toEqual({ place: "Creator Fund", section: "help-center", button: "Email Creator Fund", track_deferred: false });
+    expect(typeof track_called_at).toBe("number");
+    expect(typeof track_delivered_at).toBe("number");
+  });
+});
+
+describe("a legacy direct event (Reels)", () => {
+  it("leaves once the document is ready with exactly its properties: no audit fields, no utm", async () => {
+    const { page, reelsShare } = await loadDocument("/reels/abc?utm_source=x");
+    page("/reels/abc", {}, { sid: "sid-1" });
+    reelsShare("abc", { sid: "sid-1", userId: "0xAbC" });
+    const [share] = await tracks();
+    expect(share).toMatchObject({ event: "Reels Share", anonymousId: "sid-1", userId: "0xabc" });
+    expect(share!.properties).toEqual({ imageId: "abc" });
+  });
+
+  it("is dropped, not queued, when the document is not ready yet", async () => {
+    const { page, reelsShare } = await loadDocument("/reels/abc");
+    reelsShare("abc", { sid: "sid-1" });
+    page("/reels/abc", {}, { sid: "sid-1" });
+    expect(await tracks()).toEqual([]);
+  });
+
+  it("is never sent for a bot", async () => {
+    browser(BOT_UA);
+    const { page, reelsShare } = await loadDocument("/reels/abc");
+    page("/reels/abc", {}, { sid: "sid-1" });
+    reelsShare("abc", { sid: "sid-1" });
+    expect(await tracks()).toEqual([]);
+  });
+
+  it("is never sent in a session that started on an exempt page", async () => {
+    const { page, reelsShare } = await loadDocument("/download");
+    page("/download", {}, { sid: "sid-1" });
+    window.history.replaceState(null, "", "/reels/abc");
+    page("/reels/abc", {}, { sid: "sid-1" });
+    reelsShare("abc", { sid: "sid-1" });
+    expect(await tracks()).toEqual([]);
+  });
+
+  it("is not sent without a write key", async () => {
+    delete (window as unknown as { __DCL_PUBLIC__?: unknown }).__DCL_PUBLIC__;
+    const { page, reelsShare } = await loadDocument("/reels/abc");
+    page("/reels/abc", {}, { sid: "sid-1" });
+    reelsShare("abc", { sid: "sid-1" });
+    expect(sendBeacon).not.toHaveBeenCalled();
   });
 });

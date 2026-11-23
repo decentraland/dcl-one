@@ -14,7 +14,13 @@ function reelShareUrl(url: string): string {
 
 type Feedback = { id: string; message: string; version: number; fallback?: string };
 
-export function usePhotoActions(photo: ProfilePhoto, savePhoto: boolean, initialOrigin?: string): PhotoViewerActions {
+/** `onCopied` runs once the link is on the clipboard (not when the copy fell back to showing it). */
+export function usePhotoActions(
+  photo: ProfilePhoto,
+  savePhoto: boolean,
+  initialOrigin?: string,
+  { onCopied }: { onCopied?: () => void } = {},
+): PhotoViewerActions {
   const [browserOrigin, setBrowserOrigin] = useState<string>();
   const [feedback, setFeedback] = useState<Feedback>();
   const [downloading, setDownloading] = useState(false);
@@ -45,6 +51,7 @@ export function usePhotoActions(photo: ProfilePhoto, savePhoto: boolean, initial
     try {
       await navigator.clipboard.writeText(url);
       announce("Link copied!");
+      onCopied?.();
     } catch {
       announce("Could not copy automatically. Copy this link instead.", url);
     }

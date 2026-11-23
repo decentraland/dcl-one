@@ -86,6 +86,13 @@ describe("Reels wearable lookups", () => {
     });
   });
 
+  describe("when two of a photo's URNs are the same catalog item", () => {
+    it("should list the item once, under the first URN it was worn as", () => {
+      const hat = { id: `137:${ID}`, label: "Hat" };
+      expect(reelWearables([TOKEN, ASSET], { [`137:${ID}`]: hat })).toEqual([{ ...hat, urn: TOKEN }]);
+    });
+  });
+
   describe("when no item can be looked up", () => {
     it("should ignore unsupported entries and report missing catalog items", () => {
       expect(reelWearablesQuery(["broken"]).enabled).toBe(false);

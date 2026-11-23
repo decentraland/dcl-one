@@ -99,10 +99,25 @@ export type LegacyClickPlace =
   | "Creators Connect"
   | "Creators Learn"
   | "Creators Blog"
-  | "Creators Faqs";
+  | "Creators Faqs"
+  | "Creator Fund";
 
-/** The control's other `data-*` attributes; an empty one was never sent. */
-export type LegacyClick = { place: LegacyClickPlace; section?: string; card?: string; tab?: string; title?: string };
+/** A legacy control's `data-event` other than `Click` (which the legacy payload dropped). */
+export type LegacyClickEvent = "Reels Click Decentraland Logo";
+
+/**
+ * The control's other `data-*` attributes; an empty one was never sent. The Reels logo was the one control with
+ * no `data-place`, only its `data-event`.
+ */
+export type LegacyClick = {
+  place?: LegacyClickPlace;
+  event?: LegacyClickEvent;
+  section?: string;
+  card?: string;
+  tab?: string;
+  title?: string;
+  button?: string;
+};
 
 /**
  * The legacy `useTrackClick` `Click` of a control that downloads nothing: the URL's `utm_*`, then the control's
@@ -117,6 +132,21 @@ export function trackLegacyClick(click: LegacyClick, session: LegacySession): vo
     sendLegacyDeferred((audit, ctx) => track("Click", { ...base, ...audit }, ctx), session);
   } catch {
     // Telemetry never breaks a click.
+  }
+}
+
+/**
+ * The legacy `useAnalytics().track` called directly (Reels): no audit fields and no `utm_*`. The SDK dropped a call
+ * made before it had loaded, so nothing is sent unless the document's analytics is ready at the call; a bot or an
+ * exempt session never is.
+ */
+export function sendLegacyDirect(send: (ctx: TrackContext) => void, { sid, userId }: Omit<LegacySession, "scope">): void {
+  try {
+    if (!legacyAnalyticsReady()) return;
+    const user = userId && !trackedUserDropped() ? userId : undefined;
+    send({ sid, ...(user ? { userId: user } : {}), legacy: true });
+  } catch {
+    // Telemetry never breaks a control.
   }
 }
 

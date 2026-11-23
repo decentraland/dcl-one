@@ -11,6 +11,7 @@ import { usePhotoActions } from "@/features/photos/usePhotoActions";
 import { CollectibleLink } from "@/features/profile/collectibles";
 import { usePlaceOwners } from "@/features/profile/hooks";
 import { useReelPlace, useReelWearables } from "@/features/reels/hooks";
+import { useReelEvents } from "@/features/reels/telemetry";
 
 export function ReelScreen({ photo, origin }: { photo: ProfilePhoto; origin?: string }) {
   const { position, realm } = photoDestination(photo);
@@ -21,11 +22,26 @@ export function ReelScreen({ photo, origin }: { photo: ProfilePhoto; origin?: st
   const details = photoDetails(photo, faces.data ?? {}, place.data ?? undefined, (urns) =>
     urns.length && !worn.isLoading ? reelWearables(urns, worn.data ?? {}) : undefined,
   );
-  const actions = usePhotoActions(photo, true, origin);
+  // The list a person's wearables showed, read again at a click for the URN it was worn as.
+  const events = useReelEvents(photo, (person, wearable) =>
+    worn.data ? reelWearables(photo.people[person]?.wearables ?? [], worn.data)[wearable]?.urn : undefined,
+  );
+  const shown = usePhotoActions(photo, true, origin, { onCopied: events.onCopied });
+  const save = shown.onDownload;
+  // decentraland.org counted a download at the press, before the image was fetched.
+  const actions = save
+    ? {
+        ...shown,
+        onDownload: () => {
+          events.onDownload();
+          save();
+        },
+      }
+    : shown;
   const title = photoLabel(photo);
 
   return (
-    <ReelsPage title={title}>
+    <ReelsPage title={title} onHomeClick={events.onHomeClick}>
       <PhotoViewer
         variant="page"
         imageUrl={photo.url}
@@ -33,6 +49,7 @@ export function ReelScreen({ photo, origin }: { photo: ProfilePhoto; origin?: st
         label={title}
         details={details}
         actions={actions}
+        events={events.viewer}
         linkComponent={CollectibleLink}
       />
     </ReelsPage>

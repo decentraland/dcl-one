@@ -54,6 +54,22 @@ export type PhotoViewerActions = {
   announcementVersion?: number
 }
 
+/** What the viewer reports of its controls, for a host that counts them. Each runs before the control's own action. */
+export type PhotoViewerEvents = {
+  onShare?: () => void
+  /** The details panel was shown (`true`) or hidden. */
+  onDetailsToggle?: (visible: boolean) => void
+  onTakenByClick?: () => void
+  onPlaceClick?: () => void
+  onJumpInClick?: () => void
+  /** A person's profile link, by their index in `details.people`. */
+  onPersonClick?: (person: number) => void
+  /** A person's wearables list was opened (`true`) or closed. */
+  onWearablesToggle?: (person: number, open: boolean) => void
+  /** A wearable's link, by the person's index and the wearable's index in their list. */
+  onWearableClick?: (person: number, wearable: number) => void
+}
+
 export type PhotoViewerProps = {
   imageUrl: string
   /** The image's alt text. */
@@ -70,6 +86,7 @@ export type PhotoViewerProps = {
   onPrevious?: () => void
   onNext?: () => void
   actions?: PhotoViewerActions
+  events?: PhotoViewerEvents
   linkComponent: ComponentType<PlaceCardLinkProps>
 } & ({ variant: 'page'; onClose?: never } | { variant: 'dialog'; onClose: () => void })
 
@@ -82,6 +99,7 @@ export function PhotoViewer({
   details,
   download,
   actions,
+  events,
   onPrevious,
   onNext,
   onClose,
@@ -123,6 +141,7 @@ export function PhotoViewer({
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Share to X"
+              onClick={events?.onShare}
             >
               <SocialX size={22} aria-hidden="true" />
             </Button>
@@ -169,7 +188,11 @@ export function PhotoViewer({
             aria-pressed={detailsVisible}
             aria-expanded={detailsVisible}
             aria-controls={detailsId}
-            onClick={() => setDetailsVisible((visible) => !visible)}
+            onClick={() => {
+              const next = !detailsVisible
+              setDetailsVisible(next)
+              events?.onDetailsToggle?.(next)
+            }}
           >
             <GeneralInfoButton size={22} aria-hidden="true" />
           </Button>
@@ -253,7 +276,11 @@ export function PhotoViewer({
                 <p className={styles.takenBy}>
                   Photo taken by{' '}
                   {details.takenBy.href ? (
-                    <Link to={details.takenBy.href} className={styles.link}>
+                    <Link
+                      to={details.takenBy.href}
+                      className={styles.link}
+                      onClick={events?.onTakenByClick}
+                    >
                       {details.takenBy.name}
                     </Link>
                   ) : (
@@ -267,7 +294,11 @@ export function PhotoViewer({
               <span className={styles.placeLabel}>
                 <GeneralMapPin size={20} aria-hidden="true" />
                 {details.place.href ? (
-                  <Link to={details.place.href} className={styles.link}>
+                  <Link
+                    to={details.place.href}
+                    className={styles.link}
+                    onClick={events?.onPlaceClick}
+                  >
                     {details.place.label}
                   </Link>
                 ) : (
@@ -279,6 +310,7 @@ export function PhotoViewer({
                   href={details.place.jumpInHref}
                   size="sm"
                   aria-label={`Jump in to ${details.place.label}`}
+                  onClick={events?.onJumpInClick}
                 />
               ) : null}
             </div>
@@ -291,7 +323,11 @@ export function PhotoViewer({
                       <div className={styles.personIdentity}>
                         <PersonFace name={person.name} faceUrl={person.faceUrl} />
                         {person.href ? (
-                          <Link to={person.href} className={styles.personName}>
+                          <Link
+                            to={person.href}
+                            className={styles.personName}
+                            onClick={() => events?.onPersonClick?.(index)}
+                          >
                             {person.name}
                           </Link>
                         ) : (
@@ -301,11 +337,18 @@ export function PhotoViewer({
                       </div>
                       {person.wearables ? (
                         <details>
-                          <summary className={styles.wearableSummary}>
+                          <summary
+                            className={styles.wearableSummary}
+                            onClick={(event) => {
+                              // The click toggles the list after this runs, so it is about to flip.
+                              const open = !event.currentTarget.parentElement?.hasAttribute('open')
+                              events?.onWearablesToggle?.(index, open)
+                            }}
+                          >
                             Collectible wearables
                           </summary>
                           <ul className={styles.wearables}>
-                            {person.wearables.map((item) => (
+                            {person.wearables.map((item, wearable) => (
                               <li key={item.id} className={styles.wearable}>
                                 {item.image ? (
                                   <CardImage
@@ -315,7 +358,11 @@ export function PhotoViewer({
                                   />
                                 ) : null}
                                 {item.href ? (
-                                  <Link to={item.href} className={styles.link}>
+                                  <Link
+                                    to={item.href}
+                                    className={styles.link}
+                                    onClick={() => events?.onWearableClick?.(index, wearable)}
+                                  >
                                     {item.label}
                                   </Link>
                                 ) : (

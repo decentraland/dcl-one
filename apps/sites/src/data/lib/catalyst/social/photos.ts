@@ -9,7 +9,13 @@ import { warnInvalid } from "../warn";
 /** The node mounts the camera reel here (`services/catalyst/src/serve.rs`). */
 const CAMERA_REEL_PREFIX = "/camera-reel-service";
 
-type PhotoPerson = { name: string; address: string; isGuest: boolean; wearables?: string[] };
+/**
+ * `address` is lowercased; `sourceAddress` keeps the service's own spelling when it differs, for the legacy Reels
+ * events that reported it as sent.
+ */
+type PhotoAddress = { address: string; sourceAddress?: string };
+
+type PhotoPerson = PhotoAddress & { name: string; isGuest: boolean; wearables?: string[] };
 
 /** A snapshot as the profile's Photos tab and its viewer show it. */
 export type ProfilePhoto = {
@@ -23,7 +29,7 @@ export type ProfilePhoto = {
   realm: string;
   scene: { name: string; x: string; y: string };
   /** Who took it, by the name the service recorded. */
-  author: { name: string; address: string };
+  author: PhotoAddress & { name: string };
   people: PhotoPerson[];
 };
 
@@ -51,6 +57,11 @@ function httpUrl(value: string): string | undefined {
   return /^https?:\/\//i.test(url) ? url : undefined;
 }
 
+function photoAddress(raw: string): PhotoAddress {
+  const address = raw.toLowerCase();
+  return raw === address ? { address } : { address, sourceAddress: raw };
+}
+
 function toPhoto(raw: unknown, includeDetails = false): ProfilePhoto | null {
   const row = PhotoRowSchema.safeParse(raw);
   const url = row.success ? httpUrl(row.data.url) : undefined;
@@ -67,10 +78,10 @@ function toPhoto(raw: unknown, includeDetails = false): ProfilePhoto | null {
     dateTime: metadata.dateTime,
     realm: metadata.realm,
     scene: { name: metadata.scene.name, x: metadata.scene.location.x, y: metadata.scene.location.y },
-    author: { name: metadata.userName.trim(), address: metadata.userAddress.toLowerCase() },
+    author: { name: metadata.userName.trim(), ...photoAddress(metadata.userAddress) },
     people: metadata.visiblePeople.map((person) => ({
       name: person.userName.trim(),
-      address: person.userAddress.toLowerCase(),
+      ...photoAddress(person.userAddress),
       isGuest: person.isGuest,
       ...(includeDetails && person.wearables?.length ? { wearables: person.wearables } : {}),
     })),

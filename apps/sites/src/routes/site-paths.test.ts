@@ -73,6 +73,9 @@ describe("Sites paths", () => {
       ["/events/new-event", "routes/events_.new-event.tsx"],
       ["/events/edit-event/ev-1", "routes/events_.edit-event.$id.tsx"],
       ["/communities/new", "routes/communities.new.tsx"],
+      ["/places/communities", "routes/places_.communities.tsx"],
+      ["/sign-in", "routes/sign-in.tsx"],
+      ["/blog/sign-in", "routes/blog.sign-in.tsx"],
     ])("should serve %s from %s", (path, file) => {
       expect(served(path)).toBe(file);
     });

@@ -14,6 +14,10 @@
     "Click": {
       "loose": false,
       "props": {
+        "button": {
+          "kind": "string",
+          "optional": true
+        },
         "card": {
           "kind": "string",
           "optional": true
@@ -40,7 +44,8 @@
         "event": {
           "kind": "enum-string",
           "values": [
-            "Download"
+            "Download",
+            "Reels Click Decentraland Logo"
           ],
           "optional": true
         },
@@ -66,6 +71,7 @@
         "place": {
           "kind": "enum-string",
           "values": [
+            "Creator Fund",
             "Creator Hub Success Footer",
             "Creators Blog",
             "Creators Connect",
@@ -87,7 +93,7 @@
             "landing-hero-epic",
             "landing-hero-platform-switch"
           ],
-          "optional": false
+          "optional": true
         },
         "section": {
           "kind": "string",
@@ -136,6 +142,126 @@
         "utm_term": {
           "kind": "string",
           "optional": true
+        }
+      }
+    },
+    "Reels Click Place": {
+      "loose": false,
+      "props": {
+        "x": {
+          "kind": "string",
+          "optional": false
+        },
+        "y": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Click Profile": {
+      "loose": false,
+      "props": {
+        "legacyProfileUrl": {
+          "kind": "string",
+          "optional": true
+        },
+        "userAddress": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Click Thumbnail": {
+      "loose": false,
+      "props": {
+        "imageId": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Click Wearable": {
+      "loose": false,
+      "props": {
+        "wearableUrn": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Copy Link": {
+      "loose": false,
+      "props": {
+        "imageId": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Download": {
+      "loose": false,
+      "props": {
+        "imageId": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Hide Metadata": {
+      "loose": false,
+      "props": {
+        "imageId": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Hide Wearables": {
+      "loose": false,
+      "props": {
+        "userAddress": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Jump In": {
+      "loose": false,
+      "props": {
+        "x": {
+          "kind": "string",
+          "optional": false
+        },
+        "y": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Share": {
+      "loose": false,
+      "props": {
+        "imageId": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Show Metadata": {
+      "loose": false,
+      "props": {
+        "imageId": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "Reels Show Wearables": {
+      "loose": false,
+      "props": {
+        "userAddress": {
+          "kind": "string",
+          "optional": false
         }
       }
     },
