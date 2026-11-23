@@ -132,6 +132,14 @@ pub(super) fn avatar_has_snapshots(avatar: &serde_json::Value) -> bool {
     is_truthy(avatar.get("avatar").and_then(|a| a.get("snapshots")))
 }
 
+/// Whether `avatar.snapshots.face256` and `.body` are both truthy.
+pub(super) fn avatar_has_face_and_body(avatar: &serde_json::Value) -> bool {
+    let snapshots = avatar.get("avatar").and_then(|a| a.get("snapshots"));
+    ["face256", "body"]
+        .into_iter()
+        .all(|key| is_truthy(snapshots.and_then(|s| s.get(key))))
+}
+
 /// JS truthiness of an optional JSON value.
 fn is_truthy(value: Option<&serde_json::Value>) -> bool {
     use serde_json::Value;

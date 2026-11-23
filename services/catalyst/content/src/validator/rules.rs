@@ -1,7 +1,7 @@
 //! The rules, in the old order: structure, IPFS hashing, metadata schema, ADR-45, signature,
 //! size, item representations, profile content, item and face thumbnails,
-//! scene content, the content cross-check, outfits, the third-party merkle
-//! proof content, access. The first failing step answers; its strings are
+//! profile images, scene content, the content cross-check, outfits, the
+//! third-party merkle proof content, access. The first failing step answers; its strings are
 //! the old ones byte for byte, except the reasons after the metadata schema
 //! sentence (see [`super::metadata_schema`]).
 
@@ -17,9 +17,10 @@ use super::checker::{
 };
 use super::error::ValidationResponse;
 use super::helpers::{
-    avatar_has_snapshots, corresponds_to_a_snapshot, navmap_thumbnail_error, profile_has_emotes,
-    should_validate_face_thumbnail, slot_key, validate_profile_emote_urns,
-    validate_profile_wearable_urns, validates_up_to_adr290_optionality,
+    avatar_has_face_and_body, avatar_has_snapshots, corresponds_to_a_snapshot,
+    navmap_thumbnail_error, profile_has_emotes, should_validate_face_thumbnail, slot_key,
+    validate_profile_emote_urns, validate_profile_wearable_urns,
+    validates_up_to_adr290_optionality,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
 use super::scene_parcels::validate_scene_parcels_match_pointers;
@@ -181,6 +182,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         let result = self.validate_face_thumbnail(deployment).await;
         if !result.is_ok() {
             debug!("Validation failed at face thumbnail");
+            return result;
+        }
+
+        let result = self.validate_profile_images(deployment);
+        if !result.is_ok() {
+            debug!("Validation failed at profile images");
             return result;
         }
 
@@ -609,6 +616,30 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         }
 
         ValidationResponse::from_errors(errors)
+    }
+
+    /// Upstream `createProfileImagesValidateFn`: every avatar names truthy
+    /// face256 and body snapshots. Its hash check is moot here: uploads are
+    /// keyed by their computed hash and a synced entity file is verified.
+    fn validate_profile_images(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        let entity = &deployment.entity;
+        if entity.entity_type != EntityType::Profile
+            || !should_validate_face_thumbnail(entity, deployment.files)
+        {
+            return ValidationResponse::Ok;
+        }
+        let avatars = entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("avatars"))
+            .and_then(|a| a.as_array())
+            .map_or(&[][..], Vec::as_slice);
+        if avatars.iter().any(|a| !avatar_has_face_and_body(a)) {
+            return ValidationResponse::fail(
+                "Couldn't find hash for face or body thumbnails on profile metadata".to_string(),
+            );
+        }
+        ValidationResponse::Ok
     }
 
     fn validate_profile_content(&self, deployment: &Deployment<'_>) -> ValidationResponse {
@@ -1843,6 +1874,95 @@ mod tests {
             assert!(!profile_content(&upper).is_ok());
             upper.entity.metadata.as_mut().unwrap()["avatars"][0]["avatar"]["snapshots"] = serde_json::json!({ "face256": "QmF", "body": "QmB", "Body": "QmB", "FACE256": "QmF" });
             assert!(profile_content(&upper).is_ok());
+        }
+
+        /// The profile images rule's verdict on a profile at `timestamp`
+        /// whose avatars carry the given `snapshots` values.
+        fn profile_images(
+            timestamp: Timestamp,
+            snapshots: &[serde_json::Value],
+        ) -> ValidationResponse {
+            let mut d = profile();
+            d.entity.timestamp = timestamp;
+            let metadata = d.entity.metadata.as_mut().unwrap();
+            let avatar = metadata["avatars"][0].clone();
+            metadata["avatars"] = snapshots
+                .iter()
+                .map(|s| {
+                    let mut a = avatar.clone();
+                    a["avatar"]["snapshots"] = s.clone();
+                    a
+                })
+                .collect();
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: false,
+                synced: true,
+                access_passed: false,
+            }
+            .validate_profile_images(&d.view())
+        }
+
+        #[test]
+        fn pre_adr_290_avatars_need_face_and_body_snapshots() {
+            use serde_json::json;
+            let missing = vec![
+                "Couldn't find hash for face or body thumbnails on profile metadata".to_string(),
+            ];
+            let both = json!({ "face256": "QmF", "body": "QmB" });
+            for ts in [
+                adr_timestamps::ADR_45,
+                adr_timestamps::ADR_290_OPTIONAL - 1,
+                adr_timestamps::ADR_290_OPTIONAL + 1000,
+                adr_timestamps::ADR_290_REJECTED - 1,
+            ] {
+                assert!(profile_images(ts, std::slice::from_ref(&both)).is_ok());
+                assert!(
+                    profile_images(ts, &[]).is_ok(),
+                    "no avatars, nothing checked"
+                );
+                // Read with JS truthiness: "", 0, false and null are missing.
+                for bad in [
+                    json!({ "face256": "QmF" }),
+                    json!({ "body": "QmB" }),
+                    json!({ "face256": "", "body": "QmB" }),
+                    json!({ "face256": "QmF", "body": "" }),
+                    json!({ "face256": "QmF", "body": 0 }),
+                    json!({ "face256": false, "body": "QmB" }),
+                    json!({ "face256": "QmF", "body": null }),
+                    json!("QmF"),
+                ] {
+                    assert_eq!(
+                        errors(profile_images(ts, &[both.clone(), bad.clone()])),
+                        missing,
+                        "{ts} {bad}"
+                    );
+                }
+                assert!(profile_images(ts, &[json!({ "face256": 1, "body": [] })]).is_ok());
+            }
+            // Before ADR-45, and from ADR-290 rejection, it does not run.
+            assert!(profile_images(adr_timestamps::ADR_45 - 1, &[json!({ "body": "" })]).is_ok());
+            assert!(
+                profile_images(adr_timestamps::ADR_290_REJECTED, &[json!({ "body": "" })]).is_ok()
+            );
+            // In the optional window a profile without snapshots, content or
+            // uploads is not held to it; one avatar with snapshots opts all in.
+            let optional = adr_timestamps::ADR_290_OPTIONAL + 1000;
+            assert!(profile_images(optional, &[json!(null)]).is_ok());
+            assert_eq!(
+                errors(profile_images(optional, &[both.clone(), json!(null)])),
+                missing
+            );
+            assert_eq!(
+                errors(profile_images(
+                    adr_timestamps::ADR_290_OPTIONAL - 1,
+                    &[json!(null)]
+                )),
+                missing
+            );
         }
 
         #[test]
