@@ -8,8 +8,13 @@ use super::super::change_log::{self, Cursor};
 use super::*;
 
 const BASE: &str = "https://worlds.example/worlds-content-server";
+const FEED_TOKEN: &str = "feed-reader-example";
 
 async fn isolated() -> Option<Fixture> {
+    isolated_with(test_settings().with_change_feed_token(Some(FEED_TOKEN.into()))).await
+}
+
+async fn isolated_with(settings: Settings) -> Option<Fixture> {
     let pool = crate::db::scratch::isolated_pool(8).await?;
     Some(
         fixture_on_pool(
@@ -17,7 +22,7 @@ async fn isolated() -> Option<Fixture> {
             PersonalWorldsPolicy::disabled(),
             None,
             None,
-            test_settings(),
+            settings,
             "",
         )
         .await,
@@ -28,7 +33,7 @@ async fn isolated() -> Option<Fixture> {
 async fn page(f: &Fixture, query: &str) -> Value {
     expect(
         &f.app,
-        Case::new("GET", format!("/changes{query}")).bearer(ADMIN_TOKEN),
+        Case::new("GET", format!("/changes{query}")).bearer(FEED_TOKEN),
         200,
     )
     .await
@@ -451,11 +456,26 @@ async fn the_route_pages_by_cursor_until_caught_up() {
     );
 }
 
+/// The feed takes its own bearer only: the admin token does not open it, and
+/// it opens no admin route.
 #[tokio::test]
-async fn the_route_is_the_operators_and_refuses_bad_cursors_and_limits() {
+async fn the_route_takes_only_the_feed_token_and_refuses_bad_cursors_and_limits() {
     let Some(f) = isolated().await else { return };
     expect(&f.app, Case::new("GET", "/changes"), 401).await;
     expect(&f.app, Case::new("GET", "/changes").bearer("wrong"), 401).await;
+    expect(
+        &f.app,
+        Case::new("GET", "/changes").bearer(ADMIN_TOKEN),
+        401,
+    )
+    .await;
+    expect(&f.app, Case::new("GET", "/changes").bearer(FEED_TOKEN), 200).await;
+    expect(
+        &f.app,
+        Case::new("GET", "/admin/access-log").bearer(FEED_TOKEN),
+        401,
+    )
+    .await;
     for query in [
         "?after=12",
         "?after=a:1",
@@ -466,7 +486,7 @@ async fn the_route_is_the_operators_and_refuses_bad_cursors_and_limits() {
     ] {
         expect(
             &f.app,
-            Case::new("GET", format!("/changes{query}")).bearer(ADMIN_TOKEN),
+            Case::new("GET", format!("/changes{query}")).bearer(FEED_TOKEN),
             400,
         )
         .await;
@@ -527,4 +547,20 @@ async fn removing_a_mirrored_scene_records_no_scenes_event() {
         .unwrap();
     assert_eq!(removed, 1);
     assert_eq!(rows(&f).await, 0);
+}
+
+/// Without `WORLDS_CHANGE_FEED_TOKEN` the feed refuses every request.
+#[tokio::test]
+async fn the_route_is_refused_while_no_feed_token_is_set() {
+    let Some(f) = isolated_with(test_settings()).await else {
+        return;
+    };
+    for case in [
+        Case::new("GET", "/changes"),
+        Case::new("GET", "/changes").bearer(FEED_TOKEN),
+        Case::new("GET", "/changes").bearer(ADMIN_TOKEN),
+        Case::new("GET", "/changes").bearer(""),
+    ] {
+        expect(&f.app, case, 401).await;
+    }
 }

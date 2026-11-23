@@ -3272,6 +3272,7 @@ content server publishes to SNS, for the world changes made on this node:
 each row is one message body (`event`) with its message attributes besides
 type and subType (`attributes`), so a relay can publish it unchanged
 (`core::change_log`, [decision](docs/adr/2026-11-23-worlds-change-feed.md)).
+The feed route takes its own bearer, `WORLDS_CHANGE_FEED_TOKEN`.
 
 Workload: written only by the local write paths, in the transaction of the
 change: a publish (`deployment`, and `world_settings_changed` when it seeded

@@ -32,16 +32,18 @@ The node records the events and a relay outside it publishes them.
   transaction still running. A transaction that took its id first and
   commits last is therefore never skipped by a reader's cursor. Rows are kept
   30 days.
-- The route requires `CATALYRST_WORLDS_ADMIN_TOKEN`: a deployment event
-  carries the deploy's auth chain, which no public worlds route serves.
+- The route requires its own bearer, `WORLDS_CHANGE_FEED_TOKEN`
+  (`Authorization: Bearer <token>`, compared in constant time; unset refuses
+  every request with 401). It grants nothing else, and the worlds admin token
+  does not open it: a deployment event carries the deploy's auth chain, which
+  no public worlds route serves.
 
 Out of scope: access allow-list, permission and block events, which the node
 handles itself.
 
 ## Consequences
 
-- A relay needs the worlds admin token, which also opens the `/admin/*`
-  routes.
+- A relay holds only the feed token, which reads the feed and nothing else.
 - The feed lags the cluster's oldest open write transaction.
 - Transaction ids do not survive a logical dump and restore: after one, the
   table is emptied and readers start again from its oldest row.

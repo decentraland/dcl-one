@@ -11,8 +11,9 @@
 //! commit order. The worlds mirror and the TS import never write here.
 //! Access grants, permissions and blocks are not carried.
 //!
-//! The route is gated by `CATALYRST_WORLDS_ADMIN_TOKEN`: a deployment event
-//! carries the deploy's auth chain, which no public worlds route serves.
+//! The route takes its own bearer, `WORLDS_CHANGE_FEED_TOKEN` (unset refuses
+//! it), which grants nothing else: a deployment event carries the deploy's
+//! auth chain, which no public worlds route serves.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -373,7 +374,8 @@ pub async fn changes(
     headers: HeaderMap,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, ApiError> {
-    authorize_admin(state.settings.admin_token.as_deref(), &headers)?;
+    // The worlds bearer check (constant time, unset fails closed) over the feed's own token.
+    authorize_admin(state.settings.change_feed_token.as_deref(), &headers)?;
     let after = match query.get("after").map(String::as_str) {
         None | Some("") => Cursor::START,
         Some(raw) => Cursor::parse(raw).ok_or_else(|| {

@@ -102,6 +102,9 @@ pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
 pub struct Settings {
     /// `CATALYRST_WORLDS_ADMIN_TOKEN`: the bearer of the `/admin/*` routes; unset refuses them.
     pub admin_token: Option<String>,
+    /// `WORLDS_CHANGE_FEED_TOKEN`: the bearer of `GET /changes` and nothing
+    /// else; unset refuses it.
+    pub change_feed_token: Option<String>,
     /// `MAX_IN_FLIGHT_UPLOAD_BYTES`, `MAX_CONCURRENT_UPLOADS`,
     /// `MAX_IN_FLIGHT_UPLOAD_FILES`, `MULTIPART_UPLOAD_TIMEOUT_MS`,
     /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`, `MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
@@ -134,6 +137,10 @@ impl std::fmt::Debug for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Settings")
             .field("admin_token", &self.admin_token.as_ref().map(|_| "<set>"))
+            .field(
+                "change_feed_token",
+                &self.change_feed_token.as_ref().map(|_| "<set>"),
+            )
             .field("upload_limits", &self.upload_limits)
             .finish()
     }
@@ -148,6 +155,7 @@ impl Settings {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             admin_token: admin_token.filter(|t| !t.trim().is_empty()),
+            change_feed_token: None,
             upload_limits: upload_limits.validate(deploy::MAX_UPLOAD_SIZE_BYTES as u64)?,
             global_scenes_urn: Vec::new(),
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
@@ -169,6 +177,12 @@ impl Settings {
 
     pub fn with_scene_eviction_ttl_ms(mut self, ms: u64) -> Self {
         self.scene_eviction_ttl = std::time::Duration::from_millis(ms);
+        self
+    }
+
+    /// `WORLDS_CHANGE_FEED_TOKEN`; `None` or blank leaves the feed refused.
+    pub fn with_change_feed_token(mut self, token: Option<String>) -> Self {
+        self.change_feed_token = token.filter(|t| !t.trim().is_empty());
         self
     }
 
@@ -220,6 +234,7 @@ impl Settings {
     pub fn for_tests(admin_token: Option<&str>) -> Self {
         Self {
             admin_token: admin_token.map(str::to_string),
+            change_feed_token: None,
             upload_limits: UploadLimits::default(),
             global_scenes_urn: Vec::new(),
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,

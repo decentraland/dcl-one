@@ -348,7 +348,8 @@ A difference not listed here is a gap, not a decision.
   `WorldSpawnCoordinateSetEvent`, `WorldUndeploymentEvent` or
   `WorldScenesUndeploymentEvent` upstream would publish, with its message
   attributes, in `worlds.change_log` in its own transaction, and
-  `GET /changes` (behind `CATALYRST_WORLDS_ADMIN_TOKEN`) pages them for a
+  `GET /changes` (behind its own bearer, `WORLDS_CHANGE_FEED_TOKEN`; unset
+  answers 401) pages them for a
   relay to publish. A deployment names `WORLDS_PUBLIC_URL` (default
   `<PUBLIC_URL>/worlds-content-server`) as its content server and settings
   thumbnails link under it. The timestamp is the database clock after the
