@@ -449,6 +449,230 @@ async fn a_contract_wallet_chain_without_an_rpc_validator_is_unavailable() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// A contract wallet that refuses today and signed at the L1 block of `ENTITY_MS`.
+struct SignedAtEntityBlock;
+
+const ENTITY_MS: i64 = 1_700_000_000_000;
+
+#[async_trait]
+impl Eip1654Validator for SignedAtEntityBlock {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        block: u64,
+    ) -> Result<bool, AuthError> {
+        Ok(block == ENTITY_BLOCK)
+    }
+
+    /// The validator's own selector, asked only without an L1 RPC.
+    async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, AuthError> {
+        Ok(Some(ENTITY_BLOCK))
+    }
+}
+
+/// The last block strictly before `ENTITY_MS`: one is mined at that exact second.
+const ENTITY_BLOCK: u64 =
+    ((ENTITY_MS / 1000 - fake_chain::GENESIS) / fake_chain::INTERVAL) as u64 - 1;
+
+/// A local deploy's contract-wallet link refused at latest is asked again at the L1 block of
+/// the entity timestamp, as `@dcl/crypto` does; without an L1 RPC the validator's own selector
+/// picks the block.
+#[tokio::test]
+async fn a_contract_wallet_is_asked_at_the_entity_block_after_latest_refuses() {
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = temp_storage("eip1654-entity-block").await;
+    let with_l1 = Sources::new(
+        lazy_pool(),
+        storage.clone(),
+        Outbound::for_tests(),
+        Some(Arc::new(SignedAtEntityBlock)),
+        Settings {
+            l1_rpc_url: Some(chain.url.clone()),
+            ..mainnet()
+        },
+    );
+    let id = "bafkreientity";
+    let auth =
+        crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+            .await;
+
+    ExternalCalls::validate_signature(&with_l1, id, &auth, ENTITY_MS)
+        .await
+        .unwrap();
+
+    let without_l1 = Sources::new(
+        lazy_pool(),
+        storage,
+        Outbound::for_tests(),
+        Some(Arc::new(SignedAtEntityBlock)),
+        Settings {
+            l1_rpc_url: None,
+            ..mainnet()
+        },
+    );
+    ExternalCalls::validate_signature(&without_l1, id, &auth, ENTITY_MS)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A contract wallet that answers every ask with `latest` and refuses at past blocks.
+struct AcceptsAtLatest(bool);
+
+#[async_trait]
+impl Eip1654Validator for AcceptsAtLatest {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Ok(self.0)
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        _: u64,
+    ) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+}
+
+/// A local deploy's contract-wallet link accepted at latest reads no L1 block.
+#[tokio::test]
+async fn a_contract_wallet_accepted_at_latest_reads_no_block() {
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = temp_storage("eip1654-latest").await;
+    let s = Sources::new(
+        lazy_pool(),
+        storage,
+        Outbound::for_tests(),
+        Some(Arc::new(AcceptsAtLatest(true))),
+        Settings {
+            l1_rpc_url: Some(chain.url.clone()),
+            ..mainnet()
+        },
+    );
+    let id = "bafkreientity";
+    let auth =
+        crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+            .await;
+
+    ExternalCalls::validate_signature(&s, id, &auth, ENTITY_MS)
+        .await
+        .unwrap();
+    assert!(chain.calls().is_empty(), "{:?}", chain.calls());
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A local deploy whose L1 block lookup fails after a refusal at latest is undecided, never
+/// refused.
+#[tokio::test]
+async fn a_failed_l1_block_lookup_leaves_a_contract_wallet_unverifiable() {
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    chain.fail_block_reads(usize::MAX);
+    let (storage, tmp) = temp_storage("eip1654-no-block").await;
+    let s = Sources::new(
+        lazy_pool(),
+        storage,
+        Outbound::for_tests(),
+        Some(Arc::new(AcceptsAtLatest(false))),
+        Settings {
+            l1_rpc_url: Some(chain.url.clone()),
+            ignore_blockchain_access: true,
+            ..mainnet()
+        },
+    );
+    let model = b"glb".to_vec();
+    let (entity, files, _, _) = signed(scene(&["1,1"], &model), std::slice::from_ref(&model)).await;
+    let auth = crate::sync_test_support::signed_chain_behind_contract(
+        &entity.id,
+        "2099-01-01T00:00:00.000Z",
+    )
+    .await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &auth,
+    };
+    let verdict = validate(&entity, &files, &ctx).await.unwrap_err();
+    assert!(
+        matches!(&verdict[..], [ValidationError::Unverifiable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
+        "{verdict:?}"
+    );
+    assert!(
+        chain.calls().iter().any(|c| c == "eth_getBlockByNumber"),
+        "the block was looked up: {:?}",
+        chain.calls()
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A contract wallet whose call fails at latest and refuses at past blocks.
+struct FailsAtLatest;
+
+#[async_trait]
+impl Eip1654Validator for FailsAtLatest {
+    async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+        Err(AuthError::Eip1654ValidationFailed("timeout".into()))
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _: &str,
+        _: &[u8],
+        _: &[u8],
+        _: u64,
+    ) -> Result<bool, AuthError> {
+        Ok(false)
+    }
+}
+
+/// A local deploy whose contract-wallet call fails at latest and is refused at the entity
+/// block is refused: `@dcl/crypto` reads a failed call as a refusal before asking the past
+/// block. A synced entity is undecided instead (`batch_deployer` tests).
+#[tokio::test]
+async fn a_latest_error_then_an_entity_block_refusal_is_rejected() {
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = temp_storage("eip1654-latest-error").await;
+    let s = Sources::new(
+        lazy_pool(),
+        storage,
+        Outbound::for_tests(),
+        Some(Arc::new(FailsAtLatest)),
+        Settings {
+            l1_rpc_url: Some(chain.url.clone()),
+            ignore_blockchain_access: true,
+            ..mainnet()
+        },
+    );
+    let model = b"glb".to_vec();
+    let (entity, files, _, _) = signed(scene(&["1,1"], &model), std::slice::from_ref(&model)).await;
+    let auth = crate::sync_test_support::signed_chain_behind_contract(
+        &entity.id,
+        "2099-01-01T00:00:00.000Z",
+    )
+    .await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &auth,
+    };
+    let verdict = validate(&entity, &files, &ctx).await.unwrap_err();
+    assert!(
+        matches!(&verdict[..], [ValidationError::Rejected(m)] if m.starts_with("The signature is invalid. ")),
+        "{verdict:?}"
+    );
+    assert!(
+        chain.calls().iter().any(|c| c == "eth_getBlockByNumber"),
+        "the entity block was looked up: {:?}",
+        chain.calls()
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[cfg(unix)]
 fn seal_shard(storage: &Storage, hash: &str) -> std::path::PathBuf {
     let shard = storage.root().join(crate::storage::hex_prefix(hash));

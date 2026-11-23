@@ -185,7 +185,7 @@ def hold_for_draft(result, pull_request):
         return result
     print(f'::notice::This draft does not run these engine jobs on larger runners: {", ".join(held)}. '
           f'Mark it ready for review, or add the {ENGINE_LABEL} label and push, to run them.')
-    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False),
+    return {**result, **dict.fromkeys((*HELD_ON_DRAFT, 'native-matrix'), False), 'held': True,
             'reason': result['reason'] + '; draft: ' + ', '.join(held) + ' wait until it is ready for review'}
 
 

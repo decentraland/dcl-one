@@ -89,6 +89,46 @@ pub(crate) async fn verify_eip1654_at_verification_time(
     signature: &[u8],
     started_ms: i64,
 ) -> Result<bool, AuthError> {
+    at_verification_time(
+        validator,
+        contract_address,
+        message,
+        signature,
+        started_ms,
+        false,
+    )
+    .await
+}
+
+/// [`verify_eip1654_at_verification_time`] for a synced entity: a failed call at latest
+/// followed by a refusal at the verification-time block keeps the latest error (undecided,
+/// so sync retries it) instead of refusing.
+pub(crate) async fn verify_synced_eip1654_at_verification_time(
+    validator: &dyn Eip1654Validator,
+    contract_address: &str,
+    message: &[u8],
+    signature: &[u8],
+    started_ms: i64,
+) -> Result<bool, AuthError> {
+    at_verification_time(
+        validator,
+        contract_address,
+        message,
+        signature,
+        started_ms,
+        true,
+    )
+    .await
+}
+
+async fn at_verification_time(
+    validator: &dyn Eip1654Validator,
+    contract_address: &str,
+    message: &[u8],
+    signature: &[u8],
+    started_ms: i64,
+    latest_error_stands: bool,
+) -> Result<bool, AuthError> {
     let latest = verify_eip1654(validator, contract_address, message, signature).await;
     if matches!(latest, Ok(true)) {
         return Ok(true);
@@ -96,7 +136,11 @@ pub(crate) async fn verify_eip1654_at_verification_time(
     let Some(block) = validator.verification_time_block(started_ms).await? else {
         return latest;
     };
-    verify_hash_pair(validator, contract_address, message, signature, Some(block)).await
+    let past = verify_hash_pair(validator, contract_address, message, signature, Some(block)).await;
+    match (latest, past) {
+        (Err(e), Ok(false)) if latest_error_stands => Err(e),
+        (_, past) => past,
+    }
 }
 
 async fn verify_hash_pair(
@@ -266,5 +310,59 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AuthError::Eip1654ValidationFailed(_)));
+    }
+
+    /// A failed call at latest followed by two clean refusals at the verification-time block
+    /// is a refusal: `@dcl/crypto` reads a failed `isValidSignature` call as a refusal and
+    /// then asks the past block. For a synced entity the latest error stands.
+    #[tokio::test]
+    async fn a_latest_error_then_a_past_block_refusal_is_a_refusal() {
+        struct FailsLatestRefusesPast;
+        #[async_trait]
+        impl Eip1654Validator for FailsLatestRefusesPast {
+            async fn validate_signature(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+            ) -> Result<bool, AuthError> {
+                Err(AuthError::Eip1654ValidationFailed("timeout".into()))
+            }
+
+            async fn validate_signature_at_block(
+                &self,
+                _: &str,
+                _: &[u8],
+                _: &[u8],
+                _: u64,
+            ) -> Result<bool, AuthError> {
+                Ok(false)
+            }
+
+            async fn verification_time_block(&self, _: i64) -> Result<Option<u64>, AuthError> {
+                Ok(Some(7))
+            }
+        }
+        let verdict = verify_eip1654_at_verification_time(
+            &FailsLatestRefusesPast,
+            "0xcontract",
+            b"msg",
+            &[0u8; 65],
+            1_700_000_000_000,
+        )
+        .await;
+        assert!(matches!(verdict, Ok(false)), "{verdict:?}");
+        let synced = verify_synced_eip1654_at_verification_time(
+            &FailsLatestRefusesPast,
+            "0xcontract",
+            b"msg",
+            &[0u8; 65],
+            1_700_000_000_000,
+        )
+        .await;
+        assert!(
+            matches!(synced, Err(AuthError::Eip1654ValidationFailed(_))),
+            "a synced entity keeps the latest error: {synced:?}"
+        );
     }
 }
