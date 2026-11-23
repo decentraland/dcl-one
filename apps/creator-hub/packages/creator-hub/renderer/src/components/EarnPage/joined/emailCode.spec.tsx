@@ -12,7 +12,7 @@ vi.mock('#store', async () => {
   return { useDispatch, useSelector };
 });
 
-describe('when the resend timer fires before the service deadline', () => {
+describe('when a resend is held until the service deadline', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -48,6 +48,46 @@ describe('when the resend timer fires before the service deadline', () => {
     expect(result.current).toBe(true);
 
     clock.mockReturnValue(now + 60_000);
+    act(() => vi.advanceTimersByTime(1));
+    expect(result.current).toBe(false);
+  });
+
+  it('should wait out a long hold without repeatedly waking or releasing it early', () => {
+    vi.useFakeTimers();
+    const now = Date.parse('2026-11-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const maxTimerDelay = 2_147_483_647;
+    const resendAt = now + maxTimerDelay + 60_000;
+    const store = createTestStore();
+    store.dispatch(actions.sendEmailVerification.pending('verification', undefined));
+    store.dispatch(
+      actions.sendEmailVerification.fulfilled(
+        {
+          sent_at: new Date(now).toISOString(),
+          expires_at: new Date(resendAt + 600_000).toISOString(),
+          resend_available_at: new Date(resendAt).toISOString(),
+        },
+        'verification',
+        undefined,
+      ),
+    );
+    const render = vi.fn(() => useResendHeld());
+    const { result } = renderHook(render, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <Provider store={store}>{children}</Provider>
+      ),
+    });
+    expect(result.current).toBe(true);
+    const initialRenders = render.mock.calls.length;
+
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(result.current).toBe(true);
+    expect(render).toHaveBeenCalledTimes(initialRenders);
+
+    act(() => vi.advanceTimersByTime(maxTimerDelay - 1_000));
+    expect(result.current).toBe(true);
+    act(() => vi.advanceTimersByTime(59_999));
+    expect(result.current).toBe(true);
     act(() => vi.advanceTimersByTime(1));
     expect(result.current).toBe(false);
   });
