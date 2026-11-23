@@ -559,7 +559,7 @@ fn run_scene_loop(world: &mut World) {
     #[cfg(target_arch = "wasm32")]
     let target_end_time = {
         let pacing = world.resource::<loop_pacing::WebLoopPacing>();
-        let reserve = pacing.tail.reserve();
+        let reserve = pacing.tail.reserve(frame_target_duration);
         match (
             mode.frame_deadline() && fps != 0.0,
             pacing.frame_start,

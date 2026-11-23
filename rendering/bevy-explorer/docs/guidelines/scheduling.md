@@ -67,9 +67,9 @@ browser paces the frame, and the loop ends one frame target after the frame's st
 time the frame still needs after the loop (`frame_deadline`). That reserve is the 90th
 percentile, over the last 32 frames, of the time from the loop's end to the handoff to the
 render worker less the frame's waits for that worker (`frame_tail`: `WAIT_RENDER` for the render
-app to come back, `WAIT_HANDOFF` for its animation frame to take the handoff), plus 1 ms. The
-waits shrink when the loop runs longer, so they are left out. Until 8 frames are measured, and
-with an uncapped frame rate, the web uses the grid.
+app to come back, `WAIT_HANDOFF` for its animation frame to take the handoff), plus 6 % of the
+frame target (`TAIL_MARGIN_SHARE`). The waits shrink when the loop runs longer, so they are left
+out. Until 8 frames are measured, and with an uncapped frame rate, the web uses the grid.
 
 On the web each scene runs in a sandbox worker whose relay moves messages between the engine
 and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`, `deploy/web/engine/sandbox_worker.js`).

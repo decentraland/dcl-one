@@ -6,7 +6,7 @@
 //! ([`frame_deadline`], scene loop mode `both`, the default, or `deadline`,
 //! `dcl_wasm::scene_loop_mode`) instead ends the loop a frame target after the frame's start, less what the frame still needs
 //! after the loop: the 90th percentile of that tail over the last frames ([`TailEstimate`]) plus
-//! a margin. The tail is the frame's work, without its waits for the render worker
+//! a share of the frame target. The tail is the frame's work, without its waits for the render worker
 //! ([`frame_tail`]). Natively the scene loop is unchanged; only the wasm build reads the mode.
 
 use std::time::Duration;
@@ -17,8 +17,10 @@ use web_time::Instant;
 pub const TAIL_FRAMES: usize = 32;
 /// Frames measured before the estimate is used.
 pub const TAIL_MIN_FRAMES: usize = TAIL_FRAMES / 4;
-/// Added to the tail's 90th percentile: the frame timer wakes up to a millisecond late.
-pub const TAIL_MARGIN: Duration = Duration::from_millis(1);
+/// Added to the tail's 90th percentile, as a share of the frame target: slack for a tail beyond
+/// it that grows with the frame. (A late timer at the loop's end needs none: the loop ends its
+/// timed waits before the deadline by their lateness.)
+pub const TAIL_MARGIN_SHARE: f64 = 0.06;
 /// The scene loop always runs at least this long.
 pub const LOOP_FLOOR: Duration = Duration::from_millis(1);
 
@@ -80,9 +82,10 @@ impl TailEstimate {
         Some(sorted[(self.len * 9).div_ceil(10) - 1])
     }
 
-    /// What the deadline mode leaves for the tail: its 90th percentile plus [`TAIL_MARGIN`].
-    pub fn reserve(&self) -> Option<Duration> {
-        self.p90().map(|p90| p90 + TAIL_MARGIN)
+    /// What the deadline mode leaves for the tail: its 90th percentile plus
+    /// [`TAIL_MARGIN_SHARE`] of the frame target.
+    pub fn reserve(&self, frame: Duration) -> Option<Duration> {
+        self.p90().map(|p90| p90 + frame.mul_f64(TAIL_MARGIN_SHARE))
     }
 }
 
@@ -239,9 +242,11 @@ mod tests {
         for _ in 0..TAIL_MIN_FRAMES - 1 {
             tail.push(ms(3.0));
         }
-        assert_eq!(tail.reserve(), None);
+        assert_eq!(tail.reserve(T), None);
         tail.push(ms(3.0));
-        assert_eq!(tail.reserve(), Some(ms(3.0) + TAIL_MARGIN));
+        // 6 % of the frame target: 1 ms at 60 fps, 0.5 ms at 120 fps
+        assert!(close(tail.reserve(T).unwrap(), ms(4.0)));
+        assert!(close(tail.reserve(T / 2).unwrap(), ms(3.5)));
         // 1..=32 ms: rank ceil(0.9 * 32) = 29
         for i in 1..=TAIL_FRAMES {
             tail.push(ms(i as f64));
