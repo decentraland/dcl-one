@@ -66,7 +66,25 @@ export function trackDiscoverFilterCategory(category: DiscoverCategory, session:
   guarded(() => sendLegacyDeferred((audit, ctx) => track("Discover Filter Category", { category, ...audit }, ctx), session));
 }
 
-/** "Explore the scene" on a place's live view; `href` is the stream the page opens, left out when there is none. */
+/**
+ * The href the legacy `Discover Launch Scene` reported: its Bevy watcher URL (decentraland/sites
+ * `DiscoverScenePage.tsx` `buildBevyHref`), built from the same inputs even though this page opens its own
+ * travel URL. `playBase` stands for the legacy `BEVY_WEB_URL` (`https://decentraland.org/play/` in production)
+ * and is made absolute against `origin`; the location is a world's name or a place's base parcel.
+ */
+export function legacyWatcherHref(
+  playBase: string,
+  place: Pick<Place, "world" | "world_name" | "base_position">,
+  origin: string,
+): string | undefined {
+  const location = place.world ? place.world_name : place.base_position;
+  if (!location) return undefined;
+  const base = new URL(playBase, origin).href;
+  const param = location.endsWith(".eth") ? `?realm=${encodeURIComponent(location)}` : `?position=${encodeURIComponent(location)}`;
+  return `${base}${param}&systemScene=tortilla.dcl.eth&portables=none&guest=1&hud=0`;
+}
+
+/** "Explore the scene" on a place's live view; `href` is `legacyWatcherHref`, left out when there is none. */
 export function trackDiscoverLaunchScene(href: string | undefined, session: LegacySession): void {
   guarded(() => {
     const props = href ? { href } : {};

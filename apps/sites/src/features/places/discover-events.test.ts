@@ -6,6 +6,7 @@ import { track } from "@/core/lib/telemetry/track";
 
 import {
   discoverPlacePayload,
+  legacyWatcherHref,
   trackDiscoverClickPlaceCard,
   trackDiscoverFilterCategory,
   trackDiscoverJumpIn,
@@ -114,5 +115,33 @@ describe("the Discover events", () => {
     readiness.pending.forEach((fire) => fire());
     expect(track).toHaveBeenCalledTimes(1);
     expect(vi.mocked(track).mock.calls[0]![1]).toMatchObject({ track_deferred: true });
+  });
+});
+
+describe("legacyWatcherHref", () => {
+  const ORIGIN = "https://decentraland.org";
+  const SETTINGS = "&systemScene=tortilla.dcl.eth&portables=none&guest=1&hud=0";
+
+  it("builds legacy buildBevyHref for a parcel, encoding the comma", () => {
+    expect(legacyWatcherHref("/play/", { world: false, world_name: null, base_position: "-3,-2" }, ORIGIN)).toBe(
+      `https://decentraland.org/play/?position=-3%2C-2${SETTINGS}`,
+    );
+  });
+
+  it("uses realm for a world's .eth name", () => {
+    expect(legacyWatcherHref("/play/", { world: true, world_name: "sample.dcl.eth", base_position: "0,0" }, ORIGIN)).toBe(
+      `https://decentraland.org/play/?realm=sample.dcl.eth${SETTINGS}`,
+    );
+  });
+
+  it("uses position for a world name that is not .eth, as legacy's suffix check did", () => {
+    expect(legacyWatcherHref("/play/", { world: true, world_name: "named", base_position: "0,0" }, ORIGIN)).toBe(
+      `https://decentraland.org/play/?position=named${SETTINGS}`,
+    );
+  });
+
+  it("returns undefined without a location", () => {
+    expect(legacyWatcherHref("/play/", { world: true, world_name: null, base_position: "0,0" }, ORIGIN)).toBeUndefined();
+    expect(legacyWatcherHref("/play/", { world: false, world_name: null, base_position: "" }, ORIGIN)).toBeUndefined();
   });
 });

@@ -19,7 +19,7 @@ import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { track } from "@/core/lib/telemetry/track";
 import { useAnalyticsUserId, usePageView } from "@/core/lib/telemetry/page-view";
 import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
-import { trackDiscoverJumpIn, trackDiscoverLaunchScene } from "@/features/places/discover-events";
+import { legacyWatcherHref, trackDiscoverJumpIn, trackDiscoverLaunchScene } from "@/features/places/discover-events";
 import { useSceneChat, type SceneChat } from "@/features/explorer/scene-chat/useSceneChat";
 
 import { PLACES_SECTION, placeDetailMeta, sectionCard } from "../lib/destination-meta";
@@ -153,7 +153,12 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
           viewer={viewer}
           account={signer?.signer ?? null}
           onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}
-          onLaunch={() => trackDiscoverLaunchScene(jumpHref, legacy)}
+          onLaunch={() =>
+            trackDiscoverLaunchScene(
+              place && travel ? legacyWatcherHref(travel.playBase, place, window.location.origin) : undefined,
+              legacy,
+            )
+          }
           onFavorite={(id, favorite) => (signer ? savePlaceFavorite(signer, id, favorite) : signInFirst())}
           onJumpIn={(from) => {
             if (!place) return;

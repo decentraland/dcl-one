@@ -221,17 +221,40 @@ describe("the legacy Discover events", () => {
     expect(legacy("Discover Jump In")).toEqual([[expect.objectContaining({ place: "jump-in-modal" }), expect.anything()]]);
   });
 
-  it("sends Discover Launch Scene with the stream the live view opens", () => {
-    props.onLaunch!();
-    expect(legacy("Discover Launch Scene")).toEqual([
-      [{ href: "/play/?position=34%2C17&realm=fixture", track_called_at: expect.any(Number), track_delivered_at: expect.any(Number), track_deferred: false }, expect.anything()],
-    ]);
-  });
+  describe("and the visitor presses Explore the scene on decentraland.org", () => {
+    beforeEach(() => vi.stubGlobal("window", { location: { origin: "https://decentraland.org" } }));
+    afterEach(() => vi.unstubAllGlobals());
+    const launched = () => legacy("Discover Launch Scene").map(([payload]) => (payload as { href?: string }).href);
 
-  it("leaves href out of Discover Launch Scene when there is no stream to open", () => {
-    props = renderRoute({ playBase: "/play/", launchError: "Travel is temporarily unavailable. Please retry." });
-    props.onLaunch!();
-    const [[payload]] = legacy("Discover Launch Scene");
-    expect(payload).not.toHaveProperty("href");
+    it("sends the legacy Bevy watcher URL for a Genesis place, as decentraland.org builds it", () => {
+      props.onLaunch!();
+      // decentraland/sites `buildBevyHref("34,17")` with production's BEVY_WEB_URL.
+      expect(launched()).toEqual(["https://decentraland.org/play/?position=34%2C17&systemScene=tortilla.dcl.eth&portables=none&guest=1&hud=0"]);
+      const url = new URL(launched()[0]!);
+      expect(Object.fromEntries(url.searchParams)).toEqual({ position: "34,17", systemScene: "tortilla.dcl.eth", portables: "none", guest: "1", hud: "0" });
+      expect(url.origin + url.pathname).toBe("https://decentraland.org/play/");
+    });
+
+    it("sends the world's name as realm for a world, whatever scene is picked", () => {
+      const world = { ...GENESIS_PLACE, id: "sample.dcl.eth", base_position: "10,4", positions: ["10,4"], world: true, world_name: "sample.dcl.eth" };
+      props = renderRoute({ playBase: "/play/", jumpHref: "/play/?realm=sample.dcl.eth&position=10%2C4" }, world, [
+        { entityId: "bafy1", title: "Plaza", base: "0,0" },
+        { entityId: "bafy2", title: "Arena", base: "10,4" },
+      ]);
+      props.onLaunch!();
+      expect(launched()).toEqual(["https://decentraland.org/play/?realm=sample.dcl.eth&systemScene=tortilla.dcl.eth&portables=none&guest=1&hud=0"]);
+    });
+
+    it("keeps an absolute play base as configured", () => {
+      props = renderRoute({ playBase: "https://decentraland.zone/play/", jumpHref: "https://decentraland.zone/play/?position=34%2C17" });
+      props.onLaunch!();
+      expect(launched()).toEqual(["https://decentraland.zone/play/?position=34%2C17&systemScene=tortilla.dcl.eth&portables=none&guest=1&hud=0"]);
+    });
+
+    it("still sends the watcher URL when travel could not be resolved, as legacy's did not depend on it", () => {
+      props = renderRoute({ playBase: "/play/", launchError: "Travel is temporarily unavailable. Please retry." });
+      props.onLaunch!();
+      expect(launched()).toEqual(["https://decentraland.org/play/?position=34%2C17&systemScene=tortilla.dcl.eth&portables=none&guest=1&hud=0"]);
+    });
   });
 });
