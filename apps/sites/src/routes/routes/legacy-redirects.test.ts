@@ -16,14 +16,24 @@ const ORIGIN = "https://decentraland.example";
 const args = (path: string, params: Record<string, string> = {}) =>
   ({ request: new Request(`${ORIGIN}${path}`), params }) as never;
 
-function handedOver(response: Response) {
+function cookieOf(response: Response) {
   const cookie = response.headers.get("Set-Cookie");
   if (!cookie) return null;
   const [pair, ...attributes] = cookie.split("; ");
   const eq = pair!.indexOf("=");
-  expect(pair!.slice(0, eq)).toBe(LEGACY_REDIRECT_COOKIE);
-  expect(attributes).toEqual(["Path=/", "Max-Age=60", "SameSite=Lax", "Secure"]);
-  return JSON.parse(decodeURIComponent(pair!.slice(eq + 1)));
+  return { name: pair!.slice(0, eq), value: pair!.slice(eq + 1), attributes };
+}
+
+/** The details a redirect hands over, in a cookie of its own scoped to the destination's path. */
+function handedOver(response: Response) {
+  const cookie = cookieOf(response);
+  if (!cookie) return null;
+  expect(cookie.name).toMatch(new RegExp(`^${LEGACY_REDIRECT_COOKIE}[0-9a-f]{16}$`));
+  const location = response.headers.get("Location")!;
+  const path = location.split("?")[0];
+  expect(cookie.attributes).toEqual([`Path=${path}`, "Max-Age=60", "SameSite=Lax", "Secure"]);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  return JSON.parse(decodeURIComponent(cookie.value));
 }
 
 describe("a What's On or Discover URL", () => {
@@ -85,12 +95,24 @@ describe("a What's On or Discover URL", () => {
     });
   });
 
+  it("gives each redirect its own cookie, so concurrent redirects never overwrite each other", () => {
+    const first = cookieOf(whatsOn(args("/whats-on?tab=live")))!;
+    const second = cookieOf(whatsOn(args("/whats-on?tab=live")))!;
+    expect(first.name).not.toBe(second.name);
+  });
+
+  it("scopes the cookie to / when the destination path holds a character a cookie attribute cannot carry", () => {
+    const response = discover(args("/discover/a;b"));
+    expect(cookieOf(response)!.attributes[0]).toBe("Path=/");
+  });
+
   it("still redirects, handing nothing over, when the details would not fit in a cookie", () => {
     const long = "a".repeat(4000);
     const response = whatsOn(args(`/whats-on?q=${long}`));
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe(`/events?q=${long}`);
     expect(response.headers.get("Set-Cookie")).toBeNull();
+    expect(response.headers.get("Cache-Control")).toBeNull();
   });
 });
 

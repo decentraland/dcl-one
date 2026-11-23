@@ -10,7 +10,7 @@ const PLACE = {
   second: "Referrer Invite Second Hero",
 } as const;
 
-/** Sends the legacy `Click` for an invite hero's call to action; without a session id, nothing. */
+/** Sends the legacy `Click` for an invite hero's call to action, in the page's scope; without a session id, nothing. */
 export function trackInviteClick(hero: InviteHero, session: LegacySession): void {
   if (!session.sid) return;
   trackLegacyClick({ place: PLACE[hero] }, session);

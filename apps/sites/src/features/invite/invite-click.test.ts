@@ -20,8 +20,9 @@ async function loadDocument(path = INVITE) {
   vi.resetModules();
   const { page } = await import("@/core/lib/telemetry/track");
   const tracked = await import("@/core/lib/telemetry/tracked-user");
+  const { createLegacyTrackScope } = await import("@/core/lib/telemetry/legacy-click");
   const { trackInviteClick } = await import("./invite-click");
-  return { page, trackInviteClick, dropTrackedUser: tracked.dropTrackedUser };
+  return { page, trackInviteClick, createLegacyTrackScope, dropTrackedUser: tracked.dropTrackedUser };
 }
 
 async function clicks(): Promise<Array<Record<string, unknown>>> {
@@ -43,10 +44,10 @@ afterEach(() => {
 
 describe("trackInviteClick", () => {
   it("sends the first hero's Click with only its place, the URL's utm_* and the audit fields", async () => {
-    const { page, trackInviteClick } = await loadDocument(`${INVITE}?utm_source=Friend%20Link&utm_campaign=Invite`);
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument(`${INVITE}?utm_source=Friend%20Link&utm_campaign=Invite`);
     page(INVITE, {}, { sid: "sid-1" });
     vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
-    trackInviteClick("first", { sid: "sid-1", userId: "0xAbC" });
+    trackInviteClick("first", { sid: "sid-1", userId: "0xAbC", scope: createLegacyTrackScope() });
     const [click] = await clicks();
     expect(click).toMatchObject({ anonymousId: "sid-1", userId: "0xabc" });
     expect(click!.properties).toEqual({
@@ -60,18 +61,18 @@ describe("trackInviteClick", () => {
   });
 
   it("names the second hero by its own place", async () => {
-    const { page, trackInviteClick } = await loadDocument();
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument();
     page(INVITE, {}, { sid: "sid-1" });
-    trackInviteClick("second", { sid: "sid-1" });
+    trackInviteClick("second", { sid: "sid-1", scope: createLegacyTrackScope() });
     const [click] = await clicks();
     expect(click!.properties).toMatchObject({ place: "Referrer Invite Second Hero" });
     expect(click).not.toHaveProperty("userId");
   });
 
   it("holds a click made before the page view and sends it deferred once the page view leaves", async () => {
-    const { page, trackInviteClick } = await loadDocument();
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument();
     const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
-    trackInviteClick("first", { sid: "sid-1" });
+    trackInviteClick("first", { sid: "sid-1", scope: createLegacyTrackScope() });
     expect(await clicks()).toEqual([]);
     now.mockReturnValue(1_700_000_000_300);
     page(INVITE, {}, { sid: "sid-1" });
@@ -84,35 +85,44 @@ describe("trackInviteClick", () => {
   });
 
   it("names no account once a sign-out has started", async () => {
-    const { page, trackInviteClick, dropTrackedUser } = await loadDocument();
+    const { page, trackInviteClick, createLegacyTrackScope, dropTrackedUser } = await loadDocument();
     page(INVITE, {}, { sid: "sid-1" });
     dropTrackedUser();
-    trackInviteClick("first", { sid: "sid-1", userId: "0xabc" });
+    trackInviteClick("first", { sid: "sid-1", userId: "0xabc", scope: createLegacyTrackScope() });
     expect((await clicks())[0]).not.toHaveProperty("userId");
   });
 
   it("never sends a bot's click", async () => {
     browser(BOT_UA);
-    const { page, trackInviteClick } = await loadDocument();
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument();
     page(INVITE, {}, { sid: "sid-1" });
-    trackInviteClick("first", { sid: "sid-1" });
+    trackInviteClick("first", { sid: "sid-1", scope: createLegacyTrackScope() });
     expect(sendBeacon).not.toHaveBeenCalled();
   });
 
   it("never sends a click in a session that started on an exempt page", async () => {
-    const { page, trackInviteClick } = await loadDocument("/referral-terms");
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument("/referral-terms");
     page("/referral-terms", {}, { sid: "sid-1" });
     window.history.replaceState(null, "", INVITE);
     page(INVITE, {}, { sid: "sid-1" });
-    trackInviteClick("first", { sid: "sid-1" });
+    trackInviteClick("first", { sid: "sid-1", scope: createLegacyTrackScope() });
     expect(sendBeacon).not.toHaveBeenCalled();
   });
 
+  it("drops a click still waiting for analytics when the page unmounts", async () => {
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument();
+    const scope = createLegacyTrackScope();
+    trackInviteClick("first", { sid: "sid-1", scope });
+    scope.close();
+    page(INVITE, {}, { sid: "sid-1" });
+    expect(await clicks()).toEqual([]);
+  });
+
   it("sends nothing without a session id", async () => {
-    const { page, trackInviteClick } = await loadDocument();
+    const { page, trackInviteClick, createLegacyTrackScope } = await loadDocument();
     page(INVITE, {}, { sid: "sid-1" });
     sendBeacon.mockClear();
-    trackInviteClick("first", { sid: "" });
+    trackInviteClick("first", { sid: "", scope: createLegacyTrackScope() });
     expect(sendBeacon).not.toHaveBeenCalled();
   });
 });

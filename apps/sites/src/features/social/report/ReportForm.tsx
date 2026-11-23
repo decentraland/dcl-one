@@ -181,6 +181,9 @@ export default function ReportForm({ trackCtx, analyticsUserId = "" }: { trackCt
   const returnTo = pathname + search + hash;
   const [params] = useSearchParams();
   const { identity, address, isConnected } = useAuth();
+  // Read when each legacy event leaves: a sign-out while the submission is pending must not name the account.
+  const legacyUserId = useRef(analyticsUserId);
+  legacyUserId.current = analyticsUserId;
   const submitReport = useMemo(() => buildSubmitReport(identity), [identity]);
 
   const playerParam = params.get("player_address") ?? "";
@@ -317,21 +320,22 @@ export default function ReportForm({ trackCtx, analyticsUserId = "" }: { trackCt
     track("report_submit_started", { reason, evidence_count: evidence.length }, trackCtx);
     // decentraland.org's own three events (`Report Player *`), with the chosen category as `reason`: sent only
     // when its analytics had loaded by the press, as its `isInitialized` check did, and never queued.
-    const user = analyticsUserId && !trackedUserDropped() ? analyticsUserId : undefined;
-    const legacyCtx: TrackContext | null = legacyAnalyticsReady()
-      ? { sid: trackCtx.sid, ...(user ? { userId: user } : {}), legacy: true }
-      : null;
-    if (legacyCtx) track("Report Player Submit Started", { reason }, legacyCtx);
+    const legacyReady = legacyAnalyticsReady();
+    const legacyCtx = (): TrackContext => {
+      const user = legacyUserId.current && !trackedUserDropped() ? legacyUserId.current : undefined;
+      return { sid: trackCtx.sid, ...(user ? { userId: user } : {}), legacy: true };
+    };
+    if (legacyReady) track("Report Player Submit Started", { reason }, legacyCtx());
     try {
       const result = await submitReport({
         draft,
       });
       track("report_completed", { reason, report_id: result.reportId, evidence_count: evidence.length }, trackCtx);
-      if (legacyCtx) track("Report Player Submitted", { reason }, legacyCtx);
+      if (legacyReady) track("Report Player Submitted", { reason }, legacyCtx());
       navigate("/report/success", { state: { submitted: true } });
     } catch (err) {
       track("report_failed", { reason: err instanceof ReportSubmitError ? err.step : "request" }, trackCtx);
-      if (legacyCtx) track("Report Player Submit Failed", { reason }, legacyCtx);
+      if (legacyReady) track("Report Player Submit Failed", { reason }, legacyCtx());
       setFailure(err instanceof ReportSubmitError && SHOWN_STEPS.includes(err.step) ? err.message : SUBMIT_FAILED);
     } finally {
       busy.current = false;

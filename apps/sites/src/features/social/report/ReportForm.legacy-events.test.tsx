@@ -131,6 +131,35 @@ describe("when a valid report is submitted", () => {
     ]);
   });
 
+  it("leaves the account out of the outcome when the visitor signs out while the submission is pending", async () => {
+    let finish!: (value: { reportId: string; evidenceKeys: string[] }) => void;
+    submit.fn.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    openForm("0xabc");
+    await fillValidReport();
+    await user.click(screen.getByRole("button", { name: "Submit Report" }));
+    await waitFor(() => expect(legacyEvents()).toHaveLength(1));
+    dropTrackedUser();
+    finish({ reportId: "r-1", evidenceKeys: [] });
+    await screen.findByText("Report sent");
+    expect(legacyEvents()).toEqual([
+      ["Report Player Submit Started", { reason: "harassment" }, { sid: "sid-1", userId: "0xabc", legacy: true }],
+      ["Report Player Submitted", { reason: "harassment" }, { sid: "sid-1", legacy: true }],
+    ]);
+  });
+
+  it("leaves the account out of a failure reported after a sign-out", async () => {
+    let fail!: (error: unknown) => void;
+    submit.fn.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    openForm("0xabc");
+    await fillValidReport();
+    await user.click(screen.getByRole("button", { name: "Submit Report" }));
+    await waitFor(() => expect(legacyEvents()).toHaveLength(1));
+    dropTrackedUser();
+    fail(new ReportSubmitError("upload", "Upload failed"));
+    await waitFor(() => expect(legacyEvents()).toHaveLength(2));
+    expect(legacyEvents()[1]).toEqual(["Report Player Submit Failed", { reason: "harassment" }, { sid: "sid-1", legacy: true }]);
+  });
+
   it("sends none of them when the document's analytics was not ready at the press, as isInitialized gated them", async () => {
     ready = false;
     submit.fn.mockResolvedValue({ reportId: "r-1", evidenceKeys: [] });
