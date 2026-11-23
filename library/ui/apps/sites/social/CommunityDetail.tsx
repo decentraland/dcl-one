@@ -10,14 +10,24 @@ import {
 } from '../../../foundations/icons'
 
 import { useBrokenImage } from '../useBrokenImage'
-import styles from './CommunityPage.module.css'
+import styles from './CommunityDetail.module.css'
 
 /** The page's brand gradient and column, under the Sites top bar. */
-export function CommunityFrame({ children }: { children: ReactNode }) {
+export function CommunityFrame({
+  dialog,
+  children
+}: {
+  /** An open dialog: outside the page's stacking context, so it covers the site header. */
+  dialog?: ReactNode
+  children: ReactNode
+}) {
   return (
-    <div className={styles.root}>
-      <div className={styles.content}>{children}</div>
-    </div>
+    <>
+      <div className={styles.root}>
+        <div className={styles.content}>{children}</div>
+      </div>
+      {dialog}
+    </>
   )
 }
 

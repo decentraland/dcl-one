@@ -1,8 +1,9 @@
 import "@dcl/one-ui/foundations/foundations.css";
 import { HydrationBoundary } from "@tanstack/react-query";
 import { useState } from "react";
-import { isRouteErrorResponse, useParams } from "react-router";
+import { isRouteErrorResponse, useParams, type ShouldRevalidateFunctionArgs } from "react-router";
 
+import { EventsLocaleProvider } from "@/features/events/locale";
 import { communityHref } from "@/features/social/community/view";
 import { CommunityErrorPage } from "@/pages/social/CommunityErrorPage";
 import { CommunityPage } from "@/pages/social/CommunityPage";
@@ -17,6 +18,14 @@ export const loader = ({ request, context, params }: Route.LoaderArgs) => commun
 /** Client navigations fetch through the browser client; only the first document carries server data. */
 export async function clientLoader() {
   return null;
+}
+
+/**
+ * Opening or closing an event's detail (`?event=`) changes only the query. Revalidating would swap the
+ * first document's data for the client loader's nothing, and with it the page's title and card.
+ */
+export function shouldRevalidate({ currentUrl, nextUrl, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
+  return currentUrl.pathname === nextUrl.pathname ? false : defaultShouldRevalidate;
 }
 
 /**
@@ -50,11 +59,14 @@ export function ErrorBoundary() {
 
 export default function CommunityDetailRoute({ loaderData }: Route.ComponentProps) {
   const params = useParams();
-  // After a client navigation there is no loader clock; the browser's stands in for it.
-  const [now] = useState(() => loaderData?.now ?? Date.now());
+  // After a client navigation there is no loader clock, nor session; the browser's clock stands in.
+  const [first] = useState(() => ({ now: loaderData?.now ?? Date.now(), sid: loaderData?.sid ?? "" }));
   return (
     <HydrationBoundary state={loaderData?.dehydratedState}>
-      <CommunityPage key={params.id} id={params.id ?? ""} now={now} />
+      {/* An event's detail follows the visitor's language, as on the events page. */}
+      <EventsLocaleProvider>
+        <CommunityPage key={params.id} id={params.id ?? ""} now={first.now} sid={first.sid} />
+      </EventsLocaleProvider>
     </HydrationBoundary>
   );
 }

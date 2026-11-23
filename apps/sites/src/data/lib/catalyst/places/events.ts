@@ -57,6 +57,8 @@ export type Event = {
   rejected?: boolean;
   deleted_by_user?: boolean;
   deleted_by_admin?: boolean;
+  /** The community hosting the event, if any. */
+  community_id?: string | null;
 };
 
 export type EventCategory = {
