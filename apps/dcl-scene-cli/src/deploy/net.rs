@@ -69,6 +69,21 @@ pub(crate) fn refusal(u: UserError, body: &str) -> anyhow::Error {
     }
 }
 
+/// A fresh, owner-only staging folder per upload: two uploads of one entity id
+/// (same content and timestamp) must not share or delete each other's files.
+/// Dropping it removes it, so a cancelled upload leaves nothing behind.
+fn upload_dir(tmp: &Path, kind: &str, entity_id: &str) -> std::io::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(&format!("dcl-scene-cli-{kind}-{entity_id}-"))
+        .tempdir_in(tmp)
+}
+
+/// The program that carries an upload and the folder its staging goes in.
+struct Carrier<'a> {
+    program: &'a Path,
+    tmp: &'a Path,
+}
+
 fn stage_entity(dir: &Path, entity_id: &str, entity_bytes: &[u8]) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join(entity_id), entity_bytes)
@@ -391,9 +406,39 @@ async fn node_upload(
     progress: &UploadProgress,
 ) -> Option<Result<(u16, String)>> {
     let node = crate::build::find_node()?;
-    let dir = std::env::temp_dir().join(format!("dcl-scene-cli-nodeup-{entity_id}"));
+    let carrier = Carrier {
+        program: &node,
+        tmp: &std::env::temp_dir(),
+    };
+    Some(
+        node_upload_with(
+            carrier,
+            url,
+            entity_id,
+            entity_bytes,
+            files,
+            auth_chain,
+            progress,
+        )
+        .await,
+    )
+}
+
+async fn node_upload_with(
+    carrier: Carrier<'_>,
+    url: &str,
+    entity_id: &str,
+    entity_bytes: &[u8],
+    files: &Files,
+    auth_chain: &Value,
+    progress: &UploadProgress,
+) -> Result<(u16, String)> {
+    let Ok(staging) = upload_dir(carrier.tmp, "nodeup", entity_id) else {
+        anyhow::bail!("could not stage the upload");
+    };
+    let dir = staging.path();
     let stage = || -> std::io::Result<()> {
-        stage_entity(&dir, entity_id, entity_bytes)?;
+        stage_entity(dir, entity_id, entity_bytes)?;
         for (_, hash, bytes) in files {
             std::fs::write(dir.join(hash), bytes)?;
         }
@@ -408,10 +453,9 @@ async fn node_upload(
         std::fs::write(dir.join("up.mjs"), NODE_UPLOAD_MJS)
     };
     if stage().is_err() {
-        let _ = std::fs::remove_dir_all(&dir);
-        return Some(Err(anyhow::anyhow!("could not stage the upload")));
+        anyhow::bail!("could not stage the upload");
     }
-    let child = tokio::process::Command::new(&node)
+    let child = tokio::process::Command::new(carrier.program)
         .arg(dir.join("up.mjs"))
         .arg(dir.join("cfg.json"))
         .stdin(std::process::Stdio::null())
@@ -421,10 +465,7 @@ async fn node_upload(
         .spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Some(Err(anyhow::anyhow!("node could not run: {e}")));
-        }
+        Err(e) => anyhow::bail!("node could not run: {e}"),
     };
     progress.carrier("node");
     let reporter = {
@@ -448,14 +489,13 @@ async fn node_upload(
     };
     let out = child.wait_with_output().await;
     let _ = reporter.await;
-    let _ = std::fs::remove_dir_all(&dir);
     let o = match out {
         Ok(o) => o,
-        Err(e) => return Some(Err(anyhow::anyhow!("node could not run: {e}"))),
+        Err(e) => anyhow::bail!("node could not run: {e}"),
     };
     let stdout = String::from_utf8_lossy(&o.stdout);
     let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else {
-        return Some(Ok((0, String::new())));
+        return Ok((0, String::new()));
     };
     let code = v.get("status").and_then(Value::as_u64).unwrap_or(0) as u16;
     let body = v
@@ -463,7 +503,7 @@ async fn node_upload(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    Some(Ok((code, body)))
+    Ok((code, body))
 }
 
 /// Node 18+ has global `fetch`/`FormData`/`Blob`; prints one JSON line with
@@ -569,8 +609,36 @@ async fn curl_upload(
     auth_chain: &Value,
     progress: &UploadProgress,
 ) -> Option<Result<(u16, String)>> {
-    let dir = std::env::temp_dir().join(format!("dcl-scene-cli-upload-{entity_id}"));
-    if stage_entity(&dir, entity_id, entity_bytes).is_err() {
+    let carrier = Carrier {
+        program: Path::new("curl"),
+        tmp: &std::env::temp_dir(),
+    };
+    curl_upload_with(
+        carrier,
+        url,
+        entity_id,
+        entity_bytes,
+        files,
+        auth_chain,
+        progress,
+    )
+    .await
+}
+
+async fn curl_upload_with(
+    carrier: Carrier<'_>,
+    url: &str,
+    entity_id: &str,
+    entity_bytes: &[u8],
+    files: &Files,
+    auth_chain: &Value,
+    progress: &UploadProgress,
+) -> Option<Result<(u16, String)>> {
+    let Ok(staging) = upload_dir(carrier.tmp, "upload", entity_id) else {
+        return Some(Err(anyhow::anyhow!("could not stage the upload")));
+    };
+    let dir = staging.path();
+    if stage_entity(dir, entity_id, entity_bytes).is_err() {
         return Some(Err(anyhow::anyhow!("could not stage the upload")));
     }
     let part = |name: &str, mime: &str| {
@@ -579,7 +647,7 @@ async fn curl_upload(
             dir.join(name).display()
         )
     };
-    let mut cmd = tokio::process::Command::new("curl");
+    let mut cmd = tokio::process::Command::new(carrier.program);
     cmd.kill_on_drop(true);
     cmd.args([
         "-sS",
@@ -603,7 +671,6 @@ async fn curl_upload(
     cmd.arg("-F").arg(part(entity_id, "application/json"));
     for (_, hash, bytes) in files {
         if std::fs::write(dir.join(hash), bytes).is_err() {
-            let _ = std::fs::remove_dir_all(&dir);
             return Some(Err(anyhow::anyhow!("could not stage a payload file")));
         }
         cmd.arg("-F").arg(part(hash, "application/octet-stream"));
@@ -611,7 +678,6 @@ async fn curl_upload(
     cmd.arg(url);
     progress.carrier("curl");
     let out = cmd.output().await;
-    let _ = std::fs::remove_dir_all(&dir);
     match out {
         Ok(o) => {
             let combined = String::from_utf8_lossy(&o.stdout);
@@ -2567,5 +2633,226 @@ mod tests {
         assert_eq!(body_when_ok(Some(200), Some("x")).as_deref(), Some("x"));
         assert_eq!(body_when_ok(Some(403), Some("x")), None);
         assert_eq!(body_when_ok(None, Some("x")), None);
+    }
+
+    /// Each upload stages in its own folder, which is gone once the upload
+    /// returns, fails, or is dropped mid-flight (the carrier is killed too).
+    #[cfg(unix)]
+    mod upload_staging {
+        use super::*;
+        use std::path::PathBuf;
+
+        struct Fixture {
+            _root: tempfile::TempDir,
+            bin: PathBuf,
+            tmp: PathBuf,
+            started: PathBuf,
+        }
+
+        impl Fixture {
+            fn new() -> Self {
+                let root = tempfile::tempdir().unwrap();
+                let bin = root.path().join("bin");
+                let tmp = root.path().join("tmp");
+                std::fs::create_dir_all(&bin).unwrap();
+                std::fs::create_dir_all(&tmp).unwrap();
+                let started = root.path().join("started");
+                Fixture {
+                    _root: root,
+                    bin,
+                    tmp,
+                    started,
+                }
+            }
+
+            /// A shell script standing in for node or curl. A child writes it, so no
+            /// write handle of this process leaks into a concurrent test's fork (ETXTBSY).
+            fn program(&self, name: &str, script: &str) -> PathBuf {
+                let path = self.bin.join(name);
+                let written = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(r#"printf '#!/bin/sh\n%s\n' "$1" > "$2" && chmod 755 "$2""#)
+                    .arg("sh")
+                    .arg(script)
+                    .arg(&path)
+                    .status()
+                    .unwrap();
+                assert!(written.success());
+                path
+            }
+
+            /// Marks itself started, then hangs until killed.
+            fn hanging(&self, name: &str) -> PathBuf {
+                self.program(
+                    name,
+                    &format!("touch '{}'\nexec sleep 30", self.started.display()),
+                )
+            }
+
+            fn staged(&self) -> Vec<PathBuf> {
+                std::fs::read_dir(&self.tmp)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .collect()
+            }
+
+            fn carrier<'a>(&'a self, program: &'a Path) -> Carrier<'a> {
+                Carrier {
+                    program,
+                    tmp: &self.tmp,
+                }
+            }
+        }
+
+        fn files() -> Vec<(String, String, Vec<u8>)> {
+            vec![("a.png".into(), "bafyfile".into(), vec![1, 2, 3])]
+        }
+
+        fn chain() -> Value {
+            json!([{ "type": "SIGNER", "payload": "0x0", "signature": "" }])
+        }
+
+        /// Polls the upload until its carrier has started, then drops it.
+        async fn drop_mid_flight<F: std::future::Future>(fx: &Fixture, fut: F) {
+            let mut fut = Box::pin(fut);
+            let started = tokio::time::timeout(Duration::from_secs(20), async {
+                loop {
+                    tokio::select! {
+                        _ = &mut fut => panic!("the hanging upload finished"),
+                        _ = tokio::time::sleep(Duration::from_millis(20)) => {
+                            if fx.started.exists() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+            .await;
+            assert!(started.is_ok(), "the carrier never started");
+            assert_eq!(fx.staged().len(), 1, "the upload stages while in flight");
+            drop(fut);
+        }
+
+        #[tokio::test]
+        async fn node_staging_is_removed_after_an_upload() {
+            let fx = Fixture::new();
+            let node = fx.program("node", r#"printf '{"status":200,"body":"ok"}'"#);
+            let out = node_upload_with(
+                fx.carrier(&node),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files(),
+                &chain(),
+                &UploadProgress::default(),
+            )
+            .await;
+            assert_eq!(out.unwrap(), (200, "ok".to_string()));
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+        }
+
+        #[tokio::test]
+        async fn node_staging_is_removed_when_the_upload_fails() {
+            let fx = Fixture::new();
+            let missing = fx.bin.join("no-node");
+            let out = node_upload_with(
+                fx.carrier(&missing),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files(),
+                &chain(),
+                &UploadProgress::default(),
+            )
+            .await;
+            assert!(out.is_err());
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+
+            let failing = fx.program("node", "exit 1");
+            let out = node_upload_with(
+                fx.carrier(&failing),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files(),
+                &chain(),
+                &UploadProgress::default(),
+            )
+            .await;
+            assert_eq!(out.unwrap(), (0, String::new()));
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+        }
+
+        #[tokio::test]
+        async fn node_staging_is_removed_when_the_upload_is_dropped() {
+            let fx = Fixture::new();
+            let node = fx.hanging("node");
+            let (files, chain, progress) = (files(), chain(), UploadProgress::default());
+            let upload = node_upload_with(
+                fx.carrier(&node),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files,
+                &chain,
+                &progress,
+            );
+            drop_mid_flight(&fx, upload).await;
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+        }
+
+        #[tokio::test]
+        async fn curl_staging_is_removed_after_an_upload() {
+            let fx = Fixture::new();
+            let curl = fx.program("curl", r#"printf 'ok\n200'"#);
+            let out = curl_upload_with(
+                fx.carrier(&curl),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files(),
+                &chain(),
+                &UploadProgress::default(),
+            )
+            .await;
+            assert_eq!(out.unwrap().unwrap(), (200, "ok".to_string()));
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+        }
+
+        #[tokio::test]
+        async fn curl_staging_is_removed_when_curl_is_absent() {
+            let fx = Fixture::new();
+            let missing = fx.bin.join("no-curl");
+            let out = curl_upload_with(
+                fx.carrier(&missing),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files(),
+                &chain(),
+                &UploadProgress::default(),
+            )
+            .await;
+            assert!(out.is_none(), "an absent curl falls through");
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+        }
+
+        #[tokio::test]
+        async fn curl_staging_is_removed_when_the_upload_is_dropped() {
+            let fx = Fixture::new();
+            let curl = fx.hanging("curl");
+            let (files, chain, progress) = (files(), chain(), UploadProgress::default());
+            let upload = curl_upload_with(
+                fx.carrier(&curl),
+                "http://127.0.0.1:9/entities",
+                "bafyentity",
+                b"{}",
+                &files,
+                &chain,
+                &progress,
+            );
+            drop_mid_flight(&fx, upload).await;
+            assert!(fx.staged().is_empty(), "{:?}", fx.staged());
+        }
     }
 }

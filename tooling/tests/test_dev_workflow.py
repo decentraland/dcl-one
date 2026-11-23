@@ -146,6 +146,68 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
 
+    def test_a_linux_job_beside_the_shards_runs_the_scene_cli_crates_that_catalyst_test_leaves_out(self):
+        found = jobs()
+        rust, scene = found['rust'], found['scene_cli']
+        # Its own job, so it does not lengthen a Rust shard; Linux only, on the Rust job's condition.
+        self.assertNotIn('scene-cli-test', rust)
+        self.assertNotIn('setup-node', rust)
+        self.assertIn('    needs: changes\n', scene)
+        condition = lambda body: re.search(r'(?m)^    if: (.*)$', body).group(1)
+        self.assertEqual(condition(scene), condition(rust))
+        self.assertIn("    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}\n", scene)
+        self.assertNotIn('matrix', scene)
+        step = lambda name: re.search(rf'(?ms)^      - name: {name}\n(.*?)(?=^      - |^      # |\Z)', scene).group(1)
+        node, tests = step('Set up Node for the scene CLI tests'), step('Run the scene CLI tests')
+        self.assertRegex(node, r'uses: actions/setup-node@[0-9a-f]{40} # v')
+        self.assertLess(scene.index('setup-node@'), scene.index('make scene-cli-test'))
+        # The Rust job's dependency cache, read only: its shard 1 saves the entry. The key hashes the
+        # CARGO_* and RUST* variables, so the job and the step set the ones the Rust job sets.
+        cache = step('Restore the Rust dependency cache')
+        rust_cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
+        for line in ('        id: deps\n', 'workspaces: services/catalyst\n', "shared-key: dev-tests-${{ hashFiles('flake.lock') }}\n",
+                     'RUSTUP_HOME: /dev/null\n'):
+            self.assertIn(line, cache)
+            self.assertIn(line, rust_cache)
+        self.assertIn('save-if: false\n', cache)
+        for line in ("      CARGO_PROFILE_DEV_DEBUG: '0'\n", "      CARGO_INCREMENTAL: '0'\n"):
+            self.assertIn(line, scene)
+            self.assertIn(line, rust)
+        self.assertLess(scene.index('Put the Nix Rust toolchain on PATH'), scene.index('Swatinem/rust-cache@'))
+        self.assertIn('id: deps-restored', scene)
+        self.assertIn('save: false\n', re.search(r'(?ms)cache-nix-action@.*?(?=^      - )', scene).group(0))
+        # The compiler cache as in the Rust job: its own server, statistics after the tests, and the
+        # tests' exit status kept past them.
+        self.assertRegex(scene, r'uses: Mozilla-Actions/sccache-action@[0-9a-f]{40} # v')
+        self.assertIn("USE_COMPILER_CACHE: ${{ steps.deps-restored.outputs.restored == 'true' && steps.compiler-cache.outcome == 'success' }}", tests)
+        self.assertIn('if [ "$USE_COMPILER_CACHE" = true ] && sccache --start-server; then\n            export RUSTC_WRAPPER=sccache\n', tests)
+        self.assertIn('          nix develop .#ci --command make scene-cli-test || status=$?\n'
+                      '          [ -z "${RUSTC_WRAPPER:-}" ] || sccache --show-stats || true\n'
+                      '          exit "$status"\n', tests)
+        self.assertNotRegex(scene, r'(?m)^ +RUSTC_WRAPPER: ')
+        # Every crate NODE_CRATES excludes is one make scene-cli-test runs, and nothing more.
+        makefile = (WORKFLOW.parents[2] / 'Makefile').read_text()
+        node_crates = re.search(r'(?m)^NODE_CRATES = (.*)$', makefile).group(1)
+        scene_crates = re.search(r'(?m)^SCENE_CLI_CRATES = (.*)$', makefile).group(1)
+        self.assertEqual(re.findall(r'--exclude (\S+)', node_crates), re.findall(r'-p (\S+)', scene_crates))
+        self.assertIn('\tcd services/catalyst && cargo test --locked $(SCENE_CLI_CRATES)\n', makefile)
+        # A scene CLI change is a path the workflow watches, so the PR plan can select the job.
+        self.assertIn("      - 'apps/dcl-scene-cli/**'\n", WORKFLOW.read_text().split('  pull_request:', 1)[0])
+
+    def test_the_ci_gate_requires_every_other_job(self):
+        found = jobs()
+        gate = found.pop('gate')
+        needs = re.search(r'(?m)^    needs: \[(.*)\]$', gate).group(1).replace(' ', '').split(',')
+        self.assertEqual(sorted(needs), sorted(found))
+        self.assertIn('    if: ${{ always() }}\n', gate)
+        loop = re.search(r'(?m)^          for result in (.*); do$', gate).group(1).split()
+        self.assertEqual(len(loop), len(needs))
+        for job in needs:
+            variable = job.upper()
+            self.assertIn(f'          {variable}: ${{{{ needs.{job}.result }}}}\n', gate)
+            self.assertIn(f'"${variable}"', loop)
+        self.assertIn('              success|skipped) ;;\n', gate)
+
     def test_header_geometry_control_requires_the_original_missing_port_evidence(self):
         web = jobs()['web']
         original = re.search(r'(?ms)^      - name: Run Sites unit tests\n(.*?)(?=^      - |\Z)', web).group(1)
@@ -267,21 +329,25 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         continue
                     installs += 1
                     snapshot, roots = steps[i + 1], steps[i + 2]
-                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    shell = 'ci' if any(s in job for s in ('dev-test.sh rust', 'make scene-cli-test', 'social-voice-release-test.sh')) else 'default'
                     key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
                     self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
                     self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
-                    # One Rust test shard saves; the other jobs save from every main run.
-                    self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1'"
-                                  + (' && matrix.shard == 1 }}' if 'shard: [' in job else ' }}'), snapshot)
+                    # One Rust test shard saves, and the scene CLI job reads that entry; the other jobs
+                    # save from every main run.
+                    if 'make scene-cli-test' in job:
+                        self.assertIn('save: false\n', snapshot)
+                    else:
+                        self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1'"
+                                      + (' && matrix.shard == 1 }}' if 'shard: [' in job else ' }}'), snapshot)
                     self.assertIn('gc-max-store-size: 0', snapshot)
                     self.assertIn('mkdir -p .cache/nix-roots\n', roots)
                     self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 5)
+        self.assertEqual(installs, 6)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):

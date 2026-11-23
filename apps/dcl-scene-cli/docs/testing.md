@@ -5,6 +5,9 @@ ignorable: `golden` and `scene_editor` fail without it). Other dependencies use
 `#[ignore = "needs <VAR>: <why>; see docs/testing.md"]`; `tests/testgate_contract.rs` rejects a bare
 `#[ignore]` and gating variables missing from this page.
 
+CI runs the ungated tests on Linux: `make scene-cli-test` in the Development workflow's Scene CLI
+tests job (`docs/development.md`). macOS is not covered there.
+
 ## Gated tests
 
 ```

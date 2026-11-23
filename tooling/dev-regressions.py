@@ -12,6 +12,7 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
+# The excluded crates are the Makefile's SCENE_CLI_CRATES, which the Scene CLI tests job runs (make scene-cli-test).
 SELECTION = "--workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol --features catalyst/test-support"
 BROAD = "tooling/catalyst-test.sh " + SELECTION
 VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib"

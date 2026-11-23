@@ -1,5 +1,7 @@
-.PHONY: check figma-key-guard owners bevy-web bevy-headless bevy-avatar-render catalyst-build catalyst-test sites-install sites-build
+.PHONY: check figma-key-guard owners bevy-web bevy-headless bevy-avatar-render catalyst-build catalyst-test scene-cli-test sites-install sites-build
 
+# The scene toolchain crates NODE_CRATES leaves out: make scene-cli-test runs them (node on PATH, no dev stack).
+SCENE_CLI_CRATES = -p dcl-scene-cli -p dcl-scene-authoring -p dcl-scene-build -p dcl-preview-tunnel -p dcl-preview-tunnel-protocol
 NODE_CRATES = --workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol --features catalyst/test-support
 
 check:
@@ -29,6 +31,9 @@ catalyst-build:
 
 catalyst-test:
 	tooling/catalyst-test.sh $(NODE_CRATES)
+
+scene-cli-test:
+	cd services/catalyst && cargo test --locked $(SCENE_CLI_CRATES)
 
 sites-install:
 	pnpm --dir apps/ui3 install --frozen-lockfile

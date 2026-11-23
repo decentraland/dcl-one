@@ -35,7 +35,7 @@ class DevCiTest(unittest.TestCase):
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
-                        ['schemas/50_create.sql']):
+                        ['schemas/50_create.sql'], ['apps/dcl-scene-cli/src/main.rs']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
@@ -166,7 +166,7 @@ class DevCiTest(unittest.TestCase):
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[2])
 
-    def test_the_gate_always_reports_and_requires_rust_smoke_tooling_and_web(self):
+    def test_the_gate_always_reports_and_requires_rust_scene_cli_smoke_tooling_and_web(self):
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         on = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
         pull_request = on.split('  pull_request:', 1)[1]
@@ -174,16 +174,17 @@ class DevCiTest(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         gate = workflow.split('\n  gate:\n', 1)[1]
         self.assertIn('name: CI gate', gate)
-        self.assertIn('needs: [changes, rust, smoke, tooling, web]', gate)
-        self.assertIn('for result in "$CHANGES" "$RUST" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
+        self.assertIn('needs: [changes, rust, scene_cli, smoke, tooling, web]', gate)
+        self.assertIn('for result in "$CHANGES" "$RUST" "$SCENE_CLI" "$SMOKE" "$TOOLING" "$WEB"; do', gate)
         self.assertIn('if: ${{ always() }}', gate)
         self.assertIn('success|skipped)', gate)
-        for job in ('rust', 'smoke', 'tooling', 'web'):
+        for job in ('rust', 'scene_cli', 'smoke', 'tooling', 'web'):
             body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
             with self.subTest(job=job):
                 self.assertIn("needs.changes.outputs.run != 'false'", body)
-                # Only the Rust job reads the Rust answer: the others run on every watched change.
-                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0], job == 'rust')
+                # Only the Rust and scene CLI jobs read the Rust answer: the others run on every watched change.
+                self.assertEqual("needs.changes.outputs.rust != 'false'" in body.split('\n    steps:', 1)[0],
+                                 job in ('rust', 'scene_cli'))
         self.assertIn('      rust: ${{ steps.plan.outputs.rust }}\n', workflow)
 
     def rust(self, *changed):
@@ -216,7 +217,8 @@ class DevCiTest(unittest.TestCase):
                      'services/catalyst/tests/fixtures/a.json', 'services/catalyst/rust-toolchain.toml',
                      'schemas/storage.sql', 'library/vendor/rusty_enet/src/lib.rs', 'library/dcl-http/src/lib.rs',
                      'library/catalyst-api/openapi/a.json', 'library/protocol/proto/a.proto',
-                     'apps/dcl-scene-cli/Cargo.toml', '.cargo/config.toml', 'flake.nix', 'flake.lock', 'Makefile',
+                     'apps/dcl-scene-cli/Cargo.toml', 'apps/dcl-scene-cli/src/main.rs',
+                     'apps/dcl-scene-cli/tests/golden.rs', '.cargo/config.toml', 'flake.nix', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'infra/packages/tools.nix', 'tooling/dev.py', 'tooling/dev-test.sh',
                      'tooling/dev-regressions.json', 'tooling/catalyst-test.sh', 'tooling/ci_paths.py',
                      'tooling/tests/test_dev_regressions.py', '.github/workflows/development.yml'):

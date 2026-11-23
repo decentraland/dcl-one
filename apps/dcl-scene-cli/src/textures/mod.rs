@@ -225,9 +225,12 @@ fn try_lock_stage(root: &Path) -> std::io::Result<Option<std::fs::File>> {
     }
 }
 
+/// The key of each model input an overlay run read, by relative path.
+type ModelInputs = Arc<HashMap<String, FileKey>>;
+
 /// The overlay the preview applies, when the project enables it, with the
 /// inputs of the models it rewrote.
-fn overlay(root: &Path) -> Option<(Arc<Overlay>, Arc<HashMap<String, FileKey>>)> {
+fn overlay(root: &Path) -> Option<(Arc<Overlay>, ModelInputs)> {
     let reg = registry();
     let entry = reg.get(root)?;
     let overlay = entry.overlay.clone().filter(|_| entry.enabled)?;
@@ -799,7 +802,8 @@ fn scan_model(
     rel: &str,
     read: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> std::result::Result<(Arc<ModelScan>, FileKey), String> {
-    static SCANS: OnceLock<Mutex<HashMap<PathBuf, (FileKey, Arc<ModelScan>)>>> = OnceLock::new();
+    type Scans = Mutex<HashMap<PathBuf, (FileKey, Arc<ModelScan>)>>;
+    static SCANS: OnceLock<Scans> = OnceLock::new();
     let scans = SCANS.get_or_init(Default::default);
     let key = file_key(path).ok_or_else(|| "model not readable".to_string())?;
     if let Some((had, scan)) = scans
@@ -1054,7 +1058,8 @@ fn stage_model(
     replacements: &BTreeMap<usize, String>,
 ) -> Result<(PathBuf, u64, bool)> {
     type RewriteKey = (PathBuf, FileKey, BTreeMap<usize, String>);
-    static REWRITES: OnceLock<Mutex<HashMap<RewriteKey, (PathBuf, u64, bool)>>> = OnceLock::new();
+    type Rewrites = Mutex<HashMap<RewriteKey, (PathBuf, u64, bool)>>;
+    static REWRITES: OnceLock<Rewrites> = OnceLock::new();
     let rewrites = REWRITES.get_or_init(Default::default);
     let memo_key = (path.to_path_buf(), key, replacements.clone());
     if let Some(hit) = rewrites
