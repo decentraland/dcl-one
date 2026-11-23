@@ -1163,6 +1163,11 @@ async fn reject_and_disconnect_delete_through_voice_owner_before_signalling() {
 
 async fn seed_community(pool: &PgPool, active: bool, address: &str, role: &str) -> Uuid {
     let id = Uuid::new_v4();
+    seed_community_with_id(pool, id, active, address, role).await;
+    id
+}
+
+async fn seed_community_with_id(pool: &PgPool, id: Uuid, active: bool, address: &str, role: &str) {
     sqlx::query(
         "INSERT INTO social.communities (id, name, description, owner_address, private, active, unlisted) \
          VALUES ($1, 'Voice Soft Delete Community', 'description', $2, FALSE, $3, FALSE)",
@@ -1180,7 +1185,6 @@ async fn seed_community(pool: &PgPool, active: bool, address: &str, role: &str) 
         .execute(pool)
         .await
         .unwrap();
-    id
 }
 
 async fn drop_community(pool: &PgPool, id: Uuid) {

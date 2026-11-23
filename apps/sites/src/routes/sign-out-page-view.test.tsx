@@ -26,7 +26,7 @@ import { shouldRevalidate } from "./root";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { setIdentity } from "@/data/lib/auth/session";
-import { sessionChangeApplied, sessionChangePending, useSessionChangeRevalidation } from "@/data/lib/auth/session-change";
+import { resetSessionChangeForTests, useSessionChangeRevalidation } from "@/data/lib/auth/session-change";
 
 // The production order: `disconnect()` is not awaited before the visitor navigates, so a page view can
 // go out while `POST /auth/callback` has not answered yet.
@@ -72,7 +72,7 @@ describe("page views around a sign-out", () => {
   beforeEach(() => {
     page.mockReset();
     restoreTrackedUser();
-    if (sessionChangePending()) sessionChangeApplied();
+    resetSessionChangeForTests();
     cookies = `sid=visitor-sid; dcl_wallet_verified=${WALLET}`;
     answer = null;
     fail = null;

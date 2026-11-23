@@ -12,6 +12,7 @@ const list = (over: Partial<BlogListData>): BlogListData => ({
   title: "The Decentraland Blog",
   subtitle: "",
   activeCategory: "",
+  authorSlug: null,
   query: "",
   posts: [],
   total: 0,
@@ -55,7 +56,7 @@ describe("blog page views", () => {
   });
 
   it("names an author's page 'Posts by {author}' with the author and slug", () => {
-    expect(blogListPageView(list({ kind: "author", viewKey: "author:jane-doe", title: "Jane Doe", activeCategory: null }))).toEqual({
+    expect(blogListPageView(list({ kind: "author", viewKey: "author:jane-doe", title: "Jane Doe", activeCategory: null, authorSlug: "jane-doe" }))).toEqual({
       name: "Posts by Jane Doe",
       properties: { title: "Posts by Jane Doe", author: "Jane Doe", authorSlug: "jane-doe" },
     });

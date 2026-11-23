@@ -55,11 +55,7 @@ Some parts of the platform display a reduced square version of the thumbnail, cr
 
 ![Scene thumbnail safe area: the full 1920x1080 image, with the central 1080x1080 square marked as the safe area and the left and right bands marked as cropped](/docs/creator/images/scene-thumbnail-safe-area.webp)
 
-The image on `navmapThumbnail` should be a path to an image file in the project folder. It can also be a URL link to an image hosted elsewhere.
-
-
-> [!WARNING]
-> **📔 Note**: If you host an image elsewhere, make sure this is in a site that has permissive CORS policies for displaying content on other sites.
+The image on `navmapThumbnail` must be a relative path to an image file in the project folder, and that file is uploaded with the scene. URLs to images hosted elsewhere are not accepted.
 
 
 

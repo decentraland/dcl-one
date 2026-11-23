@@ -1,11 +1,15 @@
 .canvas {
   display: grid;
+  /* One track the width of the viewport: a grid item's automatic minimum is its content's width, which would let an
+     example's own scroller or wrapping row widen the page instead of fitting it, as it fits in an app. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--dcl-space-32);
   padding: var(--dcl-space-24) var(--dcl-space-16);
 }
 
 .example {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--dcl-space-8);
 }
 

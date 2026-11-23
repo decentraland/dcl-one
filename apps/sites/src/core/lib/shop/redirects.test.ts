@@ -173,6 +173,22 @@ describe("the classic Marketplace's paths (decentraland.org/marketplace)", () =>
     expect(mk("/marketplace/sign-in?redirectTo=https%3A%2F%2Fevil.example").path).toBe("/shop/my-items");
   });
 
+  it.each([
+    ["a tab", "%2F%09%2Fevil.example%2Fshop"],
+    ["a newline", "%2F%0A%2Fevil.example%2Fshop%2Fcart"],
+    ["a carriage return", "%2F%0D%2Fevil.example%2Fshop"],
+    ["a backslash after the tab", "%2F%09%5Cevil.example%2Fshop"],
+  ])("sign-in never returns a path with %s that a browser reads as another host", (_, redirectTo) => {
+    const target = marketplaceTarget("/marketplace/sign-in", `?redirectTo=${redirectTo}`, "");
+    expect(new URL(target ?? "", "https://sites.test").origin).toBe("https://sites.test");
+    expect(target).toBe("/shop/my-items");
+  });
+
+  it("sign-in keeps the query and fragment of a Shop page it returns to", () => {
+    const redirectTo = encodeURIComponent("/shop/cart?step=pay#total");
+    expect(marketplaceTarget("/marketplace/sign-in", `?redirectTo=${redirectTo}`, "")).toBe("/shop/cart?step=pay#total");
+  });
+
   it("an unknown path keeps its place under /shop (a Shop page or the not-found page)", () => {
     expect(mk("/marketplace/overview").path).toBe("/shop/overview");
     expect(mk("/marketplace/credits-email-confirmed/abc?address=0x1").path).toBe("/shop/credits-email-confirmed/abc");

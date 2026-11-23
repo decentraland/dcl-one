@@ -113,7 +113,8 @@ describe("usePageView", () => {
 
   it("sends nothing on the suppressed paths, and does on /events", async () => {
     const router = setup(undefined, "/whats-on");
-    for (const path of ["/discover/places", "/events/event", "/cast", "/storage/env", "/places/abc", "/social/communities/1"]) {
+    // Routes match case-insensitively, so a case variant is the same page and its own view.
+    for (const path of ["/discover/places", "/events/event", "/cast", "/storage/env", "/places/abc", "/social/communities/1", "/Blog/news/post", "/PLACES/abc"]) {
       await act(() => router.navigate(path));
     }
     await act(() => router.navigate("/events"));
@@ -122,7 +123,7 @@ describe("usePageView", () => {
 
   it("sends nothing on surfaces the legacy site never served, the Shop included", async () => {
     const router = setup(undefined, "/shop/items");
-    for (const path of ["/marketplace/browse", "/builder/collections", "/play", "/auth/callback", "/creator-hub/x"]) {
+    for (const path of ["/marketplace/browse", "/builder/collections", "/play", "/auth/callback", "/creator-hub/x", "/SHOP/items", "/docs/sdk/intro"]) {
       await act(() => router.navigate(path));
     }
     await act(() => router.navigate("/create"));
@@ -174,6 +175,14 @@ describe("usePageView", () => {
     expect(page).toHaveBeenCalledTimes(1);
     act(() => setPendingView({ name: "Builders", properties: { communityId: "c1", privacy: "public", membersCount: 4 } }));
     await waitFor(() => expect(page).toHaveBeenCalledTimes(2));
+  });
+
+  it("sends a property whose value is undefined as the view had it", async () => {
+    setup(undefined, "/social/communities/c1");
+    act(() => setPendingView({ name: "Builders", properties: { communityId: "c1", thumbnail: undefined } }));
+    await waitFor(() => expect(page).toHaveBeenCalledTimes(1));
+    const properties = page.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(Object.keys(properties)).toEqual(["communityId", "thumbnail"]);
   });
 
   it("sends nothing without a session id", async () => {
@@ -278,9 +287,13 @@ describe("useNotFoundPageView", () => {
   });
 
   it("sends nothing when the session endpoint answers an error or no sid", async () => {
-    fetchMock.mockResolvedValueOnce(new Response("nope", { status: 500 }));
+    const failed = new Response("nope", { status: 500 });
+    const cancel = vi.spyOn(failed.body!, "cancel");
+    fetchMock.mockResolvedValueOnce(failed);
     renderAt("/missing/a/b", true, null);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // The error's body is released, not left unread.
+    await waitFor(() => expect(cancel).toHaveBeenCalledOnce());
     cleanup();
     fetchMock.mockResolvedValueOnce(Response.json({}));
     renderAt("/missing/a/c", true, null);
@@ -314,19 +327,19 @@ describe("useNotFoundPageView", () => {
 });
 
 describe("isOutsideLegacySites", () => {
-  it.each(["/shop", "/shop/items", "/shop-native", "/marketplace", "/builder/x", "/play", "/auth/callback", "/internal/client-error", "/api/x"])(
+  it.each(["/shop", "/shop/items", "/shop-native", "/marketplace", "/builder/x", "/play", "/auth/callback", "/internal/client-error", "/api/x", "/docs", "/docs/sdk/intro", "/SHOP", "/Shop/items", "/Docs/x"])(
     "excludes %s",
     (path) => expect(isOutsideLegacySites(path)).toBe(true),
   );
 
-  it.each(["/", "/shopping", "/create", "/help", "/download", "/events", "/players"])(
+  it.each(["/", "/shopping", "/create", "/help", "/download", "/events", "/players", "/docsx", "/communities/new"])(
     "keeps %s",
     (path) => expect(isOutsideLegacySites(path)).toBe(false),
   );
 });
 
 describe("isPageTrackingExempt", () => {
-  it.each(["/blog", "/blog/news", "/whats-on", "/whats-on/1", "/discover", "/discover/x", "/events/event", "/cast", "/cast/s/k", "/storage", "/storage/env", "/social", "/social/communities/1", "/places", "/places/world/x"])(
+  it.each(["/blog", "/blog/news", "/whats-on", "/whats-on/1", "/discover", "/discover/x", "/events/event", "/cast", "/cast/s/k", "/storage", "/storage/env", "/social", "/social/communities/1", "/places", "/places/world/x", "/Blog/x/y", "/BLOG", "/Places/abc", "/SOCIAL"])(
     "suppresses %s",
     (path) => expect(isPageTrackingExempt(path)).toBe(true),
   );

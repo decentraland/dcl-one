@@ -18,7 +18,7 @@ use common::{
     inputs::{BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
     profile::SerializedProfile,
     rpc::{RpcResultSender, RpcStreamSender},
-    structs::{AppConfig, CurrentRealm, MicState, PermissionUsed},
+    structs::{CurrentRealm, MicState, PermissionUsed},
 };
 use serde::{Deserialize, Serialize};
 use settings::SettingBridgePlugin;
@@ -37,7 +37,6 @@ impl Plugin for SystemBridgePlugin {
             Update,
             (
                 post_events,
-                handle_home_scene,
                 handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
@@ -166,6 +165,7 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    ClearHomeScene,
     /// None takes the lobby stage down.
     SetLobbyStage(Option<LobbyStage>),
     /// Whether the local user may enter the named world (`name.dcl.eth`).
@@ -356,23 +356,6 @@ fn handle_satellite_view(mut ev: EventReader<SystemApi>, realm: Res<CurrentRealm
                     .as_ref()
                     .and_then(|map| map.satellite_view.clone()),
             );
-        }
-    }
-}
-
-fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfig>) {
-    for ev in ev.read() {
-        match ev {
-            SystemApi::GetHomeScene(rpc_result_sender) => rpc_result_sender.send(HomeScene {
-                realm: config.home_realm(),
-                parcel: config.home_location().as_vec2().into(),
-            }),
-            SystemApi::SetHomeScene(home_scene) => {
-                config.home_realm = Some(home_scene.realm.clone());
-                config.home_location = Some(bevy::math::Vec2::from(&home_scene.parcel).as_ivec2());
-                platform::write_config_file(&*config);
-            }
-            _ => (),
         }
     }
 }

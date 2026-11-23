@@ -12,7 +12,9 @@ export type PageView = { name: string; properties?: Record<string, unknown> };
  * redirect (`/whats-on`, `/discover`, `/events/event`): the root's `page(pathname)` skips them. Ported
  * verbatim from the legacy site's `isPageTrackingExempt`, so `/events` itself is tracked.
  */
-export function isPageTrackingExempt(pathname: string): boolean {
+export function isPageTrackingExempt(path: string): boolean {
+  // React Router matches routes case-insensitively, so `/Blog/x/y` is the blog post's page.
+  const pathname = path.toLowerCase();
   if (pathname === "/blog" || pathname.startsWith("/blog/")) return true;
   if (pathname === "/whats-on" || pathname.startsWith("/whats-on/")) return true;
   if (pathname === "/discover" || pathname.startsWith("/discover/")) return true;
@@ -26,8 +28,10 @@ export function isPageTrackingExempt(pathname: string): boolean {
 
 /**
  * Surfaces the legacy site never served, so its Segment source never counted them: the Shop and
- * Marketplace (the Shop reports its own views to its own source), the Builder, the Explorer and
- * auth or internal endpoints. Their pages send no Sites page view.
+ * Marketplace (the Shop reports its own views to its own source), the Builder, the Explorer, the docs
+ * (docs.decentraland.org was its own site, and its responses here carry no session) and auth or
+ * internal endpoints. Their pages send no Sites page view. A page new to this site outside these
+ * (`/communities/new`) follows the legacy Layout's rule instead: `page(pathname)`.
  */
 const OUTSIDE_LEGACY_SITES = [
   "/shop",
@@ -41,13 +45,15 @@ const OUTSIDE_LEGACY_SITES = [
   "/client",
   "/creator-hub",
   "/editor-scene",
+  "/docs",
   "/auth",
   "/connect",
   "/internal",
   "/api",
 ];
 
-export function isOutsideLegacySites(pathname: string): boolean {
+export function isOutsideLegacySites(path: string): boolean {
+  const pathname = path.toLowerCase();
   return OUTSIDE_LEGACY_SITES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
@@ -80,18 +86,21 @@ export function useAnalyticsSid(): string {
  */
 function useSendPageView(view: PageView | null | undefined, sid: string, userId: string): void {
   const { pathname } = useLocation();
+  // The key only compares views; what is sent is the view itself, so an undefined property survives.
   const key = view?.name ? JSON.stringify([pathname, view.name, view.properties ?? {}]) : null;
+  const latest = useRef(view);
+  latest.current = view;
   const sent = useRef<string | null>(null);
   useEffect(() => {
-    if (!key) {
+    const current = latest.current;
+    if (!key || !current) {
       sent.current = null;
       return;
     }
     if (!sid || sent.current === key) return;
     sent.current = key;
-    const [, name, properties] = JSON.parse(key) as [string, string, Record<string, unknown>];
     const user = trackedUserDropped() ? "" : userId;
-    page(name, properties, { sid, ...(user ? { userId: user } : {}) });
+    page(current.name, current.properties ?? {}, { sid, ...(user ? { userId: user } : {}) });
   }, [key, sid, userId]);
 }
 
@@ -126,7 +135,10 @@ const text = (value: unknown): string => (typeof value === "string" ? value : ""
 async function fetchSession(): Promise<FetchedSession | null> {
   try {
     const response = await fetch(SESSION_ENDPOINT, { credentials: "same-origin", cache: "no-store" });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
+      return null;
+    }
     const body = (await response.json()) as Record<string, unknown> | null;
     const sid = text(body?.sid);
     if (!sid) return null;
@@ -161,7 +173,7 @@ export function useNotFoundPageView(notFound: boolean): void {
   const root = useRootSession();
   const tracked = notFound && !isPageTrackingExempt(pathname) && !isOutsideLegacySites(pathname);
   const needsSession = tracked && !root.sid;
-  const [fetched, setFetched] = useState<{ sid: string; userId: string } | null>(null);
+  const [fetched, setFetched] = useState<FetchedSession | null>(null);
   useEffect(() => {
     if (!needsSession) return;
     let live = true;

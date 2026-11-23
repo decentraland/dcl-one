@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getJSON } from "../client";
-import { fetchReferrerProfile, referrerFromAddress } from "./referral";
+import { CatalystError, getJSON } from "../client";
+import { fetchReferrerProfile, referrerFromAddress, resolveReferrerAddress } from "./referral";
 
 vi.mock("../client", async (actual) => ({ ...(await actual<typeof import("../client")>()), getJSON: vi.fn() }));
 
@@ -50,5 +50,42 @@ describe("when fetching a referrer's profile", () => {
 describe("when only the address is known", () => {
   it("should carry no face", () => {
     expect(referrerFromAddress(ADDRESS).face256).toBeNull();
+  });
+});
+
+describe("when resolving an invite's referrer", () => {
+  beforeEach(() => {
+    vi.mocked(getJSON).mockReset();
+  });
+
+  describe("and it is an address", () => {
+    it("should lowercase it without a NAME lookup", async () => {
+      expect(await resolveReferrerAddress("0x0000000000000000000000000000000000000ABC")).toBe(ADDRESS);
+      expect(getJSON).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("and it is a NAME with an owner", () => {
+    it("should return the owner, lowercased", async () => {
+      vi.mocked(getJSON).mockResolvedValue({ owner: ADDRESS.toUpperCase().replace("0X", "0x") });
+      expect(await resolveReferrerAddress("Jane")).toBe(ADDRESS);
+    });
+  });
+
+  describe("and the NAME has no owner", () => {
+    it("should return none", async () => {
+      vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 404 Not Found", "https://node.test", 404));
+      expect(await resolveReferrerAddress("nobody")).toBeNull();
+    });
+  });
+
+  describe.each([
+    ["the node answers 503", new CatalystError("Catalyst returned 503", "https://node.test", 503)],
+    ["the request fails", new CatalystError("Catalyst request failed: network error", "https://node.test")],
+  ])("and %s", (_label, error) => {
+    it("should throw, so the invite is not taken for unknown", async () => {
+      vi.mocked(getJSON).mockRejectedValue(error);
+      await expect(resolveReferrerAddress("Jane")).rejects.toBe(error);
+    });
   });
 });
