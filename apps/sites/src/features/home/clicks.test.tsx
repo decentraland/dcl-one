@@ -7,7 +7,7 @@ import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 
 import { track } from "@/core/lib/telemetry/track";
-import { trackLegacyClick } from "@/core/lib/telemetry/legacy-click";
+import { createLegacyTrackScope, trackLegacyClick } from "@/core/lib/telemetry/legacy-click";
 
 import { homeClicks } from "./clicks";
 
@@ -20,7 +20,7 @@ vi.mock("@/core/lib/telemetry/track", () => ({
 }));
 
 const LABELS = { previous: "Previous", next: "Next", goTo: (n: number) => `Go to ${n}`, position: (n: number, t: number) => `${n} of ${t}` };
-const SESSION = { sid: "sid-1" };
+const SESSION = { sid: "sid-1", scope: createLegacyTrackScope() };
 const clicks = () => homeClicks((click) => trackLegacyClick(click, SESSION));
 
 /** The properties of every Click sent, without the audit timestamps. */
