@@ -3,6 +3,7 @@ import type { SitesLocale } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
 // Copy from decentraland/sites; only the install page is included.
 export const successCopy = {
   en: {
+    downloading: "Downloading Decentraland...",
     success: {
       title: "You're almost done!",
       subtitle:
@@ -53,6 +54,7 @@ export const successCopy = {
     },
   },
   es: {
+    downloading: "Descargando Decentraland...",
     success: {
       title: "¡Ya casi está!",
       subtitle:
@@ -101,6 +103,7 @@ export const successCopy = {
     },
   },
   fr: {
+    downloading: "Téléchargement de Decentraland...",
     success: {
       title: "Vous y êtes presque !",
       subtitle:
@@ -150,6 +153,7 @@ export const successCopy = {
     },
   },
   zh: {
+    downloading: "正在下载 Decentraland...",
     success: {
       title: "即将完成！",
       subtitle: "打开刚下载的文件完成 Decentraland 安装并开始{action}",
@@ -197,6 +201,7 @@ export const successCopy = {
     },
   },
   ko: {
+    downloading: "Decentraland 다운로드 중...",
     success: {
       title: "거의 다 됐어요!",
       subtitle:
@@ -245,6 +250,7 @@ export const successCopy = {
     },
   },
   ja: {
+    downloading: "Decentralandをダウンロード中...",
     success: {
       title: "もう少しで完了です！",
       subtitle:

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { resetDownloadCtaClicked } from "./download-click";
 import {
@@ -16,7 +16,7 @@ import {
   type FunnelSession,
   type FunnelPlace,
 } from "./download-funnel";
-import { deliverInstaller, installerFilename } from "./installer-delivery";
+import { deliverInstaller, installerFilename, type Dispatch } from "./installer-delivery";
 import {
   chooseInstallerUrl,
   collectDeepLinkParams,
@@ -39,17 +39,27 @@ export type DownloadSuccessFunnel = FunnelSession & {
   place: string | null;
   macArch: string | null;
   anonUserId: string | null;
-  /** Hands the installer URL to the browser. */
-  dispatch: (url: string) => void;
+  /** Hands the installer (or its streamed bytes) to the browser. */
+  dispatch: Dispatch;
 };
+
+/** The transfer overlay: shown from arrival until a download is saved or fails; `progress` null is indeterminate. */
+export type DownloadOverlay = { progress: number | null } | null;
+
+type Transfer = { downloading: boolean; progress: number | null; failed: boolean; saved: boolean };
 
 /**
  * /download_success's funnel, as the legacy page ran it: `download_success_arrived` on arrival, then the automatic
  * attempt's `download_started` and `download_success` or `download_failed`, a footer retry as an attempt of its own
  * (`place: download-success-footer`, and no `Click`), and `download_funnel_exit` on every hide once a download
- * control led here (a known `place`). Returns the footer retry's click handler.
+ * control led here (a known `place`). Returns the footer retry's click handler and the transfer overlay, which
+ * follows the legacy backdrop: up from arrival, with progress while a stream runs, down once saved or failed.
  */
-export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: MouseEvent<HTMLAnchorElement>) => void {
+export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): {
+  retry: (event: MouseEvent<HTMLAnchorElement>) => void;
+  overlay: DownloadOverlay;
+} {
+  const [transfer, setTransfer] = useState<Transfer>({ downloading: false, progress: null, failed: false, saved: false });
   const latest = useRef(input);
   latest.current = input;
   const os = input.os === "windows" ? "Windows" : "macOS";
@@ -89,6 +99,9 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
         { sid, userId },
       );
     let current: ReturnType<typeof tracker> | null = null;
+    const footer = attemptPlace === "download-success-footer";
+    // The legacy footer retry kept the earlier outcome; the automatic attempt starts from a clean slate.
+    setTransfer((state) => (footer ? { ...state, downloading: true, progress: null } : { downloading: true, progress: null, failed: false, saved: false }));
     try {
       const chosen = await chooseInstallerUrl({ os, arch, fallback: plain, gateway, identityId, anonUserId: anon, signal });
       if (signal.aborted) return;
@@ -97,17 +110,24 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
       current = tracker(reportedInstallerUrl(href, gateway, chosen.identityId));
       fired.current.startedFired = true;
       current.started();
-      const delivery = await deliverInstaller(href, os, dispatch, signal);
+      const filename = installerFilename(url);
+      const delivery = await deliverInstaller(href, os, dispatch, signal, {
+        filename,
+        onProgress: (progress) => setTransfer((state) => ({ ...state, progress })),
+      });
       if (signal.aborted) return;
+      setTransfer((state) => ({ ...state, progress: 100, saved: footer ? state.saved : true }));
       fired.current.successFired = true;
-      current.success(installerFilename(url), delivery);
+      current.success(filename, delivery);
     } catch (error) {
       if (signal.aborted) return;
+      setTransfer((state) => ({ ...state, failed: true }));
       fired.current.failedFired = true;
       // A failure before the URL was known reports the plain installer, the best link the page had.
       (current ?? tracker(plain)).failed(error instanceof Error ? error.message : "Download failed");
     } finally {
       attempts.current.delete(controller);
+      if (!signal.aborted) setTransfer((state) => ({ ...state, downloading: false }));
     }
   };
 
@@ -162,7 +182,7 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [place, os]);
 
-  return (event) => {
+  const retry = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     if (retrying.current) return;
     retrying.current = true;
@@ -170,6 +190,8 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
       retrying.current = false;
     });
   };
+  const shown = transfer.downloading || (!transfer.failed && !transfer.saved);
+  return { retry, overlay: shown ? { progress: transfer.downloading ? transfer.progress : null } : null };
 }
 
 /** /download's `download_page_exit` on every hide, counting from mount; a click made elsewhere does not count. */

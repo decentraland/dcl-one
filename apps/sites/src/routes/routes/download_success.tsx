@@ -67,14 +67,18 @@ export function loader({ request }: Route.LoaderArgs) {
   };
 }
 
-/** Hands the installer to the browser through a hidden link, as a click on it would. */
-function startDownload(href: string) {
+/**
+ * Hands the installer to the browser through a hidden link, as a click on it would. `filename` names a same-origin
+ * (streamed blob) download. Removal waits a frame: removing the link at once aborts the download in some Chromium.
+ */
+function startDownload(href: string, filename?: string) {
   const link = document.createElement("a");
   link.href = href;
   link.hidden = true;
+  if (filename !== undefined) link.download = filename;
   document.body.append(link);
   link.click();
-  link.remove();
+  requestAnimationFrame(() => link.remove());
 }
 
 export default function DownloadSuccessRoute({
@@ -97,7 +101,7 @@ export default function DownloadSuccessRoute({
   }, []);
   const sid = useAnalyticsSid();
   const userId = useAnalyticsUserId();
-  const retry = useDownloadSuccessFunnel({
+  const { retry, overlay } = useDownloadSuccessFunnel({
     href,
     os,
     arch,
@@ -118,6 +122,7 @@ export default function DownloadSuccessRoute({
         subtitle={success.started.subtitle}
         stepsLabel={success.started.subtitle}
         stepLabel={(n) => `${success.step} ${n}`}
+        downloading={overlay && { label: copy.downloading, progress: overlay.progress }}
         steps={stepImages(os, browser).map((image, index) => ({
           ...image,
           ...steps[`step${index + 1}` as keyof typeof steps],

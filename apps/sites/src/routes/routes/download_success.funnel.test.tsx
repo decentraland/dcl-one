@@ -138,13 +138,17 @@ describe("arriving from a download control", () => {
     });
   });
 
-  it("holds the Windows installer for the legacy fixed time and reports it as the anchor fallback", async () => {
+  it("falls back to the native link with the legacy fixed hold when the Windows stream fails", async () => {
+    head.mockRejectedValue(new TypeError("Failed to fetch"));
     show("?os=Windows&place=download-page&arch=amd64");
+    await settle();
+    expect(head).toHaveBeenCalledWith(REQUESTED("windows"), expect.objectContaining({ method: "GET", mode: "cors", credentials: "omit", cache: "no-store" }));
+    expect(requests).toEqual([REQUESTED("windows")]);
     await act(() => vi.advanceTimersByTimeAsync(4000));
     const [success] = sent("download_success");
     expect(success).toMatchObject({ delivery_mode: "anchor_fallback", os: "Windows", arch: "amd64", filename: "Decentraland_installer.exe" });
+    expect(success).not.toHaveProperty("bytes_transferred");
     expect(success!.duration_ms).toBeGreaterThanOrEqual(4000);
-    expect(head).not.toHaveBeenCalled();
   });
 
   it("sends download_failed with the reason when the browser refuses the download", async () => {
@@ -185,6 +189,7 @@ describe("arriving from a download control", () => {
   it("cancels the old attempt when the artifact changes on the mounted page; the new one reports once", async () => {
     let signal: AbortSignal | undefined;
     head.mockImplementation((_url: string, init: RequestInit) => {
+      if (init.method === "GET") return Promise.reject(new TypeError("Failed to fetch"));
       signal = init.signal!;
       return new Promise(() => {});
     });
@@ -385,5 +390,93 @@ describe("the download gateway (legacy calculateCDNReleaseLinksWithIdentity)", (
     ]);
     expect(requests[0]).not.toContain("c-1");
     expect(sent("download_started")[0]).toMatchObject({ click_id: "c-1", anon_user_id: SID });
+  });
+});
+
+describe("the Windows streamed transfer and the progress screen (legacy streamOrFallback)", () => {
+  const BYTES = 10;
+  let saved: string[];
+  beforeEach(() => {
+    saved = [];
+    Object.assign(URL, { createObjectURL: vi.fn(() => "blob:installer"), revokeObjectURL: vi.fn() });
+    vi.mocked(HTMLAnchorElement.prototype.click).mockImplementation(function (this: HTMLAnchorElement) {
+      if (this.href.startsWith("blob:")) saved.push(`${this.href} ${this.download}`);
+      else requests.push(this.href);
+    });
+  });
+
+  function streamOf(chunks: Uint8Array[], headers: Record<string, string>) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(chunks[0]!);
+        await gate;
+        for (const chunk of chunks.slice(1)) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    head.mockResolvedValue(new Response(body, { status: 200, headers }));
+    return release;
+  }
+
+  it("streams the installer, shows its progress, saves it as a blob and reports the bytes and the gateway's request id", async () => {
+    const release = streamOf([new Uint8Array(4), new Uint8Array(6)], { "content-length": String(BYTES), "x-request-id": "req-9" });
+    show("?os=Windows&place=download-page&arch=amd64");
+    await settle();
+    const status = screen.getByRole("status");
+    expect(status.textContent).toContain("Downloading Decentraland...");
+    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("40");
+    release();
+    await settle();
+    expect(saved).toEqual(["blob:installer Decentraland_installer.exe"]);
+    expect(requests).toEqual([]);
+    expect(sent("download_success")[0]).toMatchObject({
+      delivery_mode: "streamed",
+      gateway_request_id: "req-9",
+      bytes_transferred: BYTES,
+      filename: "Decentraland_installer.exe",
+    });
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows an indeterminate bar when the size is unknown", async () => {
+    streamOf([new Uint8Array(4), new Uint8Array(6)], {});
+    show("?os=Windows&place=download-page");
+    await settle();
+    expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
+  });
+
+  it("falls back to the native link when the stream answers an error status", async () => {
+    head.mockResolvedValue(new Response("nope", { status: 503 }));
+    show("?os=Windows&place=download-page");
+    await settle();
+    expect(requests).toEqual([REQUESTED("windows")]);
+    expect(saved).toEqual([]);
+  });
+
+  it("takes the overlay down and reports the failure when the download cannot start", async () => {
+    vi.mocked(HTMLAnchorElement.prototype.click).mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    show("?os=macOS&place=landing-hero");
+    await settle();
+    expect(sent("download_failed")[0]).toMatchObject({ reason: "blocked" });
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("cancels a running stream when the visitor leaves, saving and reporting nothing", async () => {
+    let signal: AbortSignal | undefined;
+    head.mockImplementation((_url: string, init: RequestInit) => {
+      signal = init.signal!;
+      return new Promise(() => {});
+    });
+    const { unmount } = show("?os=Windows&place=download-page");
+    await settle();
+    unmount();
+    await settle();
+    expect(signal?.aborted).toBe(true);
+    expect(saved).toEqual([]);
+    expect(names()).toEqual(["download_success_arrived", "download_started"]);
   });
 });
