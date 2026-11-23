@@ -83,20 +83,23 @@ fewer frames the 90th percentile is their maximum, and a few heavy frames at the
 hold the loop on its floor.
 
 On the web each scene runs in a sandbox worker whose relay moves messages between the engine
-and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`, `deploy/web/engine/sandbox_worker.js`).
-The relays of the scene the player stands in (also while they are kept out of the world
-arriving at a teleport's destination), of the portable experiences and of the named priority
-scenes (`SceneUpdates::priority_scenes`, such as the movement controller) wait on a word in engine memory with `Atomics.waitAsync`. The
-engine bumps the word and notifies it when it sends that scene something, so a tick sent
-early in the loop can be answered within the same frame. Every wait is at most 1 ms; the
+and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`,
+`deploy/web/engine/sandbox_worker.js`). The relays of the scene the player stands in (also
+while they are kept out of the world arriving at a teleport's destination), of the portable
+experiences and of the named priority scenes (`SceneUpdates::priority_scenes`, such as the
+movement controller) wait on a word in engine memory with `Atomics.waitAsync`. The engine bumps
+the word and notifies it when it sends that scene something, so a tick sent early in the loop
+can be answered within the same frame. Every wait is at most 1 ms; the
 timeout still covers global updates, the kill flag and the scene's own replies. Other scenes'
 relays poll their channels between 1 ms sleeps. `update_scene_priority` publishes the set of
 woken scenes each frame, before the frame's dispatch (`wake_scenes`,
 `dcl_wasm::scene_loop_mode::set_wake_scenes`).
 
 The page parameter `?sceneLoop=` selects the web scheduling for diagnostics: `both`, the
-default, applies both of the above; `relay` keeps only the wake; `deadline` keeps only the
-frame-start deadline; `legacy` uses neither.
+default, applies both of the above; `relay` keeps only the relay wake; `deadline` keeps only the
+frame-start deadline. All three also end the loop's wait for replies when a reply arrives and
+keep its timed waits clear of the deadline by their lateness (below). `legacy` uses none of
+these.
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
