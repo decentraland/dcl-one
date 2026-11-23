@@ -116,6 +116,7 @@ impl Project {
             .why(why)
             .into());
         }
+        validate_layout(&scene_json)?;
         if let Some(warning) = min_cli_warning(&root) {
             tracing::warn!("{warning}");
         }
@@ -479,6 +480,106 @@ pub fn b64_unhash(hash: &str) -> Option<(String, String)> {
     Some((tag.to_string(), rel.to_string()))
 }
 
+/// The map areas a parcel may sit in, as `(x_min, y_min, x_max, y_max)`:
+/// `@dcl/schemas` `getWorld().validWorldRanges`.
+const WORLD_RANGES: [(i64, i64, i64, i64); 4] = [
+    (-150, -150, 150, 150),
+    (62, 151, 162, 158),
+    (151, 144, 162, 150),
+    (151, 59, 163, 143),
+];
+
+fn parse_parcel(parcel: &str) -> Option<(i64, i64)> {
+    let (x, y) = parcel.split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+pub(crate) fn no_parcels() -> anyhow::Error {
+    UserError::new(
+        "scene.json declares no parcels",
+        TrySteps::one("add \"scene\": { \"parcels\": [\"0,0\"], \"base\": \"0,0\" } to scene.json"),
+    )
+    .into()
+}
+
+fn layout_error(what: String, step: &str) -> anyhow::Error {
+    UserError::new(what, TrySteps::one(step.to_string())).into()
+}
+
+/// The parcel rules every command checks when it loads a scene, as
+/// `@dcl/sdk-commands` and the Creator Hub do: at least one `"x,y"` parcel, none
+/// twice, `base` among them, each on the map, and all connected edge to edge.
+fn validate_layout(scene_json: &Value) -> Result<()> {
+    let scene = scene_json.get("scene");
+    let Some(listed) = scene
+        .and_then(|s| s.get("parcels"))
+        .and_then(Value::as_array)
+        .filter(|p| !p.is_empty())
+    else {
+        return Err(no_parcels());
+    };
+    let mut parcels = Vec::with_capacity(listed.len());
+    for entry in listed {
+        let text = entry.as_str().unwrap_or_default();
+        let Some(parcel) = parse_parcel(text) else {
+            return Err(layout_error(
+                format!("scene.json parcel {entry} is not in the form \"x,y\""),
+                "write each parcel as two whole numbers separated by a comma, such as \"0,0\"",
+            ));
+        };
+        if parcels.contains(&parcel) {
+            return Err(layout_error(
+                format!("scene.json lists the parcel \"{text}\" twice"),
+                "remove the repeated parcel from \"scene.parcels\"",
+            ));
+        }
+        parcels.push(parcel);
+    }
+    let base = scene
+        .and_then(|s| s.get("base"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !parse_parcel(base).is_some_and(|b| parcels.contains(&b)) {
+        return Err(layout_error(
+            format!("scene.json base parcel \"{base}\" is not one of its parcels"),
+            "set \"scene.base\" to one of the parcels in \"scene.parcels\"",
+        ));
+    }
+    for (parcel, &(x, y)) in listed.iter().zip(&parcels) {
+        let on_map = WORLD_RANGES
+            .iter()
+            .any(|&(x0, y0, x1, y1)| (x0..=x1).contains(&x) && (y0..=y1).contains(&y));
+        if !on_map {
+            let ranges = WORLD_RANGES
+                .iter()
+                .map(|(x0, y0, x1, y1)| format!("x {x0}..{x1}, y {y0}..{y1}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(layout_error(
+                format!("scene.json parcel {parcel} is outside the map"),
+                &format!("use parcels inside these areas: {ranges}"),
+            ));
+        }
+    }
+    let mut reached = vec![parcels[0]];
+    let mut next = 0;
+    while let Some(&(x, y)) = reached.get(next) {
+        next += 1;
+        for neighbour in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+            if parcels.contains(&neighbour) && !reached.contains(&neighbour) {
+                reached.push(neighbour);
+            }
+        }
+    }
+    if reached.len() < parcels.len() {
+        return Err(layout_error(
+            "the parcels in scene.json are not all connected".to_string(),
+            "each parcel must share an edge with another one; remove or add parcels so they form one area",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) struct Tmp(pub PathBuf);
 
@@ -761,5 +862,112 @@ mod tests {
         assert_eq!(parallel_map(&items, |n| n * 2), expected);
         assert!(parallel_map(&Vec::<usize>::new(), |n| *n).is_empty());
         assert_eq!(parallel_map(&[7usize], |n| n + 1), vec![8]);
+    }
+
+    fn load_with_layout(tag: &str, scene: serde_json::Value) -> Result<Project> {
+        let t = Tmp::new(tag);
+        t.write(
+            "scene.json",
+            serde_json::json!({"runtimeVersion": "7", "main": "bin/index.js", "scene": scene})
+                .to_string(),
+        );
+        Project::load(&t.0)
+    }
+
+    fn refusal(tag: &str, scene: serde_json::Value) -> String {
+        let err = load_with_layout(tag, scene).expect_err("the layout must be refused");
+        crate::ux::render(&err, false, false)
+    }
+
+    #[test]
+    fn a_connected_layout_inside_the_map_loads() {
+        for (tag, scene) in [
+            (
+                "one",
+                serde_json::json!({"parcels": ["0,0"], "base": "0,0"}),
+            ),
+            (
+                "l-shape",
+                serde_json::json!({"parcels": ["-1,0", "0,0", "0,1", "1,1"], "base": "0,1"}),
+            ),
+            (
+                "outer-area",
+                serde_json::json!({"parcels": ["155,100", "155,101"], "base": "155,100"}),
+            ),
+            (
+                "map-corner",
+                serde_json::json!({"parcels": ["-150,-150"], "base": "-150,-150"}),
+            ),
+        ] {
+            load_with_layout(tag, scene).unwrap_or_else(|e| panic!("{tag}: {e:#}"));
+        }
+    }
+
+    #[test]
+    fn a_scene_json_without_parcels_is_refused() {
+        for (tag, scene) in [
+            ("noscene", serde_json::Value::Null),
+            ("empty", serde_json::json!({"parcels": [], "base": "0,0"})),
+        ] {
+            let err = refusal(tag, scene);
+            assert!(err.contains("parcels"), "{tag}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_parcel_that_is_not_x_comma_y_is_named() {
+        let err = refusal(
+            "format",
+            serde_json::json!({"parcels": ["0,0", "1;0"], "base": "0,0"}),
+        );
+        assert!(err.contains("\"1;0\""), "{err}");
+    }
+
+    #[test]
+    fn a_parcel_listed_twice_is_named() {
+        let err = refusal(
+            "dup",
+            serde_json::json!({"parcels": ["0,0", "0,1", "0,0"], "base": "0,0"}),
+        );
+        assert!(err.contains("\"0,0\"") && err.contains("twice"), "{err}");
+    }
+
+    #[test]
+    fn a_base_outside_the_parcels_is_named() {
+        let err = refusal(
+            "base",
+            serde_json::json!({"parcels": ["0,0", "0,1"], "base": "5,5"}),
+        );
+        assert!(err.contains("\"5,5\"") && err.contains("base"), "{err}");
+    }
+
+    #[test]
+    fn a_parcel_off_the_map_is_named() {
+        for (tag, parcel) in [
+            ("east", "151,0"),
+            ("north", "0,151"),
+            ("corner", "-151,-151"),
+        ] {
+            let err = refusal(
+                tag,
+                serde_json::json!({"parcels": [parcel], "base": parcel}),
+            );
+            assert!(err.contains(&format!("\"{parcel}\"")), "{tag}: {err}");
+            assert!(err.contains("-150"), "the allowed ranges are listed: {err}");
+        }
+    }
+
+    #[test]
+    fn parcels_that_do_not_touch_are_refused() {
+        let err = refusal(
+            "apart",
+            serde_json::json!({"parcels": ["0,0", "0,1", "2,1"], "base": "0,0"}),
+        );
+        assert!(err.contains("connected"), "{err}");
+        let diagonal = refusal(
+            "diagonal",
+            serde_json::json!({"parcels": ["0,0", "1,1"], "base": "0,0"}),
+        );
+        assert!(diagonal.contains("connected"), "{diagonal}");
     }
 }

@@ -1114,14 +1114,19 @@ fn parse_kind_choice(answer: &str) -> Result<ProjectKind> {
     }
 }
 
-pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
-    let slug = project_slug(title);
-    let description = match kind {
+/// The `display.description` `init` writes for `kind`.
+pub fn default_description(kind: ProjectKind) -> &'static str {
+    match kind {
         ProjectKind::Scene => "A new Decentraland scene.",
         ProjectKind::SmartWearable => "A new Decentraland smart wearable.",
         ProjectKind::PxTemplate => "A new Decentraland portable experience.",
         ProjectKind::Library => "A new Decentraland SDK library.",
-    };
+    }
+}
+
+pub fn scaffold_files(kind: ProjectKind, title: &str) -> Vec<FileSpec> {
+    let slug = project_slug(title);
+    let description = default_description(kind);
     let sub = |template: &str| {
         template
             .replace("{{TITLE}}", title)

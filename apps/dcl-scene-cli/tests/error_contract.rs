@@ -262,7 +262,10 @@ fn g3_sdk6_scene() {
 #[test]
 fn g4_missing_main() {
     let f = Fixture::new("g4");
-    f.write("scene.json", r#"{"runtimeVersion":"7"}"#);
+    f.write(
+        "scene.json",
+        r#"{"runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
+    );
     let dir = f.dir_arg();
     let args = ["build", "--dir", &dir];
     let out = run(&args, &[]);
@@ -315,7 +318,10 @@ fn g6_missing_node_modules() {
 #[test]
 fn g7_main_is_a_directory() {
     let f = Fixture::new("g7");
-    f.write("scene.json", r#"{"main":"bin","runtimeVersion":"7"}"#);
+    f.write(
+        "scene.json",
+        r#"{"main":"bin","runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
+    );
     f.mkdir("bin");
     let dir = f.dir_arg();
     let args = ["build", "--dir", &dir];
@@ -821,7 +827,7 @@ fn g29_main_is_not_a_js_bundle() {
     let f = Fixture::new("g29");
     f.write(
         "scene.json",
-        r#"{"main":"src/index.ts","runtimeVersion":"7"}"#,
+        r#"{"main":"src/index.ts","runtimeVersion":"7","scene":{"parcels":["0,0"],"base":"0,0"}}"#,
     );
     let dir = f.dir_arg();
     let args = ["build", "--dir", &dir];

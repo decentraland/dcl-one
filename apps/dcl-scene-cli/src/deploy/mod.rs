@@ -23,7 +23,7 @@ pub use run::{deploy, load_signer};
 pub use unpublish::{UnpublishOptions, unpublish};
 pub use world_gate::{nameless_world_section, refuse_nameless_world};
 
-use crate::scene::Project;
+use crate::scene::{Project, no_parcels};
 use crate::ux::{TrySteps, UserError};
 use anyhow::{Context, Result};
 use dcl_auth::hash_bytes_v1;
@@ -771,12 +771,47 @@ pub fn extract_pointers(metadata: &JsValue) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn no_parcels() -> anyhow::Error {
-    UserError::new(
-        "scene.json declares no parcels",
-        TrySteps::one("add \"scene\": { \"parcels\": [\"0,0\"], \"base\": \"0,0\" } to scene.json"),
-    )
-    .into()
+/// The reminder a deploy prints when scene.json's `display` title, description
+/// or map thumbnail is missing or still a template default, as `@dcl/sdk-commands`
+/// prints it; `None` when all three are the creator's own.
+pub fn display_defaults_note(scene_json: &serde_json::Value) -> Option<String> {
+    let display = scene_json.get("display");
+    let field = |name: &str| {
+        display
+            .and_then(|d| d.get(name))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+    };
+    let is_init_description = |d: &str| {
+        <crate::init::ProjectKind as clap::ValueEnum>::value_variants()
+            .iter()
+            .any(|kind| crate::init::default_description(*kind) == d)
+    };
+    let title = field("title");
+    let description = field("description");
+    let thumbnail = field("navmapThumbnail");
+    let defaults: Vec<&str> = [
+        ("title", title.is_empty() || title == "SDK7 Scene Template"),
+        (
+            "description",
+            description.is_empty()
+                || description == "template scene with SDK7"
+                || is_init_description(description),
+        ),
+        (
+            "navmapThumbnail",
+            thumbnail.is_empty() || thumbnail == "images/scene-thumbnail.png",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(name, default)| default.then_some(name))
+    .collect();
+    (!defaults.is_empty()).then(|| {
+        format!(
+            "scene.json display metadata is missing or still the template's: {} \u{2014} update it so people can find the scene: https://docs.decentraland.org/creator/development-guide/scene-metadata/#scene-title-description-and-image",
+            defaults.join(", ")
+        )
+    })
 }
 
 pub fn world_name(metadata: &JsValue) -> Option<String> {
@@ -1041,6 +1076,36 @@ mod tests {
 
     fn strings(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn deploy_reminds_a_creator_of_display_metadata_left_at_the_template() {
+        let listed = |scene: serde_json::Value| -> String {
+            let note = display_defaults_note(&scene).expect("a reminder");
+            note.split(" \u{2014}").next().unwrap().to_string()
+        };
+        let fresh_init = serde_json::json!({"display": {
+            "title": "my-scene",
+            "description": "A new Decentraland scene.",
+            "navmapThumbnail": "images/scene-thumbnail.png"
+        }});
+        assert!(listed(fresh_init).ends_with(": description, navmapThumbnail"));
+
+        let upstream_template = serde_json::json!({"display": {
+            "title": "SDK7 Scene Template",
+            "description": "My plaza",
+            "navmapThumbnail": "images/plaza.png"
+        }});
+        assert!(listed(upstream_template).ends_with(": title"));
+
+        assert!(listed(serde_json::json!({})).ends_with(": title, description, navmapThumbnail"));
+
+        let finished = serde_json::json!({"display": {
+            "title": "Plaza",
+            "description": "A plaza with a fountain",
+            "navmapThumbnail": "images/plaza.png"
+        }});
+        assert_eq!(display_defaults_note(&finished), None);
     }
 
     #[test]

@@ -118,6 +118,12 @@ dcl-scene-cli build [--dir D] [-p|--production] [-w|--watch] [--ignoreComposite]
                     [--single GLOB] [--emitDeclaration]
 ```
 
+Every command that loads a scene checks `scene.json` first, with the rules of `@dcl/sdk-commands` and
+the Creator Hub: at least one parcel, each written `"x,y"` and listed once, `scene.base` one of them,
+every parcel on the map (x and y from -150 to 150, or in the areas x 62..162 / y 151..158, x 151..162 /
+y 144..150 and x 151..163 / y 59..143), and all of them connected edge to edge. `deploy` also says
+when the `display` title, description or map thumbnail is missing or still the template's.
+
 `--single GLOB` bundles each matching `.ts`/`.tsx` under the project to a sibling `.js` instead of the
 scene, after one type check; the SDK stays a `require`, as in the scene chunk, so a consuming scene
 bundles one SDK. Two matches that would write one `.js` (`a.ts` and `a.tsx`) are refused.
@@ -703,6 +709,8 @@ notice are `LICENSE.basis_universal` and `NOTICE.basis_universal`.
 
 Ports: 8000 preview, 5147 abgen, 7880-7882 LiveKit. Scene files (never deployed): `bin/`,
 `.dcl-one/`, `.dcl-cache/`, `.dcl-optimized-assets/`.
+
+`@dcl/sdk-commands quests` has no counterpart: the Quests service it drives is legacy.
 
 Environment: `DCL_SCENE_CLI_CATALYST` (default `https://interconnected.online`),
 `DCL_SCENE_CLI_CATALYST_ROTATION`, `DCL_SCENE_CLI_WORLD_BASE`, `DCL_SCENE_CLI_SOCIAL_API`,
