@@ -155,6 +155,16 @@ thumbnails. A worlds mirror pass re-checks the blobs its rows name under
 the shared side and fails when one is gone, for the next pass to fetch
 again. Camera-reel uploads and player report evidence commit their row
 before storing the blob, so an unlink batch's reference read keeps it.
+
+`worlds.thumbnail_aliases` records one immutable SHA-256-to-CID mapping for
+each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
+images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
+before inserting the mapping under the same store lock as the settings write.
+The CID refers to bytes in the blob store. Legacy hex reads probe the primary
+key after a raw-leaf miss. The index on the CID lets the blob collector keep
+the bytes after a world changes its thumbnail or is no longer listed. The
+alias keeps a saved URL valid across those changes.
+
 Read-through copies (explore's satellite, manifest and poster mirrors, the
 asset catalogue pull) take no lock: a removed blob is fetched again on its
 next read.

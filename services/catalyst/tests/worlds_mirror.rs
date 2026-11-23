@@ -2174,10 +2174,8 @@ async fn an_unchanged_mirrored_world_takes_settings_and_listing_updates() {
     scratch.teardown().await;
 }
 
-/// A thumbnail the source took from an upload is stored there under the SHA-256 hex of its
-/// bytes (`logic/settings/component.ts:65`) and served only by the source. The mirror fetches it,
-/// checks the digest and keeps it under its CIDv1, which `/contents` and Places' `image` serve
-/// here; a key whose bytes are not an image, or that the source does not serve, is not kept.
+/// The mirror checks a legacy thumbnail's SHA-256 and stores it under its CIDv1.
+/// The worlds mount also serves the saved hex URL of a verified multi-chunk image.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
     use sha2::Digest;
@@ -2221,6 +2219,43 @@ async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
         node.storage.retrieve(&cid).await.unwrap().as_deref(),
         Some(&png[..])
     );
+    let content_state = Arc::new(catalyst::content::ContentState::new(
+        node.pool.clone(),
+        catalyst::content::Settings::for_tests(),
+        node.storage.clone(),
+    ));
+    let content = Router::new()
+        .route(
+            "/worlds-content-server/contents/{hash}",
+            get(catalyst::content::get_content::get_world_content),
+        )
+        .with_state(content_state.clone());
+    let get_legacy = |hash: &str| {
+        content.clone().oneshot(
+            Request::get(format!("/worlds-content-server/contents/{hash}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+    };
+    let response = get_legacy(&sha).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], format!("\"{sha}\""));
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), png.len())
+            .await
+            .unwrap(),
+        png.as_slice()
+    );
+    assert_eq!(
+        get_legacy(&text_sha).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    content_state.denylist.add(&cid);
+    assert_eq!(
+        get_legacy(&sha).await.unwrap().status(),
+        StatusCode::NOT_FOUND
+    );
+    content_state.denylist.remove(&cid);
     for world in ["text.dcl.eth", "missing.dcl.eth"] {
         let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
         assert_eq!(settings["title"], "Thumb", "{settings}");
@@ -2230,11 +2265,18 @@ async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
         );
     }
 
-    // A later pass keeps the copy without fetching it again.
+    // A world imported before alias tracking gets the mapping from its held CID
+    // even when the source no longer serves the hex URL.
+    sqlx::query("DELETE FROM worlds.thumbnail_aliases WHERE legacy_sha256 = $1")
+        .bind(&sha)
+        .execute(&node.pool)
+        .await
+        .unwrap();
     fake.state.lock().blobs.remove(&sha);
     node.pass(&node.ctx().await).await;
     let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
     assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+    assert_eq!(get_legacy(&sha).await.unwrap().status(), StatusCode::OK);
 
     // A row that stored the source's hex key itself takes the held copy on the next pass.
     sqlx::query("UPDATE worlds.worlds SET thumbnail_hash = $2 WHERE name = $1")
@@ -2258,6 +2300,24 @@ async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
     let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
     assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
     assert_eq!(world_row(&node.pool, "upload.dcl.eth").await.2, version);
+
+    // A saved hex key keeps its bytes even after the source clears the thumbnail.
+    fake.state.lock().settings.insert(
+        "upload.dcl.eth".to_string(),
+        json!({"title": "Thumb", "settings_version": version + 1}),
+    );
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert!(settings.get("thumbnail_hash").is_none(), "{settings}");
+    assert_eq!(get_legacy(&sha).await.unwrap().status(), StatusCode::OK);
+    let pinned = catalyst::storage::gc::referenced_among(
+        &node.pool,
+        catalyst::storage::gc::Pins::new(&node.storage, &[]),
+        std::slice::from_ref(&cid),
+    )
+    .await
+    .unwrap();
+    assert!(pinned.contains(&cid));
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

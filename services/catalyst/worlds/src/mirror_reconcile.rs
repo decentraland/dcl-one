@@ -147,6 +147,18 @@ async fn apply_settings(
     {
         return Ok(());
     }
+    if let (Some(sha256), Some(cid)) = (&copy.thumbnail_legacy_sha256, &copy.thumbnail_hash) {
+        // The caller holds the shared blob store lock and checked the CID is still present.
+        sqlx::query(
+            "INSERT INTO worlds.thumbnail_aliases (legacy_sha256, blob_cid) VALUES ($1, $2) \
+             ON CONFLICT (legacy_sha256) DO NOTHING",
+        )
+        .bind(sha256)
+        .bind(cid)
+        .execute(&mut *conn)
+        .await
+        .with_context(|| format!("thumbnail alias of {name}"))?;
+    }
     sqlx::query(
         r#"WITH cur AS (
              SELECT name, title, description, content_rating, categories, thumbnail_hash,

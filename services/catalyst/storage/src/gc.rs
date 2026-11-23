@@ -176,6 +176,7 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "explore.world_manifest.blob_cid",
     "explore.poster.blob_cid",
     "worlds.worlds.thumbnail_hash",
+    "worlds.thumbnail_aliases.blob_cid",
     "worlds.federation_worlds.thumbnail_hash",
     "worlds.world_scenes.entity_id",
     "worlds.retired_world_scenes.entity_id",

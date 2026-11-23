@@ -135,6 +135,13 @@ CREATE TABLE worlds.worlds (
 -- stage-4 readers' lower(name) expression index went with their predicate,
 -- 2026-09-25).
 
+CREATE TABLE worlds.thumbnail_aliases (
+    legacy_sha256 text PRIMARY KEY CHECK (legacy_sha256 ~ '^[0-9a-f]{64}$'),
+    blob_cid text NOT NULL
+);
+
+CREATE INDEX thumbnail_aliases_blob_cid_idx ON worlds.thumbnail_aliases (blob_cid);
+
 CREATE TABLE worlds.world_scenes (
     world_name text NOT NULL,
     entity_id text NOT NULL,
