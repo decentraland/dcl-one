@@ -147,21 +147,23 @@ fn fold_authorizations(
     update_managers: &mut Vec<String>,
     approved_for_all: &mut Vec<String>,
     auths: &[Value],
-) {
+) -> Result<(), String> {
     for a in auths {
-        let operator = a.get("operator").and_then(Value::as_str).unwrap_or("");
-        if operator.is_empty() {
-            continue;
-        }
+        let operator = a
+            .get("operator")
+            .and_then(Value::as_str)
+            .filter(|operator| !operator.is_empty())
+            .ok_or("authorization has no nonempty operator")?;
+        let approved = a
+            .get("isApproved")
+            .and_then(Value::as_bool)
+            .ok_or("authorization has no boolean approval")?;
         let target = match a.get("type").and_then(Value::as_str).unwrap_or("") {
             "UpdateManager" => &mut *update_managers,
             "Operator" => &mut *approved_for_all,
-            _ => continue,
+            _ => return Err("authorization has no recognized type".into()),
         };
-        if a.get("isApproved")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        if approved {
             if !target.iter().any(|o| o == operator) {
                 target.push(operator.to_string());
             }
@@ -169,6 +171,53 @@ fn fold_authorizations(
             target.retain(|o| o != operator);
         }
     }
+    Ok(())
+}
+
+/// Walk the composite timestamp (block seconds * 1,000,000 + log index).
+/// Invalid or non-advancing pages cannot establish a complete grant set.
+async fn walk_authorizations<F, Fut>(
+    max_pages: usize,
+    mut page: F,
+) -> Result<(Vec<String>, Vec<String>), String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let mut update_managers = Vec::new();
+    let mut approved_for_all = Vec::new();
+    let mut timestamp_from = 0_u128;
+    for _ in 0..max_pages {
+        let data = page(timestamp_from.to_string()).await?;
+        let auths = data
+            .get("authorizations")
+            .and_then(Value::as_array)
+            .ok_or("subgraph response without authorizations")?;
+        if auths.len() > THE_GRAPH_PAGE_SIZE as usize {
+            return Err("subgraph returned more authorizations than requested".into());
+        }
+        let mut previous = timestamp_from;
+        for row in auths {
+            let timestamp = match row.get("timestamp") {
+                Some(Value::String(value)) => value.parse::<u128>().ok(),
+                Some(Value::Number(value)) => value.as_u64().map(u128::from),
+                _ => None,
+            }
+            .ok_or("authorization has no unsigned timestamp")?;
+            if timestamp <= previous {
+                return Err("authorization timestamps do not advance".into());
+            }
+            previous = timestamp;
+        }
+        fold_authorizations(&mut update_managers, &mut approved_for_all, auths)?;
+        if auths.len() < THE_GRAPH_PAGE_SIZE as usize {
+            return Ok((update_managers, approved_for_all));
+        }
+        timestamp_from = previous;
+    }
+    Err(format!(
+        "more than {max_pages} authorization pages of {THE_GRAPH_PAGE_SIZE}"
+    ))
 }
 
 async fn update_managers_and_approved_for_all(
@@ -177,33 +226,14 @@ async fn update_managers_and_approved_for_all(
     address: &str,
     token_address: &str,
 ) -> Result<(Vec<String>, Vec<String>), String> {
-    let mut update_managers = Vec::new();
-    let mut approved_for_all = Vec::new();
-    let mut timestamp_from = "0".to_string();
-    for _ in 0..MAX_PAGES {
-        let data = graph_query(
+    walk_authorizations(MAX_PAGES, |timestamp_from| async move {
+        graph_query(
             state,
             url,
             QUERY_AUTHORIZATIONS,
             json!({ "address": address, "tokenAddress": token_address, "timestampFrom": timestamp_from }),
-        )
-        .await?;
-        let auths = data
-            .get("authorizations")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        fold_authorizations(&mut update_managers, &mut approved_for_all, &auths);
-        if (auths.len() as i64) != THE_GRAPH_PAGE_SIZE {
-            break;
-        }
-        timestamp_from = match auths.last().and_then(|a| a.get("timestamp")) {
-            Some(Value::String(s)) => s.clone(),
-            Some(Value::Number(n)) => n.to_string(),
-            _ => break,
-        };
-    }
-    Ok((update_managers, approved_for_all))
+        ).await
+    }).await
 }
 
 /// The subject and the four legs of the parcel at `(x, y)`; `Ok(None)` when
@@ -386,12 +416,175 @@ mod tests {
             json!({ "type": "Operator", "operator": "0xb", "isApproved": true }),
             json!({ "type": "UpdateManager", "operator": "0xa", "isApproved": true }),
             json!({ "type": "Operator", "operator": "0xb", "isApproved": false }),
-            json!({ "type": "Other", "operator": "0xc", "isApproved": true }),
-            json!({ "type": "UpdateManager", "operator": "", "isApproved": true }),
         ];
-        fold_authorizations(&mut managers, &mut approved, &auths);
+        fold_authorizations(&mut managers, &mut approved, &auths).unwrap();
         assert_eq!(managers, ["0xa"]);
         assert!(approved.is_empty());
+    }
+
+    fn authorization(timestamp: u128, operator: &str, approved: bool) -> Value {
+        json!({ "timestamp": timestamp.to_string(), "type": "Operator", "operator": operator, "isApproved": approved })
+    }
+
+    #[tokio::test]
+    async fn authorization_walk_reads_every_page_and_keeps_composite_timestamp_precision() {
+        let first_timestamp = 9_007_199_254_740_993_u128;
+        let mut asked = Vec::new();
+        let (managers, approved) = walk_authorizations(3, |from| {
+            let first = asked.is_empty();
+            asked.push(from);
+            let rows: Vec<Value> = if first {
+                (0..1000)
+                    .map(|i| authorization(first_timestamp + i, "operator", true))
+                    .collect()
+            } else {
+                vec![authorization(first_timestamp + 1000, "operator", false)]
+            };
+            std::future::ready(Ok(json!({ "authorizations": rows })))
+        })
+        .await
+        .unwrap();
+        assert!(managers.is_empty());
+        assert!(approved.is_empty(), "the later-page revocation is folded");
+        assert_eq!(asked, ["0".into(), (first_timestamp + 999).to_string()]);
+    }
+
+    #[tokio::test]
+    async fn authorization_walk_refuses_cap_malformed_and_nonadvancing_results() {
+        let full: Vec<Value> = (1..=1000)
+            .map(|i| authorization(i, "operator", true))
+            .collect();
+        let response = json!({ "authorizations": full });
+        let err = walk_authorizations(1, |_| std::future::ready(Ok(response.clone())))
+            .await
+            .unwrap_err();
+        assert!(err.contains("more than 1 authorization pages"));
+        let err = walk_authorizations(2, |_| std::future::ready(Ok(response.clone())))
+            .await
+            .unwrap_err();
+        assert!(err.contains("do not advance"));
+        for response in [
+            json!({}),
+            json!({ "authorizations": null }),
+            json!({ "authorizations": [{}] }),
+            json!({ "authorizations": [{ "timestamp": "invalid" }] }),
+            json!({ "authorizations": [{ "timestamp": -1 }] }),
+            json!({ "authorizations": [authorization(10, "operator", true), authorization(10, "operator", false)] }),
+            json!({ "authorizations": [authorization(10, "operator", true), authorization(9, "operator", false)] }),
+        ] {
+            assert!(
+                walk_authorizations(2, |_| std::future::ready(Ok(response.clone())))
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            walk_authorizations(2, |_| async { Err("upstream failed".into()) })
+                .await
+                .unwrap_err(),
+            "upstream failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn authorization_walk_rejects_malformed_revocations_on_same_or_later_page() {
+        for later_page in [false, true] {
+            for (field, values) in [
+                (
+                    "type",
+                    vec![
+                        Value::Null,
+                        json!(17),
+                        json!(""),
+                        json!("Other"),
+                        json!("Owner"),
+                        json!("UpdateOperator"),
+                    ],
+                ),
+                ("operator", vec![Value::Null, json!(17), json!("")]),
+                ("isApproved", vec![Value::Null, json!("false"), json!(0)]),
+            ] {
+                for value in std::iter::once(None).chain(values.into_iter().map(Some)) {
+                    let mut revoked =
+                        authorization(if later_page { 1001 } else { 2 }, "operator", false);
+                    match value {
+                        Some(value) => {
+                            revoked[field] = value;
+                        }
+                        None => {
+                            revoked.as_object_mut().unwrap().remove(field);
+                        }
+                    }
+                    let mut calls = 0;
+                    let result = walk_authorizations(3, |_| {
+                        calls += 1;
+                        let rows = if later_page && calls == 1 {
+                            (1..=1000)
+                                .map(|i| authorization(i, "operator", true))
+                                .collect()
+                        } else if later_page {
+                            vec![revoked.clone()]
+                        } else {
+                            vec![authorization(1, "operator", true), revoked.clone()]
+                        };
+                        std::future::ready(Ok(json!({ "authorizations": rows })))
+                    })
+                    .await;
+                    assert!(
+                        result.is_err(),
+                        "malformed {field} must not preserve an earlier grant: {revoked}"
+                    );
+                    assert_eq!(calls, if later_page { 2 } else { 1 });
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authorization_query_preserves_timestamp_traversal_through_the_last_page() {
+        use std::sync::{Arc, Mutex};
+        let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let captured = requests.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let captured = captured.clone();
+                async move {
+                    let rows: Vec<Value> = if body["variables"]["timestampFrom"] == "0" {
+                        (1..=1000)
+                            .map(|i| authorization(i, "operator", true))
+                            .collect()
+                    } else {
+                        vec![authorization(1001, "operator", false)]
+                    };
+                    captured.lock().unwrap().push(body);
+                    axum::Json(json!({ "data": { "authorizations": rows } }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let index = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::IndexSettings::default(),
+        );
+        index.allow_loopback_for_tests();
+        let (_, approved) = update_managers_and_approved_for_all(&index, &url, "owner", "token")
+            .await
+            .unwrap();
+        assert!(approved.is_empty());
+        let calls = requests.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[1]["variables"],
+            json!({ "address": "owner", "tokenAddress": "token", "timestampFrom": "1000" })
+        );
+        let query = calls[0]["query"].as_str().unwrap();
+        assert!(query.contains("timestamp_gt: $timestampFrom"));
+        assert!(query.contains("orderBy: timestamp"));
+        assert!(!query.contains("id_gt"));
+        server.abort();
     }
 
     #[test]
