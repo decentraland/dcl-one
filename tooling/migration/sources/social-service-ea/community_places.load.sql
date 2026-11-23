@@ -5,3 +5,16 @@ JOIN social.communities c ON c.id = s.community_id AND c.origin = 'local'
 ON CONFLICT (place_id, community_id) DO UPDATE SET
     added_by = EXCLUDED.added_by,
     added_at = EXCLUDED.added_at;
+
+-- A Genesis id resolves through explore.place by its exact stored id, keyed by
+-- upstream's places UUID only once `run places` imported it (derive keys by UUIDv5).
+-- World-scene ids stay bare by design and are not reported.
+DO $catalogue$ DECLARE n bigint; BEGIN
+  SELECT count(*) INTO n FROM stage s
+   WHERE s.place_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     AND EXISTS (SELECT 1 FROM social.communities c WHERE c.id = s.community_id AND c.origin = 'local')
+     AND NOT EXISTS (SELECT 1 FROM explore.place p WHERE p.id = s.place_id)
+     AND NOT EXISTS (SELECT 1 FROM explore.world_scene_place w WHERE w.identity::text = lower(s.place_id));
+  IF n > 0 THEN RAISE NOTICE
+    'social-service-ea/community_places: % place ids of this batch are not in explore.place and answer bare rows; run `migrate.py run places` (rows resolve once it has)', n;
+  ELSE NULL; END IF; END $catalogue$;

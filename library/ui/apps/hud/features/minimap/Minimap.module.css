@@ -373,10 +373,10 @@
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: center;
   gap: 10px;
   height: 40px;
-  padding: 0;
+  margin-inline: calc(4px - var(--minimap-pad));
+  padding: 0 12px 0 13px;
   border: 0;
   border-radius: var(--r-control);
   background: var(--fill-3);
@@ -384,8 +384,14 @@
   font: inherit;
   font-size: var(--type-14);
   font-weight: var(--fw-bold);
+  text-align: left;
   text-transform: uppercase;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.jumpBack > svg {
+  flex: none;
 }
 
 .jumpBack:hover {

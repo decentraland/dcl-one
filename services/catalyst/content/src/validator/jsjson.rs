@@ -197,18 +197,28 @@ pub(crate) fn write(value: &LegacyValue, out: &mut String) {
     }
 }
 
-/// `JSON.stringify` of an object built from `entries` (distinct keys) in
-/// insertion order: integer-like keys first, ascending, then the rest.
+/// `items` (distinct keys) in JS property order, as `Object.keys` lists them:
+/// integer-like keys first, ascending, then the rest in insertion order.
+pub(super) fn property_order<T>(
+    items: impl IntoIterator<Item = T>,
+    key: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    let (mut indexed, rest): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|item| array_index(key(item)).is_some());
+    indexed.sort_by_key(|item| array_index(key(item)));
+    indexed.extend(rest);
+    indexed
+}
+
+/// `JSON.stringify` of an object built from `entries` (distinct keys), in JS
+/// property order.
 pub(super) fn write_object<'a>(
     entries: impl IntoIterator<Item = (&'a str, &'a LegacyValue)>,
     out: &mut String,
 ) {
-    let (mut indexed, rest): (Vec<_>, Vec<_>) = entries
-        .into_iter()
-        .partition(|(k, _)| array_index(k).is_some());
-    indexed.sort_by_key(|(k, _)| array_index(k));
     out.push('{');
-    for (i, (k, v)) in indexed.into_iter().chain(rest).enumerate() {
+    for (i, (k, v)) in property_order(entries, |(k, _)| k).into_iter().enumerate() {
         if i > 0 {
             out.push(',');
         }

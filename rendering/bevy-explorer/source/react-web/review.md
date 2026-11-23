@@ -515,16 +515,18 @@ Expectations:
 - **Nothing draws per frame:** the camera writes custom properties on the viewport; the sea is one
   image (`assets/map/sea.webp`) placed in the world layer like a satellite tile.
 - **Home:** the map and the place detail read the session's home and set it with `setHomeScene`
-  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home does not clear it.
-  Until the engine answers, the home is the web build's boot copy, its default realm read as
-  Genesis City, so the startup lobby agrees with the world.
+  (`placeHomeTarget` in `features/map/home.ts` picks what each saves); Set as Home on the place
+  that is home clears it with `clearHomeScene`, as the minimap's switch does. The home is the
+  signed-in account's: `homeScene` says `pinned: false` for an account with none, which then has
+  no pin and starts on 0,0 of the default realm. Until the engine answers, the home is the web
+  build's boot copy, its default realm read as Genesis City, so the startup lobby agrees with
+  the world; the lobby asks again once it shows, as the account may not be the boot copy's.
 - **Arrival** ends a route only in Genesis City: a World's parcels share the numbers, not the place.
 - **Quest pins:** the engine streams the map pins of portable experiences (`GetMapPinsStream`, the
   whole list on each change, the last list again on `hello`), and the session drops them when it ends.
   The Quest Mini-Games layer, on by default, draws them on the map and on the Genesis City minimap; a
-  pin outside the city is dropped. A pin without an icon, or whose icon fails to load, draws the
-  default quest pin. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows
-  two pins, one with a broken icon.
+  pin outside the city is dropped. Every pin draws the default quest pin: the scene's own icon is
+  not read. Clicking one selects its parcel, it never teleports. `?mock=1&mockpins=1` shows two pins.
 - Tests: `library/explorer-core/test/{navmap,mapCore}.test.ts`, `library/ui/apps/hud/test/hosted/map.page.test.tsx`,
   `hosted/home.session.test.tsx`, `hosted/placeDetail.test.tsx`, `mapEventInfo.test.tsx`, `mapPins.test.tsx`; here,
   `src/test/bridgePlaces.test.ts` and `bridgeEvents.test.ts`. Visual baseline: `panel-map`.

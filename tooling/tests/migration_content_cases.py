@@ -1184,3 +1184,120 @@ class ContentMigrationCases:
                                  f"BEGIN;\nCREATE TEMP TABLE stage ({defs}) ON COMMIT DROP;\nINSERT INTO stage VALUES ({row});\n"
                                  f"{later_batch}{step.load.read_text()}\nCOMMIT;\n")
                 self.assertEqual(self.sql(db, kept).strip(), expected)
+
+    def test_event_notice_import_bounds_locks_in_batches_and_dry_runs(self):
+        src, tgt = self.notifications_dbs()
+        self.sql(src, "DELETE FROM notifications WHERE address IS NOT NULL; INSERT INTO notifications "
+                     "SELECT md5(g::text)::uuid, 'series', 'events_started', "
+                     "'0x' || lpad(to_hex(g),40,'0'), '{}', "
+                     "1767225600000, NULL, 1767225600000, 1767225600000 "
+                     "FROM generate_series(1,1024) g;")
+        self.sql(tgt, """
+            CREATE FUNCTION public.check_notice_lock_bound() RETURNS trigger LANGUAGE plpgsql AS $f$
+            BEGIN
+              IF (SELECT count(*) FROM pg_locks WHERE pid=pg_backend_pid()
+                  AND locktype='advisory' AND granted) > 257 THEN
+                RAISE EXCEPTION 'event import retained more than 256 wallet bucket locks';
+              END IF;
+              RETURN NULL;
+            END $f$;
+            CREATE TRIGGER check_notice_lock_bound BEFORE INSERT ON social.notifications
+            FOR EACH STATEMENT EXECUTE FUNCTION public.check_notice_lock_bound();
+        """)
+        args = ('run', 'notifications-workers', '--step', 'notification', '--batch-size', '4096')
+        for dry in (True, False):
+            with self.subTest(dry_run=dry):
+                code, out = self.migrate(*args, *(('--dry-run',) if dry else ()),
+                                         sources_dir=harness.migrate.SOURCES)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(self.count(tgt, 'social.notifications'), 0 if dry else 1024)
+                if dry:
+                    self.assertEqual(self.sql(tgt, "SELECT to_regnamespace('dcl_migration') IS NULL;").strip(), 't')
+                self.assertEqual(self.count(tgt, 'social.notification_deliveries'), 0)
+
+    def test_event_notice_import_preserves_identity_and_newer_runtime_rows(self):
+        db = self.content_db('event_notice_history')
+        kinds = ('events_starts_soon', 'events_started', 'event_created',
+                 'event_approved', 'event_rejected', 'event_deleted')
+        for index, kind in enumerate(kinds):
+            source_id = f'00000000-0000-4000-8000-{index:012d}'
+            event_id = f'event-{index}'
+            self.sql(db, f"INSERT INTO social.notifications(id,address,type,metadata,read,read_at,in_app,occurred_at) "
+                         f"VALUES('{source_id}','{OWNER}','{kind}','{{}}',true,'2026-01-01',false,'2026-01-01');")
+            row = (f"'{source_id}','{event_id}','{OWNER}','{kind}','{{\"name\":\"Imported\"}}',"
+                   "'2026-02-01Z',NULL,'2026-01-01Z','2026-02-01Z'")
+            self.content_load(db, 'notifications-workers', 'notification', [row])
+            query = (f"SELECT id,metadata->>'eventId',broadcast_key,read,in_app FROM social.notifications "
+                     f"WHERE address='{OWNER}' AND type='{kind}';")
+            self.assertEqual(self.sql(db, query).strip(),
+                             f'{source_id}\t{event_id}\tevent-notice:{kind}:{event_id}\tt\tf')
+            self.sql(db, f"UPDATE social.notifications SET metadata=metadata || "
+                         "'{\"name\":\"Newer node\",\"occurredAt\":\"2026-03-01T00:00:00Z\"}' "
+                         f"WHERE id='{source_id}';")
+            self.content_load(db, 'notifications-workers', 'notification', [row])
+            self.assertEqual(self.sql(db, f"SELECT metadata->>'name' FROM social.notifications "
+                                          f"WHERE id='{source_id}';").strip(), 'Newer node')
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM social.notification_deliveries;').strip(), '0')
+
+    def test_event_attendance_reconcile_preserves_later_local_changes(self):
+        db = self.content_db('event_attendance_reconcile')
+        self.sql(db, "INSERT INTO explore.event(id,name,raw,origin,approved) "
+                     "VALUES('series','Series','{\"approved\":true}','local',true);")
+        wallets = ['0x' + c * 40 for c in 'abcdef']
+        for wallet in wallets[:4]:
+            self.content_load(db, 'events', 'attendance',
+                              [f"'series','{wallet}','Imported','2026-01-01Z'"])
+        self.sql(db, f"UPDATE explore.event_attendance_local SET action='cancel',signed_at='2026-02-01' "
+                     f"WHERE signer='{wallets[1]}';"
+                     f"UPDATE explore.event_attendance_local SET signed_at='2026-02-01',signed_payload='{{}}' "
+                     f"WHERE signer='{wallets[2]}';"
+                     "INSERT INTO explore.event_attendance_local(event_id,signer,action,signed_at) "
+                     f"VALUES('series','{wallets[4]}','going','2026-02-01');")
+        self.content_load(db, 'events', 'attendance_reconcile', [f"'series','{wallets[3]}'"])
+        query = 'SELECT signer,action FROM explore.event_attendance_local ORDER BY signer;'
+        expected = '\n'.join(f'{wallet}\t{action}' for wallet, action in
+                             [(wallets[1], 'cancel'), (wallets[2], 'going'),
+                              (wallets[3], 'going'), (wallets[4], 'going')])
+        self.assertEqual(self.sql(db, query).strip(), expected)
+        self.content_load(db, 'events', 'attendance_reconcile', [f"'series','{wallets[3]}'"])
+        self.assertEqual(self.sql(db, query).strip(), expected)
+        # Re-import must not reclaim newer local writes.
+        for wallet in wallets[1:3]:
+            self.content_load(db, 'events', 'attendance',
+                              [f"'series','{wallet}','Imported again','2026-01-01Z'"])
+        self.assertEqual(self.sql(db, query).strip(), expected)
+
+    def test_event_notice_import_reuses_a_runtime_carrier_and_merges_case_duplicates(self):
+        db = self.content_db('event_notice_carrier')
+        runtime = '10000000-0000-4000-8000-000000000001'
+        source = '20000000-0000-4000-8000-000000000001'
+        self.sql(db, f"INSERT INTO social.notifications(id,address,type,metadata,occurred_at,in_app,read,read_at) "
+                     f"VALUES('{runtime}','{OWNER}','event_rejected',"
+                     "'{\"eventId\":\"series\",\"occurredAt\":\"2026-03-01T00:00:00Z\",\"name\":\"Runtime\"}',"
+                     "'2026-03-01',false,false,NULL);")
+        row = (f"'{source}','series','{OWNER}','event_rejected','{{\"name\":\"Old source\"}}',"
+               "'2026-01-01Z','2026-02-01Z','2026-01-01Z','2026-01-01Z'")
+        self.content_load(db, 'notifications-workers', 'notification', [row])
+        self.assertEqual(self.sql(db, "SELECT id,metadata->>'name',in_app,read FROM social.notifications;").strip(),
+                         f'{runtime}\tRuntime\tf\tf')
+        # Different upstream IDs for one normalized recipient/type/event converge in a single load.
+        rows = [(f"'30000000-0000-4000-8000-{i:012d}','second','{OWNER}','events_started',"
+                 f"'{{\"name\":\"Version {i}\"}}','2026-01-0{i}Z',NULL,'2026-01-01Z','2026-01-0{i}Z'")
+                for i in (1, 2)]
+        self.content_load(db, 'notifications-workers', 'notification', rows)
+        self.assertEqual(self.sql(db, "SELECT count(*),max(metadata->>'name') FROM social.notifications "
+                                     "WHERE type='events_started';").strip(), '1\tVersion 2')
+
+    def test_event_attendance_empty_source_requires_explicit_override(self):
+        db = self.content_db('event_attendance_empty')
+        self.sql(db, "INSERT INTO explore.event(id,name,raw) VALUES('series','Series','{}');")
+        self.content_load(db, 'events', 'attendance', [f"'series','{OWNER}','Imported','2026-01-01Z'"])
+        step = next(s for s in harness.migrate.load_source(harness.migrate.SOURCES / 'events').steps
+                    if s.name == 'attendance_reconcile')
+        script = ('BEGIN; CREATE TEMP TABLE stage(event_id text, signer text) ON COMMIT DROP;\n'
+                  + step.load.read_text() + '\nCOMMIT;')
+        with self.assertRaisesRegex(harness.migrate.MigrationError, 'upstream lists no attendees'):
+            self.sql(db, script)
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM explore.event_attendance_local;').strip(), '1')
+        self.sql(db, "SET dcl_migration.allow_empty='on'; " + script)
+        self.assertEqual(self.sql(db, 'SELECT count(*) FROM explore.event_attendance_local;').strip(), '0')

@@ -62,6 +62,7 @@ members = [
     "camera-reel",
     "chain-index",
     "comms",
+    "comms-e2e",
     "config",
     "content",
     "db",

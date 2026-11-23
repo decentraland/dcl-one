@@ -173,12 +173,6 @@ async fn a_live_update_published_after_subscribing_follows_the_snapshot() {
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
 
-/// A membership change reaches the stream as published (upstream
-/// `communityMemberStatusHandler`, `src/logic/updates.ts:262-297` at
-/// `b6b2cef`): the wallet that left hears its own OFFLINE though it is no
-/// longer a member, and a co-member hears a join's ONLINE whatever the
-/// joiner's presence; neither meets the co-member or presence check of a
-/// connectivity update.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_membership_change_reaches_the_departed_wallet_and_the_members() {
     let Some(pool) = scratch_pool().await else {
@@ -214,20 +208,94 @@ async fn a_membership_change_reaches_the_departed_wallet_and_the_members() {
             ConnectivityStatus::Offline as i32
         )
     );
-    // now a member: a join's ONLINE arrives though the joiner is not online
-    sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")
+    sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')")
+        .bind(community)
+        .bind(&me)
+        .bind(&joiner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut raw = pubsub.subscribe(&me);
+    pubsub
+        .community_member_status(&pool, community, &joiner, ConnectivityStatus::Online)
+        .await;
+    let membership_join = raw.try_recv().unwrap();
+    // The self event also proves that the stream advanced past the offline co-member's join.
+    pubsub
+        .community_member_status(&pool, community, &me, ConnectivityStatus::Online)
+        .await;
+    let got = next_update(&mut updates).await;
+    assert_eq!(
+        (got.member.map(|m| m.address), got.status),
+        (Some(me.clone()), ConnectivityStatus::Online as i32)
+    );
+    let ctx = &server.state.ctx;
+    assert!(
+        crate::rpc::stream::captured_event_data(ctx, &me, "community-member", &membership_join)
+            .await
+            .is_none()
+    );
+
+    ctx.topology().apply_world_event("PA_world", &joiner, true);
+    let got = next_update(&mut updates).await;
+    assert_eq!(
+        (got.member.map(|m| m.address), got.status),
+        (Some(joiner.clone()), ConnectivityStatus::Online as i32)
+    );
+    let online =
+        crate::rpc::stream::captured_event_data(ctx, &me, "community-member", &membership_join)
+            .await;
+    assert_eq!(online.unwrap()["status"], "online");
+
+    let mut raw = pubsub.subscribe(&me);
+    pubsub
+        .community_member_status(&pool, community, &joiner, ConnectivityStatus::Offline)
+        .await;
+    let removal = raw.try_recv().unwrap();
+    assert!(
+        crate::rpc::stream::captured_event_data(ctx, &me, "community-member", &removal)
+            .await
+            .is_none(),
+        "a stale removal cannot take an online member out of the roster"
+    );
+
+    pubsub
+        .community_member_status(&pool, community, &me, ConnectivityStatus::Online)
+        .await;
+    let got = next_update(&mut updates).await;
+    assert_eq!(got.member.map(|m| m.address), Some(me.clone()));
+
+    sqlx::query("DELETE FROM social.community_members WHERE community_id=$1 AND member_address=$2")
+        .bind(community)
+        .bind(&joiner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut raw = pubsub.subscribe(&me);
+    pubsub
+        .community_member_status(&pool, community, &joiner, ConnectivityStatus::Offline)
+        .await;
+    let committed_removal = raw.try_recv().unwrap();
+    let got = next_update(&mut updates).await;
+    assert_eq!(
+        (got.member.map(|m| m.address), got.status),
+        (Some(joiner.clone()), ConnectivityStatus::Offline as i32)
+    );
+    assert!(
+        ctx.is_online(&joiner),
+        "removal only changes this community's roster"
+    );
+    sqlx::query("DELETE FROM social.community_members WHERE community_id=$1 AND member_address=$2")
         .bind(community)
         .bind(&me)
         .execute(&pool)
         .await
         .unwrap();
-    pubsub
-        .community_member_status(&pool, community, &joiner, ConnectivityStatus::Online)
-        .await;
-    let got = next_update(&mut updates).await;
-    assert_eq!(
-        (got.member.map(|m| m.address), got.status),
-        (Some(joiner.clone()), ConnectivityStatus::Online as i32)
+    assert!(
+        crate::rpc::stream::captured_event_data(ctx, &me, "community-member", &committed_removal)
+            .await
+            .is_none(),
+        "a departed recipient cannot receive a queued co-member removal"
     );
     drop_community(&pool, community).await;
     server.jobs.shutdown(Duration::from_secs(2)).await;

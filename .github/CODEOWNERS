@@ -80,6 +80,7 @@
 /.github/workflows/cast-presenter.yml @decentraland/apis
 /library/vendor/rusty_enet/ @decentraland/apis
 /library/dcl-livekit-token/ @decentraland/apis
+/services/catalyst/comms-e2e/ @decentraland/apis
 
 # pulse
 /services/catalyst/comms/src/pulse/ @decentraland/apis
