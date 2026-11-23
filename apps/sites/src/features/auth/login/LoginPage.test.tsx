@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getIdentity, setIdentity } from "@/data/lib/auth/session";
 import { beginShellBrowserSignIn } from "@/data/lib/auth/native-shell";
+import { getIdentity, setBrowserWalletIdentity, setIdentity, suspendWalletIdentity } from "@/data/lib/auth/session";
 
 import LoginPage from "./LoginPage";
 import { signInKindFor } from "@/data/lib/auth/signin-kind";
@@ -242,6 +242,72 @@ describe("the sign-in page", () => {
     // Recorded as a web3 sign-in: the Shop's Marketplace follows how the account signed in.
     expect(signInKindFor(SIGNER)).toBe("web3");
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
+  });
+
+  describe("when a wallet switch needs a new signature", () => {
+    let selected: string;
+    let decline: boolean;
+    let changeDuringSignature: boolean;
+    const previous = `0x${"ab".repeat(20)}`;
+    const returnTo = "/shop/items?sortBy=newest#results";
+
+    beforeEach(() => {
+      setBrowserWalletIdentity({
+        signer: previous,
+        ephemeral: { address: `0x${"c".repeat(40)}`, privateKey: `0x${"12".repeat(32)}` },
+        expiration: new Date(Date.now() + 60_000).toISOString(),
+        authChain: [],
+      }, "injected");
+      suspendWalletIdentity();
+      selected = SIGNER;
+      decline = false;
+      changeDuringSignature = false;
+      installWallet(({ method }) => {
+        if (method === "eth_accounts") return [selected];
+        if (decline) throw Object.assign(new Error("User rejected the request."), { code: 4001 });
+        if (changeDuringSignature) selected = previous;
+        return `0x${"11".repeat(65)}`;
+      });
+    });
+
+    describe("and the signature is approved", () => {
+      it("should sign in as the selected wallet and restore the full destination", async () => {
+        await act(async () => {
+          render(<LoginPage redirectTo={returnTo} layoutVariant="two-options" magicApiKey={MAGIC_KEY} walletSwitch />);
+        });
+        expect(getIdentity()?.signer).toBe(SIGNER);
+        await waitFor(() => expect(assign).toHaveBeenCalledWith(returnTo));
+        expect(replace).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("and the signature is declined", () => {
+      beforeEach(() => { decline = true; });
+
+      it("should keep the old account suspended and allow a retry", async () => {
+        await act(async () => {
+          render(<LoginPage redirectTo={returnTo} layoutVariant="two-options" magicApiKey={MAGIC_KEY} walletSwitch />);
+        });
+        expect(getIdentity()).toBeNull();
+        expect(assign).not.toHaveBeenCalled();
+        decline = false;
+        await userEvent.click(screen.getByRole("button", { name: "Try Again" }));
+        await waitFor(() => expect(assign).toHaveBeenCalledWith(returnTo));
+      });
+    });
+
+    describe("and the wallet changes again during signing", () => {
+      beforeEach(() => { changeDuringSignature = true; });
+
+      it("should reject the stale signature and allow a retry", async () => {
+        await act(async () => {
+          render(<LoginPage redirectTo={returnTo} layoutVariant="two-options" magicApiKey={MAGIC_KEY} walletSwitch />);
+        });
+        expect(getIdentity()).toBeNull();
+        expect(assign).not.toHaveBeenCalled();
+        expect(screen.getByText("Your wallet changed accounts. Try again with the account you want to use.")).toBeTruthy();
+      });
+    });
   });
 
   it("says the signature was not confirmed only once it was asked for, and tries again on request", async () => {

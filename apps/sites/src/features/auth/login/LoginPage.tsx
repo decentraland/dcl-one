@@ -15,8 +15,9 @@ import { Button } from "@dcl/one-ui";
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
 import { beginShellBrowserSignIn, isDesktopShell } from "@/data/lib/auth/native-shell";
-import { getIdentity, setIdentity } from "@/data/lib/auth/session";
-import { recordSignIn } from "@/data/lib/auth/signin-kind";
+import { getIdentity, getSuspendedWalletSigner, setBrowserWalletIdentity } from "@/data/lib/auth/session";
+import { browserWalletRdnsFor } from "@/data/lib/auth/signin-kind";
+import { browserWalletProvider, getConnectedAddress } from "@/data/lib/auth/wallet";
 
 import appleIcon from "./assets/apple.svg?url";
 import coinbaseIcon from "./assets/coinbase.svg?url";
@@ -223,13 +224,14 @@ export type LoginPageProps = {
   magicApiKey: string | null;
   /** A method the player already picked in the Explorer: started once the page knows its layout, if it offers it. */
   loginMethod?: ConnectionOption | null;
+  walletSwitch?: boolean;
 };
 
-export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, loginMethod = null }: LoginPageProps) {
+export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, loginMethod = null, walletSwitch = false }: LoginPageProps) {
   const auth = useAuth();
   const [client, setClient] = useState<Client | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
-  const [pending, setPending] = useState<ConnectionOption | null>(null);
+  const [pending, setPending] = useState<{ option: ConnectionOption; walletRdns?: string } | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -279,7 +281,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   }, [returnToSite]);
 
   const connect = useCallback(
-    async (option: ConnectionOption) => {
+    async (option: ConnectionOption, walletRdns?: string) => {
       if (option === "email") {
         const input = document.getElementById("dcl-email-input");
         input?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -288,7 +290,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       }
       const mine = ++attempt.current;
       const live = () => attempt.current === mine;
-      setPending(option);
+      setPending({ option, walletRdns });
       walletConnect.current?.abort();
 
       if (SOCIAL_OPTIONS.includes(option)) {
@@ -310,17 +312,20 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
         return;
       }
 
-      const browserWallet = option === "metamask" ? walletFor("metamask") ?? "injected" : option === "coinbase" ? walletFor("coinbase") : null;
+      const browserWallet = walletRdns ?? (option === "metamask" ? walletFor("metamask") ?? "injected" : option === "coinbase" ? walletFor("coinbase") : null);
       if (browserWallet) {
         let askedToSign = false;
         try {
+          if (walletRdns && !browserWalletProvider(walletRdns)) throw new Error("The browser wallet is unavailable.");
           const identity = await signInWithBrowserWallet(browserWallet, SESSION_MS, (phase) => {
             askedToSign = phase === "signing";
             if (live()) setModal({ state: phase, detail: null, pairing: null });
           });
+          if (walletRdns && (await getConnectedAddress()) !== identity.signer) {
+            throw new Error("Your wallet changed accounts. Try again with the account you want to use.");
+          }
           if (!live()) return;
-          recordSignIn(identity.signer, "web3");
-          setIdentity(identity);
+          setBrowserWalletIdentity(identity, browserWallet);
           rememberEmail(null);
           finish();
         } catch (err) {
@@ -358,10 +363,13 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   // one that fails or is closed, leaves the page's own options.
   const requested = useRef(false);
   useEffect(() => {
-    if (requested.current || client == null || client.desktopShell || loginMethod == null || loginMethod === "email") return;
+    if (requested.current || client == null || client.desktopShell) return;
     requested.current = true;
-    if (layoutOffers(layout, loginMethod)) void connect(loginMethod);
-  }, [client, layout, loginMethod, connect]);
+    const signer = walletSwitch ? getSuspendedWalletSigner() : null;
+    const walletRdns = signer && browserWalletRdnsFor(signer);
+    if (walletRdns) void connect(walletRdns === "com.coinbase.wallet" ? "coinbase" : "metamask", walletRdns);
+    else if (loginMethod && loginMethod !== "email" && layoutOffers(layout, loginMethod)) void connect(loginMethod);
+  }, [client, layout, loginMethod, walletSwitch, connect]);
 
   const closeModal = useCallback(() => {
     attempt.current++;
@@ -458,9 +466,9 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
           pairing={modal.pairing}
           onClose={closeModal}
           onTryAgain={() => {
-            const option = pending;
+            const retry = pending;
             closeModal();
-            if (option) void connect(option);
+            if (retry) void connect(retry.option, retry.walletRdns);
           }}
         />
       ) : null}

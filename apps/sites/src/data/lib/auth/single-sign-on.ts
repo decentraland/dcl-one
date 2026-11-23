@@ -127,6 +127,22 @@ export function clearAllShared(): void {
   }
 }
 
+function readShared(store: Storage, k: string, now: number): AuthIdentity | null {
+  try {
+    const identity = fromShared(JSON.parse(store.getItem(k) ?? "null"), now);
+    return identity && k === key(identity.signer) ? identity : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The selected account's unexpired shared session. */
+export function sharedIdentityFor(address: string, now = Date.now()): AuthIdentity | null {
+  const k = key(address);
+  const store = storage();
+  return k && store ? readShared(store, k, now) : null;
+}
+
 /** The freshest unexpired shared session on this origin (the account signed in last), or null. */
 export function freshestShared(now = Date.now()): AuthIdentity | null {
   const store = storage();
@@ -136,15 +152,8 @@ export function freshestShared(now = Date.now()): AuthIdentity | null {
     for (let i = 0; i < store.length; i++) {
       const k = store.key(i);
       if (!k?.startsWith(`${SINGLE_SIGN_ON_PREFIX}0x`)) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(store.getItem(k) ?? "");
-      } catch {
-        continue;
-      }
-      const identity = fromShared(parsed, now);
-      // The key names the account: an entry filed under another address is not that account's session.
-      if (!identity || k !== key(identity.signer)) continue;
+      const identity = readShared(store, k, now);
+      if (!identity) continue;
       if (!best || new Date(identity.expiration) > new Date(best.expiration)) best = identity;
     }
   } catch {
