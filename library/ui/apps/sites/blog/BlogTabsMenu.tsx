@@ -22,16 +22,19 @@ export function BlogTabsMenu({
   query,
   desktopSearch
 }: BlogTabsMenuProps) {
-  const items = [{ slug: '', title: 'All articles' }, ...categories].map(({ slug, title }) => {
+  const home = blogCategoryHref('')
+  const items = new Map([[home, { id: home, href: home, label: 'All articles' }]])
+  for (const { slug, title } of categories) {
+    if (!slug.trim()) continue
     const href = blogCategoryHref(slug)
-    return { id: href, href, label: title }
-  })
+    if (!items.has(href)) items.set(href, { id: href, href, label: title.trim() || slug })
+  }
   return (
     <TabsBar
       mode="navigation"
       page="blog"
       label="Blog categories"
-      items={items}
+      items={[...items.values()]}
       activeId={activeCategory === null ? null : blogCategoryHref(activeCategory)}
       current={current}
       LinkComponent={BlogLink}
