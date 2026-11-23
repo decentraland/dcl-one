@@ -54,16 +54,24 @@ fn assert_passed(result: &ScenarioResult) {
             repeat,
             timeline,
         } => {
-            let tail: Vec<String> = timeline
+            let tail_start = timeline.len().saturating_sub(25);
+            let lines = |entries: Vec<String>| entries.join("\n");
+            let earlier = timeline[..tail_start]
                 .iter()
                 .filter(|entry| entry.actor == "scenario" || entry.kind == "transport failed")
-                .chain(timeline.iter().rev().take(25).rev())
+                .map(|entry| format!("{entry:?}"))
+                .collect();
+            let last = timeline[tail_start..]
+                .iter()
                 .map(|entry| format!("{entry:?}"))
                 .collect();
             panic!(
-                "{} failed on repeat {repeat} (seed {seed}): {expectation}\n--- last entries\n{}",
+                "{} failed on repeat {repeat} (seed {seed}): {expectation}\n\
+                 --- earlier scenario and transport failure entries\n{}\n\
+                 --- last entries\n{}",
                 result.name,
-                tail.join("\n")
+                lines(earlier),
+                lines(last)
             );
         }
         Outcome::Skipped { reason } => panic!("{} was skipped: {reason}", result.name),

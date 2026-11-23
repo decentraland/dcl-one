@@ -531,7 +531,11 @@ mod tests {
         match dialing.await.unwrap() {
             Err(ClientError::Closed { code, .. }) => assert_eq!(code, refusal),
             Err(error) => panic!("expected the server refusal, got {error}"),
-            Ok(_) => panic!("client opened a stream despite the stream limit"),
+            Ok(client) => {
+                // Dropping the client here would shut its runtime down inside this async test.
+                std::mem::forget(client);
+                panic!("client opened a stream despite the stream limit")
+            }
         }
     }
 

@@ -15,7 +15,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use web_transport_quinn::{Session, SessionError, WebTransportError};
+use web_transport_quinn::{Session, SessionError, WebTransportError, quinn};
 
 /// Buffer size for a single reliable-stream read. Raw chunks are forwarded as-is.
 const STREAM_READ_BUF: usize = 16 * 1024;
@@ -101,7 +101,8 @@ impl Client {
 
     /// [`Client::connect_within`] from a chosen local address: the server counts its per-address
     /// limits by the source address of a connection. Needs `server_cert_hash` (a client bound to
-    /// an address does not use the system trust store).
+    /// an address does not use the system trust store). Without `local`, a pinned IPv4 loopback
+    /// URL binds `127.0.0.1`; `[::1]`, `localhost` and unpinned URLs use the dual-stack builder.
     pub fn connect_within_from(
         config: ClientConfig,
         timeout: Option<Duration>,
@@ -141,18 +142,25 @@ impl Client {
                     .map_err(|e| ClientError::Connect(e.to_string()))?,
             };
 
-            let session = client
-                .connect(url)
-                .await
-                .map_err(|e| ClientError::Connect(e.to_string()))?;
+            let session = client.connect(url).await.map_err(|error| {
+                let lost = match &error {
+                    web_transport_quinn::ClientError::Connection(lost)
+                    | web_transport_quinn::ClientError::ReadError(
+                        quinn::ReadError::ConnectionLost(lost),
+                    )
+                    | web_transport_quinn::ClientError::WriteError(
+                        quinn::WriteError::ConnectionLost(lost),
+                    ) => Some(SessionError::from(lost.clone())),
+                    _ => None,
+                };
+                closed_or(lost.as_ref(), || error.to_string())
+            })?;
             stage.set("opening the reliable stream");
             // Client opens the reliable bidi stream; the server accepts it (server `accept_bi`).
-            let (send, recv) = session.open_bi().await.map_err(|error| match error {
-                SessionError::WebTransportError(WebTransportError::Closed(code, reason)) => {
-                    ClientError::Closed { code, reason }
-                }
-                other => ClientError::Connect(other.to_string()),
-            })?;
+            let (send, recv) = session
+                .open_bi()
+                .await
+                .map_err(|error| closed_or(Some(&error), || error.to_string()))?;
             Ok::<_, ClientError>((session, send, recv))
         };
         let (session, send, recv) = runtime.block_on(async {
@@ -275,18 +283,35 @@ async fn stream_writer(
 async fn disconnect_monitor(session: Session, events_tx: Sender<ClientEvent>) {
     // The code the server closed the session with; 0 when the session ended some other way
     // (idle timeout, lost connection, local close).
-    let reason = match session.closed().await {
-        SessionError::WebTransportError(WebTransportError::Closed(code, _)) => code,
-        _ => 0,
-    };
+    let reason = peer_close(&session.closed().await).map_or(0, |(code, _)| code);
     let _ = events_tx.send(ClientEvent::Disconnected { reason });
+}
+
+/// The code and reason the peer closed the session with, if it did.
+fn peer_close(error: &SessionError) -> Option<(u32, &str)> {
+    match error {
+        SessionError::WebTransportError(WebTransportError::Closed(code, reason)) => {
+            Some((*code, reason))
+        }
+        _ => None,
+    }
+}
+
+/// [`ClientError::Closed`] for a peer close, otherwise [`ClientError::Connect`].
+fn closed_or(error: Option<&SessionError>, message: impl FnOnce() -> String) -> ClientError {
+    match error.and_then(peer_close) {
+        Some((code, reason)) => ClientError::Closed {
+            code,
+            reason: reason.to_owned(),
+        },
+        None => ClientError::Connect(message()),
+    }
 }
 
 /// A client whose QUIC endpoint is bound to `local` (any port) and that trusts the one server
 /// certificate with SHA-256 `hash`: what the builder does, except for the local address, which the
 /// builder does not let a caller choose.
 fn bound_client(local: IpAddr, hash: Vec<u8>) -> Result<web_transport_quinn::Client, ClientError> {
-    use web_transport_quinn::quinn;
     let fail = |error: &dyn std::fmt::Display| ClientError::Connect(error.to_string());
     let provider = web_transport_quinn::crypto::default_provider();
     let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
