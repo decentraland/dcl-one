@@ -5,6 +5,7 @@ import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { CREATOR_HUB_RELEASES, CREATOR_HUB_STEPS } from "@/features/download/creator-hub-steps";
 import { trackCreatorHubClick } from "@/features/download/creator-hub-click";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 
 import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
@@ -35,6 +36,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.ComponentProps) {
   const { sid, os, retryUrl } = loaderData;
   const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
   const fired = useRef(false);
   useEffect(() => {
     if (fired.current) return;
@@ -58,7 +60,7 @@ export default function CreatorHubDownloadSuccessRoute({ loaderData }: Route.Com
               href: retryUrl || CREATOR_HUB_RELEASES,
               // The legacy footer reported only a retry of a known installer, through `useTrackClick`.
               onClick: retryUrl
-                ? () => trackCreatorHubClick("success-footer", { sid, userId }, os === "windows" ? "Windows" : "macOS")
+                ? () => trackCreatorHubClick("success-footer", { sid, userId, scope }, os === "windows" ? "Windows" : "macOS")
                 : undefined,
             },
           },

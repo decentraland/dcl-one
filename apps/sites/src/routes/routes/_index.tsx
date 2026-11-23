@@ -16,6 +16,8 @@ import { homeDownloadActions } from "@/features/home/actions";
 import { googlePlayHref } from "@/features/download/google-play";
 import { withDownloadClicks } from "@/features/home/download-clicks";
 import { trackDownloadClick } from "@/features/download/download-click";
+import { homeClicks } from "@/features/home/clicks";
+import { trackLegacyClick, useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
 import {
@@ -81,6 +83,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
   const copy = homeCopy[locale];
   const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
   const viewed = useRef(false);
   useEffect(() => {
     if (viewed.current) return;
@@ -90,8 +93,9 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
   const { hero, hangOut, store, alternateStore, hangOutStore } = withDownloadClicks(
     homeDownloadActions(platform, downloads, installers, copy.download, googlePlay),
-    (click) => trackDownloadClick(click, { sid, userId }),
+    (click) => trackDownloadClick(click, { sid, userId, scope }),
   );
+  const clicks = homeClicks((click) => trackLegacyClick(click, { sid, userId, scope }));
   const labels = {
     previous: copy.slides.previous,
     next: copy.slides.next,
@@ -124,9 +128,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           title={copy.whatsOn.title}
           labels={copy.whatsOn}
           carouselLabels={labels}
-          viewAll={{ label: copy.whatsOn.view_all, href: "/events" }}
+          viewAll={{ label: copy.whatsOn.view_all, href: "/events", onClick: clicks.viewAll }}
           background={<AnimatedBackground />}
           cards={cards}
+          onCardClick={clicks.whatsOnCard}
+          onJumpInClick={clicks.whatsOnJumpIn}
         />
         <CatchTheVibe
           title={copy.vibe}
@@ -142,11 +148,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               avatarUrl: faces[clip.address] ?? undefined,
             },
           }))}
-          hangOut={{ label: copy.hangOutNow, href: "/play/" }}
+          hangOut={{ label: copy.hangOutNow, href: "/play/", onClick: clicks.hangOut }}
         />
         <WeeklyRituals
           title={copy.rituals.title}
           labels={labels}
+          onCardClick={clicks.ritual}
           cards={WEEKLY_RITUALS.map((ritual) => ({
             id: ritual.id,
             title: copy.rituals[ritual.id],
