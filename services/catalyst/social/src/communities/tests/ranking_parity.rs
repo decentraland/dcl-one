@@ -59,7 +59,8 @@ async fn upstream_community_edits_import_after_a_ranking_pass() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
     };
-    let id = Uuid::new_v4();
+    let community = CommunityId::new();
+    let id = community.as_uuid();
     let owner = wallet();
     load_community(
         &rig.pool,
@@ -83,6 +84,11 @@ async fn upstream_community_edits_import_after_a_ranking_pass() {
         .unwrap();
     assert!(score > 0.0, "the ranking pass must write a score");
 
+    assert!(
+        super::super::queries::set_suspended(&rig.pool, community, true, "admin", Some("reason"))
+            .await
+            .unwrap()
+    );
     // This edit predates the ranking pass but arrives in the next import.
     load_community(
         &rig.pool,
@@ -92,14 +98,28 @@ async fn upstream_community_edits_import_after_a_ranking_pass() {
         "2026-01-02T00:00:00Z",
     )
     .await;
-    let (name, updated_at): (String, chrono::NaiveDateTime) =
-        sqlx::query_as("SELECT name, updated_at FROM social.communities WHERE id=$1")
+    let (name, updated_at, suspended): (String, chrono::NaiveDateTime, bool) =
+        sqlx::query_as("SELECT name, updated_at, suspended FROM social.communities WHERE id=$1")
             .bind(id)
             .fetch_one(&rig.pool)
             .await
             .unwrap();
     assert_eq!(name, "Edited upstream");
     assert_eq!(updated_at, ranking_at - chrono::Duration::days(1));
+    assert!(suspended);
+
+    assert!(
+        super::super::queries::set_suspended(&rig.pool, community, false, "admin", None)
+            .await
+            .unwrap()
+    );
+    let lifted: (bool, chrono::NaiveDateTime) =
+        sqlx::query_as("SELECT suspended, updated_at FROM social.communities WHERE id=$1")
+            .bind(id)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap();
+    assert_eq!(lifted, (false, updated_at));
     rig.finish();
 }
 
