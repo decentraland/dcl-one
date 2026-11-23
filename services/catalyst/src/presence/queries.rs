@@ -93,18 +93,6 @@ impl Queries {
         })
     }
 
-    /// `snapshots_taken_at_idx`.
-    pub async fn current(&self) -> Result<Option<CurrentSnapshot>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT id, taken_at, peers_count, islands_count, hot_scenes_count, \
-                    scenes_polled, scene_users_total, worlds_polled, active_worlds, \
-                    world_users_total, worlds_live_total \
-             FROM presence.snapshots ORDER BY taken_at DESC, id DESC LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await
-    }
-
     /// `scene_occupancy_pointer_idx`.
     pub async fn scene_history(
         &self,
@@ -122,18 +110,6 @@ impl Queries {
         .await
     }
 
-    /// The latest snapshot's rows by PK prefix, busiest first.
-    pub async fn current_scenes(&self) -> Result<Vec<SceneOccupancyRow>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT taken_at, pointer, scene_name, realm, count \
-             FROM presence.scene_occupancy \
-             WHERE snapshot_id = (SELECT id FROM presence.snapshots ORDER BY taken_at DESC, id DESC LIMIT 1) \
-             ORDER BY count DESC, pointer",
-        )
-        .fetch_all(&self.pool)
-        .await
-    }
-
     /// `world_membership_world_idx`.
     pub async fn world_history(
         &self,
@@ -147,17 +123,6 @@ impl Queries {
         )
         .bind(world)
         .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-    }
-
-    pub async fn current_worlds(&self) -> Result<Vec<WorldHeadcountRow>, sqlx::Error> {
-        sqlx::query_as(
-            "SELECT taken_at, world_name, count, live_users \
-             FROM presence.world_membership \
-             WHERE snapshot_id = (SELECT id FROM presence.snapshots ORDER BY taken_at DESC, id DESC LIMIT 1) \
-             ORDER BY count DESC, world_name",
-        )
         .fetch_all(&self.pool)
         .await
     }

@@ -26,7 +26,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use futures::TryStreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -721,72 +720,93 @@ impl EventsComponent {
         keys: &[String],
         list: EventListType,
     ) -> Result<Vec<EventAt>, ApiError> {
-        let f = EventListFilters {
-            list,
-            destination_ids: keys.to_vec(),
-            ..Default::default()
-        };
-        let mut binds: Vec<EventBind> = Vec::new();
-        let where_sql = Self::build_where(&f, &mut binds);
-        let requested = next_placeholder(
+        let live = matches!(list, EventListType::Live);
+        let mut binds = Vec::new();
+        let where_sql = Self::build_where(
+            &EventListFilters {
+                list,
+                ..Default::default()
+            },
             &mut binds,
-            EventBind::TextArray(keys.iter().map(|key| key.to_lowercase()).collect()),
         );
-        // Match the place-before-world resolver, then select one eligible event
-        // per destination. A busy destination must not consume another's budget.
-        let eligible = if matches!(list, EventListType::Live) {
-            "name IS NOT NULL AND name <> ''"
-        } else {
-            "name IS NOT NULL AND next_start_at IS NOT NULL"
-        };
-        // Live names are sanitized in Rust. A markup-only name must not hide
-        // the next usable name, so stream that ordered set before choosing winners.
-        let selection = if matches!(list, EventListType::Live) {
-            "SELECT"
-        } else {
-            "SELECT DISTINCT ON (destination)"
-        };
-        let sql = format!(
-            "{selection} id, name, place_id, server, world, next_start_at
-             FROM (
-               SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server, world,
-                      {EFF_NEXT_START_SQL} AS next_start_at,
-                      CASE WHEN lower(raw->>'place_id') = ANY({requested})
-                           THEN lower(raw->>'place_id')
-                           ELSE lower(raw->>'server') END AS destination
-               FROM explore.event{where_sql}
-             ) candidates
-             WHERE {eligible}
-             ORDER BY destination, next_start_at ASC NULLS LAST, id ASC"
-        );
-        let mut q = sqlx::query_as::<_, EventAt>(sqlx::AssertSqlSafe(sql));
-        for b in &binds {
-            q = bind_one(q, b);
-        }
-        if matches!(list, EventListType::Upcoming) {
-            return Ok(q.fetch_all(&self.pool).await?);
-        }
         let asked = AskedKeys::new(keys);
-        let mut selected = HashMap::new();
-        let mut rows = q.fetch(&self.pool);
-        while let Some(row) = rows.try_next().await? {
-            let Some(key) = asked.resolve(&row) else {
-                continue;
-            };
-            if selected.contains_key(&key)
-                || row
-                    .name
-                    .as_deref()
-                    .is_none_or(|name| strip_all_markup(name).is_empty())
-            {
-                continue;
+        let requested: Vec<_> = asked.0.keys().cloned().collect();
+        let mut pending = requested.clone();
+        let mut selected = Vec::new();
+        let mut offset = 0_i64;
+        let mut limit = 1_i64;
+        let n = binds.len();
+        // Keep place-before-world precedence relative to the full request even
+        // when only the destinations with unusable names need another page.
+        let sql = format!(
+            "SELECT page.* FROM unnest(${}::text[]) AS wanted(key)
+             CROSS JOIN LATERAL (
+               SELECT id, name, raw->>'place_id' AS place_id, raw->>'server' AS server,
+                      world, {EFF_NEXT_START_SQL} AS next_start_at
+               FROM explore.event{where_sql}
+                 AND (place_id_lower = wanted.key OR
+                     (world IS TRUE AND server_lower = wanted.key
+                      AND (place_id_lower = ANY(${}::text[])) IS NOT TRUE))
+                 AND name IS NOT NULL {}
+               ORDER BY next_start_at ASC, id ASC LIMIT ${} OFFSET ${}
+             ) page ORDER BY wanted.key, page.next_start_at ASC, page.id ASC",
+            n + 1,
+            n + 2,
+            if live { "AND name <> ''" } else { "" },
+            n + 3,
+            n + 4
+        );
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        loop {
+            let mut q = sqlx::query_as::<_, EventAt>(sqlx::AssertSqlSafe(sql.as_str()));
+            for bind in &binds {
+                q = bind_one(q, bind);
             }
-            selected.insert(key, row);
-            if selected.len() == asked.0.len() {
+            let rows = q
+                .bind(&pending)
+                .bind(&requested)
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(&mut *tx)
+                .await?;
+            if !live {
+                selected = rows;
                 break;
             }
+            let mut seen = HashMap::new();
+            for row in rows {
+                let Some(key) = asked.resolve(&row) else {
+                    continue;
+                };
+                let (count, found) = seen.entry(key).or_insert((0_i64, false));
+                *count += 1;
+                if !*found
+                    && row
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| !strip_all_markup(name).is_empty())
+                {
+                    selected.push(row);
+                    *found = true;
+                }
+            }
+            pending = seen
+                .into_iter()
+                .filter(|(_, (count, found))| !found && *count == limit)
+                .map(|(key, _)| key.to_lowercase())
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            offset += limit;
+            // Markup-only rows are unusual. Read further candidates only where needed.
+            limit = 32;
         }
-        Ok(selected.into_values().collect())
+        tx.commit().await?;
+        Ok(selected)
     }
 }
 
@@ -1369,9 +1389,11 @@ mod tests {
 
     #[tokio::test]
     async fn destination_selection_survives_more_than_2500_earlier_events() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("destination_selection", Schema::Full, 2).await else {
             return;
         };
+        let pool = db.pool.clone();
         let run = uuid::Uuid::new_v4().simple().to_string();
         let busy = format!("busy-{run}");
         let quiet = format!("quiet-{run}");
@@ -1396,12 +1418,12 @@ mod tests {
                          jsonb_build_object('approved',true,'place_id',$2::text))"
             ).bind(format!("{run}-{phase}-quiet")).bind(quiet.to_uppercase()).bind(hours).execute(&pool).await.unwrap();
         }
-        // This event sorts before quiet's usable live name, but sanitizes empty.
+        // Two pages of markup-only names precede the first usable name.
         sqlx::query(
             "INSERT INTO explore.event (id,name,start_at,next_start_at,duration_ms,approved,raw)
-             VALUES ($1,'<b></b>',timezone('UTC',now()) - interval '61 minutes',
+             SELECT $1 || '-' || n,'<b></b>',timezone('UTC',now()) - interval '61 minutes',
                      timezone('UTC',now()) - interval '61 minutes',7200000,true,
-                     jsonb_build_object('approved',true,'place_id',$2::text))",
+                     jsonb_build_object('approved',true,'place_id',$2::text) FROM generate_series(1,34) n",
         )
         .bind(format!("{run}-markup"))
         .bind(&quiet)
@@ -1415,11 +1437,7 @@ mod tests {
         let next = component.next_events(&keys).await.unwrap();
         assert_eq!(next[&quiet].name, "quiet");
         assert_eq!(next[&busy].name, "busy");
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{run}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        db.drop().await;
     }
 
     #[test]
