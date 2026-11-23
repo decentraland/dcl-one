@@ -249,7 +249,7 @@ pub enum SyncValidation {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-async fn verify_entity_auth_chain(
+async fn verify_peer_entity_chain(
     entity_id: &str,
     auth_chain: &AuthChain,
     entity_timestamp_ms: i64,
@@ -569,7 +569,7 @@ impl LiveSyncDeployer {
             #[cfg(any(test, feature = "test-support"))]
             SyncValidation::AuthChainOnly => {
                 let parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
-                verify_entity_auth_chain(entity_id, auth_chain, parsed.entity_timestamp as i64)
+                verify_peer_entity_chain(entity_id, auth_chain, parsed.entity_timestamp as i64)
                     .await
             }
         }
