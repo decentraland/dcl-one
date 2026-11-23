@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow, bail};
 use catalyst_comms::pulse::hardening::DisconnectReason;
+use catalyst_comms::pulse::simulation::DEFAULT_PENDING_AUTH_CLEAN_TIMEOUT_MS;
 use serde::Serialize;
 
 use super::support::{
@@ -27,6 +28,9 @@ const COMMAND_BUDGET: Duration = Duration::from_secs(180);
 const AFTER_COMMAND: Duration = Duration::from_secs(35);
 /// What the peers may take to enter before the stop command starts.
 const STOP_SETUP: Duration = Duration::from_secs(20);
+/// How long a peer has been connected, as it measures it, when Pulse ends it for not signing in:
+/// Pulse's window less two seconds, since Pulse counts from before the peer knows it is connected.
+const SIGN_IN_WINDOW_MS: u64 = DEFAULT_PENDING_AUTH_CLEAN_TIMEOUT_MS as u64 - 2_000;
 /// Peers signed in to Pulse when it is told to stop; one more has connected and not signed in.
 const SIGNED_IN: u32 = 3;
 /// How long Pulse may take to answer a handshake again after the restart command.
@@ -173,6 +177,8 @@ pub struct StopSeen {
     pub code: Option<u32>,
     /// When the peer saw its connection end, from the start of the stop command.
     pub after_ms: Option<u64>,
+    /// How long the peer had been connected when its connection ended.
+    pub connected_for_ms: Option<u64>,
 }
 
 /// The stop rule: every peer watched was told `Graceful` before the stop command returned. The
@@ -214,7 +220,10 @@ pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), Strin
             // Pulse ends a connection that has not signed in on its own after a while: a command
             // slower than that leaves this peer nothing to be told
             let slow_command = !peer.signed_in
-                && peer.code == Some(DisconnectReason::AuthTimeout.code());
+                && peer.code == Some(DisconnectReason::AuthTimeout.code())
+                && peer
+                    .connected_for_ms
+                    .is_some_and(|connected_for| connected_for >= SIGN_IN_WINDOW_MS);
             let cause = if slow_command {
                 ": the command took too long to stop Pulse, which had by then ended this connection for not signing in"
             } else {
@@ -241,17 +250,21 @@ type CommandEnd = parking_lot::Mutex<Option<(Instant, bool)>>;
 /// the watch goes on; it ends at once when the command fails, and [`AFTER_COMMAND`] after it
 /// succeeds.
 async fn watch_disconnects(
-    peers: &[(PulseBot, bool)],
+    peers: &[(PulseBot, bool, Instant)],
     started: Instant,
     command: &CommandEnd,
 ) -> Vec<StopSeen> {
-    let mut ended: Vec<Option<(u32, u64)>> = vec![None; peers.len()];
+    let mut ended: Vec<Option<(u32, u64, u64)>> = vec![None; peers.len()];
     loop {
-        for ((bot, _), slot) in peers.iter().zip(ended.iter_mut()) {
+        for ((bot, _, connected), slot) in peers.iter().zip(ended.iter_mut()) {
             if slot.is_none()
                 && let Some(code) = bot.view().disconnect
             {
-                *slot = Some((code, started.elapsed().as_millis() as u64));
+                *slot = Some((
+                    code,
+                    started.elapsed().as_millis() as u64,
+                    connected.elapsed().as_millis() as u64,
+                ));
             }
         }
         let over = match *command.lock() {
@@ -267,13 +280,49 @@ async fn watch_disconnects(
     peers
         .iter()
         .zip(ended)
-        .map(|((bot, signed_in), ended)| StopSeen {
+        .map(|((bot, signed_in, _), ended)| StopSeen {
             peer: bot.name().to_owned(),
             signed_in: *signed_in,
-            code: ended.map(|(code, _)| code),
-            after_ms: ended.map(|(_, after)| after),
+            code: ended.map(|(code, _, _)| code),
+            after_ms: ended.map(|(_, after, _)| after),
+            connected_for_ms: ended.map(|(_, _, connected_for)| connected_for),
         })
         .collect()
+}
+
+/// Whether `left` of the scenario's deadline holds the stop command and what follows it: the
+/// command's budget, the watch after it and Pulse answering again, and before the peers enter
+/// also their setup. A command cut short between its stop and its start leaves Pulse down.
+pub fn room_for_the_command(left: Duration, peers_entered: bool) -> Result<(), String> {
+    let setup = if peers_entered {
+        Duration::ZERO
+    } else {
+        STOP_SETUP
+    };
+    let needed = setup + COMMAND_BUDGET + AFTER_COMMAND + BACK_WITHIN;
+    if left >= needed {
+        return Ok(());
+    }
+    let (when, deadline) = if peers_entered {
+        (
+            ", the peers having entered",
+            (STOP_SETUP + needed).as_secs(),
+        )
+    } else {
+        ("", needed.as_secs())
+    };
+    Err(format!(
+        "the scenario's deadline leaves {} s{when}, less than the {} s the Pulse restart command may take with the {} s the peers are watched after it and the {} s Pulse may take to answer again{}: give --deadline {deadline} or more",
+        left.as_secs(),
+        COMMAND_BUDGET.as_secs(),
+        AFTER_COMMAND.as_secs(),
+        BACK_WITHIN.as_secs(),
+        if peers_entered {
+            String::new()
+        } else {
+            format!(", and {} s to set up", STOP_SETUP.as_secs())
+        }
+    ))
 }
 
 async fn graceful_stop(ctx: Ctx) -> Result<()> {
@@ -283,28 +332,20 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
         .get_program()
         .to_string_lossy()
         .into_owned();
-    // The command has to run to its end: cut short between its stop and its start, it leaves
-    // Pulse down.
-    let needed = STOP_SETUP + COMMAND_BUDGET + AFTER_COMMAND + BACK_WITHIN;
-    if let Some(ends_at) = ctx.ends_at() {
-        let left = ends_at.saturating_duration_since(Instant::now());
-        if left < needed {
-            bail!(
-                "the scenario's deadline leaves {} s, less than the {} s the Pulse restart command may take with the {} s the peers are watched after it, the {} s Pulse may take to answer again and {} s to set up: give --deadline {} or more",
-                left.as_secs(),
-                COMMAND_BUDGET.as_secs(),
-                AFTER_COMMAND.as_secs(),
-                BACK_WITHIN.as_secs(),
-                STOP_SETUP.as_secs(),
-                needed.as_secs()
-            );
-        }
+    // The command has to run to its end: refused here, before anyone enters, and again right
+    // before it starts, when the setup has taken what it took.
+    let left = |ctx: &Ctx| {
+        ctx.ends_at()
+            .map(|ends_at| ends_at.saturating_duration_since(Instant::now()))
+    };
+    if let Some(left) = left(&ctx) {
+        room_for_the_command(left, false).map_err(|error| anyhow!(error))?;
     }
     let realm = ctx.realm("stop");
     let here = meeting_place(&ctx);
     let target = ctx.stack().pulse_enet;
 
-    let mut peers: Vec<(PulseBot, bool)> = Vec::new();
+    let mut peers: Vec<(PulseBot, bool, Instant)> = Vec::new();
     for index in 0..SIGNED_IN {
         let bot = enter_on_enet(
             &ctx,
@@ -315,7 +356,7 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
             offset(here, index as f32, 1.0),
         )
         .await?;
-        peers.push((bot, true));
+        peers.push((bot, true, Instant::now()));
     }
     // the server has handled every handshake and teleport: the first peer holds the others
     for index in 1..SIGNED_IN {
@@ -330,9 +371,9 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
     }
     // connected and never signed in: Pulse holds it as awaiting authentication
     let pending = connect_on_enet(&ctx, "not-signed-in", target, None).await?;
-    peers.push((pending, false));
+    peers.push((pending, false, Instant::now()));
     {
-        let bots: Vec<&PulseBot> = peers.iter().map(|(bot, _)| bot).collect();
+        let bots: Vec<&PulseBot> = peers.iter().map(|(bot, _, _)| bot).collect();
         stay_connected(
             &ctx,
             "every peer is connected before the stop",
@@ -342,6 +383,14 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
         .await?;
     }
 
+    if let Some(left) = left(&ctx)
+        && let Err(error) = room_for_the_command(left, true)
+    {
+        for (bot, _, _) in peers {
+            bot.close();
+        }
+        bail!(error);
+    }
     ctx.record("runner", "pulse restart", &program);
     let started = Instant::now();
     let mut child = command
@@ -358,7 +407,7 @@ async fn graceful_stop(ctx: Ctx) -> Result<()> {
     let (status, command_took) = status;
     ctx.note("stop", &seen);
     ctx.note("restart_command_ms", command_took.as_millis() as u64);
-    for (bot, _) in peers {
+    for (bot, _, _) in peers {
         bot.close();
     }
 
@@ -562,13 +611,29 @@ async fn silent_peer(ctx: Ctx, round_trip: Duration) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// A peer that had been connected for a second when the stop command started.
     fn stopped(peer: &str, signed_in: bool, code: Option<u32>, after_ms: Option<u64>) -> StopSeen {
         StopSeen {
             peer: peer.to_owned(),
             signed_in,
             code,
             after_ms,
+            connected_for_ms: after_ms.map(|after| after + 1_000),
         }
+    }
+
+    #[test]
+    fn the_deadline_must_hold_the_command_before_and_after_the_peers_enter() {
+        let seconds = Duration::from_secs;
+        assert_eq!(room_for_the_command(seconds(295), false), Ok(()));
+        let before = room_for_the_command(seconds(294), false).unwrap_err();
+        assert!(before.contains("--deadline 295 or more"), "{before}");
+        assert!(before.contains("20 s to set up"), "{before}");
+        // once the peers are in, the setup is behind: what is left has to hold the rest
+        assert_eq!(room_for_the_command(seconds(275), true), Ok(()));
+        let after = room_for_the_command(seconds(274), true).unwrap_err();
+        assert!(after.contains("the peers having entered"), "{after}");
+        assert!(after.contains("--deadline 295 or more"), "{after}");
     }
 
     #[test]
@@ -636,6 +701,24 @@ mod tests {
             "{failure}"
         );
         assert!(!failure.contains("signed-in-0"), "{failure}");
+
+        // the same code long before Pulse's sign-in window has run out is Pulse's own answer to
+        // the stop, and no word on the command
+        let early = vec![
+            stopped("signed-in-0", true, Some(graceful), Some(400)),
+            StopSeen {
+                connected_for_ms: Some(2_400),
+                ..stopped(
+                    "not-signed-in",
+                    false,
+                    Some(DisconnectReason::AuthTimeout.code()),
+                    Some(400),
+                )
+            },
+        ];
+        let failure = judge_stop(&early, Duration::from_secs(2)).unwrap_err();
+        assert!(failure.contains("AuthTimeout"), "{failure}");
+        assert!(!failure.contains("took too long"), "{failure}");
     }
 
     #[test]

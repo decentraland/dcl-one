@@ -97,7 +97,11 @@ async fn a_restart_command_that_fails_is_reported_as_the_commands_failure() {
         PulseServer::new(),
         |stack| stack.pulse_restart_command = Some(exits_with(3)),
         &pulse_enet::GRACEFUL_STOP,
-        options(1),
+        // above what the scenario asks of its deadline, whatever the run's default is
+        RunOptions {
+            scenario_deadline: Duration::from_secs(400),
+            ..options(1)
+        },
     )
     .await;
     let failure = failure_of(&result);

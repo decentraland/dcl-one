@@ -236,9 +236,9 @@ receive a disconnect with `Graceful` (1) before the command returns; the report 
 peer's code and time (`stop`) and how long the command took (`restart_command_ms`), and the
 scenario then waits for Pulse to accept a handshake again. It is hostile: it stops a process of
 the stack. The command has 180 s to return, and the scenario refuses to start when the run's
-`--deadline` leaves less than 295 s for it: a command cut short between its stop and its start
-leaves Pulse down for the rest of the run, and ending it reaches only the process the scenario
-started, not what that process started. A command that fails or does not return is reported as
+`--deadline` leaves less than 295 s for it, and looks once more right before the command starts:
+a command cut short between its stop and its start leaves Pulse down for the rest of the run,
+and ending it reaches only the process the scenario started, not what that process started. A command that fails or does not return is reported as
 the command's failure, and the stop is not judged. The command must also reach Pulse within the
 30 s Pulse keeps a connection that has not signed in, or the peer that never signs in is gone
 before the stop. The `pulse-silent-peer` scenarios put a peer behind a fault link, let ENet
