@@ -26,7 +26,7 @@ use crate::{
     },
     update_world::{
         gltf_container::GLTF_LOADING,
-        mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData},
+        mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData, AVATAR_REACH},
         raycast::Raycast,
     },
     ContainingScene, RendererSceneContext, SceneEntity, SceneSets, SceneUpdates,
@@ -390,6 +390,21 @@ impl RaycastJob {
     }
 }
 
+/// The scenes a world cast asks, with the distance at which it first meets each: those on its
+/// ray, and for a cast of the avatar's shape those the capsule touches beside the ray as well.
+fn world_scenes(
+    containing_scene: &ContainingScene,
+    origin: Vec3,
+    full_ray: Vec3,
+    shape: RaycastShape,
+) -> Vec<(Entity, f32)> {
+    let reach = match shape {
+        RaycastShape::RsRay => 0.0,
+        RaycastShape::RsAvatar => AVATAR_REACH,
+    };
+    containing_scene.get_swept(origin, full_ray, reach)
+}
+
 /// What preparing a due raycast request found.
 enum Prepared {
     /// The request or its scene is gone, so it counts as neither ran nor deferred.
@@ -466,7 +481,12 @@ fn prepare(
         RaycastTargets::Pinned(target)
     } else if context.is_portable || raycast.include_world() {
         let full_ray = direction * raycast.max_distance;
-        RaycastTargets::World(containing_scene.get_ray(origin, full_ray))
+        RaycastTargets::World(world_scenes(
+            containing_scene,
+            origin,
+            full_ray,
+            raycast.shape(),
+        ))
     } else {
         RaycastTargets::Own
     };
@@ -763,7 +783,11 @@ fn run_raycasts(
 #[cfg(test)]
 mod world_target_tests {
     use super::*;
-    use crate::update_world::mesh_collider::{regions_of_parcels, ColliderId};
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers},
+        update_world::mesh_collider::{regions_of_parcels, ColliderId},
+    };
+    use bevy::ecs::system::RunSystemOnce;
     use rapier3d_f64::prelude::{ColliderBuilder, Group, InteractionGroups, InteractionTestMode};
 
     const MASK: u32 = ColliderLayer::ClPointer as u32 | ColliderLayer::ClPhysics as u32;
@@ -938,5 +962,85 @@ mod world_target_tests {
             world(),
         );
         assert_eq!(hits, vec![(in_the_notch, 21.2)]);
+    }
+
+    #[test]
+    fn a_world_avatar_cast_hits_a_step_of_the_scene_beside_its_ray() {
+        // the caster's scene is parcel (0, 0); east of it, parcel (1, 0) starts at world x = 16
+        let mut world = World::new();
+        let caster = world.spawn_empty().id();
+        let east = world.spawn_empty().id();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (scene, parcel) in [(caster, IVec2::ZERO), (east, IVec2::X)] {
+            let hash = parcel.to_string();
+            live.scenes.insert(hash.clone(), scene);
+            pointers.insert(parcel, PointerResult::Exists { hash, urn: None });
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        // a step of east along the edge, x from 16 to 18, its top at 0.5 m
+        let mut colliders = SceneColliderData::for_regions(&regions_of_parcels(&[(1, 0)]), 1);
+        let step = ColliderId::new(
+            SceneEntityId {
+                id: 512,
+                generation: 0,
+            },
+            None,
+            0,
+        );
+        let collider = ColliderBuilder::cuboid(0.5, 0.5, 0.5)
+            .collision_groups(InteractionGroups::new(
+                Group::from_bits_truncate(MASK),
+                Group::from_bits_truncate(MASK),
+                InteractionTestMode::And,
+            ))
+            .build();
+        colliders.set_collider(&step, collider, None);
+        colliders.update_collider_transform(
+            &step,
+            &GlobalTransform::from(
+                Transform::from_xyz(17.0, 0.25, -8.0).with_scale(Vec3::new(2.0, 0.5, 4.0)),
+            ),
+        );
+        colliders.update_bvh();
+
+        // straight down inside the caster's scene, 0.2 m from the edge: the capsule's 0.3 m
+        // reaches over the step, the ray down its middle does not
+        let origin = Vec3::new(15.8, 2.0, -8.0);
+        let mut cast = |shape: RaycastShape| {
+            let scenes = world
+                .run_system_once(move |containing: ContainingScene| {
+                    world_scenes(&containing, origin, Vec3::NEG_Y * 5.0, shape)
+                })
+                .unwrap();
+            let job = RaycastJob {
+                scene_root: caster,
+                scene_entity: SceneEntityId::ROOT,
+                scene_translation: Vec3::ZERO,
+                timestamp: None,
+                continuous: false,
+                origin,
+                direction: Vec3::NEG_Y,
+                max_distance: 5.0,
+                mask: MASK,
+                shape,
+                query: RaycastQueryType::RqtHitFirst,
+                targets: RaycastTargets::World(scenes),
+                results: Vec::new(),
+            };
+            job.cast(&|scene| (scene == east).then_some(&colliders), &[])
+        };
+
+        assert!(cast(RaycastShape::RsRay).is_empty());
+
+        let hits = cast(RaycastShape::RsAvatar);
+        assert_eq!(hits.len(), 1, "{} hits", hits.len());
+        let (scene, hit) = &hits[0];
+        assert_eq!((*scene, &hit.id), (east, &step));
+        // the capsule's rounded foot lands on the step's edge, the feet 0.42 m up
+        assert!((hit.toi - 1.576).abs() < 2e-3, "{}", hit.toi);
     }
 }
