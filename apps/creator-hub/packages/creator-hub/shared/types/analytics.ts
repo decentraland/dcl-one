@@ -222,4 +222,156 @@ export type Events = {
   'Report Issue Help Center Clicked': {
     source: FeedbackSource;
   };
+  // `error` is the error message with file paths replaced and its length capped
+  // (`describeError` in the renderer's analytics store).
+  'Publish Scene Failed': {
+    project_id: string | null;
+    target: string;
+    targetContent: string;
+    error: string;
+  };
+  'Execute Scene Deployment Failed': {
+    project_id: string | null;
+    is_world: boolean | null;
+    error: string;
+  };
+  'Preview Scene Failed': {
+    project_id: string | null;
+    mobile: boolean;
+    error: string;
+  };
+  'Publish Modal Opened': {
+    project_id: string;
+    initial_step: string;
+    signed_in: boolean;
+  };
+  'Publish Step Viewed': {
+    project_id: string;
+    step: string;
+  };
+  'Publish Modal Closed': {
+    project_id: string;
+    step: string;
+  };
+  'Jump In Published Scene': {
+    project_id: string;
+    is_world: boolean;
+    opened_in: 'client' | 'web';
+  };
+  'Analytics Jump In': {
+    place_id: string;
+  };
+  'Delete Project': {
+    project_id: string | null;
+    delete_files: boolean;
+  };
+  'Duplicate Project': {
+    project_id: string;
+    source_project_id: string | null;
+  };
+  'Rename Project': {
+    project_id: string;
+  };
+  'Import Project': {
+    project_id: string;
+  };
+  'Template Clicked': {
+    template: string;
+  };
+  'Template Code Viewed': {
+    template: string;
+  };
+  'Templates Filtered': {
+    difficulty: string;
+  };
+  'Preview On Mobile': {
+    project_id: string | null;
+  };
+  'Mobile Preview Connected': {
+    devices: number;
+  };
+  'Install Client Prompt': {
+    action: 'shown' | 'download' | 'dismiss';
+  };
+  'Optimize Scan': {
+    project_id: string | null;
+    glb_count: number;
+    total_bytes: number;
+    has_backup: boolean;
+  };
+  'Optimize Scene': {
+    project_id: string | null;
+    glbs_processed: number;
+    glbs_changed: number;
+    glbs_failed: number;
+    bytes_before: number;
+    bytes_after: number;
+  };
+  'Optimize Scene Failed': {
+    project_id: string | null;
+    error: string;
+  };
+  'Optimize Revert': {
+    project_id: string | null;
+  };
+  'Optimize Tools Installed': {
+    project_id: string | null;
+  };
+  'Optimize Tools Install Failed': {
+    project_id: string | null;
+    error: string;
+  };
+  'Session Recording Started': {
+    project_id: string;
+  };
+  'Session Recording Finished': {
+    project_id: string | null;
+    reason: 'user' | 'limit' | 'device';
+    ended_with: 'stop' | 'send';
+    duration_ms: number;
+    action_count: number;
+    transcribed: boolean;
+  };
+  'Session Recording Cancelled': {
+    project_id: string | null;
+  };
+  'Session Recording Failed': {
+    project_id: string | null;
+    stage: 'start' | 'stop';
+    error: string;
+  };
+  'AI Sharing Decided': {
+    granted: boolean;
+  };
+  'AI Sharing Data Deleted': undefined;
+  'Update Prompt': {
+    action: 'shown' | 'install' | 'dismiss';
+    version: string;
+  };
+  // Setting names only: never their values, which can hold a folder path.
+  'App Settings Changed': {
+    changed: string[];
+  };
+  'Learn Resource Opened': {
+    page: 'learn' | 'docs' | 'videos';
+    kind: 'video' | 'doc';
+    title: string;
+    url: string;
+  };
+  'Open Tutorial': {
+    video_id: string;
+    title: string;
+  };
+  // The matched route pattern, never the path: a path can hold a world name or a place id.
+  'Page Viewed': {
+    page: string;
+    tab: string | null;
+  };
+  'Transfer LAND Started': {
+    land_type: string;
+  };
+  'Transfer LAND Result': {
+    land_type: string;
+    result: 'done' | 'unconfirmed' | 'rejected' | 'expired' | 'failed';
+  };
 };

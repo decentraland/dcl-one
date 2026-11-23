@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { editor } from '#preload';
+import { analytics, editor } from '#preload';
 import type { MobileDebugSessionInfo } from '/shared/types/ipc';
 
 import { t } from '/@/modules/store/translation/utils';
@@ -19,6 +19,11 @@ export function MobileQRCode({ open, onClose, url, qr }: Props) {
     const unsubscribe = editor.onMobileDebugSessions(setSessions);
     return unsubscribe;
   }, [open]);
+
+  const connected = sessions.length > 0;
+  useEffect(() => {
+    if (connected) void analytics.track('Mobile Preview Connected', { devices: sessions.length });
+  }, [connected]);
 
   return (
     <Modal

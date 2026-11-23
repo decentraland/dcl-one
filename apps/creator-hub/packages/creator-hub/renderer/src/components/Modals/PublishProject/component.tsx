@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { analytics } from '#preload';
 import { useDispatch } from '#store';
 import { fetchENSList } from '/@/modules/store/ens';
 import { useAuth } from '/@/hooks/useAuth';
@@ -37,10 +38,25 @@ export function PublishProject({
     [history, initialStep],
   );
 
+  useEffect(() => {
+    if (open) {
+      void analytics.track('Publish Modal Opened', {
+        project_id: project.id,
+        initial_step: initialStep,
+        signed_in: !!wallet,
+      });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (open) void analytics.track('Publish Step Viewed', { project_id: project.id, step });
+  }, [open, step]);
+
   const handleClose = useCallback(() => {
+    void analytics.track('Publish Modal Closed', { project_id: project.id, step });
     setHistory([]);
     onClose();
-  }, [onClose]);
+  }, [onClose, project.id, step]);
 
   const handleBack = useCallback(() => {
     setHistory(history => (history.length > 0 ? history.slice(0, -1) : []));
