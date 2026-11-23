@@ -184,9 +184,6 @@ fn setup(
 
 static TRANSITION_TIME: f32 = 1.0;
 
-/// The ground a reflection shows below the horizon, as a multiple of the fog colour.
-const GROUND_REFLECTION_SCALE: f32 = 2.0;
-
 fn apply_global_light(
     mut commands: Commands,
     setting: Res<AppConfig>,
@@ -367,14 +364,11 @@ fn apply_global_light(
 
     // skip the light and flat ambient writes (which trigger change detection and re-extraction)
     // when the light has settled and nothing else affecting them has changed
-    // below the horizon the reflections show the ground: twice the fog colour, bright by day,
-    // or the lower sky of a scene that authors a nadir
-    let ground = environment
-        .nadir
-        .is_none()
-        .then(|| new_fog_color.to_linear().to_vec3() * GROUND_REFLECTION_SCALE);
-    if envmap_settings.ground != ground {
-        envmap_settings.ground = ground;
+    // an authored nadir: the envmap generates the lower hemisphere, and the pbr lookups stop
+    // mirroring it (flagged in the ambient alpha below)
+    let authored_lower = environment.nadir.is_some();
+    if envmap_settings.authored_lower_hemisphere != authored_lower {
+        envmap_settings.authored_lower_hemisphere = authored_lower;
     }
     let skip_writes = settled
         && !environment.is_changed()
@@ -441,18 +435,20 @@ fn apply_global_light(
     // the flat ambient light is only the target the pbr shaders level the sky reflections
     // towards (they zero it as a light where the sky envmap is bound): the setting's brightness,
     // scaled and tinted by a scene's ambient override, the envmap already following the time
-    // of day. the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl). the
-    // uniform holds alpha * brightness. the brightness is kept above zero so the compression
-    // survives a zero setting, levelling the envmap to ~nothing
+    // of day. the compression rides in the alpha, negated; a further -2 flags an authored lower
+    // sky (see sky_envmap_lookup.wgsl). the uniform holds alpha * brightness. the brightness is
+    // kept above zero so the compression and the flag survive a
+    // zero setting, levelling the envmap to ~nothing
     const MIN_AMBIENT_BRIGHTNESS: f32 = 0.01;
     ambient.brightness = (setting.graphics.ambient_brightness as f32
         * 20.0
         * envmap_settings.floor
         * next_light.ambient_brightness)
         .max(MIN_AMBIENT_BRIGHTNESS);
-    ambient.color = next_light
-        .ambient_color
-        .with_alpha(-envmap_settings.compression / ambient.brightness);
+    ambient.color = next_light.ambient_color.with_alpha(
+        -(envmap_settings.compression + if authored_lower { 2.0 } else { 0.0 })
+            / ambient.brightness,
+    );
 
     if prev.1.source == scene_global_light.source {
         prev.0 += time.delta_secs()

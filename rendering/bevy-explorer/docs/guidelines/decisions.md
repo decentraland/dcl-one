@@ -61,11 +61,6 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
   keeps its orientation when it comes back, and a bump texture the scene puts in its place is
   read as the SDK's.
-- **Reflections limit the sky, not the ground.** The reflection map holds the sky with its
-  brightest channel brought down to 1: as drawn, the clouds reach 4 and the sun more, and the
-  smooth patches of a material shine out of the shade as if wet. Below the horizon it holds
-  twice the fog colour, unlimited: that stands in for the light coming back up off the ground,
-  which by day is brighter than 1.
 - **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
   surface here is about half as strong as Unity draws it, and 0.5 matches its captures
   (`BLOOM_SCATTER`).

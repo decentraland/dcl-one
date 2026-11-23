@@ -3,6 +3,8 @@
 // GGX-prefiltered specular cube (one perceptual roughness per mip) and a
 // cosine-convolved irradiance cube for `EnvironmentMapLight`.
 
+#import "embedded://shaders/sky_envmap_ground.wgsl"::sky_envmap_ground_tint
+
 const PI: f32 = 3.141592653589793;
 
 #ifdef DOWNSAMPLE
@@ -45,9 +47,10 @@ struct Constants {
     sample_count: u32,
     // source mip sampled by the irradiance pass
     source_lod: f32,
-    // what the map holds below the horizon, where `fill_ground` is set
-    ground: vec3<f32>,
-    fill_ground: u32,
+    authored_lower: u32,
+    _padding_0: u32,
+    _padding_1: u32,
+    _padding_2: u32,
 }
 
 @group(0) @binding(0) var source_cube: texture_cube<f32>;
@@ -77,6 +80,19 @@ fn output_texel_dir(uv: vec2<f32>, face: u32) -> vec3<f32> {
     return cube_texel_dir(uv, face) * vec3<f32>(1.0, 1.0, -1.0);
 }
 
+// the pbr lookups only read the upper hemisphere (see sky_envmap_lookup.wgsl), so the outputs
+// are generated for the upper half only: the +y face, the top half of the side faces plus one
+// row below the horizon for bilinear filtering, and none of the -y face. dispatched with 5
+// layers, skipping -y.
+fn output_face(layer: u32) -> u32 {
+    if constants.authored_lower != 0u { return layer; }
+    return select(layer, layer + 1u, layer >= 3u);
+}
+
+fn below_generated_half(row: u32, size: u32, face: u32) -> bool {
+    return constants.authored_lower == 0u && face != 2u && row > size / 2u;
+}
+
 // The reflection map holds nothing brighter than 1, while the sky is drawn brighter than that
 // (the clouds up to 4, the horizon and the sun beyond). Reflected at that strength, the smooth
 // and metallic patches of a material shine out of the shade as if wet. The brightest channel is
@@ -85,29 +101,25 @@ fn sky_as_reflected(sky: vec3<f32>) -> vec3<f32> {
     return sky / max(max(sky.r, max(sky.g, sky.b)), 1.0);
 }
 
-// What a reflection holds in direction `dir` of the sky cube: the sky, limited, above the
-// horizon. The sky fades to black below it, so there the map holds the ground colour instead,
-// as it is: it stands in for the light coming back up off the ground, and is brighter than 1 by
-// day. A sky with a lower half of its own (`fill_ground` unset) is read as it is, limited too.
-fn sky_or_ground(dir: vec3<f32>) -> vec3<f32> {
-    if constants.fill_ground != 0u && dir.y < 0.0 {
-        return constants.ground;
-    }
-    return sky_as_reflected(textureSampleLevel(source_cube, source_sampler, dir, 0.0).rgb);
-}
-
 fn sample_sky(dir: vec3<f32>, lod: f32) -> vec3<f32> {
 #ifdef RAW_SKY
-    // the sky itself rather than the downsample
-    return sky_or_ground(dir);
+    // the sky itself rather than the mirrored, tinted downsample: limit, mirror and tint here.
+    // a scene's own lower sky is limited too, and read as it is
+    if constants.authored_lower != 0u {
+        return sky_as_reflected(textureSampleLevel(source_cube, source_sampler, dir, 0.0).rgb);
+    }
+    let tint = select(vec3<f32>(1.0), sky_envmap_ground_tint(dir), dir.y < 0.0);
+    return sky_as_reflected(textureSampleLevel(source_cube, source_sampler, vec3<f32>(dir.x, abs(dir.y), dir.z), 0.0).rgb) * tint;
 #else
     return textureSampleLevel(source_cube, source_sampler, dir, lod).rgb;
 #endif
 }
 
 // first downsample, from the sky cube: box-filter each output texel's block of sky texels (one
-// bilinear tap per 2x2), each as a reflection holds it, so the filter lobes and irradiance
-// hemispheres that cross the horizon see the sky on one side and the ground on the other.
+// bilinear tap per 2x2), each limited to what a reflection holds, taking below-horizon texels
+// from their mirror image above, tinted towards the ground. the sky fades to black below the horizon; the mirror stands in for light
+// coming back up off the ground, so the filter lobes and irradiance hemispheres that cross the
+// horizon see sky on both sides.
 @compute
 @workgroup_size(8, 8, 1)
 fn downsample_sky(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -125,7 +137,11 @@ fn downsample_sky(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var y = 0u; y < taps; y++) {
         for (var x = 0u; x < taps; x++) {
             let uv = origin + vec2<f32>(f32(x), f32(y)) * 2.0 * texel;
-            sum += sky_or_ground(cube_texel_dir(uv, id.z));
+            let dir = cube_texel_dir(uv, id.z);
+            let authored = constants.authored_lower != 0u;
+            let mirrored = select(vec3<f32>(dir.x, abs(dir.y), dir.z), dir, authored);
+            let tint = select(vec3<f32>(1.0), sky_envmap_ground_tint(dir), dir.y < 0.0 && !authored);
+            sum += sky_as_reflected(textureSampleLevel(source_cube, source_sampler, mirrored, 0.0).rgb) * tint;
         }
     }
     textureStore(output_texture, id.xy, id.z, vec4<f32>(sum / f32(taps * taps), 1.0));
@@ -191,8 +207,8 @@ fn source_lod_for(pdf: f32, samples: f32) -> f32 {
 @workgroup_size(8, 8, 1)
 fn specular(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(output_texture);
-    let face = id.z;
-    if any(id.xy >= size) {
+    let face = output_face(id.z);
+    if any(id.xy >= size) || below_generated_half(id.y, size.y, face) {
         return;
     }
     let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
@@ -239,8 +255,8 @@ fn specular(@builtin(global_invocation_id) id: vec3<u32>) {
 @workgroup_size(8, 8, 1)
 fn irradiance(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(output_texture);
-    let face = id.z;
-    if any(id.xy >= size) {
+    let face = output_face(id.z);
+    if any(id.xy >= size) || below_generated_half(id.y, size.y, face) {
         return;
     }
     let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
