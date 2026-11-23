@@ -16,7 +16,7 @@ The first message a client sends is a [`ChallengeRequestMessage`](#challengerequ
 
 The [`SignedChallengeMessage`](#signedchallengemessage) carries a JSON-serialized [authentication chain](/docs/contributor/authentication/authchain/) that begins with the provided address, and ends with the challenge signature.
 
-If the signature is successfully verified by the service, the client is authenticated and will receive a [`WelcomeMessage`](#welcomemessage).
+The connector sends a [`WelcomeMessage`](#welcomemessage) after verifying the signed challenge and admitting the session.
 
 ```mermaid
 sequenceDiagram
@@ -103,12 +103,12 @@ Catalyst interprets `desired_room` as a realm hint. Gatekeeper still applies roo
 
 ### `ChallengeResponseMessage` <small>[↗ source][ChallengeResponseMessage]</small>
 
-The connector sends this in response to a [`ChallengeRequestMessage`](#challengerequestmessage)
+The connector sends this in response to a [`ChallengeRequestMessage`](#challengerequestmessage).
 
 | Field               | Type     | Value                                                                                               |
 | ------------------- | -------- | --------------------------------------------------------------------------------------------------- |
 | `challenge_to_sign` | `string` | A generated string to sign and create an [authentication chain](/docs/contributor/authentication/authchain/) |
-| `already_connected` | `bool`   | Whether an existing connection for this user's key                                                  |
+| `already_connected` | `bool`   | Whether the connector already has a session for the requested wallet address                                                  |
 
 ---
 

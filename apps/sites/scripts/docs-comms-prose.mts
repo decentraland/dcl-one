@@ -94,6 +94,7 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
     [/^Archipelago is the realm service[\s\S]*?(?=^## Connecting)/m, "The primary Catalyst API serves a signed WebSocket connector for realm signaling. Pulse clusters players, and Gatekeeper authorizes assignments and issues the room credentials sent over the connector. The adapter prefix `archipelago:` identifies the compatible protobuf protocol.\n\n"],
     [/^To begin, clients must open[\s\S]*?(?=^## Authenticating)/m, "Read `comms.adapter` in the realm’s `/about` response and use the advertised WebSocket URL. For example, `archipelago:archipelago:wss://realm.example/ws` advertises `wss://realm.example/ws`. By default, clients have 10 seconds after opening the socket to send `ChallengeRequestMessage`, then 60 seconds after receiving the challenge to send `SignedChallengeMessage`.\n\nA realm may instead advertise a fixed transport through `comms.fixedAdapter`. In that case, use that transport directly.\n\n"],
     ["After opening a connection to Archipelago, clients must begin by requesting and signing a challenge from the service to verify their identity.", "After opening the socket, request and sign a challenge to verify your identity."],
+    ["If the signature is successfully verified by the service, the client is authenticated and will receive a [`WelcomeMessage`](#welcomemessage).", "The connector sends a [`WelcomeMessage`](#welcomemessage) after verifying the signed challenge and admitting the session."],
     [/^```mermaid\nsequenceDiagram\n    participant Client\n    participant Archipelago\n[\s\S]*?^```/m, [
       "```mermaid",
       "sequenceDiagram",
@@ -117,7 +118,8 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
     [/\| `peers`[^\n]+/, "| `peers`          | `map<string, Position>` | Peer positions, when the assignment includes them |"],
     [/^Clients that receive an `IslandChangedMessage` should end.*$/m, "Use `conn_str` to join the assigned room. Keep a healthy connection when an update refers to the same room."],
     [/^The `peers` field contains.*$/m, "The protobuf schema defines the `peers` field. Use the appropriate room or Pulse transport for ongoing player updates."],
-    ["Sent by Archipelago in response to a", "The connector sends this in response to a"],
+    ["Sent by Archipelago in response to a [`ChallengeRequestMessage`](#challengerequestmessage)", "The connector sends this in response to a [`ChallengeRequestMessage`](#challengerequestmessage)."],
+    ["Whether an existing connection for this user's key", "Whether the connector already has a session for the requested wallet address"],
     ["Sent by Archipelago after successful authentication.", "The connector sends this after successful authentication."],
     ["Sent by Archipelago when the client is (re)assigned to an island.", "The connector sends this when it has an assignment for the client."],
     ["Sent by Archipelago before closing a connection.", "The connector can send this before closing the session."],
