@@ -6,7 +6,8 @@
    the fix or evidence that the reported failure does not apply.
 2. **Verify what was tested.** Read the PR head and target branch name from GitHub. Get
    the live target tip with `git ls-remote origin refs/heads/<target-branch>` and fetch
-   both commits. Verify the commit checked out by CI using one of these paths.
+   both commits. Verify the checkout for each CI job used in step 3 using one of
+   these paths.
 
    - CI checked out the current PR head, and
      `git merge-base --is-ancestor <target-tip-sha> <head-sha>` exits 0.
@@ -28,8 +29,9 @@
    recheck. This pins the PR head. The target can still advance during that interval.
    Enable auto-merge only when the target already requires an up-to-date branch and
    every check in step 3, or uses a merge queue that runs and requires those checks on
-   `merge_group`. Otherwise merge manually after verification. An authorized approval
-   override leaves these verification steps in force.
+   `merge_group`. Otherwise merge manually after verification. Disable auto-merge
+   before pushing a new head and repeat verification before re-enabling it. An
+   authorized approval override leaves these verification steps in force.
 5. **Verify the result.** Record the merge SHA and inspect its relevant post-merge CI.
    For a direct squash merge, compare its first parent with the verified target tip to
    detect a target advance during the merge. Report any failure with its run or job
