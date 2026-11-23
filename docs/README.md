@@ -1,6 +1,7 @@
 # Engineering references
 
 - [Development](development.md)
+- [PR merge verification](pr-merge-verification.md)
 - [UI standards](ui-standards.md)
 - [UI component adoption](ui-components.md)
 - [Web app architecture standards](web-app-standards.md)
