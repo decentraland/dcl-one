@@ -53,7 +53,7 @@ The mobile menu keeps the single branded header usable above a full-width lower 
 
 NavBar integration follow-ups: consolidate the legacy notification inbox cache with the Sites private-key lifecycle, and retire the legacy `overlayNav` body flag when its consumers migrate. The current native header surface remains explicit so existing body layouts keep their behavior. The Sites geometry test currently requires Chromium in the default test command; separating it requires preserving explicit CI browser coverage. Local CI path selection also needs shared-component and Sites-library coverage. These tooling follow-ups do not certify live authentication or service acceptance.
 
-The Events detail modal uses the public [Button](../library/ui/components/Button/Button.tsx) for Remind me. The inactive state uses `variant="secondaryLight"` at the medium size and the active state uses `primary`. While a reminder is saving, the control keeps keyboard focus and ignores repeated activation. After a failed save it can be retried from the same button. Physical touch and screen readers remain unverified.
+The Events detail modal uses the public [Button](../library/ui/components/Button/Button.tsx) for Remind me. The inactive state uses `variant="secondaryLight"` at the medium size and the active state uses `primary`. The three actions use `viewport="responsive"`, which selects mobile dimensions on narrow screens and with a coarse primary pointer. While a reminder is saving, the control keeps keyboard focus and ignores repeated activation. After a failed save it can be retried from the same button. Physical touch and screen readers remain unverified.
 
 ## Review-only components
 

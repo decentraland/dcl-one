@@ -98,6 +98,18 @@ function Fixture() {
         aria-label="Static copy link"
         startIcon={<svg />}
       />
+      <Button
+        data-case="responsive-small-icon"
+        viewport="responsive"
+        size="sm"
+        variant="secondaryLight"
+        iconOnly
+        aria-label="Small copy link"
+        startIcon={<svg />}
+      />
+      <Button data-case="responsive-loading" viewport="responsive" size="md" loading>
+        Save reminder
+      </Button>
       <output>{calls}</output>
       <span id="target">Destination</span>
     </main>

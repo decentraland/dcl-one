@@ -80,7 +80,8 @@
     --button-spinner-size: 27px;
     border-width: 0;
   }
-  .root[data-variant='secondaryLight']:is([data-size='lg'], [data-size='md']) {
+  .root[data-variant='secondaryLight']:is([data-size='lg'], [data-size='md']),
+  .root[data-variant='primary'][data-viewport='responsive'][data-size='md'] {
     --button-spinner-size: 23px;
   }
   .root[data-variant='secondaryLight'][data-size='md'],
@@ -184,7 +185,7 @@
     padding-inline: var(--dcl-space-0);
   }
   @media not (pointer: coarse) {
-    .root[data-icon-only='true'][data-variant='secondaryLight'][data-viewport='responsive'] {
+    .root[data-icon-only='true'][data-variant='secondaryLight'][data-viewport='responsive'][data-size='md'] {
       min-width: var(--button-height);
       min-height: var(--button-height);
     }

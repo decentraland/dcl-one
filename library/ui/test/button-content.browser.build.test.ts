@@ -74,8 +74,20 @@ describe('when Button owns content layout in a production bundle', () => {
             [height, 24]
           ])
           expect(
-            await b.evaluate(`document.querySelector('[data-case="responsive-icon"]').offsetWidth`)
-          ).toBe(height)
+            await b.evaluate(`['responsive-icon', 'static-icon', 'responsive-small-icon'].map(name => {
+              const button = document.querySelector('[data-case="' + name + '"]')
+              return [button.offsetWidth, button.offsetHeight]
+            })`)
+          ).toEqual([
+            [height, height],
+            [48, 48],
+            [48, 48]
+          ])
+          expect(
+            await b.evaluate(
+              `document.querySelector('[data-case="responsive-loading"] [data-loading-indicator]').offsetWidth`
+            )
+          ).toBe(23)
         }
       } finally {
         await b.session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
