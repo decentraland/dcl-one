@@ -380,6 +380,16 @@ The peer ceiling and simulation settings take effect at startup. Either transpor
 admission budgets. Pulse checks the 30-second authentication deadline on each base tick, so a
 larger base interval also increases the time between checks.
 
+The stale-view sweep retires a connected subject that leaves an observer's interest set 61–80 base
+ticks after the last observation. At nominal pacing this takes 3.05–4 seconds with a 50 ms base
+interval or 61–80 seconds with a 1000 ms interval. [Disconnect cleanup](#playerleft-on-disconnect)
+sends departures directly to observers still holding the subject.
+
+Pulse preallocates snapshot history for all 8,191 transport slots at startup, including when
+WebTransport is disabled or `PULSE_MAX_PEERS` is set below its default. Setting
+`PULSE_SNAPSHOT_HISTORY_CAPACITY` to 256 allocates 2,096,896 snapshot entries, 12.8 times the
+default ring storage. Account for this memory when raising the history capacity.
+
 Remaining options need the same explicit disposition: mapped, fixed by the destination, intentionally different under an accepted decision, or missing work. Include metrics, replay persistence, ban polling, timeouts, self mirror and resync mode in that inventory before release.
 
 ## Apply the bevy-explorer guidance selectively
