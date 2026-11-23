@@ -15,7 +15,7 @@ separate from the current runtime described here.
 - Services talk over core NATS, at most once; it was kept over gRPC, Zenoh and Postgres NOTIFY because it alone covers per-key events, snapshots, fan-out and request/reply.
 - The gatekeeper runs inside the primary `catalyst serve`; only the primary serves `/ws`. Pulse runs as `catalyst pulse`. The community chat message router runs as its own binary, `catalyst-message-router` (crate `services/catalyst/message-router`), outside `catalyst`, so a libwebrtc fault cannot stop `serve`.
 - The shared vocabulary lives in comms; ban status has one answer, comms moderation; the MLS delivery service stays in social.
-- Friends' online status comes from Pulse's islands snapshot. Room occupancy and capacity stay on LiveKit as an interim; the target is Pulse.
+- Friends' and community co-members' online status comes from Pulse's islands snapshot united with World presence: room joins and leaves applied on every replica as they arrive, corrected by each replica's complete LiveKit reads ([ADR](../../../../docs/adr/2026-11-21-world-presence-counts-as-online.md)). Room occupancy and capacity stay on LiveKit as an interim; the target is Pulse.
 - Pulse retains unfinished takeover work in memory; gatekeeper alone applies LiveKit cleanup, confirms completion and mints under the authoritative token floor.
 - Pulse and the native Bevy client use one pinned, patched ENet source in `library/vendor/rusty_enet`. Each keeps its own transport driver; channel 1 explicitly bypasses local sender throttling while retaining sequenced-unreliable semantics. Pulse implements the opt-in 8192 payload/65536 charged queued bytes/256 command native receive boundary, with typed terminal early reason 16 and exact release; shared Explorer defaults/outgoing limits remain. Ordinary/connected event adapters preserve session ownership. No service/process/channel is added. Check current acceptance evidence in the task report before making runtime claims.
 - Public Pulse V4 and Archipelago native/negotiated V4 authentication are separate proposed capabilities, deferred pending a separate user verdict. Ordinary signed `/ws` and its configured ownership remain supported. Profile announcements require nonnegative, strictly increasing versions but do not consume the teleport/emote budget; emote IDs follow the baseline without a separate 512-character cap.
@@ -34,9 +34,9 @@ separate from the current runtime described here.
 | `gatekeeper::voice`, `streaming`, `streaming_jobs`, `streaming::cast` | `serve` | private and community voice; stream access, LiveKit Ingress, streaming expiry; Cast 2.0 (`/cast/*`): stream links, streamer, watcher and presentation-bot tokens over the same stream credential, presenters in the scene room's metadata. Unlike the pinned comms-gatekeeper, a stream key is revoked once the wallet that generated it would no longer be given it (scene admin removed, platform ban, world permission or ownership lost): publisher tokens check it, and the key job checks every active key. The same checks, and `GET /scene-stream-access`, revoke a key once the scene of its room is redeployed or gone, where the pinned comms-gatekeeper answers that key and publishes into the old room until the next stream link. The `streaming` flag follows LiveKit's ingress state where the pinned comms-gatekeeper applies `ingress_started` and `ingress_ended` in arrival order: the streaming job raises and lowers it, an `ingress_ended` is ignored while the ingress is live, and a stream link asks before it replaces an idle credential |
 | `cast_presenter` | `serve`, one `cast-bot` process per session | Cast presentations at `/cast-presenter-service/presentations`: PDF slides rendered in `serve` and published into the scene room by a `cast-bot` process (`services/catalyst/cast-bot`, the only LiveKit participant code outside the Explorer), commands from the room's presenters over the data channel, sessions in memory |
 | `gatekeeper::reports` | `serve` | the player report intake at `/report-user` (`/api/reports/players/presign`, the evidence `PUT`s, `/api/reports/players`); the moderator token reads `/api/reports` |
-| `gatekeeper::webhook`, `events` | `serve` | the one LiveKit webhook; a typed nine-field `RoomEvent` to `RoomEventSink` and `RoomEventStore` |
+| `gatekeeper::webhook`, `events` | `serve` | the LiveKit webhook; a typed `RoomEvent` to `RoomEventSink` and `RoomEventStore`, with canonical room events published on `comms.room_events.v1` |
 | `gatekeeper::bus` | `serve` | `serve`'s one NATS link |
-| `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology |
+| `presence`, `topology` | every `serve` | `/live-data`, `/wallet/{w}/connected-world`, capacity counts from LiveKit occupancy; social online from Pulse's topology united with World join/leave events and LiveKit reads |
 | `protocol` | all | Pulse proto, legacy archipelago, `bus`, `room_authority`: the only module the services share |
 | `rooms`, `world_identity`, `access`, `limits` (from `shared`), `worlds_envelope`, `writes`, `signed_fetch`, `deny_list` | library | the vocabulary worlds and social use |
 | `catalyst-message-router` (its own crate) | `catalyst-message-router` | community chat: a LiveKit participant on the private messages room that relays a member's message to the community's members (§ Message router) |
@@ -146,7 +146,7 @@ unverified pending acceptance evidence.
 | message router → gatekeeper | `POST /internal/message-router/token/v1` with the dedicated HMAC key `MESSAGE_ROUTER_KEY`, at start and on every reconnect |
 | message router → social tables | shared SQL reads of `social.communities` and `social.community_members` on its own pool (`DATABASE.md` "Message router workload") |
 | Explorer ↔ message router | data packets on the private messages room, topic `community:<id>` |
-| gatekeeper → `multiplayer-hosting` | `RoomEvent` on `comms.room_events.v1` (defined, not yet published) |
+| gatekeeper → every `serve`, `multiplayer-hosting` | `RoomEvent` on `comms.room_events.v1`: each replica applies World joins and leaves to its social online view |
 | `multiplayer-hosting` → gatekeeper / engine | public routes / stdin-stdout JSON lines |
 
 `/ws` limits : `WS_MAX_SOCKETS` (default 3,000, sized by the 10 ms-per-socket
@@ -277,7 +277,7 @@ timer delays the healthy change path. A gap retains the previous view until a
 watermarked complete recovery arrives. HTTP, about/realms and each archive pass
 retain one immutable snapshot across projection and content I/O. Cold state remains an empty
 successful view, and an outage retains the last complete snapshot without public peer expiry.
-Social keeps its existing topology subscription and LiveKit keeps occupancy authority.
+Social keeps its existing topology subscription, united with World presence, and LiveKit keeps occupancy authority.
 Hot-scene HTTP and archive enrichment use serve's existing content pool and shared
 content denylist, preserving selected local document order before projection,
 stable count sorting and top-100 selection. Thumbnails name `CONTENT_URL`, or
@@ -322,7 +322,7 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 | Statistics observation | connector → Pulse | `archipelago.statistics.observations.v2` | ≤64 KiB and broker limit; queue 1,024; 2 s including registration | Pulse incarnation/generation and increasing cursor; at most once; no event retry | `serve` pub, Pulse sub |
 | Statistics changes and recovery | Pulse → every `serve` | `archipelago.statistics.snapshots.v1` | each frame ≤min(64 KiB, broker limit); transfer ≤64 MiB; changes on observation; recovery requested every 5 s at transfer boundaries | finite queued prefix, then complete checkpoint; retain last complete view on gaps | Pulse pub, `serve` sub |
 | Control position | connector → Pulse | `archipelago.control.position.v1` | 640 B | next heartbeat | `serve` pub, Pulse sub |
-| Room event | webhook → `multiplayer-hosting` | `comms.room_events.v1` | 4 KiB | reconcile via `GET /scene-participants` | `serve` pub, `multiplayer-hosting` sub only |
+| Room event | webhook → every `serve`, `multiplayer-hosting` | `comms.room_events.v1` | 4 KiB; never fails the webhook | duplicates and disorder are harmless (per-sid, leave is final); each replica's 30 s complete LiveKit read; `GET /scene-participants` | `serve` pub and sub, `multiplayer-hosting` sub |
 
 A publish returns after bounded local SDK acceptance: `Submitted` proves neither broker authorization nor delivery. Require per-process NATS credentials and subject permissions matching the producer/consumer table. Verify deployment enforcement through the private release review.
 
