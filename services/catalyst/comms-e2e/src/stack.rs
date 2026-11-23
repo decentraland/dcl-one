@@ -448,7 +448,8 @@ pub fn token_may_travel_to(url: &Url, token: &str, key: &str) -> Result<(), Stri
     }
 }
 
-fn host_of(url: &Url) -> String {
+/// The host of `url` as the host guard names it: an IPv6 address without its brackets.
+pub(crate) fn host_of(url: &Url) -> String {
     url.host_str()
         .unwrap_or_default()
         .trim_matches(['[', ']'])

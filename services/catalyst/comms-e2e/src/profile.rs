@@ -272,11 +272,11 @@ pub struct Endpoints {
 }
 
 impl Endpoints {
-    /// The hosts a deployment reaches.
+    /// The hosts a deployment reaches, an IPv6 address without its brackets.
     pub fn hosts(&self) -> Vec<String> {
         let mut hosts: Vec<String> = [&self.entities, &self.lambdas]
             .iter()
-            .map(|url| url.host_str().unwrap_or_default().to_owned())
+            .map(|url| crate::stack::host_of(url))
             .collect();
         hosts.dedup();
         hosts
@@ -656,6 +656,16 @@ mod tests {
             endpoints.past_front("127.0.0.1:7000".parse().unwrap(), &real),
             None
         );
+    }
+
+    #[test]
+    fn an_ipv6_host_is_named_without_its_brackets() {
+        let endpoints = Endpoints {
+            entities: "http://[::1]:5210/content/entities".parse().unwrap(),
+            lambdas: "http://[::1]:5210/lambdas".parse().unwrap(),
+        };
+        assert_eq!(endpoints.hosts(), vec!["::1".to_owned()]);
+        assert!(crate::stack::is_loopback_host(&endpoints.hosts()[0]));
     }
 
     #[test]
