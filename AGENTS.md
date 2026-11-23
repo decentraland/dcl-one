@@ -145,6 +145,8 @@ To implement a Figma design, follow the `implement-figma-design` skill in
 recreating it. To port a capture into `library/ui`, follow
 `maintain-figma-library`.
 
+Shared UI is imported only from `@dcl/one-ui`, never from a subpath (stylesheets excepted).
+
 State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 
 ## Explorer automation

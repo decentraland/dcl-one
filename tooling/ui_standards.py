@@ -21,6 +21,13 @@ when the file records a stylesheet that is not there, so a move or a removal
 is a reviewed change of the floor. `--write-token-floor` records the current
 counts after a deliberate change; it leaves out a stylesheet with no use of
 either kind, which is the floor of an unlisted one.
+
+`--shared-imports` is a check over the whole tree: a script under apps/, library/
+(outside library/ui itself) or tooling/ that names a `@dcl/one-ui/<path>` module
+fails, because shared foundations and components come from the `@dcl/one-ui`
+entry (docs/ui-standards.md, "Shared foundations and components"). Stylesheets
+(`.css`) and the app-scoped UI under `@dcl/one-ui/apps/` are not shared components
+and stay importable by path.
 """
 import argparse
 import json
@@ -354,6 +361,37 @@ def check(base='HEAD', staged=False):
     return issues
 
 
+SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
+SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
+SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
+# Files PR #2028 rewrites; it moves their foundation imports to @dcl/one-ui and empties this list.
+SHARED_IMPORT_PENDING = frozenset({
+    'apps/sites/src/features/not-found/NotFoundPage.tsx',
+    'apps/sites/src/features/social/report/ReportForm.tsx',
+    'apps/sites/src/features/social/report/ReportSuccess.tsx',
+})
+
+
+def deep_shared_imports(text):
+    """The @dcl/one-ui/<path> specifiers in source text that name shared code, comments excluded."""
+    return [value for kind, value in tokens(text) if kind == 'string' and SHARED_UI_DEEP.match(value)]
+
+
+def shared_import_issues(paths, read):
+    """One issue per file in scope that imports shared UI by path instead of from @dcl/one-ui."""
+    issues = []
+    for name in sorted(paths):
+        if (not name.startswith(SHARED_IMPORT_ROOTS) or name.startswith('library/ui/')
+                or not name.endswith(SHARED_IMPORT_EXTENSIONS) or name in SHARED_IMPORT_PENDING):
+            continue
+        text = read(name)
+        if '@dcl/one-ui/' not in text:
+            continue
+        for specifier in deep_shared_imports(text):
+            issues.append(f"{name}: import {specifier!r} from '@dcl/one-ui' instead")
+    return issues
+
+
 TOKENS_CSS = ROOT / 'library' / 'ui' / 'foundations' / 'spacing' / 'spacing.css'
 SKIPPED_DIRECTORIES = {'node_modules', 'build', 'dist', '.react-router'}
 # The CSS named colours, less the keywords that are not a literal value (transparent, currentColor, inherit).
@@ -509,7 +547,19 @@ def main():
                         help='Check the token floor of the stylesheets under FLOOR_PATHS instead')
     parser.add_argument('--write-token-floor', action='store_true',
                         help='Record the current token counts as the floor')
+    parser.add_argument('--shared-imports', action='store_true',
+                        help='Check that shared UI is imported from @dcl/one-ui, not by path')
     args = parser.parse_args()
+    if args.shared_imports:
+        def read(name):
+            return (ROOT / name).read_text(encoding='utf-8', errors='replace')
+        tracked = names(('ls-files',), '--', *SHARED_IMPORT_ROOTS)
+        issues = shared_import_issues({name for name in tracked if (ROOT / name).is_file()}, read)
+        if issues:
+            print('\n'.join(issues), file=sys.stderr)
+            return 1
+        print('UI standards: shared UI is imported from @dcl/one-ui')
+        return 0
     if args.tokens:
         print('\n'.join(tokens_report(args.tokens)))
         return 0

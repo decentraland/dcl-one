@@ -7,6 +7,10 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import {
+  type ChromeTopBarProps,
+  useChromeAuth,
+  ChromeLink,
+  useSiteLayout,
   decentralandPublicNavSections,
   NavBar,
   GeneralMarketplace,
@@ -26,10 +30,6 @@ import { useManaBalance } from "@ui/shop/credits/hooks";
 import { useWalletAccount } from "@dcl/one-ui/apps/shop/wallet-account";
 import { useWalletChain } from "@ui/shop/wallet/context";
 import type { Eip1193Provider } from "@web-core/auth/eip1193";
-import type { ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
-import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
-import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
-import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
 import {
   categoryForType,
   notificationBody,
