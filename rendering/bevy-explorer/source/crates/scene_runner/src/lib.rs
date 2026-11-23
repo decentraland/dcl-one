@@ -453,10 +453,7 @@ impl Plugin for SceneRunnerPlugin {
         #[cfg(target_arch = "wasm32")]
         {
             app.init_resource::<loop_pacing::WebLoopPacing>();
-            app.add_systems(
-                First,
-                loop_pacing::web_frame_start.before(bevy::time::TimeSystem),
-            );
+            app.add_systems(First, loop_pacing::web_frame_start);
         }
 
         let mut scene_schedule = Schedule::new(SceneLoopLabel);

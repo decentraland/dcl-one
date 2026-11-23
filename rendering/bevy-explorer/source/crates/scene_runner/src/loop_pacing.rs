@@ -274,7 +274,9 @@ pub fn frame_tail(loop_end: Instant, handoff: Instant, waits: Duration) -> Optio
 /// together at the end of the app's update. The waits, for the render app to come back
 /// (`WAIT_RENDER`) and for the render worker's animation frame to take the handoff
 /// (`WAIT_HANDOFF`), shrink as the loop runs longer, so they are not part of what the loop must
-/// leave.
+/// leave. It reads only what the previous update recorded and writes only [`WebLoopPacing`], so it
+/// takes no order in `First`; a system there that runs before it moves the frame's start, and the
+/// deadline, later by its own time.
 #[cfg(target_arch = "wasm32")]
 pub fn web_frame_start(
     mut pacing: bevy::prelude::ResMut<WebLoopPacing>,
