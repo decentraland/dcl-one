@@ -13,7 +13,7 @@ use platform::{platform_pointer_is_locked, platform_pointer_lock_requested};
 
 use super::{
     left_drag_pan::{self, Frame, LeftDragPan, Reason},
-    pointer_results::{PointerActionTarget, UiPointerTarget, UiPointerTargetValue},
+    pointer_results::{PointerActionTarget, UiPointerTarget},
 };
 use crate::{
     initialize_scene::SuperUserScene, renderer_context::RendererSceneContext,
@@ -100,7 +100,8 @@ impl CameraInteractionState<'_, '_> {
 
 /// What the left-button pan reads besides the input. The pan and the pointer results it reads are
 /// absent in a headless app (see `LeftDragPanPlugin`), which then never pans; nor does it track
-/// window focus.
+/// window focus. Public only because `update_pointer_lock`, which other crates order against,
+/// takes it; its fields are private.
 #[derive(SystemParam)]
 pub struct LeftDragCamera<'w, 's> {
     pan: Option<ResMut<'w, LeftDragPan>>,
@@ -181,11 +182,13 @@ impl LeftDragCamera<'_, '_> {
     }
 
     fn press_refusal(&self, window: &Window) -> Option<Reason> {
-        // settled in `PreUpdate`, so it is this frame's, unlike the resolved `PointerTarget`
+        // settled in `PreUpdate`, so it is this frame's, unlike the resolved `PointerTarget`.
+        // Scene UI on screen and scene UI drawn in the world both refuse: their content scrolls
+        // by dragging without reserving the pointer
         if self
             .ui_target
             .as_ref()
-            .is_some_and(|t| matches!(t.0, UiPointerTargetValue::Primary(..)))
+            .is_some_and(|t| t.0.entity().is_some())
         {
             return Some(Reason::OverUi);
         }
@@ -396,7 +399,9 @@ mod tests {
     use super::*;
     use crate::update_scene::{
         left_drag_pan::Phase,
-        pointer_results::{ActionCandidateMode, PointerTargetInfo, PressCapture},
+        pointer_results::{
+            ActionCandidateMode, PointerTargetInfo, PressCapture, UiPointerTargetValue,
+        },
     };
     use dcl_component::proto_components::sdk::components::common::InputAction;
 
@@ -704,6 +709,24 @@ mod tests {
         rig.drag();
         assert!(!rig.camera_locked());
         assert_eq!(rig.phase(), Phase::Spent);
+    }
+
+    #[test]
+    fn a_press_on_scene_ui_never_pans() {
+        for ui in [
+            UiPointerTargetValue::Primary(Entity::PLACEHOLDER, None),
+            UiPointerTargetValue::World(Entity::PLACEHOLDER, None),
+        ] {
+            let mut rig = Rig::new(true);
+            rig.app.world_mut().resource_mut::<UiPointerTarget>().0 = ui.clone();
+            rig.drag();
+            assert!(!rig.camera_locked(), "{ui:?}");
+            assert_eq!(
+                rig.app.world().resource::<LeftDragPan>().last_reason(),
+                Some(Reason::OverUi),
+                "{ui:?}"
+            );
+        }
     }
 
     #[test]
