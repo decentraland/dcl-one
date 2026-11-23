@@ -13,7 +13,7 @@ use bevy::{
 use common::structs::PrimaryUser;
 use comms::global_crdt::ForeignPlayer;
 use dcl_component::{
-    proto_components::{common::Color3, sdk::components::PbAvatarNametag},
+    proto_components::{common::Color3, sdk::components::PbAvatarNametag, Color3DclToBevy},
     SceneEntityId,
 };
 use scene_runner::{ContainingScene, SceneEntity};
@@ -36,16 +36,15 @@ pub(super) struct NametagPlate {
     pub(super) border: Color,
 }
 
-/// A scene's colour as a display colour. The scene's numbers are bounded here.
+/// A scene's colour as a display colour. A channel that is not a number reads 0.
 fn display(color: Color3) -> Color {
-    let channel = |value: f32| {
-        if value.is_finite() {
-            value.clamp(0.0, 1.0)
-        } else {
-            0.0
-        }
-    };
-    Color::srgb(channel(color.r), channel(color.g), channel(color.b))
+    let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
+    Color3 {
+        r: finite(color.r),
+        g: finite(color.g),
+        b: finite(color.b),
+    }
+    .convert_srgb()
 }
 
 impl From<&PbAvatarNametag> for NametagPlate {

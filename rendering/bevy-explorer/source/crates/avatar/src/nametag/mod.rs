@@ -1021,6 +1021,11 @@ impl TagBuilder<'_, '_> {
         mut bubble: Option<Mut<ChatBubble>>,
         mesh: &mut Mut<Mesh3d>,
     ) -> bool {
+        // a name that went, where one that is only hidden may come back: its glyphs are let go
+        if content.is_none() && nametag.named.take().is_some() {
+            nametag.name = None;
+            self.keep_glyphs(tag, nametag, None);
+        }
         let content = content.filter(|_| nametag.shown && nametag.name_shown);
         let Some(content) = content else {
             // a message whose time ran out unseen is not shown later
@@ -1154,10 +1159,13 @@ impl TagBuilder<'_, '_> {
                 drawn = plate_quads(
                     &layout::plate(
                         label.map_or(Vec2::ZERO, |label| label.size),
-                        // clear of the mention ring while it shows
+                        // clear of the mention ring, which is drawn whole as it fades in
                         name.as_ref().map(|name| {
-                            name.root
-                                .inflate(MENTION_RING * progress.mention.clamp(0.0, 1.0))
+                            name.root.inflate(if progress.mention > 0.0 {
+                                MENTION_RING
+                            } else {
+                                0.0
+                            })
                         }),
                     ),
                     plate,

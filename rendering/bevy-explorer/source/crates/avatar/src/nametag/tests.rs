@@ -1713,6 +1713,27 @@ fn a_plate_is_drawn_over_the_name_and_alone_when_the_name_is_hidden() {
 }
 
 #[test]
+fn a_name_that_went_leaves_the_plate_none_of_its_glyphs() {
+    let mut app = build_app();
+    let ada = spawn_player(&mut app, "Ada", 10.0);
+    app.world_mut().entity_mut(ada).insert(scene_plate("VIP").0);
+    settle(&mut app, ada);
+    let tag = tag_of(&app, ada).unwrap();
+    assert!(app.world().get::<Nametag>(tag).unwrap().name.is_some());
+
+    // only hidden: it may come back
+    app.world_mut().entity_mut(ada).insert(HiddenNametag);
+    settle(&mut app, ada);
+    assert!(app.world().get::<Nametag>(tag).unwrap().name.is_some());
+
+    app.world_mut().entity_mut(ada).remove::<NametagContent>();
+    settle(&mut app, ada);
+    let nametag = app.world().get::<Nametag>(tag).unwrap();
+    assert!(nametag.name.is_none() && nametag.plate.is_some());
+    assert!(built(&app, ada).content.is_none() && built(&app, ada).plate.is_some());
+}
+
+#[test]
 fn a_plate_is_drawn_for_any_label_a_scene_writes() {
     let mut app = build_app();
     let guide = spawn_nameless(&mut app, 10.0);
