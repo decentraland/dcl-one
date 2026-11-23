@@ -673,11 +673,23 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never
   ends. The arrival rule itself is the same: within about 5.6 m of the destination parcel's
   centre, then "You have arrived to your destination" and the pin goes.
-- **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
-  takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's and the place
-  detail's buttons and the minimap's switch only set it: the switch reads on where the player
-  stands in their home, and can't be turned off.
+- **Home belongs to the account, and can be taken back.** As in unity-explorer, the engine keeps
+  one home per wallet address in its config, and Set as Home on the place that is home (the place
+  panel's and the place detail's buttons, the minimap's switch) takes it back. An account with
+  no home has no home pin and no Set as Home on, and starts on parcel 0,0 of the default realm.
+  Before sign-in the home is the stored sign-in's account's, else the last account's. A home an
+  install kept before homes were per account goes to the first account that signs in. A guest
+  with no account (a scene preview's `?guest=1`, `/login_guest`) has a new address each session,
+  so it is no account here: it reads the home that applies before sign-in, is not offered Set as
+  Home, and neither takes nor writes a home. A guest account signs in and keeps its home like any
+  other account.
+- **Jump back to Genesis City lands on the home parcel, else on 0,0.** The minimap's button in a
+  World travels to the default realm naming a parcel: the account's home when it is in Genesis
+  City, Genesis Plaza otherwise; `/goto genesis` always names 0,0. A realm change that names no
+  parcel keeps the player's parcel, clamped to the new realm's map, which from a World is a parcel
+  of that World's grid. unity-explorer lands the button on its start parcel, read once at launch
+  (a launch position, the home parcel, or `alfa-genesis-spawn-parcel`); here the home is read when
+  the button is pressed, so a home set during the session counts.
 - **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
   detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
   World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there

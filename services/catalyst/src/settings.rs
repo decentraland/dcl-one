@@ -93,7 +93,7 @@ pub(crate) fn market_settings(
             chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
             chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
         })?)
-        .with_shadow(shop::market::chain_jobs::ShadowSettings::parse(
+        .with_portal(shop::market::chain_jobs::PortalSettings::parse(
             &config.marketplace.chain_logs_source,
             config.marketplace.chain_logs_portal_url.as_deref(),
             &config.marketplace.chain_logs_portal_dataset_ethereum,
@@ -101,6 +101,7 @@ pub(crate) fn market_settings(
             config.marketplace.chain_logs_portal_api_key.clone(),
             config.marketplace.chain_logs_portal_max_rps,
             config.marketplace.chain_logs_portal_assert_full_history,
+            config.marketplace.chain_logs_portal_deadline_secs,
         )?)
         .with_tips(shop::market::tips::TipSettings::parse(
             &config.marketplace.marketplace_tip_min_amount_wei,

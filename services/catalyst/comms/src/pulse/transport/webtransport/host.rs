@@ -47,6 +47,10 @@ enum Outbound {
         peer: u32,
         reason: u32,
     },
+    RefuseConnection {
+        connection: u64,
+        reason: u32,
+    },
 }
 
 #[derive(Clone)]
@@ -185,6 +189,12 @@ impl WtHost {
         let _ = self.outbound_tx.send(Outbound::Disconnect { peer, reason });
     }
 
+    pub(in crate::pulse::transport) fn refuse_connection(&self, connection: u64, reason: u32) {
+        let _ = self
+            .outbound_tx
+            .send(Outbound::RefuseConnection { connection, reason });
+    }
+
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
@@ -247,6 +257,9 @@ fn run_loop(
                     if let Some(&qid) = sessions.quic_by_peer.get(&peer) {
                         quic.disconnect(qid, reason);
                     }
+                }
+                Outbound::RefuseConnection { connection, reason } => {
+                    quic.disconnect(connection, reason);
                 }
                 Outbound::Send { peer, packet } => {
                     let Some(&qid) = sessions.quic_by_peer.get(&peer) else {
@@ -391,6 +404,7 @@ fn handle_connect(
         Event::Connect {
             peer: slot as PeerId,
             ip: Some(parse_ip(&remote_addr)),
+            webtransport_connection: Some(peer_id),
         },
     )
 }

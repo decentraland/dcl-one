@@ -286,7 +286,9 @@ the [conventions ADR](../../../docs/adr/2026-11-17-console-command-conventions.m
   dropped, and nearby voice is not subscribed from an address blocked either way or banned by the
   connected scene room, while calls still carry it; `/ban_block_refresh` re-checks the platform
   ban), `/item_purchase_state` (the scene item purchase request in flight and how the last one
-  ended; `/item_purchase_cancel` drops the one in flight), `/entity_screen_position <entity>
+  ended; `/item_purchase_cancel` drops the one in flight), `/home_state` (the signed-in account's
+  home and the home that applies at startup; `/home_clear` takes that account's home back),
+  `/entity_screen_position <entity>
   [--bounds]` (pixels, `normalized` and `screen`), `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
   close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
   names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`

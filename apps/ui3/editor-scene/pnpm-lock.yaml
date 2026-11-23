@@ -176,6 +176,7 @@ overrides:
   protobufjs: 7.6.6
   '@dcl/quests-client>@dcl/sdk': 7.30.1
   fast-uri@>=3.0.0 <3.1.9: ^3.1.9
+  extract-zip: file:../../creator-hub/packages/zip-extract
 
 importers:
 
@@ -195,7 +196,7 @@ importers:
         version: 7.30.1
       '@dcl/sdk':
         specifier: 7.30.1
-        version: 7.30.1(@well-known-components/interfaces@1.5.2)
+        version: 7.30.1
       '@dcl/sdk-commands':
         specifier: 7.30.1
         version: 7.30.1(@well-known-components/interfaces@1.5.2)
@@ -311,6 +312,10 @@ packages:
   '@dcl/ts-proto@1.154.0':
     resolution: {integrity: sha512-2S5AKMMPVZrVfa/1WRy4/h0niikcbu3Yf6dCoudh7ScG7BsyKAPC3CMg6IJKHzrmWS593UZClq7YJof6Vt4O+w==}
     hasBin: true
+
+  '@dcl/zip-extract@file:../../creator-hub/packages/zip-extract':
+    resolution: {directory: ../../creator-hub/packages/zip-extract, type: directory}
+    engines: {node: '>=22.2.0'}
 
   '@esbuild/android-arm64@0.18.20':
     resolution: {integrity: sha512-Nz4rJcchGDtENV0eMKUNa6L12zz2zBDXuhj/Vjh18zGqB44Bi7MBMSXjgunJgjRhCmKOjnPuZp4Mb6OKqtMHLQ==}
@@ -541,9 +546,6 @@ packages:
   '@types/ws@8.18.2':
     resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
 
-  '@types/yauzl@2.10.3':
-    resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
-
   '@well-known-components/env-config-provider@1.2.0':
     resolution: {integrity: sha512-QYDL9Uk1zEs5Q4ymgeZo1GVzuHe9Pp/jOLPRIbhwtPOCQ2Bd9yIlUWiFoC36JpcUSIlQ7Fzh8x21v2U95q5/+Q==}
     peerDependencies:
@@ -719,15 +721,6 @@ packages:
     resolution: {integrity: sha512-K2cjYR5RZcdH6YNC7YjQMmZd4fhlE7zGyc79sYWvJGgofjO8TxAJ7CCNahqqllzMrdnxidFFGOWXTYJMJmOdqA==}
     engines: {node: '>=18'}
 
-  debug@4.4.3:
-    resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
-    engines: {node: '>=6.0'}
-    peerDependencies:
-      supports-color: '*'
-    peerDependenciesMeta:
-      supports-color:
-        optional: true
-
   decamelize@1.2.0:
     resolution: {integrity: sha512-z2S+W9X73hAUUki+N+9Za2lBlun89zigOyGrsax+KUQ6wKW4ZoWpEYBkGhQjwAjjDCkWxhY0VKEhk8wzY7F5cA==}
     engines: {node: '>=0.10.0'}
@@ -803,19 +796,11 @@ packages:
   ethereum-cryptography@2.2.1:
     resolution: {integrity: sha512-r/W8lkHSiTLxUxW8Rf3u4HGB0xQweG2RyETjywylKZSzLWoWAijRz8WCuOtJ6wah+avllXBqZuk29HCCvhEIRg==}
 
-  extract-zip@2.0.1:
-    resolution: {integrity: sha512-GDhU9ntwuKyGXdZBUgTIe+vXnWj0fppUEtMDL0+idd5Sta8TGpHssn/eusA9mrPr9qNDym6SxAYZjNvCn/9RBg==}
-    engines: {node: '>= 10.17.0'}
-    hasBin: true
-
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
   fast-uri@3.1.9:
     resolution: {integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==}
-
-  fd-slicer@1.1.0:
-    resolution: {integrity: sha512-cE1qsB/VwyQozZ+q1dGxR8LBYNZeofhEdUNGSMbQD3Gw2lAzX9Zb3uIU6Ebc/Fmyjo9AWWfnn0AUCHqtevs/8g==}
 
   fill-range@7.1.1:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
@@ -861,10 +846,6 @@ packages:
   get-proto@1.0.1:
     resolution: {integrity: sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==}
     engines: {node: '>= 0.4'}
-
-  get-stream@5.2.0:
-    resolution: {integrity: sha512-nBF+F1rAZVCu/p7rjzgA+Yb4lfYXrpl7a6VmJrU8wF9I1CKvP/QwPNZHnOlwbTkY6dvtFIzFMSyQXbLoTQPRpA==}
-    engines: {node: '>=8'}
 
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
@@ -1031,9 +1012,6 @@ packages:
   mitt@3.0.1:
     resolution: {integrity: sha512-vKivATfr97l2/QBCYAkXYDbrIWPM2IIKEl7YPhjCvKlG3kE2gm+uBo6nEXK3M5/Ffh/FLpKExzOQ3JJoJGFKBw==}
 
-  ms@2.1.3:
-    resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
-
   node-fetch@2.7.0:
     resolution: {integrity: sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==}
     engines: {node: 4.x || >=6.0.0}
@@ -1092,9 +1070,6 @@ packages:
   path-to-regexp@6.3.0:
     resolution: {integrity: sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==}
 
-  pend@1.2.0:
-    resolution: {integrity: sha512-F3asv42UuXchdzt+xXqfW1OGlVBe+mxa2mqI0pg5yAHZPvFmY3Y6drSf/GQ1A86WgWEN9Kzh/WrgKa6iGcHXLg==}
-
   picomatch@2.3.2:
     resolution: {integrity: sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==}
     engines: {node: '>=8.6'}
@@ -1114,9 +1089,6 @@ packages:
   protobufjs@7.6.6:
     resolution: {integrity: sha512-dYDWdjSl5RNb7SgPxGQcRU+GtvP7s2fpkrY0r432PcOIaZ0/rBcxEZnQN67iJhFuQiVw754JDoPruPCNdGsbjg==}
     engines: {node: '>=12.0.0'}
-
-  pump@3.0.4:
-    resolution: {integrity: sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA==}
 
   qrcode@1.5.4:
     resolution: {integrity: sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg==}
@@ -1303,9 +1275,6 @@ packages:
     resolution: {integrity: sha512-aePbxDmcYW++PaqBsJ+HYUFwCdv4LVvdnhBy78E57PIor8/OVvhMrADFFEDh8DHDFRv/O9i3lPhsENjO7QX0+A==}
     engines: {node: '>=8'}
 
-  yauzl@2.10.0:
-    resolution: {integrity: sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==}
-
   zip-stream@4.1.1:
     resolution: {integrity: sha512-9qv4rlDiopXg4E69k+vMHjNN63YFMe9sZMrdlvKnCjlCRWeCBswPPMPUfx+ipsAWq1LXHe70RcbaHdJJpS6hyQ==}
     engines: {node: '>= 10'}
@@ -1392,18 +1361,12 @@ snapshots:
       '@dcl/ts-proto': 1.154.0
       protobufjs: 7.6.6
 
-  '@dcl/quests-client@1.0.3(@well-known-components/interfaces@1.5.2)':
+  '@dcl/quests-client@1.0.3':
     dependencies:
       '@dcl/protocol': 1.0.0-34643020503.commit-6402953
       '@dcl/rpc': 1.1.2
-      '@dcl/sdk': 7.30.1(@well-known-components/interfaces@1.5.2)
+      '@dcl/sdk': 7.30.1
       mitt: 3.0.1
-    transitivePeerDependencies:
-      - '@well-known-components/interfaces'
-      - bufferutil
-      - encoding
-      - supports-color
-      - utf-8-validate
 
   '@dcl/quests-manager@0.1.4': {}
 
@@ -1454,7 +1417,7 @@ snapshots:
       '@dcl/linker-dapp': 0.15.2
       '@dcl/mini-comms': 1.0.1-20230216163137.commit-a4c75be
       '@dcl/protocol': 1.0.0-34643020503.commit-6402953
-      '@dcl/quests-client': 1.0.3(@well-known-components/interfaces@1.5.2)
+      '@dcl/quests-client': 1.0.3
       '@dcl/quests-manager': 0.1.4
       '@dcl/rpc': 1.1.2
       '@dcl/schemas': 8.2.3-20230801124703.commit-ade94fc
@@ -1468,7 +1431,7 @@ snapshots:
       chokidar: 3.6.0
       dcl-catalyst-client: 22.0.0
       esbuild: 0.18.20
-      extract-zip: 2.0.1
+      extract-zip: '@dcl/zip-extract@file:../../creator-hub/packages/zip-extract'
       i18next: 25.10.10(typescript@5.9.3)
       i18next-fs-backend: 2.6.9
       ignore: 5.3.2
@@ -1479,22 +1442,15 @@ snapshots:
       - '@well-known-components/interfaces'
       - bufferutil
       - encoding
-      - supports-color
       - utf-8-validate
 
-  '@dcl/sdk@7.30.1(@well-known-components/interfaces@1.5.2)':
+  '@dcl/sdk@7.30.1':
     dependencies:
       '@dcl/ecs': 7.30.1
       '@dcl/ecs-math': 2.1.0
       '@dcl/js-runtime': 7.30.1
       '@dcl/react-ecs': 7.30.1
       '@dcl/sdk-commands': 7.30.1(@well-known-components/interfaces@1.5.2)
-    transitivePeerDependencies:
-      - '@well-known-components/interfaces'
-      - bufferutil
-      - encoding
-      - supports-color
-      - utf-8-validate
 
   '@dcl/ts-proto@1.154.0':
     dependencies:
@@ -1505,6 +1461,8 @@ snapshots:
       protobufjs: 7.6.6
       ts-poet: 6.12.0
       ts-proto-descriptors: 1.16.0
+
+  '@dcl/zip-extract@file:../../creator-hub/packages/zip-extract': {}
 
   '@esbuild/android-arm64@0.18.20':
     optional: true
@@ -1670,11 +1628,6 @@ snapshots:
   '@types/ws@8.18.2':
     dependencies:
       '@types/node': 26.6.5
-
-  '@types/yauzl@2.10.3':
-    dependencies:
-      '@types/node': 26.6.5
-    optional: true
 
   '@well-known-components/env-config-provider@1.2.0(@well-known-components/interfaces@1.5.2)':
     dependencies:
@@ -1900,10 +1853,6 @@ snapshots:
       '@dcl/schemas': 23.1.0
       cookie: 0.5.0
 
-  debug@4.4.3:
-    dependencies:
-      ms: 2.1.3
-
   decamelize@1.2.0: {}
 
   delayed-stream@1.0.0: {}
@@ -1987,23 +1936,9 @@ snapshots:
       '@scure/bip32': 1.4.0
       '@scure/bip39': 1.3.0
 
-  extract-zip@2.0.1:
-    dependencies:
-      debug: 4.4.3
-      get-stream: 5.2.0
-      yauzl: 2.10.0
-    optionalDependencies:
-      '@types/yauzl': 2.10.3
-    transitivePeerDependencies:
-      - supports-color
-
   fast-deep-equal@3.1.3: {}
 
   fast-uri@3.1.9: {}
-
-  fd-slicer@1.1.0:
-    dependencies:
-      pend: 1.2.0
 
   fill-range@7.1.1:
     dependencies:
@@ -2057,10 +1992,6 @@ snapshots:
     dependencies:
       dunder-proto: 1.0.1
       es-object-atoms: 1.1.2
-
-  get-stream@5.2.0:
-    dependencies:
-      pump: 3.0.4
 
   glob-parent@5.1.2:
     dependencies:
@@ -2203,8 +2134,6 @@ snapshots:
 
   mitt@3.0.1: {}
 
-  ms@2.1.3: {}
-
   node-fetch@2.7.0:
     dependencies:
       whatwg-url: 5.0.0
@@ -2246,8 +2175,6 @@ snapshots:
 
   path-to-regexp@6.3.0: {}
 
-  pend@1.2.0: {}
-
   picomatch@2.3.2: {}
 
   pngjs@5.0.0: {}
@@ -2272,11 +2199,6 @@ snapshots:
       '@protobufjs/utf8': 1.1.2
       '@types/node': 26.6.5
       long: 5.3.2
-
-  pump@3.0.4:
-    dependencies:
-      end-of-stream: 1.4.5
-      once: 1.4.0
 
   qrcode@1.5.4:
     dependencies:
@@ -2459,11 +2381,6 @@ snapshots:
       which-module: 2.0.1
       y18n: 4.0.3
       yargs-parser: 18.1.3
-
-  yauzl@2.10.0:
-    dependencies:
-      buffer-crc32: 0.2.13
-      fd-slicer: 1.1.0
 
   zip-stream@4.1.1:
     dependencies:

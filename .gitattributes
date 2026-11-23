@@ -9,7 +9,6 @@ library/vendor/rusty_enet/** -text -whitespace
 rendering/bevy-explorer/patches/** -text -whitespace
 rendering/bevy-explorer/source/vendor/basisu/** -text -whitespace
 rendering/bevy-explorer/vendor/bevy_dui/** -text -whitespace
-rendering/bevy-explorer/vendor/boimp/** -text -whitespace
 rendering/bevy-explorer/vendor/rpc-rust/** -text -whitespace
 
 # The Explorer end-to-end suite's visual scenes and their references (apps/bevy-explorer/e2e).

@@ -177,6 +177,12 @@ pub enum SmartWearableSource {
 pub struct HomeScene {
     pub realm: String,
     pub parcel: Vector2,
+    /// False when the account has no home: `realm` and `parcel` are then where it starts, the
+    /// default realm on 0,0.
+    pub pinned: bool,
+    /// False when no account is signed in or the session is a guest with no account: setting and
+    /// clearing a home then change nothing.
+    pub pinnable: bool,
 }
 
 /// The lobby's 3D stage, drawn around the system scene's preview avatar for the camera that
