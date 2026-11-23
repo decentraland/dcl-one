@@ -1,0 +1,32 @@
+.root {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  user-select: none;
+}
+.root:where([data-size="inherit"]) {
+  font-size: inherit;
+}
+.root:where([data-size="small"]) {
+  font-size: 16px;
+}
+.root:where([data-size="medium"]) {
+  font-size: 1.5rem;
+}
+.root:where([data-size="large"]) {
+  font-size: 2.1875rem;
+}
+.root:where([data-tone="primary"]) {
+  color: var(--brand);
+}
+.root:where([data-tone="secondary"]) {
+  color: var(--icon-secondary, var(--text));
+}
+.root:where([data-tone="error"]) {
+  color: var(--error);
+}
+.root:where([data-tone="disabled"]) {
+  color: var(--ctl-disabled-ink, var(--ink-45));
+}

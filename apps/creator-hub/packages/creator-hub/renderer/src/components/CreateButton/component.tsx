@@ -8,6 +8,7 @@ import arrowDown from '/assets/images/arrow-down.svg';
 import { useMatchMedia } from '/@/hooks/useMatchMedia';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 import { t } from '/@/modules/store/translation/utils';
+import { Plus } from '../Icons/figma';
 import { CreateProject } from '../Modals/CreateProject';
 
 import { ICON_ONLY_QUERY } from './breakpoints';
@@ -65,7 +66,7 @@ export function CreateButton() {
           <Button
             className={styles.label}
             data-testid="create-button"
-            startIcon={<AddIcon fontSize="inherit" />}
+            startIcon={<Plus fontSize="inherit" />}
             onClick={handleClickNewScene}
           >
             <span className={styles.labelText}>{t('navbar.create.label')}</span>
