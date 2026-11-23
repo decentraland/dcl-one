@@ -295,10 +295,11 @@ pub async fn insert_events(
 /// fold also revisits a cancelled listing whose own rent is past `$1`: a
 /// rent indexed after an expiry or transfer cancellation still executes it.
 /// The fold reads the distinct signatures of the venue's rents past `$1`
-/// once (`new_rent`) and joins the venue's listings to them. In the
-/// measured custom and generic plans that is a hash join, so the leg costs
-/// one read of the range's rents and one pass over the venue's listings,
-/// with no event lookup per cancelled listing. `new_rent` is empty and its
+/// once (`new_rent`) and joins the venue's listings to them. On the
+/// measured data both custom and generic plans chose a hash join, so the
+/// leg cost one read of the range's rents and one pass over the venue's
+/// listings, with no event lookup per cancelled listing. No test pins
+/// that plan. `new_rent` is empty and its
 /// rents are never read for a rebuild or a one-listing read; the
 /// one-listing read probes `rental_event_signature_idx` for its own
 /// signature instead. `$2` is the Rentals address, lowercase; the nonces
@@ -538,6 +539,7 @@ pub async fn fold(
     chain_walk::analyze_if_stale(&mut tx, "shop", "rental_event", since < 0).await?;
     let verdicts = changed_verdicts(&mut tx, venue, since, None).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -554,7 +556,6 @@ pub async fn fold_listing(
     let mut tx = pool.begin().await?;
     let verdicts = changed_verdicts(&mut tx, venue, 0, Some(listing)).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
-    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -701,6 +702,18 @@ pub(crate) mod tests {
     use super::*;
     use alloy_primitives::{U256, keccak256};
     use alloy_sol_types::SolValue;
+
+    /// A fold at the present time by the projection's owner, claimed as a
+    /// process without leases claims it.
+    async fn fold_as_owner(pool: &PgPool, venue: &str, since: Option<i64>) -> anyhow::Result<u64> {
+        let owner = chain_walk::test_owner(
+            pool,
+            &RentalsIndex::mainnet(),
+            &chain_walk::IndexSettings::default(),
+        )
+        .await;
+        fold(pool, venue, since, Utc::now(), &owner).await
+    }
 
     #[test]
     fn the_topics_are_the_keccak_of_the_pinned_abis_events() {
@@ -1073,7 +1086,7 @@ pub(crate) mod tests {
     /// rebuild revisits closed rows too.
     #[tokio::test]
     async fn the_fold_moves_listings_through_executed_claimed_and_cancelled() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let tag = format!(
@@ -1233,7 +1246,7 @@ pub(crate) mod tests {
     /// one asset, only the newest listing opens.
     #[tokio::test]
     async fn a_rebuild_never_reopens_a_second_open_listing_of_an_asset() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let tag = format!(
@@ -1308,10 +1321,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
         drop(conn);
-        assert_eq!(
-            fold(&pool, &venue, Some(9_199), Utc::now()).await.unwrap(),
-            2
-        );
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_199)).await.unwrap(), 2);
         let new = seed("1", 3).await;
         let second = seed("2", 4).await;
         let rented = seed("3", 5).await;
@@ -1331,10 +1341,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
         drop(conn);
-        assert_eq!(
-            fold(&pool, &venue, Some(9_200), Utc::now()).await.unwrap(),
-            1
-        );
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_200)).await.unwrap(), 1);
         assert_eq!(state(second).await, nonce());
 
         // The reorg removes every bump and lands a rent of token 3.
@@ -1365,7 +1372,7 @@ pub(crate) mod tests {
         .unwrap();
         drop(conn);
         assert_eq!(
-            fold(&pool, &venue, None, Utc::now()).await.unwrap(),
+            fold_as_owner(&pool, &venue, None).await.unwrap(),
             2,
             "the rent and one reopening"
         );
@@ -1401,7 +1408,7 @@ pub(crate) mod tests {
     /// cancellation as it is, and reopens the asset's newest unexpired one.
     #[tokio::test]
     async fn a_rebuild_never_reopens_an_expired_nonce_cancellation() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let tag = format!(
@@ -1459,7 +1466,7 @@ pub(crate) mod tests {
         };
 
         // No event of the venue remains: every verdict is `open`.
-        assert_eq!(fold(&pool, &venue, None, Utc::now()).await.unwrap(), 1);
+        assert_eq!(fold_as_owner(&pool, &venue, None).await.unwrap(), 1);
         let nonce = ("cancelled".to_string(), Some(CANCEL_NONCE.to_string()));
         assert_eq!(state_of(alone).await, nonce);
         assert_eq!(state_of(newer).await, nonce);
@@ -1477,7 +1484,7 @@ pub(crate) mod tests {
     /// rent before the range as they are.
     #[tokio::test]
     async fn an_incremental_fold_revisits_only_the_cancellations_rented_in_its_range() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let tag = format!(
@@ -1556,10 +1563,7 @@ pub(crate) mod tests {
             }
         };
 
-        assert_eq!(
-            fold(&pool, &venue, Some(9_310), Utc::now()).await.unwrap(),
-            1
-        );
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_310)).await.unwrap(), 1);
         let (status, reason, updated_at) = state_of(rented_in_range).await;
         assert_eq!((status.as_str(), reason), ("executed", None));
         assert!(updated_at > stamp);
@@ -1570,6 +1574,74 @@ pub(crate) mod tests {
         assert_eq!(
             state_of(rented_before).await,
             ("cancelled".into(), None, stamp)
+        );
+
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND rentals_address = $1",
+        )
+        .bind(&venue)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM signatures.rental_assets WHERE contract_address = $1")
+            .bind(&land)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// Two `rented` rows of one signature in a fold's range give its
+    /// cancelled listing one verdict, not one per row.
+    #[tokio::test]
+    async fn an_incremental_fold_gives_a_twice_rented_signature_one_verdict() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let tag = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let land = format!("0x{}{}", &tag[..24], "0000000000000000");
+        let lessor = format!("0x{}a1", &tag[..38]);
+        let venue = format!("0x{}", &tag[24..64]);
+        let sig = format!("0x{tag}{tag}01");
+        let id = seed_listing(&pool, &land, "1", ["0", "0", "0"], &sig, &lessor, &venue).await;
+        sqlx::query("UPDATE signatures.rentals SET status = 'cancelled', cancel_reason = 'expired' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let rent = |block: u64| {
+            let log = rented_log(
+                &land,
+                U256::from(1u8),
+                &lessor,
+                TENANT,
+                7,
+                U256::from(5u8),
+                &hex::decode(&sig[2..]).unwrap(),
+                block,
+                0,
+            );
+            let mut e = decode_log(&log, 1_700_000_000).unwrap().unwrap();
+            e.rentals_address = venue.clone();
+            e
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        insert_events(&mut conn, ChainNet::Ethereum, &[rent(9_320), rent(9_330)])
+            .await
+            .unwrap();
+        let verdicts = changed_verdicts(&mut conn, &venue, 9_310, None)
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            verdicts
+                .iter()
+                .map(|v| (v.id, v.status))
+                .collect::<Vec<_>>(),
+            vec![(id, "executed")]
         );
 
         sqlx::query(
@@ -1610,7 +1682,7 @@ pub(crate) mod tests {
     /// or an unknown reason; a rent of one of them still executes it.
     #[tokio::test]
     async fn a_rebuild_keeps_the_cancellations_that_are_not_a_nonce_move() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let tag = format!(
@@ -1664,10 +1736,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
         drop(conn);
-        assert_eq!(
-            fold(&pool, &venue, Some(9_099), Utc::now()).await.unwrap(),
-            1
-        );
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_099)).await.unwrap(), 1);
         let reason_of = |id: uuid::Uuid| {
             let pool = pool.clone();
             async move {
@@ -1708,7 +1777,7 @@ pub(crate) mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        assert_eq!(fold(&pool, &venue, None, Utc::now()).await.unwrap(), 1);
+        assert_eq!(fold_as_owner(&pool, &venue, None).await.unwrap(), 1);
         assert_eq!(reason_of(bumped).await, ("open".into(), None));
         for (id, reason) in [
             (transferred, Some("transferred")),
@@ -1743,10 +1812,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
         drop(conn);
-        assert_eq!(
-            fold(&pool, &venue, Some(9_110), Utc::now()).await.unwrap(),
-            1
-        );
+        assert_eq!(fold_as_owner(&pool, &venue, Some(9_110)).await.unwrap(), 1);
         assert_eq!(reason_of(transferred).await, ("executed".into(), None));
 
         sqlx::query(

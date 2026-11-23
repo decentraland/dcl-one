@@ -1025,6 +1025,73 @@ async fn a_relisting_never_lowers_the_stored_asset_time() {
     cleanup(&pool, &[token]).await;
 }
 
+/// A relisting whose reader row has the stored time exactly replaces the
+/// stored details: only a strictly older row keeps them.
+#[tokio::test]
+async fn a_relisting_at_the_stored_asset_time_replaces_the_details() {
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    let db = Database::new(pool.clone());
+    let token = random_token_id();
+    let first = insert(&db, &token, LESSOR, &format!("0xsig-a-{token}"))
+        .await
+        .unwrap();
+    let at = chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp() + 3_600, 0)
+        .unwrap()
+        .naive_utc();
+    sqlx::query(
+        "UPDATE signatures.rental_assets SET nft_updated_at = $3, category = 'estate', search_text = 'A stored name' \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .bind(at)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE signatures.rentals SET status = 'cancelled' WHERE id = $1::uuid")
+        .bind(&first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let signature = format!("0xsig-b-{token}");
+    let second = db
+        .insert_listing(
+            &format!("{LAND}-{token}"),
+            &ListingMetadata {
+                category: "parcel",
+                search_text: "-10,20",
+                distance_to_plaza: Some(3),
+                adjacent_to_road: Some(true),
+                estate_size: None,
+                updated_at: at,
+            },
+            now,
+            &creation(&token, &signature),
+            LESSOR,
+            now,
+        )
+        .await
+        .unwrap();
+    let stored: (chrono::NaiveDateTime, String, String) = sqlx::query_as(
+        "SELECT nft_updated_at, category, search_text FROM signatures.rental_assets \
+         WHERE contract_address = $1 AND token_id = $2::numeric",
+    )
+    .bind(LAND)
+    .bind(&token)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, (at, "parcel".to_string(), "-10,20".to_string()));
+    assert_eq!(
+        (second.category.as_str(), second.search_text.as_str()),
+        ("parcel", "-10,20")
+    );
+    cleanup(&pool, &[token]).await;
+}
+
 /// `CATALYST_LIVE_MARKETPLACE_SUBGRAPH_URL=https://...` reads Genesis
 /// Plaza's parcel (token 0 of the LAND registry) from the real subgraph.
 #[tokio::test]

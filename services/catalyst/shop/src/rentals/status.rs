@@ -666,8 +666,8 @@ mod tests {
             "the rentals index is not published"
         );
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-             VALUES ('rentals', 'ethereum', 1, 50, 50, timezone('UTC', now()), true)",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('rentals', 'ethereum', 1, 50, 50, timezone('UTC', now()), true, 1)",
         )
         .execute(pool)
         .await
@@ -741,8 +741,8 @@ mod tests {
 
     async fn publish_rentals_index(pool: &PgPool) {
         sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-             VALUES ('rentals', 'ethereum', 1, 50, 50, timezone('UTC', now()), true)",
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+             VALUES ('rentals', 'ethereum', 1, 50, 50, timezone('UTC', now()), true, 1)",
         )
         .execute(pool)
         .await
