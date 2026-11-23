@@ -273,17 +273,8 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
                     ctx.topology()
                         .apply_world_event("PA_target", target.address.as_str(), true);
                 } else {
-                    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
-                        IslandData, IslandStatusMessage,
-                    };
-                    use prost::Message as _;
-                    let frame = IslandStatusMessage {
-                        data: vec![IslandData {
-                            peers: vec![target.address.to_string()],
-                            ..Default::default()
-                        }],
-                    };
-                    ctx.topology().receive(&frame.encode_to_vec()).unwrap();
+                    // Keep Pulse presence through a slow database round trip.
+                    ctx.topology().hold_for_tests([target.address.as_str()]);
                 }
                 crate::rpc::service::ops::start_community_voice_chat(
                     &ctx,

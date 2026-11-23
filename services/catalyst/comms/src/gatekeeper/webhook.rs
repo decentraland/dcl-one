@@ -842,6 +842,18 @@ mod tests {
     }
 
     #[test]
+    fn participant_event_enforces_the_sid_byte_limit() {
+        let mut sid = "a".repeat(MAX_PARTICIPANT_SID_BYTES);
+        let event = participant_event("join", "participant_joined", &sid, 100);
+        let parsed = ValidatedEvent::parse(&event).unwrap();
+        assert_eq!(parsed.participant().unwrap().sid, sid);
+
+        sid.push('a');
+        let event = participant_event("join", "participant_joined", &sid, 100);
+        assert_eq!(ValidatedEvent::parse(&event).unwrap_err().code, 400);
+    }
+
+    #[test]
     fn retries_ordering_and_equal_second_leave_precedence() {
         let mut state = WebhookState::default();
         let join = participant_event("j", "participant_joined", "PA_1", 100);

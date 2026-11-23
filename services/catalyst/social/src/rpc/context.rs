@@ -1,7 +1,7 @@
 //! The state every procedure shares: the queries, the fan-out, the voice
 //! runtime, profile enrichment, the connection identities and the presence
-//! counters. Socket counters are transport bookkeeping; online state comes from
-//! the complete Pulse topology shared by every serving replica.
+//! counters. Socket counters track transports. Online state comes from the shared
+//! topology of Pulse islands and World presence.
 
 use crate::comms::gatekeeper::voice::rooms::VoiceRooms;
 use crate::rpc::db::Db;
@@ -58,6 +58,8 @@ pub struct ContextInner {
     /// reads its places and thumbnail through it.
     communities: std::sync::OnceLock<crate::communities::SharedState>,
     connectivity_operations: tokio::sync::Semaphore,
+    // Membership mutations use their own delivery slots to keep topology fan-out moving.
+    membership_delivery_operations: tokio::sync::Semaphore,
     kill_handles: DashMap<u32, Arc<SocketClose>>,
     /// Every open socket of both protocols, from the moment it opens
     /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
@@ -165,6 +167,7 @@ impl Context {
             topology: std::sync::OnceLock::new(),
             communities: std::sync::OnceLock::new(),
             connectivity_operations: tokio::sync::Semaphore::new(4),
+            membership_delivery_operations: tokio::sync::Semaphore::new(2),
             kill_handles: DashMap::new(),
             sockets: parking_lot::Mutex::new(HashMap::new()),
             socket_counts: [AtomicUsize::new(0), AtomicUsize::new(0)],
@@ -419,7 +422,12 @@ impl Context {
             let recipient = recipient.clone();
             let actor = actor.clone();
             Box::pin(async move {
-                let Ok(_permit) = ctx.0.connectivity_operations.acquire().await else {
+                let operations = if topology_generation.is_some() {
+                    &ctx.0.connectivity_operations
+                } else {
+                    &ctx.0.membership_delivery_operations
+                };
+                let Ok(_permit) = operations.acquire().await else {
                     return Err(());
                 };
                 let allowed = if let Some(community) = community {
@@ -830,6 +838,34 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn community_membership_delivery_can_proceed_during_topology_fanout() {
+        let pool = crate::rpc::tests::closed_pool();
+        pool.close().await;
+        let ctx = Context::new(
+            VoiceSettings::default(),
+            Db::new(pool),
+            Profiles::new(None),
+            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+        );
+        let _topology_slots = ctx.0.connectivity_operations.try_acquire_many(4).unwrap();
+        let recipient = format!("0x{:040x}", 1);
+        let actor = format!("0x{:040x}", 2);
+        let event = SocialEvent::CommunityMemberStatus(CommunityMemberConnectivityUpdate {
+            stream_closed: None,
+            community_id: uuid::Uuid::new_v4().to_string(),
+            member: Some(User { address: actor }),
+            status: ConnectivityStatus::Online as i32,
+        });
+        let guard = ctx.event_delivery_guard(&recipient, &event).unwrap();
+        let mut delivery = guard();
+        // Reaching the closed database reports an error without waiting on fan-out.
+        assert!(matches!(
+            futures::poll!(delivery.as_mut()),
+            std::task::Poll::Ready(Err(()))
+        ));
+    }
 
     #[tokio::test]
     async fn presence_counts_sockets_per_address() {
