@@ -1909,3 +1909,133 @@ async fn the_signature_check_asks_a_contract_wallet_at_the_entity_time_block() {
     assert_eq!(*wallet.0.lock().unwrap(), [1_999]);
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+/// A fully validating deployer whose contract wallet is `wallet`, its L1 RPC at `l1_rpc_url`.
+fn deployer_with_wallet(
+    storage: &Arc<Storage>,
+    wallet: &Arc<SignedInThePast>,
+    l1_rpc_url: &str,
+) -> WriteDeployer {
+    let sources = crate::validator::Sources::new(
+        lazy_pool(),
+        storage.clone(),
+        crate::http::Outbound::for_tests(),
+        Some(wallet.clone()),
+        crate::validator::Settings {
+            eth_network: "mainnet".into(),
+            l1_rpc_url: Some(l1_rpc_url.into()),
+            ignore_blockchain_access: true,
+            ..Default::default()
+        },
+    );
+    let deployer = WriteDeployer::new(
+        lazy_pool(),
+        storage.clone(),
+        Some(wallet.clone()),
+        Arc::new(sources),
+    );
+    deployer.configure(&DeployLimits {
+        request_ttl_backwards_ms: 10 * 60_000,
+        ..Default::default()
+    });
+    deployer
+}
+
+fn is_signature_refusal(failure: &DeployFailure) -> bool {
+    matches!(failure, DeployFailure::Rejected(RejectionKind::Validation, errors)
+        if errors.iter().any(|e| e.starts_with("The signature is invalid.")))
+}
+
+/// A check at now asks a contract wallet at latest only: a wallet refused there is
+/// rejected without an L1 block lookup, which here would fail and leave it undecided.
+#[tokio::test]
+async fn a_signature_check_at_now_asks_a_contract_wallet_at_latest_only() {
+    let (storage, tmp) = crate::sync_test_support::temp_storage("deployer-eip1654-now").await;
+    let wallet = Arc::new(SignedInThePast::default());
+    let deployer = deployer_with_wallet(&storage, &wallet, "http://127.0.0.1:1");
+    let id = "bafkreientity";
+    let auth =
+        crate::sync_test_support::signed_chain_behind_contract(id, "2099-01-01T00:00:00.000Z")
+            .await;
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let failure = deployer
+        .check_signature_at_latest(id, &auth, now)
+        .await
+        .unwrap_err();
+    assert!(is_signature_refusal(&failure), "got {failure:?}");
+    assert!(wallet.0.lock().unwrap().is_empty());
+    assert!(
+        matches!(
+            deployer.check_signature(id, &auth, now).await,
+            Err(DeployFailure::Unverifiable(_))
+        ),
+        "the entity-time check needs the failing L1 lookup"
+    );
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+/// A partial upload's scene published past `REQUEST_TTL_BACKWARDS` asks its contract wallet
+/// at latest only, so a key removed since signing no longer deploys; within the window the
+/// wallet is still asked at the entity-time block.
+#[tokio::test]
+async fn a_scene_published_past_the_request_ttl_asks_its_contract_wallet_at_latest() {
+    use crate::validator::fake_chain;
+    let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+    let (storage, tmp) = crate::sync_test_support::temp_storage("deployer-eip1654-ttl").await;
+    let scene_at = |timestamp: i64| {
+        let parcel = "140,140";
+        let bytes = Bytes::from(
+            serde_json::to_vec(&serde_json::json!({
+                "version": "v3",
+                "type": "scene",
+                "pointers": [parcel],
+                "timestamp": timestamp,
+                "content": [],
+                "metadata": {"main": "bin/index.js", "scene": {"base": parcel, "parcels": [parcel]}}
+            }))
+            .unwrap(),
+        );
+        let id = hash_bytes_v1(&bytes);
+        (bytes, id)
+    };
+    let publish = |timestamp: i64, ttl_anchor: Option<i64>| {
+        let (bytes, id) = scene_at(timestamp);
+        let wallet = Arc::new(SignedInThePast::default());
+        let deployer = deployer_with_wallet(&storage, &wallet, &chain.url);
+        async move {
+            let auth = crate::sync_test_support::signed_chain_behind_contract(
+                &id,
+                "2099-01-01T00:00:00.000Z",
+            )
+            .await;
+            let result = deployer
+                .deploy_entity_anchored(
+                    vec![bytes],
+                    &id,
+                    serde_json::to_value(auth).unwrap(),
+                    "LOCAL",
+                    ttl_anchor,
+                )
+                .await;
+            let asked = wallet.0.lock().unwrap().len();
+            (result, asked)
+        }
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let (past, asked) = publish(now - 15 * 60_000, Some(now - 14 * 60_000)).await;
+    assert!(
+        past.as_ref().is_err_and(is_signature_refusal),
+        "got {past:?}"
+    );
+    assert_eq!(asked, 0);
+
+    let (within, asked) = publish(now - 60_000, Some(now - 30_000)).await;
+    assert!(
+        !within.as_ref().is_err_and(is_signature_refusal),
+        "got {within:?}"
+    );
+    assert!(asked > 0, "the wallet is asked at the entity-time block");
+    let _ = std::fs::remove_dir_all(tmp);
+}
