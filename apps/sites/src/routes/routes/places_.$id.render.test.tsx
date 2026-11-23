@@ -20,7 +20,14 @@ vi.mock("@dcl/one-ui/apps/sites/places/PlaceDetail", () => ({
     return null;
   },
 }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => {
+    fire();
+    return () => {};
+  },
+}));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/features/explorer/scene-chat/useSceneChat", () => ({ useSceneChat: vi.fn(() => ({ status: "loading", messages: [] })) }));
 vi.mock("@/data/lib/catalyst/client", async (importOriginal) => ({
@@ -169,17 +176,62 @@ describe("when handing off place travel", () => {
   beforeEach(() => { props = renderRoute(); });
   afterEach(() => vi.clearAllMocks());
   it("should retain started and completed launch telemetry", () => {
-    props.onJumpIn!();
+    props.onJumpIn!("live");
     expect(track).toHaveBeenCalledWith("jump_in_started", { place_id: PLACE_ID }, expect.anything());
     expect(track).toHaveBeenCalledWith("jump_in_completed", { place_id: PLACE_ID, launch_url: props.jumpHref }, expect.anything());
   });
   describe("and the realm lookup failed", () => {
     beforeEach(() => { props = renderRoute({ playBase: "/play/", launchError: "Travel is temporarily unavailable. Please retry." }); });
     it("should retain failed telemetry and offer resolution again without a wrong-realm link", () => {
-      props.onJumpIn!();
+      props.onJumpIn!("live");
       expect(props.jumpHref).toBeUndefined();
       expect(track).toHaveBeenCalledWith("jump_in_failed", { place_id: PLACE_ID, error: "Travel is temporarily unavailable. Please retry." }, expect.anything());
       expect(track).not.toHaveBeenCalledWith("jump_in_completed", expect.anything(), expect.anything());
     });
+  });
+});
+
+describe("the legacy Discover events", () => {
+  let props: PlaceDetailProps;
+  const legacy = (name: string) => vi.mocked(track).mock.calls.filter(([event]) => event === name).map(([, p, ctx]) => [p, ctx]);
+  beforeEach(() => { props = renderRoute(); });
+  afterEach(() => vi.clearAllMocks());
+
+  it("sends Discover Jump In from the live view as scene-preview, with the place's legacy payload", () => {
+    props.onJumpIn!("live");
+    expect(legacy("Discover Jump In")).toEqual([
+      [
+        {
+          place_id: PLACE_ID,
+          place_title: "New Scene 12",
+          world: false,
+          position: "34,17",
+          place: "scene-preview",
+          track_called_at: expect.any(Number),
+          track_delivered_at: expect.any(Number),
+          track_deferred: false,
+        },
+        { sid: "sid-1", legacy: true },
+      ],
+    ]);
+  });
+
+  it("sends Discover Jump In from the jump-in card as jump-in-modal", () => {
+    props.onJumpIn!("modal");
+    expect(legacy("Discover Jump In")).toEqual([[expect.objectContaining({ place: "jump-in-modal" }), expect.anything()]]);
+  });
+
+  it("sends Discover Launch Scene with the stream the live view opens", () => {
+    props.onLaunch!();
+    expect(legacy("Discover Launch Scene")).toEqual([
+      [{ href: "/play/?position=34%2C17&realm=fixture", track_called_at: expect.any(Number), track_delivered_at: expect.any(Number), track_deferred: false }, expect.anything()],
+    ]);
+  });
+
+  it("leaves href out of Discover Launch Scene when there is no stream to open", () => {
+    props = renderRoute({ playBase: "/play/", launchError: "Travel is temporarily unavailable. Please retry." });
+    props.onLaunch!();
+    const [[payload]] = legacy("Discover Launch Scene");
+    expect(payload).not.toHaveProperty("href");
   });
 });

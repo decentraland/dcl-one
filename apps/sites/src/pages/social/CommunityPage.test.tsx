@@ -28,7 +28,15 @@ const signIn = vi.hoisted(() => ({ openSignIn: vi.fn() }));
 const page = vi.hoisted(() => vi.fn());
 const reminders = vi.hoisted(() => ({ failed: null as string | null, onSignIn: null as null | (() => void) }));
 const events = vi.hoisted(() => ({ fetchEvent: vi.fn() }));
-const telemetry = vi.hoisted(() => ({ track: vi.fn() }));
+const legacyReady = vi.hoisted(() => ({ ready: true }));
+const telemetry = vi.hoisted(() => ({
+  track: vi.fn(),
+  legacyAnalyticsReady: () => legacyReady.ready,
+  whenLegacyAnalyticsReady: (fire: () => void) => {
+    fire();
+    return () => {};
+  },
+}));
 
 vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/community-detail")>()),
@@ -141,6 +149,7 @@ beforeEach(() => {
   for (const fn of Object.values(net)) fn.mockReset();
   events.fetchEvent.mockReset();
   telemetry.track.mockReset();
+  legacyReady.ready = true;
   creators.asked = [];
   signIn.openSignIn.mockReset();
   auth.identity = null;
@@ -1210,4 +1219,60 @@ describe("when a signed-out visitor asks for an event reminder", () => {
     expect(signIn.openSignIn).toHaveBeenCalledWith();
   });
 
+});
+
+describe("the legacy community Click events", () => {
+  const ME_CHECKSUMMED = "0xAbCdEf1111111111111111111111111111111111";
+  const sent = () => telemetry.track.mock.calls.filter(([event]) => String(event).startsWith("Click on "));
+
+  it("sends Click on Sign In to Join with the community and no userAddress for a signed-out visitor", async () => {
+    serve(community());
+    show();
+    await userEvent.click(await screen.findByRole("button", { name: "Sign in to join" }));
+    expect(sent()).toEqual([["Click on Sign In to Join", { communityId: ID }, { sid: SID, legacy: true }]]);
+  });
+
+  it("sends Click on Join with the signed-in wallet, lowercased", async () => {
+    auth.identity = { signer: ME_CHECKSUMMED };
+    serve(community(), { role: "none" });
+    net.joinCommunity.mockResolvedValue(undefined);
+    show();
+    await userEvent.click(await screen.findByRole("button", { name: "Join" }));
+    expect(sent()).toEqual([["Click on Join", { communityId: ID, userAddress: ME_CHECKSUMMED.toLowerCase() }, { sid: SID, legacy: true }]]);
+  });
+
+  it("sends Click on Request to Join, then Click on Cancel Request, on a private community", async () => {
+    auth.identity = { signer: ME };
+    const request = { id: "r1", communityId: ID, type: "request_to_join", status: "pending" };
+    serve(community({ privacy: "private" }), { role: "none" });
+    net.requestToJoin.mockResolvedValue(request);
+    net.cancelJoinRequest.mockResolvedValue(undefined);
+    net.fetchJoinRequests.mockResolvedValueOnce([]).mockResolvedValue([request]);
+    show();
+    await userEvent.click(await screen.findByRole("button", { name: "Request to join" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel request" }));
+    expect(sent().map(([event, props]) => [event, props])).toEqual([
+      ["Click on Request to Join", { communityId: ID, userAddress: ME }],
+      ["Click on Cancel Request", { communityId: ID, userAddress: ME }],
+    ]);
+  });
+
+  it("sends nothing when the document's analytics is not ready yet, as the legacy direct call did", async () => {
+    legacyReady.ready = false;
+    serve(community());
+    show();
+    await userEvent.click(await screen.findByRole("button", { name: "Sign in to join" }));
+    expect(signIn.openSignIn).toHaveBeenCalledTimes(1);
+    expect(sent()).toEqual([]);
+  });
+
+  it("sends no Click when a sign-in return performs the remembered join on its own", async () => {
+    auth.identity = { signer: ME };
+    serve(community(), { role: "none" });
+    net.joinCommunity.mockResolvedValue(undefined);
+    const nonce = rememberAction(ID, "join");
+    show(`/social/communities/${ID}?action=join&nonce=${nonce}`);
+    await waitFor(() => expect(net.joinCommunity).toHaveBeenCalledTimes(1));
+    expect(sent()).toEqual([]);
+  });
 });

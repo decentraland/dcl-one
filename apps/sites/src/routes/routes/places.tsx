@@ -14,7 +14,8 @@ import type { PlaceCardData, PlaceCardLabels } from "@dcl/one-ui/apps/sites/plac
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
-import { usePageView } from "@/core/lib/telemetry/page-view";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
+import { useAnalyticsUserId, usePageView } from "@/core/lib/telemetry/page-view";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -37,6 +38,13 @@ import { openSignIn } from "@/features/components/auth/signin-store";
 import { detectPlatform, type DetectedPlatform } from "@/features/download/options";
 import { modalPlace, placeCard, placeJumpIn, type CreatorProfiles } from "@/features/places/cards";
 import { PLACES_PAGE_VIEW } from "@/features/places/page-view";
+import {
+  trackDiscoverClickLiveCard,
+  trackDiscoverClickPlaceCard,
+  trackDiscoverFilterCategory,
+  trackDiscoverJumpIn,
+  type DiscoverJumpInSurface,
+} from "@/features/places/discover-events";
 import { useBrowsePlaces, useLiveRail, useMemberPlaces, usePlaceCreators } from "@/features/places/hooks";
 
 import { PLACES_SECTION, destinationMeta, sectionCard } from "../lib/destination-meta";
@@ -232,6 +240,9 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
   );
   const root = useRouteLoaderData<{ sid: string | null }>("root");
   const sid = loaderSid ?? root?.sid ?? "";
+  const userId = useAnalyticsUserId();
+  const scope = useLegacyTrackScope();
+  const legacy = { sid, userId, scope };
 
   const auth = useAuth();
   const identity = auth.isConnected ? auth.identity : null;
@@ -340,6 +351,9 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
   type Opens = "busy-navigates" | "modal" | "page";
   const open = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>, opens: Opens) => {
     if (sid) track("place_card_clicked", { place_id: card.id }, { sid, story: STORY });
+    // The legacy cards were buttons: every click was reported, a live card's apart from the others'.
+    const clicked = places.get(card.id);
+    if (clicked) (opens === "page" ? trackDiscoverClickLiveCard : trackDiscoverClickPlaceCard)(clicked, legacy);
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     const place = places.get(card.id);
@@ -353,11 +367,13 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
   const onOpen = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, "busy-navigates");
   const onOpenMember = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, "modal");
   const onOpenLive = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, "page");
-  const jumpIn = (place: Destination | undefined, event: MouseEvent<HTMLAnchorElement>) => {
+  const jumpIn = (place: Destination | undefined, event: MouseEvent<HTMLAnchorElement>, surface: DiscoverJumpInSurface) => {
+    if (place) trackDiscoverJumpIn(place, surface, legacy);
     const handler = place ? placeJumpIn(place, platform).onJumpIn : undefined;
     handler?.(event);
   };
-  const onJumpIn = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => jumpIn(places.get(card.id), event);
+  const onJumpIn = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => jumpIn(places.get(card.id), event, "place-card");
+  const onLiveJumpIn = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => jumpIn(places.get(card.id), event, "live-card");
 
   const status = view.section === "all" ? browseStatus() : memberStatus();
   function browseStatus(): string {
@@ -381,7 +397,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
               cardLabels={CARD_LABELS}
               labels={{ previous: "Previous live places", next: "More live places", goTo: (n, title) => `Show ${title} (${n})` }}
               onOpen={onOpenLive}
-              onJumpIn={onJumpIn}
+              onJumpIn={onLiveJumpIn}
             />
           ) : null
         }
@@ -397,7 +413,11 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
           onSearch={setSearchInput}
           category={view.category}
           categories={CATEGORIES}
-          onCategory={(value) => setParam("category", value === "all" ? null : value)}
+          onCategory={(value) => {
+            const category = CATEGORY_OPTIONS.find((option) => option === value);
+            if (category) trackDiscoverFilterCategory(category, legacy);
+            setParam("category", value === "all" ? null : value);
+          }}
           allCategory="all"
           labels={BAND_LABELS}
         >
@@ -409,7 +429,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable, liveMinUsers }
           place={modalPlace(modal.place, modal.card, window.location.origin)}
           labels={MODAL_LABELS}
           onClose={() => setModal(null)}
-          onJumpIn={(event) => jumpIn(modal.place, event)}
+          onJumpIn={(event) => jumpIn(modal.place, event, "jump-in-modal")}
         />
       ) : null}
     </SitesLayout>

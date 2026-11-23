@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { legacyAnalyticsReady, track, whenLegacyAnalyticsReady } from "./track";
 import { dropTrackedUser, restoreTrackedUser } from "./tracked-user";
-import { createLegacyTrackScope, sendLegacyDeferred, trackLegacyClick, trackSectionViewed, useLegacyTrackScope } from "./legacy-click";
+import { createLegacyTrackScope, sendLegacyDeferred, sendLegacyNow, trackLegacyClick, trackSectionViewed, useLegacyTrackScope } from "./legacy-click";
 
 // The document's readiness (its first page view) is driven here; `legacy-click.wire.test.ts` covers the real gates.
 let ready = true;
@@ -256,5 +256,36 @@ describe("the emitting component's scope", () => {
     const send = vi.fn();
     sendLegacyDeferred(send, { sid: "sid-1", scope }, { conversion: true });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sendLegacyNow", () => {
+  it("sends at once with the legacy gate and no audit fields when the document is ready", () => {
+    const send = vi.fn();
+    sendLegacyNow(send, { sid: "sid-1", userId: "0xabc" });
+    expect(send).toHaveBeenCalledWith({ sid: "sid-1", userId: "0xabc", legacy: true });
+  });
+
+  it("sends nothing before the document is ready, and nothing later either", () => {
+    ready = false;
+    const send = vi.fn();
+    sendLegacyNow(send, { sid: "sid-1" });
+    becomeReady();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("leaves the account out once a sign-out has started", () => {
+    dropTrackedUser();
+    const send = vi.fn();
+    sendLegacyNow(send, { sid: "sid-1", userId: "0xabc" });
+    expect(send).toHaveBeenCalledWith({ sid: "sid-1", legacy: true });
+  });
+
+  it("never throws into the click", () => {
+    expect(() =>
+      sendLegacyNow(() => {
+        throw new Error("boom");
+      }, { sid: "sid-1" }),
+    ).not.toThrow();
   });
 });

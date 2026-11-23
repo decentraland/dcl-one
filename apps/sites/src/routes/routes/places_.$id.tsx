@@ -17,7 +17,9 @@ import { usePlaceDetailChat, usePlaceDetailCreator } from "@/features/explorer/p
 import { placePageView } from "@/features/places/page-view";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { track } from "@/core/lib/telemetry/track";
-import { usePageView } from "@/core/lib/telemetry/page-view";
+import { useAnalyticsUserId, usePageView } from "@/core/lib/telemetry/page-view";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
+import { trackDiscoverJumpIn, trackDiscoverLaunchScene } from "@/features/places/discover-events";
 import { useSceneChat, type SceneChat } from "@/features/explorer/scene-chat/useSceneChat";
 
 import { PLACES_SECTION, placeDetailMeta, sectionCard } from "../lib/destination-meta";
@@ -89,6 +91,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   const creator = usePlaceDetailCreator(place);
   const chatView = usePlaceDetailChat(place?.world ? WORLD_CHAT : chat);
   usePageView(placePageView(place));
+  const legacy = { sid, userId: useAnalyticsUserId(), scope: useLegacyTrackScope() };
 
   function retryTravel() {
     const query = new URLSearchParams(location.search);
@@ -150,9 +153,11 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
           viewer={viewer}
           account={signer?.signer ?? null}
           onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}
+          onLaunch={() => trackDiscoverLaunchScene(jumpHref, legacy)}
           onFavorite={(id, favorite) => (signer ? savePlaceFavorite(signer, id, favorite) : signInFirst())}
-          onJumpIn={() => {
+          onJumpIn={(from) => {
             if (!place) return;
+            trackDiscoverJumpIn(place, from === "modal" ? "jump-in-modal" : "scene-preview", legacy);
             onTravel(place.id, jumpHref, launchError);
             if (!jumpHref) retryTravel();
           }}

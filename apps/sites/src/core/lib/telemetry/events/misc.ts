@@ -21,6 +21,68 @@ export type MiscEvents = {
     utm_source?: string;
     utm_term?: string;
   };
+  "Click on Cancel Request": {
+    communityId: string;
+    userAddress?: string;
+  };
+  "Click on Join": {
+    communityId: string;
+    userAddress?: string;
+  };
+  "Click on Request to Join": {
+    communityId: string;
+    userAddress?: string;
+  };
+  "Click on Sign In to Join": {
+    communityId: string;
+    userAddress?: string;
+  };
+  "Discover Click Live Card": {
+    place_id: string;
+    place_title: null | string;
+    position?: string;
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+    user_count?: number;
+    world: boolean;
+    world_name?: string;
+  };
+  "Discover Click Place Card": {
+    place_id: string;
+    place_title: null | string;
+    position?: string;
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+    user_count?: number;
+    world: boolean;
+    world_name?: string;
+  };
+  "Discover Filter Category": {
+    category: "all" | "art" | "business" | "education" | "fashion" | "featured" | "game" | "music" | "shop" | "social" | "sports";
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+  };
+  "Discover Jump In": {
+    place: "jump-in-modal" | "live-card" | "place-card" | "scene-preview";
+    place_id: string;
+    place_title: null | string;
+    position?: string;
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+    user_count?: number;
+    world: boolean;
+    world_name?: string;
+  };
+  "Discover Launch Scene": {
+    href?: string;
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+  };
   "Section Viewed": {
     mobile: boolean;
     section_viewed: "Creators Blog" | "Creators Connect" | "Creators Create" | "Creators Faqs" | "Creators Learn" | "Creators Live Scenes" | "Creators Why";

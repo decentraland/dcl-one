@@ -27,7 +27,15 @@ vi.hoisted(() =>
 const auth = vi.hoisted(() => ({ current: { isConnected: false, identity: null as null | { signer: string } } }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth.current }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
-vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn(), page: vi.fn() }));
+vi.mock("@/core/lib/telemetry/track", () => ({
+  track: vi.fn(),
+  page: vi.fn(),
+  legacyAnalyticsReady: () => true,
+  whenLegacyAnalyticsReady: (fire: () => void) => {
+    fire();
+    return () => {};
+  },
+}));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@/data/lib/catalyst/places/destinations", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/destinations")>()),
@@ -834,5 +842,81 @@ describe("when navigating to /places in the browser", () => {
     await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 0 });
     await expect(clientLoader()).resolves.toEqual({ liveMinUsers: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the legacy Discover events", () => {
+  /** Each legacy event sent, by name, without its audit timestamps. */
+  const sent = (name: string) =>
+    vi
+      .mocked(track)
+      .mock.calls.filter(([event]) => event === name)
+      .map(([, props, ctx]) => {
+        const { track_called_at: _called, track_delivered_at: _delivered, ...rest } = props as Record<string, unknown>;
+        return [rest, ctx];
+      });
+  const CTX = { sid: "sid", legacy: true };
+  const QUIET = { place_id: "quiet", place_title: "Quiet", world: false, position: "1,2", user_count: 0, track_deferred: false };
+
+  beforeEach(() => {
+    auth.current = { isConnected: false, identity: null };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.resetAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends Discover Click Place Card for a grid card, then Discover Jump In from its jump-in-modal", async () => {
+    serve({ browse: [destination({ id: "quiet", title: "Quiet" })] });
+    const { user } = renderPage();
+    await user.click(await screen.findByRole("link", { name: "Quiet" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Quiet" })).getByRole("link", { name: /Jump in/ }));
+    expect(sent("Discover Click Place Card")).toEqual([[QUIET, CTX]]);
+    expect(sent("Discover Jump In")).toEqual([[{ ...QUIET, place: "jump-in-modal" }, CTX]]);
+    expect(sent("Discover Click Live Card")).toEqual([]);
+  });
+
+  it("sends Discover Jump In as place-card from a grid card's own Jump in, with no card click", async () => {
+    serve({ browse: [destination({ id: "quiet", title: "Quiet" })] });
+    const { user } = renderPage();
+    await screen.findByRole("link", { name: "Quiet" });
+    const grid = screen.getByRole("list", { name: "Explore all" });
+    await user.click(within(grid).getByRole("link", { name: /Jump in/ }));
+    expect(sent("Discover Jump In")).toEqual([[{ ...QUIET, place: "place-card" }, CTX]]);
+    expect(sent("Discover Click Place Card")).toEqual([]);
+  });
+
+  it("sends Discover Click Live Card for a Live Now card and Discover Jump In as live-card from its Jump in", async () => {
+    serve({ browse: [], live: [destination({ id: "busy", title: "Busy", user_count: 5, world: true, world_name: "busy.dcl.eth", base_position: "0,0", positions: ["0,0"] })] });
+    const { user } = renderPage();
+    const group = await screen.findByRole("group", { name: "Live Now" });
+    await user.click(within(group).getAllByRole("link", { name: /Jump in/ })[0]!);
+    await user.click(within(group).getAllByRole("link", { name: "Busy" })[0]!);
+    const BUSY = { place_id: "busy", place_title: "Busy", world: true, position: "0,0", world_name: "busy.dcl.eth", user_count: 5, track_deferred: false };
+    expect(sent("Discover Jump In")).toEqual([[{ ...BUSY, place: "live-card" }, CTX]]);
+    expect(sent("Discover Click Live Card")).toEqual([[BUSY, CTX]]);
+    expect(sent("Discover Click Place Card")).toEqual([]);
+  });
+
+  it("sends Discover Filter Category with the picked category, and all when the chip removes it", async () => {
+    serve({ browse: [destination()] });
+    const { user } = renderPage();
+    const [select] = await screen.findAllByRole("combobox", { name: "Category" });
+    await user.selectOptions(select!, "music");
+    await user.click(screen.getByRole("button", { name: "Remove filter: Music" }));
+    expect(sent("Discover Filter Category")).toEqual([
+      [{ category: "music", track_deferred: false }, CTX],
+      [{ category: "all", track_deferred: false }, CTX],
+    ]);
+  });
+
+  it("sends no Discover event while the visitor only browses", async () => {
+    serve({ browse: [destination({ id: "quiet", title: "Quiet" })] });
+    renderPage();
+    await screen.findByRole("link", { name: "Quiet" });
+    expect(vi.mocked(track).mock.calls.filter(([event]) => String(event).startsWith("Discover "))).toEqual([]);
   });
 });

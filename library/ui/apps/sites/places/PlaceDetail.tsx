@@ -36,7 +36,10 @@ type PlaceDetailProps = {
   livePlayers?: number
   mobile?: boolean
   jumpHref?: string
-  onJumpIn?: () => void
+  /** Jump in was pressed: on the jump-in card (`modal`) or under the live view (`live`). */
+  onJumpIn?: (from: 'modal' | 'live') => void
+  /** "Explore the scene" opened the live view's stream. */
+  onLaunch?: () => void
   onClose?: () => void
   /** Opens the creator's profile; without it the creator's name is plain text. */
   onCreator?: (address: string) => void
@@ -544,11 +547,13 @@ function SceneWatcher({
   place,
   jumpHref,
   onJumpIn,
+  onLaunch,
   rating
 }: {
   place: PlaceDetailData
   jumpHref?: string
   onJumpIn?: () => void
+  onLaunch?: () => void
   rating?: ReactNode
 }) {
   const [launched, setLaunched] = useState(false)
@@ -578,7 +583,10 @@ function SceneWatcher({
               type="button"
               className={styles.explore}
               disabled={!jumpHref}
-              onClick={() => setLaunched(true)}
+              onClick={() => {
+                onLaunch?.()
+                setLaunched(true)
+              }}
             >
               Explore the scene
             </button>
@@ -628,6 +636,7 @@ function PlaceDetail({
   mobile = false,
   jumpHref,
   onJumpIn,
+  onLaunch,
   onClose,
   onCreator,
   detailSlot,
@@ -661,7 +670,7 @@ function PlaceDetail({
           creator={creator}
           livePlayers={livePlayers}
           jumpHref={jumpHref}
-          onJumpIn={onJumpIn}
+          onJumpIn={onJumpIn && (() => onJumpIn('modal'))}
           onClose={onClose}
           rating={rating}
           detailSlot={detailSlot}
@@ -711,7 +720,13 @@ function PlaceDetail({
               )}
             </div>
           </div>
-          <SceneWatcher place={place} jumpHref={jumpHref} onJumpIn={onJumpIn} rating={rating} />
+          <SceneWatcher
+            place={place}
+            jumpHref={jumpHref}
+            onJumpIn={onJumpIn && (() => onJumpIn('live'))}
+            onLaunch={onLaunch}
+            rating={rating}
+          />
         </section>
 
         <div className={styles.chatColumn}>

@@ -139,6 +139,246 @@
         }
       }
     },
+    "Click on Cancel Request": {
+      "loose": false,
+      "props": {
+        "communityId": {
+          "kind": "string",
+          "optional": false
+        },
+        "userAddress": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Click on Join": {
+      "loose": false,
+      "props": {
+        "communityId": {
+          "kind": "string",
+          "optional": false
+        },
+        "userAddress": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Click on Request to Join": {
+      "loose": false,
+      "props": {
+        "communityId": {
+          "kind": "string",
+          "optional": false
+        },
+        "userAddress": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Click on Sign In to Join": {
+      "loose": false,
+      "props": {
+        "communityId": {
+          "kind": "string",
+          "optional": false
+        },
+        "userAddress": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Discover Click Live Card": {
+      "loose": false,
+      "props": {
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "place_title": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "position": {
+          "kind": "string",
+          "optional": true
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "user_count": {
+          "kind": "number",
+          "optional": true
+        },
+        "world": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "world_name": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Discover Click Place Card": {
+      "loose": false,
+      "props": {
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "place_title": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "position": {
+          "kind": "string",
+          "optional": true
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "user_count": {
+          "kind": "number",
+          "optional": true
+        },
+        "world": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "world_name": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Discover Filter Category": {
+      "loose": false,
+      "props": {
+        "category": {
+          "kind": "enum-string",
+          "values": [
+            "all",
+            "art",
+            "business",
+            "education",
+            "fashion",
+            "featured",
+            "game",
+            "music",
+            "shop",
+            "social",
+            "sports"
+          ],
+          "optional": false
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "Discover Jump In": {
+      "loose": false,
+      "props": {
+        "place": {
+          "kind": "enum-string",
+          "values": [
+            "jump-in-modal",
+            "live-card",
+            "place-card",
+            "scene-preview"
+          ],
+          "optional": false
+        },
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "place_title": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "position": {
+          "kind": "string",
+          "optional": true
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "user_count": {
+          "kind": "number",
+          "optional": true
+        },
+        "world": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "world_name": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "Discover Launch Scene": {
+      "loose": false,
+      "props": {
+        "href": {
+          "kind": "string",
+          "optional": true
+        },
+        "track_called_at": {
+          "kind": "number",
+          "optional": false
+        },
+        "track_deferred": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "track_delivered_at": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
     "Section Viewed": {
       "loose": false,
       "props": {

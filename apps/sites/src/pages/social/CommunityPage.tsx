@@ -10,7 +10,7 @@ import {
   CommunitySections,
 } from "@dcl/one-ui/apps/sites/social/CommunityDetail";
 
-import { usePageView } from "@/core/lib/telemetry/page-view";
+import { useAnalyticsUserId, usePageView } from "@/core/lib/telemetry/page-view";
 import { useAuth } from "@/data/lib/auth/context";
 import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { CommunityInfo } from "@/data/lib/catalyst/social/community-detail";
@@ -19,6 +19,7 @@ import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { useCreatorProfiles } from "@/features/events/useCreatorProfiles";
 import { isRouteFatal } from "@/features/social/community/errors";
 import { communityPageView } from "@/features/social/community/page-view";
+import { trackCommunityClick, type CommunityClick } from "@/features/social/community/legacy-events";
 import { useCommunityMembership, type Membership } from "@/features/social/community/useCommunityMembership";
 import { canViewContent, faceUrl, membersLabel, thumbnailUrl } from "@/features/social/community/view";
 
@@ -69,7 +70,7 @@ function CommunityBody({ community: anonymous, now, sid }: { community: Communit
   return (
     // The detail opens outside the frame's stacking context, so it covers the site header.
     <CommunityFrame dialog={<CommunityEventDialog state={events} sid={sid} />}>
-      <CommunityCard community={community} membership={membership} showDescription={visible} />
+      <CommunityCard community={community} membership={membership} showDescription={visible} sid={sid} />
       {visible ? (
         <CommunitySections
           members={<CommunityMembers community={community} />}
@@ -88,11 +89,19 @@ function CommunityCard({
   community,
   membership,
   showDescription,
+  sid,
 }: {
   community: CommunityInfo;
   membership: Membership;
   showDescription: boolean;
+  sid: string;
 }) {
+  const { identity } = useAuth();
+  const userId = useAnalyticsUserId();
+  const clicked = (click: CommunityClick, then: () => void) => () => {
+    trackCommunityClick(click, community.id, identity?.signer, { sid, userId });
+    then();
+  };
   const profiles = useCreatorProfiles([[community.ownerAddress]]);
   const owner = profiles[community.ownerAddress.toLowerCase()];
   return (
@@ -109,11 +118,11 @@ function CommunityCard({
         <CommunityMembershipAction
           state={membership.state.kind}
           pending={membership.pending}
-          onSignIn={membership.signIn}
+          onSignIn={clicked("signIn", membership.signIn)}
           onRetry={membership.retry}
-          onJoin={membership.join}
-          onRequest={membership.requestToJoin}
-          onCancel={membership.cancelRequest}
+          onJoin={clicked("join", membership.join)}
+          onRequest={clicked("request", membership.requestToJoin)}
+          onCancel={clicked("cancel", membership.cancelRequest)}
         />
       }
       error={membership.failed ? FAILED_COPY[membership.failed] : undefined}

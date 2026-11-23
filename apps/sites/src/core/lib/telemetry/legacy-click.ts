@@ -87,6 +87,20 @@ export function sendLegacyDeferred(
   else scope.defer(fire);
 }
 
+/**
+ * The legacy site's direct `useAnalytics().track`: no audit fields, and nothing at all unless the document's
+ * analytics is ready when it is called (analytics.js was not loaded yet, so the call went nowhere).
+ */
+export function sendLegacyNow(send: (ctx: TrackContext) => void, { sid, userId }: Omit<LegacySession, "scope">): void {
+  try {
+    if (!legacyAnalyticsReady()) return;
+    const user = userId && !trackedUserDropped() ? userId : undefined;
+    send({ sid, ...(user ? { userId: user } : {}), legacy: true });
+  } catch {
+    // Telemetry never breaks a click.
+  }
+}
+
 /** The legacy `data-place` of a non-download control (decentraland/sites `SectionViewedTrack` values). */
 export type LegacyClickPlace =
   | "Landing Catch The Vibe"

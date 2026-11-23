@@ -96,6 +96,37 @@ describe('PlaceDetail', () => {
     })
   })
 
+  describe('when the visitor uses the jump-in controls', () => {
+    it('should report Jump in under the live view as live', () => {
+      const onJumpIn = vi.fn()
+      mount({ onJumpIn })
+      fireEvent.click(screen.getByRole('link', { name: 'Jump in' }))
+      expect(onJumpIn).toHaveBeenCalledWith('live')
+    })
+
+    it('should report Jump in on the jump-in card as modal', () => {
+      const onJumpIn = vi.fn()
+      mount({ onJumpIn, livePlayers: 0 })
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Jump in' }))
+      expect(onJumpIn).toHaveBeenCalledWith('modal')
+    })
+
+    it('should report Explore the scene once, and not Stop', () => {
+      const onLaunch = vi.fn()
+      mount({ onLaunch })
+      fireEvent.click(screen.getByRole('button', { name: 'Explore the scene' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+      expect(onLaunch).toHaveBeenCalledTimes(1)
+    })
+
+    it('should report nothing when Explore the scene is disabled for want of a stream', () => {
+      const onLaunch = vi.fn()
+      mount({ onLaunch, jumpHref: undefined })
+      fireEvent.click(screen.getByRole('button', { name: 'Explore the scene' }))
+      expect(onLaunch).not.toHaveBeenCalled()
+    })
+  })
+
   describe("when the route's travel error is in the detail slot", () => {
     let slot: ReactElement
 
