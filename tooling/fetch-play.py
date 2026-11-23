@@ -143,12 +143,14 @@ def download(record, archive):
     read(request, limit=300, attempts=2, transient=lambda stderr: not re.search(r'\bHTTP 4\d\d\b', stderr))
 
 
-def workflow_runs(pr=None, deadline=None):
+def workflow_runs(pr=None, deadline=None, include_main=True):
     # Only main runs and the PR's own runs are trusted (checked locally on each run). A filtered
     # query stops at 1,000 results: main's newest 1,000 runs.
     path = 'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100'
     own = api(f'{path}&head_sha={pr["head"]}', deadline)['workflow_runs'] if pr else []
     yield from own
+    if not include_main:
+        return
     seen = {row['id'] for row in own}
     for page in range(1, MAIN_PAGES + 1):
         rows = api(f'{path}&branch=main&page={page}', deadline)['workflow_runs']
@@ -201,20 +203,19 @@ def commit_time(revision):
     return int(done.stdout) if done.returncode == 0 and str(done.stdout).strip().isdigit() else None
 
 
-def engine_changed(pr):
+def engine_changed(pr, base):
     """Whether the PR changes an engine input (engine source, protos, HUD, build scripts)
-    relative to the commit it is based on. A PR that does not has main's engine, so it is
-    tested with the newest main build that uploaded its web app and has not failed instead
-    of waiting for main to rebuild the same inputs; a PR that does gets its own Bevy run and
-    needs that exact build."""
+    relative to the commit it is based on, whose fingerprint is `base` (None when unreadable).
+    A PR that does not has main's engine, so it is tested with the newest main build that
+    uploaded its web app and has not failed instead of waiting for main to rebuild the same
+    inputs; a PR that does gets its own Bevy run and needs that exact build."""
     if not pr or not pr.get('base'):
         return True
-    base = inputs_at(pr['base'])
     return base is None or base != artifact.inputs(ROOT)
 
 
 def trusted(run, pr=None):
-    if (run.get('path') != WORKFLOW or run.get('head_repository', {}).get('full_name') != REPO
+    if (run.get('path') != WORKFLOW or (run.get('head_repository') or {}).get('full_name') != REPO
             or not re.fullmatch('[0-9a-f]{40}', run.get('head_sha', ''))):
         return False
     if run['event'] in ('push', 'workflow_dispatch') and run['head_branch'] == 'main':
@@ -382,19 +383,22 @@ def fetch(wait=0, production=False, receipt=None):
     expected = artifact.inputs(ROOT)
     pr = None if production else current_pr()
     # Production and engine-changing PRs need the build of exactly these inputs.
-    match_inputs = production or engine_changed(pr)
+    base_inputs = inputs_at(pr['base']) if pr and pr.get('base') else None
+    match_inputs = production or engine_changed(pr, base_inputs)
+    # Only the PR's own runs build its engine change; an unreadable base makes engine_changed() a guess.
+    own_only = match_inputs and base_inputs is not None
     deadline = time.monotonic() + wait
     read_deadline = deadline if wait > 0 else None
     # Only a non-engine PR takes main builds of other inputs; inputs_at() fetched its base.
     based = commit_time(pr['base']) if pr and pr.get('base') and not match_inputs else None
-    poll_delay = 2
+    poll_delay = min(60, max(2, wait // 4))
     checked = set()
     keys = {}
     # The newest Bevy run of this commit and why it cannot supply the build: named for a rerun.
     head = pr['head'] if pr else os.environ.get('GITHUB_SHA')
     newest, hint, rejected = 0, None, 0
     # History is read newest first, and only as far as the search needs it.
-    history = workflow_runs(pr, read_deadline)
+    history = workflow_runs(pr, read_deadline, include_main=not own_only)
     candidates, swept, pending = history, False, set()
     while True:
         seen, pending, paused, expired = pending, set(), False, False
@@ -402,7 +406,7 @@ def fetch(wait=0, production=False, receipt=None):
             for run in candidates:
                 # GitHub reuses the run ID on rerun; only this attempt was checked.
                 attempt = (run['id'], run['run_attempt'])
-                if not trusted(run, pr) or attempt in checked:
+                if not trusted(run, pr) or attempt in checked or (own_only and run['head_sha'] != head):
                     continue
                 failed = run['status'] == 'completed' and run['conclusion'] != 'success'
                 if match_inputs and run['head_sha'] == head and run['id'] >= newest:
@@ -467,7 +471,7 @@ def fetch(wait=0, production=False, receipt=None):
                         rejected += 1
                         if rejected == MAX_REJECTED:
                             hint = (f'None of the {MAX_REJECTED} newest main web builds older than this PR\'s base '
-                                    'verified against this tree (each error is above). Rebase on main, or rerun this '
+                                    'could be used (each error is above). Rebase on main, or rerun this '
                                     'job once main has a newer successful Bevy CI build. ')
                             break
         except TimeoutError:
@@ -487,6 +491,10 @@ def fetch(wait=0, production=False, receipt=None):
                 limit = f'after the {wait} s wait' if wait > 0 else 'and this import does not wait'
                 recovery += (f'Bevy CI run {", ".join(map(str, sorted(pending)))} {state} {limit}. '
                              'Rerun this job when it has. ')
+            elif own_only:
+                if hint is None:
+                    recovery += ('No trusted Bevy CI run of this PR\'s head uploaded a build of these inputs '
+                                 '(runs of fork PRs are never trusted). ')
             else:
                 recovery += ('Refresh main with: gh workflow run bevy-explorer-ci.yml --ref main. '
                              'Wait for its successful web build, then retry with matching inputs. ')
