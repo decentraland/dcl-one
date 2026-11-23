@@ -179,10 +179,15 @@ jobs:
           pnpm exec vite build --config gallery/vite.config.ts --mode hosted
           node gallery/scripts/hosted-digest.mjs gallery/dist
           cp -R gallery/dist figma/review/review-dist/ui-gallery
-      # The same bytes as a pull request preview serves them (ui-gallery-publish.yml): opened as index.html under a
-      # prefix as deep as ui-gallery/pr/<n>/<sha>/. check-build only reads the build it serves.
-      - name: Check the hosted gallery under a preview prefix
-        run: node gallery/scripts/check-build.mjs gallery/dist --hosted --prefix /ui-gallery/pr/1/0000000000000000000000000000000000000000/
+      # The same bytes as a pull request preview serves them (ui-gallery-publish.yml): every file of a type and within
+      # the limits the publisher accepts, so a refusal shows here and not on main, then opened as index.html under a
+      # prefix as deep as ui-gallery/pr/<n>/<sha>/. Both only read the build.
+      - name: Check the hosted gallery as a preview serves it
+        env:
+          SITE_DIR: gallery/dist
+        run: |
+          python3 -I ../../tooling/ui-gallery-publish.py check
+          node gallery/scripts/check-build.mjs gallery/dist --hosted --prefix /ui-gallery/pr/1/0000000000000000000000000000000000000000/
       # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
       - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist

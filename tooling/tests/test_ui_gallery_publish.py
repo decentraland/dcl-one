@@ -295,6 +295,14 @@ class VerifyTest(unittest.TestCase):
                   f'  run-id: {RUN + 1}', '##[endgroup]',
                   f'- ui-review-{"c" * 40} (ID: 1, Size: 1, Expected Digest: sha256:{"f" * 64})',
                   f'SHA256 digest of downloaded artifact is {"f" * 64}', 'Artifact download completed successfully.']
+        # The runner echoes a step's environment in the same shape as its inputs; it is not an input.
+        with_env = scan_log().replace('  digest-mismatch: error\n',
+                                      f'  digest-mismatch: error\n2026-11-20T20:23:33.7791372Z env:\n'
+                                      f'2026-11-20T20:23:33.7791372Z   name: ui-review-{"c" * 40}\n'
+                                      f'2026-11-20T20:23:33.7791372Z   run-id: {RUN + 1}\n')
+        self.assertIn('env:', with_env)
+        self.assertEqual(publish.scanned_artifact(with_env, REPO),
+                         {'head': HEAD, 'run': RUN, 'artifact': ARTIFACT, 'digest': DIGEST})
         # Printed by the key step after the real download, it changes nothing.
         self.assertEqual(publish.scanned_artifact(scan_log(after=forged), REPO),
                          {'head': HEAD, 'run': RUN, 'artifact': ARTIFACT, 'digest': DIGEST})
@@ -412,6 +420,8 @@ class FetchTest(unittest.TestCase):
         for name, content in (('../escape.js', b'x'), ('ui-gallery/../../escape.js', b'x'),
                               ('/ui-gallery/abs.js', b'x'), ('ui-gallery/assets\\x.js', b'x'),
                               ('ui-gallery/run.sh', b'x'), ('ui-gallery/.env', b'x'),
+                              ('ui-gallery/a\nb.js', b'x'), ('ui-gallery/a\x1bb.js', b'x'),
+                              ('ui-gallery/a\x7fb.js', b'x'),
                               ('ui-gallery/assets/link.js', (b'/etc/passwd', stat.S_IFLNK | 0o777)),
                               ('ui-gallery', b'x')):
             with self.subTest(name=name):
@@ -481,6 +491,10 @@ class UploadTest(unittest.TestCase):
         self.assertEqual(commands, [])
 
 
+SERVED = {'X-Robots-Tag': 'noindex, nofollow', 'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "default-src 'none'; script-src 'self'"}
+
+
 class ProbeTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -499,19 +513,23 @@ class ProbeTest(unittest.TestCase):
         return requested, sleeps, printed.getvalue()
 
     def test_waits_until_the_page_and_an_asset_answer(self):
-        robots = 'noindex, nofollow'
-        requested, sleeps, printed = self.probe([(403, robots), (403, robots), (200, robots), (200, robots)])
+        served = SERVED
+        requested, sleeps, printed = self.probe([(403, served), (403, served), (200, served), (200, served)])
         self.assertEqual(requested[:2], [PAGE, PAGE.replace('index.html', 'assets/index-B8BLG4hy.js')])
         self.assertEqual(sleeps, [5])
         self.assertNotIn('::warning', printed)
 
     def test_fails_when_the_preview_never_answers(self):
         with self.assertRaisesRegex(publish.Reject, 'did not answer 200'):
-            self.probe([(403, '')] * 2 * (len(publish.PROBE_DELAYS) + 1))
+            self.probe([(403, {})] * 2 * (len(publish.PROBE_DELAYS) + 1))
 
-    def test_warns_when_the_preview_lets_robots_index_it(self):
-        _, _, printed = self.probe([(200, ''), (200, '')])
-        self.assertIn('::warning title=UI gallery::', printed)
+    def test_warns_when_the_distribution_drops_a_header_it_must_add(self):
+        for name in publish.EXPECTED_HEADERS:
+            with self.subTest(name=name):
+                headers = {**SERVED, name: ''}
+                _, _, printed = self.probe([(200, headers), (200, headers)])
+                self.assertEqual(printed.count('::warning title=UI gallery::'), 1)
+                self.assertIn(f'without {name}', printed)
 
 
 class CommentTest(unittest.TestCase):
@@ -568,6 +586,26 @@ class Process:
 
 
 class GitHubTest(unittest.TestCase):
+    def test_reads_a_log_with_escape_sequences_on_every_gh(self):
+        github = publish.GitHub()
+        calls = []
+
+        def call(arguments, path, unknown=False):
+            calls.append(arguments)
+            if unknown and arguments:
+                raise publish.ApiError(path, None, 'unknown flag: --allow-escape-sequences')
+            return b'\x1b[36;1mlog\x1b[0m'
+        with patch.object(github, '_call', side_effect=call):
+            self.assertEqual(github.text('jobs/1/logs'), '\x1b[36;1mlog\x1b[0m')
+        self.assertEqual(calls, [['--allow-escape-sequences']])
+        calls.clear()
+        with patch.object(github, '_call', side_effect=lambda a, p: call(a, p, unknown=True)):
+            self.assertEqual(github.text('jobs/1/logs'), '\x1b[36;1mlog\x1b[0m')
+        self.assertEqual(calls, [['--allow-escape-sequences'], []])
+        with patch.object(github, '_call', side_effect=publish.ApiError('jobs/1/logs', 404, 'HTTP 404')):
+            with self.assertRaisesRegex(publish.ApiError, '404'):
+                github.text('jobs/1/logs')
+
     def test_flattens_every_page_or_each_page_key(self):
         github = publish.GitHub()
         slurped = b'[{"jobs": [{"id": 1}], "total_count": 2}, {"jobs": [{"id": 2}]}]'
@@ -626,6 +664,29 @@ class MainTest(unittest.TestCase):
         code, outputs, printed = self.run_main(environment(UI_GALLERY_ROLE_ARN=''))
         self.assertEqual((code, outputs), (0, 'publish=false\n'))
         self.assertIn('::notice title=UI gallery::No UI gallery preview: publication is not configured', printed)
+
+    def test_an_unexpected_answer_fails_with_the_error_annotation(self):
+        def broken(env):
+            answer = None
+            return answer['head']
+        with patch.dict(publish.COMMANDS, verify=broken):
+            code, outputs, printed = self.run_main(environment())
+        self.assertEqual((code, outputs), (1, ''))
+        self.assertIn('::error title=UI gallery::UI gallery preview failed on an unexpected value: TypeError', printed)
+
+    def test_check_passes_a_servable_build_and_fails_a_file_the_publisher_would_refuse(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = site(Path(temp.name)) / 'site'
+        self.assertEqual(self.run_main({'SITE_DIR': str(root)}, 'check')[0], 0)
+        for extra in ('assets/login-music.mp3', 'assets/app.wasm', '.well-known/x.json'):
+            with self.subTest(extra=extra):
+                (root / extra).parent.mkdir(parents=True, exist_ok=True)
+                (root / extra).write_bytes(b'x')
+                code, _, printed = self.run_main({'SITE_DIR': str(root)}, 'check')
+                self.assertEqual(code, 1)
+                self.assertIn('::error title=UI gallery::', printed)
+                (root / extra).unlink()
 
     def test_mismatched_evidence_fails_with_an_error(self):
         def reject(env):

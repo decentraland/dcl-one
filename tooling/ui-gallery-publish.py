@@ -15,6 +15,7 @@ serves, under the digest gallery/scripts/hosted-digest.mjs and tooling/ui-galler
            with explicit content types
   probe    waits until the preview answers 200 through $UI_GALLERY_BASE_URL
   comment  creates or updates the one gallery comment on the pull request
+  check    checks the hosted gallery in $SITE_DIR as upload would, for ui-library.yml on the pull request's build
 
 A run that is not eligible (publication not configured, a fork, a closed or moved-on pull request, a scan that read no
 Review artifact) ends with a notice and publishes nothing. Evidence that does not match fails the command.
@@ -71,6 +72,7 @@ BOT = 'github-actions[bot]'
 SHA = re.compile(r'[0-9a-f]{40}')
 DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
 GALLERY_DIGEST = re.compile(r'[0-9a-f]{64}')
+CONTROL = re.compile(r'[\x00-\x1f\x7f]')
 # Only a pull request that changes a file under this tree gets a preview. The library job also runs for the other trees
 # the gallery compiles (library/explorer-core) and for its build inputs, which alone get no link.
 LIBRARY = 'library/ui/'
@@ -155,7 +157,16 @@ class GitHub:
         return [item for page in pages for item in (page if key is None else page.get(key, []))]
 
     def text(self, path):
-        return self._call([], path).decode('utf-8', errors='replace')
+        """A plain text answer, such as a job log. Logs carry ANSI colour codes, which gh 2.97 and later refuses to
+        print without --allow-escape-sequences; an older gh does not know the flag. The text only reaches this
+        process, never a terminal."""
+        try:
+            answer = self._call(['--allow-escape-sequences'], path)
+        except ApiError as error:
+            if 'unknown flag: --allow-escape-sequences' not in str(error):
+                raise
+            answer = self._call([], path)
+        return answer.decode('utf-8', errors='replace')
 
     def send(self, method, path, **fields):
         return self._json(['--method', method, *query_fields(fields)], path)
@@ -300,12 +311,17 @@ def scanned_artifact(log, repository):
             break
         if action.group(1) != 'actions/download-artifact':
             continue
-        inputs = {}
+        # The runner echoes the step's inputs under `with:` and its environment under `env:`, in the same shape: only
+        # the lines under `with:` are inputs.
+        inputs, block = {}, None
         for line in section[1:]:
             if line.startswith('##[endgroup]'):
                 break
+            if not line.startswith(' '):
+                block = line
+                continue
             match = re.fullmatch(r'  ([\w-]+): (.*)', line)
-            if match:
+            if match and block == 'with:':
                 inputs[match.group(1)] = match.group(2)
         if inputs.get('name', '').startswith('ui-review-'):
             reviews.append((inputs, section))
@@ -501,7 +517,7 @@ def unpack_gallery(archive, site):
             for info in bundle.infolist():
                 name = info.filename
                 parts = name.rstrip('/').split('/')
-                if (not name or name.startswith('/') or '\\' in name or '\0' in name
+                if (not name or name.startswith('/') or '\\' in name or CONTROL.search(name)
                         or any(part in ('', '.', '..') for part in parts)):
                     raise Reject(f'unsafe path in the artifact: {name!r}')
                 if name in seen:
@@ -573,6 +589,32 @@ def site_files(site):
     return sorted(path.relative_to(site).as_posix() for path in site.rglob('*') if path.is_file())
 
 
+def check_site(site):
+    """The files of a hosted gallery directory and its gallery digest. Every file has a served type, and the directory
+    keeps the artifact limits, an index.html, no hidden path and no link."""
+    files = site_files(site)
+    unknown = sorted({path for path in files if PurePosixPath(path).suffix[1:] not in TYPES})
+    if 'index.html' not in files or unknown:
+        raise Reject(f'{site} is not a hosted gallery: ' + (f'{unknown} have no content type; {sorted(TYPES)} are '
+                                                             'served' if unknown else 'it has no index.html'))
+    sizes = [(site / path).stat().st_size for path in files]
+    if (len(files) > LIMITS['files'] or max(sizes) > LIMITS['file_bytes'] or sum(sizes) > LIMITS['total_bytes']
+            or any(path.count('/') >= LIMITS['depth'] for path in files)):
+        raise Reject(f'{site} exceeds the limits of a hosted gallery: {LIMITS}')
+    try:
+        return files, receipt.tree_digest(site)
+    except receipt.ReceiptError as error:
+        raise Reject(f'{site} is not a hosted gallery: {error}') from None
+
+
+def check(env):
+    """Run by ui-library.yml on the pull request's own build, so a file the publisher would refuse fails there and not
+    on main."""
+    files, digest = check_site(Path(env.get('SITE_DIR') or '.'))
+    print(f'{len(files)} files a preview can serve, gallery digest {digest}')
+    return {}
+
+
 def utc_today():
     return datetime.datetime.now(datetime.timezone.utc).date()
 
@@ -584,14 +626,8 @@ def upload(env, run=subprocess.run, today=utc_today):
     if not GALLERY_DIGEST.fullmatch(expected):
         raise Reject(f'GALLERY_DIGEST is not a sha256 digest: {expected!r}')
     site = Path(env['WORK_DIR']) / 'site'
-    files = site_files(site)
+    files, actual = check_site(site)
     extensions = sorted({PurePosixPath(path).suffix[1:] for path in files})
-    if 'index.html' not in files or any(extension not in TYPES for extension in extensions):
-        raise Reject(f'{site} is not an unpacked hosted gallery')
-    try:
-        actual = receipt.tree_digest(site)
-    except receipt.ReceiptError as error:
-        raise Reject(f'{site} is not an unpacked hosted gallery: {error}') from None
     if actual != expected:
         raise Reject(f'digest mismatch: {site} is {actual}, the fetch unpacked {expected}')
     destination = f's3://{values["UI_GALLERY_BUCKET"]}/{prefix}/'
@@ -611,16 +647,23 @@ def upload(env, run=subprocess.run, today=utc_today):
     return {'expires': expires.isoformat()}
 
 
+# The headers dcl-one-infra's distribution adds to every response; a missing one means the distribution drifted.
+EXPECTED_HEADERS = {'X-Robots-Tag': 'noindex', 'Content-Security-Policy': "default-src 'none'",
+                    'X-Content-Type-Options': 'nosniff'}
+
+
 def answer(url):
+    """The status and the expected headers of a GET."""
     request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             response.read()
-            return response.status, response.headers.get('X-Robots-Tag', '')
+            status, headers = response.status, response.headers
     except urllib.error.HTTPError as error:
-        return error.code, error.headers.get('X-Robots-Tag', '') if error.headers else ''
+        status, headers = error.code, error.headers
     except (urllib.error.URLError, OSError):
-        return 0, ''
+        return 0, {}
+    return status, {name: (headers.get(name, '') if headers else '') for name in EXPECTED_HEADERS}
 
 
 def probe(env, request=answer, sleep=time.sleep):
@@ -634,8 +677,10 @@ def probe(env, request=answer, sleep=time.sleep):
     for attempt in range(len(PROBE_DELAYS) + 1):
         answers = [request(url) for url in targets]
         if all(status == 200 for status, _ in answers):
-            if 'noindex' not in answers[0][1].lower():
-                annotate('warning', f'{page} is served without X-Robots-Tag: noindex')
+            headers = answers[0][1]
+            for name, expected in EXPECTED_HEADERS.items():
+                if expected.lower() not in headers.get(name, '').lower():
+                    annotate('warning', f'{page} is served without {name}: {expected}')
             print(f'The preview answers at {page}')
             return {}
         if attempt < len(PROBE_DELAYS):
@@ -694,7 +739,7 @@ def write_outputs(env, outputs):
         sink.writelines(lines)
 
 
-COMMANDS = {'verify': verify, 'fetch': fetch, 'upload': upload, 'probe': probe, 'comment': comment}
+COMMANDS = {'verify': verify, 'fetch': fetch, 'upload': upload, 'probe': probe, 'comment': comment, 'check': check}
 
 
 def main(argv=None, env=None):
@@ -711,6 +756,10 @@ def main(argv=None, env=None):
         return 0
     except (Reject, ApiError) as problem:
         annotate('error', f'UI gallery preview refused: {problem}')
+        return 1
+    except (KeyError, TypeError, AttributeError, ValueError) as problem:
+        # An answer or input of an unexpected shape: still the error annotation, with what was missing.
+        annotate('error', f'UI gallery preview failed on an unexpected value: {type(problem).__name__}: {problem}')
         return 1
     write_outputs(env, outputs)
     return 0
