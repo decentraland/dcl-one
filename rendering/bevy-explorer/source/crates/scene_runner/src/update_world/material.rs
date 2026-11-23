@@ -381,7 +381,7 @@ impl TextureResolver<'_, '_> {
     }
 
     /// `is_srgb` is false for data the shader reads as numbers, a normal map.
-    pub fn resolve_texture_as(
+    fn resolve_texture_as(
         &mut self,
         scene: &RendererSceneContext,
         texture: &texture_union::Tex,
@@ -396,44 +396,29 @@ impl TextureResolver<'_, '_> {
                     .filter_mode
                     .and_then(TextureFilterMode::from_i32)
                     .unwrap_or(TextureFilterMode::TfmBilinear);
-                let point = filter_mode == TextureFilterMode::TfmPoint;
-                let filter_mode = if point {
-                    ImageFilterMode::Nearest
-                } else {
-                    ImageFilterMode::Linear
+                let filter_mode = match filter_mode {
+                    TextureFilterMode::TfmPoint => ImageFilterMode::Nearest,
+                    TextureFilterMode::TfmBilinear => ImageFilterMode::Linear,
+                    TextureFilterMode::TfmTrilinear => ImageFilterMode::Linear,
                 };
 
                 let wrap_mode = texture
                     .wrap_mode
                     .and_then(TextureWrapMode::from_i32)
                     .unwrap_or(TextureWrapMode::TwmClamp);
-                // an image is one asset for each sampler and colour space it is used with; the
-                // usual one (clamped, bilinear, sRGB) keeps the file's own path
-                let mut variant = String::new();
-                variant.push_str(match wrap_mode {
-                    TextureWrapMode::TwmRepeat => "repeat",
-                    TextureWrapMode::TwmClamp => "",
-                    TextureWrapMode::TwmMirror => "mirror",
-                });
-                if point {
-                    variant.push_str("-point");
-                }
-                if !is_srgb {
-                    variant.push_str("-linear");
-                }
                 let wrap_mode = match wrap_mode {
                     TextureWrapMode::TwmRepeat => ImageAddressMode::Repeat,
                     TextureWrapMode::TwmClamp => ImageAddressMode::ClampToEdge,
                     TextureWrapMode::TwmMirror => ImageAddressMode::MirrorRepeat,
                 };
 
+                // TODO handle different wrapmode and filtering for the same image at some point...
                 Ok(ResolvedTexture {
                     image: self
                         .ipfas
-                        .load_content_file_variant::<Image, _>(
+                        .load_content_file_with_settings::<Image, _>(
                             &texture.src,
                             &scene.hash,
-                            &variant,
                             move |s: &mut ImageLoaderSettings| {
                                 s.is_srgb = is_srgb;
                                 s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
