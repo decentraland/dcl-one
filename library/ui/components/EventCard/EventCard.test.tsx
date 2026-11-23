@@ -625,6 +625,24 @@ describe('EventCard motion', () => {
     })
   })
 
+  describe('when a day card is drawn', () => {
+    it('should draw no border, outline or inset line around it, at rest or on hover', () => {
+      const outsideForced = css.replace(/@media \(forced-colors: active\) \{[\s\S]*?\n {2}\}\n/, '')
+      const dayRules = [...outsideForced.matchAll(/\n *([^\n{}@]*\.day[^\n{}]*) \{([^}]*)\}/g)]
+      expect(dayRules.length).toBeGreaterThan(0)
+      for (const [, selector, body] of dayRules) {
+        if (/\.day\s+\./.test(selector ?? '')) continue
+        expect(body, selector).not.toMatch(/(^|\s)(border|outline|box-shadow)\s*:/)
+      }
+    })
+
+    it('should give it a system-colour boundary only when forced colours drop its background', () => {
+      expect(blockOf(mediaOf('(forced-colors: active)'), '.day')).toMatch(
+        /outline: 1px solid CanvasText;\s*outline-offset: -1px/
+      )
+    })
+  })
+
   describe('when a small card is live', () => {
     it('should mark it with its surface and a 5px live bar', () => {
       expect(blockOf(css, '.small.isLive')).toContain('#680d4a')

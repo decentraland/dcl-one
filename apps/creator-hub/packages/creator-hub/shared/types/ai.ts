@@ -167,7 +167,8 @@ export interface AiSendParams {
   // of stripping it to force subscription billing. From the `useApiKeyFromEnv` setting.
   apiKeyFromEnv?: boolean;
   // Which local session this turn belongs to. Main keys the provider resume id by
-  // (projectDir, sessionId), so each saved conversation resumes its own CLI thread.
+  // (projectDir, sessionId), so each saved conversation resumes its own CLI thread. It is also
+  // the shared turn's `conversationId`; main records no turn without one.
   sessionId?: string;
   // Present only when the user opted in to sharing and this conversation isn't excluded.
   // Main still checks the saved consent and the signed-in address before recording.

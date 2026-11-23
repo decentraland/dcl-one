@@ -5,9 +5,17 @@ import { CATEGORIES, type CategoryKey } from '@explorer-core/features/map/navmap
 import { CAT_ICONS } from './mapArt'
 import styles from './MapChrome.module.css'
 
-export function CategoryStrip({ selected, onSelect }: { selected: CategoryKey | null; onSelect: (key: CategoryKey | null) => void }): React.JSX.Element {
+export function CategoryStrip({
+  selected,
+  wrap = false,
+  onSelect
+}: {
+  selected: CategoryKey | null
+  wrap?: boolean
+  onSelect: (key: CategoryKey | null) => void
+}): React.JSX.Element {
   return (
-    <div className={styles.categories}>
+    <div className={wrap ? `${styles.categories} ${styles.categoriesWrap}` : styles.categories}>
       <div className={styles.categoryRow} role="group" aria-label="Categories">
         {CATEGORIES.map((c) => {
           const on = c.key === selected

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
 import { AllEvents, type AllEventsDay } from "@dcl/one-ui/apps/sites/events/AllEvents";
-import { EventDetailModal, PlaceDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
+import { PlaceDetailModal } from "@dcl/one-ui/apps/sites/events/DetailModal";
 import { EventsPage } from "@dcl/one-ui/apps/sites/events/EventsPage";
 import { HostBanner } from "@dcl/one-ui/apps/sites/events/HostBanner";
 import { LiveNow } from "@dcl/one-ui/apps/sites/events/LiveNow";
@@ -12,7 +12,6 @@ import type {
   ExperienceCardProps,
   JumpIn,
   LiveEventCardProps,
-  RemindControl,
   UpcomingEventCardProps,
 } from "@dcl/one-ui/apps/sites/events/types";
 
@@ -20,7 +19,6 @@ import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import type { Event } from "@/data/lib/catalyst/places/events";
 import {
   calendarQuery,
   DEFAULT_MIN_USERS,
@@ -37,13 +35,13 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
 import { useSignInRequired } from "../components/auth/useSignInRequired";
 import type { DetectedPlatform } from "../download/options";
-import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
 import { useEventsCopy } from "@dcl/one-ui/apps/sites/events/locale";
+import { EventDetail, eventJumpIn, isPlainClick, remindControl } from "./EventDetail";
 import { useCreatorProfiles } from "./useCreatorProfiles";
-import { REMIND_FAILED, useEventReminders, type Reminder } from "./useEventReminders";
+import { REMIND_FAILED, useEventReminders } from "./useEventReminders";
 import { myEventCards, myEventsQuery } from "./my-events";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
-import { formatTime, heroWhen, scheduleLine, type Zone } from "../components/event-schedule";
+import { formatTime, type Zone } from "../components/event-schedule";
 import {
   bucketByDay,
   creatorWallets,
@@ -56,6 +54,7 @@ import {
   dayLabel,
   eventCreator,
   eventHref,
+  eventImage,
   eventPageShareUrl,
   eventTarget,
   eventUsers,
@@ -66,7 +65,6 @@ import {
   placeHref,
   placeShareUrl,
   placeTarget,
-  playHref,
   readDayOffset,
   relativeStart,
   TAB_PARAM,
@@ -76,7 +74,6 @@ import {
 } from "./view";
 
 const STORY: StoryId = "admin/whats-on";
-const DETAIL_STORY: StoryId = "admin/whats-on-detail";
 const LEARN_MORE_PATH = "/blog/about-decentraland/how-to-make-and-run-an-event-in-decentraland";
 const CREATE_HREF = "/events/new-event";
 /** The All Events section, which arriving at My Events scrolls to. */
@@ -87,6 +84,8 @@ export type EventsViewProps = {
   platform: DetectedPlatform;
   /** The public origin share links and calendar entries point at. */
   origin: string;
+  /** The origin the browser loaded the page from: the request's on the server, the window's in the browser. */
+  pageOrigin: string;
   /** The loader's clock and its required-data outcome; null after a client navigation. */
   initial: { now: number; unavailable: boolean } | null;
 };
@@ -119,23 +118,7 @@ function useViewer(initialNow: number, platform: DetectedPlatform) {
   return { zone, now, columns };
 }
 
-/** A plain click opens the detail in place; a modified click keeps the browser's own behaviour. */
-function isPlainClick(event: MouseEvent<HTMLAnchorElement>): boolean {
-  return !(
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey
-  );
-}
-
-function remindControl(reminder: Reminder): RemindControl {
-  return { active: reminder.active, pending: reminder.pending, onToggle: reminder.toggle };
-}
-
-export function EventsView({ sid, platform, origin, initial }: EventsViewProps) {
+export function EventsView({ sid, platform, origin, pageOrigin, initial }: EventsViewProps) {
   const { locale, text } = useEventsCopy();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -155,13 +138,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
     enabled: Boolean(placeTargetParam),
   });
 
-  const jumpIn = useCallback(
-    (target: Target): JumpIn => {
-      const { jumpInHref, onJumpIn } = jumpInFor(playHref(target), mobileLaunch(platform, target));
-      return { href: jumpInHref ?? playHref(target), onJumpIn };
-    },
-    [platform],
-  );
+  const jumpIn = useCallback((target: Target): JumpIn => eventJumpIn(target, platform), [platform]);
 
   const open = useCallback(
     (href: string, eventIdForTelemetry?: string) => (event: MouseEvent<HTMLAnchorElement>) => {
@@ -236,7 +213,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: item.event.id,
         title: item.event.name ?? text("Untitled event"),
-        image: item.event.image,
+        image: eventImage(item.event.image, pageOrigin),
         href,
         onOpen: open(href, item.event.id),
         users: item.users,
@@ -265,7 +242,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   const upcomingCards: UpcomingEventCardProps[] = upcomingEvents.map((event) => {
     const href = eventHref(event.id, search);
     return {
-      ...upcomingCardProps(event, { href, now, zone, origin, profiles, locale }),
+      ...upcomingCardProps(event, { href, now, zone, origin, pageOrigin, profiles, locale }),
       onOpen: open(href, event.id),
       remind: remindControl(reminders.get(event.id)),
     };
@@ -283,7 +260,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       return {
         id: `${event.id}@${occurrence.start}`,
         title: event.name ?? text("Untitled event"),
-        image: event.image,
+        image: eventImage(event.image, pageOrigin),
         href,
         onOpen: open(href, event.id),
         users,
@@ -314,8 +291,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
 
   const myCards = useMemo(
     () =>
-      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, profiles, locale }) : [],
-    [identity, mine.events, now, zone, profiles, locale],
+      identity && mine.events ? myEventCards(mine.events, { signer: identity.signer, now, zone, pageOrigin, profiles, locale }) : [],
+    [identity, mine.events, now, zone, pageOrigin, profiles, locale],
   );
 
   const calendarStatus = calendar.data ? "ready" : calendar.isError || initial?.unavailable ? "unavailable" : "loading";
@@ -332,6 +309,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
               event={detail.data}
               zone={zone}
               origin={origin}
+              pageOrigin={pageOrigin}
               jumpIn={jumpIn}
               reminder={detail.data.live ? undefined : reminders.get(detail.data.id)}
               profiles={profiles}
@@ -388,71 +366,6 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       />
       <HostBanner createHref={CREATE_HREF} learnMoreHref={siteUrl(LEARN_MORE_PATH)} />
     </EventsPage>
-  );
-}
-
-function EventDetail({
-  sid,
-  event,
-  zone,
-  origin,
-  jumpIn,
-  reminder,
-  profiles,
-  onClose,
-}: {
-  profiles: CreatorProfiles;
-  sid: string;
-  event: Event;
-  zone: Zone;
-  origin: string;
-  jumpIn: (target: Target) => JumpIn;
-  reminder?: Reminder;
-  onClose: () => void;
-}) {
-  const { locale, text } = useEventsCopy();
-  const target = eventTarget(event);
-  const share = eventPageShareUrl(origin, event);
-  const viewed = useRef<string | null>(null);
-  useEffect(() => {
-    if (!sid || viewed.current === event.id) return;
-    viewed.current = event.id;
-    track("lp_event_viewed", { event_id: event.id, live: event.live }, { sid, story: DETAIL_STORY });
-  }, [sid, event.id, event.live]);
-  const travel = jumpIn(target);
-  const tracked: JumpIn = {
-    href: travel.href,
-    onJumpIn: (click) => {
-      if (sid) {
-        track(
-          "lp_event_jump_in",
-          { event_id: event.id, position: target.realm ? null : `(${target.coordinates.join(",")})` },
-          { sid, story: DETAIL_STORY },
-        );
-      }
-      travel.onJumpIn?.(click);
-    },
-  };
-  return (
-    <EventDetailModal
-      title={event.name ?? text("Untitled event")}
-      image={event.image}
-      live={event.live}
-      when={event.live ? undefined : heroWhen(event, zone, locale)}
-      creator={eventCreator(event, profiles, locale)}
-      location={{
-        label: locationLabel(target, event.scene_name ?? event.estate_name),
-        world: Boolean(target.realm),
-        jumpIn: tracked,
-      }}
-      description={event.description ?? undefined}
-      schedule={scheduleLine(event, zone, locale)}
-      jumpIn={tracked}
-      remind={reminder ? remindControl(reminder) : undefined}
-      calendarHref={calendarHref(event, share, undefined, locale)}
-      shareUrl={share}
-      onClose={onClose}
-    />
   );
 }
 

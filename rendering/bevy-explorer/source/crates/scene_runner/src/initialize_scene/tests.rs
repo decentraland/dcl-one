@@ -1,5 +1,6 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::structs::ServerConfiguration;
+use comms::SetCurrentScene;
 
 use super::*;
 
@@ -16,6 +17,9 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
+    world.init_resource::<CurrentRealm>();
+    world.init_resource::<comms::SceneAdmission>();
+    world.init_resource::<wallet::Wallet>();
     world.init_resource::<Time>();
     world.init_resource::<AppConfig>();
     world.insert_resource(SceneLoadDistance {
@@ -425,6 +429,118 @@ fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() 
         .resource::<LiveScenes>()
         .scenes
         .contains_key("wearable-sw-male"));
+}
+
+#[test]
+fn scene_ban_unloads_only_the_matching_scene_until_admitted() {
+    let mut world = lifecycle_world();
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    world.insert_resource(wallet);
+    world.insert_resource(CurrentRealm::default());
+    let current = spawn_current_scene(&mut world, SceneLoading::SceneEntity);
+    world.insert_resource(
+        comms::SceneAdmission::from_refusal(
+            403,
+            Some("User is banned from this scene"),
+            false,
+            "current",
+        )
+        .for_session("", address),
+    );
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(current).is_err());
+    assert!(!world.resource::<CurrentSceneLoading>().0);
+    assert_eq!(spawned_hashes(&world), vec!["neighbour"]);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+
+    for x in [24.0, 8.0, 24.0, 8.0] {
+        move_player(&mut world, x);
+        world.run_system_once(process_scene_lifecycle).unwrap();
+        assert!(!world
+            .resource::<LiveScenes>()
+            .scenes
+            .contains_key("current"));
+        assert!(!spawned_hashes(&world).iter().any(|hash| hash == "current"));
+    }
+
+    world.insert_resource(comms::SceneAdmission::allowed("current"));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+}
+
+#[test]
+fn returning_from_another_scene_targets_the_unloaded_banned_parcel() {
+    let mut app = App::new();
+    setup_lifecycle(app.world_mut());
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    app.insert_resource(wallet)
+        .insert_resource(
+            comms::SceneAdmission::from_refusal(
+                403,
+                Some("User is banned from this scene"),
+                false,
+                "current",
+            )
+            .for_session("", address),
+        )
+        .add_event::<SetCurrentScene>()
+        .add_systems(Update, crate::update_scene_room);
+    app.world_mut()
+        .resource_mut::<CurrentRealm>()
+        .config
+        .realm_name = Some("realm".into());
+    let entity = spawn_live_neighbour(app.world_mut());
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(RendererSceneContext::new(
+            SceneId(entity),
+            "neighbour".into(),
+            String::new(),
+            false,
+            0,
+            "Neighbour".into(),
+            IVec2::X,
+            [IVec2::X].into_iter().collect(),
+            Vec::new(),
+            SceneBounds::default(),
+            Vec::new(),
+            entity,
+            0.0,
+            false,
+            "",
+            false,
+            false,
+        ));
+    for (x, expected) in [
+        (24.0, "neighbour"),
+        (8.0, "current"),
+        (24.0, "neighbour"),
+        (8.0, "current"),
+    ] {
+        move_player(app.world_mut(), x);
+        app.update();
+        let events = app.world().resource::<Events<SetCurrentScene>>();
+        let mut reader = events.get_cursor();
+        assert_eq!(reader.read(events).last().unwrap().scene_id, expected);
+        assert!(!app
+            .world()
+            .resource::<LiveScenes>()
+            .scenes
+            .contains_key("current"));
+    }
 }
 
 #[test]

@@ -16,6 +16,7 @@ import {
   editEventHref, eventAdminKeys, eventOccurrence, eventReviewStatus, moderateEvent, moderationQueueQuery, type ManagedEvent,
 } from "@/data/lib/catalyst/places/event-management";
 import { useEventsFooterCopy } from "@/features/events/locale";
+import { eventImage } from "@/features/events/view";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import SitesLayout from "@/features/components/chrome/SitesLayout";
 import { AdminAccessGate } from "@/features/explorer/event-management/AdminAccessGate";
@@ -45,11 +46,16 @@ export default function PendingEventsPage() {
 
 function PendingQueue({ access }: { access: EventAdminAccess }) {
   const identity = access.identity;
+  // The queue is a signed read, so its cards render in the browser only, where the page origin is the window's.
+  const pageOrigin = typeof window === "undefined" ? "" : window.location.origin;
   const client = useQueryClient();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const queue = useQuery(identity ? moderationQueueQuery(identity) : { queryKey: eventAdminKeys.queue("anonymous"), queryFn: skipToken });
   const [rejecting, setRejecting] = useState<ManagedEvent | null>(null);
+  // The review a moderation just closed. Its id leaves the URL in a later commit than the reason
+  // dialog leaves state, so without this the review would show again for that commit.
+  const [closing, setClosing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useToast();
@@ -75,13 +81,14 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
   const mayReject = (event: ManagedEvent) => mayEdit(event) && access.canApproveAny;
   const recentlyApproved = (queue.data?.recentlyApproved ?? []).filter(visible);
   const openId = params.get("id");
-  const review = openId ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
+  if (closing !== null && openId !== closing) setClosing(null);
+  const review = openId && openId !== closing ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
   const now = new Date();
   // A link (a notification, a shared URL) can name an event another moderator has handled since, or one
   // this account does not review: once a read made for this page answers without it, say so and drop the
   // id. A cached queue may predate the event, so it decides nothing until that read settles.
-  const unlisted = Boolean(openId) && queue.isSuccess && queue.isFetchedAfterMount && !queue.isFetching && review === null;
-  const cachedWithout = Boolean(openId) && queue.isSuccess && !queue.isFetchedAfterMount && !queue.isFetching && review === null;
+  const unlisted = Boolean(openId) && openId !== closing && queue.isSuccess && queue.isFetchedAfterMount && !queue.isFetching && review === null;
+  const cachedWithout = Boolean(openId) && openId !== closing && queue.isSuccess && !queue.isFetchedAfterMount && !queue.isFetching && review === null;
   const refetchQueue = queue.refetch;
   useEffect(() => {
     if (cachedWithout) void refetchQueue();
@@ -98,6 +105,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
 
   function select(id: string | null) {
     setError(null);
+    if (id && id === closing) setClosing(null);
     setParams((current) => {
       const next = new URLSearchParams(current);
       if (id) next.set("id", id);
@@ -123,6 +131,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       await moderateEvent(signer, event.id, action, reason);
       void invalidateEventsAfterWrite(client);
       if (!mounted.current) return;
+      setClosing(event.id);
       setRejecting(null);
       select(null);
       setToast({ message: action === "approve" ? adminCopy.pending.approveSuccess : adminCopy.pending.rejectSuccess, tone: "success" });
@@ -141,7 +150,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
           <li key={event.id}>
             <PendingEventCard
               title={event.name}
-              image={event.image}
+              image={eventImage(event.image, pageOrigin)}
               href={`${PENDING_PATH}?id=${encodeURIComponent(event.id)}`}
               onOpen={(click) => {
                 click.preventDefault();
@@ -187,7 +196,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       {review && !rejecting ? (
         <EventDetailModal
           title={review.name}
-          image={review.image}
+          image={eventImage(review.image, pageOrigin)}
           live={false}
           when={reviewStart ? { label: new Date(reviewStart).toLocaleString(DATE_LOCALE), dateTime: reviewStart } : undefined}
           location={{ world: review.world, label: review.world ? review.server || "World location not published" : `${review.x},${review.y}` }}

@@ -69,13 +69,13 @@ let calendar: Event[];
 let upcoming: Event[];
 let live: { events: Event[]; places: ReturnType<typeof placeRecord>[] };
 
-function setup(path: string, platform: DetectedPlatform = DESKTOP) {
+function setup(path: string, platform: DetectedPlatform = DESKTOP, pageOrigin = "https://example.org") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [
       {
         path: "/events",
-        element: <EventsView sid="sid" platform={platform} origin="https://example.org" initial={null} />,
+        element: <EventsView sid="sid" platform={platform} origin="https://example.org" pageOrigin={pageOrigin} initial={null} />,
       },
     ],
     { initialEntries: [path] },
@@ -702,6 +702,17 @@ describe("when /events opens My Events", () => {
       expect(vi.mocked(loadAllOwnedEvents)).toHaveBeenCalledWith(auth.identity, expect.anything());
       await waitFor(() => expect(scrolled).toHaveBeenCalledOnce());
       expect(scrolled.mock.contexts[0]).toBe(document.getElementById("all-events"));
+    });
+
+    it("should show an uploaded cover the page's own http origin serves", async () => {
+      const poster = "/events-assets-099ac00/poster/abc.png";
+      vi.mocked(loadAllOwnedEvents).mockResolvedValue([
+          owned({ id: "covered", name: "Covered", image: `http://127.0.0.1:5254${poster}`, start_at: at(5), finish_at: at(6), next_start_at: at(5), next_finish_at: at(6) }),
+        ]);
+      setup("/events?tab=my", DESKTOP, "http://127.0.0.1:5254");
+      const panel = await screen.findByRole("tabpanel", { name: "My Events" });
+      const card = (await within(panel).findByRole("link", { name: "Covered" })).closest("li")!;
+      expect(card.querySelector("img")?.getAttribute("src")).toBe(poster);
     });
 
     it("should count a recurring event by its next occurrence", async () => {

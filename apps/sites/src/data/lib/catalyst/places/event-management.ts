@@ -10,7 +10,7 @@ export const EVENT_PERMISSIONS = [
   { id: "approve_any_event", label: "Approve any hangout" },
   { id: "edit_any_event", label: "Edit any hangout" },
   { id: "edit_any_schedule", label: "Manage schedules" },
-  { id: "edit_any_profile", label: "Legacy profile permission" },
+  { id: "edit_any_profile", label: "Edit users" },
 ] as const;
 export type EventPermission = typeof EVENT_PERMISSIONS[number]["id"];
 export type ManagedEvent = z.infer<typeof EventRecordSchema>;
@@ -147,7 +147,7 @@ export function editEventHref(id: string): string {
 const EVENT_ADMIN_STALE_MS = 30_000;
 
 /**
- * Every account's grants, or null when the moderator-only list refuses this account (403): the server,
+ * Every account's grants, or null when the list (moderators and `edit_any_profile` grantees) refuses this account (403): the server,
  * not the `edit_any_profile` hint, decides who may read other accounts. Any other failure throws.
  */
 export async function loadEventGrants(identity: AuthIdentity, signal?: AbortSignal): Promise<EventProfile[] | null> {

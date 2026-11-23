@@ -174,9 +174,15 @@ jobs:
           mkdir -p sections
           bash .github/actions/bevy-explorer-ci-status/explorer-ci-sections.sh
           cat sections/tests.md
-      - name: Check that the run still matches the PR head
+      - name: Check that the run goes on and still matches the PR head
         id: current
         run: |
+          state=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')
+          if [ "$state" = completed ]; then
+            echo "::notice::Run $RUN_ID has ended: its report writes the tests section."
+            echo "write=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           live=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
           if [ "$live" = "$HEAD_SHA" ]; then
             echo "write=true" >> "$GITHUB_OUTPUT"
@@ -270,7 +276,8 @@ jobs:
         id: current
         run: |
           # After the run ends its report links the preview, and this section must not replace it.
-          if [ "$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')" = completed ]; then
+          state=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status')
+          if [ "$state" = completed ]; then
             echo "::notice::Run $RUN_ID has ended: its report writes the build section."
             echo "write=false" >> "$GITHUB_OUTPUT"
             exit 0
