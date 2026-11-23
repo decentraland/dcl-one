@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 import { FALLBACK_PROFILES } from '@web-core/multiplayer-test/rules'
 import type { MpReplayOutcome } from '@web-core/multiplayer-test/types'
@@ -49,28 +49,35 @@ export default function MpReplayDialog({
   const [seed, setSeed] = useState('42')
   const profileNames = profiles.length ? profiles : FALLBACK_PROFILES
   const activeProfile = profile || profileNames[0] || ''
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const hasOutcome = outcome !== null
+
+  // The focused submit action unmounts when the outcome replaces the form; focus would fall to the body.
+  useEffect(() => {
+    if (hasOutcome) closeRef.current?.focus()
+  }, [hasOutcome])
 
   return (
     <Modal
       title={`Replay run ${runId}`}
       onClose={onClose}
-      dismissible={!requesting}
-      // A stray press outside must not discard the chosen tier, profile and seed.
+      // A stray press outside must not discard the chosen tier, profile and seed. Escape, the
+      // close button and Cancel stay active during a request: closing abandons it.
       closeOnBackdrop={false}
       actions={
         outcome ? (
-          <Button variant="secondary" size="lg" data-mp-action="close-replay" onClick={onClose}>
+          <Button
+            ref={closeRef}
+            variant="secondary"
+            size="lg"
+            data-mp-action="close-replay"
+            onClick={onClose}
+          >
             Close
           </Button>
         ) : (
           <>
-            <Button
-              variant="secondary"
-              size="lg"
-              data-mp-action="close-replay"
-              onClick={onClose}
-              disabled={requesting}
-            >
+            <Button variant="secondary" size="lg" data-mp-action="close-replay" onClick={onClose}>
               Cancel
             </Button>
             <Button

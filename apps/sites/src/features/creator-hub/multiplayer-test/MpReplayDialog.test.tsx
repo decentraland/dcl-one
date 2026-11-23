@@ -112,19 +112,34 @@ describe("MpReplayDialog", () => {
   });
 
   describe("when a request is in flight", () => {
-    it("should mark the submit action busy, disable Cancel and refuse Escape and a second submit", async () => {
+    it("should mark the submit action busy and refuse a second submit", async () => {
       const onSubmit = vi.fn();
-      const onClose = vi.fn();
-      render(<MpReplayDialog runId="r1" profiles={["lan"]} requesting onSubmit={onSubmit} onClose={onClose} />);
+      render(<MpReplayDialog runId="r1" profiles={["lan"]} requesting onSubmit={onSubmit} onClose={vi.fn()} />);
       const submit = screen.getByRole("button", { name: "Replay offline" });
       expect(submit).toHaveAttribute("aria-busy", "true");
       expect(submit).toHaveAttribute("aria-disabled", "true");
-      expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
-      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-      expect(onClose).not.toHaveBeenCalled();
       await userEvent.click(submit);
       fireEvent.submit(screen.getByRole("radiogroup").closest("form")!);
       expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("should still close from Cancel and Escape, which abandons the request", async () => {
+      const onClose = vi.fn();
+      render(<MpReplayDialog runId="r1" profiles={["lan"]} requesting onSubmit={vi.fn()} onClose={onClose} />);
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(onClose).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("when the outcome replaces the form", () => {
+    it("should move focus to the Close action", () => {
+      const props = { runId: "r1", profiles: ["lan"], onSubmit: vi.fn(), onClose: vi.fn() };
+      const { rerender } = render(<MpReplayDialog {...props} requesting />);
+      screen.getByRole("button", { name: "Replay offline" }).focus();
+      rerender(<MpReplayDialog {...props} outcome={outcome()} />);
+      const close = screen.getAllByRole("button", { name: "Close" }).find((b) => b.dataset.mpAction === "close-replay");
+      expect(close).toHaveFocus();
     });
   });
 
