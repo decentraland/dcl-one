@@ -11,7 +11,7 @@ use catalyst_comms_e2e::engine::{Outcome, RunOptions, run_scenarios};
 use catalyst_comms_e2e::identity::now_ms;
 use catalyst_comms_e2e::pulse::{ConnectOptions, HandshakeOptions, HandshakeOutcome, PulseBot};
 use catalyst_comms_e2e::scenarios::pulse_clock::{
-    Attempt, BEHIND_MS, HANDSHAKE_CLOCK, signed_at, verdict,
+    Answer, Attempt, BEHIND_MS, HANDSHAKE_CLOCK, Reading, answer_of, reading, signed_at, verdict,
 };
 
 /// Whether a Pulse server whose clock is `offset_ms` off this machine's (ahead when positive)
@@ -21,13 +21,22 @@ fn accepts(offset_ms: i64, signed_ahead_ms: i64, one_way_ms: i64) -> bool {
     (signed_ahead_ms - (offset_ms + one_way_ms)).abs() <= MAX_TIMESTAMP_SKEW_MS
 }
 
+/// The answer of a server on another clock: accepted, or refused for the skew window.
+fn answered(accepted: bool) -> Answer {
+    if accepted {
+        Answer::Accepted
+    } else {
+        Answer::SkewRefused
+    }
+}
+
 /// The attempts the probe records against such a server: the handshake signed at this
 /// machine's now, then the ladder up to its first accepted rung.
 fn scripted(offset_ms: i64) -> (Attempt, Vec<Attempt>) {
     let (one_way_ms, round_trip_ms) = (10, 20);
     let at_now = Attempt {
         behind_edge_ms: MAX_TIMESTAMP_SKEW_MS,
-        accepted: accepts(offset_ms, 0, one_way_ms),
+        answer: answered(accepts(offset_ms, 0, one_way_ms)),
         round_trip_ms,
     };
     let mut ladder = Vec::new();
@@ -35,7 +44,7 @@ fn scripted(offset_ms: i64) -> (Attempt, Vec<Attempt>) {
         let accepted = accepts(offset_ms, MAX_TIMESTAMP_SKEW_MS - behind, one_way_ms);
         ladder.push(Attempt {
             behind_edge_ms: *behind,
-            accepted,
+            answer: answered(accepted),
             round_trip_ms,
         });
         if accepted {
@@ -48,8 +57,8 @@ fn scripted(offset_ms: i64) -> (Attempt, Vec<Attempt>) {
 #[test]
 fn a_server_70_s_behind_fails_as_behind_though_a_deeper_rung_is_accepted() {
     let (at_now, ladder) = scripted(-70_000);
-    assert!(!at_now.accepted);
-    assert_eq!(ladder.last().map(|attempt| attempt.accepted), Some(true));
+    assert!(!at_now.accepted());
+    assert_eq!(ladder.last().map(Attempt::accepted), Some(true));
     let failure = verdict(&at_now, &ladder).unwrap_err();
     assert!(failure.contains("behind"), "{failure}");
     assert!(!failure.contains("ahead of this machine's by"), "{failure}");
@@ -61,9 +70,9 @@ fn a_server_70_s_behind_fails_as_behind_though_a_deeper_rung_is_accepted() {
 #[test]
 fn a_server_90_s_ahead_fails_as_ahead_though_the_first_rung_is_accepted() {
     let (at_now, ladder) = scripted(90_000);
-    assert!(!at_now.accepted);
+    assert!(!at_now.accepted());
     assert_eq!(ladder.len(), 1);
-    assert!(ladder[0].accepted);
+    assert!(ladder[0].accepted());
     let failure = verdict(&at_now, &ladder).unwrap_err();
     assert!(failure.contains("ahead"), "{failure}");
     assert!(failure.contains("more than 59980 ms"), "{failure}");
@@ -74,7 +83,7 @@ fn a_server_90_s_ahead_fails_as_ahead_though_the_first_rung_is_accepted() {
 fn a_server_5_s_behind_or_ahead_or_on_time_passes() {
     for offset in [-5_000, 0, 5_000] {
         let (at_now, ladder) = scripted(offset);
-        assert!(at_now.accepted, "{offset}");
+        assert!(at_now.accepted(), "{offset}");
         assert_eq!(verdict(&at_now, &ladder), Ok(()), "{offset}");
     }
 }
@@ -83,10 +92,109 @@ fn a_server_5_s_behind_or_ahead_or_on_time_passes() {
 fn a_server_out_of_the_ladders_reach_fails_naming_both_ways() {
     for offset in [-200_000, 200_000] {
         let (at_now, ladder) = scripted(offset);
-        assert!(ladder.iter().all(|attempt| !attempt.accepted), "{offset}");
+        assert!(ladder.iter().all(|attempt| !attempt.accepted()), "{offset}");
         let failure = verdict(&at_now, &ladder).unwrap_err();
         assert!(failure.contains("behind"), "{failure}");
         assert!(failure.contains("ahead"), "{failure}");
+    }
+}
+
+#[test]
+fn the_notes_claim_only_what_the_verdict_claims() {
+    // behind: the behind bounds alone
+    let (at_now, ladder) = scripted(-70_000);
+    assert_eq!(
+        reading(&at_now, &ladder),
+        Reading {
+            behind_more_than_ms: Some(60_000),
+            behind_at_most_ms: Some(92_020),
+            ..Reading::default()
+        }
+    );
+    // ahead: the ahead bounds alone
+    let (at_now, ladder) = scripted(90_000);
+    assert_eq!(
+        reading(&at_now, &ladder),
+        Reading {
+            ahead_more_than_ms: Some(59_980),
+            ahead_at_most_ms: Some(120_000),
+            ..Reading::default()
+        }
+    );
+    // out of the ladder's reach: one way or the other, neither alone
+    for offset in [-200_000, 200_000] {
+        let (at_now, ladder) = scripted(offset);
+        assert_eq!(
+            reading(&at_now, &ladder),
+            Reading {
+                behind_or_ahead_more_than_ms: Some((92_000, 119_980)),
+                ..Reading::default()
+            },
+            "{offset}"
+        );
+    }
+    // a refusal for another reason: nothing about the clock
+    let (_, ladder) = scripted(0);
+    let at_now = Attempt {
+        behind_edge_ms: MAX_TIMESTAMP_SKEW_MS,
+        answer: Answer::Other("refused: too many handshakes".to_owned()),
+        round_trip_ms: 20,
+    };
+    assert_eq!(reading(&at_now, &ladder), Reading::default());
+}
+
+#[test]
+fn a_refusal_for_another_reason_fails_with_it_and_no_word_on_the_clock() {
+    let other = |reason: &str| Attempt {
+        behind_edge_ms: MAX_TIMESTAMP_SKEW_MS,
+        answer: Answer::Other(reason.to_owned()),
+        round_trip_ms: 20,
+    };
+    // the handshake signed at this machine's now
+    let (_, ladder) = scripted(0);
+    let failure = verdict(
+        &other("refused: too many handshakes from this address"),
+        &ladder,
+    )
+    .unwrap_err();
+    assert!(
+        failure.contains("too many handshakes from this address"),
+        "{failure}"
+    );
+    assert!(!failure.contains("clock is"), "{failure}");
+    // a rung: the ladder stops there, and the probe fails with that rung's reason
+    let (at_now, _) = scripted(0);
+    let rung = Attempt {
+        behind_edge_ms: 0,
+        ..other("disconnected: auth failed")
+    };
+    let failure = verdict(&at_now, &[rung]).unwrap_err();
+    assert!(failure.contains("disconnected: auth failed"), "{failure}");
+    assert!(failure.contains("0 ms behind the far edge"), "{failure}");
+    assert!(!failure.contains("clock is"), "{failure}");
+}
+
+#[test]
+fn only_the_skew_window_refusal_reads_as_skew() {
+    use catalyst_comms::pulse::handshake::HandshakeError;
+    assert_eq!(answer_of(&HandshakeOutcome::Accepted), Answer::Accepted);
+    assert_eq!(
+        answer_of(&HandshakeOutcome::Refused {
+            error: Some(HandshakeError::StaleTimestamp.message())
+        }),
+        Answer::SkewRefused
+    );
+    for outcome in [
+        HandshakeOutcome::Refused {
+            error: Some(HandshakeError::InvalidAuthChain(String::new()).message()),
+        },
+        HandshakeOutcome::Refused { error: None },
+        HandshakeOutcome::Disconnected { code: 2 },
+    ] {
+        assert!(
+            matches!(answer_of(&outcome), Answer::Other(_)),
+            "{outcome:?}"
+        );
     }
 }
 
@@ -182,6 +290,8 @@ async fn the_server_accepts_the_windows_edge_and_refuses_past_it() {
                 error.as_deref().unwrap_or_default().contains("skew window"),
                 "{error:?}"
             );
+            // the probe reads this refusal, and only it, as the clock's
+            assert_eq!(answer_of(&outcome), Answer::SkewRefused);
         } else {
             assert_eq!(outcome, HandshakeOutcome::Accepted);
         }
