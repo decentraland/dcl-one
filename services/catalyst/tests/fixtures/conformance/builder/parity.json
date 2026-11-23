@@ -630,7 +630,7 @@
       "anchors": []
     },
     "listing-page-past-the-last": {
-      "text": "GET /v1/collections, GET /v1/addresses and GET /v1/:address/collections: a page past the last answers the matches' total and pages with no results. Upstream reads the total from the page's first row, so such a page answers total 0 and pages 0.",
+      "text": "GET /v1/collections, GET /v1/addresses, GET /v1/:address/collections, GET /v1/collections/:id/items and GET /v1/:address/items: a page past the last answers the matches' total and pages with no results. Upstream reads the total from the page's first row, so such a page answers total 0 and pages 0, and GET /v1/:address/items answers total null and pages null.",
       "captures": [],
       "anchors": []
     },
@@ -781,6 +781,11 @@
           "path": "services/catalyst/builder/src/tests/items.rs",
           "test": "listing_filters_reach_the_database_as_values",
           "scope": "Filters reach the statement as values; a negative page or limit and a repeated collectionId answer 400."
+        },
+        {
+          "path": "services/catalyst/builder/src/tests/items.rs",
+          "test": "a_page_past_the_last_answers_the_items_total_with_no_results",
+          "scope": "A page past the last answers the items' total and pages with no results, with and without a name or collectionId filter; pages inside the range are unchanged."
         }
       ],
       "gaps": [
@@ -788,7 +793,8 @@
         "deliberate:chain-copy-lag",
         "deliberate:catalyst-is-this-node",
         "deliberate:request-budgets",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:listing-page-past-the-last"
       ],
       "remaining_verification": "A registry manager listing its provider's items."
     },
@@ -1220,6 +1226,11 @@
           "path": "services/catalyst/builder/src/tests/limits.rs",
           "test": "a_collections_items_cost_their_reader_by_the_row",
           "scope": "60 rows charged to the signer and to the source."
+        },
+        {
+          "path": "services/catalyst/builder/src/tests/items.rs",
+          "test": "a_page_past_the_last_answers_the_items_total_with_no_results",
+          "scope": "A page past the last answers the items' total and pages with no results, with and without a name or collectionId filter; pages inside the range are unchanged."
         }
       ],
       "gaps": [
@@ -1232,7 +1243,8 @@
         "deliberate:catalyst-is-this-node",
         "deliberate:item-curation-reopen-later-reads",
         "deliberate:request-budgets",
-        "deliberate:third-party-registry-read-window"
+        "deliberate:third-party-registry-read-window",
+        "deliberate:listing-page-past-the-last"
       ],
       "remaining_verification": "The synced and mappingStatus filters over items with curations."
     },

@@ -30,10 +30,19 @@ role builder-server's `CHAIN_NAME` plays: `mainnet` (the default) is Polygon
 (chain 137, URN network `matic`), and `sepolia` is Amoy (chain 80002, URN
 network `amoy`). The chain decides the collection manager, factory and
 forwarder of a publication, the factory's proxy code hash a collection's
-address is computed with, the base URI, the rarities oracle, the third-party
-registry that slot cheques are signed under, and the network of the
-collection and item URNs the builder answers and stores. Startup refuses
-any other `ETH_NETWORK`.
+address is computed with, the base URI of a publication the node prepares,
+the rarities oracle, the third-party registry that slot cheques are signed
+under, and the network of the collection and item URNs the builder answers
+and stores. Startup refuses any other `ETH_NETWORK`.
+
+A collection save's contract address is computed from the `initialize` data
+the client sends, its base URI included. `/create` names its environment's
+base URI on a Decentraland host, and elsewhere the token metadata route of
+the node serving the page, `/lambdas/collections/standard/erc721/`, which
+the node's content server answers. It saves a collection again before each
+publication, so the address matches what it deploys; while an earlier
+publication holds the collection's lock, it refuses a publication whose
+base URI would deploy elsewhere.
 
 Every chain source the builder reads must serve that chain:
 

@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import './test/setup'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContractName, getContract } from './chain/contracts'
-import { decodeAbiParameters, maxUint256, parseAbiParameters, slice, toFunctionSelector, type Hex } from 'viem'
+import {
+  decodeAbiParameters,
+  keccak256,
+  maxUint256,
+  parseAbiParameters,
+  slice,
+  toFunctionSelector,
+  toHex,
+  type Hex
+} from 'viem'
 import { decodeCall, toTransaction } from './test/chain'
 import { BuilderServerError } from './builder'
 import type { Collection } from './collections'
@@ -19,6 +28,7 @@ import {
   buildUseCreditsCall,
   canPayWith,
   consolidatePublishedCollection,
+  getCollectionAddress,
   PublishTransactionRevertedError,
   getAvailablePaymentMethods,
   getManaApprovalNeeded,
@@ -310,6 +320,23 @@ describe('createCollection encoding', () => {
   })
 })
 
+describe('getCollectionAddress', () => {
+  describe("when given the initialize data and salt of the node's own derivation", () => {
+    let data: string
+    let salt: string
+
+    beforeEach(() => {
+      data =
+        '0xd14fee77000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001400000000000000000000000000000000000000000000000000000000000000180000000000000000000000000c1aba94a79ca07d9d15a62ff5c9b382777e0c70e0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017113b44fdd661a156cc01b5031e3acf72c32eb30000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000b566563746f722068617473000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b44434c2d56435452485453000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004668747470733a2f2f706565722e646563656e7472616c616e642e6f72672f6c616d626461732f636f6c6c656374696f6e732f7374616e646172642f6572633732312f3133372f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000de0b6b3a7640000000000000000000000000000c1aba94a79ca07d9d15a62ff5c9b382777e0c70e00000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000006636f6d6d6f6e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001c313a773a566563746f72206861743a3a6861743a426173654d616c6500000000'
+      salt = keccak256(toHex('c011ec71-0000-4000-8000-0000000000f1'))
+    })
+
+    it('should derive the Polygon address the node stores for that save', () => {
+      expect(getCollectionAddress(137, salt, data)).toBe('0xe237c5ffa36d5432a8cfdf53960bcf61ce4cdfc5')
+    })
+  })
+})
+
 describe('toPublishError', () => {
   it('maps known failures to their reasons and everything else to generic', () => {
     expect(toPublishError(new CreditsServerError('Insufficient credits', 402)).reason).toBe('insufficient_credits')
@@ -534,11 +561,46 @@ describe('publishCollection', () => {
     })
   })
 
-  it('skips the re-save while the collection is locked', async () => {
-    const deps = makeDeps()
-    await publishCollection({ ...params, collection: { ...collection, lock: Date.now() } }, deps)
-    expect(deps.calls).not.toContain('saveCollection')
-    expect(deps.calls).toContain('saveTOS')
+  describe('when the collection is locked', () => {
+    const storedUnder = (host?: string) => {
+      if (host) vi.stubGlobal('location', { ...window.location, host })
+      const address = getCollectionAddress(CHAIN_ID, SALT, buildCollectionInitializeData(collection, items, ADDRESS))
+      vi.unstubAllGlobals()
+      return address
+    }
+
+    describe('and its stored address is the one the page derives from the same arguments', () => {
+      let deps: ReturnType<typeof makeDeps>
+
+      beforeEach(async () => {
+        deps = makeDeps()
+        await publishCollection(
+          { ...params, collection: { ...collection, lock: Date.now(), contractAddress: storedUnder() } },
+          deps
+        )
+      })
+
+      it('should skip the re-save and publish', () => {
+        expect(deps.calls).toEqual(['fetchItems', 'saveTOS', 'authorizePublication', 'sendTransaction', 'lockCollection'])
+      })
+    })
+
+    describe('and it was last saved under another token metadata base URI', () => {
+      let deps: ReturnType<typeof makeDeps>
+      let locked: Collection
+
+      beforeEach(() => {
+        deps = makeDeps()
+        locked = { ...collection, lock: Date.now(), contractAddress: storedUnder('decentraland.zone') }
+      })
+
+      it('should refuse it as locked before recording the ToS or paying', async () => {
+        await expect(publishCollection({ ...params, collection: locked }, deps)).rejects.toMatchObject({
+          reason: 'locked'
+        })
+        expect(deps.calls).toEqual(['fetchItems'])
+      })
+    })
   })
 
   it('never pays when the ToS acceptance cannot be recorded, after retrying a server failure', async () => {

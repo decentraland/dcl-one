@@ -1467,8 +1467,10 @@ Invariants:
   per response, `GET /v1/items` 1,000; an upload carries at most 256 parts,
   empty ones included, and 20 MiB in all; a video upload one part of at most
   250,000,000 bytes. Filters are bound values over fixed SQL.
-- Pages first. A listing resolves the page's ids and the total, then reads
-  the bodies of that page only, in a read-only transaction without JIT.
+- Pages first. A listing resolves the page's ids and the total, counting
+  the matches when the page is past the last, then reads the bodies of that
+  page only, all in one `REPEATABLE READ` read-only transaction without
+  JIT.
 - One transaction per write. A save, a delete and an upload lock the item's
   collections and the item (`FOR UPDATE`, collections first, as the
   publications do) and decide again inside the transaction. A video upload
@@ -3934,8 +3936,9 @@ Every builder decision only the committee could grant (`builder::access`:
 the committee's listings, another wallet's collections and items, draft
 reads, curation writes, forum replies), `GET /v1/committee` and the curation
 console's committee list read the current members of the curation committee
-from the Polygon collections subgraph (`MATIC_COLLECTIONS_SUBGRAPH_URL`, the
-accounts it marks `isCommitteeMember`), not from a table.
+from the Polygon collections subgraph (`MATIC_COLLECTIONS_SUBGRAPH_URL`, else
+the builder's network's on Decentraland's subgraph worker; the accounts it
+marks `isCommitteeMember`), not from a table.
 `BUILDER_ADMIN_ADDRESSES` grants no committee role (its wallets' signed
 requests, like the curation console's bearer, open only the operator's item
 status routes and `GET /v1/collections/curation`). A curation write reads the

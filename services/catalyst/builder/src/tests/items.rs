@@ -945,6 +945,95 @@ async fn listing_filters_reach_the_database_as_values() {
     assert_eq!(items, 2);
 }
 
+#[tokio::test]
+async fn a_page_past_the_last_answers_the_items_total_with_no_results() {
+    let Some(app) = app().await else {
+        return;
+    };
+    let owner = address(OWNER_KEY);
+    let collection = Uuid::new_v4();
+    sqlx::query("INSERT INTO builder.collections (id, name, eth_address) VALUES ($1, 'Paged', $2)")
+        .bind(collection)
+        .bind(&owner)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    for (parent, name) in [
+        (Some(collection), "Hat one"),
+        (Some(collection), "Hat two"),
+        (Some(collection), "Cape"),
+        (None, "Loose"),
+    ] {
+        sqlx::query(
+            "INSERT INTO builder.items (id, collection_id, eth_address, name, type) \
+             VALUES ($1, $2, $3, $4, 'wearable')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(parent)
+        .bind(&owner)
+        .bind(name)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    }
+    for (path, total, pages, listed) in [
+        (
+            format!("/v1/collections/{collection}/items?page=1&limit=2"),
+            3,
+            2,
+            2,
+        ),
+        (
+            format!("/v1/collections/{collection}/items?page=2&limit=2"),
+            3,
+            2,
+            1,
+        ),
+        (
+            format!("/v1/collections/{collection}/items?page=5&limit=2"),
+            3,
+            2,
+            0,
+        ),
+        (
+            format!("/v1/collections/{collection}/items?name=hat&page=3&limit=1"),
+            2,
+            2,
+            0,
+        ),
+        (format!("/v1/{owner}/items?page=1&limit=3"), 4, 2, 3),
+        (format!("/v1/{owner}/items?page=2&limit=3"), 4, 2, 1),
+        (format!("/v1/{owner}/items?page=4&limit=3"), 4, 2, 0),
+        (
+            format!("/v1/{owner}/items?collectionId=null&page=2&limit=1"),
+            1,
+            1,
+            0,
+        ),
+    ] {
+        let (status, body) = send(
+            &app,
+            OWNER_KEY,
+            "GET",
+            &path,
+            Body::empty(),
+            "application/json",
+        )
+        .await;
+        assert_eq!(status, 200, "{path}: {body}");
+        let data = &body["data"];
+        assert_eq!(
+            (
+                &data["total"],
+                &data["pages"],
+                data["results"].as_array().map(Vec::len)
+            ),
+            (&json!(total), &json!(pages), Some(listed)),
+            "{path}: {body}"
+        );
+    }
+}
+
 async fn linked_collection(app: &App, key: &str, name: &str) -> (Uuid, String) {
     let id = Uuid::new_v4();
     let urn = format!("{PROVIDER}:{name}-{}", id.simple());

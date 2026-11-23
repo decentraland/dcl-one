@@ -3,7 +3,8 @@
 //! (`getAddressItems`) and every item (`getItems`, the committee's).
 //!
 //! A listing resolves the page's ids first, ordered by creation and id, with
-//! the total of what matched, and builds bodies for that page only. Filters
+//! the total of what matched (counted also for a page past the last), and
+//! builds bodies for that page only, all in one read-only snapshot. Filters
 //! are bound values over fixed SQL; nothing from the request becomes SQL
 //! text. Bounds: a collection's items and an address's items answer at most
 //! [`ROWS_CAP`] rows per response, `GET /v1/items` at most [`EVERY_ITEM_CAP`].
@@ -16,7 +17,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 use serde_json::json;
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{PgConnection, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::access::{CollectionRead, ItemRead, OnCommittee, Wallet};
@@ -130,19 +131,34 @@ pub(crate) async fn bodies(
         .execute(&mut *tx)
         .await?;
     sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+    let out = bodies_in(&mut tx, store, ids, reached, full, listing).await?;
+    tx.commit().await?;
+    Ok(out)
+}
+
+async fn bodies_in(
+    conn: &mut PgConnection,
+    store: &ItemsComponent,
+    ids: &[Uuid],
+    reached: Reached,
+    full: bool,
+    listing: Option<&Listing<'_>>,
+) -> Result<Vec<FullItemOut>, ApiError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     if let Some(listing) = listing {
         let bytes: i64 = sqlx::query_scalar(DOCUMENT_BYTES)
             .bind(ids)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *conn)
             .await?;
         listing.admit(ids.len(), bytes)?;
     }
-    let view = chain_state::for_read(&mut tx).await?;
+    let view = chain_state::for_read(conn).await?;
     let rows = sqlx::query_as::<_, ItemRow>(sqlx::AssertSqlSafe(list_statement(&view)))
         .bind(ids)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *conn)
         .await?;
-    tx.commit().await?;
     let mut rows: HashMap<Uuid, ItemRow> = rows.into_iter().map(|row| (row.id, row)).collect();
     ids.iter()
         .filter_map(|id| rows.remove(id))
@@ -153,20 +169,26 @@ pub(crate) async fn bodies(
         .collect()
 }
 
-/// A statement whose scope the caller pushes next: a `SELECT` of `id`,
-/// `created_at` and `tp` (a third-party item) per item.
-fn scope() -> QueryBuilder<Postgres> {
-    QueryBuilder::new("WITH scope AS (")
-}
-
-/// The page's ids, oldest first, with whether each is a third-party item,
-/// and, when `counted`, the total matched; after the scope [`scope`] began.
-async fn page_ids(
-    pool: &PgPool,
-    mut sql: QueryBuilder<Postgres>,
+/// The page of the items `push_scope` selects (a `SELECT` of `id`,
+/// `created_at` and `tp`, a third-party item, per item), oldest first and
+/// standard items first, as bodies, with the total matched when `page` asks
+/// for a page: one read-only snapshot without JIT reads the ids, the total
+/// and the bodies, and a page past the last counts the matches.
+async fn listed(
+    store: &ItemsComponent,
+    push_scope: impl Fn(&mut QueryBuilder<Postgres>),
     page: &Page,
-    counted: bool,
-) -> Result<(Vec<(Uuid, bool)>, Option<i64>), ApiError> {
+    full: bool,
+    listing: Option<&Listing<'_>>,
+) -> Result<(Vec<FullItemOut>, Option<i64>), ApiError> {
+    let counted = page.page.is_some();
+    let mut tx = store.pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+    let mut sql = QueryBuilder::new("WITH scope AS (");
+    push_scope(&mut sql);
     sql.push(if counted {
         ") SELECT id, tp, count(*) OVER () FROM scope ORDER BY created_at, id LIMIT "
     } else {
@@ -175,33 +197,32 @@ async fn page_ids(
     sql.push_bind(page.limit)
         .push(" OFFSET ")
         .push_bind(page.offset);
-    let rows: Vec<(Uuid, bool, i64)> = sql.build_query_as().fetch_all(pool).await?;
-    let total = counted
-        .then(|| rows.first().map(|(_, _, total)| *total))
-        .flatten();
-    Ok((
-        rows.into_iter().map(|(id, tp, _)| (id, tp)).collect(),
-        total,
-    ))
+    let rows: Vec<(Uuid, bool, i64)> = sql.build_query_as().fetch_all(&mut *tx).await?;
+    let total = match rows.first() {
+        _ if !counted => None,
+        Some((_, _, total)) => Some(*total),
+        None => {
+            let mut count = QueryBuilder::new("WITH scope AS (");
+            push_scope(&mut count);
+            count.push(") SELECT count(*) FROM scope");
+            Some(count.build_query_scalar().fetch_one(&mut *tx).await?)
+        }
+    };
+    let ids = standard_first(rows.into_iter().map(|(id, tp, _)| (id, tp)).collect());
+    let results = bodies_in(&mut tx, store, &ids, Reached::InList, full, listing).await?;
+    tx.commit().await?;
+    Ok((results, total))
 }
 
-fn answer(
-    page: &Page,
-    total: Option<i64>,
-    results: Vec<FullItemOut>,
-    empty_total: Option<i64>,
-) -> ItemsOut {
+fn answer(page: &Page, total: Option<i64>, results: Vec<FullItemOut>) -> ItemsOut {
     match page.page {
-        Some(number) => {
-            let total = total.or(empty_total);
-            ItemsOut::Paginated(ItemsPageOut {
-                total,
-                limit: page.limit,
-                pages: total.map(|t| (t + page.limit - 1) / page.limit),
-                page: number,
-                results,
-            })
-        }
+        Some(number) => ItemsOut::Paginated(ItemsPageOut {
+            total,
+            limit: page.limit,
+            pages: total.map(|t| (t + page.limit - 1) / page.limit),
+            page: number,
+            results,
+        }),
         None => ItemsOut::Plain(results),
     }
 }
@@ -265,53 +286,53 @@ impl ItemsComponent {
         .unwrap_or(false);
         let status = third_party && filters.status;
         let mapping = filters.mapping.filter(|_| third_party);
-        let mut scope = scope();
-        scope.push("SELECT i.id, i.created_at, false AS tp FROM builder.items i ");
-        if filters.synced.is_some() || status || mapping.is_some() {
-            scope.push(
-                "LEFT JOIN LATERAL (SELECT k.status, k.content_hash, k.is_mapping_complete \
-                 FROM builder.item_curations k WHERE k.item_id = i.id ORDER BY k.created_at DESC LIMIT 1) nk ON true ",
-            );
-        }
-        scope.push("WHERE i.collection_id = ").push_bind(read.id());
-        match filters.synced {
-            Some(true) => {
-                scope
-                    .push(" AND nk.status = 'approved' AND nk.content_hash = i.local_content_hash");
-            }
-            Some(false) => {
+        let scope = |scope: &mut QueryBuilder<Postgres>| {
+            scope.push("SELECT i.id, i.created_at, false AS tp FROM builder.items i ");
+            if filters.synced.is_some() || status || mapping.is_some() {
                 scope.push(
-                    " AND nk.status = 'approved' AND nk.content_hash <> i.local_content_hash",
+                    "LEFT JOIN LATERAL (SELECT k.status, k.content_hash, k.is_mapping_complete \
+                     FROM builder.item_curations k WHERE k.item_id = i.id ORDER BY k.created_at DESC LIMIT 1) nk ON true ",
                 );
             }
-            None => {}
-        }
-        if status {
-            scope.push(" AND nk.status = 'pending'");
-        }
-        if let Some(name) = &filters.name {
-            scope
-                .push(" AND i.name ILIKE '%' || ")
-                .push_bind(name.clone())
-                .push(" || '%'");
-        }
-        if let Some(with_mappings) = mapping {
-            scope.push(if with_mappings {
-                " AND i.mappings IS NOT NULL AND NOT COALESCE(nk.is_mapping_complete, false)"
-            } else {
-                " AND i.mappings IS NULL"
-            });
-        }
-        if !read.full() {
-            scope
-                .push(" AND (i.blockchain_item_id IS NOT NULL OR ")
-                .push(crate::curation::ITEM_CURATED)
-                .push(")");
-        }
-        let (ids, total) = page_ids(&self.pool, scope, &page, true).await?;
-        let ids: Vec<Uuid> = ids.into_iter().map(|(id, _)| id).collect();
-        let results = bodies(self, &ids, Reached::InList, read.full(), listing).await?;
-        Ok(answer(&page, total, results, Some(0)))
+            scope.push("WHERE i.collection_id = ").push_bind(read.id());
+            match filters.synced {
+                Some(true) => {
+                    scope.push(
+                        " AND nk.status = 'approved' AND nk.content_hash = i.local_content_hash",
+                    );
+                }
+                Some(false) => {
+                    scope.push(
+                        " AND nk.status = 'approved' AND nk.content_hash <> i.local_content_hash",
+                    );
+                }
+                None => {}
+            }
+            if status {
+                scope.push(" AND nk.status = 'pending'");
+            }
+            if let Some(name) = &filters.name {
+                scope
+                    .push(" AND i.name ILIKE '%' || ")
+                    .push_bind(name.clone())
+                    .push(" || '%'");
+            }
+            if let Some(with_mappings) = mapping {
+                scope.push(if with_mappings {
+                    " AND i.mappings IS NOT NULL AND NOT COALESCE(nk.is_mapping_complete, false)"
+                } else {
+                    " AND i.mappings IS NULL"
+                });
+            }
+            if !read.full() {
+                scope
+                    .push(" AND (i.blockchain_item_id IS NOT NULL OR ")
+                    .push(crate::curation::ITEM_CURATED)
+                    .push(")");
+            }
+        };
+        let (results, total) = listed(self, scope, &page, read.full(), listing).await?;
+        Ok(answer(&page, total, results))
     }
 
     /// `GET /v1/{address}/items`: the wallet's items with no collection, the
@@ -344,44 +365,37 @@ impl ItemsComponent {
             }
         };
         let address = wallet.address().to_string();
-        let mut scope = scope();
-        scope.push(
-            "SELECT i.id, i.created_at, false AS tp FROM builder.items i \
-             WHERE i.collection_id IS NULL AND i.eth_address = ",
-        );
-        scope.push_bind(address.clone());
-        narrow(&mut scope);
-        scope.push(
-            " UNION ALL SELECT i.id, i.created_at, false FROM (SELECT o.id FROM builder.collections o \
-             WHERE o.third_party_id IS NULL AND o.eth_address = ",
-        );
-        scope.push_bind(address.clone()).push(
-            " AND NOT EXISTS (SELECT 1 FROM shop.collections s WHERE s.network = 'matic' \
-             AND s.contract_address = lower(o.contract_address)) \
-             UNION SELECT b.id FROM shop.collections s JOIN builder.collections b \
-             ON b.contract_address = s.contract_address \
-             WHERE s.network = 'matic' AND b.third_party_id IS NULL AND s.creator = ",
-        );
-        scope
-            .push_bind(address)
-            .push(") owned JOIN builder.items i ON i.collection_id = owned.id WHERE true");
-        narrow(&mut scope);
-        scope.push(
-            " UNION ALL SELECT i.id, i.created_at, i.urn_suffix IS NOT NULL FROM builder.collections c \
-             JOIN builder.items i ON i.collection_id = c.id WHERE c.third_party_id = ANY(",
-        );
-        scope.push_bind(wallet.provider_ids()).push(")");
-        narrow(&mut scope);
-        let (ids, total) = page_ids(&self.pool, scope, &page, true).await?;
-        let results = bodies(
-            self,
-            &standard_first(ids),
-            Reached::InList,
-            true,
-            Some(listing),
-        )
-        .await?;
-        Ok(answer(&page, total, results, None))
+        let scope = |scope: &mut QueryBuilder<Postgres>| {
+            scope.push(
+                "SELECT i.id, i.created_at, false AS tp FROM builder.items i \
+                 WHERE i.collection_id IS NULL AND i.eth_address = ",
+            );
+            scope.push_bind(address.clone());
+            narrow(scope);
+            scope.push(
+                " UNION ALL SELECT i.id, i.created_at, false FROM (SELECT o.id FROM builder.collections o \
+                 WHERE o.third_party_id IS NULL AND o.eth_address = ",
+            );
+            scope.push_bind(address.clone()).push(
+                " AND NOT EXISTS (SELECT 1 FROM shop.collections s WHERE s.network = 'matic' \
+                 AND s.contract_address = lower(o.contract_address)) \
+                 UNION SELECT b.id FROM shop.collections s JOIN builder.collections b \
+                 ON b.contract_address = s.contract_address \
+                 WHERE s.network = 'matic' AND b.third_party_id IS NULL AND s.creator = ",
+            );
+            scope
+                .push_bind(address.clone())
+                .push(") owned JOIN builder.items i ON i.collection_id = owned.id WHERE true");
+            narrow(scope);
+            scope.push(
+                " UNION ALL SELECT i.id, i.created_at, i.urn_suffix IS NOT NULL FROM builder.collections c \
+                 JOIN builder.items i ON i.collection_id = c.id WHERE c.third_party_id = ANY(",
+            );
+            scope.push_bind(wallet.provider_ids()).push(")");
+            narrow(scope);
+        };
+        let (results, total) = listed(self, scope, &page, true, Some(listing)).await?;
+        Ok(answer(&page, total, results))
     }
 
     /// `GET /v1/items`: every item, at most [`EVERY_ITEM_CAP`], standard ones
@@ -396,19 +410,13 @@ impl ItemsComponent {
             offset: 0,
             page: None,
         };
-        let mut sql = scope();
-        sql.push(
-            "SELECT i.id, i.created_at, (c.third_party_id IS NOT NULL AND i.urn_suffix IS NOT NULL) AS tp \
-             FROM builder.items i LEFT JOIN builder.collections c ON c.id = i.collection_id",
-        );
-        let (ids, _) = page_ids(&self.pool, sql, &page, false).await?;
-        bodies(
-            self,
-            &standard_first(ids),
-            Reached::InList,
-            true,
-            Some(listing),
-        )
-        .await
+        let scope = |sql: &mut QueryBuilder<Postgres>| {
+            sql.push(
+                "SELECT i.id, i.created_at, (c.third_party_id IS NOT NULL AND i.urn_suffix IS NOT NULL) AS tp \
+                 FROM builder.items i LEFT JOIN builder.collections c ON c.id = i.collection_id",
+            );
+        };
+        let (results, _) = listed(self, scope, &page, true, Some(listing)).await?;
+        Ok(results)
     }
 }
