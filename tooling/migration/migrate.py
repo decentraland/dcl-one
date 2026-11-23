@@ -1536,6 +1536,8 @@ SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(k, 'UTF8'), 'hex'
     UNION ALL
     SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
     WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
+    UNION ALL
+    SELECT legacy_sha256 || ' (legacy thumbnail)', blob_cid FROM worlds.thumbnail_aliases
 ) x ORDER BY o, k""",
         'steps': {'world', 'world_scene'},
     },

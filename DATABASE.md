@@ -160,6 +160,7 @@ before storing the blob, so an unlink batch's reference read keeps it.
 each distinct mirrored thumbnail that the raw-leaf CID cannot name, including
 images larger than one 256 KiB chunk. The mirror checks the SHA-256 digest
 before inserting the mapping under the same store lock as the settings write.
+The cutover importer uses the verified blob inventory in its settings batch.
 The CID refers to bytes in the blob store. Legacy hex reads probe the primary
 key after a raw-leaf miss. The index on the CID lets the blob collector keep
 the bytes after a world changes its thumbnail or is no longer listed. The

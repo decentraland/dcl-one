@@ -101,8 +101,13 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   CIDv0 against either upstream spelling (raw sha256, or `ipfs add`).
 - Upstream's uploaded thumbnails are keyed by the sha256 hex of their bytes.
   They are stored under their `hash_bytes_v1` CID, and `world` rewrites
-  `thumbnail_hash` to that CID, so a thumbnail of any size resolves.
-  Deploy-derived thumbnails already are a scene content CID.
+  `thumbnail_hash` to that CID. It records the verified hex-to-CID mapping
+  in `worlds.thumbnail_aliases` for uploads over 256 KiB and up to 1 MiB,
+  so saved hex URLs still resolve on the worlds mount. To recover mappings
+  on an earlier import, run `blobs worlds-content-server` and replay the
+  `world` step with `--since` set before the source rows. The aliases are
+  recorded even for worlds that retain newer local settings. Deploy-derived
+  thumbnails already are a scene content CID.
 - The store layout is the node's: `<STORAGE_ROOT_FOLDER>/contents/<sha1
   shard>/<cid>`, written through a new staging file (`O_EXCL|O_NOFOLLOW`, as
   the node) and a rename; the staging file is removed when the read fails. Run
@@ -118,7 +123,7 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   recorded size are skipped, so the copy runs again before each
   `run --since last`. A file the store already holds for an unrecorded key is
   re-hashed, and copied again when its bytes do not match.
-- `--verify` lists each imported local scene (and world thumbnail) whose
+- `--verify` lists each imported local scene, world thumbnail and legacy alias whose
   blobs are not in the store. It checks existence; the copy checked content.
 - Places: upstream Places stored an uploaded world thumbnail as the image URL
   `<worlds server>/contents/<sha256 hex>`. The `places` source's `place` step
