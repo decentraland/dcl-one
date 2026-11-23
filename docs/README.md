@@ -19,6 +19,7 @@
 - [Creator Hub ships as the desktop app only](adr/2026-11-19-creator-hub-desktop-only.md)
 - [Creators collections in Sites](adr/2026-11-19-creators-collections-in-sites.md)
 - [Shared Pulse and Explorer ENet](adr/2026-10-28-shared-pulse-enet.md)
+- [Pulse ENet interop evidence](adr/2026-11-23-pulse-enet-csharp-interop-evidence.md) (evidence)
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)
 - [Opt-in UASTC texture upload](adr/2026-11-06-opt-in-uastc-texture-upload.md)
