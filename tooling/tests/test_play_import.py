@@ -1354,15 +1354,17 @@ class PlayImportTests(unittest.TestCase):
     def test_a_pr_finds_its_own_run_without_reading_main(self):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
         own = run(event='pull_request', head_branch='feature', pull_requests=[{'number': 7}])
-        with patch.object(play, 'api', return_value={'workflow_runs': [own]}) as api, \
-                patch.object(play, 'current_pr', return_value=pr), \
-                patch.object(play, 'engine_changed', return_value=True), \
-                patch.object(play.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
-                patch.object(contract, 'inputs', return_value='match'), \
-                patch.object(play, 'download_run', return_value=self.build) as download:
-            self.assertEqual(play.fetch(), self.build)
-        api.assert_called_once_with(f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}', None)
-        download.assert_called_once()
+        # Without a readable base, main is still searched, but only after the own run gives no build.
+        for base in ('base inputs', None):
+            with self.subTest(base=base), \
+                    patch.object(play, 'api', return_value={'workflow_runs': [own]}) as api, \
+                    patch.object(play, 'current_pr', return_value=pr), \
+                    patch.object(play, 'inputs_at', side_effect=lambda revision: base if revision == 'b' * 40 else 'match'), \
+                    patch.object(contract, 'inputs', return_value='match'), \
+                    patch.object(play, 'download_run', return_value=self.build) as download:
+                self.assertEqual(play.fetch(), self.build)
+            api.assert_called_once_with(f'actions/workflows/bevy-explorer-ci.yml/runs?per_page=100&head_sha={SHA}', None)
+            download.assert_called_once()
 
     def engine_pr(self, own, base_inputs, **fetch):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
