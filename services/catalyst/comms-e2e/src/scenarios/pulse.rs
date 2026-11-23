@@ -1213,6 +1213,10 @@ async fn handshake_swarm(ctx: Ctx) -> Result<()> {
         // (c) the same number again, spread over two addresses: the limit is per address. macOS
         // has one loopback address, so there is nothing to spread over there.
         if cfg!(target_os = "macos") {
+            ctx.note(
+                "per_address_spread",
+                "not run: one loopback address on macOS",
+            );
             return Ok(());
         }
         let addresses: [IpAddr; 2] = ["127.0.0.2".parse()?, "127.0.0.3".parse()?];
