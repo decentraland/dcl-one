@@ -472,6 +472,7 @@ mod tests {
     }
 
     #[test]
+    // Regression guard: the rule must stay ungated.
     fn full_commit_applies_regardless_of_timestamp() {
         for timestamp in [0, 1_600_000_000_000, Timestamp::MAX] {
             let mut deployment = edited_woodie(EXTRA_FIELD);
