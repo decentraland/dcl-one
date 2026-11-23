@@ -4,13 +4,13 @@ The primary Catalyst API serves a signed WebSocket connector for realm signaling
 
 ## Connecting
 
-Read `comms.adapter` in the realm’s `/about` response and use the advertised WebSocket URL. For example, `archipelago:archipelago:wss://realm.example/ws` advertises `wss://realm.example/ws`. Catalyst allows 60 seconds per handshake step by default.
+Read `comms.adapter` in the realm’s `/about` response and use the advertised WebSocket URL. For example, `archipelago:archipelago:wss://realm.example/ws` advertises `wss://realm.example/ws`. By default, clients have 10 seconds after opening the socket to send `ChallengeRequestMessage`, then 60 seconds after receiving the challenge to send `SignedChallengeMessage`.
 
 A realm may instead advertise a fixed transport through `comms.fixedAdapter`. In that case, use that transport directly.
 
 ## Authenticating
 
-After opening a connection to the connector, clients must begin by requesting and signing a challenge from the service to verify their identity.
+After opening the socket, request and sign a challenge to verify your identity.
 
 The first message a client sends is a [`ChallengeRequestMessage`](#challengerequestmessage) with their Ethereum address. They will receive a [`ChallengeResponseMessage`](#challengeresponsemessage) with a randomly generated string to sign, and must respond with a [`SignedChallengeMessage`](#signedchallengemessage).
 
@@ -22,8 +22,6 @@ If the signature is successfully verified by the service, the client is authenti
 sequenceDiagram
     participant Client
     participant Connector
-    
-    Note over Client,Connector: Connect
     Client->>Connector: ChallengeRequestMessage
     Connector->>Client: ChallengeResponseMessage
     Client->>Connector: SignedChallengeMessage
@@ -88,7 +86,7 @@ The first key in the [authentication chain](/docs/contributor/authentication/aut
 
 ### `Heartbeat` <small>[↗ source][Heartbeat]</small>
 
-Sent by the client at regular intervals (typically once per second), to update the connector on their position and/or request an island assignment.
+Clients can send this message periodically to report their position to the connector.
 
 | Field          | Type       | Value                                                       |
 | -------------- | ---------- | ----------------------------------------------------------- |
@@ -105,7 +103,7 @@ Catalyst interprets `desired_room` as a realm hint. Gatekeeper still applies roo
 
 ### `ChallengeResponseMessage` <small>[↗ source][ChallengeResponseMessage]</small>
 
-Sent by the connector in response to a [`ChallengeRequestMessage`](#challengerequestmessage)
+The connector sends this in response to a [`ChallengeRequestMessage`](#challengerequestmessage)
 
 | Field               | Type     | Value                                                                                               |
 | ------------------- | -------- | --------------------------------------------------------------------------------------------------- |
@@ -118,7 +116,7 @@ Sent by the connector in response to a [`ChallengeRequestMessage`](#challengereq
 
 ### `WelcomeMessage` <small>[↗ source][WelcomeMessage]</small>
 
-Sent by the connector after successful authentication.
+The connector sends this after successful authentication.
 
 | Field     | Type     | Value                                                                      |
 | --------- | -------- | -------------------------------------------------------------------------- |
@@ -130,7 +128,7 @@ Sent by the connector after successful authentication.
 
 ### `IslandChangedMessage` <small>[↗ source][IslandChangedMessage]</small>
 
-Sent by the connector when the client is (re)assigned to an island.
+The connector sends this when it has an assignment for the client.
 
 | Field            | Type                    | Value                                                                          |
 | ---------------- | ----------------------- | ------------------------------------------------------------------------------ |
@@ -149,11 +147,11 @@ The protobuf schema defines the `peers` field. Use the appropriate room or Pulse
 
 ### `KickedMessage` <small>[↗ source][KickedMessage]</small>
 
-Sent by the connector before closing a connection.
+The connector can send this before closing the session.
 
 | Field    | Type           | Value                                           |
 | -------- | -------------- | ----------------------------------------------- |
-| `reason` | `KickedReason` | the connector's reason for closing the connection |
+| `reason` | `KickedReason` | The reason the connector closed the connection |
 
 The standard values for the `reason` field are:
 

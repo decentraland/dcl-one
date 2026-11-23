@@ -21,6 +21,9 @@ afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 it("repairs upstream content, validates links and pinned media, and detects drift", () => {
   write(source, "player/README.md", "# Welcome\n\n[Account](https://docs.decentraland.org/faqs/my-account)\n");
   write(source, "player/faqs/my-account.md", "# Account\n");
+  const revisedPage = "player/decentraland-in-world/overview.md";
+  const originalOverview = "# Overview\r\n\r\nExplore Genesis City and it's archipelago of off-map Worlds.\r\n";
+  write(source, revisedPage, originalOverview);
   write(source, "creator/README.md", '# Creator\n\n![\x01](images/pic.webp)\n\n\\\x01src="../images/wearables-and-emotes/creating-wearables/19\\_skin\\_uv.png"width="600"/>\n\n![Revocations Committee](https://github.com/lordlikedao/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Revocation.png?raw=true)\n');
   write(source, "creator/images/pic.webp", "image");
   write(source, "player/images/favicon.ico", "icon");
@@ -37,7 +40,18 @@ it("repairs upstream content, validates links and pinned media, and detects drif
   expect(creator).toContain(`![Avatar skin UV map](/docs/${fallback})`);
   expect(creator).toContain("/docs/player/images/DAO%20Organizational%20Chart/Revocation.webp");
   expect(creator).not.toContain("\x01");
+  const overview = fs.readFileSync(path.join(output, "player/decentraland-in-world/overview/index.md"), "utf8");
+  expect(overview).toContain("and its off-map Worlds");
   expect(run(true).status).toBe(0);
+
+  write(source, revisedPage, "# Overview\n\nExplore the city and nearby worlds.\n");
+  for (const check of [false, true]) {
+    const stale = run(check);
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain(`comms prose rule did not match in ${revisedPage}`);
+  }
+  write(source, revisedPage, originalOverview);
+
   fs.unlinkSync(path.join(output, fallback));
   expect(run(true).stderr).toContain("missing or altered pinned image");
   write(source, "player/README.md", "# Welcome\n\n[broken](/missing.md)\n");

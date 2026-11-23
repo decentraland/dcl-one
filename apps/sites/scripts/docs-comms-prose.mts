@@ -29,7 +29,7 @@ const statisticsApi = [
     "| `GET /hot-scenes` | Scene activity with content metadata |",
     "| `GET /core-status` | Clustering discovery status |",
   ].join("\n"),
-  "The `/comms` aliases also serve the parcel, peer, and island reads. Only observations from authenticated WebSocket sessions contribute peers to this view.",
+  "The `/comms` aliases also serve the parcel, peer, and island reads. The shared Catalyst API root exposes those reads under `/stats` as well. For example, use `/stats/peers` at the API root. Only observations from authenticated WebSocket sessions contribute peers to this view.",
   "## WebSocket connector",
   `Open the endpoint advertised by the realm. The primary Catalyst server accepts WebSocket upgrades at \`/ws\` and at \`/ws\` under the \`/archipelago-ea-ws-connector\` and \`/archipelago-ea-stats\` mounts. See the ${connectorLink} for the handshake and assignment messages.`,
 ].join("\n\n");
@@ -91,13 +91,25 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
     [`[Archipelago](${connectorUrl})`, connectorLink],
   ],
   "contributor/communications/archipelago.md": [
-    ["# archipelago", `# ${connectorTitle}`],
     [/^Archipelago is the realm service[\s\S]*?(?=^## Connecting)/m, "The primary Catalyst API serves a signed WebSocket connector for realm signaling. Pulse clusters players, and Gatekeeper authorizes assignments and issues the room credentials sent over the connector. The adapter prefix `archipelago:` identifies the compatible protobuf protocol.\n\n"],
-    [/^To begin, clients must open[\s\S]*?(?=^## Authenticating)/m, "Read `comms.adapter` in the realm’s `/about` response and use the advertised WebSocket URL. For example, `archipelago:archipelago:wss://realm.example/ws` advertises `wss://realm.example/ws`. Catalyst allows 60 seconds per handshake step by default.\n\nA realm may instead advertise a fixed transport through `comms.fixedAdapter`. In that case, use that transport directly.\n\n"],
+    [/^To begin, clients must open[\s\S]*?(?=^## Authenticating)/m, "Read `comms.adapter` in the realm’s `/about` response and use the advertised WebSocket URL. For example, `archipelago:archipelago:wss://realm.example/ws` advertises `wss://realm.example/ws`. By default, clients have 10 seconds after opening the socket to send `ChallengeRequestMessage`, then 60 seconds after receiving the challenge to send `SignedChallengeMessage`.\n\nA realm may instead advertise a fixed transport through `comms.fixedAdapter`. In that case, use that transport directly.\n\n"],
+    ["After opening a connection to Archipelago, clients must begin by requesting and signing a challenge from the service to verify their identity.", "After opening the socket, request and sign a challenge to verify your identity."],
+    [/^```mermaid\nsequenceDiagram\n    participant Client\n    participant Archipelago\n[\s\S]*?^```/m, [
+      "```mermaid",
+      "sequenceDiagram",
+      "    participant Client",
+      "    participant Connector",
+      "    Client->>Connector: ChallengeRequestMessage",
+      "    Connector->>Client: ChallengeResponseMessage",
+      "    Client->>Connector: SignedChallengeMessage",
+      "    Connector->>Client: WelcomeMessage",
+      "```",
+    ].join("\n")],
     [/^During their session, clients must periodically send[\s\S]*?(?=^## Getting Island Assignments)/m, "The connector accepts [`Heartbeat`](#heartbeat-message) position reports from an authenticated socket. These reports feed the compatibility statistics view and can provide position or room intent to Pulse. Explorer also sends movement updates over its separate Pulse connection. WebSocket ping and pong frames maintain the transport connection.\n\n"],
     ["Shortly after the first heartbeat, Archipelago will send the client their first [`IslandChangedMessage`][IslandChangedMessage].", "After authentication, the connector announces the session to Gatekeeper. It sends an [`IslandChangedMessage`][IslandChangedMessage] when a room assignment is available."],
     [/^During the session, Archipelago may send[\s\S]*?(?=^Clients must listen)/m, "The connector can send a new assignment when the selected room changes or refreshed credentials are available.\n\n"],
     ["their Ethereum address (i.e. their public key)", "their Ethereum address"],
+    ["Sent by the client at regular intervals (typically once per second), to update Archipelago on their position and/or request an island assignment.", "Clients can send this message periodically to report their position to the connector."],
     ["The first `Heartbeat` message a client sends is quickly followed by an [`IslandChangedMessage`](#islandchangedmessage) from Archipelago. Subsequent updates, however, are independent of island assignments. Clients should not expect a `Heartbeat` to be responded.", "Assignments arrive asynchronously. An individual `Heartbeat` has no corresponding acknowledgement."],
     ["| The ID of an island the client would like to be assigned to |", "| Realm hint for the position update |"],
     [/^When the `desired_room` parameter is included.*$/m, "Catalyst interprets `desired_room` as a realm hint. Gatekeeper still applies room access policy."],
@@ -105,9 +117,12 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
     [/\| `peers`[^\n]+/, "| `peers`          | `map<string, Position>` | Peer positions, when the assignment includes them |"],
     [/^Clients that receive an `IslandChangedMessage` should end.*$/m, "Use `conn_str` to join the assigned room. Keep a healthy connection when an update refers to the same room."],
     [/^The `peers` field contains.*$/m, "The protobuf schema defines the `peers` field. Use the appropriate room or Pulse transport for ongoing player updates."],
+    ["Sent by Archipelago in response to a", "The connector sends this in response to a"],
+    ["Sent by Archipelago after successful authentication.", "The connector sends this after successful authentication."],
+    ["Sent by Archipelago when the client is (re)assigned to an island.", "The connector sends this when it has an assignment for the client."],
+    ["Sent by Archipelago before closing a connection.", "The connector can send this before closing the session."],
+    ["Archipelago's reason for closing the connection", "The reason the connector closed the connection"],
     [/^Sent by Archipelago when a peer is (assigned to|removed from) the client's island\.$/gm, "This message is defined by the compatibility schema. Catalyst sends room assignments through `IslandChangedMessage`."],
-    [/^(    .*?)\bArchipelago\b/gm, "$1Connector"],
-    [/\bArchipelago\b/g, "the connector"],
     [/^(## (?:Connecting|Authenticating)) \{#[a-z]+\}$/gm, "$1"],
     [/^(#{2,3} .+?) \{#([\w-]+)\}$/gm, '<span id="$2"></span>\n\n$1'],
   ],
@@ -130,7 +145,11 @@ const updates: Record<string, readonly (readonly [string | RegExp, string])[]> =
 
 export function updateCommsDocs(source: string, markdown: string): string {
   for (const [before, after] of updates[source] ?? []) {
-    markdown = typeof before === "string" ? markdown.replaceAll(before, after) : markdown.replace(before, after);
+    const revised = typeof before === "string" ? markdown.replaceAll(before, after) : markdown.replace(before, after);
+    if (revised === markdown) {
+      throw new Error(`[docs-content] comms prose rule did not match in ${source}: ${before}`);
+    }
+    markdown = revised;
   }
   return markdown;
 }

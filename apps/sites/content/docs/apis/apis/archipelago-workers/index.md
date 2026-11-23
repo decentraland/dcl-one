@@ -14,7 +14,7 @@ Use the `archipelago-ea-stats` service subdomain or the `/archipelago-ea-stats` 
 | `GET /hot-scenes` | Scene activity with content metadata |
 | `GET /core-status` | Clustering discovery status |
 
-The `/comms` aliases also serve the parcel, peer, and island reads. Only observations from authenticated WebSocket sessions contribute peers to this view.
+The `/comms` aliases also serve the parcel, peer, and island reads. The shared Catalyst API root exposes those reads under `/stats` as well. For example, use `/stats/peers` at the API root. Only observations from authenticated WebSocket sessions contribute peers to this view.
 
 ## WebSocket connector
 
