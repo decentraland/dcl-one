@@ -25,7 +25,7 @@ Review both manifests and lockfiles for resolution to the one tracked vendor tre
 
 CI must run deterministic shared dependency regressions for bypass delivery, ordinary controls, repeated sends of one packet, cross-channel and unsequenced packets, fragment grouping and packet-kind inspection. A narrow native-client mapping regression verifies the bypass is selected for channel 1 while channels 0 and 2 retain their kinds. Provenance checks verify the upstream pin, imported/patched checksums, patch history and full MIT notice.
 
-Native interoperability uses separately pinned harness inputs and an explicit invocation. Missing prerequisites do not count as a native pass. Full Explorer builds, admitted-client journeys and deployment readiness retain separate evidence gates; manifest and callsite review does not establish those results. Live runs of a Unity Explorer client against Pulse are recorded in [the interop evidence](2026-11-23-pulse-enet-csharp-interop-evidence.md).
+Native interoperability uses separately pinned harness inputs and an explicit invocation. Missing prerequisites do not count as a native pass. Full Explorer builds, admitted-client journeys and deployment readiness retain separate evidence gates; manifest and callsite review does not establish those results. Live runs of a Unity Explorer client against Pulse, and runs of the native interop test against pinned ENet-CSharp inputs, are recorded in [the interop evidence](2026-11-23-pulse-enet-csharp-interop-evidence.md).
 
 ## Consequences
 
