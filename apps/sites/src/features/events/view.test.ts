@@ -11,6 +11,7 @@ import {
   dayLabel,
   eventCreator,
   eventHref,
+  eventImage,
   eventPageShareUrl,
   GENESIS_PLAZA,
   legacyEventsHref,
@@ -397,6 +398,46 @@ describe("page URLs", () => {
         expect(readDayOffset(new URLSearchParams())).toBe(0);
       });
     });
+  });
+});
+
+describe("when rendering an event cover", () => {
+  const POSTER = "/events-assets-099ac00/poster/abc.png";
+
+  it("should turn an http cover on the page's own origin into its path, keeping its query", () => {
+    expect(eventImage(`http://127.0.0.1:5254${POSTER}`, "http://127.0.0.1:5254")).toBe(POSTER);
+    expect(eventImage(`http://127.0.0.1:5254${POSTER}?v=2`, "http://127.0.0.1:5254/")).toBe(`${POSTER}?v=2`);
+  });
+
+  it("should keep an https cover unchanged, on the page's own origin or under a catalyst base on another origin", () => {
+    expect(eventImage(`https://example.org${POSTER}`, "https://example.org")).toBe(`https://example.org${POSTER}`);
+    expect(eventImage(`https://catalyst.example.org${POSTER}`, "https://example.org")).toBe(`https://catalyst.example.org${POSTER}`);
+  });
+
+  it("should keep a cover on another origin, another port or another scheme unchanged", () => {
+    expect(eventImage("https://cdn.example.com/poster.png", "https://example.org")).toBe("https://cdn.example.com/poster.png");
+    expect(eventImage(`http://127.0.0.1:5210${POSTER}`, "http://127.0.0.1:5254")).toBe(`http://127.0.0.1:5210${POSTER}`);
+    expect(eventImage(`http://example.org${POSTER}`, "https://example.org")).toBe(`http://example.org${POSTER}`);
+  });
+
+  it("should keep a root-relative cover unchanged", () => {
+    expect(eventImage(POSTER, "https://example.org")).toBe(POSTER);
+  });
+
+  it("should keep a cover whose path would read as another host once the origin is dropped", () => {
+    expect(eventImage("http://example.org//evil.example/x.png", "http://example.org")).toBe("http://example.org//evil.example/x.png");
+  });
+
+  it("should give no cover for an empty or missing one", () => {
+    expect(eventImage(null, "https://example.org")).toBeNull();
+    expect(eventImage(undefined, "https://example.org")).toBeNull();
+    expect(eventImage("", "https://example.org")).toBe("");
+  });
+
+  it("should keep the cover unchanged while the origin is unknown or malformed, or the cover is not a URL", () => {
+    expect(eventImage(`http://127.0.0.1:5254${POSTER}`, "")).toBe(`http://127.0.0.1:5254${POSTER}`);
+    expect(eventImage(`http://127.0.0.1:5254${POSTER}`, "not a url")).toBe(`http://127.0.0.1:5254${POSTER}`);
+    expect(eventImage("http://[bad", "https://example.org")).toBe("http://[bad");
   });
 });
 

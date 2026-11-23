@@ -595,6 +595,18 @@
     "primitives": 0,
     "tokens": 40
   },
+  "library/ui/apps/sites/social/CommunityDetail.module.css": {
+    "primitives": 0,
+    "tokens": 79
+  },
+  "library/ui/apps/sites/social/CommunityError.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "library/ui/apps/sites/social/CommunityLists.module.css": {
+    "primitives": 0,
+    "tokens": 41
+  },
   "library/ui/components/AppChrome/ChromeBody.module.css": {
     "primitives": 0,
     "tokens": 2
@@ -653,7 +665,7 @@
   },
   "library/ui/components/EventCard/EventCard.module.css": {
     "primitives": 0,
-    "tokens": 82
+    "tokens": 81
   },
   "library/ui/components/FriendCTA/FriendCTA.module.css": {
     "primitives": 0,

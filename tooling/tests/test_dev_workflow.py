@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+from tooling.tests.cache_cleanup_fixture import cache_cleanup_api
+
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'
 CLEANUP = WORKFLOW.with_name('closed-pr-cache.yml')
@@ -324,24 +326,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         ]}]
         with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
                                      'GITHUB_EVENT_NAME': 'pull_request'}), \
-                patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api(pages)) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-            request = listing.call_args.args[0]
+            request = next(call.args[0] for call in cli.call_args_list if '--paginate' in call.args[0])
             self.assertIn('ref=refs/pull/150/merge', request)
             self.assertIn('--paginate', request)
-            self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+            self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
                 'repos/decentraland/dcl-one/actions/caches/3',
                 'repos/decentraland/dcl-one/actions/caches/5',
             ])
             for number in ('', '0', '-1', '../main', '150; echo unsafe'):
                 with self.subTest(number=number), patch.dict(os.environ, {'PR_NUMBER': number}):
-                    listing.reset_mock()
-                    deletion.reset_mock()
+                    cli.reset_mock()
                     with self.assertRaises(ValueError):
                         exec(compile(script, str(CLEANUP), 'exec'), {})
-                    listing.assert_not_called()
-                    deletion.assert_not_called()
+                    cli.assert_not_called()
 
     def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
@@ -376,20 +375,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
-        def api(args, **kwargs):
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': caches}])
-            if args[-1].endswith('/pulls/10'):
-                return json.dumps({'state': 'closed'})
-            if args[-1].endswith('/pulls/11'):
-                return json.dumps({'state': 'open'})
-            self.fail(f'Unexpected API call: {args}')
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api([{'actions_caches': caches}], {'10': 'MERGED'})) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+        self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
             'repos/decentraland/dcl-one/actions/caches/1',
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
@@ -401,7 +391,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
         ])
-        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
+        self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         command = re.search(r'^          source=(.*)$', jobs()['smoke'], re.M).group(1)

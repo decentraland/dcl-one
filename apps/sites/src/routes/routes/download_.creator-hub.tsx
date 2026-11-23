@@ -2,6 +2,7 @@ import { redirect } from "react-router";
 
 import { loadLatestRelease, resolveDownload } from "@/data/lib/download/creator-hub.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
+import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import CreatorHubDownloadPage from "@/features/download/CreatorHubDownloadPage";
 import { successPath } from "@/features/download/creator-hub-click";
 
@@ -44,5 +45,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export default function CreatorHubDownloadRoute({ loaderData }: Route.ComponentProps) {
-  return <CreatorHubDownloadPage {...loaderData} />;
+  const userId = useAnalyticsUserId();
+  return <CreatorHubDownloadPage {...loaderData} userId={userId} />;
 }

@@ -76,6 +76,7 @@ function legacyWalletName(): string {
 }
 
 let activeProvider: Eip1193Provider | null = null;
+let activeRdns = "injected";
 let hostProvider: (() => Eip1193Provider | null) | undefined;
 
 /** Native explorer checkout uses the wallet selected by the explorer itself. */
@@ -85,11 +86,19 @@ export function installHostWalletProvider(provider: () => Eip1193Provider | null
 }
 
 export function selectWallet(rdns: string | null): void {
-  if (!rdns || rdns === "injected") {
-    activeProvider = null;
-    return;
-  }
-  activeProvider = eip6963Registry.get(rdns)?.provider ?? null;
+  activeProvider = rdns ? eip6963Registry.get(rdns)?.provider ?? null : null;
+  activeRdns = activeProvider && rdns ? rdns : "injected";
+}
+
+export function selectedWalletRdns(): string {
+  return activeRdns;
+}
+
+export function browserWalletProvider(rdns: string): Eip1193Provider | null {
+  if (typeof window === "undefined") return null;
+  if (rdns === "injected") return window.ethereum ?? null;
+  startWalletDiscovery();
+  return eip6963Registry.get(rdns)?.provider ?? null;
 }
 
 function provider(): Eip1193Provider {
