@@ -28,7 +28,7 @@ When a wallet completes the `/ws` handshake, comms credits one login of that wal
   - Concurrent attempts and the backlog are bounded; past the backlog, a credit is dropped and counted. A credit waiting to retry holds no attempt slot.
   - Each attempt has a timeout.
   - A transient failure (a server error or a timeout) is retried with the same login ID. A refused login (an invalid wallet, the quota, an occurrence outside the window) is not retried; it is logged and counted.
-  - At shutdown the job `archipelago-login-credits` ends the pending credits and counts them as dropped. The clients reconnect to the next primary, and that handshake credits again.
+  - At shutdown the job `archipelago-login-credits` ends the pending credits and counts them as dropped. A later handshake that day still counts.
 - `serve` builds one `Referral` and hands it to both comms and social. Comms depends only on the interface.
 - Only the primary `serve` runs `/ws`, so only the primary credits. A node with `SOCIAL_WRITES_ENABLED` off credits nothing, as its `client-login` answers 503.
 - Reconnects count as logins here, but a login on a date already counted stores no receipt and takes no slot of the 120-per-day quota. This changes the earlier rule that room admissions are not logins, but only for referral days: several handshakes on one date are still one day.
