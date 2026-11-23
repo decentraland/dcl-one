@@ -1323,19 +1323,19 @@ fn report_player_parcel(
         return;
     };
     let parcel = vec3_to_parcel(player.translation());
-    let scene = pointers
-        .get(parcel)
-        .map(|pointer| pointer.hash_and_urn().map(|(hash, _)| hash));
-    if last
-        .as_ref()
-        .is_some_and(|last| last.parcel == parcel && last.scene == scene)
-    {
+    let scene = pointers.get(parcel).map(|pointer| match pointer {
+        PointerResult::Nothing => None,
+        PointerResult::Exists { hash, .. } => Some(hash.as_str()),
+    });
+    if last.as_ref().is_some_and(|last| {
+        last.parcel == parcel && last.scene.as_ref().map(Option::as_deref) == scene
+    }) {
         return;
     }
     let change = PlayerParcelChanged {
         old: last.as_ref().map(|last| last.parcel),
         parcel,
-        scene,
+        scene: scene.map(|scene| scene.map(str::to_owned)),
     };
     changes.write(change.clone());
     *last = Some(change);

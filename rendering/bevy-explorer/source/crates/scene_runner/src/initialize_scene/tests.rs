@@ -719,3 +719,55 @@ fn a_city_scene_is_bounded_by_the_parcel_count_of_each_region() {
         assert_eq!(heights_over(&SPLIT_SCENE, &city), [40.0, 40.0, 40.0, 20.0]);
     }
 }
+
+// A new parcel reports the one before; a change of the scene listed at the parcel the player
+// stands on (a new realm at the same parcel) reports the parcel again, with the new scene.
+#[test]
+fn the_player_parcel_reports_moves_and_scene_changes() {
+    #[derive(Resource, Default)]
+    struct Seen(Vec<(Option<IVec2>, IVec2, Option<Option<String>>)>);
+    let mut app = App::new();
+    app.init_resource::<ScenePointers>()
+        .init_resource::<Seen>()
+        .add_event::<PlayerParcelChanged>()
+        .add_systems(
+            Update,
+            (
+                report_player_parcel,
+                |mut changes: EventReader<PlayerParcelChanged>, mut seen: ResMut<Seen>| {
+                    for change in changes.read() {
+                        seen.0
+                            .push((change.old, change.parcel, change.scene.clone()));
+                    }
+                },
+            )
+                .chain(),
+        );
+    let player = app
+        .world_mut()
+        .spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_xyz(8.0, 0.0, -8.0),
+        ))
+        .id();
+    app.update();
+    app.update();
+    {
+        let mut pointers = app.world_mut().resource_mut::<ScenePointers>();
+        pointers.set_realm(IVec2::ZERO, IVec2::X);
+        pointers.set_all_scenes_known();
+    }
+    app.update();
+    *app.world_mut().get_mut::<GlobalTransform>(player).unwrap() =
+        GlobalTransform::from_xyz(24.0, 0.0, -8.0);
+    app.update();
+
+    assert_eq!(
+        app.world().resource::<Seen>().0,
+        [
+            (None, IVec2::ZERO, None),
+            (Some(IVec2::ZERO), IVec2::ZERO, Some(None)),
+            (Some(IVec2::ZERO), IVec2::X, Some(None)),
+        ]
+    );
+}

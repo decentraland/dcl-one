@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-pub mod badges;
+mod badges;
 pub mod crash;
 pub mod data_definition;
 pub mod feature_flags;
