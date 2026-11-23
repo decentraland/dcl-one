@@ -159,12 +159,13 @@ mod browser {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     use bevy::web_worker::{spawn_worker, WorkerSpec};
-    use js_sys::{Atomics, Int32Array, Promise, Reflect, WebAssembly};
+    use js_sys::{Atomics, Promise};
     use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
     use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
     use super::*;
+    use crate::browser_test::{field, word_view};
 
     wasm_bindgen_test_configure!(run_in_dedicated_worker);
 
@@ -174,16 +175,6 @@ mod browser {
     // the relay thread's count, and the word it sets once it runs
     static RELAYED: SceneReplies = SceneReplies::new();
     static RELAY_RUNS: AtomicI32 = AtomicI32::new(0);
-
-    fn word_view(word: &AtomicI32) -> Int32Array {
-        let memory = wasm_bindgen::memory().unchecked_into::<WebAssembly::Memory>();
-        let address = word as *const AtomicI32 as usize as u32;
-        Int32Array::new_with_byte_offset_and_length(&memory.buffer(), address, 1)
-    }
-
-    fn field(object: &JsValue, name: &str) -> JsValue {
-        Reflect::get(object, &JsValue::from_str(name)).unwrap()
-    }
 
     /// The relay thread: says it runs, then replies 100 ms later, while the test thread waits.
     #[wasm_bindgen]

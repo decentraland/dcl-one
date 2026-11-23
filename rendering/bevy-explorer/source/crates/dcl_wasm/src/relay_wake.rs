@@ -249,28 +249,18 @@ mod tests {
 mod browser {
     use std::task::Waker;
 
-    use js_sys::{Atomics, Int32Array, Object, Promise, Reflect, WebAssembly};
+    use js_sys::{Atomics, Promise};
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
     use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
     use super::*;
+    use crate::browser_test::{field, word_view};
 
     wasm_bindgen_test_configure!(run_in_dedicated_worker);
 
     // under the test runner's own 20 s limit, so a missing notify fails the assertion
     const WAIT_MS: f64 = 5_000.0;
-
-    // the worker's view of the word (sandbox_worker.js `wakeView`), over the shared memory
-    fn word_view(wake: &RelayWake) -> Int32Array {
-        let memory = wasm_bindgen::memory().unchecked_into::<WebAssembly::Memory>();
-        let address = wake.word() as *const AtomicI32 as usize as u32;
-        Int32Array::new_with_byte_offset_and_length(&memory.buffer(), address, 1)
-    }
-
-    fn field(wait: &Object, name: &str) -> JsValue {
-        Reflect::get(wait, &JsValue::from_str(name)).unwrap()
-    }
 
     // a relay step as the worker takes it: decide, load the word, pump (the empty channel
     // registers the waker)
@@ -289,7 +279,8 @@ mod browser {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let seen = step(&wake, &mut rx);
 
-        let wait = Atomics::wait_async_with_timeout(&word_view(&wake), 0, seen, WAIT_MS).unwrap();
+        let wait =
+            Atomics::wait_async_with_timeout(&word_view(wake.word()), 0, seen, WAIT_MS).unwrap();
         assert_eq!(field(&wait, "async"), JsValue::TRUE);
         tx.send(7).unwrap();
         let outcome = JsFuture::from(field(&wait, "value").unchecked_into::<Promise>())
@@ -309,7 +300,8 @@ mod browser {
         let seen = step(&wake, &mut rx);
 
         tx.send(7).unwrap();
-        let wait = Atomics::wait_async_with_timeout(&word_view(&wake), 0, seen, WAIT_MS).unwrap();
+        let wait =
+            Atomics::wait_async_with_timeout(&word_view(wake.word()), 0, seen, WAIT_MS).unwrap();
         assert_eq!(field(&wait, "async"), JsValue::FALSE);
         assert_eq!(
             field(&wait, "value").as_string().as_deref(),
