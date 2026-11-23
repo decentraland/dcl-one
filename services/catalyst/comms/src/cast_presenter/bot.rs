@@ -99,15 +99,27 @@ pub struct Connected {
     pub room: watch::Receiver<RoomState>,
 }
 
-/// Who makes the room service calls for a bot that ended without leaving:
-/// the gatekeeper, which holds the LiveKit key.
+/// The gatekeeper's side of the presenter: the room service calls for a bot
+/// that ended without leaving (it holds the LiveKit key), and whether a bot's
+/// Cast credential is still the room's active one.
+#[async_trait::async_trait]
 pub trait Rooms: Send + Sync {
     fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_>;
+    /// Whether the bot `identity` of `room` holds the room's active Cast
+    /// credential: a bot of a revoked or rotated one does not.
+    async fn holds_credential(&self, room: &str, identity: &str) -> anyhow::Result<bool>;
 }
 
+#[async_trait::async_trait]
 impl Rooms for crate::gatekeeper::CommsState {
     fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_> {
         Self::room_service(self)
+    }
+    async fn holds_credential(&self, room: &str, identity: &str) -> anyhow::Result<bool> {
+        Ok(
+            crate::gatekeeper::streaming::publisher_credential_current(&self.pool, room, identity)
+                .await?,
+        )
     }
 }
 

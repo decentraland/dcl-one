@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import type { HeroDownloads } from "@/data/lib/download/creator-hub.server";
+import { useLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
 import { trackCreatorHubClick, useCreatorHubDownloadClick } from "../download/creator-hub-click";
 import CreatorHubDownload from "../download/CreatorHubDownload";
@@ -29,13 +30,14 @@ export default function HeroDownload({ downloads, sid, userId }: Props) {
   const [offered, setOffered] = useState(downloads);
   useEffect(() => setOffered(downloads && forThisDevice(downloads)), [downloads]);
   const onDownload = useCreatorHubDownloadClick({ sid, userId }, "create-hero");
+  const scope = useLegacyTrackScope();
 
   if (!offered) {
     return (
       <a
         className={`${styles.cta} ${styles.ctaDesktop}`}
         href={CREATOR_HUB_DOWNLOAD}
-        onClick={() => trackCreatorHubClick("create-hero", { sid, userId })}
+        onClick={() => trackCreatorHubClick("create-hero", { sid, userId, scope })}
       >
         <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
       </a>

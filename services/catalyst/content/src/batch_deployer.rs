@@ -687,7 +687,8 @@ mod tests {
             block: u64,
         ) -> Result<bool, crate::auth::AuthError> {
             use crate::validator::fake_chain::{GENESIS, INTERVAL};
-            assert_eq!(block, ((1_700_000_000 - GENESIS) / INTERVAL) as u64);
+            // The last block strictly before the entity's exact second.
+            assert_eq!(block, ((1_700_000_000 - 1 - GENESIS) / INTERVAL) as u64);
             if self.answers_at_block {
                 Ok(true)
             } else {
@@ -912,6 +913,57 @@ mod tests {
             description.starts_with("Validation undecided:"),
             "{description}"
         );
+    }
+
+    /// A contract wallet whose call fails at latest and that refuses at past blocks.
+    struct FailsLatestRefusesAtBlock;
+
+    #[async_trait::async_trait]
+    impl crate::auth::Eip1654Validator for FailsLatestRefusesAtBlock {
+        async fn validate_signature(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                "timeout".to_string(),
+            ))
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+            _block: u64,
+        ) -> Result<bool, crate::auth::AuthError> {
+            Ok(false)
+        }
+    }
+
+    /// A synced contract wallet whose call fails at latest and that is refused at the entity
+    /// block is undecided and retried, never refused for good.
+    #[tokio::test]
+    async fn a_contract_wallet_failing_at_latest_and_refused_at_the_entity_block_is_retried() {
+        let Some(outcome) = sync_outfits(
+            CONTRACT_SIGNER,
+            Chain::BehindContract,
+            Some(Arc::new(FailsLatestRefusesAtBlock)),
+        )
+        .await
+        else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        assert_eq!(outcome.active, None);
+        let (retry_count, description) = outcome.failure.expect("queued for a retry");
+        assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Validation undecided:"),
+            "{description}"
+        );
+        assert!(outcome.due, "the retry worker picks it up");
     }
 
     /// Mainnet contracts over `chain` on both layers.

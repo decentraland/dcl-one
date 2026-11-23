@@ -6,6 +6,7 @@ use super::auth_chain::{
 };
 use super::eip1654::{
     Eip1654Validator, PeerValidated, verify_eip1654, verify_eip1654_at_verification_time,
+    verify_synced_eip1654_at_verification_time,
 };
 use super::error::AuthError;
 use super::hex0x::{HexDecodeError, decode_hex_0x};
@@ -121,6 +122,26 @@ pub async fn verify_auth_chain_async(
     .map(|_| ())
 }
 
+/// A locally deployed entity's chain: ephemeral expiry checked against the entity timestamp,
+/// and a contract-wallet link asked at the latest block, then at the block
+/// `eip1654_validator` selects for that timestamp, as `@dcl/crypto` does.
+pub async fn verify_entity_auth_chain(
+    chain: &AuthChain,
+    expected_address: &str,
+    entity_timestamp_ms: i64,
+    eip1654_validator: Option<&dyn Eip1654Validator>,
+) -> Result<(), AuthError> {
+    walk_and_check(
+        chain,
+        expected_address,
+        Some(entity_timestamp_ms),
+        eip1654_validator,
+        WalkRules::stored(ExpirationPolicy::Strict, ContractPolicy::VerificationTime),
+    )
+    .await
+    .map(|_| ())
+}
+
 /// [`verify_auth_chain_async`] for a chain presented as a login (signed
 /// fetch, socket handshakes, identities): every ephemeral delegation must be
 /// a [`LOGIN_PURPOSE`] one.
@@ -181,8 +202,10 @@ pub async fn verify_peer_auth_chain(
 }
 
 /// The full validation of an entity a peer serves: as [`verify_peer_auth_chain`], but a
-/// contract-wallet link is asked of `eip1654_validator` (the caller binds it to the entity's
-/// block); without one it fails with [`AuthError::Eip1654NotImplemented`] (undecidable).
+/// contract-wallet link is asked of `eip1654_validator` at the latest block, then at the
+/// block it selects for the entity timestamp, as [`verify_entity_auth_chain`]; without one it
+/// fails with [`AuthError::Eip1654NotImplemented`] (undecidable). A failed call at latest
+/// followed by a refusal at that block keeps the error (undecidable), so sync retries it.
 pub async fn verify_synced_auth_chain(
     chain: &AuthChain,
     expected_address: &str,
@@ -194,7 +217,10 @@ pub async fn verify_synced_auth_chain(
         expected_address,
         Some(entity_timestamp_ms),
         eip1654_validator,
-        WalkRules::stored(ExpirationPolicy::TrustPeer, ContractPolicy::Latest),
+        WalkRules::stored(
+            ExpirationPolicy::TrustPeer,
+            ContractPolicy::SyncedVerificationTime,
+        ),
     )
     .await
 }
@@ -203,6 +229,8 @@ pub async fn verify_synced_auth_chain(
 pub(crate) enum ContractPolicy {
     Latest,
     VerificationTime,
+    /// [`Self::VerificationTime`], a failed call at latest kept over a past-block refusal.
+    SyncedVerificationTime,
 }
 
 impl ContractPolicy {
@@ -218,6 +246,12 @@ impl ContractPolicy {
             Self::Latest => verify_eip1654(validator, contract, message, signature).await,
             Self::VerificationTime => {
                 verify_eip1654_at_verification_time(
+                    validator, contract, message, signature, started_ms,
+                )
+                .await
+            }
+            Self::SyncedVerificationTime => {
+                verify_synced_eip1654_at_verification_time(
                     validator, contract, message, signature, started_ms,
                 )
                 .await
@@ -1313,5 +1347,62 @@ mod tests {
         verify_auth_chain_async(&foreign, delegate, Some(0), Some(validator))
             .await
             .unwrap();
+    }
+
+    /// A contract wallet that refuses today and signed at block 7, the block it selects for
+    /// the timestamp it is given.
+    #[derive(Default)]
+    struct SignedAtBlock7(Mutex<Vec<i64>>);
+
+    #[async_trait::async_trait]
+    impl Eip1654Validator for SignedAtBlock7 {
+        async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+            Ok(false)
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+            block: u64,
+        ) -> Result<bool, AuthError> {
+            Ok(block == 7)
+        }
+
+        async fn verification_time_block(&self, started_ms: i64) -> Result<Option<u64>, AuthError> {
+            self.0.lock().unwrap().push(started_ms);
+            Ok(Some(7))
+        }
+    }
+
+    /// An entity's contract-wallet link refused at latest is asked again at the block of the
+    /// entity timestamp, as `@dcl/crypto` does.
+    #[tokio::test]
+    async fn an_entity_chain_asks_the_contract_at_the_entity_time_block() {
+        let entity = "QmEntity";
+        let chain: AuthChain = vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: "0x0000000000000000000000000000000000000001".into(),
+                signature: None,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEip1654SignedEntity,
+                payload: entity.into(),
+                signature: Some("0x1234".into()),
+            },
+        ];
+        let wallet = SignedAtBlock7::default();
+        let entity_ms = 1_700_000_000_000;
+
+        let err = verify_auth_chain_async(&chain, entity, Some(entity_ms), Some(&wallet))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AuthError::Eip1654Rejected { .. }), "{err}");
+        verify_entity_auth_chain(&chain, entity, entity_ms, Some(&wallet))
+            .await
+            .unwrap();
+        assert_eq!(*wallet.0.lock().unwrap(), [entity_ms]);
     }
 }
