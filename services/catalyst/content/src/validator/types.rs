@@ -161,6 +161,10 @@ pub mod adr_timestamps {
 
     pub const PROFILE_IDENTITY: Timestamp = 1_786_579_200_000;
 
+    /// Profile and outfit third-party items must name their linked NFT from
+    /// here on (2026-12-01T00:00:00Z).
+    pub const THIRD_PARTY_ITEM_URN: Timestamp = 1_796_083_200_000;
+
     pub const LEGACY_CONTENT_MIGRATION: Timestamp = 1_582_167_600_000;
 }
 

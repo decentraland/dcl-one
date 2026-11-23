@@ -66,6 +66,15 @@ pub(super) fn validate_profile_wearable_urns(
                                  The URN must include the tokenId."
                             ));
                         }
+                        if timestamp >= adr_timestamps::THIRD_PARTY_ITEM_URN
+                            && parsed.is_third_party_without_nft()
+                        {
+                            return Err(format!(
+                                "Wearable pointer {pointer} should be a third-party item linked \
+                                 to an NFT. The URN must include the NFT network, contract and \
+                                 tokenId."
+                            ));
+                        }
                     }
                 }
             }
@@ -101,6 +110,14 @@ pub(super) fn validate_profile_emote_urns(
                             return Err(format!(
                                 "Emote pointer {urn} should be an item, not an asset. \
                                  The URN must include the tokenId."
+                            ));
+                        }
+                        if timestamp >= adr_timestamps::THIRD_PARTY_ITEM_URN
+                            && parsed.is_third_party_without_nft()
+                        {
+                            return Err(format!(
+                                "Emote pointer {urn} should be a third-party item linked to an \
+                                 NFT. The URN must include the NFT network, contract and tokenId."
                             ));
                         }
                     }
@@ -466,5 +483,42 @@ mod urn_rule_tests {
                 "{urn}"
             );
         }
+    }
+
+    #[test]
+    fn third_party_items_need_their_nft_from_the_cutoff() {
+        const FROM: Timestamp = adr_timestamps::THIRD_PARTY_ITEM_URN;
+        for urn in [
+            "urn:decentraland:matic:collections-thirdparty:tp:col:hat",
+            "urn:decentraland:matic:collections-thirdparty:tp:col",
+            "urn:decentraland:matic:collections-thirdparty:tp",
+        ] {
+            assert_eq!(
+                validate_profile_wearable_urns(&wearing(urn), FROM),
+                Err(format!(
+                    "Wearable pointer {urn} should be a third-party item linked to an NFT. \
+                     The URN must include the NFT network, contract and tokenId."
+                ))
+            );
+            assert_eq!(
+                validate_profile_emote_urns(&emoting(urn), FROM),
+                Err(format!(
+                    "Emote pointer {urn} should be a third-party item linked to an NFT. \
+                     The URN must include the NFT network, contract and tokenId."
+                ))
+            );
+            assert!(
+                validate_profile_wearable_urns(&wearing(urn), FROM - 1).is_ok(),
+                "{urn}"
+            );
+            assert!(
+                validate_profile_emote_urns(&emoting(urn), FROM - 1).is_ok(),
+                "{urn}"
+            );
+        }
+        let linked =
+            format!("urn:decentraland:matic:collections-thirdparty:tp:col:hat:matic:{C}:5");
+        assert!(validate_profile_wearable_urns(&wearing(&linked), FROM).is_ok());
+        assert!(validate_profile_emote_urns(&emoting(&linked), FROM).is_ok());
     }
 }

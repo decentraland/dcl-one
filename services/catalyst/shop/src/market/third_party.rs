@@ -1406,18 +1406,17 @@ pub(crate) async fn owned_third_party_urns(
 }
 
 /// A worn URN naming a third-party collection (it contains
-/// `collections-thirdparty`, the old lambdas' test), as their checker split
-/// them: only items of an L2 collection (`matic`, `amoy`) count. The one
-/// classifier the profiles and the outfits share.
+/// `collections-thirdparty`, the old lambdas' test): only linked items of an
+/// L2 collection (`matic`, `amoy`) count. The one classifier the profiles and
+/// the outfits share.
 #[derive(Debug, PartialEq, Eq)]
 enum WornThirdParty {
-    /// `urn:decentraland:<l2>:collections-thirdparty:<tp>:<collection>:<item>`:
-    /// kept unchecked.
-    V1,
     /// `...:<item>:<nftChain>:<contract>:<tokenId>`: a linked item, kept when
     /// its NFT is owned.
     Linked(LinkedItem),
-    /// Any other shape: never kept.
+    /// Any other shape, including an item without its NFT
+    /// (`...:<tp>:<collection>:<item>`), whose ownership cannot be checked:
+    /// never kept.
     Unrecognised,
 }
 
@@ -1446,7 +1445,6 @@ fn worn_third_party(urn: &str) -> Option<WornThirdParty> {
         return Some(WornThirdParty::Unrecognised);
     }
     match p.len() {
-        7 => Some(WornThirdParty::V1),
         10 => {
             let network = p[7].to_lowercase();
             let on_l1 = match network.as_str() {
@@ -1472,18 +1470,9 @@ pub(crate) fn is_third_party_urn(urn: &str) -> bool {
     worn_third_party(urn).is_some()
 }
 
-/// The v1 items among worn URNs, which need no check: what a profile keeps
-/// of its third-party items when its linked items could not be read.
-pub(crate) fn v1_third_party_urns(urns: &[String]) -> Vec<String> {
-    urns.iter()
-        .filter(|u| worn_third_party(u) == Some(WornThirdParty::V1))
-        .cloned()
-        .collect()
-}
-
 /// The worn third-party URNs `owner` may keep, in the order the old lambdas
-/// answered them (`tpw-ownership-checker.ts`): the v1 items unchecked, then
-/// the linked items whose NFT is on L1, then those on L2. A linked item is
+/// answered them (`tpw-ownership-checker.ts`): the linked items whose NFT is
+/// on L1, then those on L2. A linked item is
 /// kept when its entity's mappings include the NFT and the chain confirms it
 /// (`ownerOf` is the owner, or an ERC-1155 `balanceOf` above zero); any
 /// other URN is not kept. A linked item on a network with no RPC endpoint
@@ -1493,13 +1482,10 @@ pub async fn sanitize_third_party_urns(
     owner: &str,
     urns: &[String],
 ) -> Result<Vec<String>, String> {
-    let mut v1 = Vec::new();
     let mut linked: Vec<(&String, LinkedItem)> = Vec::new();
     for urn in urns {
-        match worn_third_party(urn) {
-            Some(WornThirdParty::V1) => v1.push(urn.clone()),
-            Some(WornThirdParty::Linked(item)) => linked.push((urn, item)),
-            Some(WornThirdParty::Unrecognised) | None => {}
+        if let Some(WornThirdParty::Linked(item)) = worn_third_party(urn) {
+            linked.push((urn, item));
         }
     }
     let items: Vec<&LinkedItem> = linked.iter().map(|(_, item)| item).collect();
@@ -1511,11 +1497,7 @@ pub async fn sanitize_third_party_urns(
             .filter(move |((_, item), owned)| item.on_l1 == l1 && **owned)
             .map(|((urn, _), _)| (*urn).clone())
     };
-    Ok(v1
-        .into_iter()
-        .chain(kept(true))
-        .chain(kept(false))
-        .collect())
+    Ok(kept(true).chain(kept(false)).collect())
 }
 
 /// Per item, whether `owner` holds its NFT (`third-party-item-checker.ts`).
@@ -2199,10 +2181,6 @@ mod tests {
     #[test]
     fn worn_third_party_urns_split_as_the_old_checker_did() {
         assert_eq!(
-            worn_third_party("urn:decentraland:matic:collections-thirdparty:tp:c1:hat"),
-            Some(WornThirdParty::V1)
-        );
-        assert_eq!(
             worn_third_party(
                 "urn:decentraland:amoy:collections-thirdparty:tp:c1:hat:sepolia:0xAbC:12"
             ),
@@ -2215,6 +2193,8 @@ mod tests {
             }))
         );
         for unrecognised in [
+            // An item without its NFT: its ownership cannot be checked.
+            "urn:decentraland:matic:collections-thirdparty:tp:c1:hat",
             // An L1 collection: not checked, so not kept.
             "urn:decentraland:mainnet:collections-thirdparty:tp:c1:hat",
             "urn:decentraland:ethereum:collections-thirdparty:tp:c1:hat",
@@ -2235,13 +2215,6 @@ mod tests {
         ] {
             assert_eq!(worn_third_party(other), None, "{other}");
         }
-        assert_eq!(
-            v1_third_party_urns(&[
-                "urn:decentraland:matic:collections-thirdparty:tp:c1:hat".to_string(),
-                "urn:decentraland:matic:collections-thirdparty:tp:c1:hat:matic:0xabc:1".to_string(),
-            ]),
-            ["urn:decentraland:matic:collections-thirdparty:tp:c1:hat"]
-        );
     }
     #[test]
     fn providers_parse_the_registry_answer() {

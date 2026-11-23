@@ -33,6 +33,14 @@ impl UrnType {
     pub fn is_collection_asset(self) -> bool {
         matches!(self, Self::CollectionV1Asset | Self::CollectionV2Asset)
     }
+
+    /// A third-party URN that names no NFT, so its ownership cannot be checked.
+    pub fn is_third_party_without_nft(self) -> bool {
+        matches!(
+            self,
+            Self::ThirdPartyName | Self::ThirdPartyCollection | Self::ThirdParty
+        )
+    }
 }
 
 /// The networks the resolver accepts.
