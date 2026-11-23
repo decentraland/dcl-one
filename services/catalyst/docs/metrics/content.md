@@ -8,8 +8,8 @@ alerts read them unchanged.
 
 The names, buckets and emit helpers live in `content/src/series.rs`
 (`catalyst_content::series`). `register_series` runs when the exporter is installed
-(`src/serve_lifecycle.rs`) and renders every counter of a closed label set at 0, the two
-`*_last_success_timestamp_seconds` gauges at 0 and the sync state at 0 (bootstrapping).
+(`src/serve_lifecycle.rs`) and renders every counter of a closed label set, and the two
+`*_last_success_timestamp_seconds` gauges at 0.
 `comms::metrics::prometheus_builder` applies `series::BUCKETS`, so every histogram below is
 exported as a histogram. A histogram declared without buckets uses the Prometheus client's
 default buckets (0.005 to 10 s).
@@ -25,8 +25,8 @@ Paths below are relative to `services/catalyst`.
 |---|---|---|---|---|
 | `dcl_deployments_endpoint_counter` | counter `kind` = `success`, `validation_error`, `error` | emitted | `content/src/create_entity.rs` `deploy_regular`, `deploy_form` | A regular `POST /entities` deploy: `success` for a stored or replayed entity, `validation_error` for a 400 refusal, `error` for a 503 (store, database, access check, processing timeout). Requests turned away before the form is read (limits, budgets, bootstrapping) are not counted. |
 | `total_deployments_count` | counter `entity_type`, `deployment_context` = `LOCAL`, `SYNCED`, `FIX_ATTEMPT` | emitted | `content/src/write_deployer.rs` `deploy_entity_unlocked`; `content/src/sync_deployer.rs` `flush_batch` | Entities newly stored: a local deploy (partial publications included) once its row is inserted, a synced or retried entity once the batch flush that inserted it commits. Replays are not counted. |
-| `dcl_deployment_time` | histogram `entity_type`, `failed` = `true`, `false`; default buckets | emitted | `content/src/sync_deployer.rs` `LiveSyncDeployer::deploy_entity_with_files` | The deploy step of a downloaded synced or retried entity: parse, validation and the wait for a flush-backlog slot. Synced entities are written in batches: the step ends once the entity is buffered, so the batch commit is not part of this time, and an entity whose batch flush later fails is recorded with `failed="false"` (it is recorded in `content.failed_deployments` instead). |
-| `dcl_pending_deployment_gauge` | gauge `entity_type` | emitted | `content/src/batch_deployer.rs` `BatchDeployer::schedule_undeployed` | Synced entities scheduled and not yet deployed or recorded as failed. |
+| `dcl_deployment_time` | histogram `entity_type`, `failed` | covered in `sync.md` | | Observed by the sync code. |
+| `dcl_pending_deployment_gauge` | gauge `entity_type` | covered in `sync.md` | | Observed by the sync code. |
 | `dcl_ignored_sync_deployments` | counter | covered in `sync.md` | | Part of snapshot and pointer-change syncing. |
 | `dcl_pending_download_gauge` | gauge `entity_type` | covered in `sync.md` | | Part of snapshot and pointer-change syncing. |
 
@@ -95,8 +95,8 @@ command outside `serve` and exports nothing.
 | Legacy series | Type and labels | Status | Observed at | Notes |
 |---|---|---|---|---|
 | `dcl_content_server_build_info` | gauge `version`, `commitHash`, `ethNetwork`; value 1 | emitted | `content/src/lib.rs` `ContentState::with_sync` | `commitHash` is `Unknown` when the process has none. |
-| `dcl_content_server_sync_state` | gauge | emitted | `content/src/lib.rs` `SyncStatus::set_state` | 1 once every entity type bootstrapped (`Syncing`); 0 while bootstrapping, partially synced or failed. |
-| `dcl_content_server_failed_deployments` | gauge | emitted | `content/src/sync/retry_failed.rs` `execute_retry_cycle` | Rows of `content.failed_deployments`, counted at the start of each retry cycle; absent until the first cycle. |
+| `dcl_content_server_sync_state` | gauge | covered in `sync.md` | | Observed by the sync code. |
+| `dcl_content_server_failed_deployments` | gauge | covered in `sync.md` | | Observed by the sync code. |
 | `dcl_content_server_snapshot_generation_time` | histogram `result` = `success`, `error`, `interval_size` = `day`, `week`, `month`, `year`, `unknown`, `reason` = `cover_time_range`, `snapshots_not_stored`, `inactive_entities`, `is_outdated`, `unknown`; default buckets | emitted | `content/src/snapshot_gen.rs` `SnapshotGenerator::pass` | Each window written. `cover_time_range`: no row for the window; `snapshots_not_stored`: its stored file could not be verified; `unknown`: a requested rebuild. |
 | `dcl_content_server_snapshot_entities` | gauge `type` | not applicable | | Declared but never set by the content server, so no dashboard reads a value from it. |
 | `dcl_deployed_entities_bloom_filter_checks_total` | counter `hit` = `true`, `false` | emitted | `content/src/batch_deployer.rs` `schedule_entity_deployment`, `retain_undeployed` | Already-deployed probes of synced entities: `true` when the entity is deployed, `false` for a filter miss and for a false positive the database refuted. |

@@ -290,15 +290,6 @@ impl LiveFailedDeploymentsStore {
             .collect())
     }
 
-    /// Every record: `dcl_content_server_failed_deployments`.
-    pub async fn count_all(&self) -> Result<u64, SyncError> {
-        let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM content.failed_deployments")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| SyncError::Storage(e.to_string()))?;
-        Ok(count.max(0) as u64)
-    }
-
     /// Records waiting for a verdict.
     pub async fn count_undecided(&self) -> Result<u64, SyncError> {
         let (count,): (i64,) = sqlx::query_as(

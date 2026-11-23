@@ -1072,18 +1072,10 @@ impl LiveSyncDeployer {
         retry_state: Option<(u32, u64)>,
         renders: Option<(&crate::storage::Storage, Vec<(String, String)>)>,
     ) -> Result<(), SyncError> {
-        let started = std::time::Instant::now();
-        let mut parsed = match parse_entity_for_deploy(entity_data, entity_id, auth_chain) {
-            Ok(parsed) => parsed,
-            Err(e) => {
-                crate::series::deployment_timed("unknown", started, true);
-                return Err(e);
-            }
-        };
+        let mut parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
         let verdict = self
             .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
-            .await
-            .inspect_err(|_| crate::series::deployment_timed(&parsed.entity_type, started, true))?;
+            .await?;
         parsed.context = context;
         parsed.buffered = Some(BufferedMark::new(entity_id));
         scene_parcels::report_drift(
@@ -1122,7 +1114,6 @@ impl LiveSyncDeployer {
             );
         }
 
-        crate::series::deployment_timed(&parsed.entity_type, started, false);
         let mut buf = self.batch.lock().await;
         buf.push(parsed);
         if buf.len() >= BATCH_SIZE {

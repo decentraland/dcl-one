@@ -134,7 +134,6 @@ mod metrics_tests {
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
             "dcl_deployments_endpoint_counter{kind=\"success\"} 0",
-            "dcl_content_server_sync_state 0",
             "dcl_partial_upload_cleanup_runs_total{outcome=\"deferred\"} 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");

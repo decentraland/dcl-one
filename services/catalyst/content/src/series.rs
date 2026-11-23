@@ -1,12 +1,13 @@
 //! The content server's Prometheus series, under the names, label names, label values and
 //! histogram buckets the content server's dashboards and alerts read
-//! (`docs/metrics/content.md` maps each one to where it is observed).
+//! (`docs/metrics/content.md` maps each one to where it is observed; the sync series are
+//! in `docs/metrics/sync.md`).
 //!
 //! Every label value comes from a closed set: an entity type a client or a peer names goes
 //! through [`entity_type`] first. The helpers only touch the `metrics` facade, a no-op
 //! without an installed recorder, so they never fail or block a request or a job.
-//! [`register_series`] renders the counters of each closed label set at 0, and the gauges
-//! whose value is known at start, before the first event.
+//! [`register_series`] renders the counters of each closed label set at 0, and the
+//! last-success gauges, before the first event.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,13 +16,9 @@ use std::time::Instant;
 use metrics::{counter, gauge, histogram};
 
 pub const BUILD_INFO: &str = "dcl_content_server_build_info";
-pub const SYNC_STATE: &str = "dcl_content_server_sync_state";
-pub const FAILED_DEPLOYMENTS: &str = "dcl_content_server_failed_deployments";
 pub const SNAPSHOT_GENERATION_TIME: &str = "dcl_content_server_snapshot_generation_time";
 
 pub const DEPLOYMENTS_ENDPOINT: &str = "dcl_deployments_endpoint_counter";
-pub const DEPLOYMENT_TIME: &str = "dcl_deployment_time";
-pub const PENDING_DEPLOYMENTS: &str = "dcl_pending_deployment_gauge";
 pub const TOTAL_DEPLOYMENTS: &str = "total_deployments_count";
 
 pub const RATE_LIMITED: &str = "dcl_content_rate_limited_deployments_total";
@@ -73,9 +70,8 @@ const DEFAULT_BUCKETS: &[f64] = &[
 
 /// Every histogram here and its buckets; the exporter renders a histogram without an entry
 /// as a summary.
-pub const BUCKETS: [(&str, &[f64]); 7] = [
+pub const BUCKETS: [(&str, &[f64]); 6] = [
     (SNAPSHOT_GENERATION_TIME, DEFAULT_BUCKETS),
-    (DEPLOYMENT_TIME, DEFAULT_BUCKETS),
     (GC_TIME, DEFAULT_BUCKETS),
     (
         PARTIAL_DURATION,
@@ -142,8 +138,7 @@ const SPOOL_FAILURE_REASONS: [&str; 5] = [
     "folder",
 ];
 
-/// Renders every series with a closed label set at 0, and the sync state a process starts in
-/// (bootstrapping).
+/// Renders every series with a closed label set at 0.
 pub fn register_series() {
     for name in [
         GC_ITEMS,
@@ -210,7 +205,6 @@ pub fn register_series() {
     }
     gauge!(GC_LAST_SUCCESS).set(0.0);
     gauge!(PARTIAL_CLEANUP_LAST_SUCCESS).set(0.0);
-    sync_state(&crate::SyncState::Bootstrapping);
 }
 
 fn seconds_since(started: Instant) -> f64 {
@@ -232,16 +226,6 @@ pub fn build_info(version: &str, commit_hash: Option<&str>, eth_network: &str) {
         "ethNetwork" => eth_network.to_string()
     )
     .set(1.0);
-}
-
-/// 1 once every entity type bootstrapped (`Syncing`), else 0.
-pub fn sync_state(state: &crate::SyncState) {
-    let syncing = matches!(state, crate::SyncState::Syncing);
-    gauge!(SYNC_STATE).set(if syncing { 1.0 } else { 0.0 });
-}
-
-pub fn failed_deployments(records: u64) {
-    gauge!(FAILED_DEPLOYMENTS).set(records as f64);
 }
 
 /// One snapshot window written (`result` success) or not (error), `interval_size` its window
@@ -274,22 +258,6 @@ pub fn deployment_stored(entity_type: &str, context: &'static str) {
         "deployment_context" => context
     )
     .increment(1);
-}
-
-/// A downloaded entity's deploy step ended, `failed` or not.
-pub fn deployment_timed(entity_type: &str, started: Instant, failed: bool) {
-    histogram!(
-        DEPLOYMENT_TIME,
-        "entity_type" => self::entity_type(entity_type),
-        "failed" => if failed { "true" } else { "false" }
-    )
-    .record(seconds_since(started));
-}
-
-/// Sync deployments of `entity_type` queued or running: +1 when one is scheduled, -1 when
-/// it ends.
-pub fn pending_deployment(entity_type: &str, delta: f64) {
-    gauge!(PENDING_DEPLOYMENTS, "entity_type" => self::entity_type(entity_type)).increment(delta);
 }
 
 pub fn rate_limited(entity_type: &str, reason: &'static str) {
@@ -566,7 +534,6 @@ mod tests {
                 vec![("budget", "source"), ("reason", "source_concurrency")],
             ),
             (BLOOM_FILTER_CHECKS, vec![("hit", "false")]),
-            (SYNC_STATE, vec![]),
         ] {
             assert_eq!(
                 sample(&rendered, name, &labels),
@@ -580,7 +547,7 @@ mod tests {
                 "{name}"
             );
         }
-        for name in [GC_LAST_SUCCESS, SYNC_STATE] {
+        for name in [GC_LAST_SUCCESS, PARTIAL_CLEANUP_LAST_SUCCESS] {
             assert!(rendered.contains(&format!("# TYPE {name} gauge")), "{name}");
         }
     }
@@ -615,9 +582,6 @@ mod tests {
             deployment_stored("a-peer-chosen-type", "SYNCED");
             snapshot_generated(Instant::now(), true, "fortnight", "cover_time_range");
             build_info("1.2.3", None, "sepolia");
-            sync_state(&crate::SyncState::PartiallySynced {
-                ready_types: vec!["scene".into()],
-            });
         });
         assert_eq!(
             sample(
@@ -640,7 +604,6 @@ mod tests {
             ),
             Some(1.0)
         );
-        assert_eq!(sample(&rendered, SYNC_STATE, &[]), Some(0.0));
     }
 
     #[test]

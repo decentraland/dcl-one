@@ -336,7 +336,6 @@ impl BatchDeployer {
         if let Some(report) = &report {
             report.record_scheduled();
         }
-        crate::series::pending_deployment(&entity.entity_type, 1.0);
 
         tokio::spawn(async move {
             let result = super::deploy_remote_entity::deploy_entity_streaming(
@@ -413,7 +412,6 @@ impl BatchDeployer {
                 report.record_acknowledged();
             }
 
-            crate::series::pending_deployment(&entity.entity_type, -1.0);
             drop(slot);
             idle_notify.notify_waiters();
             progress.maybe_summarize(
