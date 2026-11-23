@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn dotnet_formatting() {
-        assert_eq!(dotnet_double_string(46304.512345678901), "46304.5123456789");
+        assert_eq!(dotnet_double_string(46304.5123456789), "46304.5123456789");
         assert_eq!(dotnet_double_string(25569.0), "25569");
         assert_eq!(dotnet_double_string(0.5), "0.5");
         assert_eq!(dotnet_double_string(0.0001), "0.0001");

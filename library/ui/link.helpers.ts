@@ -80,3 +80,20 @@ export function assertNavigationEntries(
     ids.add(entry.id)
   }
 }
+
+/** An image URL a card may load: https (without credentials) or root-relative; anything else is dropped. */
+export function imageSource(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined
+  if (hasUnsafeURLCharacters(value)) return undefined
+  const source = value.trim()
+  if (!source) return undefined
+  if (source.startsWith('/')) return source.startsWith('//') ? undefined : source
+  if (!/^https:\/\//i.test(source)) return undefined
+  try {
+    const url = new URL(source)
+    if (url.protocol !== 'https:' || url.username || url.password) return undefined
+    return url.href
+  } catch {
+    return undefined
+  }
+}

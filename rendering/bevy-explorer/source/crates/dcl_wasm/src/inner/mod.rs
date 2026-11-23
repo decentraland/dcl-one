@@ -63,7 +63,6 @@ pub fn queue_scene(data: SceneInitializationData) -> bool {
         .is_some()
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_scene(
     initial_crdt_store: CrdtStore,
     scene_context: CrdtContext,

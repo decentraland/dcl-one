@@ -1,6 +1,4 @@
-use std::{path::PathBuf, sync::Mutex, time::Instant};
-
-use std::{collections::BTreeMap, fs::File, io::Write};
+use std::{collections::BTreeMap, sync::Mutex, time::Instant};
 
 use bevy::{
     app::{PluginGroupBuilder, ScheduleRunnerPlugin},
@@ -40,9 +38,9 @@ use common::{
     rpc::RpcCallEvent,
     sets::RealmLifecycle,
     structs::{
-        AppConfig, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed, PreviewMode,
-        PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance, ServerConfiguration,
-        TimeOfDay, ToolTips,
+        AppConfig, ClientWindowFocus, CurrentRealm, CursorLocks, GraphicsSettings, PermissionUsed,
+        PreviewMode, PrimaryCamera, PrimaryPlayerRes, SceneGlobalLight, SceneLoadDistance,
+        ServerConfiguration, TimeOfDay, ToolTips,
     },
 };
 use comms::CommsPlugin;
@@ -121,6 +119,7 @@ fn init_test_app(entity_json: &str) -> App {
     let mut app = App::new();
 
     // Add our systems
+    app.insert_resource(ClientWindowFocus::Focused);
     app.insert_resource(AppConfig {
         graphics: GraphicsSettings {
             fps_target: 0,
@@ -258,8 +257,10 @@ macro_rules! assert_output_eq {
 }
 
 // write output to file
-#[allow(dead_code)]
+#[cfg(feature = "gen-tests")]
 fn write_expected(expected: String, filename: &str) {
+    use std::{fs::File, io::Write, path::PathBuf};
+
     let mut path = PathBuf::from(file!());
     path.pop();
     path.push(filename);

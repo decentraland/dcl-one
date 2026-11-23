@@ -54,6 +54,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("SDK", "sdk"),
                     ("Parcels", "parcels"),
                     ("Height (m)", "height"),
+                    ("Collider height limit (m)", "colliderHeight"),
                     ("Global position (m) (X / Y / Z)", "world"),
                     ("Scene position (m) (X / Y / Z)", "relative"),
                     ("Tick", "tick"),
@@ -146,6 +147,7 @@ impl Plugin for SceneDebugPanelPlugin {
                     ("Visible unique materials", "visibleMaterials"),
                     ("Material textures", "textures"),
                     ("Colliders", "colliders"),
+                    ("Colliders off outside scene bounds", "collidersOutOfBounds"),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -317,6 +319,7 @@ fn scene_state(
     scenes: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
     bounds: Res<ShowBounds>,
     histories: Query<&SceneTraffic>,
+    colliders: Query<&SceneColliderData>,
 ) {
     if input.take().is_none() {
         return;
@@ -369,11 +372,13 @@ fn scene_state(
     unavailable["history"] = "Waiting for a complete tick in the current parcel scene.".into();
     unavailable["bytesPerSecond"] = "Waiting for two consecutive worker samples.".into();
     unavailable["height"] = "The scene has no parcel bounds.".into();
+    unavailable["colliderHeight"] = "The scene's colliders have no bounds in this run.".into();
     unavailable[""] = "The parcel scene worker has not reported a sample.".into();
     let report = json!({
         "unavailable": unavailable,
         "bounds": bounds.0, "name": scene.title, "sdk": scene.sdk_version, "parcels": scene.parcels.len(),
         "height": scene.bounds.iter().map(|r| r.height).reduce(f32::max),
+        "colliderHeight": colliders.get(root).ok().and_then(SceneColliderData::height_limit),
         "world": position.map(|p| p.to_array()), "relative": position.map(|p| (p-base).to_array()), "tick": scene.tick_number,
         "history": history, "engines": engines,
         "bytesPerSecond": scene.crdt_bytes_per_second.map(f64::round),
@@ -565,7 +570,8 @@ fn scene_content(
         "allBodies": all_bodies, "allTriangles": all_triangles.display(),
         "geometries": geometry.len(), "visibleGeometries": visible_geometry.len(), "materials": material_ids.len(),
         "visibleMaterials": visible_materials.len(), "textures": textures.len(),
-        "colliders": colliders.map_or(0, SceneColliderData::collider_count)}).to_string());
+        "colliders": colliders.map_or(0, SceneColliderData::collider_count),
+        "collidersOutOfBounds": colliders.map_or(0, SceneColliderData::out_of_bounds_count)}).to_string());
 }
 
 #[derive(clap::Parser, ConsoleCommand)]

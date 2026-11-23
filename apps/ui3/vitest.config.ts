@@ -12,20 +12,23 @@ export default defineConfig({
       ...validateAlias(),
       { find: "@catalyst-api", replacement: fileURLToPath(new URL("../../library/catalyst-api", import.meta.url)) },
       { find: "@shop", replacement: fileURLToPath(new URL("../../library/shop", import.meta.url)) },
+      { find: "@web-core", replacement: fileURLToPath(new URL("../../library/web-core", import.meta.url)) },
       // The Explorer HUD UI (library/ui/apps/hud) and the behaviours /play supplies to it.
       { find: "@hud-host", replacement: fileURLToPath(new URL("./src/play/host.ts", import.meta.url)) },
+      // What /play supplies to the in-world Shop UI (library/ui/apps/shop).
+      { find: "@shop-host", replacement: fileURLToPath(new URL("./src/play/shopHost.ts", import.meta.url)) },
       { find: "@hud", replacement: fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)) },
       { find: "@explorer-core", replacement: fileURLToPath(new URL("../../library/explorer-core", import.meta.url)) },
       { find: /^@dcl\/one-ui$/, replacement: ui("index.ts") },
       { find: /^@dcl\/one-ui\//, replacement: ui("") },
     ],
-    // library/ has no node_modules of its own: viem, React and the testing packages the shared HUD's test
-    // harness imports resolve to ui3's copies.
-    dedupe: ["viem", "react", "react-dom", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
+    // library/ has no node_modules of its own: viem, zod, the WalletConnect client, React and the testing packages
+    // the shared HUD's test harness imports resolve to ui3's copies.
+    dedupe: ["viem", "zod", "@walletconnect/sign-client", "qrcode-generator", "react", "react-dom", "@tanstack/react-query", "@noble/curves", "@noble/hashes", "@testing-library/react", "@testing-library/user-event", "@testing-library/dom", "@testing-library/jest-dom"],
   },
   // The HUD UI and the Sites assets (the bar's wordmark) live outside this app; their assets load through the dev
   // server like ui3's own.
-  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url))] } },
+  server: { fs: { allow: [".", fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url)), fileURLToPath(new URL("../../library/explorer-core", import.meta.url)), fileURLToPath(new URL("../../library/web-core", import.meta.url)), fileURLToPath(new URL("../../library/ui/apps/sites/assets", import.meta.url))] } },
   plugins: [react()],
   test: {
     environment: "jsdom",
@@ -63,6 +66,15 @@ export default defineConfig({
           dir: "../../library/shop",
           include: ["**/*.test.ts"],
           environment: "node",
+        },
+      },
+      {
+        // The browser logic ui3 shares with sites (library/web-core).
+        extends: true,
+        test: {
+          name: "web-core",
+          dir: "../../library/web-core",
+          include: ["**/*.test.ts"],
         },
       },
       {

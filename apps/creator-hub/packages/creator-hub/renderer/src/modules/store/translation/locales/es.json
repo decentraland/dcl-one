@@ -52,10 +52,13 @@
         "retry": "Reintentar",
         "outdated_deps": "Las dependencias de esta escena están desactualizadas y no son compatibles con el renderizador Bevy. Actualízalas para continuar.",
         "update_deps": "Actualizar dependencias",
-        "data_layer_crashed": "La escena se detiene inesperadamente una y otra vez. Vuelve atrás y ábrela de nuevo, o revisa los registros."
+        "data_layer_crashed": "La escena se detiene inesperadamente una y otra vez. Reintenta, vuelve atrás y ábrela de nuevo, o revisa los registros."
       }
     },
+    "realm_server_restarting": "El servidor multijugador se detuvo inesperadamente. Se está reiniciando, lo que recarga el editor.",
+    "realm_server_unavailable": "El servidor multijugador no puede ejecutarse en este equipo, así que la escena funciona sin él.",
     "realm_restarted": "La escena se detuvo inesperadamente y se recargó. Es posible que los cambios de los últimos segundos no se hayan guardado.",
+    "realm_restart_failed": "No se pudo reiniciar la escena. Se intentará de nuevo.",
     "header": {
       "actions": {
         "code": "Código",
@@ -177,10 +180,81 @@
         "needs_login_help": "Puede que su sesión guardada haya caducado, aunque aparezca como conectado. Cierra sesión y vuelve a iniciarla: ejecuta esto en una terminal, un comando a la vez, y termina en tu navegador. Luego vuelve a enviar tu mensaje:",
         "needs_login_managed_help": "Puede que su inicio de sesión guardado haya caducado, aunque apareciera como conectado. En Configuración → IA, haz clic en Cerrar sesión y luego en Iniciar sesión, y vuelve a enviar tu mensaje.",
         "api_key_alternative": "O usa una clave de API: define {envVar} y activa \"{setting}\" en Configuración → IA."
+      },
+      "recording": {
+        "chip": "Grabación de sesión · {duration} · {actions} {actions, plural, one {acción} other {acciones}}",
+        "chip_no_speech": "Grabación de sesión · {duration} · {actions} {actions, plural, one {acción} other {acciones}} (sin voz)",
+        "remove": "Descartar grabación",
+        "attachment": "Grabación de sesión {duration}",
+        "chip_many": "{count} {count, plural, one {grabación} other {grabaciones}} · {duration} · {actions} {actions, plural, one {acción} other {acciones}}",
+        "chip_many_no_speech": "{count} {count, plural, one {grabación} other {grabaciones}} · {duration} · {actions} {actions, plural, one {acción} other {acciones}} (sin voz)",
+        "attachment_many": "{count} {count, plural, one {grabación} other {grabaciones}} {duration}"
+      },
+      "sharing": {
+        "card_title": "Ayúdanos a mejorar el asistente de IA",
+        "card_body": "Comparte tus conversaciones con Decentraland para ayudar a mejorar el asistente. Un modelo de IA las lee para encontrar qué funciona y qué no. Antes de enviar nada, tu computadora quita claves, frases semilla, correos y otros datos personales comunes.",
+        "signin_body": "Inicia sesión para compartir tus conversaciones y ayudar a mejorar el asistente.",
+        "details_toggle": "Qué se comparte y qué no",
+        "details_shared": "Se comparte: lo que escribes, las respuestas del asistente, las herramientas que usó con sus nombres de archivo y comandos, el agente y el modelo, y cuánto tardó cada respuesta.",
+        "details_not_shared": "No se comparte: imágenes, contenido de archivos, el nombre de tu escena ni las conversaciones que marques como no compartidas.",
+        "details_analysis": "Cómo se usan: un modelo de IA de un proveedor que trabaja para Decentraland resume cada conversación. El proveedor no guarda ninguna copia ni entrena con ellas. Guardamos los patrones que vemos entre muchos creadores para mejorar el asistente.",
+        "details_publish": "El equipo comenta esos patrones. Los cambios que salgan de ellos pueden publicarse en las instrucciones, habilidades y documentación públicas del asistente, y en las descripciones de esos cambios. Una vez publicados, siguen siendo públicos aunque borres lo que compartiste.",
+        "details_control": "Puedes dejar de compartir o borrar todo lo compartido en cualquier momento desde Configuración. Dejar de compartir también detiene el análisis, y borrar también borra los resúmenes. Las conversaciones compartidas y sus resúmenes se guardan hasta 180 días.",
+        "accept": "Compartir para ayudar",
+        "decline": "No, gracias",
+        "not_now": "Ahora no",
+        "chip": "Compartiendo",
+        "chip_excluded": "Sin compartir",
+        "chip_menu": "opciones para compartir",
+        "rate_up": "Buena respuesta",
+        "rate_down": "Mala respuesta",
+        "menu_share_chat": "Compartir este chat",
+        "menu_share_all": "Compartir todos los chats",
+        "menu_chat_erased": "Lo que este chat compartió se borró."
       }
     },
     "publish": {
       "save_failed": "No se pudo guardar tu escena antes de publicar, así que se detuvo la publicación para no desplegar contenido anterior. {reason}"
+    },
+    "recording": {
+      "record": "Grabar",
+      "record_panel": "Grabar voz y acciones",
+      "stop": "Detener grabación",
+      "stop_with_time": "Detener · {time} / {limit}",
+      "live": "Grabando",
+      "discard": "Descartar grabación",
+      "discard_confirm": {
+        "title": "¿Descartar esta grabación?",
+        "body": "La grabación se detiene y se elimina lo capturado hasta ahora. Esta acción no se puede deshacer.",
+        "cancel": "Seguir grabando",
+        "confirm": "Descartar"
+      },
+      "starting": "Iniciando…",
+      "transcribing": "Transcribiendo…",
+      "downloading": "Descargando modelo de voz… {percent}%",
+      "default_mic": "el micrófono predeterminado del sistema",
+      "tooltip_idle": "Graba lo que dices y haces para el asistente de IA, hasta {minutes} minutos. Usa el micrófono predeterminado del sistema; cambia el dispositivo de entrada en la configuración de sonido del sistema para usar otro.",
+      "tooltip_live": "Grabando desde {mic}; se detiene sola a los {minutes} minutos. Para usar otro micrófono, cambia el dispositivo de entrada en la configuración de sonido del sistema y vuelve a grabar.",
+      "error": "No se pudo grabar: {message}",
+      "no_transcript": "No se pudo transcribir tu voz. La grabación igual incluye todo lo que hiciste.",
+      "limit_reached": "La grabación se detuvo al llegar al límite de {minutes} minutos. Se envía en cuanto se transcribe.",
+      "consent": {
+        "title": "Graba una sesión para el asistente de IA",
+        "intro": "Habla mientras trabajas. Creator Hub graba tu voz y tus acciones en el editor juntas, para que el asistente de IA entienda tus instrucciones en contexto. Por ejemplo, decir \"borra este\" mientras señalas una entidad le indica al asistente exactamente a qué te refieres.",
+        "what_title": "¿Qué se graba?",
+        "what": "Tu voz, los movimientos del mouse, clics, selecciones, lo que señalas, menús, búsquedas, ediciones y otras acciones en el editor.",
+        "local_title": "Tus datos quedan en tu computadora",
+        "local": "Solo se graba mientras el botón <b>Grabar</b> está activo. Cerrar el proyecto o Creator Hub detiene la grabación de inmediato.",
+        "stored": "Tu audio, el registro de acciones y la transcripción quedan en tu computadora. Cuando se envía una grabación, solo la transcripción y el registro de acciones se comparten con tu proveedor de IA, no el audio.",
+        "first_title": "Antes de tu primera grabación",
+        "download": "Creator Hub descarga un modelo de voz a texto (unos {size} MB).",
+        "microphone": "La grabación usa el micrófono predeterminado del sistema. Puedes cambiarlo en la configuración de sonido del sistema.",
+        "cancel": "Cancelar",
+        "accept": "Entendido"
+      },
+      "microphone_lost": "La grabación se detuvo porque se desconectó tu micrófono. Se envía en cuanto se transcribe.",
+      "record_tooltip": "Grabar voz y acciones",
+      "send": "Detener y enviar"
     }
   },
   "scene_list": {
@@ -320,6 +394,7 @@
       "more": "Más"
     },
     "earn_not_joined": "EARN, aún no te uniste",
+    "earn_payout_pending": "EARN, configuración de pagos sin terminar",
     "feedback": "Darnos feedback",
     "user_menu": {
       "sign_in": "Iniciar Sesión",
@@ -674,6 +749,55 @@
           "install": "Instalar",
           "sign_in_label": "Iniciar sesión",
           "copy": "Copiar"
+        },
+        "ai_sharing": {
+          "label": "Compartir conversaciones para mejorar Creator Hub",
+          "description": "Envía a Decentraland lo que le pides al asistente y sus respuestas, después de quitar en tu computadora las claves y los datos personales comunes. Un modelo de IA los resume para encontrar formas de mejorar el asistente. Se guardan hasta 180 días.",
+          "signin": "Inicia sesión para compartir conversaciones.",
+          "queued_title": "Pendientes de enviar ({count})",
+          "queued_empty": "No hay nada pendiente de enviar.",
+          "delete": "Borrar todo lo que compartí",
+          "deleting": "Borrando…",
+          "deleted": "Se borraron {count} turnos compartidos.",
+          "delete_failed": "No se pudieron borrar tus conversaciones compartidas. Revisa tu conexión e inténtalo de nuevo.",
+          "viewer_show": "Ver lo que compartí",
+          "viewer_hide": "Ocultar lo que compartí",
+          "viewer_empty": "Todavía no compartiste nada.",
+          "viewer_failed": "No se pudo cargar lo que compartiste. Revisa tu conexión e inténtalo de nuevo.",
+          "viewer_delete": "Borrar este turno",
+          "viewer_more": "Ver más",
+          "delete_confirm": "¿Seguro que quieres borrar todo lo que compartiste? Esta acción no se puede deshacer.",
+          "delete_confirm_yes": "Borrar todo",
+          "delete_cancel": "Cancelar",
+          "digests_show": "Ver los resúmenes hechos de tus conversaciones",
+          "digests_hide": "Ocultar los resúmenes",
+          "digests_empty": "Todavía no hay resúmenes. Cada conversación se resume unas horas después de terminar.",
+          "digests_failed": "No se pudieron cargar los resúmenes. Revisa tu conexión e inténtalo de nuevo.",
+          "digests_more": "Ver más",
+          "digests_problems": "Problemas: {kinds}",
+          "digest_outcome": {
+            "achieved": "Logrado",
+            "partial": "Logrado en parte",
+            "not_achieved": "No logrado",
+            "abandoned": "Abandonado",
+            "unclear": "No está claro"
+          },
+          "digest_friction": {
+            "misunderstood_request": "pedido mal entendido",
+            "wrong_sdk_knowledge": "conocimiento del SDK incorrecto",
+            "tool_failed": "falló una herramienta",
+            "tool_missing": "falta una herramienta",
+            "skill_missing": "falta una habilidad",
+            "skill_ignored": "habilidad sin usar",
+            "asset_not_found": "recurso no encontrado",
+            "scene_broke": "la escena se rompió",
+            "slow_or_stuck": "lento o trabado",
+            "creator_corrected_agent": "corregiste al asistente",
+            "creator_stopped_reply": "detuviste una respuesta",
+            "setup_or_sign_in": "configuración o inicio de sesión",
+            "other": "otro"
+          },
+          "signin_link": "Iniciar sesión"
         }
       },
       "actions": {
@@ -782,8 +906,8 @@
       "sent": "¡Gracias por ayudarnos a mejorar Creator Hub! Recibimos tu reporte y nuestro equipo investigará el problema y trabajará en una solución.",
       "queued_title": "Reporte de problema guardado",
       "queued": "Guardamos tu reporte y lo enviaremos en cuanto vuelvas a tener conexión.",
-      "unknown_title": "No pudimos confirmar tu reporte",
-      "unknown": "Enviamos tu reporte, pero no pudimos confirmar que llegó. Si el problema continúa, vuelve a reportarlo.",
+      "unknown_title": "Reporte enviado",
+      "unknown": "Enviamos tu reporte, pero todavía no pudimos confirmar que llegó. No hace falta enviarlo de nuevo.",
       "failed_title": "Algo salió mal",
       "failed": "No pudimos enviar tu reporte. Revisa tu conexión e inténtalo de nuevo."
     }
@@ -795,6 +919,7 @@
     "generic": {
       "import_scene": "Importando escena...",
       "import_scene_failed": "Error al importar escena",
+      "watchlist_not_saved": "No se pudo guardar tu lista de seguimiento. Este cambio se perderá al cerrar la aplicación.",
       "import_scene_already_imported": "La escena ya fue importada",
       "duplicate_scene": "Duplicando escena...",
       "duplicate_scene_failed": "Error al duplicar escena",
@@ -833,6 +958,13 @@
       "actions": {
         "view": "Ver",
         "discard_all": "Descartar todas"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "El servidor multijugador se detiene una y otra vez, así que la escena funciona sin él. Reintentar lo reinicia y recarga el editor.",
+      "actions": {
+        "dismiss": "Descartar",
+        "retry": "Reintentar"
       }
     },
     "external_agent_access": {
@@ -1735,7 +1867,8 @@
         "my_places": "Mis lugares",
         "leaderboard": "Clasificación",
         "payouts": "Pagos",
-        "home": "Inicio"
+        "home": "Inicio",
+        "payouts_pending": "PAGOS, configuración sin terminar"
       },
       "title_prefix": "Ganar",
       "title": "Creator Fund",
@@ -1748,6 +1881,12 @@
       "contact_support": "Contactar con soporte",
       "banner": {
         "region": "Anuncio"
+      },
+      "setup_banner": {
+        "wallet": {
+          "title": "Configura tu billetera de pagos",
+          "description": "Agrega una billetera para recibir tus pagos del Creator Fund en USDC."
+        }
       },
       "filter": {
         "cycle": "Ciclo",
@@ -1842,17 +1981,22 @@
           "title": "Billetera de pagos",
           "info_label": "Acerca de las billeteras de pagos",
           "info": "Una billetera digital es donde guardas y gestionas tus activos digitales. Puedes usarla para enviar, recibir y seguir tus fondos de forma segura, incluidas tus recompensas en USDC del Creator Fund.",
+          "payout_info": "Tu billetera de pagos es donde el Creator Fund envía tus recompensas, en USDC en Ethereum (ERC-20), dentro de los 14 días posteriores al cierre de cada ciclo. Puede ser cualquier billetera o cuenta de exchange que controles.",
           "learn_more": "Más información",
           "copy": "Copiar la dirección de la billetera",
           "edit": "Editar",
-          "add": "Agregar billetera"
+          "add": "Agregar billetera",
+          "unavailable": "Verifica tu correo para configurar tu billetera.",
+          "no_active_place": "Necesitas tener una escena publicada para configurar tu billetera.",
+          "notify_failed": "No pudimos enviarte un correo sobre este cambio, así que no guardamos tu billetera. Vuelve a intentarlo."
         },
         "contact": {
           "title": "Información de contacto",
           "full_name": "Nombre completo",
           "email": "Correo electrónico",
           "unverified": "Sin verificar",
-          "verify": "Verificar correo"
+          "verify": "Verificar correo",
+          "unavailable": "Necesitas tener una escena publicada para verificar tu correo"
         },
         "table": {
           "label": "Pagos",
@@ -1889,13 +2033,20 @@
         },
         "erc20": "Asegúrate de que esta billetera pueda recibir USDC en Ethereum (ERC-20). Los fondos enviados a una billetera que no lo admite no se pueden recuperar.",
         "verify": {
-          "title": "Verifica tu correo",
+          "confirm_title": "1. Confirma tu correo",
+          "confirm_body": "Asegúrate de que tu correo sea correcto. Enviaremos un código de verificación a esta dirección.",
+          "edit_email": "Editar correo",
+          "daily_limit": "Solicitaste demasiados códigos hoy. Inténtalo de nuevo mañana.",
+          "send_soon": "Podrás enviar un código a esta dirección en un momento.",
+          "continue": "Continuar",
+          "title": "2. Introduce el código de verificación",
           "body_sent": "Enviamos un código de 6 dígitos a <b>{email}</b>.",
           "body_instruction": "Introduce el código a continuación para completar la verificación.",
           "digit": "Dígito {n} de 6",
           "resend": "Reenviar código",
           "incorrect": "Código incorrecto. Revisa el correo e inténtalo de nuevo.",
           "expired": "Este código caducó. Reenvía uno nuevo.",
+          "back": "Atrás",
           "submit": "Verificar"
         },
         "snackbar": {

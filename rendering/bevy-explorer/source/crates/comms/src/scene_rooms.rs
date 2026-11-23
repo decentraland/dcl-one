@@ -51,7 +51,15 @@ pub struct SceneRooms<'w, 's> {
     connection: Res<'w, SceneRoomConnection>,
     server_rooms: Res<'w, ServerSceneRooms>,
     realm: Res<'w, CurrentRealm>,
-    rooms: Query<'w, 's, (&'static Transport, Has<Connected>)>,
+    rooms: Query<
+        'w,
+        's,
+        (
+            &'static Transport,
+            Has<Connected>,
+            Option<&'static crate::SceneRoomModeration>,
+        ),
+    >,
 }
 
 impl SceneRooms<'_, '_> {
@@ -67,15 +75,19 @@ impl SceneRooms<'_, '_> {
     }
 
     pub fn transport(&self, scene_hash: &str) -> Option<&Transport> {
-        let (transport, _) = self.rooms.get(self.room(scene_hash)?).ok()?;
+        let (transport, _, _) = self.rooms.get(self.room(scene_hash)?).ok()?;
         Some(transport)
+    }
+
+    pub fn moderation(&self, scene_hash: &str) -> Option<&crate::SceneRoomModeration> {
+        self.rooms.get(self.room(scene_hash)?).ok()?.2
     }
 
     /// Whether the room that carries the scene is connected: `isConnectedSceneRoom`.
     pub fn connected(&self, scene_hash: &str) -> bool {
         self.room(scene_hash)
             .and_then(|room| self.rooms.get(room).ok())
-            .is_some_and(|(_, connected)| connected)
+            .is_some_and(|(_, connected, _)| connected)
     }
 
     pub(crate) fn carries(&self, transport: Entity, scene_hash: &str) -> bool {
@@ -133,6 +145,7 @@ pub(crate) mod test_support {
         app.world_mut().resource_mut::<SceneRoomConnection>().0 = Some((
             SetCurrentScene {
                 realm_name: "realm".to_owned(),
+                realm_about_url: String::new(),
                 scene_id: hash.to_owned(),
             },
             "livekit:test".to_owned(),
@@ -174,6 +187,7 @@ mod tests {
         SceneRoomConnection(Some((
             SetCurrentScene {
                 realm_name: "realm".to_owned(),
+                realm_about_url: String::new(),
                 scene_id: hash.to_owned(),
             },
             "livekit:test".to_owned(),

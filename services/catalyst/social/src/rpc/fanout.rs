@@ -55,6 +55,11 @@ pub(crate) enum Event {
     CommunityDeleted {
         community: Uuid,
     },
+    /// Each replica announces the new friends to its own sockets from its own topology.
+    FriendshipAccepted {
+        actor: String,
+        friend: String,
+    },
     Reference {
         event_id: Uuid,
     },
@@ -94,6 +99,14 @@ fn decode_proto<T: Message + Default>(payload: &str) -> Option<T> {
         return None;
     }
     T::decode(bytes.as_slice()).ok()
+}
+/// The kind of a rejected message, for logging; an oversized one is never parsed.
+fn rejected_kind(bytes: &[u8]) -> Option<String> {
+    if bytes.len() > MAX_BYTES {
+        return None;
+    }
+    let value = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    value["event"]["kind"].as_str().map(str::to_owned)
 }
 fn address(value: &str) -> bool {
     wallet_token(value).as_deref() == Some(value)
@@ -220,6 +233,9 @@ impl Event {
             Self::CommunityMember { actor, status, .. } => {
                 address(actor) && ConnectivityStatus::try_from(*status).is_ok()
             }
+            Self::FriendshipAccepted { actor, friend } => {
+                address(actor) && address(friend) && actor != friend
+            }
             Self::CommunityDeleted { .. } | Self::Reference { .. } => true,
         }
     }
@@ -236,12 +252,23 @@ impl Event {
         (bytes.len() <= MAX_STORED_BYTES).then_some(bytes)
     }
     fn decode(bytes: &[u8], local: Uuid) -> Option<Self> {
-        if bytes.len() > MAX_BYTES {
-            return None;
+        let envelope = (bytes.len() <= MAX_BYTES)
+            .then(|| serde_json::from_slice::<Envelope>(bytes).ok())
+            .flatten();
+        match envelope {
+            Some(envelope) if envelope.source == local => None,
+            Some(envelope) if envelope.version == 1 && envelope.event.validate() => {
+                Some(envelope.event)
+            }
+            _ => {
+                // An older replica rejects a newer kind; count it rather than drop silently.
+                let kind = rejected_kind(bytes);
+                tracing::debug!(?kind, len = bytes.len(), "undecodable social event dropped");
+                metrics::counter!("social_event_delivery_dropped", "reason" => "undecodable_inbound")
+                    .increment(1);
+                None
+            }
         }
-        let envelope: Envelope = serde_json::from_slice(bytes).ok()?;
-        (envelope.version == 1 && envelope.source != local && envelope.event.validate())
-            .then_some(envelope.event)
     }
     pub(crate) fn encode_stored(&self) -> Option<Vec<u8>> {
         let Self::CommunityVoice {
@@ -336,6 +363,9 @@ impl Event {
                 ctx.pubsub()
                     .deliver_community_deleted(ctx.db().pool(), community)
                     .await
+            }
+            Self::FriendshipAccepted { actor, friend } => {
+                super::service::announce_accepted_connectivity(ctx, &actor, &friend).await
             }
             Self::Reference { event_id } => match ctx.db().social_event_payload(event_id).await {
                 Ok(Some(bytes)) => {
@@ -491,6 +521,37 @@ mod tests {
             invalid["event"][field] = value;
             assert!(Event::decode(&serde_json::to_vec(&invalid).unwrap(), local).is_none());
         }
+    }
+    #[test]
+    fn rejected_kind_is_read_only_within_the_wire_cap() {
+        let unknown = br#"{"version":1,"source":"00000000-0000-0000-0000-000000000000","event":{"kind":"future_kind"}}"#;
+        assert!(Event::decode(unknown, Uuid::new_v4()).is_none());
+        assert_eq!(rejected_kind(unknown).as_deref(), Some("future_kind"));
+        let mut oversized = unknown.to_vec();
+        oversized.resize(MAX_BYTES + 1, b' ');
+        assert!(Event::decode(&oversized, Uuid::new_v4()).is_none());
+        assert_eq!(rejected_kind(&oversized), None);
+        assert_eq!(rejected_kind(b"not json"), None);
+    }
+    #[test]
+    fn friendship_accepted_carries_two_distinct_wallets() {
+        let other = "0x2222222222222222222222222222222222222222";
+        let event = |actor: &str, friend: &str| Event::FriendshipAccepted {
+            actor: actor.into(),
+            friend: friend.into(),
+        };
+        let bytes = event(WALLET, other).encode(Uuid::new_v4()).unwrap();
+        assert!(matches!(
+            Event::decode(&bytes, Uuid::new_v4()),
+            Some(Event::FriendshipAccepted { actor, friend }) if actor == WALLET && friend == other
+        ));
+        assert!(event(WALLET, WALLET).encode(Uuid::nil()).is_none());
+        assert!(event(WALLET, "0xinvalid").encode(Uuid::nil()).is_none());
+        assert!(
+            event(&format!("0x{}", "A".repeat(40)), other)
+                .encode(Uuid::nil())
+                .is_none()
+        );
     }
     #[test]
     fn wire_cap_is_inclusive_and_large_metadata_uses_lossless_nonrecursive_storage() {

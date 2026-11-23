@@ -40,7 +40,6 @@ macro_rules! test_component {
     };
 }
 
-#[expect(clippy::too_many_arguments)]
 fn test_components<T: AVPlayer>(
     app: &mut App,
     entity: Entity,
@@ -108,26 +107,7 @@ fn min_test_app() -> App {
 
     app.world_mut().run_schedule(Startup);
 
-    #[cfg(target_arch = "wasm32")]
-    {
-        let set_video_source = wasm_bindgen::closure::Closure::new(Box::new(set_video_source)
-            as Box<dyn FnMut(wasm_bindgen::JsValue, wasm_bindgen::JsValue)>)
-        .into_js_value();
-        let window = web_sys::window().unwrap();
-        js_sys::Reflect::set(
-            &window,
-            &wasm_bindgen::JsValue::from_str("setVideoSource"),
-            &set_video_source,
-        )
-        .unwrap();
-    }
-
     app
-}
-
-#[cfg(target_arch = "wasm32")]
-fn set_video_source(_p0: wasm_bindgen::JsValue, _p1: wasm_bindgen::JsValue) {
-    debug!("set_video_source");
 }
 
 #[test]
@@ -982,6 +962,110 @@ pub(super) fn test_source_change() {
         .0
         .clone();
     assert_eq!(video_handle, repeat_video_handle);
+}
+
+fn spawn_playing_video_player(app: &mut App, src: &str) -> Entity {
+    let renderer_context = app
+        .world_mut()
+        .spawn(RendererSceneContext::new(
+            SceneId::DUMMY,
+            "hash".to_owned(),
+            "storage_root".to_owned(),
+            false,
+            0,
+            "title".to_owned(),
+            IVec2::splat(0),
+            HashSet::from_iter([IVec2::splat(0)]),
+            vec![],
+            Default::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk_version",
+            false,
+            false,
+        ))
+        .id();
+
+    app.world_mut()
+        .spawn((
+            VideoPlayer(PbVideoPlayer {
+                src: src.to_owned(),
+                ..Default::default()
+            }),
+            ContainerEntity {
+                container: renderer_context,
+                root: renderer_context,
+                container_id: SceneEntityId::new(0, 0),
+            },
+            InScene,
+            ShouldBePlaying::<VideoPlayer>::default(),
+        ))
+        .id()
+}
+
+fn video_texture_output(app: &App, video_player: Entity) -> Handle<Image> {
+    app.world()
+        .entity(video_player)
+        .get::<VideoTextureOutput>()
+        .unwrap()
+        .0
+        .clone()
+}
+
+fn is_black(app: &App, image: &Handle<Image>) -> bool {
+    let data = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(image)
+        .unwrap()
+        .data
+        .as_ref()
+        .unwrap();
+    data.as_chunks::<4>()
+        .0
+        .iter()
+        .all(|pixel| *pixel == [0, 0, 0, 255])
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_clearing_a_video_source_shows_black() {
+    let mut app = min_test_app();
+    let video_player = spawn_playing_video_player(&mut app, EXAMPLE_VIDEO);
+    let video_handle = video_texture_output(&app, video_player);
+
+    app.world_mut()
+        .entity_mut(video_player)
+        .insert(VideoPlayer(PbVideoPlayer {
+            src: "".to_owned(),
+            ..Default::default()
+        }));
+
+    let cleared_handle = video_texture_output(&app, video_player);
+    assert_ne!(video_handle, cleared_handle);
+    assert!(is_black(&app, &cleared_handle));
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn test_clearing_a_stream_source_shows_black() {
+    let mut app = min_test_app();
+    let video_player = spawn_playing_video_player(&mut app, LIVEKIT_VIDEO_STREAM);
+    let stream_handle = video_texture_output(&app, video_player);
+
+    app.world_mut()
+        .entity_mut(video_player)
+        .insert(VideoPlayer(PbVideoPlayer {
+            src: "".to_owned(),
+            ..Default::default()
+        }));
+
+    test_component!(app, video_player, ReceiverImage, false);
+    let cleared_handle = video_texture_output(&app, video_player);
+    assert_ne!(stream_handle, cleared_handle);
+    assert!(is_black(&app, &cleared_handle));
 }
 
 #[test]

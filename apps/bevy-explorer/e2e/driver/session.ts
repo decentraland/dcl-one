@@ -14,7 +14,7 @@ import { NativeConsole, spawnNative } from './native.ts'
 import { serveWebApp, type StaticServer } from './serve.ts'
 import { accountKey, describeTarget, readTarget, type Target } from './target.ts'
 import { until } from './wait.ts'
-import { BootError, WebConsole } from './web.ts'
+import { BOOT_ABANDONED, BootError, WebConsole } from './web.ts'
 import { REPORT_DIR } from './paths.ts'
 
 /** How a session signs in: the automation `account`; a `guest`, a fresh account the engine marks
@@ -36,6 +36,10 @@ export interface OpenOptions {
   /** More arguments for the standalone this session starts, which make it a separate client;
    *  an error on the web. */
   nativeArgs?: string[]
+  /** Gives up a boot in progress when aborted: the client is closed, the boot fails with
+   *  `BOOT_ABANDONED` and is neither counted as a failed boot nor kept as evidence. On the web it
+   *  acts from the moment the browser is up; natively, once the console answers. */
+  signal?: AbortSignal
 }
 
 export interface Session {
@@ -75,6 +79,7 @@ export function openSession(options: OpenOptions = {}, target: Target = readTarg
     }
     session = boot(options, target).catch(async (error: unknown) => {
       sessions.delete(id)
+      if (options.signal?.aborted) throw error
       const count = (bootFailures.get(id)?.count ?? 0) + 1
       bootFailures.set(id, { count, error })
       // Said at once: the run's own failure summary comes at its end, which a step timeout cuts off.
@@ -181,11 +186,16 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
       chrome: target.chrome,
       headless: !target.headed,
       args: chromeArgs(),
-      windowSize: options.windowSize ?? target.windowSize
+      windowSize: options.windowSize ?? target.windowSize,
+      signal: options.signal
     })
   }
   const explorer = new Explorer(console_)
+  const { signal } = options
+  const abandon = (): void => void explorer.close().catch(() => {})
+  signal?.addEventListener('abort', abandon, { once: true })
   try {
+    if (signal?.aborted) throw new Error(BOOT_ABANDONED)
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
     if (target.transport === 'web' && options.signIn !== 'unsigned-guest') {
       // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
@@ -195,12 +205,18 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
       await explorer.hud.wait(WORLD_HUD, { timeoutMs: HUD_TIMEOUT_MS })
     }
   } catch (error) {
+    if (signal?.aborted) {
+      await explorer.close().catch(() => {})
+      throw new Error(BOOT_ABANDONED, { cause: error })
+    }
     // a page that opened but never arrived: what it said and how it looks, with the error; the
     // console with the credentials the sign-in sent replaced, should the page have quoted one
     const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
     if (evidence) throw new BootError(message(error), evidence.console.map((line) => explorer.redactSecrets(line)), evidence.screenshot)
     throw error
+  } finally {
+    signal?.removeEventListener('abort', abandon)
   }
   return {
     explorer,
@@ -324,20 +340,37 @@ export async function arrive(explorer: Explorer, realm: string, position: string
 }
 
 /** Wait for the world, pressing the lobby's `Jump In` when it offers one (the standalone's). */
-export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS): Promise<WorldState> {
+export const NO_LANDING_POLLS = 3
+
+/** A native client shows the layout it stored, which may have no Landing card and so no `Jump In`:
+ *  the editor then stores the shipped layout, which has one. */
+export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS, intervalMs = 1000): Promise<WorldState> {
+  const jumpIn = { name: 'Jump In', role: 'button', index: 0 }
   let jumped = false
+  let reset = false
+  let missing = 0
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
-      const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
+      const jump = await explorer.hud.find(jumpIn).catch(() => undefined)
       if (jump?.actionable) {
-        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
+        await explorer.hud.click(jumpIn)
         jumped = true
+        return state
+      }
+      if (jump != null || reset) return state
+      const customize = await explorer.hud.find({ name: 'Customize lobby layout', role: 'button' }).catch(() => undefined)
+      missing = customize?.actionable ? missing + 1 : 0
+      if (missing >= NO_LANDING_POLLS) {
+        await explorer.hud.click({ name: 'Customize lobby layout', role: 'button' })
+        await explorer.hud.click({ name: 'Reset to Default', role: 'button' })
+        await explorer.hud.click({ name: 'SAVE', role: 'button' })
+        reset = true
       }
       return state
     },
     (state) => state.inWorld,
-    { timeoutMs, intervalMs: 1000, what: 'the world after sign-in' }
+    { timeoutMs, intervalMs, what: 'the world after sign-in' }
   )
 }

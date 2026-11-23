@@ -1,12 +1,12 @@
-import { useId } from 'react'
+import { Button } from '@dcl/one-ui'
+import { useId, type ReactNode } from 'react'
 import helpGirl from '../assets/help/help_girl.webp'
 import { AnimatedBackground } from '../shared/AnimatedBackground/AnimatedBackground'
-import { Button } from '../shared/Button/Button'
 import styles from './HelpChatBanner.module.css'
 
 type HelpChatBannerProps = {
   title: string
-  subtitle: string
+  subtitle: ReactNode
   actionLabel: string
   onAction: () => void
 }
@@ -23,8 +23,10 @@ function HelpChatBanner({ title, subtitle, actionLabel, onAction }: HelpChatBann
         <h2 id={titleId} className={styles.title}>
           {title}
         </h2>
-        <p className={styles.subtitle}>{subtitle}</p>
-        <Button className={styles.action} onClick={onAction}>
+        <p className={styles.subtitle} aria-live="polite">
+          {subtitle}
+        </p>
+        <Button size="lg" className={styles.action} onClick={onAction}>
           {actionLabel}
         </Button>
       </div>

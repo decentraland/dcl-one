@@ -23,7 +23,9 @@
 //!   wallet included; past it the entity is undecided.
 //! - access: every check asks the chain at the entity timestamp's block, then
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
-//!   ownership leaves out the escrow lease overlay, which knows only the
+//!   ownership leaves out the items the reference never asks about (a v2
+//!   item on L1, a v1 item on L2, a third-party item whose NFT chain is not
+//!   a listed network) and the escrow lease overlay, which knows only the
 //!   leases active now, and counts a collection URN naming no item as owned
 //!   (the reference skips URNs it cannot parse). Its item caps are wider than
 //!   a local deploy's and past them the entity is undecided, never refused
@@ -193,22 +195,35 @@ impl BlockchainChecker for Synced<'_> {
         urns: &[String],
         timestamp: Timestamp,
     ) -> Result<PermissionResult, ValidatorError> {
+        // The reference never asks about the URNs it skips: they count as owned.
+        let (asked, malformed): (Vec<String>, Vec<bool>) = urns
+            .iter()
+            .filter_map(|u| match super::onchain::items::classify(u) {
+                (_, true) => None,
+                (item, false) => Some((
+                    u.clone(),
+                    matches!(item, super::onchain::items::ItemRef::Malformed),
+                )),
+            })
+            .unzip();
         let owned = self
             .sources
             .access()
             .items_capped(
                 eth_address,
-                urns,
+                &asked,
                 timestamp,
                 super::onchain::SYNCED_ITEM_CAPS,
             )
             .await?;
         // The reference skips URNs it cannot parse, so they count as owned.
         Ok(PermissionResult::from_failing(
-            urns.iter()
+            asked
+                .into_iter()
                 .zip(owned)
-                .filter(|(u, o)| !o && !super::onchain::is_malformed_item(u))
-                .map(|(u, _)| u.clone())
+                .zip(malformed)
+                .filter(|((_, o), m)| !o && !m)
+                .map(|((u, _), _)| u)
                 .collect(),
         ))
     }
@@ -312,7 +327,7 @@ async fn validate_synced_within(
     }
     let files = HashMap::from([(
         entity_id.to_string(),
-        bytes::Bytes::copy_from_slice(entity_bytes),
+        bytes::Bytes::copy_from_slice(entity_bytes).into(),
     )]);
     let synced = Synced {
         sources,
@@ -439,7 +454,7 @@ mod tests {
             .expect("no thumbnail check on a synced item");
 
         let entity = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes))]);
+        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes).into())]);
         let local = super::super::validate(
             &entity,
             &files,
@@ -474,6 +489,44 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(tmp);
         let _ = std::fs::remove_dir_all(tmp2);
+    }
+
+    /// A scoped login (ADR-162) signs no deployment, local or synced.
+    #[tokio::test]
+    async fn a_scoped_login_signs_no_deployment() {
+        let (bytes, id, _, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "content".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                4_000_000_000_000,
+                &grants,
+                &id,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let local = ExternalCalls::validate_signature(&sources, &id, &chain, 1_700_000_000_000)
+            .await
+            .unwrap_err();
+        assert!(matches!(local, AuthError::MalformedChain(_)), "{local}");
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{errors:?}").contains("without a service identifier"),
+            "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     /// Records the block each historical ask names.
@@ -789,13 +842,11 @@ mod tests {
             files: &files,
             auth_chain: &chain,
         };
-        // The local check reads the escrow overlay.
-        let Some(pool) = crate::sync_test_support::test_pool(1).await else {
-            return;
-        };
+        // Neither check reads the database: without the escrow-lease opt-in
+        // the local check reads no lease either.
         let (storage, tmp) = crate::sync_test_support::temp_storage("malformed-urn").await;
         let sources = Sources::new(
-            pool,
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             storage,
             crate::http::Outbound::for_tests(),
             None,
@@ -901,6 +952,60 @@ mod tests {
             .unwrap();
         assert!(!verdict.result, "{verdict:?}");
         assert_eq!(verdict.failing, Some(urns));
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[tokio::test]
+    async fn a_synced_profile_is_not_asked_about_items_the_reference_skips() {
+        use super::super::fake_chain::{self, Query, Reply};
+        use alloy_primitives::{Address, U256};
+        const OWNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        // Every item is owned by someone else.
+        let chain = fake_chain::serve(|q, _| match q {
+            Query::OwnerOf { .. } => Reply::Owner(Address::repeat_byte(0x11)),
+            Query::BalanceOf { .. } => Reply::Balance(U256::ZERO),
+            other => panic!("unexpected question {other:?}"),
+        })
+        .await;
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-skips").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: Some(chain.url.clone()),
+                l2_rpc_url: Some(chain.url.clone()),
+                ..Default::default()
+            },
+        );
+        let synced = Synced {
+            sources: &sources,
+            content: SyncedContent::Fetched,
+            trusted_expirations: Mutex::new(Vec::new()),
+        };
+        let contract = "0x0002000000000000000000000000000000000001";
+        let urns = vec![
+            format!("urn:decentraland:ethereum:collections-v2:{contract}:0:5"),
+            format!("urn:decentraland:matic:collections-v1:{contract}:hat:3"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:ethereum:{contract}:5"),
+        ];
+
+        let verdict = synced
+            .check_items_ownership(OWNER, &urns, 1_700_000_000_000)
+            .await
+            .unwrap();
+        assert!(verdict.result, "{verdict:?}");
+        assert_eq!(chain.requests(), 0);
+        let local = sources
+            .check_items_ownership(OWNER, &urns, 1_700_000_000_000)
+            .await;
+        assert!(
+            matches!(&local, Ok(r) if !r.result && r.failing.as_ref() == Some(&urns)),
+            "a local deploy still asks: {local:?}"
+        );
+        assert!(chain.requests() > 0);
         let _ = std::fs::remove_dir_all(tmp);
     }
 }

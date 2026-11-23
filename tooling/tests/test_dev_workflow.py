@@ -3,12 +3,15 @@ from pathlib import Path
 import json
 import os
 import re
+import runpy
 import subprocess
 import tempfile
 import textwrap
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+
+from tooling.tests.cache_cleanup_fixture import cache_cleanup_api
 
 
 WORKFLOW = Path(__file__).parents[2] / '.github/workflows/development.yml'
@@ -97,6 +100,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         # One of those shards runs the provisioned Archipelago tests; tooling/dev-regressions.py reads the setting.
         self.assertIn("      CATALYST_TEST_PROVISIONED_SHARD: '1'\n", rust)
         self.assertEqual(rust.count('CATALYST_TEST_PROVISIONED_SHARD:'), 1)
+        # One shard runs the doc-tests; tooling/catalyst-test.sh rejects a shard outside 1 to n.
+        self.assertIn("      CATALYST_TEST_DOC_SHARD: '2'\n", rust)
+        self.assertEqual(rust.count('CATALYST_TEST_DOC_SHARD:'), 1)
         # The dependency cache: the action prunes workspace output before saving, main writes, PRs read.
         self.assertNotIn('actions/cache', rust)
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
@@ -193,11 +199,46 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertEqual(found, {'bevy-explorer-e2e.yml:scenarios'})
         self.assertEqual(unset, set())
 
+    def test_the_tooling_tests_run_beside_smoke_on_the_same_platforms(self):
+        # They need only the dev shell, so smoke does not wait for them and they skip its caches.
+        found = jobs()
+        smoke, tooling = found['smoke'], found['tooling']
+        suite = 'nix develop --command python3 -m unittest discover -s tooling/tests -v\n'
+        self.assertEqual(sum(body.count('unittest discover -s tooling/tests -v') for body in found.values()), 1)
+        self.assertIn(suite, tooling)
+        self.assertIn('    name: Tooling tests\n', tooling)
+        self.assertIn('    needs: changes\n', tooling)
+        head = lambda body: body.split('    timeout-minutes:', 1)[0].split('    if:', 1)[1]
+        self.assertEqual(head(tooling), head(smoke))
+        for cache in ('Restore Rust build cache', 'Restore the pnpm store', 'Reserve disk space', 'cargo-mtimes.py'):
+            self.assertNotIn(cache, tooling)
+        self.assertNotRegex(tooling, r'(?m)^    (env|permissions):')
+
+    def test_smoke_snapshot_preserves_all_active_library_variants(self):
+        prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
+        with tempfile.TemporaryDirectory() as temporary:
+            deps = Path(temporary)
+            stems = ["libcrate-" + str(index) * 16 for index in range(3)]
+            for stem in stems:
+                for suffix in (".rlib", ".rmeta"):
+                    (deps / (stem + suffix)).write_bytes(b"data")
+            other = deps / ("libother-" + "3" * 16 + ".rlib")
+            other.touch()
+            def message(stem):
+                return json.dumps({"reason": "compiler-artifact", "filenames": [str(deps / (stem + ".rlib"))]})
+            receipts = "\n".join(message(stem) for stem in stems[:2])
+            self.assertEqual(prune(deps, receipts), 8)
+            self.assertEqual(prune(deps, receipts), 0)
+            self.assertEqual({path.name for path in deps.iterdir()},
+                             {stem + suffix for stem in stems[:2] for suffix in (".rlib", ".rmeta")} | {other.name})
+            with self.assertRaises(ValueError):
+                prune(deps, "")
+
     def test_smoke_gives_unchanged_sources_the_snapshot_file_times(self):
         # Cargo decides by file time. The snapshot is of no use to Cargo unless the checkout's
         # unchanged files get the times they had when the snapshot was built.
         smoke = jobs()['smoke']
-        restore = '        run: python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
+        restore = '          python3 tooling/cargo-mtimes.py restore services/catalyst/target\n'
         record = '        run: python3 tooling/cargo-mtimes.py record services/catalyst/target\n'
         self.assertEqual(smoke.count(restore), 1)
         self.assertEqual(smoke.count(record), 1)
@@ -210,6 +251,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         condition = lambda name: re.search(r'(?m)^        if: (.+)$', steps[name]).group(1)
         self.assertEqual(condition('Record the source file times in the snapshot'),
                          condition('Save successful smoke build snapshot'))
+        self.assertEqual(condition('Prune superseded Rust libraries from the smoke snapshot'),
+                         condition('Save successful smoke build snapshot'))
+        self.assertLess(smoke.index('python3 tooling/catalyst-smoke-cache.py'), smoke.index(record))
         self.assertNotIn('        if:', steps['Give unchanged sources the file times of the snapshot'])
 
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
@@ -239,7 +283,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
-        self.assertEqual(installs, 4)
+        self.assertEqual(installs, 5)
 
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
@@ -282,24 +326,21 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         ]}]
         with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
                                      'GITHUB_EVENT_NAME': 'pull_request'}), \
-                patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api(pages)) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-            request = listing.call_args.args[0]
+            request = next(call.args[0] for call in cli.call_args_list if '--paginate' in call.args[0])
             self.assertIn('ref=refs/pull/150/merge', request)
             self.assertIn('--paginate', request)
-            self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+            self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
                 'repos/decentraland/dcl-one/actions/caches/3',
                 'repos/decentraland/dcl-one/actions/caches/5',
             ])
             for number in ('', '0', '-1', '../main', '150; echo unsafe'):
                 with self.subTest(number=number), patch.dict(os.environ, {'PR_NUMBER': number}):
-                    listing.reset_mock()
-                    deletion.reset_mock()
+                    cli.reset_mock()
                     with self.assertRaises(ValueError):
                         exec(compile(script, str(CLEANUP), 'exec'), {})
-                    listing.assert_not_called()
-                    deletion.assert_not_called()
+                    cli.assert_not_called()
 
     def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
@@ -334,20 +375,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 23, 'ref': 'refs/pull/11/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'c' * 64},
             {'id': 24, 'ref': 'refs/pull/10/merge', 'key': 'bevy-web-unopt-v1-pr-' + 'a' * 64},
         ]
-        def api(args, **kwargs):
-            if any(arg.endswith('/actions/caches') for arg in args):
-                return json.dumps([{'actions_caches': caches}])
-            if args[-1].endswith('/pulls/10'):
-                return json.dumps({'state': 'closed'})
-            if args[-1].endswith('/pulls/11'):
-                return json.dumps({'state': 'open'})
-            self.fail(f'Unexpected API call: {args}')
         with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
                                      'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
-                patch('subprocess.check_output', side_effect=api) as listing, \
-                patch('subprocess.run') as deletion, patch('builtins.print'):
+                patch('subprocess.run', side_effect=cache_cleanup_api([{'actions_caches': caches}], {'10': 'MERGED'})) as cli, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
-        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+        self.assertEqual([call.args[0][-1] for call in cli.call_args_list if 'DELETE' in call.args[0]], [
             'repos/decentraland/dcl-one/actions/caches/1',
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
@@ -359,7 +391,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/22',
             'repos/decentraland/dcl-one/actions/caches/24',
         ])
-        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
+        self.assertEqual(sum('graphql' in call.args[0] for call in cli.call_args_list), 1)
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         command = re.search(r'^          source=(.*)$', jobs()['smoke'], re.M).group(1)
@@ -408,9 +440,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         linux = "contains(github.event.pull_request.labels.*.name, 'ci:linux')"
         # main always builds; a skipped build is not a failure for the required check.
         self.assertIn(f"    if: github.event_name != 'pull_request' || {label} || {linux}\n", found['creator-hub'])
-        # ci:desktop builds macOS and Windows, ci:linux builds Linux; main builds all three.
+        # ci:desktop builds macOS, Windows and Linux, ci:linux builds Linux alone; main builds all three.
         self.assertIn(f"      macos-windows: ${{{{ github.event_name != 'pull_request' || {label} }}}}\n", found['creator-hub'])
-        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {linux} }}}}\n", found['creator-hub'])
+        self.assertIn(f"      linux: ${{{{ github.ref == 'refs/heads/main' || {label} || {linux} }}}}\n", found['creator-hub'])
         self.assertIn('    needs: [ changes, creator-hub ]\n', found['prune_pre_releases'])
         self.assertIn('creator-hub, prune_pre_releases ]', found['result'])
         self.assertIn('any(.value.result == "failure" or .value.result == "cancelled")', found['result'])

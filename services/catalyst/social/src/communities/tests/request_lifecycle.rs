@@ -218,3 +218,106 @@ async fn wait_for_decisions(pool: &PgPool, blocker: i32, count: i64) {
         "{count} real handlers must reach the locked request before the cancellation is released"
     );
 }
+
+/// A deleted or suspended community answers 404 to likes, unlikes and invite
+/// acceptance, and none of them writes a row.
+#[tokio::test]
+async fn closed_communities_refuse_likes_and_invite_acceptance() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    for closing in [
+        "UPDATE social.communities SET active = FALSE WHERE id = $1",
+        "UPDATE social.communities SET suspended = TRUE, suspended_at = now(), suspended_by = 'op' WHERE id = $1",
+    ] {
+        let (owner, member, invitee) = (wallet(), wallet(), wallet());
+        let community = rig.community(&owner, false).await;
+        rig.member(community, &member, "member").await;
+        let post = rig.post(community, &owner).await;
+        let request = rig.request(community, &invitee, "invite").await;
+        let like = format!("/v1/communities/{community}/posts/{post}/like");
+        sqlx::query(
+            "INSERT INTO social.community_post_likes (post_id, user_address) VALUES ($1, $2)",
+        )
+        .bind(post)
+        .bind(&member.address)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+        sqlx::query(closing)
+            .bind(community)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+
+        let liked = hit(&rig.app, Case::new("post", &like).signed(&owner).await).await;
+        assert_eq!(liked.0, StatusCode::NOT_FOUND, "{closing}: like");
+        let unliked = hit(&rig.app, Case::new("delete", &like).signed(&member).await).await;
+        assert_eq!(unliked.0, StatusCode::NOT_FOUND, "{closing}: unlike");
+        let path = format!("/v1/communities/{community}/requests/{request}");
+        assert_eq!(
+            decide(&rig.app, &invitee, &path, "accepted").await,
+            StatusCode::NOT_FOUND,
+            "{closing}: accept"
+        );
+
+        let likes: Vec<String> = sqlx::query_scalar(
+            "SELECT user_address FROM social.community_post_likes WHERE post_id = $1",
+        )
+        .bind(post)
+        .fetch_all(&rig.pool)
+        .await
+        .unwrap();
+        assert_eq!(likes, vec![member.address.to_string()], "{closing}");
+        assert_eq!(rig.role_of(community, &invitee).await, None, "{closing}");
+    }
+}
+
+/// A deleted or suspended community refuses new requests, including an invite
+/// that would meet a pending join request, and writes nothing.
+#[tokio::test]
+async fn closed_communities_refuse_new_requests_and_auto_accept() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    for closing in [
+        "UPDATE social.communities SET active = FALSE WHERE id = $1",
+        "UPDATE social.communities SET suspended = TRUE, suspended_at = now(), suspended_by = 'op' WHERE id = $1",
+    ] {
+        let (owner, joiner, invitee) = (wallet(), wallet(), wallet());
+        let community = rig.community(&owner, true).await;
+        let pending = rig.request(community, &joiner, "request_to_join").await;
+        sqlx::query(closing)
+            .bind(community)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+
+        let path = format!("/v1/communities/{community}/requests");
+        for target in [&joiner, &invitee] {
+            let invited = hit(
+                &rig.app,
+                Case::new("post", &path)
+                    .signed(&owner)
+                    .await
+                    .json(&json!({"type": "invite", "targetedAddress": target.address.as_str()})),
+            )
+            .await;
+            assert_eq!(invited.0, StatusCode::NOT_FOUND, "{closing}: {}", invited.1);
+        }
+
+        let requests: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, status FROM social.community_requests WHERE community_id = $1",
+        )
+        .bind(community)
+        .fetch_all(&rig.pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            requests,
+            vec![(pending, "pending".to_string())],
+            "{closing}"
+        );
+        assert_eq!(rig.role_of(community, &joiner).await, None, "{closing}");
+    }
+}

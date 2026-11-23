@@ -22,10 +22,10 @@ vi.mock('@explorer-core/lib/shell', () => ({
   }
 }))
 
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import shopStyles from '../features/shop/InWorldShop.module.css'
+import InWorldShop, { type InWorldShopProps } from '@dcl/one-ui/apps/shop/InWorldShop'
+import shopStyles from '@dcl/one-ui/apps/shop/InWorldShop.module.css'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
+import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '@dcl/one-ui/apps/shop/shopProtocol'
 import type { Wearable } from '@explorer-core/engine/protocol'
 import { fakeProfileState } from '@hud/test/harness'
 import { PopupHost, resetPopups } from '@hud/design'
@@ -52,6 +52,9 @@ const row = {
   data: { wearable: { category: 'upper_body', bodyShapes: [], isSmart: false } }
 }
 
+/** The MANA the listings feed quotes for `row` (wei), when a test sets it. */
+let manaWei: string | null = null
+
 /** `row` as the listings feed lists it (what is on sale: the catalogue's default), read from `row` on every answer. */
 const listing = (): Record<string, unknown> => ({
   tradeId: null,
@@ -68,7 +71,7 @@ const listing = (): Record<string, unknown> => ({
   wearableCategory: row.data.wearable.category,
   creator: row.creator,
   priceCredits: row.priceCredits,
-  manaWei: null,
+  manaWei,
   available: row.available,
   network: row.network,
   chainId: row.chainId
@@ -88,11 +91,11 @@ function serveCatalogue(flags: Record<string, boolean> = {}): ReturnType<typeof 
 
 let balance = 700
 /** The shell's answers; `codedErrors` false is a shell from before codes, whose refusals carry words alone. */
-function answerShell(wallet: 'managed' | 'web3' = 'managed', marketplace: boolean | 'reject' = wallet === 'web3', codedErrors = true): void {
+function answerShell(wallet: 'managed' | 'web3' = 'managed', marketplace: boolean | 'reject' = wallet === 'web3', codedErrors = true, mana = false): void {
   shell.request.mockImplementation(async (method: string) => {
     if (method === 'shop.capabilities') {
       if (marketplace === 'reject') throw new Error('the shell did not answer')
-      return { v: 1, buyer: BUYER, wallet, credits: true, marketplace, ...(codedErrors ? { codedErrors } : {}) }
+      return { v: 1, buyer: BUYER, wallet, credits: true, marketplace, ...(codedErrors ? { codedErrors } : {}), ...(mana ? { mana } : {}) }
     }
     if (method === 'shop.balance') return { v: 1, credits: balance }
     if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
@@ -131,7 +134,7 @@ function renderShop(): InWorldShopProps {
 function withShopStyles(): HTMLStyleElement {
   const sheet = document.createElement('style')
   const names = shopStyles as Record<string, string>
-  sheet.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../features/shop/InWorldShop.module.css'), 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
+  sheet.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../library/ui/apps/shop/InWorldShop.module.css'), 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
   document.head.append(sheet)
   return sheet
 }
@@ -184,6 +187,38 @@ describe('buying in the in-world Shop', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Golden Armor' }, { timeout: 5000 }))
     await userEvent.click(await screen.findByRole('button', { name: 'Buy item' }))
     await waitFor(() => expect(shell.request.mock.calls.filter(([m]) => m === 'shop.buy')).toHaveLength(1))
+  })
+
+  it('shows the MANA a credits price comes to under it, only to a buyer the shell shows MANA', async () => {
+    manaWei = '5000000000000000000000'
+    try {
+      serveCatalogue()
+      answerShell('web3', true, true, true)
+      renderShop()
+      await userEvent.click(await screen.findByRole('button', { name: 'Golden Armor' }, { timeout: 5000 }))
+      const panel = await screen.findByRole('complementary', { name: 'Golden Armor' })
+      await waitFor(() => expect(panel.textContent).toContain('≈ 5,000 MANA'))
+      cleanup()
+      // Rounded up as every Shop price is, never below what the wallet is asked for.
+      manaWei = '12999000000000000000'
+      serveCatalogue()
+      answerShell('web3', true, true, true)
+      renderShop()
+      await userEvent.click(await screen.findByRole('button', { name: 'Golden Armor' }, { timeout: 5000 }))
+      const rounded = await screen.findByRole('complementary', { name: 'Golden Armor' })
+      await waitFor(() => expect(rounded.textContent).toContain('≈ 13 MANA'))
+      cleanup()
+      manaWei = '5000000000000000000000'
+      serveCatalogue()
+      answerShell('web3', true, true, false)
+      renderShop()
+      await userEvent.click(await screen.findByRole('button', { name: 'Golden Armor' }, { timeout: 5000 }))
+      const plain = await screen.findByRole('complementary', { name: 'Golden Armor' })
+      await waitFor(() => expect(plain.textContent).toMatch(/500/))
+      expect(plain.textContent).not.toContain('MANA')
+    } finally {
+      manaWei = null
+    }
   })
 
   it('shows the item panel’s stock as the listings read it again after a purchase', async () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   EventCard,
   EventCardAction,
@@ -9,19 +9,21 @@ import { JumpInCTA } from '../../../components/JumpInCTA/JumpInCTA'
 import { PlaceCard } from '../../../components/PlaceCard/PlaceCard'
 import {
   GeneralAddToCalendar,
-  GeneralBell,
   GeneralCopy,
   GeneralReminderOff,
   GeneralReminderOn,
   MenusShare
 } from '../../../foundations/icons'
 import dclLogo from '../assets/dcl-logo.svg'
+import { useEventsCopy } from './locale'
+import styles from './cards.module.css'
 import type {
   DayListCardProps,
   EventCardCreator,
   ExperienceCardProps,
   JumpIn,
   LiveEventCardProps,
+  MyEventCardProps,
   RemindControl
 } from './types'
 
@@ -49,6 +51,7 @@ function LiveNowCard({
   jumpIn,
   priority = false
 }: LiveEventCardProps & { priority?: boolean }) {
+  const { text } = useEventsCopy()
   return (
     <PlaceCard
       variant="live"
@@ -64,7 +67,9 @@ function LiveNowCard({
       live={live}
       creator={creatorOf(creator)}
       jumpHref={jumpIn?.href}
-      jumpLabel="Jump In"
+      jumpLabel={text('Jump In')}
+      liveLabel={text('LIVE')}
+      byLabel={text('By')}
       onJumpIn={jumpIn?.onJumpIn}
     />
   )
@@ -77,17 +82,34 @@ type ActionProps = { title: string; remind?: RemindControl; calendarHref?: strin
  * action exists, so the first result is read too.
  */
 function useCopyLink(href: string) {
-  const [status, setStatus] = useState('')
+  const { text } = useEventsCopy()
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const attempt = useRef(0)
+  useEffect(() => {
+    if (status !== 'copied') return
+    const timer = setTimeout(() => setStatus('idle'), 2000)
+    return () => clearTimeout(timer)
+  }, [status])
+
   const copy = async () => {
+    const current = ++attempt.current
+    setStatus('idle')
+    let outcome: 'copied' | 'failed'
     try {
-      if (!navigator.clipboard) throw new Error('Clipboard unavailable')
       await navigator.clipboard.writeText(new URL(href, window.location.href).href)
-      setStatus('Link copied.')
+      outcome = 'copied'
     } catch {
-      setStatus("Couldn't copy the link. Try again.")
+      outcome = 'failed'
     }
+    if (current === attempt.current) setStatus(outcome)
   }
-  return { status, copy }
+  const message =
+    status === 'copied'
+      ? text('Copied')
+      : status === 'failed'
+        ? text("Couldn't copy the link. Try again.")
+        : ''
+  return { status: message, copy }
 }
 
 /**
@@ -109,13 +131,15 @@ function EventActions({
   jumpIn?: JumpIn
   onCopy: () => void
 }) {
+  const { text } = useEventsCopy()
   const small = size === 'small'
   const glyph = small ? 24 : 20
-  const Reminder = small ? (remind?.active ? GeneralReminderOn : GeneralReminderOff) : GeneralBell
+  const [requestedReminder, setRequestedReminder] = useState(false)
+  const Reminder = remind?.active ? GeneralReminderOn : GeneralReminderOff
   const Share = small ? MenusShare : GeneralCopy
   const share = (
     <EventCardAction
-      aria-label={`Copy link: ${title}`}
+      aria-label={text('{action}: {title}', { action: text('Copy link'), title })}
       icon={<Share size={glyph} aria-hidden="true" />}
       onClick={onCopy}
     />
@@ -126,9 +150,10 @@ function EventActions({
         {jumpIn ? (
           <JumpInCTA
             size="sm"
+            label={text('Jump in')}
             href={jumpIn.href}
             onClick={jumpIn.onJumpIn}
-            aria-label={`Jump in: ${title}`}
+            aria-label={text('{action}: {title}', { action: text('Jump in'), title })}
           />
         ) : null}
         {share}
@@ -138,17 +163,26 @@ function EventActions({
     <>
       {remind ? (
         <EventCardAction
-          aria-label={`Remind me: ${title}`}
+          aria-label={text('{action}: {title}', { action: text('Remind me'), title })}
           aria-pressed={remind.active}
           disabled={remind.pending}
-          icon={<Reminder size={glyph} aria-hidden="true" />}
-          label={small ? undefined : 'Remind me'}
-          onClick={remind.onToggle}
+          icon={
+            <Reminder
+              size={glyph}
+              className={requestedReminder && remind.active ? styles.reminderShake : undefined}
+              aria-hidden="true"
+            />
+          }
+          label={small ? undefined : text('Remind me')}
+          onClick={() => {
+            setRequestedReminder(!remind.active)
+            remind.onToggle()
+          }}
         />
       ) : null}
       {calendarHref ? (
         <EventCardActionLink
-          aria-label={`Add to calendar: ${title}`}
+          aria-label={text('{action}: {title}', { action: text('Add to calendar'), title })}
           href={calendarHref}
           target="_blank"
           rel="noopener noreferrer"
@@ -178,10 +212,13 @@ function UpcomingCard({
   usersLabel,
   jumpIn
 }: DayListCardProps) {
+  const { text } = useEventsCopy()
   const { status, copy } = useCopyLink(href)
   return (
     <EventCard
       variant="small"
+      liveLabel={text('LIVE')}
+      byLabel={text('by')}
       title={title}
       href={href}
       onOpen={onOpen}
@@ -203,11 +240,12 @@ function UpcomingCard({
         />
       }
       announcement={status}
+      showAnnouncement
     />
   )
 }
 
-/** A card in an All Events day column: a live event shows its badges, a later one its time and actions. */
+/** A card in an All Events day column, with actions matched to the event state. */
 function DayCard({
   title,
   image,
@@ -219,8 +257,10 @@ function DayCard({
   live,
   time,
   remind,
-  calendarHref
+  calendarHref,
+  jumpIn
 }: ExperienceCardProps) {
+  const { text } = useEventsCopy()
   const { status, copy } = useCopyLink(href)
   return (
     <EventCard
@@ -230,25 +270,51 @@ function DayCard({
       onOpen={onOpen}
       image={image}
       creator={creatorOf(creator)}
-      byLabel="By"
+      byLabel={text('By')}
+      liveLabel={text('LIVE')}
       live={live}
       players={live ? users : undefined}
       playersLabel={live ? usersLabel : undefined}
       time={live ? undefined : time}
       actions={
-        live ? undefined : (
-          <EventActions
-            size="day"
-            title={title}
-            remind={remind}
-            calendarHref={calendarHref}
-            onCopy={() => void copy()}
-          />
-        )
+        <EventActions
+          size="day"
+          title={title}
+          live={live}
+          jumpIn={jumpIn}
+          remind={remind}
+          calendarHref={calendarHref}
+          onCopy={() => void copy()}
+        />
       }
-      announcement={live ? undefined : status}
+      announcement={status}
+      showAnnouncement
     />
   )
 }
 
-export { DayCard, LiveNowCard, UpcomingCard }
+const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected' } as const
+
+/**
+ * My Events: the day card without actions, opening the event's editor. Its review status sits over the
+ * cover, and an event still in review is dimmed, as source.
+ */
+function MyEventCard({ title, image, href, creator, time, status }: MyEventCardProps) {
+  const { text } = useEventsCopy()
+  return (
+    <div className={styles.mine} data-status={status} data-cover={image ? '' : undefined}>
+      <span className={styles.status}>{text(STATUS_LABEL[status])}</span>
+      <EventCard
+        variant="day"
+        title={title}
+        href={href}
+        image={image}
+        creator={creatorOf(creator)}
+        byLabel={text('By')}
+        time={time}
+      />
+    </div>
+  )
+}
+
+export { DayCard, LiveNowCard, MyEventCard, UpcomingCard }

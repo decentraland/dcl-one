@@ -1,4 +1,4 @@
-import { after, afterEach, before, describe, it, type TestContext } from 'node:test'
+import { after, afterEach, before, beforeEach, describe, it, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { chmod, mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -30,39 +30,56 @@ async function script(body: string) {
 }
 
 describe('when starting a capture browser', () => {
-  it('should skip a non-executable candidate', async () => {
-    const { file } = await script('process.exit(0)')
-    await chmod(file, 0o644)
-    assert.equal(await findBrowser([file, process.execPath]), process.execPath)
+  describe('and a candidate is not executable', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script('process.exit(0)'))
+      await chmod(file, 0o644)
+    })
+    it('should skip the non-executable candidate', async () => {
+      assert.equal(await findBrowser([file, process.execPath]), process.execPath)
+    })
   })
-  it('should fail promptly if the child exits before publishing its DevTools port', async () => {
-    const { file } = await script('process.exit(7)')
-    const begin = Date.now()
-    await assert.rejects(openSession(file), /exited during startup/)
-    assert.ok(Date.now() - begin < 2000)
+  describe('and the child exits before publishing its DevTools port', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script('process.exit(7)'))
+    })
+    it('should fail promptly', async () => {
+      const begin = Date.now()
+      await assert.rejects(openSession(file), /exited during startup/)
+      assert.ok(Date.now() - begin < 2000)
+    })
   })
-  it('should cancel startup and remove the browser profile', async () => {
-    const { folder, file } = await script('process.exit(0)')
-    const marker = path.join(folder, 'profile')
-    await writeFile(
-      file,
-      `#!/bin/sh\nexec '${process.execPath}' -e 'require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16)); setInterval(()=>{},1000)' -- "$@"\n`
-    )
-    const controller = new AbortController()
-    const pending = openSession(file, { signal: controller.signal })
-    let profile = ''
-    for (let i = 0; i < 100; i++) {
-      try {
-        profile = await readFile(marker, 'utf8')
-        break
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 10))
+  describe('and startup is cancelled', () => {
+    let file: string
+    let marker: string
+    beforeEach(async () => {
+      let folder: string
+      ;({ folder, file } = await script('process.exit(0)'))
+      marker = path.join(folder, 'profile')
+      await writeFile(
+        file,
+        `#!/bin/sh\nexec '${process.execPath}' -e 'require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16)); setInterval(()=>{},1000)' -- "$@"\n`
+      )
+    })
+    it('should cancel startup and remove the browser profile', async () => {
+      const controller = new AbortController()
+      const pending = openSession(file, { signal: controller.signal })
+      let profile = ''
+      for (let i = 0; i < 100; i++) {
+        try {
+          profile = await readFile(marker, 'utf8')
+          break
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
       }
-    }
-    assert.ok(profile)
-    controller.abort(new Error('cancelled startup'))
-    await assert.rejects(pending, /cancelled startup/)
-    await assert.rejects(stat(profile), { code: 'ENOENT' })
+      assert.ok(profile)
+      controller.abort(new Error('cancelled startup'))
+      await assert.rejects(pending, /cancelled startup/)
+      await assert.rejects(stat(profile), { code: 'ENOENT' })
+    })
   })
 })
 describe('when startup diagnostics explain a failed browser launch', () => {
@@ -90,15 +107,20 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.ok(!JSON.stringify(diagnostic).includes(path.dirname(file)))
   })
 
-  it('should let the caller exit when a failed browser leaves an inherited stderr writer', async () => {
-    const { file } = await script(
-      'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},8000)"],{stdio:["ignore","ignore",2]}).unref();process.exit(7)'
-    )
-    const source = new URL('../scripts/capture-browser.mjs', import.meta.url).href
-    const runner = `import {openSession} from ${JSON.stringify(source)};try{await openSession(${JSON.stringify(file)});process.exitCode=1}catch(error){if(!error.message.includes('exited during startup'))throw error}`
-    execFileSync(process.execPath, ['--input-type=module', '-e', runner], {
-      timeout: 3000,
-      stdio: 'pipe'
+  describe('and the failed browser leaves an inherited stderr writer', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script(
+        'require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},8000)"],{stdio:["ignore","ignore",2]}).unref();process.exit(7)'
+      ))
+    })
+    it('should let the caller exit', async () => {
+      const source = new URL('../scripts/capture-browser.mjs', import.meta.url).href
+      const runner = `import {openSession} from ${JSON.stringify(source)};try{await openSession(${JSON.stringify(file)});process.exitCode=1}catch(error){if(!error.message.includes('exited during startup'))throw error}`
+      execFileSync(process.execPath, ['--input-type=module', '-e', runner], {
+        timeout: 3000,
+        stdio: 'pipe'
+      })
     })
   })
 
@@ -122,33 +144,43 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.equal(diagnostic.port.validObserved, false)
   })
 
-  it('should report a partial port read when the polling budget expires', async (t) => {
-    const log = t.mock.method(console, 'error', () => {})
-    const { file } = await script(
-      'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").writeFileSync(dir+"/DevToolsActivePort","not-a-port");setInterval(()=>{},1000)'
-    )
-    await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
-    const diagnostic = report(log.mock.calls)
-    assert.equal(diagnostic.port.state, 'partial')
-    assert.equal(diagnostic.port.validObserved, false)
-    assert.equal(diagnostic.port.lastFsError, null)
-    assert.equal(diagnostic.phase, 'port-file')
+  describe('and the polling budget expires on a partial port read', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script(
+        'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").writeFileSync(dir+"/DevToolsActivePort","not-a-port");setInterval(()=>{},1000)'
+      ))
+    })
+    it('should report the partial port read', async (t) => {
+      const log = t.mock.method(console, 'error', () => {})
+      await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
+      const diagnostic = report(log.mock.calls)
+      assert.equal(diagnostic.port.state, 'partial')
+      assert.equal(diagnostic.port.validObserved, false)
+      assert.equal(diagnostic.port.lastFsError, null)
+      assert.equal(diagnostic.phase, 'port-file')
+    })
   })
 
-  it('should retain the last filesystem error when the start limit expires', async (t) => {
-    const log = t.mock.method(console, 'error', () => {})
-    const { file } = await script(
-      'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").mkdirSync(dir+"/DevToolsActivePort");setInterval(()=>{},1000)'
-    )
-    const started = performance.now()
-    await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
-    const waited = performance.now() - started
-    assert.ok(waited >= 500 && waited < 5000, `waited ${waited} ms`)
-    const diagnostic = report(log.mock.calls)
-    assert.equal(diagnostic.port.lastFsError, 'EISDIR')
-    assert.equal(diagnostic.port.validObserved, false)
-    assert.equal(diagnostic.exitCode, null)
-    assert.equal(diagnostic.signal, null)
+  describe('and the start limit expires on a filesystem error', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script(
+        'const dir=process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16);require("node:fs").mkdirSync(dir+"/DevToolsActivePort");setInterval(()=>{},1000)'
+      ))
+    })
+    it('should retain the last filesystem error', async (t) => {
+      const log = t.mock.method(console, 'error', () => {})
+      const started = performance.now()
+      await assert.rejects(openSession(file, { startTimeoutMs: 500 }), /did not start/)
+      const waited = performance.now() - started
+      assert.ok(waited >= 500 && waited < 5000, `waited ${waited} ms`)
+      const diagnostic = report(log.mock.calls)
+      assert.equal(diagnostic.port.lastFsError, 'EISDIR')
+      assert.equal(diagnostic.port.validObserved, false)
+      assert.equal(diagnostic.exitCode, null)
+      assert.equal(diagnostic.signal, null)
+    })
   })
 
   it('should sanitize split stderr lines and omit overlong lines before bounding the report', async (t) => {
@@ -210,30 +242,42 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.match(diagnostic.stderr, /redacted/)
   })
 
-  it('should preserve startup failure and cleanup when home lookup fails', async (t) => {
-    const log = t.mock.method(console, 'error', () => {})
-    const { folder, file } = await script('process.exit(0)')
-    const marker = path.join(folder, 'profile')
-    await writeFile(
-      file,
-      `#!/bin/sh\nexec '${process.execPath}' -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(marker)},process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16));fs.writeSync(2,"private startup details\\n");process.exit(8)' -- "$@"\n`
-    )
-    t.mock.method(os, 'homedir', () => {
-      throw new Error('home unavailable')
+  describe('and home lookup fails', () => {
+    let file: string
+    let marker: string
+    beforeEach(async () => {
+      let folder: string
+      ;({ folder, file } = await script('process.exit(0)'))
+      marker = path.join(folder, 'profile')
+      await writeFile(
+        file,
+        `#!/bin/sh\nexec '${process.execPath}' -e 'const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(marker)},process.argv.find(x=>x.startsWith("--user-data-dir=")).slice(16));fs.writeSync(2,"private startup details\\n");process.exit(8)' -- "$@"\n`
+      )
     })
-    await assert.rejects(openSession(file), /exited during startup/)
-    await assert.rejects(stat(await readFile(marker, 'utf8')), { code: 'ENOENT' })
-    assert.ok(!report(log.mock.calls).stderr.includes('private startup details'))
+    it('should preserve the startup failure and cleanup', async (t) => {
+      const log = t.mock.method(console, 'error', () => {})
+      t.mock.method(os, 'homedir', () => {
+        throw new Error('home unavailable')
+      })
+      await assert.rejects(openSession(file), /exited during startup/)
+      await assert.rejects(stat(await readFile(marker, 'utf8')), { code: 'ENOENT' })
+      assert.ok(!report(log.mock.calls).stderr.includes('private startup details'))
+    })
   })
 
-  it('should preserve diagnostic slashes when the home directory is the filesystem root', async (t) => {
-    const log = t.mock.method(console, 'error', () => {})
-    t.mock.method(os, 'homedir', () => '/')
-    const { file } = await script(
-      'require("node:fs").writeSync(2,"port /tmp/devtools\\n");process.exit(8)'
-    )
-    await assert.rejects(openSession(file), /exited during startup/)
-    assert.match(report(log.mock.calls).stderr, /port \/tmp\/devtools/)
+  describe('and the home directory is the filesystem root', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script(
+        'require("node:fs").writeSync(2,"port /tmp/devtools\\n");process.exit(8)'
+      ))
+    })
+    it('should preserve diagnostic slashes', async (t) => {
+      const log = t.mock.method(console, 'error', () => {})
+      t.mock.method(os, 'homedir', () => '/')
+      await assert.rejects(openSession(file), /exited during startup/)
+      assert.match(report(log.mock.calls).stderr, /port \/tmp\/devtools/)
+    })
   })
 
   it('should snapshot startup output before teardown noise is emitted', async (t) => {
@@ -246,12 +290,17 @@ describe('when startup diagnostics explain a failed browser launch', () => {
     assert.ok(!report(log.mock.calls).stderr.includes('shutdown noise'))
   })
 
-  it('should retain the primary failure if diagnostic logging is unavailable', async (t) => {
-    t.mock.method(console, 'error', () => {
-      throw new Error('logger unavailable')
+  describe('and diagnostic logging is unavailable', () => {
+    let file: string
+    beforeEach(async () => {
+      ;({ file } = await script('process.exit(8)'))
     })
-    const { file } = await script('process.exit(8)')
-    await assert.rejects(openSession(file), /exited during startup/)
+    it('should retain the primary failure', async (t) => {
+      t.mock.method(console, 'error', () => {
+        throw new Error('logger unavailable')
+      })
+      await assert.rejects(openSession(file), /exited during startup/)
+    })
   })
 
   it('should preserve an explicit abort reason without emitting a startup failure diagnostic', async (t) => {
@@ -280,13 +329,15 @@ describe('when capture cleanup also fails', () => {
     )
     assert.deepEqual(diagnostics, [['Capture cleanup failed:', cleanup]])
   })
-  it('should surface cleanup failures after a successful capture', async () => {
-    await assert.rejects(
-      cleanupCapture(undefined, async () => {
-        throw new Error('profile busy')
-      }),
-      /profile busy/
-    )
+  describe('and the capture itself succeeded', () => {
+    it('should surface the cleanup failure', async () => {
+      await assert.rejects(
+        cleanupCapture(undefined, async () => {
+          throw new Error('profile busy')
+        }),
+        /profile busy/
+      )
+    })
   })
 })
 describe('when a capture receives a termination signal', () => {
@@ -549,44 +600,48 @@ describe('when capture startup waits for a usable port record', () => {
   })
 
   for (const failure of ['abort', 'spawn-error'] as const)
-    it(`should preserve an untagged ${failure} while the port file is missing`, async (t) => {
+    describe(`and ${failure} happens while the port file is missing`, () => {
+      it(`should preserve the untagged ${failure}`, async (t) => {
+        const fixture = await startup(t, [])
+        const controller = new AbortController()
+        const reason = Object.freeze(new Error('original startup failure'))
+        fixture.readFile.mock.mockImplementation((async () => {
+          throw Object.assign(new Error('absent'), { code: 'ENOENT' })
+        }) as unknown as typeof fs.readFile)
+        fixture.setTimeout.mock.mockImplementation((async () => {
+          if (failure === 'abort') controller.abort(reason)
+          else fixture.browser.emit('error', reason)
+        }) as typeof timers.setTimeout)
+        syncBuiltinESMExports()
+        await assert.rejects(
+          fixture.open('capture-fixture', { signal: controller.signal }),
+          (error) => error === reason
+        )
+        assert.ok(!('code' in reason))
+        if (failure === 'abort') assert.deepEqual(fixture.diagnostics, [])
+        await cleaned(fixture)
+      })
+    })
+
+  describe('and the child exits during the final delay while the port file is missing', () => {
+    it('should leave the child exit untagged', async (t) => {
       const fixture = await startup(t, [])
-      const controller = new AbortController()
-      const reason = Object.freeze(new Error('original startup failure'))
       fixture.readFile.mock.mockImplementation((async () => {
         throw Object.assign(new Error('absent'), { code: 'ENOENT' })
       }) as unknown as typeof fs.readFile)
-      fixture.setTimeout.mock.mockImplementation((async () => {
-        if (failure === 'abort') controller.abort(reason)
-        else fixture.browser.emit('error', reason)
+      fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
+        fixture.delays.push(ms)
+        fixture.clock.now += ms
+        if (fixture.delays.length === 300) fixture.browser.exitCode = 7
       }) as typeof timers.setTimeout)
       syncBuiltinESMExports()
-      await assert.rejects(
-        fixture.open('capture-fixture', { signal: controller.signal }),
-        (error) => error === reason
-      )
-      assert.ok(!('code' in reason))
-      if (failure === 'abort') assert.deepEqual(fixture.diagnostics, [])
+      await assert.rejects(fixture.open('capture-fixture'), (error: NodeJS.ErrnoException) => {
+        assert.equal(error.message, 'Capture browser exited during startup')
+        assert.equal(error.code, undefined)
+        return true
+      })
       await cleaned(fixture)
     })
-
-  it('should leave a final-delay child exit untagged even when the port file is missing', async (t) => {
-    const fixture = await startup(t, [])
-    fixture.readFile.mock.mockImplementation((async () => {
-      throw Object.assign(new Error('absent'), { code: 'ENOENT' })
-    }) as unknown as typeof fs.readFile)
-    fixture.setTimeout.mock.mockImplementation((async (ms: number) => {
-      fixture.delays.push(ms)
-      fixture.clock.now += ms
-      if (fixture.delays.length === 300) fixture.browser.exitCode = 7
-    }) as typeof timers.setTimeout)
-    syncBuiltinESMExports()
-    await assert.rejects(fixture.open('capture-fixture'), (error: NodeJS.ErrnoException) => {
-      assert.equal(error.message, 'Capture browser exited during startup')
-      assert.equal(error.code, undefined)
-      return true
-    })
-    await cleaned(fixture)
   })
 
   it('should preserve a spawn error during the final polling delay', async (t) => {
@@ -623,30 +678,34 @@ describe('when capture startup waits for a usable port record', () => {
       assert.deepEqual(fixture.diagnostics, [])
       await cleaned(fixture)
     })
-  it('should preserve cancellation identity between readable invalid records and clean up when logging throws', async (t) => {
-    const fixture = await startup(t, ['1'])
-    const controller = new AbortController()
-    const reason = Object.freeze(new Error('cancelled fixture startup'))
-    fixture.setTimeout.mock.mockImplementation((async () => {
-      controller.abort(reason)
-    }) as typeof timers.setTimeout)
-    fixture.error.mock.mockImplementation(() => {
-      throw new Error('logger unavailable')
+  describe('and logging throws while startup is cancelled between readable invalid records', () => {
+    it('should preserve cancellation identity and clean up', async (t) => {
+      const fixture = await startup(t, ['1'])
+      const controller = new AbortController()
+      const reason = Object.freeze(new Error('cancelled fixture startup'))
+      fixture.setTimeout.mock.mockImplementation((async () => {
+        controller.abort(reason)
+      }) as typeof timers.setTimeout)
+      fixture.error.mock.mockImplementation(() => {
+        throw new Error('logger unavailable')
+      })
+      syncBuiltinESMExports()
+      await assert.rejects(
+        fixture.open('capture-fixture', { signal: controller.signal }),
+        (error) => error === reason
+      )
+      assert.deepEqual(fixture.endpoints, [])
+      await cleaned(fixture)
     })
-    syncBuiltinESMExports()
-    await assert.rejects(
-      fixture.open('capture-fixture', { signal: controller.signal }),
-      (error) => error === reason
-    )
-    assert.deepEqual(fixture.endpoints, [])
-    await cleaned(fixture)
   })
 })
-it('should restore startup fixture builtins before later sessions', () => {
-  assert.equal(fs.readFile, startupBuiltins.readFile)
-  assert.equal(timers.setTimeout, startupBuiltins.setTimeout)
-  assert.equal(console.error, startupBuiltins.error)
-  assert.equal(performance.now, startupBuiltins.now)
+describe('when the startup fixtures have finished', () => {
+  it('should restore startup fixture builtins before later sessions', () => {
+    assert.equal(fs.readFile, startupBuiltins.readFile)
+    assert.equal(timers.setTimeout, startupBuiltins.setTimeout)
+    assert.equal(console.error, startupBuiltins.error)
+    assert.equal(performance.now, startupBuiltins.now)
+  })
 })
 
 // A browser that publishes a DevTools port in its profile and then stays up until it is stopped.
@@ -748,15 +807,19 @@ describe('when an evaluation loses its document', () => {
     assert.ok(error instanceof NavigationInterrupted, String(error))
     assert.match(String(error.cause), /Inspected target navigated or closed/)
   })
-  it('should keep the CDP error when no navigation was observed, as a closed or crashed target answers', async () => {
-    const { error, NavigationInterrupted } = await evaluateWith([], contextLost)
-    assert.ok(!(error instanceof NavigationInterrupted))
-    assert.match(error.message, /Inspected target navigated or closed/)
+  describe('and no navigation was observed', () => {
+    it('should keep the CDP error, as a closed or crashed target answers', async () => {
+      const { error, NavigationInterrupted } = await evaluateWith([], contextLost)
+      assert.ok(!(error instanceof NavigationInterrupted))
+      assert.match(error.message, /Inspected target navigated or closed/)
+    })
   })
-  it('should keep the CDP error when only a child frame navigated', async () => {
-    const { error, NavigationInterrupted } = await evaluateWith([started('child')], contextLost)
-    assert.ok(!(error instanceof NavigationInterrupted))
-    assert.match(error.message, /Inspected target navigated or closed/)
+  describe('and only a child frame navigated', () => {
+    it('should keep the CDP error', async () => {
+      const { error, NavigationInterrupted } = await evaluateWith([started('child')], contextLost)
+      assert.ok(!(error instanceof NavigationInterrupted))
+      assert.match(error.message, /Inspected target navigated or closed/)
+    })
   })
   it('should keep any other CDP error during a navigation', async () => {
     const { error, NavigationInterrupted } = await evaluateWith([started('top')], {
@@ -922,7 +985,7 @@ describe('when a real page navigates', () => {
       'complete /landed'
     )
   })
-  it('should reject an evaluation pending when the page navigates as NavigationInterrupted, then evaluate in the new document', async () => {
+  it('should reject an evaluation still pending across a page navigation as NavigationInterrupted, then evaluate in the new document', async () => {
     await session.navigate(`${origin}/first`)
     const { NavigationInterrupted } = await import('../scripts/capture-browser.mjs')
     await assert.rejects(

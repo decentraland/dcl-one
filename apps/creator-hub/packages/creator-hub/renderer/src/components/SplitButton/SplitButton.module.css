@@ -1,5 +1,10 @@
-.popover {
+/* Doubled so it outranks the Popover's own `.root`, whatever order the two stylesheets load in. */
+.popover.popover {
   --overlay-surface: var(--secondary);
   --overlay-radius: 4px;
   --overlay-shadow: none;
+  /* The Play options' Desktop Client flyout sits beside the menu, outside the surface; the
+     Popover's `overflow: auto` cut it off, so it never showed. These menus are short and never
+     need to scroll. */
+  overflow: visible;
 }

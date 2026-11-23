@@ -13,7 +13,6 @@ import { profileKeys } from "../profile/queries";
 import {
   blogIndexToMarkdown,
   blogPostToMarkdown,
-  communityToMarkdown,
   discoverToMarkdown,
   eventDetailToMarkdown,
   legalDocToMarkdown,
@@ -52,7 +51,7 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   whatsOn: (data) => {
     const d = data as { tab?: "my" | null; dehydratedState?: DehydratedState | null } | undefined;
     if (!d) return null;
-    if (d.tab === "my") return whatsOnToMarkdown({ tab: "my" });
+    if (d.tab === "my") return whatsOnToMarkdown({ ...eventsAgentData(d.dehydratedState), tab: "my" });
     // An event link (`?id=`) describes that event, as its old `/whats-on/:id` page did.
     const event = eventsAgentDetail(d.dehydratedState);
     return event ? eventDetailToMarkdown(event) : whatsOnToMarkdown(eventsAgentData(d.dehydratedState));
@@ -81,10 +80,6 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   discover: (data) => {
     const d = data as { content?: Parameters<typeof discoverToMarkdown>[0] | null } | undefined;
     return d?.content ? discoverToMarkdown(d.content) : null;
-  },
-  communityDetail: (data) => {
-    const d = data as { detail?: Parameters<typeof communityToMarkdown>[0] | null } | undefined;
-    return d?.detail && d.detail.source === "live" ? communityToMarkdown(d.detail) : null;
   },
 };
 

@@ -25,13 +25,31 @@ use super::http::{
     get_pagination_params, handler_error as err_json,
 };
 use super::profiles::ProfileInfo;
-use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
+use super::thumbnail::{
+    StoreThumbnailError, detect_image_mime_type, store_thumbnail, validate_thumbnail,
+};
 use super::write_support::{
     ClientCommunityWriteAuthority, Refusal, acquire_membership, load_client_standing, map_db,
     parse_community_id, parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
 use crate::notifications::community::{Audience, CommunityEvent, notify};
+
+/// A thumbnail that could not be stored: 503 while the store lock is busy,
+/// otherwise 500.
+fn thumbnail_failed(e: &StoreThumbnailError) -> Response {
+    if e.busy() {
+        return err_json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the content store is being collected; retry shortly",
+        );
+    }
+    tracing::error!(error = %e, "failed to store community thumbnail");
+    err_json(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "failed to store thumbnail",
+    )
+}
 
 const MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE: usize = 3;
 const MAX_LIMIT_FOR_MINIMAL_RESPONSE: i64 = 50;
@@ -222,26 +240,74 @@ async fn enrich_with_friends(
     Ok(())
 }
 
+/// A URL versioned by the current hash never changes content.
+const THUMBNAIL_CACHE_VERSIONED: &str = "public, max-age=86400, immutable";
+/// The bare (or stale-versioned) URL changes on update: revalidate soon.
+const THUMBNAIL_CACHE_UNVERSIONED: &str = "public, max-age=60";
+
+/// A miss is short-cached (clients ask for every community's bare path); a
+/// server error is not cached.
+fn thumbnail_error(status: StatusCode, message: &'static str) -> Response {
+    let cache = if status.is_server_error() {
+        "no-store"
+    } else {
+        THUMBNAIL_CACHE_UNVERSIONED
+    };
+    (
+        status,
+        [(header::CACHE_CONTROL, HeaderValue::from_static(cache))],
+        message,
+    )
+        .into_response()
+}
+
+/// Serves the stored thumbnail: long-cached when `v` names the current
+/// hash, short-cached with an ETag otherwise.
 pub async fn get_raw_thumbnail(
     State(state): State<SharedState>,
     Path(id_str): Path<String>,
+    Query(pairs): Query<Vec<(String, String)>>,
+    request_headers: HeaderMap,
 ) -> Response {
     let Ok(id) = CommunityId::parse(&id_str) else {
-        return (StatusCode::NOT_FOUND, "thumbnail not found").into_response();
+        return thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found");
     };
     let hash = match queries::thumbnail_hash(&state.pool, id).await {
         Ok(h) => h,
         Err(e) => {
             tracing::error!(error = %e, "raw-thumbnail: db error");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "database error").into_response();
+            return thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "database error");
         }
     };
     let Some(hash) = hash else {
-        return (StatusCode::NOT_FOUND, "thumbnail not found").into_response();
+        return thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found");
     };
+    let mut headers = HeaderMap::new();
+    let versioned = get_first(&pairs, super::THUMBNAIL_VERSION_PARAM).as_deref() == Some(&hash);
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(if versioned {
+            THUMBNAIL_CACHE_VERSIONED
+        } else {
+            THUMBNAIL_CACHE_UNVERSIONED
+        }),
+    );
+    let etag = HeaderValue::from_str(&format!("\"{hash}\"")).ok();
+    if let Some(etag) = &etag {
+        headers.insert(header::ETAG, etag.clone());
+        let matches = request_headers
+            .get_all(header::IF_NONE_MATCH)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .map(|t| t.trim().trim_start_matches("W/"))
+            .any(|t| t == "*" || t.as_bytes() == etag.as_bytes());
+        if matches {
+            return (StatusCode::NOT_MODIFIED, headers).into_response();
+        }
+    }
     match state.storage.retrieve(&hash).await {
         Ok(Some(bytes)) => {
-            let mut headers = HeaderMap::new();
             let content_type = detect_image_mime_type(&bytes)
                 .map(|m| m.as_str())
                 .unwrap_or("image/png");
@@ -251,10 +317,10 @@ pub async fn get_raw_thumbnail(
             }
             (StatusCode::OK, headers, bytes).into_response()
         }
-        Ok(None) => (StatusCode::NOT_FOUND, "thumbnail not found").into_response(),
+        Ok(None) => thumbnail_error(StatusCode::NOT_FOUND, "thumbnail not found"),
         Err(e) => {
             tracing::error!(error = %e, hash = %hash, "raw-thumbnail: blob store error");
-            (StatusCode::INTERNAL_SERVER_ERROR, "content store error").into_response()
+            thumbnail_error(StatusCode::INTERNAL_SERVER_ERROR, "content store error")
         }
     }
 }
@@ -614,7 +680,7 @@ pub async fn create_community(
         Some(v) => try_resp!(parse_visibility(v)),
         None => "all".to_string(),
     };
-    let place_ids = fields.place_ids.unwrap_or_default();
+    let place_ids = super::places::canonical_place_ids(&fields.place_ids.unwrap_or_default());
     if !match state.has_owned_name(&signer).await {
         Ok(owns) => owns,
         Err(error) => return error.into_response(),
@@ -669,20 +735,20 @@ pub async fn create_community(
         .execute(&mut *tx)
         .await
     ));
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&mut *tx, &state.storage, id, bytes).await
-    {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
+    let mut stored_hash = None;
+    if let Some(bytes) = thumbnail.as_deref() {
+        match store_thumbnail(&mut tx, &state.storage, id, bytes).await {
+            Ok(hash) => stored_hash = Some(hash),
+            Err(e) => return thumbnail_failed(&e),
+        }
     }
     if !place_ids.is_empty() {
         try_resp!(map_db(
             sqlx::query(
                 "INSERT INTO social.community_places (place_id, community_id, added_by) \
                  SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
+                 WHERE NOT EXISTS (SELECT 1 FROM social.community_places e \
+                   WHERE e.community_id = $2 AND lower(e.place_id) = p) \
                  ON CONFLICT (place_id, community_id) DO NOTHING",
             )
             .bind(&place_ids)
@@ -705,12 +771,12 @@ pub async fn create_community(
         "ownerName": owner_name,
         "isHostingLiveEvent": false,
     });
-    if thumbnail.is_some()
+    if let Some(hash) = stored_hash.as_deref()
         && let Some(m) = data.as_object_mut()
     {
         m.insert(
             "thumbnails".to_string(),
-            json!({ "raw": state.thumbnail_url(id) }),
+            json!({ "raw": state.versioned_thumbnail_url(id, Some(hash)) }),
         );
     }
     (
@@ -827,15 +893,11 @@ pub async fn update_community(
     // owner/moderator tiers as the edit check above.
     let place_ids: Option<Vec<String>> = match fields.place_ids {
         Some(ids) => {
-            let mut unique: Vec<String> = Vec::new();
-            for id in ids {
-                if !unique.contains(&id) {
-                    unique.push(id);
-                }
-            }
+            let unique = super::places::canonical_place_ids(&ids);
+            // lower(): rows written before ids were canonicalized keep their standing
             let held: Vec<String> = try_resp!(map_db(
                 sqlx::query_scalar(
-                    "SELECT place_id FROM social.community_places WHERE community_id = $1"
+                    "SELECT lower(place_id) FROM social.community_places WHERE community_id = $1"
                 )
                 .bind(uuid)
                 .fetch_all(&state.pool)
@@ -905,19 +967,35 @@ pub async fn update_community(
     ));
     // A rename broadcast starts after the first committed UPDATE, before the
     // separately fallible thumbnail, places and request-acceptance stages.
+    let mut stored_signal = None;
     if let (Some(new_name), Some((old_name, _, _, _))) = (name.as_deref(), current)
         && new_name.trim() != old_name.trim()
     {
         let (state, old_name, new_name) = (state.clone(), old_name.clone(), new_name.to_owned());
-        tokio::spawn(async move {
-            let Ok(has_thumbnail) = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM social.community_thumbnails WHERE community_id=$1)",
-            )
-            .bind(uuid)
-            .fetch_one(&state.pool)
-            .await
-            else {
-                return;
+        // A thumbnail sent with the rename is named once stored; a failed
+        // store drops the sender and the stored version stands.
+        let stored = thumbnail.is_some().then(|| {
+            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+            stored_signal = Some(tx);
+            rx
+        });
+        crate::shared::task::spawn(async move {
+            let incoming = match stored {
+                Some(rx) => rx.await.ok(),
+                None => None,
+            };
+            let hash = match incoming {
+                Some(hash) => Some(hash),
+                None => match sqlx::query_scalar::<_, String>(
+                    "SELECT thumbnail_hash FROM social.community_thumbnails WHERE community_id=$1",
+                )
+                .bind(uuid)
+                .fetch_optional(&state.pool)
+                .await
+                {
+                    Ok(hash) => hash,
+                    Err(_) => return,
+                },
             };
             let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
             let event = CommunityEvent {
@@ -925,31 +1003,54 @@ pub async fn update_community(
                 key: format!("{uuid}-{}-{}", slug(&new_name), slug(&old_name)),
                 community_id: uuid,
                 metadata: json!({"communityId":uuid.as_uuid(), "oldName":old_name,
-                    "newName":new_name, "thumbnailUrl":stored_thumbnail_or_na(&state,has_thumbnail,uuid)}),
+                    "newName":new_name, "thumbnailUrl":stored_thumbnail_or_na(&state,hash.as_deref(),uuid)}),
             };
             notify(&state.pool, event, Audience::Members).await;
         });
     }
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
-    {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
+    let mut stored_hash = None;
+    if let Some(bytes) = thumbnail.as_deref() {
+        let stored = async {
+            let mut tx = state.pool.begin().await?;
+            let hash = store_thumbnail(&mut tx, &state.storage, uuid, bytes).await?;
+            tx.commit().await?;
+            Ok::<_, StoreThumbnailError>(hash)
+        }
+        .await;
+        match stored {
+            Ok(hash) => {
+                if let Some(signal) = stored_signal {
+                    let _ = signal.send(hash.clone());
+                }
+                stored_hash = Some(hash);
+            }
+            Err(e) => return thumbnail_failed(&e),
+        }
     }
     if let Some(ids) = &place_ids {
-        try_resp!(map_db(
+        let replaced: sqlx::Result<()> = async {
+            let mut tx = state.pool.begin().await?;
+            // drops the unlisted places and all but one spelling of a listed one
             sqlx::query(
-                "DELETE FROM social.community_places WHERE community_id = $1 AND place_id <> ALL($2)"
+                "DELETE FROM social.community_places t USING ( \
+                   SELECT place_id, row_number() OVER (PARTITION BY lower(place_id) \
+                     ORDER BY place_id <> lower(place_id), added_at, place_id) AS rank \
+                   FROM social.community_places WHERE community_id = $1) r \
+                 WHERE t.community_id = $1 AND t.place_id = r.place_id \
+                   AND (r.rank > 1 OR lower(t.place_id) <> ALL($2))",
             )
             .bind(uuid)
             .bind(ids)
-            .execute(&state.pool)
-            .await
-        ));
-        try_resp!(map_db(
+            .execute(&mut *tx)
+            .await?;
+            // a kept row keeps its adder and time
+            sqlx::query(
+                "UPDATE social.community_places SET place_id = lower(place_id) \
+                 WHERE community_id = $1 AND place_id <> lower(place_id)",
+            )
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query(
                 "INSERT INTO social.community_places (place_id, community_id, added_by) \
                  SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
@@ -958,9 +1059,12 @@ pub async fn update_community(
             .bind(ids)
             .bind(uuid)
             .bind(&signer)
-            .execute(&state.pool)
-            .await
-        ));
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        }
+        .await;
+        try_resp!(map_db(replaced));
     }
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
         // The source bulk acceptance owns its transaction. Failure rolls back
@@ -1017,8 +1121,8 @@ pub async fn update_community(
         "ownerAddress": detail.owner_address, "privacy": detail.privacy,
         "visibility": detail.visibility, "active": detail.active,
     });
-    if thumbnail.is_some() {
-        data["thumbnails"] = json!({ "raw": state.thumbnail_url(uuid) });
+    if let Some(hash) = stored_hash.as_deref() {
+        data["thumbnails"] = json!({ "raw": state.versioned_thumbnail_url(uuid, Some(hash)) });
     }
     (
         StatusCode::OK,
@@ -1029,11 +1133,10 @@ pub async fn update_community(
 
 /// Upstream's `communityThumbnail.getThumbnail(id) || 'N/A'` (the renamed and
 /// deleted events).
-fn stored_thumbnail_or_na(state: &SharedState, has_thumbnail: bool, id: CommunityId) -> String {
-    if has_thumbnail {
-        state.thumbnail_url(id)
-    } else {
-        "N/A".to_string()
+fn stored_thumbnail_or_na(state: &SharedState, hash: Option<&str>, id: CommunityId) -> String {
+    match hash {
+        Some(hash) => state.versioned_thumbnail_url(id, Some(hash)),
+        None => "N/A".to_string(),
     }
 }
 
@@ -1146,12 +1249,12 @@ pub async fn delete_community(
         )
         .into_response();
     }
-    let (name, owner, has_thumbnail): (String, Address, bool) = try_resp!(map_db(
+    let (name, owner, hash): (String, Address, Option<String>) = try_resp!(map_db(
         sqlx::query_as(
             "UPDATE social.communities c SET active = FALSE, updated_at = timezone('UTC', now()) \
              WHERE c.id = $1 \
              RETURNING c.name, c.owner_address, \
-                       EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id = c.id)"
+                       (SELECT t.thumbnail_hash FROM social.community_thumbnails t WHERE t.community_id = c.id)"
         )
         .bind(uuid)
         .fetch_one(&state.pool)
@@ -1163,7 +1266,7 @@ pub async fn delete_community(
     let metadata = json!({
         "communityId": uuid.as_uuid(),
         "communityName": name,
-        "thumbnailUrl": stored_thumbnail_or_na(&state, has_thumbnail, uuid),
+        "thumbnailUrl": stored_thumbnail_or_na(&state, hash.as_deref(), uuid),
     });
     let violation = (!owner_deleting).then(|| CommunityEvent {
         kind: "community_deleted_content_violation",
@@ -1178,7 +1281,7 @@ pub async fn delete_community(
         metadata,
     };
     let updates = state.clone();
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         updates.community_deleted_update(uuid).await;
     });
     if let Some(event) = violation {
@@ -1265,6 +1368,18 @@ mod tests {
             "a community without a thumbnail has no thumbnailUrl, as production"
         );
         assert!(v.get("ownerName").is_none());
+    }
+
+    #[test]
+    fn thumbnail_misses_are_short_cached_and_server_errors_uncached() {
+        let cache = |status| {
+            thumbnail_error(status, "x").headers()[header::CACHE_CONTROL]
+                .to_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(cache(StatusCode::NOT_FOUND), THUMBNAIL_CACHE_UNVERSIONED);
+        assert_eq!(cache(StatusCode::INTERNAL_SERVER_ERROR), "no-store");
     }
 
     #[test]

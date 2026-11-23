@@ -1,0 +1,52 @@
+/* The design system's Explorer modal: 600px wide, 48px above and below the content, 64px at the sides, 24px corners,
+   Brand/Purple Dark under its two pink glows (the design's radial gradients, sized to the card as they stretch with it). */
+.modal {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 600px;
+  max-width: 100%;
+  padding: 48px 64px;
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  background:
+    radial-gradient(62% 45% at 92% -12%, var(--shop-modal-glow-top) 0%, transparent 100%),
+    radial-gradient(85% 30% at 50% 112%, var(--shop-modal-glow-bottom) 0%, transparent 100%),
+    var(--shop-modal);
+  color: var(--text);
+}
+
+/* The slot: a 472px column, its sections 32px apart. */
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  width: 472px;
+  max-width: 100%;
+}
+
+/* A section's header: the illustration, the title and what stands under it, 16px apart. */
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+/* The CTAs, 24px apart: two share the row, one takes it whole. */
+.actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+  width: 100%;
+}
+.actions > * {
+  flex: 1 1 0;
+  min-width: 0;
+}

@@ -509,9 +509,10 @@ async fn refund_checkout(
         .await?
         .ok_or_else(|| ApiError::not_found("checkout not found"))?;
 
+    // re-checked under the checkout's lock by the refund
     if checkout.status != "fulfilling" && checkout.status != "fulfilled" {
         return Err(ApiError::conflict(
-            "checkout is not refundable (only a debited, not-yet-reversed checkout in 'fulfilling'/'fulfilled' can be manually refunded)",
+            crate::credits::checkout::NOT_MANUALLY_REFUNDABLE,
         ));
     }
 

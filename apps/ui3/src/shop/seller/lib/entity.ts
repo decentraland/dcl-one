@@ -6,7 +6,7 @@
 // auth chain, and everything goes to `POST {peer}/content/entities` as multipart form data. ui3 cannot
 // import sites, so the hashing lives here too (the vectors in its test are the ones sites pins).
 
-import type { AuthIdentity, AuthLink } from "../../../data/auth/identity";
+import type { AuthIdentity, AuthLink } from "@web-core/auth/identity";
 
 const CHUNK = 262_144;
 const MAX_CHILDREN = 174;

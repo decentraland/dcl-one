@@ -2,11 +2,14 @@ import { useEffect, useId, useReducer, useState, useSyncExternalStore, type CSSP
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
-import { docsUrl } from "@ui/data/docs";
+import { docsUrl } from "@web-core/docs";
 import { latestPostsQuery, type BlogPostSummary } from "@/data/lib/create-landing/blog-posts";
 import { liveScenesQuery, selectLiveScenes, type HotScene } from "@/data/lib/create-landing/live-scenes";
 
+import type { HeroDownloads } from "@/data/lib/download/creator-hub.server";
+
 import { Carousel } from "./Carousel";
+import HeroDownload from "./HeroDownload";
 import {
   connectCards,
   copy,
@@ -23,13 +26,18 @@ import discordIcon from "./assets/discord.svg?url";
 import dclLogo from "./assets/dcl-logo.svg?url";
 import styles from "./CreateLanding.module.css";
 
-export const CREATOR_HUB_DOWNLOAD = "/download/creator-hub";
-
 /** decentraland.org /create, the Creator Hub's marketing landing. */
-export default function CreateLanding() {
+type CreateLandingProps = {
+  /** The Creator Hub installers for the visitor's system; without them the hero links to the download page. */
+  downloads?: HeroDownloads | null;
+  /** The visit's session id, for the download events. */
+  sid?: string;
+};
+
+export default function CreateLanding({ downloads = null, sid = "" }: CreateLandingProps) {
   return (
     <main className={styles.landing}>
-      <Hero />
+      <Hero downloads={downloads} sid={sid} />
       <Why />
       <Possibilities />
       <LiveScenes />
@@ -91,7 +99,7 @@ function useHydrated(): boolean {
   return useSyncExternalStore(noSubscribe, () => true, () => false);
 }
 
-function Hero() {
+function Hero({ downloads, sid }: Required<CreateLandingProps>) {
   const isMobile = useMediaQuery("(max-width: 767px)");
   // The server cannot know the viewport: the video mounts after hydration, when isMobile is known, so each
   // viewport requests only its own file (as the reference's client-rendered Hero.tsx does).
@@ -117,9 +125,7 @@ function Hero() {
           </h1>
           <p className={styles.heroSubtitle}>{heroData.subtitle}</p>
           <div className={styles.heroActions}>
-            <a className={`${styles.cta} ${styles.ctaDesktop}`} href={CREATOR_HUB_DOWNLOAD}>
-              <span className={styles.ctaLabel}>{copy.downloadCreatorHub}</span>
-            </a>
+            <HeroDownload downloads={downloads} sid={sid} />
             <a className={`${styles.cta} ${styles.ctaMobile}`} href={docsUrl("creator")}>
               <span className={styles.ctaLabel}>{copy.heroMobileCta}</span>
             </a>

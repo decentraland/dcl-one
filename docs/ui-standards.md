@@ -219,6 +219,8 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
+Sites composes its views in route modules or in `apps/sites/src/pages/<domain>/` when a screen needs app-level wiring. Its visual components and styles belong in `library/ui/apps/sites/<domain>/`. See [Sites page components](adr/2026-11-20-sites-pages.md).
+
 Until `library/ui` is implemented, Sites imports some UI source through the
 `@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
 actual importing surfaces of a component before assuming it has more than one
@@ -278,6 +280,7 @@ library/ui/
       Button.module.css
       Button.test.tsx
       Button.figma.ts   Figma mapping, read by the tooling only
+    AppChrome/          web chrome contexts and host adapters, imported by path
   apps/
     <app>/              app-specific UI: components and styles used by one app
   index.ts              public foundation and component exports
@@ -292,6 +295,7 @@ library/ui/
 - **App-specific UI:** keep components used by a single app in
   `apps/<app>/`, built from the shared foundations and components; only that
   app imports them. See [App-specific UI](#app-specific-ui).
+- **Web chrome contracts:** `components/AppChrome/` contains the shared contexts, router link adapter and structural layout slots. These contracts are imported by path and have no Figma component mapping.
 - **Figma tooling:** keep the MCP server and CLI in `figma/` and outside browser
   exports. Component mappings connect Figma nodes to shared components.
 
@@ -360,8 +364,10 @@ Each host keeps only what is its own:
 - `App.tsx`, which renders the shared `HudApp` (`library/ui/apps/hud/App.tsx`)
   with the host's drivers and Shop page, and `lib/engineLaunch.ts`, the engine's
   launch for the shared `EngineHost`;
-- its global stylesheet (`styles/global.css`, which also gives the shared
-  stylesheets the host's public files as CSS variables such as `--hud-logo`);
+- its global stylesheet (`styles/global.css`), which imports the shared tokens
+  and page styles (`@hud/styles/tokens.css`, `@hud/styles/page.css`) and gives
+  the shared stylesheets the host's public files as CSS variables such as
+  `--hud-logo`;
 - what only one host has: react-web's benchmark autopilot
   (`engine/autopilot.ts`, `shell/localGuest.ts`) and Shop query client, and
   `/play`'s in-world Shop and Creator Hub editor embed.
@@ -416,7 +422,9 @@ include the shared sources so that changes invalidate the affected artifacts.
   (`src/test/sharedUi.test.tsx` checks them).
 
 The Sites host maps `@hud`, `@explorer-core` and `@hud-host` the same way,
-with React deduplicated and both folders allowed to its dev servers:
+and also `@shop-host`, the in-world Shop's host (`library/ui/apps/shop/hostContract.ts`,
+implemented by `apps/ui3/src/play/shopHost.ts`), with React and TanStack Query
+deduplicated and both folders allowed to its dev servers:
 `apps/ui3/tsconfig.json` and `apps/ui3/vitest.config.ts` for the `/play`
 type check and tests, `apps/sites/tsconfig.json` and
 `apps/sites/vite.config.ts` for the Sites build.

@@ -79,8 +79,12 @@ function toIso(date: string, time: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof EventRecordSchema>, signer?: string, privileged = false) {
-  const own = Boolean(signer && original?.user?.toLowerCase() === signer.toLowerCase());
+export type EventScheduleSource = Pick<EditableHangout,
+  "start_at" | "recurrent_frequency" | "recurrent_interval" | "recurrent_weekday_mask" |
+  "recurrent_month_mask" | "recurrent_monthday" | "recurrent_setpos" | "recurrent_until"
+>;
+
+export function toEventSchedule(draft: HangoutDraft, original?: EventScheduleSource) {
   let start = toIso(draft.startDate, draft.startTime);
   if (start && original?.start_at && new Date(original.start_at).toISOString().slice(0, 16) === start.slice(0, 16)) start = original.start_at;
   const frequency = RECURRENCE_FREQUENCIES[draft.recurrence] ?? null;
@@ -88,20 +92,10 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
   const until = draft.recurrent && draft.recurrentUntil
     ? original?.recurrent_until?.slice(0, 10) === draft.recurrentUntil ? original.recurrent_until : `${draft.recurrentUntil}T23:59:59.000Z`
     : null;
-  const scheduleIds = draft.scheduleIds ?? original?.schedules ?? [];
-  const joinUrl = draft.joinUrl?.trim() || null;
-  const originalJoinUrl = original ? customJoinUrl(original) || null : null;
-  const schedulesChanged = !original || JSON.stringify([...scheduleIds].sort()) !== JSON.stringify([...original.schedules].sort());
   return {
-    name: draft.name.trim(),
-    description: draft.description.trim(),
     start_at: start,
     duration: (draft.allDay ? 24 : draft.durationHours) * 3_600_000,
     all_day: draft.allDay,
-    x: draft.location === "world" ? 0 : draft.coordX,
-    y: draft.location === "world" ? 0 : draft.coordY,
-    world: draft.location === "world",
-    server: draft.location === "world" ? draft.worldName.trim() : null,
     recurrent: draft.recurrent,
     recurrent_frequency: draft.recurrent ? frequency : null,
     recurrent_interval: sameRecurrence ? original?.recurrent_interval ?? 1 : 1,
@@ -111,6 +105,23 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     recurrent_setpos: sameRecurrence ? original?.recurrent_setpos ?? null : null,
     recurrent_count: draft.recurrent && !until ? draft.recurrentCount ?? null : null,
     recurrent_until: until,
+  };
+}
+
+export function toCreateEventBody(draft: HangoutDraft, original?: EditableHangout, signer?: string, privileged = false) {
+  const own = Boolean(signer && original?.user?.toLowerCase() === signer.toLowerCase());
+  const scheduleIds = draft.scheduleIds ?? original?.schedules ?? [];
+  const joinUrl = draft.joinUrl?.trim() || null;
+  const originalJoinUrl = original ? customJoinUrl(original) || null : null;
+  const schedulesChanged = !original || JSON.stringify([...scheduleIds].sort()) !== JSON.stringify([...original.schedules].sort());
+  return {
+    name: draft.name.trim(),
+    description: draft.description.trim(),
+    ...toEventSchedule(draft, original),
+    x: draft.location === "world" ? 0 : draft.coordX,
+    y: draft.location === "world" ? 0 : draft.coordY,
+    world: draft.location === "world",
+    server: draft.location === "world" ? draft.worldName.trim() : null,
     categories: original?.categories[0] === draft.category ? original.categories : draft.category ? [draft.category] : [],
     ...(!original || (own && (original.community_id ?? "") !== draft.communityId.trim())
       ? { community_id: draft.communityId.trim() || null } : {}),
@@ -120,6 +131,9 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     featured_item: draft.featuredItem?.trim() || null,
     ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
     ...(privileged && (!original || joinUrl !== originalJoinUrl) ? { url: joinUrl } : {}),
+    // As decentraland.org's editor (useCreateEventForm): the owner saving a rejected event asks to send it
+    // back to review. The response says whether the event is still rejected.
+    ...(own && original?.rejected ? { rejected: false } : {}),
   };
 }
 
@@ -185,6 +199,7 @@ export async function uploadHangoutPoster(identity: AuthIdentity, file: File, ve
   const Poster = z.object({ url: z.string() });
   const raw: unknown = await response.json();
   const poster = z.union([Poster, apiOkOf(Poster).transform((value) => value.data)]).parse(raw);
+  if (/^\/events-assets-099ac00\/poster(?:-vertical)?\//.test(poster.url)) return poster.url;
   const origin = typeof window === "undefined" ? base : window.location.origin;
   const absoluteBase = new URL(base || origin, origin);
   return new URL(poster.url, absoluteBase).href;
@@ -233,6 +248,8 @@ export function isStepValid(step: string, draft: HangoutDraft): boolean {
 const SubmitResultSchema = z.object({
   id: z.string(),
   approved: z.boolean(),
+  /** Still true after an edit when the event did not go back to review. */
+  rejected: z.boolean().optional(),
 });
 export type SubmitResult = z.infer<typeof SubmitResultSchema>;
 

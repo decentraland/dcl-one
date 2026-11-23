@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,6 +18,22 @@ VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.to
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 EXTERNAL_COMMAND = "python3 tooling/dev-regressions.py --archipelago-external"
+RUNTIME = 'make -C "$FOUNDATION_DEV_ROOT" catalyst-test || broad=$?'
+# The provisioned tests run beside the broad runtime; the step waits for both and fails if either does.
+CONCURRENT = [
+    EXTERNAL_COMMAND + " > >(sed -u 's/^/[provisioned] /') 2>&1 &",
+    'provisioned=$!',
+    'trap \'kill -- -"$provisioned" 2>/dev/null || kill "$provisioned" 2>/dev/null; foundation-dev down\' EXIT',
+    'broad=0',
+    RUNTIME,
+    'external=0',
+    'wait "$provisioned" || external=$?',
+    "trap 'foundation-dev down' EXIT",
+    '[ "$external" -eq 0 ] || echo "dev-test: the provisioned Archipelago tests failed with status $external"',
+    '[ "$external" -eq 0 ] || [ "${GITHUB_ACTIONS:-}" != true ] || echo "::error title=Provisioned Archipelago tests failed::status $external"',
+    '[ "$broad" -eq 0 ] || exit "$broad"',
+    '[ "$external" -eq 0 ] || exit "$external" ;;',
+]
 AUTH_STRESS = "rpc_validator::tests::provisioned_rpc_workload_runs_3000_verifiers_at_nine_links"
 EXTERNAL_SHARD = "CATALYST_TEST_PROVISIONED_SHARD"
 EXTERNAL = [
@@ -228,7 +245,9 @@ MANDATORY_ARCHIPELAGO = {
         "comms_v4_assignment_fence::selected_identity_domains_survive_production_assignment_json_postgres_roundtrip",
         "comms_v4_assignment_fence::selected_realm_ownership_tracks_native_without_ws_and_borrows_external_rows_read_only",
         "comms_v4_assignment_fence::lost_selected_claim_and_publication_acknowledgments_reconcile_without_restoring_a_predecessor",
-        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_borrowed_and_foreign_rows_after_lapse",
+        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_a_borrowed_null_row_after_lapse",
+        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_a_borrowed_assignment_row_after_lapse",
+        "comms_v4_assignment_fence::recovery::started_native_periodic_replay_retries_a_foreign_row_after_lapse",
         "comms_v4_assignment_fence::recovery::started_native_periodic_replay_survives_one_lookup_failure_without_another_hint",
         "comms_v4_assignment_fence::recovery::started_selected_periodic_retirement_reclaims_capacity_across_native_and_legacy_churn",
         "comms_v4_assignment_fence::recovery::started_selected_retirement_rejects_a_delayed_negative_after_native_reconnect_or_successor",
@@ -329,17 +348,42 @@ MANDATORY_ARCHIPELAGO = {
     ],
 }
 TEST_SCRIPT = [
-    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
+    'durations="$root/tooling/catalyst-test-durations.tsv"',
+    'inventory=',
+    'targets=(--lib --bins)',
+    'if [ "${1:-}" = "--write-inventory" ]; then',
+    'inventory="$2"',
+    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | tee "${inventory:-/dev/null}" | python3 -c \'',
     'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
     'print(os.path.relpath(target["src_path"]), ",".join(target["kind"]), artifact["executable"], sep="\\t")',
-    '\' > "$logs/binaries"',
+    'python3 "$root/tooling/catalyst-test-targets.py" plan "$@" > "$logs/binaries"',
+    'if [ "$planned" = false ]; then build_targets "$@" > "$logs/binaries"; fi',
     '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
     'shard="${CATALYST_TEST_SHARD:-1/1}"',
     'index="${shard%/*}" total="${shard#*/}"',
     '[[ "$shard" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] && [ "$index" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_SHARD must be i/n with i from 1 to n" >&2; exit 1; }',
+    'doc="${CATALYST_TEST_DOC_SHARD:-$index}"',
+    '[[ "$doc" =~ ^[1-9][0-9]*$ ]] && [ "$doc" -le "$total" ] || { echo "catalyst-test: CATALYST_TEST_DOC_SHARD must name one shard from 1 to $total" >&2; exit 1; }',
     'same=$(cut -f1,2 "$logs/binaries" | LC_ALL=C sort | LC_ALL=C uniq -d)',
     '[ -z "$same" ] || { echo "catalyst-test: two test binaries have one source file and kind: $same" >&2; exit 1; }',
-    'LC_ALL=C sort "$logs/binaries" | cut -f3- | awk -v i="$index" -v n="$total" \'NR % n == i % n\' > "$logs/shard"',
+    'LC_ALL=C sort "$logs/binaries" | python3 -c \'',
+    'rows = [line.rstrip("\\n").split("\\t", 2) for line in sys.stdin]',
+    'order = lambda shard: sorted(shard, key=lambda row: (time(row) is not None, -(time(row) or 0)))',
+    'for number, row in enumerate(rows):',
+    'if time(row) is None:',
+    'shards[number % total].append(row)',
+    'for row in sorted((row for row in rows if time(row) is not None), key=lambda row: (not socket(row), -time(row))):',
+    'best = min((i for i in range(total) if taken[i] == min(taken)), key=lambda i: (cost(shards[i] + [row]), i))',
+    'shards[best].append(row)',
+    'for row in order(shards[index - 1]):',
+    'print(row[2])',
+    '\' "$index" "$total" "$durations" > "$logs/shard"',
+    'case "$target" in test/*) targets+=(--test "${target#test/}");; esac',
+    'done < "$logs/shard"',
+    'build_targets "$@" "${targets[@]}" > "$logs/artifacts"',
+    'python3 "$root/tooling/catalyst-test-targets.py" resolve "$logs/shard" "$logs/binaries" "$logs/artifacts" > "$logs/executables"',
+    'mv "$logs/executables" "$logs/shard"',
+    'if [ -n "$inventory" ]; then exit 0; fi',
     'grep -E \'/sockets_[^/]*$\' "$logs/shard" > "$logs/sockets" || [ $? -eq 1 ]',
     'grep -v -E \'/sockets_[^/]*$\' "$logs/shard" > "$logs/others" || [ $? -eq 1 ]',
     'xargs -P "$1" -I{} sh -c \'',
@@ -348,6 +392,7 @@ TEST_SCRIPT = [
     'echo "$line" >> "$2/failures"; exit 1',
     'run "$jobs" < "$logs/others"',
     'run "$socket_jobs" < "$logs/sockets"',
+    'if [ "$doc" -eq "$index" ]; then',
     'cargo test --locked "$@" --doc',
 ]
 
@@ -403,7 +448,7 @@ def validate_runtime_script(script):
     # Shell removes escaped newlines before recognizing assignments/commands.
     logical = re.sub(r"\\\r?\n", "", script)
     make_lines = [line.strip() for line in logical.splitlines() if re.search(r"\bmake\s", line)]
-    require(make_lines == ['make -C "$FOUNDATION_DEV_ROOT" catalyst-test ;;'], "dev-test Rust runtime must invoke broad catalyst-test exactly once without filters")
+    require(make_lines == [RUNTIME], "dev-test Rust runtime must invoke broad catalyst-test exactly once without filters")
     vendor_lines = [line.strip() for line in logical.splitlines() if line.strip().startswith("cargo test")]
     require(vendor_lines == [VENDOR], "vendor runtime must be the unfiltered locked default lib suite exactly once")
 
@@ -411,9 +456,10 @@ def validate_runtime_script(script):
     require(compile_lines == [VENDOR_CHECK], "vendor compile gate must check locked all-features/all-targets exactly once")
     sequence = "      python3 tooling/dev-regressions.py\n      " + VENDOR_CHECK + "\n      " + VENDOR + "\n"
     require(logical.count(sequence) == 1, "vendor compile gate must run unconditionally before the default runtime")
-    external = "      " + VENDOR + "\n      " + EXTERNAL_COMMAND + '\n      make -C "$FOUNDATION_DEV_ROOT" catalyst-test ;;'
-    require(logical.count(external) == 1 and logical.count(EXTERNAL_COMMAND) == 1,
-            "provisioned Archipelago tests must run exactly once after vendor tests and before the broad runtime")
+    lines = [line.strip() for line in logical.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    start = lines.index(VENDOR) + 1
+    require(lines[start:start + len(CONCURRENT)] == CONCURRENT and logical.count(EXTERNAL_COMMAND) == 1,
+            "provisioned Archipelago tests must run exactly once after vendor tests, beside the broad runtime, and fail the step")
     fixture_commands = [
         "python3 -m unittest discover -s tooling/tests -p 'test_archipelago_fixtures.py'",
         "python3 tooling/archipelago-fixtures.py check",
@@ -452,15 +498,16 @@ def validate_auth_stress_workflow(workflow):
 
 
 def validate_test_script(script):
-    # Pins the lines that keep the run complete: bash under set -e, the selection compiled
-    # unfiltered, every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
-    # without arguments in both phases, the doc-tests, and no exit before the end. Comment lines are inert.
+    # Pins the lines that keep the run complete: bash under set -e, the selected targets compiled,
+    # every listed binary of the shard (all of them without CATALYST_TEST_SHARD) run
+    # without arguments in both phases, the doc-tests in one shard (every shard without
+    # CATALYST_TEST_DOC_SHARD), and an early return for inventory builds. Comment lines are inert.
     require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
     lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")
     positions = [[index for index, line in enumerate(lines) if line == pinned] for pinned in TEST_SCRIPT]
     require(all(len(found) == 1 for found in positions) and positions == sorted(positions),
-            "catalyst-test.sh must compile the selection unfiltered, run every listed binary without arguments and the doc-tests exactly once; update the guard's pinned lines with the script")
+            "catalyst-test.sh must build the selected targets, run every assigned binary without arguments and run the designated doc-tests; update the guard's pinned lines with the script")
     require(not any(line.startswith("exit") for line in lines), "catalyst-test.sh must not exit before the doc-tests")
 
 
@@ -488,6 +535,8 @@ def run(command, cwd=ROOT):
 
 
 def compiled_targets(arguments, cwd, *, selected=None, kind=None):
+    if selected and kind == "lib":
+        arguments = [*arguments, "--lib"]
     output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json-render-diagnostics"], cwd)
     return artifact_targets(output, selected, kind=kind)
 
@@ -572,6 +621,10 @@ def external_shard(environ):
     return index == int(chosen), f"{int(chosen)}/{total}"
 
 
+def external_targets():
+    return set(MANDATORY_ARCHIPELAGO) | {(target, kind) for target, kind, _ in EXTERNAL}
+
+
 def check_external():
     binary = external_prerequisites(os.environ)
     execute, owner = external_shard(os.environ)
@@ -579,9 +632,13 @@ def check_external():
                              stderr=subprocess.STDOUT, check=True, timeout=10)
     print(version.stdout, flush=True)
     # Preserve the broad runner's feature graph; choose targets from this exact build.
-    output = run(["cargo", "test", "--locked", *SELECTION.split(), "--no-run",
+    selected = external_targets()
+    filters = ["--lib"]
+    for name, kind in sorted(selected):
+        if kind != "lib":
+            filters.extend([f"--{kind}", name])
+    output = run(["cargo", "test", "--locked", *SELECTION.split(), *filters, "--no-run",
                   "--message-format=json-render-diagnostics"], ROOT / "services/catalyst")
-    selected = set(MANDATORY_ARCHIPELAGO) | {(target, kind) for target, kind, _ in EXTERNAL}
     targets = {kind: artifact_targets(output, {target for target, selected_kind in selected
                                               if selected_kind == kind}, kind=kind)
                for kind in {kind for _, kind in selected}}
@@ -639,6 +696,17 @@ def check_auth_stress():
     run_external(targets["dcl_auth"], AUTH_STRESS, show_output=True)
 
 
+def regression_targets(required):
+    if os.environ.get("CATALYST_TEST_SHARD", "1/1") == "1/1":
+        return compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
+    names = set(required) | {name for name, kind in external_targets() if kind == "test"}
+    with tempfile.TemporaryDirectory() as temporary:
+        inventory = Path(temporary) / "artifacts.jsonl"
+        subprocess.run([str(ROOT / "tooling/catalyst-test.sh"), "--write-inventory", str(inventory),
+                        *sorted(names), "--", *SELECTION.split()], check=True)
+        return artifact_targets(inventory.read_text(), required, kind="test")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bevy-artifacts", type=Path)
@@ -652,6 +720,11 @@ def main():
         check_auth_stress()
         return
     if args.archipelago_external:
+        # Lead a process group so tooling/dev-test.sh can stop the test binaries and their brokers with it.
+        try:
+            os.setpgid(0, 0)
+        except OSError:
+            pass
         check_external()
         return
     manifest = json.loads((ROOT / "tooling/dev-regressions.json").read_text())
@@ -671,7 +744,7 @@ def main():
         for target, names in manifest["unix"].items():
             required[target] += names
     # Match the runtime selection so Cargo reuses the same feature graph and binaries.
-    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
+    targets = regression_targets(required)
     verify_targets(required, targets)
     vendor_targets = compiled_targets(["--manifest-path", "library/vendor/rusty_enet/Cargo.toml", "--lib"], ROOT)
     require("rusty_enet" in vendor_targets, "missing vendor lib target")

@@ -4,7 +4,8 @@
 //! expired at Stripe, then the order retired), comes back (`resume`: the
 //! same hosted page while Stripe still has it open, the order retired when
 //! it does not), or lands on Stripe's cancel page (`cancel-return`: the
-//! cancellation confirmed with Stripe before anything is recorded), and the
+//! session expired at Stripe as `cancel` does, and the order retired only
+//! once Stripe confirms the session closed unpaid), and the
 //! sweep that retires orders nobody paid within a session's lifetime. Every
 //! Stripe call runs outside a transaction; the state change is one guarded
 //! UPDATE (`status = 'pending'`), so a late webhook or a second click moves
@@ -103,19 +104,19 @@ impl Credits {
         }))
     }
 
-    /// The order by id alone (the unauthenticated cancel return: Stripe is
-    /// then asked before anything moves).
+    /// The order's status and session by id alone (the unauthenticated
+    /// cancel return: Stripe is then asked before anything moves).
     pub async fn get_order_with_session_any(
         &self,
         order_id: &str,
     ) -> Result<Option<(String, Option<String>)>, ApiError> {
         let row = sqlx::query(
-            "SELECT address, stripe_checkout_session FROM credits.purchases WHERE order_id = $1",
+            "SELECT status, stripe_checkout_session FROM credits.purchases WHERE order_id = $1",
         )
         .bind(order_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get("address"), r.get("stripe_checkout_session"))))
+        Ok(row.map(|r| (r.get("status"), r.get("stripe_checkout_session"))))
     }
 
     /// The order behind a session id, for the unauthenticated cancel return.

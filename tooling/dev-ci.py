@@ -24,14 +24,14 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = 'development.yml'
 # What the macOS Rust job itself runs (the dev stack, the ENet pin check and dev-test.sh's tests)
 # and what changes how it builds (manifests, lockfiles, build scripts, toolchains, cargo config).
-MACOS = ('tooling/dev*', 'tooling/catalyst-test*.sh', 'tooling/tests/test_catalyst_test_resources.py',
+MACOS = ('tooling/dev*', 'tooling/catalyst-test*', 'tooling/tests/test_catalyst_test_resources.py',
          'tooling/enet-provenance.py', 'tooling/tests/test_dev_regressions.py',
          'tooling/archipelago-fixtures.py', 'tooling/tests/test_archipelago_fixtures.py',
          'tooling/tests/test_enet_provenance.py', '**/Cargo.toml', '**/Cargo.lock', '**/build.rs',
          '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
 # Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
 # source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
-LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**',
+LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'apps/creator-hub/packages/zip-extract/**',
               'tooling/*.py', 'tooling/tests/**', 'tooling/migration/**', 'services/catalyst/**', 'library/**', 'schemas/**')
 # What the Rust job reads besides the paths its Rust sources name: the crates it compiles, the SQL, protocol
 # and API contract they embed, the toolchain, the dev shell and stack, and the scripts and tests

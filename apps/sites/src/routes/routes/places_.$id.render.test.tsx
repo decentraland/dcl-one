@@ -1,9 +1,8 @@
-import type { ComponentProps } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { PlaceDetailProps } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type PlaceDetail from "@ui/explorer/pages/PlaceDetail";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { postJSON, signedGetJSON } from "@/data/lib/catalyst/client";
@@ -13,11 +12,10 @@ import type { PlaceTravel, WorldScene } from "@/data/lib/catalyst/places/world-s
 import { track } from "@/core/lib/telemetry/track";
 import PlaceDetailRoute from "./places_.$id";
 
-type DetailProps = NonNullable<ComponentProps<typeof PlaceDetail>>;
-const seen: { props: DetailProps | null } = { props: null };
+const seen: { props: PlaceDetailProps | null } = { props: null };
 
-vi.mock("@ui/explorer/pages/PlaceDetail", () => ({
-  default: (props: DetailProps) => {
+vi.mock("@dcl/one-ui/apps/sites/places/PlaceDetail", () => ({
+  PlaceDetail: (props: PlaceDetailProps) => {
     seen.props = props;
     return null;
   },
@@ -59,7 +57,8 @@ function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/pla
     [{ id: "place", path: "/places/:id", Component: PlaceDetailRoute as never }],
     { initialEntries: [`/places/${PLACE_ID}`], hydrationData: { loaderData: { place: loaderData } } },
   );
-  renderToString(<RouterProvider router={router} />);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  renderToString(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
   return seen.props!;
 }
 
@@ -76,7 +75,8 @@ describe("/places/:id", () => {
 
   it("hands PlaceDetail the place, its creator fields, the live player count and the device", () => {
     const props = renderRoute();
-    expect(props.place).toMatchObject({ id: PLACE_ID, title: "New Scene 12", coords: "34,17", contactName: "Studio", owner: "0x296fa4213a6a88590328008dd5f5b535cf37bd66" });
+    expect(props.place).toMatchObject({ id: PLACE_ID, title: "New Scene 12", coords: "34,17" });
+    expect(props.creator).toMatchObject({ name: "Studio", address: GENESIS_PLACE.owner });
     expect(props.livePlayers).toBe(3);
     expect(props.mobile).toBe(false);
   });
@@ -152,7 +152,7 @@ describe("/places/:id likes and favorites", () => {
 describe("when a world has more than one scene", () => {
   const world = { ...GENESIS_PLACE, id: "sample.dcl.eth", base_position: "0,0", positions: ["0,0"], world: true, world_name: "sample.dcl.eth" };
   const scenes = [{ entityId: "bafy1", title: "Plaza", base: "0,0" }, { entityId: "bafy2", title: "Arena", base: "10,4" }];
-  let props: DetailProps;
+  let props: PlaceDetailProps;
   beforeEach(() => { props = renderRoute({ playBase: "/play/", jumpHref: "/play/?realm=sample.dcl.eth&position=0%2C0" }, world, scenes); });
   it("should offer each scene by title and base parcel, the first one picked", () => {
     expect(props.scenePicker).toMatchObject({ options: [{ value: "bafy1", label: "Plaza (0,0)" }, { value: "bafy2", label: "Arena (10,4)" }], value: "bafy1" });
@@ -165,7 +165,7 @@ describe("when a world has more than one scene", () => {
 });
 
 describe("when handing off place travel", () => {
-  let props: DetailProps;
+  let props: PlaceDetailProps;
   beforeEach(() => { props = renderRoute(); });
   afterEach(() => vi.clearAllMocks());
   it("should retain started and completed launch telemetry", () => {

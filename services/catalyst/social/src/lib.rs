@@ -51,6 +51,7 @@ pub mod messaging;
 mod mls;
 pub mod notifications;
 pub mod profile_images;
+pub mod request_auth;
 pub mod rpc;
 pub mod segment_webhooks;
 #[cfg(any(test, feature = "test-support"))]
@@ -189,5 +190,17 @@ fn production_routes_use_shared_routing() {
     assert!(
         found.is_empty(),
         "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
+}
+
+/// Production spawns stay on `shared::task` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_spawns_use_shared_task() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_tokio_spawns(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::task instead of tokio::spawn at {found:?}"
     );
 }

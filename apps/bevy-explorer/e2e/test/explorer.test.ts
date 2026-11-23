@@ -88,7 +88,7 @@ describe('Explorer', () => {
           address: '0x' + '1'.repeat(40),
           blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
           platformBan: { state: 'checked', isBanned: false, source: null, reason: null, matchedOn: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
-          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
+          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1', retainedRefusals: [{ sceneId: 'refused-scene', scope: 'scene', retryDue: 45 }] },
           sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
           lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,
           unavailable: line.endsWith(other) ? {} : { lookup: 'no address given' }
@@ -101,6 +101,7 @@ describe('Explorer', () => {
     assert.equal(state.blocks.state, 'live')
     assert.deepEqual(state.blocks.blocked, [other])
     assert.equal(state.platformBan.isBanned, false)
+    assert.deepEqual(state.sceneAdmission.retainedRefusals, [{ sceneId: 'refused-scene', scope: 'scene', retryDue: 45 }])
     assert.equal(state.lookup, null)
     assert.equal(state.unavailable.lookup, 'no address given')
     const lookup = await explorer.banBlockState(other)
@@ -397,20 +398,29 @@ describe('Explorer', () => {
   })
 
   test('hud.hover clicks the control centre once it takes a click', async () => {
-    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: 'clicked at (30, 35)' })
+    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     await new Explorer(fake).hud.hover('Backpack')
     assert.deepEqual(fake.sent('click_at'), ['/click_at 30 35'])
   })
 
   test('key, escape and clickAt compose the lines', async () => {
-    const fake = new FakeConsole({ press_key: 'pressed', click_at: 'clicked' })
+    const fake = new FakeConsole({ press_key: 'pressed', click_at: '{"x":30,"y":35,"normalized":{"x":0.02,"y":0.04},"button":"left","screen":{"width":1600,"height":900,"scale":2}}' })
     const explorer = new Explorer(fake)
     await explorer.key('KeyB')
     await explorer.key('ShiftLeft', 'down')
     await explorer.escape()
     await explorer.clickAt(1, 2)
     await explorer.clickAt(1, 2, 'right')
-    assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
+    const reply = await explorer.clickAt(0.5, 0.25, 'left', { normalized: true })
+    assert.deepEqual(reply.screen, { width: 1600, height: 900, scale: 2 })
+    assert.deepEqual(fake.lines, [
+      '/press_key KeyB',
+      '/press_key ShiftLeft --state down',
+      '/press_key Escape',
+      '/click_at 1 2',
+      '/click_at 1 2 --button right',
+      '/click_at 0.5 0.25 --normalized'
+    ])
   })
 
   test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {
@@ -431,6 +441,20 @@ describe('Explorer', () => {
       '/raycast_budget 0',
       '/scene_logs 50'
     ])
+  })
+
+  test('mediaState and mediaRetryDelay compose the lines and parse the replies', async () => {
+    const fake = new FakeConsole({
+      media_state: JSON.stringify({ backend: 'HTML media', players: [{ type: 'video', entity: '512', scene: 'video', source: 'media/flaky.webm', retryAttempt: 2, retryFailures: 3, retryDelaySeconds: 0.2, retryGaveUp: false, lastError: 'source not supported' }] }),
+      media_retry_delay: JSON.stringify({ firstDelayMs: 100, maxReopens: 5 })
+    })
+    const explorer = new Explorer(fake)
+    const [row] = (await explorer.mediaState()).players
+    assert.equal(row!.retryAttempt, 2)
+    assert.equal(row!.retryFailures, 3)
+    assert.deepEqual(await explorer.mediaRetryDelay(100), { firstDelayMs: 100, maxReopens: 5 })
+    await explorer.mediaRetryDelay()
+    assert.deepEqual(fake.lines, ['/media_state', '/media_retry_delay 100', '/media_retry_delay'])
   })
 
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {

@@ -88,8 +88,9 @@ function parseIdentity(raw: string | null): AuthIdentity | null {
 // identity (the most recently created session), mirroring sites' getStoredAddress().
 // One within RELOGIN_MARGIN_MS of expiring is forgotten instead: the player signs in again, and the
 // auth site, which sends a reader with an unexpired sign-in straight back, then asks for a new one. A
-// guest keeps its wallet session, so PLAY AS GUEST signs the same wallet in again. A guest that signed
-// out is left for PLAY AS GUEST.
+// thirdweb guest keeps its wallet session, so PLAY AS GUEST signs the same wallet in again; a guest
+// whose key this browser made (features/auth/guest.ts localGuestBackend) gets a new wallet. A guest
+// that signed out is left for PLAY AS GUEST.
 export function getStoredLogin(): StoredLogin | null {
   const logins: StoredLogin[] = []
   for (let i = 0; i < localStorage.length; i++) {

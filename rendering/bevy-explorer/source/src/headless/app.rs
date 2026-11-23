@@ -25,7 +25,7 @@ use common::{
         AppConfig, AvatarDynamicState, CursorLocks, EngineMovementControl, GraphicsSettings,
         HeadSync, NoRenderApp, PermissionType, PermissionUsed, PermissionValue, PointAtSync,
         PrimaryCamera, PrimaryCameraRes, PrimaryPlayerRes, PrimaryUser, SceneGlobalLight,
-        SceneLoadDistance, SystemAudio, TimeOfDay, ToolTips,
+        SceneLoadDistance, ShowOutOfBounds, SystemAudio, TimeOfDay, ToolTips,
     },
     util::UtilsPlugin,
 };
@@ -129,6 +129,13 @@ pub fn assemble(
     // lights, visibility, pointer results) and comms' microphone and video. Must precede the
     // plugins: the gates are read at plugin-build time.
     app.insert_resource(NoRenderApp);
+    // A scene server keeps what reaches out of a scene's bounds solid in the runs where its
+    // clients do, or the two sides' raycasts and triggers would disagree.
+    app.insert_resource(show_out_of_bounds(
+        launch,
+        &map_realm_name(realm),
+        common::structs::multi_tenant(),
+    ));
 
     // ---- render-free plugin set (mirrors scene_runner TestPlugins) ----
     app.add_plugins(FrameCountPlugin)
@@ -193,7 +200,7 @@ pub fn assemble(
 
     register_gltf_scene_types(app);
 
-    // embedded assets: the scene-loading material (grid.png / loading.wgsl)
+    // embedded assets (the preview grid plane's grid.png among them)
     app.add_plugins(assets::EmbedAssetsPlugin);
 
     // the shared launch options' resources and plugins (--log-fps logs the tick rate, against
@@ -374,5 +381,63 @@ fn drain_permissions(mut manager: ResMut<PermissionManager>, config: Res<AppConf
             Some(PermissionValue::Allow)
         );
         req.sender.send(allow);
+    }
+}
+
+/// Whether a headless run on `realm` shows what is out of bounds. A multi-tenant server is
+/// started with no realm, each of its scenes bringing its own, so `realm` is a placeholder
+/// there and does not count.
+fn show_out_of_bounds(launch: &LaunchOptions, realm: &str, multi_tenant: bool) -> ShowOutOfBounds {
+    ShowOutOfBounds::for_run(false, launch.preview, (!multi_tenant).then_some(realm))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_multi_tenant_server_takes_no_realm_of_its_own_for_out_of_bounds() {
+        // started with no realm, so its realm is the binary's placeholder
+        let placeholder = "http://localhost:8000";
+        let preview = LaunchOptions {
+            preview: true,
+            ..Default::default()
+        };
+        assert!(!show_out_of_bounds(&LaunchOptions::default(), placeholder, true).0);
+        assert!(show_out_of_bounds(&preview, placeholder, true).0);
+        // a client or a standalone server booted into the same address is on that realm
+        assert!(show_out_of_bounds(&LaunchOptions::default(), placeholder, false).0);
+    }
+
+    /// The scene server's app for a run, as `assemble` builds it.
+    fn assembled(preview: bool, realm: &str) -> App {
+        let mut app = App::new();
+        app.add_plugins(TaskPoolPlugin::default());
+        let launch = LaunchOptions {
+            preview,
+            ..Default::default()
+        };
+        assemble(
+            &mut app,
+            AppConfig::default(),
+            &launch,
+            realm,
+            true,
+            Wallet::default(),
+        );
+        app
+    }
+
+    #[test]
+    fn a_scene_server_shows_what_is_out_of_bounds_in_the_runs_its_clients_do() {
+        let shows = |preview, realm| {
+            assembled(preview, realm)
+                .world()
+                .resource::<ShowOutOfBounds>()
+                .0
+        };
+        assert!(shows(true, "https://realm.example.test/main"));
+        assert!(shows(false, "http://127.0.0.1:8000"));
+        assert!(!shows(false, "https://realm.example.test/main"));
     }
 }

@@ -116,8 +116,13 @@ async fn op_open_nft_dialog(
 }
 
 #[op2]
-async fn op_open_explorer_ui(op_state: Rc<RefCell<OpState>>, ui: i32) -> Result<i32, OpError> {
-    Ok(dcl_js::restricted_actions::op_open_explorer_ui(op_state, ui).await?)
+async fn op_open_explorer_ui(
+    op_state: Rc<RefCell<OpState>>,
+    ui: i32,
+    request_id: u32,
+    #[string] item_urn: Option<String>,
+) -> Result<i32, OpError> {
+    Ok(dcl_js::restricted_actions::op_open_explorer_ui(op_state, ui, request_id, item_urn).await?)
 }
 
 #[op2]

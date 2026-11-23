@@ -190,7 +190,8 @@ impl Plugin for MeshDefinitionPlugin {
                 .build()
                 .scaled_by(Vec3::new(1.0, 1.0, 0.0)),
         )));
-        let sphere = assets.add(xyflip_uvs(generate_tangents(
+        // tangents follow the uvs, so they are generated last
+        let sphere = assets.add(generate_tangents(xyflip_uvs(
             Sphere::new(0.5)
                 .mesh()
                 .uv(36, 18)
@@ -239,7 +240,13 @@ type PrimitiveData = (
     Has<PendingPrimitive>,
 );
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+/// A mesh a normal map can be drawn on: the renderer skips the map on a mesh without tangents.
+/// Uvs that span no area (a scene may give any) have no tangents; the mesh then stays as it is.
+fn with_tangents(mut mesh: Mesh) -> Mesh {
+    let _ = mesh.generate_tangents();
+    mesh
+}
+
 pub fn update_mesh(
     mut commands: Commands,
     pending_primitives: Query<PrimitiveData, With<PendingPrimitive>>,
@@ -380,7 +387,7 @@ pub fn update_mesh(
                     mesh_uvs[to][0] = uvs[from % len][0];
                     mesh_uvs[to][1] = 1.0 - uvs[from % len][1];
                 }
-                meshes.add(mesh)
+                meshes.add(with_tangents(mesh))
             }
             (
                 None,
@@ -388,11 +395,11 @@ pub fn update_mesh(
                     radius_bottom,
                     radius_top,
                 },
-            ) => meshes.add(Mesh::from(TruncatedCone {
+            ) => meshes.add(with_tangents(Mesh::from(TruncatedCone {
                 base_radius: *radius_bottom,
                 tip_radius: *radius_top,
                 ..Default::default()
-            })),
+            }))),
             (None, MeshDefinition::Plane { uvs }) => {
                 let len = uvs.len();
                 let mut mesh = Cuboid::default()
@@ -417,7 +424,7 @@ pub fn update_mesh(
                     mesh_uvs[to][0] = uvs[from % len][0];
                     mesh_uvs[to][1] = 1.0 - uvs[from % len][1];
                 }
-                meshes.add(mesh)
+                meshes.add(with_tangents(mesh))
             }
             // a sphere always uses the shared one
             (None, MeshDefinition::Sphere) => defaults.sphere.clone(),

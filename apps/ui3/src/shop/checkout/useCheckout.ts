@@ -22,11 +22,12 @@ import { stashResumeIntent, takeResumeIntent } from "./lib/auth-return";
 import { invalidateAfterPurchase } from "./lib/after-purchase";
 import { setAuthorization, type ShopAuthorization } from "./lib/authorizations";
 import { RESUME_CART_KEY, reviewCart, type CartReview, type ResolvedLine } from "./purchase/cart";
-import { releaseAuthorizing, resumeCheckout, runGroup, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
+import { releaseAuthorizing, resumeCheckout, runGroups, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
 import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { useShopServices } from "./services";
 import { cartOfferFetcher, useOfferSource } from "../detail/offers";
+import { useCreditsManaSplit } from "../discovery/flags";
 import { needsMarketplace, useMarketplaceAccess } from "../market/access";
 import type { ManaWei, UsdCents } from "@shop/model/money";
 import { creditsCeil } from "@shop/model/money";
@@ -37,7 +38,8 @@ export const CREDITS_SHORT = "Your Credits balance doesn't cover the Credits par
 export type ReviewState =
   | { kind: "empty" }
   | { kind: "outage"; reason: "no-quote-route" | "failed" }
-  | { kind: "checking" }
+  /** `seenRecently`: each line shows the offer the buyer saw moments ago until the check ends (see useCartRevalidation). */
+  | { kind: "checking"; seenRecently: boolean }
   | { kind: "changed"; changes: LineChange[] }
   | { kind: "current" };
 
@@ -105,6 +107,8 @@ export type CheckoutView = {
   /** A payment the buyer started by hand: a resume armed by sign-in must not start a second one. */
   holdAutoConfirm(): void;
   resume(): Promise<void>;
+  /** CHECK AGAIN: follows the groups in flight and starts nothing. */
+  checkAgain(): Promise<void>;
   discardCheckout(): Promise<void>;
   dismissTopUp(): void;
   stashForTopUp(): void;
@@ -194,18 +198,20 @@ export function useCheckout(
   }, [lines, revalidation.offers]);
 
   const unpriced = !fetchOffers || revalidation.status === "failed";
+  // Credits and MANA together, as this render holds the rollout: the MANA option's split and the cart's note about it.
+  const split = useCreditsManaSplit();
   const views = useMemo(() => {
     const out: Record<string, PaymentPresentation | null> = {};
     for (const line of lines) {
       const offer = offers[line.id];
       out[line.id] = offer
-        ? presentPayment(offer, session, { creditsBalance: balance?.balanceCents ?? null, manaBalance: manaBalance as ManaWei | null, report: () => {} })
+        ? presentPayment(offer, session, { creditsBalance: balance?.balanceCents ?? null, manaBalance: manaBalance as ManaWei | null, split, report: () => {} })
         : unpriced
           ? presentUnpriced(lineRule(line, session))
           : null;
     }
     return out;
-  }, [lines, offers, session, balance?.balanceCents, manaBalance, unpriced]);
+  }, [lines, offers, session, balance?.balanceCents, manaBalance, unpriced, split]);
 
   const partition = useMemo(() => {
     if (lines.length === 0) return null;
@@ -225,7 +231,7 @@ export function useCheckout(
     switch (revalidation.status) {
       case "idle":
       case "checking":
-        return { kind: "checking" };
+        return { kind: "checking", seenRecently: revalidation.status === "checking" && revalidation.seenRecently };
       case "failed":
         return { kind: "outage", reason: "failed" };
       case "changed":
@@ -233,7 +239,7 @@ export function useCheckout(
       case "current":
         return { kind: "current" };
     }
-  }, [allLines.length, lines.length, fetchOffers, revalidation.status, revalidation.changes]);
+  }, [allLines.length, lines.length, fetchOffers, revalidation.status, revalidation.seenRecently, revalidation.changes]);
 
   const reviewChanges = useMemo(() => revalidation.changes.filter((c) => c.kind !== "quoteUnavailable"), [revalidation.changes]);
   const quoteOutage = useMemo(() => {
@@ -412,22 +418,47 @@ export function useCheckout(
         const started = services.cart.startCheckout(fresh);
         services.cart.replaceCheckout({ ...started, groups: [...keep, ...started.groups] });
       }
-      const next: Record<string, GroupResult> = {};
-      for (const group of runnable) {
-        const result = await runGroup(d, group, resolved);
-        next[group.keyId] = result;
+      // One group at a time, none while another is in flight (runGroups).
+      const next = await runGroups(d, runnable, resolved, (group, result) => {
         setResults((prev) => ({ ...prev, [group.keyId]: result }));
         if (result.status === "failed" && result.topUp) {
           const short = Math.max(0, result.topUp.requiredCents - result.topUp.balanceCents);
           setTopUp({ shortCents: short as UsdCents });
         }
-      }
+      });
       finish(runnable, next, resolved);
     } finally {
       confirming.current = false;
       setRunning(false);
     }
   }, [account, canConfirm, partition, deps, settle, payableGroups, services.cart, finish, wallet.host]);
+
+  /** Follows the groups in flight, and starts nothing. */
+  const watchInFlight = useCallback(
+    async (state: PurchaseState, d: CheckoutDeps) => {
+      const out: Record<string, GroupResult> = {};
+      for (const g of state.groups) if (g.status === "submitted" || g.status === "pending") out[g.keyId] = await watchGroup(d, g);
+      setResults((prev) => ({ ...prev, ...out }));
+      finish(partition?.groups ?? [], out, new Map());
+    },
+    [partition, finish],
+  );
+
+  /**
+   * CHECK AGAIN, while a group is in flight: a status check, never a purchase. A group that waited on the one in
+   * flight starts only from the buyer's own Resume or Confirm, even when this check sees the one in flight settle.
+   */
+  const checkAgain = useCallback(async () => {
+    const state = services.cart.getSnapshot().checkout;
+    const d = deps();
+    if (!state || !d) return;
+    setRunning(true);
+    try {
+      await watchInFlight(state, d);
+    } finally {
+      setRunning(false);
+    }
+  }, [services.cart, deps, watchInFlight]);
 
   const resume = useCallback(async () => {
     const state = services.cart.getSnapshot().checkout;
@@ -436,10 +467,7 @@ export function useCheckout(
     setRunning(true);
     try {
       if (!canResume) {
-        const out: Record<string, GroupResult> = {};
-        for (const g of state.groups) if (g.status === "submitted" || g.status === "pending") out[g.keyId] = await watchGroup(d, g);
-        setResults((prev) => ({ ...prev, ...out }));
-        finish(partition?.groups ?? [], out, new Map());
+        await watchInFlight(state, d);
         return;
       }
       const unfinished = state.groups.filter((g) => g.status !== "confirmed" && g.status !== "submitted" && g.status !== "pending");
@@ -451,7 +479,7 @@ export function useCheckout(
     } finally {
       setRunning(false);
     }
-  }, [services.cart, deps, partition, settle, finish, canResume]);
+  }, [services.cart, deps, partition, settle, finish, canResume, watchInFlight]);
 
   const discardCheckout = useCallback(async () => {
     const state = services.cart.getSnapshot().checkout;
@@ -544,6 +572,7 @@ export function useCheckout(
     confirm,
     holdAutoConfirm: () => setAutoConfirm(false),
     resume,
+    checkAgain,
     discardCheckout,
     dismissTopUp: () => setTopUp(null),
     bindTopUp: bindTopUpReturn,

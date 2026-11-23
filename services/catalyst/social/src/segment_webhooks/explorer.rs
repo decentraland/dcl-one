@@ -47,7 +47,7 @@ pub(super) async fn forward(
     };
     if text(&event, "event").is_some_and(|name| name.eq_ignore_ascii_case(OTP_VERIFICATION_SUCCESS))
     {
-        return forward_otp(&event, &state.onboarding);
+        return forward_otp(&event, &state.onboarding).await;
     }
     let Some(parsed) = parse_client_event(&event, &state.settings) else {
         tracing::warn!(key = ?event.get("messageId"), "Segment explorer event: invalid event");
@@ -65,7 +65,8 @@ pub(super) async fn forward(
         record(
             &state.onboarding,
             checkpoint(&parsed.row.address, "completed"),
-        );
+        )
+        .await;
     }
     if let Err(error) = insert_client_event(&state.pool, &parsed.row).await {
         tracing::error!(%error, key = parsed.row.key, "Segment explorer event: insert failed");
@@ -93,14 +94,14 @@ pub(super) async fn forward(
 /// without one is ignored as the notifier ignored it): the store resolves
 /// the wallet to the email the auth server bound to it, and a wallet without
 /// that binding reaches no nudge.
-fn forward_otp(event: &Value, onboarding: &OnboardingState) -> Response {
+async fn forward_otp(event: &Value, onboarding: &OnboardingState) -> Response {
     let context = event.get("context").unwrap_or(&Value::Null);
     let Some(wallet) = verified_owner(context) else {
         tracing::warn!(key = ?event.get("messageId"), "Segment explorer event: invalid auth chain");
         return refused(StatusCode::UNAUTHORIZED, "Invalid AuthChain");
     };
     match event.get("properties").and_then(|p| text(p, "email")) {
-        Some(_) => record(onboarding, checkpoint(&wallet, "reached")),
+        Some(_) => record(onboarding, checkpoint(&wallet, "reached")).await,
         None => tracing::warn!("otp_verification_success missing email property"),
     }
     reply(StatusCode::OK, json!({ "ok": true }))
@@ -131,10 +132,11 @@ fn checkpoint(wallet: &str, action: &str) -> CheckpointRequest {
     }
 }
 
-/// Fire-and-forget as the notifier's auth-server call: a refusal is a warning.
-fn record(onboarding: &OnboardingState, request: CheckpointRequest) {
-    if let Err(error) = onboarding.record_checkpoint(request) {
-        tracing::warn!(error, "Segment checkpoint refused by the onboarding store");
+/// Fire-and-forget as the notifier's auth-server call: a refusal or a store
+/// failure is a warning.
+async fn record(onboarding: &OnboardingState, request: CheckpointRequest) {
+    if let Err(error) = onboarding.record_checkpoint(request).await {
+        tracing::warn!(%error, "Segment checkpoint refused by the onboarding store");
     }
 }
 
@@ -298,13 +300,21 @@ fn auth_chain_is_valid(chain: Option<&AuthChain>, address: &str) -> bool {
     let Ok((_, ephemeral, _)) = parse_ephemeral_payload(&delegation.payload) else {
         return false;
     };
-    crate::auth::verify_auth_chain(chain, &ephemeral, None).is_ok()
+    crate::auth::verify_login_chain(chain, &ephemeral, None).is_ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::auth::Wallet;
+
+    /// An onboarding store over a database of its own; `None` skips without
+    /// `CATALYST_TEST_DATABASE_URL`.
+    async fn onboarding() -> Option<OnboardingState> {
+        crate::db::scratch::isolated_pool(2)
+            .await
+            .map(OnboardingState::new)
+    }
 
     /// A context signed now by a fresh owner, as the explorer's.
     fn signed_context() -> (String, Value) {
@@ -330,30 +340,40 @@ mod tests {
         (owner.address().to_lowercase(), context)
     }
 
-    #[test]
-    fn the_otp_checkpoint_of_a_wallet_no_email_is_bound_to_records_nothing() {
+    #[tokio::test]
+    async fn the_otp_checkpoint_of_a_wallet_no_email_is_bound_to_records_nothing() {
         let (owner, context) = signed_context();
-        let onboarding = OnboardingState::default();
+        let Some(onboarding) = onboarding().await else {
+            return;
+        };
         let event = json!({
             "event": "otp_verification_success",
             "properties": { "email": "user@example.com" },
             "context": context,
         });
-        assert_eq!(forward_otp(&event, &onboarding).status(), StatusCode::OK);
-        assert!(
-            onboarding.checkpoint_state(&owner, 7).is_none(),
-            "a row no nudge can reach would only evict a user's"
+        assert_eq!(
+            forward_otp(&event, &onboarding).await.status(),
+            StatusCode::OK
         );
         assert!(
-            onboarding.checkpoint_state("user@example.com", 7).is_none(),
+            onboarding.checkpoint_state(&owner, 7).await.is_none(),
+            "a row no nudge can reach"
+        );
+        assert!(
+            onboarding
+                .checkpoint_state("user@example.com", 7)
+                .await
+                .is_none(),
             "the event's email is the client's word, not the user identifier"
         );
     }
 
-    #[test]
-    fn the_otp_checkpoint_takes_the_email_the_auth_server_bound_to_the_wallet() {
+    #[tokio::test]
+    async fn the_otp_checkpoint_takes_the_email_the_auth_server_bound_to_the_wallet() {
         let (owner, context) = signed_context();
-        let onboarding = OnboardingState::default();
+        let Some(onboarding) = onboarding().await else {
+            return;
+        };
         onboarding
             .record_checkpoint(CheckpointRequest {
                 checkpoint_id: 1,
@@ -365,15 +385,20 @@ mod tests {
                 source: Some("auth-server".into()),
                 metadata: None,
             })
+            .await
             .unwrap();
         let event = json!({
             "event": "otp_verification_success",
             "properties": { "email": "attacker@example.com" },
             "context": context,
         });
-        assert_eq!(forward_otp(&event, &onboarding).status(), StatusCode::OK);
+        assert_eq!(
+            forward_otp(&event, &onboarding).await.status(),
+            StatusCode::OK
+        );
         let state = onboarding
             .checkpoint_state("bound@example.com", 7)
+            .await
             .expect("recorded by the bound user");
         assert_eq!(state.email.as_deref(), Some("bound@example.com"));
         assert_eq!(state.wallet.as_deref(), Some(owner.as_str()));
@@ -381,18 +406,21 @@ mod tests {
             state.metadata, None,
             "a Segment checkpoint carries no metadata"
         );
-        assert!(onboarding.checkpoint_state(&owner, 7).is_none());
+        assert!(onboarding.checkpoint_state(&owner, 7).await.is_none());
         assert!(
             onboarding
                 .checkpoint_state("attacker@example.com", 7)
+                .await
                 .is_none()
         );
     }
 
-    #[test]
-    fn the_otp_checkpoint_needs_the_owners_chain() {
+    #[tokio::test]
+    async fn the_otp_checkpoint_needs_the_owners_chain() {
         let (owner, mut context) = signed_context();
-        let onboarding = OnboardingState::default();
+        let Some(onboarding) = onboarding().await else {
+            return;
+        };
         let other = Wallet::random().unwrap().address();
         context["dcl_eth_address"] = json!(other);
         let event = json!({
@@ -401,29 +429,34 @@ mod tests {
             "context": context,
         });
         assert_eq!(
-            forward_otp(&event, &onboarding).status(),
+            forward_otp(&event, &onboarding).await.status(),
             StatusCode::UNAUTHORIZED
         );
-        assert!(onboarding.checkpoint_state(&other, 7).is_none());
-        assert!(onboarding.checkpoint_state(&owner, 7).is_none());
+        assert!(onboarding.checkpoint_state(&other, 7).await.is_none());
+        assert!(onboarding.checkpoint_state(&owner, 7).await.is_none());
         let unsigned = json!({
             "event": "otp_verification_success",
             "properties": { "email": "user@example.com" },
             "context": { "session_id": "s-1" },
         });
         assert_eq!(
-            forward_otp(&unsigned, &onboarding).status(),
+            forward_otp(&unsigned, &onboarding).await.status(),
             StatusCode::UNAUTHORIZED
         );
-        assert!(onboarding.checkpoint_state("user@example.com", 7).is_none());
+        assert!(
+            onboarding
+                .checkpoint_state("user@example.com", 7)
+                .await
+                .is_none()
+        );
     }
 
     /// The chains a content server publishes with every deployment: the
     /// owner's delegation and the entity signed by the ephemeral key, or the
     /// entity signed by the owner. Both verify as deployment chains and
     /// neither is the explorer's login chain, so both are 401.
-    #[test]
-    fn a_published_deployment_chain_is_refused() {
+    #[tokio::test]
+    async fn a_published_deployment_chain_is_refused() {
         let owner = Wallet::random().unwrap();
         let ephemeral = Wallet::random().unwrap();
         let expiration = (chrono::Utc::now() + chrono::Duration::days(1))
@@ -434,6 +467,9 @@ mod tests {
         );
         let entity = "bafkreiexampleprofileentity";
         let signer = json!({ "payload": owner.address(), "signature": "", "type": "SIGNER" });
+        let Some(onboarding) = onboarding().await else {
+            return;
+        };
         let chains = [
             json!([
                 signer.clone(),
@@ -452,31 +488,65 @@ mod tests {
                 "a genuine deployment chain"
             );
             assert!(!auth_chain_is_valid(Some(&parsed), &owner.address()));
-            let onboarding = OnboardingState::default();
             let event = json!({
                 "event": "otp_verification_success",
                 "properties": { "email": "user@example.com" },
                 "context": { "dcl_eth_address": owner.address(), "auth_chain": chain.to_string() },
             });
             assert_eq!(
-                forward_otp(&event, &onboarding).status(),
+                forward_otp(&event, &onboarding).await.status(),
                 StatusCode::UNAUTHORIZED
             );
             assert!(
                 onboarding
                     .checkpoint_state(&owner.address().to_lowercase(), 7)
+                    .await
                     .is_none()
             );
         }
     }
 
+    /// A `[SIGNER, ECDSA_EPHEMERAL]` chain whose delegation starts with
+    /// `first_line`, and its owner.
+    fn delegated_with(first_line: &str) -> (String, AuthChain) {
+        let owner = Wallet::random().unwrap();
+        let ephemeral = Wallet::random().unwrap();
+        let expiration = (chrono::Utc::now() + chrono::Duration::days(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let payload = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
+            ephemeral.address()
+        );
+        let chain = json!([
+            { "payload": owner.address(), "signature": "", "type": "SIGNER" },
+            { "payload": payload, "signature": owner.sign_message(payload.as_bytes()).unwrap(), "type": "ECDSA_EPHEMERAL" },
+        ]);
+        (owner.address(), serde_json::from_value(chain).unwrap())
+    }
+
     #[test]
-    fn the_logged_in_checkpoint_completes_the_bound_wallets_cp7_without_metadata() {
-        let onboarding = OnboardingState::default();
-        let wallet = "0x0000000000000000000000000000000000000001";
-        record(&onboarding, checkpoint(wallet, "completed"));
+    fn only_a_login_delegation_proves_the_owner() {
+        let (owner, chain) = delegated_with("Decentraland Login");
+        assert!(auth_chain_is_valid(Some(&chain), &owner));
+
+        let (owner, chain) = delegated_with("Decentraland Storage Delegation");
+        let ephemeral = parse_ephemeral_payload(&chain[1].payload).unwrap().1;
         assert!(
-            onboarding.checkpoint_state(wallet, 7).is_none(),
+            crate::auth::verify_auth_chain(&chain, &ephemeral, None).is_ok(),
+            "otherwise a valid chain"
+        );
+        assert!(!auth_chain_is_valid(Some(&chain), &owner));
+    }
+
+    #[tokio::test]
+    async fn the_logged_in_checkpoint_completes_the_bound_wallets_cp7_without_metadata() {
+        let Some(onboarding) = onboarding().await else {
+            return;
+        };
+        let wallet = "0x0000000000000000000000000000000000000001";
+        record(&onboarding, checkpoint(wallet, "completed")).await;
+        assert!(
+            onboarding.checkpoint_state(wallet, 7).await.is_none(),
             "no row for a wallet no email is bound to"
         );
         onboarding
@@ -490,17 +560,19 @@ mod tests {
                 source: Some("auth-server".into()),
                 metadata: None,
             })
+            .await
             .unwrap();
-        record(&onboarding, checkpoint(wallet, "reached"));
-        record(&onboarding, checkpoint(wallet, "completed"));
+        record(&onboarding, checkpoint(wallet, "reached")).await;
+        record(&onboarding, checkpoint(wallet, "completed")).await;
         let state = onboarding
             .checkpoint_state("bound@example.com", 7)
+            .await
             .expect("recorded by the bound user");
         assert!(state.completed);
         assert_eq!(state.email.as_deref(), Some("bound@example.com"));
         assert_eq!(state.wallet.as_deref(), Some(wallet));
         assert_eq!(state.metadata, None);
-        assert!(onboarding.checkpoint_state(wallet, 7).is_none());
+        assert!(onboarding.checkpoint_state(wallet, 7).await.is_none());
     }
 
     #[test]

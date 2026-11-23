@@ -11,7 +11,6 @@ import { catalystBase, getJson, serviceBase } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { resolveEquippedEmotes } from './emotes'
 import { equippedSlots } from './emoteSlots'
-import { profileSaveSettled } from './avatarDraft'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '@explorer-core/engine/protocol'
 import type { SetAvatarData } from '@explorer-core/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
@@ -24,6 +23,7 @@ import type { Ctx } from '../bridge'
 /** A deployed profile as the engine holds it (`common::profile::SerializedProfile`, serde JSON).
  *  Only the keys the passport reads are typed here; anything else rides along untyped. */
 export type SerializedProfile = {
+  ethAddress?: string
   version?: number
   name?: string
   hasClaimedName?: boolean
@@ -308,18 +308,28 @@ async function fetchBadges(address: string, includeLocked: boolean): Promise<Bad
 // picker offers exactly these; anything else is an unclaimed name.
 type NamesResponse = { elements?: Array<{ name?: string }> }
 
-let ownedNames: string[] | undefined
+// Keyed by account: a lookup that settles after a sign-in change must not answer for the new one.
+let ownedNames: { address: string; names: string[] } | undefined
 identity.onChange(() => {
   ownedNames = undefined
 })
-async function fetchOwnedNames(address: string): Promise<string[]> {
-  if (ownedNames != null) return ownedNames
+/** The names `address` owns now, or undefined when the lookup failed. */
+export async function readOwnedNames(address: string): Promise<string[] | undefined> {
   const base = await catalystBase()
   const r = await getJson<NamesResponse>(`${base}/lambdas/users/${address}/names`).catch(() => undefined)
-  // Cached only on success: a failed lookup must not pin an empty picker for the whole session.
-  if (r == null) return []
-  ownedNames = (r.elements ?? []).map((e) => e.name).filter((n): n is string => typeof n === 'string' && n !== '')
-  return ownedNames
+  if (r == null) return undefined
+  const names = (r.elements ?? []).map((e) => e.name).filter((n): n is string => typeof n === 'string' && n !== '')
+  ownedNames = { address: address.toLowerCase(), names }
+  return names
+}
+/** This session's list for `address`, else a fresh one, or undefined when the lookup failed. */
+async function knownOwnedNames(address: string): Promise<string[] | undefined> {
+  if (ownedNames?.address === address.toLowerCase()) return ownedNames.names
+  return await readOwnedNames(address)
+}
+/** As `knownOwnedNames`, with a failed lookup as [] (not kept). */
+export async function fetchOwnedNames(address: string): Promise<string[]> {
+  return (await knownOwnedNames(address)) ?? []
 }
 
 /**
@@ -343,14 +353,15 @@ function toProfileExtras(msg: SaveProfileRequest): Record<string, JsonValue> {
     const links = msg.links.filter((l) => l.url !== '')
     extras.links = links.length > 0 ? links : null
   }
-  if (msg.info !== undefined) {
+  const info = msg.infoPatch ?? msg.info
+  if (info !== undefined) {
     for (const [wireKey, profileKey] of Object.entries(INFO_KEYS) as Array<[keyof ProfileInfo, string]>) {
-      set(profileKey, msg.info[wireKey]?.trim())
+      if (msg.infoPatch === undefined || info[wireKey] !== undefined) set(profileKey, info[wireKey]?.trim())
     }
-    set('birthDate', fromIsoDate(msg.info.birthdate))
-    // Drop the all-lowercase key an earlier build of this HUD may have written, so a stale value
-    // can't sit alongside the one unity-explorer reads.
-    extras.birthdate = null
+    if (msg.infoPatch === undefined || info.birthdate !== undefined) {
+      set('birthDate', fromIsoDate(info.birthdate))
+      extras.birthdate = null // Also clear the legacy spelling when editing the birthday.
+    }
   }
   return extras
 }
@@ -358,22 +369,30 @@ function toProfileExtras(msg: SaveProfileRequest): Record<string, JsonValue> {
 export function registerProfile(ctx: Ctx): void {
   ctx.on('getOwnedNames', async () => {
     const player = getPlayer()
-    ctx.send({ kind: 'ownedNames', names: player == null ? [] : await fetchOwnedNames(player.userId).catch(() => []) })
+    const names = player == null ? [] : await knownOwnedNames(player.userId).catch(() => undefined)
+    ctx.send(names != null ? { kind: 'ownedNames', names } : { kind: 'ownedNames', names: [], failed: true })
   })
 
   ctx.on('saveProfile', async (msg) => {
+    const accountChanged = (): void => ctx.send({
+      kind: 'profileSaved', requestId: msg.requestId, ok: false, accountChanged: true, error: 'The active account changed.'
+    })
     const player = getPlayer()
     if (player == null) {
-      ctx.send({ kind: 'profileSaved', ok: false, error: 'Not signed in yet.' })
+      if (msg.address !== undefined) return accountChanged()
+      ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: false, error: 'Not signed in yet.' })
       return
     }
 
+    if (msg.address !== undefined && profileKey(msg.address) !== profileKey(player.userId)) {
+      return accountChanged()
+    }
     // the account can change while this waits; the edit and its answers belong to this one only
-    const signedOut = (): boolean => getPlayer()?.userId !== player.userId
+    const isCurrent = identity.session(() => getPlayer()?.userId ?? null)
     const data: SetAvatarData = {}
-    if (msg.name !== undefined) {
+    if (msg.name) {
       const owned = await fetchOwnedNames(player.userId).catch(() => [])
-      if (signedOut()) return
+      if (!isCurrent()) return accountChanged()
       // An empty bodyShapeUrn and null colors mean "leave the avatar alone" — the name is the only
       // thing this edit touches, and the Backpack owns the rest.
       data.base = { skinColor: null, eyesColor: null, hairColor: null, bodyShapeUrn: '', name: msg.name, talking: null }
@@ -383,58 +402,68 @@ export function registerProfile(ctx: Ctx): void {
     if (Object.keys(extras).length > 0) data.profileExtras = extras
     if (msg.nameColor !== undefined) data.nameColor = { ...msg.nameColor, clear: false }
     if (data.base == null && data.profileExtras == null && data.nameColor == null) {
-      ctx.send({ kind: 'profileSaved', ok: true })
+      ctx.send({ kind: 'profileSaved', requestId: msg.requestId, ok: true })
       return
     }
 
     try {
-      // setAvatar resolves only once the engine has deployed the new profile version (guests
-      // resolve immediately — they have no catalyst presence to deploy to), so a rejection here
-      // is a genuinely failed save and the HUD must not keep showing the edit as if it stuck.
       await BevyApi.setAvatar(data)
     } catch (e) {
-      if (signedOut()) return
-      // a save that a later one replaced settles nothing: the later one carries it
-      if (!String(e).includes('cancelled')) profileSaveSettled(false)
+      if (!isCurrent() || (e != null && typeof e === 'object' && 'accountChanged' in e && e.accountChanged === true)) return accountChanged()
       console.error('[profile] save failed', e)
-      ctx.send({ kind: 'profileSaved', ok: false, error: e instanceof Error ? e.message : String(e) })
+      const snapshot = e != null && typeof e === 'object' && 'profile' in e ? e.profile : undefined
+      const matchesOwner = (profile: unknown): profile is SerializedProfile =>
+        profile != null && typeof profile === 'object' && 'ethAddress' in profile &&
+        typeof profile.ethAddress === 'string' && profileKey(profile.ethAddress) === profileKey(player.userId)
+      const committed = snapshot === null || matchesOwner(snapshot) ? snapshot : await fetchProfile(player.userId)
+      if (!isCurrent()) return accountChanged()
+      ctx.send({
+        kind: 'profileSaved', requestId: msg.requestId, ok: false, error: e instanceof Error ? e.message : String(e),
+        profile: committed && toProfile(committed, player.userId, player.isGuest, player.name)
+      })
       return
     }
 
-    if (signedOut()) return
-    profileSaveSettled(true)
-    ctx.send({ kind: 'profileSaved', ok: true })
-    // setAvatar amends the engine's own copy of the profile before it resolves, so re-reading it
-    // is the post-save state — no need to fold the edit in by hand.
+    if (!isCurrent()) return accountChanged()
     const av = await fetchProfile(player.userId)
-    if (signedOut()) return
-    ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
+    if (!isCurrent()) return accountChanged()
+    ctx.send({
+      kind: 'profileSaved', requestId: msg.requestId, ok: true, profile: av && toProfile(av, player.userId, player.isGuest, player.name)
+    })
   })
 
   // The page marks its world-entry profile fetch done as soon as it ASKS, so an answer of `null`
   // costs it the profile for the whole session. `getPlayer()` is the scene's view of the player
   // CRDT, which lags world entry by a good few hundred frames, so a request that arrives in that
   // window is held rather than answered — the page only ever hears a profile it can use.
-  let wanted = false
+  const playerAddress = (): string | null => getPlayer()?.userId ?? null
+  let wanted: (() => boolean) | undefined
+  // A read invalidated by logout can serve a different player. Reading the same wallet again
+  // requires an explicit request from its new login, because the scene can still see it on logout.
+  let retryAfter: string | undefined
   let inFlight = false
   const answerProfile = async (): Promise<void> => {
     const player = getPlayer()
     if (player == null || inFlight) return
-    wanted = false
+    if (!wanted?.() && (retryAfter === undefined || retryAfter === profileKey(player.userId))) return
+    wanted = undefined
+    retryAfter = undefined
     inFlight = true
     try {
+      const isCurrent = identity.session(playerAddress)
       const av = await fetchProfile(player.userId)
-      ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
+      if (isCurrent()) ctx.send({ kind: 'profile', profile: toProfile(av, player.userId, player.isGuest, player.name) })
+      else retryAfter = profileKey(player.userId)
     } finally {
       inFlight = false
     }
   }
   ctx.on('getProfile', () => {
-    wanted = true
-    void answerProfile()
+    wanted = identity.session(playerAddress)
+    return answerProfile()
   })
   ctx.push(() => {
-    if (wanted) void answerProfile()
+    if (wanted || retryAfter !== undefined) void answerProfile()
   })
 
   // The engine tells us when any profile it holds moves to a new version; the page decides what
@@ -446,13 +475,12 @@ export function registerProfile(ctx: Ctx): void {
   // A user's profile by address: the engine's copy alone for a name and a face (chat lines, the
   // profile card), plus badges + equipped items when the passport asks (`extras`).
   ctx.on('getUserProfile', async (msg) => {
+    const reply = (profile: Profile | null): void => {
+      ctx.send({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
+    }
     if (msg.extras !== true) {
       const av = await fetchProfile(msg.address)
-      ctx.send({
-        kind: 'userProfile',
-        address: msg.address,
-        profile: av == null ? null : toProfile(av, msg.address, false, av.name ?? msg.address)
-      })
+      reply(av == null ? null : toProfile(av, msg.address, false, av.name ?? msg.address))
       return
     }
     const me = getPlayer()
@@ -462,19 +490,16 @@ export function registerProfile(ctx: Ctx): void {
       fetchBadges(msg.address, isSelf).catch(() => undefined)
     ])
     if (av == null && badges == null) {
-      ctx.send({ kind: 'userProfile', address: msg.address, profile: null })
+      reply(null)
       return
     }
-    // Your OWN passport: read the live avatar (getPlayer()) so it matches the Backpack exactly.
-    // Other users have no live source (getPlayer(userId) only resolves nearby avatars), so they
-    // read the equipment their deployed profile lists.
-    const wearableUrns = isSelf ? (me.wearables ?? []).map(String) : (av?.avatar?.wearables ?? [])
-    // Through equippedSlots, not me.emotes: the bevy runtime leaves a fresh profile's wheel empty
-    // and the emote wheel fills it with the 10 base emotes, so reading the raw array would show an
-    // empty Equipped Emotes section in your own passport while the wheel shows ten.
-    const emoteEntries = isSelf
-      ? equippedSlots(me.emotes).map((urn, slot) => ({ slot, urn }))
-      : (av?.avatar?.emotes ?? [])
+    const wearableUrns = av?.avatar?.wearables ?? []
+    // A fresh player's empty wheel shows the base emotes. Use the committed slots even while
+    // the live avatar previews an equipment change.
+    const slots = av?.avatar?.emotes ?? []
+    const emoteEntries = isSelf && !slots.some(({ urn }) => urn !== '')
+      ? equippedSlots([]).map((urn, slot) => ({ slot, urn }))
+      : slots
     const [equippedWearables, equippedEmotes] = await Promise.all([
       // Only our OWN urns go through resolveEquippedSet (it indexes tokens for the equip handler);
       // shopUrls because the passport is the only surface that renders a SHOP action.
@@ -487,11 +512,11 @@ export function registerProfile(ctx: Ctx): void {
       equippedWearables,
       equippedEmotes
     }
-    ctx.send({ kind: 'userProfile', address: msg.address, profile })
+    reply(profile)
     // The tiers arrive in a second copy of the same profile, so the passport shows its badges at
     // once and the tier rows (and NEXT TIER names) fill in when they land.
     if (badges?.tiered === true) {
-      ctx.send({ kind: 'userProfile', address: msg.address, profile: { ...profile, badges: await badges.withTiers() } })
+      reply({ ...profile, badges: await badges.withTiers() })
     }
   })
 }

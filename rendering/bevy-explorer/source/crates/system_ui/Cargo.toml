@@ -3,6 +3,9 @@ name = "system_ui"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [lib]
 
 [features]
@@ -15,6 +18,7 @@ comms = { workspace = true }
 dcl_types = { workspace = true }
 dcl_component = { workspace = true }
 scene_runner = { workspace = true }
+texture_camera = { workspace = true }
 ipfs = { workspace = true }
 ui_core = { workspace = true }
 avatar = { workspace = true }
@@ -50,4 +54,11 @@ clap = { workspace = true }
 web-time = { workspace = true }
 copypwasmta = { workspace = true }
 
-shlex = "1"
+[dev-dependencies]
+# the embedded shaders, for the GPU shader test
+assets = { workspace = true }
+# the headless renderer, for the GPU shader test
+pipeline_test = { workspace = true }
+# present only to enable the naga_oil `override_any` feature in a per-crate test build, as the
+# root crate does for the app (see [workspace.dependencies]); not referenced from Rust
+naga_oil = { workspace = true }

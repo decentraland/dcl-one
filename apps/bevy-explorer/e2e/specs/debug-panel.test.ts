@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spec, until } from '../driver/index.ts'
+import { readTarget, spec, until } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
@@ -31,9 +31,22 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button(title))
   }
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
-  const developmentBuild = await explorer.json<boolean>('/debug_panel --dev-build')
-  const sidebarSettings = button('Sidebar settings')
+  // the Profiler section and its commands exist only in a `performance-profiler` build, which
+  // release builds (CI's among them) leave out
+  const profilerBuild = (await explorer.json<{ title: string }[]>('/debug_panel'))
+    .some((section) => section.title === 'Profiler')
+  const target = readTarget()
   const nativeHud = explorer.console.kind === 'native'
+  const sidebarSettings = button('Sidebar settings')
+  await explorer.hud.wait(sidebarSettings)
+  const launcher = button('Toggle debug panel')
+  const launcherEnabled = await explorer.hud.isVisible(launcher)
+  if (!nativeHud) {
+    const requested = target.webUrl != null && new URL(target.webUrl).searchParams.get('debugPanel') === '1'
+    assert.equal(launcherEnabled, requested)
+  } else if (target.native.bin) {
+    assert.equal(launcherEnabled, target.native.args.includes('--debug-panel'))
+  }
   if (nativeHud) {
     await explorer.hud.click(sidebarSettings)
     await explorer.hud.wait(button('Debug panel'))
@@ -44,16 +57,14 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     { timeoutMs: 10_000, what: 'a CEF repaint while the debug panel is closed' })
     assert.ok(cef.paintSize?.every(size => size > 0))
     // the open popup's backdrop covers its handle: Escape closes the popup
-    if (developmentBuild) await explorer.escape()
+    if (launcherEnabled) await explorer.escape()
   }
   const waitTarget = (fps: number) => until(() => explorer.hud.get(panel),
     (read) => read.text.includes('Target frame rate (FPS) ' + fps),
     { timeoutMs: 10_000, what: 'the open panel to show a target of ' + fps + ' FPS' })
-  const launcher = button('Toggle debug panel')
-  if (developmentBuild) {
+  if (launcherEnabled) {
     await explorer.hud.click(launcher)
   } else {
-    assert.equal(await explorer.hud.isVisible(launcher), false)
     if (!nativeHud) await explorer.hud.click(sidebarSettings)
     await explorer.hud.click(button('Debug panel'))
   }
@@ -80,6 +91,25 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
+    if (profilerBuild) {
+      await expand('Profiler')
+      await explorer.hud.click(button('Enable profiler'))
+      await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
+        timeoutMs: 10_000, what: 'the profiler to report itself enabled'
+      })
+      const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
+        (reading) => reading.enabled && reading.scopeSummaries.length === 5,
+        { timeoutMs: 10_000, what: 'five profiled scopes' })
+      for (const row of top.scopeSummaries) {
+        assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
+        assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+      }
+      await explorer.hud.click(button('Disable profiler'))
+      await explorer.hud.wait(button('Enable profiler'))
+      const off = await explorer.json<ProfileTop>('/profile_top')
+      assert.equal(off.enabled, false)
+      assert.match(String(off.unavailable.scopeSummary), /disabled/)
+    }
     // walk, click the world and use Sidebar settings with the panel open
     const start = await explorer.position()
     await explorer.key('KeyW', 'down')
@@ -109,6 +139,7 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
+    if (profilerBuild) await explorer.run('/profile_enable off')
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
     // The panel's own Close button, not Escape: with the filter field focused the HUD leaves Cancel
     // to the field, and a panel left open would stay over every later scenario. The panel comes
@@ -121,6 +152,59 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
   }
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)
 })
+
+type ProfileTop = {
+  enabled: boolean
+  scopeSummaries: { scopeName: string; scopeKind: string; callCount: number; selfTimeMs: number; inclusiveTimeMs: number }[]
+  unavailable: Record<string, string>
+}
+
+type PerformanceState = {
+  sampling: { status: 'sampling' | 'paused'; pausedReason: string | null }
+  inProgressSample: { sampledSeconds: number }
+  cpuFrameTimes: { hiccupThresholdMs: number; sampleCount: number; p99Ms: number } | null
+  frameTimeBreakdown: (number | null)[]
+  bottleneck: string | null
+  hudMainThreadCost: (number | null)[] | null
+  entityCount: number | null
+  unavailable: Record<string, string>
+}
+
+scenario('the performance sampler samples in world and scales the hiccup threshold to the target', async ({ explorer }) => {
+  const state = await until(() => explorer.json<PerformanceState>('/performance_state'),
+    (reading) => reading.sampling.status === 'sampling' && reading.inProgressSample.sampledSeconds > 0,
+    { timeoutMs: 20_000, what: 'the sampler to run in world' })
+  assert.equal(state.sampling.pausedReason, null)
+  assert.equal(state.frameTimeBreakdown.length, 6)
+  assert.ok(state.frameTimeBreakdown.slice(0, 4).every((ms) => typeof ms === 'number' && ms >= 0), JSON.stringify(state.frameTimeBreakdown))
+  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'render_thread_cpu', 'gpu', 'swapchain_present_wait', 'frame_rate_limiter', 'cpu_and_gpu_balanced'].includes(state.bottleneck), String(state.bottleneck))
+  assert.ok((state.entityCount ?? 0) > 0)
+  if (explorer.console.kind === 'native') {
+    assert.equal(state.hudMainThreadCost, null)
+    assert.equal(state.unavailable.hudMainThreadCost, '-')
+  } else {
+    // React commits (the first two cells) only from a HUD built with HUD_REACT_PROFILING=1
+    const withHud = await until(() => explorer.json<PerformanceState>('/performance_state'),
+      (reading) => reading.hudMainThreadCost != null,
+      { timeoutMs: 10_000, what: 'a HUD main-thread cost window' })
+    assert.equal(withHud.hudMainThreadCost!.length, 5, JSON.stringify(withHud.hudMainThreadCost))
+    const [commitCount, commitMs] = withHud.hudMainThreadCost!
+    assert.equal(commitCount == null, commitMs == null, JSON.stringify(withHud.hudMainThreadCost))
+    if (commitCount != null) assert.ok(commitCount >= 0 && commitMs! >= 0, JSON.stringify(withHud.hudMainThreadCost))
+  }
+  if (state.cpuFrameTimes == null) assert.match(String(state.unavailable.cpuFrameTimes), /sampled time/)
+  const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
+  try {
+    await explorer.run('/session_graphics fps 30')
+    const capped = await until(() => explorer.json<PerformanceState>('/performance_state'),
+      (reading) => reading.cpuFrameTimes != null && Math.abs(reading.cpuFrameTimes.hiccupThresholdMs - 66.7) < 0.1,
+      { timeoutMs: 40_000, what: 'a snapshot taken at the 30 FPS cap, with its 66.7 ms threshold' })
+    assert.ok(capped.cpuFrameTimes!.sampleCount > 0)
+    assert.ok(capped.cpuFrameTimes!.p99Ms > 0)
+  } finally {
+    await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
+  }
+}, { session: { signIn: 'guest' } })
 
 // An unsigned guest, the session-only one the engine's `/login_guest` signs in (as a scene
 // preview's `?guest=1` does), has no signed identity to send a client login with. The HUD's

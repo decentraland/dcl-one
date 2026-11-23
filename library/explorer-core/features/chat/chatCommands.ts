@@ -5,7 +5,8 @@
 // `/goto` and `/world` reuse the existing teleport/changeRealm bridge plumbing; `/reload` and
 // `/commands` go through thin bridge handlers (reloadScene / consoleCommand). `/help` is a
 // client-rendered system message; `/commands` surfaces the engine's own console command list.
-// Any other `/word args` is passed through to the engine console (`consoleCommand`), except the
+// Any other `/word args` goes to the engine console as the line typed (`engine_console_command`),
+// so the engine splits it by its one rule (`console::line::split`), except the
 // HUD_HIDDEN_COMMANDS below; the engine itself only registers dev/cheat commands in preview mode.
 
 /** The DCL default (Genesis) realm — `/goto genesis` / `/goto main` target this. */
@@ -16,7 +17,7 @@ export type ChatCommand =
   | { kind: 'send'; text: string }
   /** `/goto x,y` — teleport to a parcel. */
   | { kind: 'goto'; x: number; y: number }
-  /** `/goto genesis|main` — change to the default (Genesis) realm. */
+  /** `/goto genesis|main` — go to Genesis Plaza, in the default (Genesis) realm. */
   | { kind: 'genesis' }
   /** `/goto <world>` or `/world <world>` — jump to a world's realm (normalized to `.dcl.eth`). */
   | { kind: 'world'; realm: string }
@@ -25,8 +26,9 @@ export type ChatCommand =
   /** `/commands` — list the engine console commands. */
   | { kind: 'commands' }
   | { kind: 'debug'; target: string }
-  /** Any other `/command args` — run it on the engine console (no leading slash, args pre-split). */
-  | { kind: 'console'; command: string; args: string[] }
+  /** Any other `/command args` — run `line` on the engine console, which splits it. `command` is
+   *  the name without its slash; `hasArgs` says whether anything follows it. */
+  | { kind: 'console'; command: string; hasArgs: boolean; line: string }
   /** `/help` (and invalid usage) — echo this text as a system message. */
   | { kind: 'system'; message: string }
 
@@ -94,19 +96,16 @@ export const HUD_HIDDEN_COMMANDS: ReadonlySet<string> = new Set([
   'exit',
 ])
 
-/** Split a console argument string on whitespace, honouring "double" and 'single' quotes. */
-export function splitArgs(rest: string): string[] {
-  const out: string[] = []
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(rest)) != null) out.push(m[1] ?? m[2] ?? m[3])
-  return out
+/** The line the engine console runs for a typed command: its name lower-cased, the rest as typed. */
+function consoleLine(name: string, rest: string): ChatCommand {
+  return { kind: 'console', command: name, hasArgs: rest !== '', line: rest === '' ? `/${name}` : `/${name} ${rest}` }
 }
 
 /** Render an engine console reply as a chat system line. A bare `help` (`/commands`) drops the
  *  HUD-hidden commands; the engine's unknown-command rejection is cut to its first sentence (its
- *  "Recognized commands: [...]" tail is the whole registry). */
-export function formatConsoleReply(command: string, args: string[], output: string): string {
+ *  "Recognized commands: [...]" tail is the whole registry). `args` is only asked whether it is
+ *  empty. */
+export function formatConsoleReply(command: string, args: readonly unknown[], output: string): string {
   if (command === 'help' && args.length === 0) {
     return output
       .split('\n')
@@ -152,7 +151,7 @@ export function parseChatCommand(input: string): ChatCommand {
   switch (name) {
     case 'help':
       // `/help <command>` → the engine's per-command usage (its registry keys carry the slash).
-      if (restParts.length > 0) return { kind: 'console', command: 'help', args: [`/${restParts[0].replace(/^\//, '')}`] }
+      if (restParts.length > 0) return consoleLine('help', `/${restParts[0].replace(/^\//, '')}`)
       return { kind: 'system', message: HELP_TEXT }
     case 'debug': return { kind: 'debug', target: rest.trim() }
     case 'commands':
@@ -160,7 +159,7 @@ export function parseChatCommand(input: string): ChatCommand {
     case 'reload':
       // Bare `/reload` targets the player's scene (the engine's bare `/reload` reloads every scene,
       // this HUD's bridge included); with a hash it is the engine command.
-      if (restParts.length > 0) return { kind: 'console', command: 'reload', args: splitArgs(rest) }
+      if (restParts.length > 0) return consoleLine('reload', rest)
       return { kind: 'reload' }
     case 'goto':
       return parseGoto(rest, true)
@@ -172,6 +171,6 @@ export function parseChatCommand(input: string): ChatCommand {
       if (name === '' || HUD_HIDDEN_COMMANDS.has(name)) {
         return { kind: 'system', message: `Unknown command ${word}. Type /help for the list.` }
       }
-      return { kind: 'console', command: name, args: splitArgs(rest) }
+      return consoleLine(name, rest)
   }
 }

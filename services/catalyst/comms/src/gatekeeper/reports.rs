@@ -653,7 +653,7 @@ async fn store_once(
             }
         };
     }
-    tokio::spawn(async move {
+    crate::shared::task::spawn_with(async move {
         let Err(error) = state.storage.store(&hash, body).await else {
             return Ok(());
         };

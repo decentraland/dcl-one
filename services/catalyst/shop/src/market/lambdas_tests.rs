@@ -51,10 +51,7 @@ impl ScratchDb {
             "catalyst_z_lmb_{}",
             &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&format!("/{name}"));
         let pool = crate::db::connect_pool(
@@ -66,7 +63,6 @@ impl ScratchDb {
         )
         .await
         .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { name, pool, admin })
     }
 
@@ -114,7 +110,9 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 fn matic_collections(query: &str) -> Value {
     if query.contains("urn_in") {
         // The ownership document of the profiles: the owner holds the hat, token 10.
-        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
+        let mut data = empty_owner_aliases(query);
+        data["o0"] = json!([{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }]);
+        data
     } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
@@ -130,8 +128,27 @@ fn matic_collections(query: &str) -> Value {
     }
 }
 
-fn eth_collections(_: &str) -> Value {
+fn eth_collections(query: &str) -> Value {
+    if query.contains("o0: nfts(") {
+        return empty_owner_aliases(query);
+    }
     json!({ "nfts": [] })
+}
+
+fn empty_owner_aliases(query: &str) -> Value {
+    let mut data = json!({});
+    for alias in query
+        .split_whitespace()
+        .filter_map(|word| word.strip_suffix(':'))
+    {
+        if alias
+            .strip_prefix('o')
+            .is_some_and(|n| n.parse::<usize>().is_ok())
+        {
+            data[alias] = json!([]);
+        }
+    }
+    data
 }
 
 fn marketplace_graph(query: &str) -> Value {
@@ -520,8 +537,8 @@ async fn seed_indexes(pool: &PgPool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(pool)
@@ -1210,8 +1227,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "{uri}"
     );
     // An active escrow grant joins the explorer's on-chain copies only where
-    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
-    // as lamb2 lists chain-owned tokens only).
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off unless the operator opts
+    // in, as lamb2 lists chain-owned tokens only).
     sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
         .bind(OWNER)
         .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
@@ -1872,8 +1889,8 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(&db.pool)

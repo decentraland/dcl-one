@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { embedEscapeHref, framedPathname, installEmbedGuards, isEmbedded } from "@ui/web/frames/embed";
+import { embedEscapeHref, framedPathname, installEmbedGuards, isEmbedded } from "@/core/lib/embed";
 
 import { explorerHost, hubLocationKeeper, installHubFrame } from "./explorer-host";
 

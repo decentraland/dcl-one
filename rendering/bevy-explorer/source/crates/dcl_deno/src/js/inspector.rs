@@ -12,7 +12,6 @@ use deno_core::futures::prelude::*;
 use deno_core::futures::select;
 use deno_core::futures::stream::StreamExt;
 use deno_core::futures::task::Poll;
-use deno_core::serde_json;
 use deno_core::serde_json::json;
 use deno_core::serde_json::Value;
 use deno_core::unsync::spawn;
@@ -212,19 +211,20 @@ fn handle_json_request(
         .values()
         .map(move |info| info.get_json_metadata(&host))
         .collect::<Vec<_>>();
-    http::Response::builder()
-        .status(http::StatusCode::OK)
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::to_string(&data).unwrap().into())
+    json_response(Value::Array(data))
 }
 
 fn handle_json_version_request(
     version_response: Value,
 ) -> http::Result<http::Response<hyper::Body>> {
+    json_response(version_response)
+}
+
+fn json_response(body: Value) -> http::Result<http::Response<hyper::Body>> {
     http::Response::builder()
         .status(http::StatusCode::OK)
         .header(http::header::CONTENT_TYPE, "application/json")
-        .body(serde_json::to_string(&version_response).unwrap().into())
+        .body(body.to_string().into())
 }
 
 async fn server(

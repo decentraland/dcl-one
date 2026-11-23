@@ -5,15 +5,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Eip1193Provider } from '../../data/auth/wallet'
 import type { CartGroup } from '@shop/cart/partition'
-import { createFakeWallet, creatorTrade, type FakeWallet } from '../../shop/checkout/fakes'
+import { createFakeShop, createFakeWallet, creatorTrade, type FakeWallet } from '../../shop/checkout/fakes'
 import type { CheckoutDeps, GroupResult } from '../../shop/checkout/purchase/executor'
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
 import type { GroupProgress } from '@shop/model/purchase'
 import { BOOK, creatorOrder, ITEM, storeMint } from '@shop/payment/fixtures'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
-import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
-import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
+import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '@dcl/one-ui/apps/shop/shopProtocol'
+import { claimLock, createShellShop, creditRecordOutcome, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
 import { NAME_SIMULATION_MS } from '../shell/shop/namePurchase'
 import { createLedger, type OperationRecord } from '../shell/shop/ledger'
 import type { PurchaseIntent } from '../shell/shop/walletGuard'
@@ -193,6 +193,7 @@ function setup(
     newId: () => `0f0e0d0c-0000-4000-8000-${String(++opIds).padStart(12, '0')}`,
     creditsUrl: () => 'https://decentraland.example/shop/credits',
     creatorName: opts.creatorName ?? (async () => 'Aurora'),
+    creatorFace: async () => null,
     claim: opts.claim ?? (async () => () => {}),
     creditRecord,
     ...(opts.names?.mode === 'build' ? {} : { namesMode: typeof opts.names?.mode === 'function' ? opts.names.mode : () => (opts.names?.mode ?? null) as ShopNamesMode | null }),
@@ -859,7 +860,7 @@ describe('the shell purchase', () => {
     expect(t.creditRecord).toHaveBeenCalledTimes(4)
     expect(t.creditRecord.mock.calls[0][1]).toEqual(['0x' + 'a1'.repeat(32)])
     const { view, handlers } = await t.until('failed')
-    expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/never went through/) })
+    expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/expired before its Credits were spent on chain/) })
     handlers.onClose()
     // The item can be bought again.
     const again = await t.buy()
@@ -1070,6 +1071,65 @@ describe('the shell purchase', () => {
   it('reads the balance for the login, and none signed out', async () => {
     expect(await setup({ balanceCents: 1234 }).shop.request('shop.balance', undefined)).toEqual({ v: 1, credits: 123 })
     expect(await setup({ login: () => null }).shop.request('shop.balance', undefined)).toBeNull()
+  })
+})
+
+describe('the node’s record of a Credits purchase’s credits', () => {
+  const CREDIT = '0x' + 'a1'.repeat(32)
+  const OTHER = '0x' + 'b2'.repeat(32)
+  /** The buyer's purchases, `per` a page, listed by line (`<salt>:0`), as the node lists them. */
+  const shopWith = (rows: { id: string; status: 'PENDING' | 'SETTLED' | 'EXPIRED' }[], per = 200) => {
+    const pages: number[] = []
+    const shop = createFakeShop({
+      userPurchases: ({ query }) => {
+        const offset = Number(query.get('offset') ?? 0)
+        pages.push(offset)
+        const page = rows.slice(offset, offset + Math.min(per, Number(query.get('limit') ?? per)))
+        return { purchases: page.map((r) => ({ ...r, usdCents: 50, createdAt: 1, txHash: null })), total: rows.length }
+      }
+    })
+    return { client: shop.client, pages }
+  }
+  const filler = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `0x${i.toString(16).padStart(64, '0')}:0`, status: 'SETTLED' as const }))
+
+  it('finds a credit by its salt among its lines (`<salt>:0`): spent is settled, expired is expired, reserved is open', async () => {
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'SETTLED' }]).client)).toBe('settled')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT.toUpperCase().replace('0X', '0x')}:0`, status: 'EXPIRED' }]).client)).toBe('expired')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'PENDING' }]).client)).toBe('open')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${OTHER}:0`, status: 'SETTLED' }]).client)).toBe('open')
+  })
+
+  it('reads past the first page for a credit listed further down', async () => {
+    const { client, pages } = shopWith([...filler(250), { id: `${CREDIT}:0`, status: 'SETTLED' }])
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], client)).toBe('settled')
+    expect(pages).toEqual([0, 200])
+  })
+
+  it('reads every credit of the group in one pass, and stops at the first one spent even where a later page fails', async () => {
+    const { client, pages } = shopWith([...filler(250), { id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${OTHER}:0`, status: 'EXPIRED' }])
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], client)).toBe('expired')
+    expect(pages).toEqual([0, 200])
+    // Spent on the first page: read no further, so a failing next page says nothing against it.
+    let reads = 0
+    const failing = createFakeShop({
+      userPurchases: () => {
+        if (reads++ > 0) throw new Error('upstream unavailable')
+        return { purchases: [{ id: `${CREDIT}:0`, status: 'SETTLED', usdCents: 50, createdAt: 1, txHash: null }, ...filler(199).map((r) => ({ ...r, usdCents: 50, createdAt: 1, txHash: null }))], total: 400 }
+      }
+    })
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], failing.client)).toBe('settled')
+    expect(reads).toBe(1)
+  })
+
+  it('takes a credit as spent by any of its lines, and as expired only when every line read of it is', async () => {
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${CREDIT}:1`, status: 'SETTLED' }]).client)).toBe('settled')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${CREDIT}:1`, status: 'PENDING' }]).client)).toBe('open')
+  })
+
+  it('is expired only once every credit of the group is listed expired', async () => {
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }]).client)).toBe('open')
+    expect(await creditRecordOutcome(BOOK.buyer, [CREDIT, OTHER], shopWith([{ id: `${CREDIT}:0`, status: 'EXPIRED' }, { id: `${OTHER}:0`, status: 'EXPIRED' }]).client)).toBe('expired')
+    expect(await creditRecordOutcome(BOOK.buyer, [], shopWith([]).client)).toBe('open')
   })
 })
 
@@ -1290,56 +1350,33 @@ describe('a purchase of several items (the cart)', () => {
     })
   }
 
-  it('says the purchase is in progress while a group confirms, and successful with everything once it does', async () => {
+  it('holds the rest while a group confirms, never says successful, and says the rest waited once it does', async () => {
+    // Signed while the first is out, the next group could take the same meta-transaction nonce and revert.
     const watched: Record<string, GroupResult> = {}
     const t = confirming(['accept'], watched)
     await t.checkout('7', '8')
     ;(await t.until('confirm')).handlers.onConfirm?.()
     await t.until('pending')
-    expect(t.run).toHaveBeenCalledTimes(2)
     await vi.waitFor(() => expect(t.watch).toHaveBeenCalled())
-    expect(t.events.filter((e) => e.state === 'succeeded').map((e) => e.items.map((i) => i.itemId))).toEqual([['8']])
-    // The first group confirms after the last one did: the checkout is done, with everything it bought.
+    expect(t.run).toHaveBeenCalledTimes(1)
+    expect(t.guard.mock.calls.map(([, intent]) => intent.sale.call)).toEqual(['accept'])
     watched.accept = { status: 'confirmed', txHash: TX }
-    const done = await t.until('success')
-    expect(done.view.step === 'success' && done.view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toBe(
+      'Part of this purchase went through, but not all of it: the rest wasn’t sent while an earlier part was still being confirmed. What wasn’t bought is still in your cart.'
+    )
+    expect(t.events.filter((e) => e.state === 'succeeded').map((e) => e.items.map((i) => i.itemId))).toEqual([['7']])
+    expect(t.events.some((e) => e.items.some((i) => i.itemId === '8') && e.state !== 'processing' && e.state !== 'reviewing')).toBe(false)
   })
 
-  it('stays in progress while any group is, and says what went and what didn’t once they all end', async () => {
+  it('says nothing was bought when the group it waited on fails on-chain', async () => {
     const watched: Record<string, GroupResult> = {}
     const t = confirming(['accept', 'storeBuy'], watched)
     await t.checkout('7', '8')
     ;(await t.until('confirm')).handlers.onConfirm?.()
     await t.until('pending')
-    await vi.waitFor(() => expect(t.watch.mock.calls.length).toBeGreaterThanOrEqual(2))
-    // The last group confirms first: never "successful" while the other is still out.
-    watched.storeBuy = { status: 'confirmed', txHash: TX }
-    await vi.waitFor(() => expect(t.events.some((e) => e.state === 'succeeded')).toBe(true))
-    expect(t.last().view.step).toBe('pending')
-    watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
-    const { view } = await t.until('failed')
-    expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*failed on-chain.*still in your cart/)
-    expect(view.step === 'failed' && view.message).not.toMatch(/were returned/)
-  })
-
-  it('says nothing was bought when no group of it was', async () => {
-    const watched: Record<string, GroupResult> = {}
-    const t = setup({
-      items: ITEMS,
-      offers: mixed,
-      resolvers: trades,
-      run: async (deps, group) => {
-        if (group.key.call.kind !== 'accept') return { status: 'failed', failure: { kind: 'rejected', message: 'You declined the signature.' }, released: [] }
-        handedOff(deps, group)
-        return { status: 'pending', txHash: TX }
-      },
-      watch: async (_deps, progress) => watched[progress.key.call.kind] ?? { status: 'pending', txHash: TX }
-    })
-    await t.checkout('7', '8')
-    ;(await t.until('confirm')).handlers.onConfirm?.()
-    // The second group was declined while the first is still out: in progress until it ends.
-    await t.until('pending')
     await vi.waitFor(() => expect(t.watch).toHaveBeenCalled())
+    expect(t.run).toHaveBeenCalledTimes(1)
     watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
     const { view } = await t.until('failed')
     expect(view.step === 'failed' && view.message).toBe('None of its transactions went through: nothing was bought. Everything is still in your cart.')

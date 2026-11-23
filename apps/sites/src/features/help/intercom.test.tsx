@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { INTERCOM_WIDGET_URL, showIntercom, useIntercom } from "./intercom";
 
@@ -14,7 +14,10 @@ vi.hoisted(() =>
 );
 
 const APP_ID = "app-example123";
+const BOOT_SETTINGS = { app_id: APP_ID, alignment: "right", hide_default_launcher: true };
+const READY_CALL = ["ready", expect.any(Function)];
 const WALLET = "0x" + "ab".repeat(20);
+const OTHER_WALLET = "0x" + "cd".repeat(20);
 
 type IntercomWindow = Window & { Intercom?: (...args: unknown[]) => void; intercomSettings?: unknown };
 const win = window as IntercomWindow;
@@ -32,8 +35,11 @@ function loadScript(intercom: (...args: unknown[]) => void) {
   scripts()[0].dispatchEvent(new Event("load"));
 }
 
+let intercom: Mock<(...args: unknown[]) => void>;
+
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
+  intercom = vi.fn();
 });
 
 afterEach(() => {
@@ -45,106 +51,151 @@ afterEach(() => {
 });
 
 describe("useIntercom", () => {
-  it("does not inject the widget during a server render", () => {
-    renderToString(<Widget />);
-    expect(scripts()).toHaveLength(0);
+  describe("when rendered on the server", () => {
+    it("should not inject the widget", () => {
+      renderToString(<Widget />);
+      expect(scripts()).toHaveLength(0);
+    });
   });
 
-  it("injects the widget script for the app id once mounted in the browser", () => {
-    render(<Widget />);
-    expect(scripts().map((s) => s.src)).toEqual([`${INTERCOM_WIDGET_URL}${APP_ID}`]);
-    expect(win.intercomSettings).toEqual({ alignment: "right" });
+  describe("when mounted in the browser", () => {
+    it("should inject the widget script for the app id", () => {
+      render(<Widget />);
+      expect(scripts().map((s) => s.src)).toEqual([`${INTERCOM_WIDGET_URL}${APP_ID}`]);
+    });
+
+    it("should set the widget settings", () => {
+      render(<Widget />);
+      expect(win.intercomSettings).toEqual({ alignment: "right", hide_default_launcher: true });
+    });
   });
 
-  it("boots the widget with the app id, the alignment and the wallet once the script loads", async () => {
-    const intercom = vi.fn();
-    render(<Widget wallet={WALLET} />);
-    loadScript(intercom);
-    await waitFor(() =>
-      expect(intercom.mock.calls).toEqual([["boot", { app_id: APP_ID, alignment: "right", Wallet: WALLET }]]),
-    );
+  describe("when the script loads", () => {
+    describe("and a wallet is signed in", () => {
+      it("should boot the widget with the app id, the alignment and the wallet", async () => {
+        render(<Widget wallet={WALLET} />);
+        loadScript(intercom);
+        await waitFor(() =>
+          expect(intercom.mock.calls).toEqual([READY_CALL, ["boot", { ...BOOT_SETTINGS, Wallet: WALLET }]]),
+        );
+      });
+    });
+
+    describe("and the messenger has not replaced Intercom's queue yet", () => {
+      it("should queue the boot", async () => {
+        render(<Widget wallet={WALLET} />);
+        const queue = win.Intercom as unknown as { q: unknown[][] };
+        scripts()[0].dispatchEvent(new Event("load"));
+        await waitFor(() =>
+          expect(queue.q).toEqual([READY_CALL, ["boot", { ...BOOT_SETTINGS, Wallet: WALLET }]]),
+        );
+      });
+    });
+
+    describe("and no one is signed in", () => {
+      it("should leave the wallet out", async () => {
+        render(<Widget wallet={null} />);
+        loadScript(intercom);
+        await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", BOOT_SETTINGS));
+      });
+    });
   });
 
-  it("queues the boot while the messenger has not replaced Intercom's queue yet", async () => {
-    render(<Widget wallet={WALLET} />);
-    const queue = win.Intercom as unknown as { q: unknown[][] };
-    scripts()[0].dispatchEvent(new Event("load"));
-    await waitFor(() =>
-      expect(queue.q).toEqual([["boot", { app_id: APP_ID, alignment: "right", Wallet: WALLET }]]),
-    );
+  describe("when the page unmounts after the boot", () => {
+    it("should shut the widget down", async () => {
+      const { unmount } = render(<Widget />);
+      loadScript(intercom);
+      await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.anything()));
+      unmount();
+      expect(intercom).toHaveBeenLastCalledWith("shutdown");
+    });
+
+    describe("and the visitor comes back to the page", () => {
+      beforeEach(async () => {
+        const first = render(<Widget />);
+        loadScript(intercom);
+        await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.anything()));
+        first.unmount();
+        intercom.mockClear();
+      });
+
+      it("should boot again", async () => {
+        render(<Widget />);
+        await waitFor(() =>
+          expect(intercom.mock.calls).toEqual([READY_CALL, ["boot", BOOT_SETTINGS]]),
+        );
+      });
+
+      it("should reuse the injected script", async () => {
+        render(<Widget />);
+        await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", BOOT_SETTINGS));
+        expect(scripts()).toHaveLength(1);
+      });
+    });
   });
 
-  it("leaves the wallet out when no one is signed in", async () => {
-    const intercom = vi.fn();
-    render(<Widget wallet={null} />);
-    loadScript(intercom);
-    await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", { app_id: APP_ID, alignment: "right" }));
+  describe("when the wallet changes after the boot", () => {
+    it("should restart the messenger for the new account", async () => {
+      const view = render(<Widget wallet={WALLET} />);
+      loadScript(intercom);
+      await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.objectContaining({ Wallet: WALLET })));
+      intercom.mockClear();
+
+      view.rerender(<Widget wallet={OTHER_WALLET} />);
+      await waitFor(() =>
+        expect(intercom.mock.calls).toEqual([
+          ["shutdown"],
+          READY_CALL,
+          ["boot", { ...BOOT_SETTINGS, Wallet: OTHER_WALLET }],
+        ]),
+      );
+    });
   });
 
-  it("shuts the widget down when the page unmounts", async () => {
-    const intercom = vi.fn();
-    const { unmount } = render(<Widget />);
-    loadScript(intercom);
-    await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.anything()));
-    unmount();
-    expect(intercom).toHaveBeenLastCalledWith("shutdown");
+  describe("when the app id is empty", () => {
+    it("should load nothing", () => {
+      render(<Widget appId="" />);
+      expect(scripts()).toHaveLength(0);
+    });
   });
 
-  it("boots again when the visitor comes back to the page after a shutdown", async () => {
-    const intercom = vi.fn();
-    const first = render(<Widget />);
-    loadScript(intercom);
-    await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.anything()));
-    first.unmount();
-    intercom.mockClear();
+  describe("when the script fails to load", () => {
+    beforeEach(() => {
+      render(<Widget />);
+      scripts()[0].dispatchEvent(new Event("error"));
+    });
 
-    render(<Widget />);
-    await waitFor(() =>
-      expect(intercom.mock.calls).toEqual([["boot", { app_id: APP_ID, alignment: "right" }]]),
-    );
-    expect(scripts()).toHaveLength(1);
-  });
+    it("should log the failure", async () => {
+      await waitFor(() => expect(console.error).toHaveBeenCalledWith("Could not render Intercom", "Failed to load the Intercom script"));
+    });
 
-  it("restarts the messenger for the new account when the wallet changes", async () => {
-    const intercom = vi.fn();
-    const OTHER = "0x" + "cd".repeat(20);
-    const view = render(<Widget wallet={WALLET} />);
-    loadScript(intercom);
-    await waitFor(() => expect(intercom).toHaveBeenCalledWith("boot", expect.objectContaining({ Wallet: WALLET })));
-    intercom.mockClear();
-
-    view.rerender(<Widget wallet={OTHER} />);
-    await waitFor(() =>
-      expect(intercom.mock.calls).toEqual([
-        ["shutdown"],
-        ["boot", { app_id: APP_ID, alignment: "right", Wallet: OTHER }],
-      ]),
-    );
-  });
-
-  it("loads nothing when the app id is empty", () => {
-    render(<Widget appId="" />);
-    expect(scripts()).toHaveLength(0);
-  });
-
-  it("drops the script and logs when it fails to load", async () => {
-    render(<Widget />);
-    scripts()[0].dispatchEvent(new Event("error"));
-    await waitFor(() => expect(console.error).toHaveBeenCalledWith("Could not render Intercom", "Failed to load the Intercom script"));
-    expect(scripts()).toHaveLength(0);
-    expect(win.Intercom).toBeUndefined();
+    it("should drop the script and leave Intercom undefined", async () => {
+      await waitFor(() => expect(console.error).toHaveBeenCalled());
+      expect(scripts()).toHaveLength(0);
+      expect(win.Intercom).toBeUndefined();
+    });
   });
 });
 
 describe("showIntercom", () => {
-  it("opens nothing when no widget was requested", () => {
-    expect(showIntercom()).toBe(false);
+  describe("when no widget was requested", () => {
+    it("should open nothing", () => {
+      expect(showIntercom()).toBe(false);
+    });
   });
 
-  it("opens the chat through the loaded widget", () => {
-    const intercom = vi.fn();
-    win.Intercom = intercom;
-    expect(showIntercom()).toBe(true);
-    expect(intercom).toHaveBeenCalledWith("show");
+  describe("when the widget is loaded", () => {
+    beforeEach(() => {
+      win.Intercom = intercom;
+    });
+
+    it("should report that the chat opened", () => {
+      expect(showIntercom()).toBe(true);
+    });
+
+    it("should open the chat through the widget", () => {
+      showIntercom();
+      expect(intercom).toHaveBeenCalledWith("show");
+    });
   });
 });

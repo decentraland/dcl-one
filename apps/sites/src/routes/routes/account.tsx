@@ -16,7 +16,7 @@ export function meta() {
 
 function sectionOf(pathname: string): AccountSection | null {
   const section = pathname.replace(/\/+$/, "").split("/")[2];
-  return section === "notifications" || section === "credits" ? section : null;
+  return section === "wallets" || section === "notifications" || section === "credits" ? section : null;
 }
 
 /** `/account`: the signed-in member's settings; each section reads its data with the browser's session. */

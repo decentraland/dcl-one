@@ -53,8 +53,23 @@ reference:
   It logs `raycast entity=<id>` the first time an entity's raycast answers and
   `raycast-storm complete` once all 200 have.
 
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png` and `.jpg`
-assets are in Git LFS.
+## The video scene
+
+`video`, parcel `0,26`, spawn at `(8, 0, 4)` facing the screens: the scene of
+`specs/media-retry.test.ts`, in the workspace but not in `SCENES`, so without a reference, and
+left out of the visual specs' realm, so its looping decoders run only beside its own spec. Three
+planes each show one looped file of `assets/` in a basic material: `recover`
+(`assets/recover.webm`, at `(5, 2, 8)`), `broken` (`assets/broken.webm`, at `(11, 2, 15)`) and
+`paused` (`assets/paused.webm`, at `(2, 2, 15)`), 2 s, 64 by 64 VP8 of one colour each, so their
+bytes and content hashes differ. `recover` and `broken` play from the start; `paused` starts
+paused and is set playing 1 s after it first reports `VS_ERROR`, logging `video paused play`. One
+video plays at a time, the nearest: `recover` from the spawn, `broken` from `(11, 0, 12)` and
+`paused` from `(2, 0, 12)`, where the spec walks. It logs `video ready` once all exist and
+`video <name> state=<VideoState>` (`VS_PLAYING`, `VS_ERROR`, ...) on every state the engine
+reports. The spec's realm fails the files' first GETs.
+
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
+`.webm` assets are in Git LFS.
 
 ## Environment components
 
@@ -63,3 +78,38 @@ EnvironmentFog components through the SDK. It is a workspace fixture without a v
 reference. After building it, `DCL_E2E_NATIVE_BIN=/path/to/decentra-bevy pnpm run check:environment`
 serves an isolated loopback realm and checks its optional values, sky image, component removal
 and scene-departure reset through the native console. Captures are saved in `report/environment`.
+
+## Material fidelity charts
+
+`material-fidelity`, parcels `0,28` to `9,28`, is a workspace fixture without a visual reference:
+charts of the SDK material for viewing in two clients side by side. Eight boards stand in a row,
+20 m apart, each tilted 45 degrees towards the sky and holding a 6 by 6 grid of spheres. A row
+varies one value across its six columns and holds the rest, and the line under it names the
+values left to right. Boards 7 and 8 also use boxes, planes, cylinders, cones and glTF cubes.
+
+| Board | Rows |
+| --- | --- |
+| 1 | metallic by roughness, both 0 to 1, white albedo |
+| 2 | the same chart, red albedo |
+| 3 | `specularIntensity`, `reflectivityColor` and `directIntensity`, each at metallic 0 and 1 |
+| 4 | `emissiveIntensity` 0 to 512, `emissiveColor` hues on black and white albedo, `emissiveTexture` |
+| 5 | albedo alpha under blend, unset and opaque modes; `alphaTest` thresholds; every transparency mode on a texture with alpha; blend over other values; the deprecated PBR `alphaTexture`. A black and a white tile sit behind every sphere |
+| 6 | albedo texture and tint, `bumpTexture`, wrap, tiling, offset and filter modes, unlit colour, texture and `alphaTexture`, `castShadows`, a sphere without a Material and one with an empty PBR material |
+| 7 | which way up a texture sits on each shape; wrap and filter modes on images used by one cell each; `bumpTexture` on each shape; the emissive rules (texture without a colour, a black colour, a colour over an albedo texture, an empty `src`); lit and unlit grey ramps |
+| 8 | `bumpTexture` on planes, a sphere and a box rolled about the board's normal, which brings each axis of the normal map under the sun; a glTF cube as it is and with SDK materials put on it through `GltfNodeModifiers`; glTF cubes with emissive materials of their own |
+
+Each board has a virtual camera on its normal, 11.5 m out, so two clients at the same board
+render the same frame. The scene starts at board 1; E goes to the next board and F to the
+previous one, and after board 8 comes the free player camera. Avatars are hidden. The scene adds
+no light, so the sun and sky of each client at the fixed noon light the boards.
+
+`assets/lava.jpg` and `assets/smoke.png` are the `materials` scene's textures;
+`assets/bumps-normal.png` is a generated tangent-space normal map (+Y up) of round bumps,
+`assets/orientation.png` has a colour for each corner and an arrow to its top, and the
+`assets/checker-*.png` files are 16 px checkers with one dark corner cell. The
+`assets/cube-*.glb` files are generated unit cubes with normals and uvs and no tangents: one
+plain, and six black ones whose material emits (a factor of 0.25, 0.5 and 1, orange, the lava
+texture, and `KHR_materials_emissive_strength` 4).
+
+To compare clients, build it (`pnpm run build-scenes material-fidelity`) and deploy the folder
+to a world, adding the world's name to a copy of `scene.json`.

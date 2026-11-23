@@ -42,6 +42,11 @@ export function registerWorld(ctx: Ctx): void {
     ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
   })
 
+  ctx.on('clearHomeScene', async () => {
+    await BevyApi.clearHomeScene()
+    ctx.send({ kind: 'homeScene', ...(await BevyApi.getHomeScene()) })
+  })
+
   ctx.on('getMap', () => {
     const pos = getPlayer()?.position
     ctx.send({ kind: 'mapState', x: Math.floor((pos?.x ?? 0) / 16), y: Math.floor((pos?.z ?? 0) / 16) })
@@ -200,6 +205,21 @@ export function registerWorld(ctx: Ctx): void {
         sceneLookup.reset()
       })
       .catch(() => undefined)
+  })
+
+  // Deep-zoom satellite detail tiles for the full-screen map: the engine decodes the KTX2 file to
+  // a JPEG. Every outcome answers the request, so the page never waits on a failure.
+  ctx.on('getSatelliteTile', async (msg) => {
+    if (BevyApi.getSatelliteTile == null) {
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
+    try {
+      const data = await BevyApi.getSatelliteTile(msg.path)
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: true, data })
+    } catch (e) {
+      ctx.send({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: String(e) })
+    }
   })
 
   // Current scene title → the minimap header. Resolved by parcel from liveSceneInfo (the same

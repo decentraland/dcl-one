@@ -61,7 +61,13 @@
       "path": "raycast-storm"
     },
     {
+      "path": "video"
+    },
+    {
       "path": "environment"
+    },
+    {
+      "path": "material-fidelity"
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import plazaThumbnail from "@dcl/one-ui/apps/sites/assets/genesis-plaza.webp";
 
 import { profileFaceUrl } from "../../auth/profile-face-url";
 import { withDeadline } from "../../request-deadline";
@@ -7,7 +8,7 @@ import { FOUNDATION_CONTACT_NAME } from "../jump/jump";
 import { getJSON, postPublicJSON, type GetOptions } from "../client";
 import { eventsApiPath, placesApiPath } from "../typed";
 import { HOT_SCENES_PATH, HotScene, hotSceneRows } from "./hot-scenes";
-import { readCopy, type CopyStamp } from "@ui/data/copyAsOf";
+import { readCopy, type CopyStamp } from "@web-core/freshness/copyAsOf";
 
 // The Live Now cards, read the way the reference reads them, on the server: hot scenes with people, each joined to the live event on one of its parcels.
 
@@ -99,7 +100,7 @@ export function plazaCard(hotScenes: HotScene[]): LiveNowCard {
     id: plaza?.id ?? "genesis-plaza",
     title: plaza?.name ?? "Genesis Plaza",
     users: plaza?.usersTotalCount ?? 0,
-    image: ownContent(plaza?.thumbnail),
+    image: ownContent(plaza?.thumbnail) || plazaThumbnail,
     coordinates: plaza ? coordsKey(...plaza.baseCoords) : "0,0",
     creatorName: FOUNDATION_CONTACT_NAME,
     isGenesisPlaza: true,

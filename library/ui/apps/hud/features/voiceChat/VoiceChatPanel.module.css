@@ -7,12 +7,14 @@
   --panel-h: 46px;
   --chat-h: 46px;
   position: fixed;
-  left: calc(56px * var(--ui-scale));
+  /* lined up with the chat input below: 5px in from each side of the chat's 356px column
+     (Chat.module.css .inputRow) */
+  left: calc((56px + 5px) * var(--ui-scale));
   bottom: calc((5px + var(--chat-h) + 3px) * var(--ui-scale));
   z-index: var(--z-hud);
   display: flex;
   flex-direction: column;
-  width: 356px;
+  width: 346px;
   height: var(--panel-h);
   background: var(--panel-translucent);
   border-radius: var(--r-md);

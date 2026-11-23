@@ -9,6 +9,7 @@ import {
 } from '../renderer/controller';
 import type { RendererId } from '../renderer/controller';
 import { asBabylonInternals } from '../renderer/babylon/register';
+import { hideEditorHelpers } from '../babylon/setup/editor-helpers';
 import { asBevyInternals } from '../renderer/bevy/register';
 import type { IRenderer } from '../renderer/types';
 import type { InspectorPreferences } from '../logic/preferences/types';
@@ -16,6 +17,7 @@ import { SceneMetricsServer } from '../../lib/rpc/scene-metrics/server';
 import { SceneServer } from '../rpc/scene/server';
 import { createIframeScene, getSceneClient } from '../rpc/scene';
 import { createSceneMetadataNotifier } from '../rpc/scene/scene-metadata-notifier';
+import { createSessionRecorder } from '../recorder';
 import { getConfig } from '../logic/config';
 import type { AssetPack } from '../logic/catalog';
 import { store } from '../../redux/store';
@@ -109,6 +111,14 @@ export async function createSdkContext(
     const transport = new MessageTransport(window, window.parent, config.dataLayerRpcParentUrl);
     const babylonInternals = asBabylonInternals(built.internals);
     const bevyInternals = asBevyInternals(built.internals);
+    const recorder = createSessionRecorder({
+      engine,
+      events,
+      renderer: built.renderer,
+      store,
+      doc: document,
+      getClient: getSceneClient,
+    });
     new SceneServer(
       transport,
       store,
@@ -117,6 +127,14 @@ export async function createSdkContext(
       operations,
       engine,
       enumEntity,
+      babylonInternals
+        ? () =>
+            hideEditorHelpers(
+              babylonInternals.sceneContext.scene,
+              babylonInternals.sceneContext.gizmos.getUtilityLayers(),
+            )
+        : undefined,
+      recorder,
     );
 
     // Ensure the scene-RPC CLIENT (host-bound) exists. It's normally set up by the

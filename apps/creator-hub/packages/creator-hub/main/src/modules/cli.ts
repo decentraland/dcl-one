@@ -22,6 +22,18 @@ import { downloadGithubRepo } from './download-github-folder';
 import { startMobileDebugServer } from './mobile-debug-server';
 import { qrCodeDataUrl } from './qr-code';
 import { getLanIp } from './network';
+import { realmProvidesServer } from './bevy-realm';
+import {
+  NO_SERVER_FLAG,
+  setPreviewServer,
+  spawnsMultiplayerServer,
+  usesRealmServer,
+} from './realm-server-logs';
+import {
+  addDependencyOverrides,
+  clearTemplateDescription,
+  ensureEditorFilesNotDeployed,
+} from './project-config-files';
 
 // `mobile` marks a preview that was started for the mobile-QR flow (`--mobile`): the
 // SDK runs the preview server but does NOT open the desktop client. It is tracked so a
@@ -69,6 +81,12 @@ export async function init(targetPath: string, repo: string): Promise<void> {
   log.info('[CLI] Downloading GitHub repository', { repo, targetPath });
   await downloadGithubRepo(repo, targetPath);
   log.info('[CLI] GitHub repository downloaded successfully');
+  excludeEditorFiles(targetPath);
+  try {
+    addDependencyOverrides(targetPath);
+  } catch (error) {
+    log.warn('[CLI] Could not add the dependency overrides to package.json', { targetPath, error });
+  }
   track('Scene created', {
     projectType: 'github-repo',
     url: repo,
@@ -330,6 +348,25 @@ export async function start(path: string, opts: StartOptions): Promise<string> {
   }
 }
 
+/**
+ * Which Multiplayer Server the preview gets: none when the scene's SDK has none, the
+ * editor realm's when it runs one, otherwise its own.
+ *
+ * The Bevy editor realm (bevy-realm.ts) is a `sdk-commands start` of the same project, so
+ * on an SDK with the authoritative server it already runs one. A second server loses the
+ * scene room to it and exits, and the preview console then reports that no server is
+ * running while the realm's keeps serving. The preview reuses the realm's server instead;
+ * realm-server-logs.ts relays that server's logs into the preview console. A realm that is
+ * being restarted counts as running one.
+ *
+ * `arg` rejects unknown flags, so the flag is only passed when the scene's sdk-commands
+ * declares it. Only versions that spawn a server do.
+ */
+async function getServerMode(path: string): Promise<'none' | 'realm' | 'own'> {
+  if (!(await spawnsMultiplayerServer(path))) return 'none';
+  return realmProvidesServer(path) ? 'realm' : 'own';
+}
+
 async function doStart(path: string, opts: StartOptions, generation: number): Promise<string> {
   const { retry = true } = opts;
   const stopped = () => stopGeneration(path) !== generation;
@@ -360,8 +397,15 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
   // Otherwise reuse a running preview only if it's the same client — switching client
   // (Unity <-> Bevy) means a different launch, so tear the old one down and start fresh
   // below — and not a mobile-QR one: it never opened the desktop client, so a desktop
-  // Preview press must restart to actually launch it.
-  if (isPreviewRunning(preview) && preview.opts.client === opts.client && !preview.mobile) {
+  // Preview press must restart to actually launch it. A preview that leaves the
+  // Multiplayer Server to an editor realm that no longer runs one (it stopped and was not
+  // restarted, or the editor left the Bevy renderer) restarts too, with its own server.
+  if (
+    isPreviewRunning(preview) &&
+    preview.opts.client === opts.client &&
+    !preview.mobile &&
+    !(usesRealmServer(preview.child) && !realmProvidesServer(path))
+  ) {
     if (opts.client === PREVIEW_CLIENT.BEVY_WEB) {
       // The Bevy web client runs in the browser; sdk-commands opened the tab on
       // launch and there's no deep-link to re-issue. Re-open the stored URL so a
@@ -396,10 +440,12 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
     // itself and prints no deeplink, so we wait for the browser URL it prints. Mobile
     // (`--mobile`): it serves the scene and prints the LAN QR deeplink, opening no client
     // at all. Both are bare.
+    const serverMode = await getServerMode(path);
+    const serverArgs = serverMode === 'realm' ? [NO_SERVER_FLAG] : [];
     const args = isMobile
-      ? ['start', '--mobile']
+      ? ['start', '--mobile', ...serverArgs]
       : isBevyWeb
-        ? ['start', '--bevy-web']
+        ? ['start', '--bevy-web', ...serverArgs]
         : [
             'start',
             '--explorer-alpha',
@@ -408,6 +454,7 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
             // `--mcp` (a boolean) is emitted by generatePreviewArguments from opts.mcp;
             // pin the port too when the gateway asked for one, so it knows where to connect.
             ...(opts.mcp && opts.mcpPort !== undefined ? ['--mcp-port', String(opts.mcpPort)] : []),
+            ...serverArgs,
             // must stay last: everything after `--` is forwarded to the explorer deeplink
             ...(opts.loadRawGltfs ? ['--', `--${RAW_GLTF_PARAM}`] : []),
           ];
@@ -425,6 +472,8 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
 
     // registered before the deeplink resolves so a failed spawn is still killed below
     previewCache.set(path, { child: process, url: '', opts, mobile: isMobile });
+    // An editor realm that starts later leaves the server to this preview (bevy-realm.ts).
+    setPreviewServer(path, serverMode === 'own' ? process : undefined);
 
     if (isBevyWeb) {
       // No deep-link on this path — sdk-commands opens the Bevy client in the browser
@@ -516,6 +565,22 @@ async function doStart(path: string, opts: StartOptions, generation: number): Pr
   }
 }
 
+// Templates ship editor and agent files (`cursor.config`, `cursorignore`) that no default deploy
+// rule covers, and the empty template describes itself. Run before every deploy so scenes created
+// before these fixes are covered too. A file the Hub cannot write leaves the scene as it is.
+function excludeEditorFiles(path: string) {
+  try {
+    ensureEditorFilesNotDeployed(path);
+  } catch (error) {
+    log.warn('[CLI] Could not add the editor files to .dclignore', { path, error });
+  }
+  try {
+    clearTemplateDescription(path);
+  } catch (error) {
+    log.warn('[CLI] Could not clear the template description from scene.json', { path, error });
+  }
+}
+
 // ############################################################################################
 // TODO: Remove this after a couple of months...
 export async function legacyDeploy({
@@ -526,6 +591,7 @@ export async function legacyDeploy({
   if (deployServer) {
     await deployServer.stop();
   }
+  excludeEditorFiles(path);
   const port = await getAvailablePort();
   const process = run('@dcl/sdk-commands', 'sdk-commands', {
     args: [
@@ -634,6 +700,7 @@ async function startDeploy({
     };
   }
 
+  excludeEditorFiles(path);
   const port = await getAvailablePort();
   const deployToken = support.deployResource && support.deployToken ? randomUUID() : undefined;
 

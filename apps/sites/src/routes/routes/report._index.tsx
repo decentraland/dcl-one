@@ -1,9 +1,13 @@
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import ReportForm from "@/features/social/report/ReportForm";
 
+import { publicBase } from "../lib/social-meta";
+import { staticPageMeta } from "../lib/static-page-meta";
 import type { Route } from "./+types/report._index";
 
-export const meta = () => [{ title: "Report a player – Decentraland" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return staticPageMeta("/report", publicBase(matches));
+}
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = sidLoader(request, context);

@@ -1,4 +1,4 @@
-use crate::scene_state::auth::{AuthError, FIVE_MINUTES, verify_auth_frame};
+use crate::scene_state::auth::{AuthError, SIGNED_FETCH_WINDOW_SECS, verify_auth_frame};
 use crate::scene_state::delegation::{Wallet, create_simple_auth_chain};
 use crate::shared::signed_fetch::{
     AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, build_legacy_payload,
@@ -148,7 +148,7 @@ async fn a_deterministic_failure_is_not_retried_against_the_other_shape() {
     for shape in SHAPES {
         let ts_ms = now_ms();
         let body = frame(matches!(shape, Shape::V6), PATH, METADATA, METADATA, ts_ms);
-        let err = verify(&body, PATH, ts_ms / 1000 + FIVE_MINUTES + 60)
+        let err = verify(&body, PATH, ts_ms / 1000 + SIGNED_FETCH_WINDOW_SECS + 60)
             .await
             .unwrap_err();
         assert!(

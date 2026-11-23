@@ -103,17 +103,35 @@ fn parses_a_v3_manifest() {
 }
 
 #[test]
-fn rejects_other_versions_and_garbage() {
-    let manifest = |v: u32| format!(r#"{{"v": {v}, "files": {{}}}}"#);
-    assert!(parse_manifest(manifest(3).as_bytes()).is_ok());
-    // v1 and v2 manifests (variants with a CID) are no longer read
-    assert!(parse_manifest(manifest(2).as_bytes())
-        .unwrap_err()
-        .contains("version 2"));
-    assert!(parse_manifest(manifest(1).as_bytes()).is_err());
-    assert!(parse_manifest(manifest(4).as_bytes()).is_err());
+fn reads_any_version_and_rejects_garbage() {
+    // `v` is abgen's rebuild reference: the client reads the paths whatever it says, or
+    // without it
+    let listed = format!(r#""files": {{"{ORIGINAL_CID}": ["bevy/t4/{VARIANT_CID}"]}}"#);
+    for manifest in [
+        format!(r#"{{"v": 3, {listed}}}"#),
+        format!(r#"{{"v": 4, "added": true, {listed}}}"#),
+        format!(r#"{{{listed}}}"#),
+        format!(r#"{{"lanes": null, {listed}}}"#),
+        format!(r#"{{"lanes": ["t4"], {listed}}}"#),
+    ] {
+        let manifest = parse_manifest(manifest.as_bytes()).unwrap();
+        assert_eq!(
+            manifest.files[ORIGINAL_CID][0].path,
+            format!("bevy/t4/{VARIANT_CID}")
+        );
+    }
+    // `lanes` is only shown: an entry that is not a string is left out, the rest stay
+    let lanes = format!(r#"{{"lanes": {{"texture": 4, "mesh": "m2"}}, {listed}}}"#);
+    let manifest = parse_manifest(lanes.as_bytes()).unwrap();
+    assert_eq!(manifest.lanes.len(), 1);
+    assert_eq!(manifest.lanes["mesh"], "m2");
+    assert!(manifest.files.contains_key(ORIGINAL_CID));
+    // the entries of the first manifests were objects, not paths: not a manifest
+    let objects =
+        format!(r#"{{"v": 2, "files": {{"{ORIGINAL_CID}": [{{"cid": "{VARIANT_CID}"}}]}}}}"#);
+    assert!(parse_manifest(objects.as_bytes()).is_err());
     assert!(parse_manifest(b"<html>not found</html>").is_err());
-    assert!(parse_manifest(br#"{"files": {}}"#).is_err());
+    assert!(parse_manifest(br#"{"error": "not found"}"#).is_err());
 }
 
 #[test]
@@ -179,6 +197,10 @@ fn selects_the_first_variant_this_client_takes() {
     .is_none());
     assert!(could_have_variant("a.KTX2") && could_have_variant("a"));
     assert!(!could_have_variant("main.crdt") && !could_have_variant("a.mp3"));
+    // a url a scene names waits on no manifest
+    assert!(!could_have_variant(
+        "https://abgen.example/LOD/lods-bevy/lods/bafkreiscene_1.glb"
+    ));
 }
 
 #[test]
@@ -259,6 +281,129 @@ async fn preview_and_local_scenes_ask_for_no_manifest() {
         .unwrap()
         .clone();
     assert!(matches!(state, ManifestState::Ineligible("preview mode")));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_near_lod_descriptor_comes_from_the_variants_base() {
+    let (io, dir) = io_with_cache("lod-descriptor");
+    assert_eq!(io.bevy_lod_descriptor(SCENE), None);
+    io.set_bevy_variants_base("https://abgen.example/");
+    assert_eq!(
+        io.bevy_lod_descriptor(SCENE),
+        Some(format!(
+            "https://abgen.example/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            SCENE.to_lowercase()
+        ))
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_far_lod_is_offered_on_the_terms_of_a_manifest_and_bc() {
+    let (mut io, dir) = io_with_cache("far-lod");
+    assert_eq!(
+        io.bevy_far_lod(SCENE),
+        FarLodSource::Unavailable("bevy variants off".to_owned())
+    );
+    io.set_bevy_variants_base("https://abgen.example/");
+    assert_eq!(io.bevy_far_lod(SCENE), FarLodSource::NotYet);
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let _ = io.bevy_variants.bc.set(true);
+    assert_eq!(
+        io.bevy_far_lod(SCENE),
+        FarLodSource::Url(format!(
+            "https://abgen.example/LOD/lods-bevy/lods/{}_1.glb",
+            SCENE.to_lowercase()
+        ))
+    );
+    assert!(matches!(
+        io.bevy_far_lod("b64-abc"),
+        FarLodSource::Unavailable(_)
+    ));
+    Arc::get_mut(&mut io).unwrap().is_preview = true;
+    assert_eq!(
+        io.bevy_far_lod(SCENE),
+        FarLodSource::Unavailable("preview mode".to_owned())
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn a_missing_far_lod_is_remembered_and_failures_pause_far_lods() {
+    let (io, dir) = io_with_cache("far-lod-health");
+    io.set_bevy_variants_base("https://abgen.example");
+    io.context.write().await.about = Some(ServerAbout {
+        content: Some(EndpointConfig {
+            healthy: true,
+            public_url: "https://peer.example/content".to_owned(),
+        }),
+        ..Default::default()
+    });
+    let _ = io.bevy_variants.bc.set(true);
+    let url = |scene: &str| match io.bevy_far_lod(scene) {
+        FarLodSource::Url(url) => url,
+        other => panic!("{scene}: {other:?}"),
+    };
+    let status = reqwest::StatusCode::from_u16;
+
+    // a 404 is remembered for the scene, by its lower-case id
+    let missing = url("bafkreiMissing");
+    io.far_lod_fetched(&missing, Err(Some(status(404).unwrap())));
+    assert_eq!(
+        io.bevy_far_lod("bafkreiMissing"),
+        FarLodSource::Unavailable("the server has none for the scene".to_owned())
+    );
+    assert_eq!(io.far_lod_status().missing, 1);
+
+    // a far LOD url the client never named counts for nothing, whatever it answers
+    let made_up = "https://abgen.example/LOD/lods-bevy/lods/bafkreimadeup_1.glb";
+    io.far_lod_fetched(made_up, Err(Some(status(404).unwrap())));
+    for _ in 0..10 {
+        io.far_lod_fetched(made_up, Err(None));
+    }
+    assert_eq!(io.far_lod_status().missing, 1);
+    assert_eq!(io.far_lod_status().failures, 0);
+    assert!(matches!(
+        io.bevy_far_lod("bafkreimadeup"),
+        FarLodSource::Url(_)
+    ));
+    assert!(io.is_named_far_lod(made_up));
+
+    // other urls are not far LODs and count for nothing
+    for _ in 0..10 {
+        io.far_lod_fetched("https://abgen.example/bevy/manifest/x.json", Err(None));
+    }
+    assert_eq!(io.far_lod_status().failures, 0);
+
+    // errors, timeouts and statuses that may change pause far LODs once enough are in a row
+    for (n, result) in [
+        Err(None),
+        Err(Some(status(503).unwrap())),
+        Err(Some(status(403).unwrap())),
+    ]
+    .into_iter()
+    .cycle()
+    .take(far_lod::FAR_LOD_BREAKER_FAILURES as usize)
+    .enumerate()
+    {
+        io.far_lod_fetched(&url(&format!("bafkrei{n}")), result);
+    }
+    // naming a url spends no probe: the download is what the breaker gates
+    assert!(matches!(io.bevy_far_lod(SCENE), FarLodSource::Url(_)));
+    assert!(io.far_lod_status().paused_for.is_some());
+    assert!(!io.far_lod_may_request());
+    // a remembered scene stays unavailable
+    assert!(matches!(
+        io.bevy_far_lod("bafkreimissing"),
+        FarLodSource::Unavailable(_)
+    ));
     std::fs::remove_dir_all(dir).unwrap();
 }
 

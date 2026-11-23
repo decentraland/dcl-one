@@ -7,6 +7,7 @@ import { setCurrentLocale, t } from '/@/modules/store/translation/utils';
 
 import { expectFocusTrap, pressBackdrop, pressEscape } from '../../../../tests/utils/modalContract';
 import { TestProviders } from '../../../../tests/utils/TestProviders';
+import { tracked } from '../../../../tests/utils/analytics';
 
 import { InstallClient } from './component';
 
@@ -113,5 +114,31 @@ describe('InstallClient', () => {
     fireEvent.click(screen.getByRole('button', { name: t('modal.install_client.cancel') }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  describe('analytics', () => {
+    it('should track the prompt as shown when it opens', () => {
+      renderModal();
+
+      expect(tracked('Install Client Prompt')).toEqual([{ action: 'shown' }]);
+    });
+
+    it('should track the download', () => {
+      renderModal();
+
+      fireEvent.click(
+        screen.getByRole('button', { name: t('modal.install_client.download_macos') }),
+      );
+
+      expect(tracked('Install Client Prompt')).toContainEqual({ action: 'download' });
+    });
+
+    it('should track the dismissal from Cancel', () => {
+      renderModal();
+
+      fireEvent.click(screen.getByRole('button', { name: t('modal.install_client.cancel') }));
+
+      expect(tracked('Install Client Prompt')).toContainEqual({ action: 'dismiss' });
+    });
   });
 });
