@@ -84,6 +84,7 @@ struct Classified {
     source: OccupancyRoom,
     realm: String,
     is_world: bool,
+    legacy: bool,
     scene: Option<String>,
 }
 impl Classified {
@@ -163,50 +164,45 @@ impl Presence {
                         .map_err(|_| RecoveryFailure::Source)
                 })
                 .await?;
-            match classification {
-                // A scoped read reaches here only for a name that may hold
-                // its participants (filtered above).
-                RoomClassification::Canonical(room) if room.room != source.name => {
+            let (realm, scene, legacy) = match classification {
+                RoomClassification::Canonical(room) if room.room == source.name => {
+                    (room.realm, room.scene_id, false)
+                }
+                RoomClassification::LegacyWorldScene { world, scene } if background => (
+                    crate::world_identity::RealmId::World(world),
+                    Some(scene),
+                    true,
+                ),
+                RoomClassification::Unrelated => continue,
+                _ => {
+                    // A scoped read reaches here only for a room that could
+                    // affect its admission count.
                     if scope.is_some() {
                         return Err(RecoveryFailure::Unresolved);
                     }
                     refused.push(source.name);
+                    continue;
                 }
-                RoomClassification::Canonical(room) => {
-                    let realm = room
-                        .realm
-                        .world()
-                        .map(|world| world.key())
-                        .unwrap_or_else(|| room.realm.as_str());
-                    if realm.len() > 512
-                        || room
-                            .scene_id
-                            .as_ref()
-                            .is_some_and(|scene| scene.as_str().len() > 512)
-                    {
-                        return Err(RecoveryFailure::Budget);
-                    }
-                    let classified = Classified {
-                        source,
-                        realm: realm.to_owned(),
-                        is_world: room.realm.is_world(),
-                        scene: room.scene_id.map(|scene| scene.as_str().to_owned()),
-                    };
-                    if classified.selected(scope) {
-                        out.push(classified);
-                    }
-                }
-
-                // A refused name never counts, and never resolves through the
-                // lossy event projection; it keeps undetermined only the scope
-                // whose participants it could hold.
-                RoomClassification::RelevantRefused { .. } => {
-                    if scope.is_some() {
-                        return Err(RecoveryFailure::Unresolved);
-                    }
-                    refused.push(source.name);
-                }
-                RoomClassification::Unrelated => {}
+            };
+            let realm_key = realm
+                .world()
+                .map_or_else(|| realm.as_str(), |world| world.key());
+            if realm_key.len() > 512
+                || scene
+                    .as_ref()
+                    .is_some_and(|scene| scene.as_str().len() > 512)
+            {
+                return Err(RecoveryFailure::Budget);
+            }
+            let classified = Classified {
+                source,
+                realm: realm_key.to_owned(),
+                is_world: realm.is_world(),
+                legacy,
+                scene: scene.map(|scene| scene.as_str().to_owned()),
+            };
+            if classified.selected(scope) {
+                out.push(classified);
             }
         }
         out.sort_by(|a, b| a.source.cmp(&b.source));
@@ -289,6 +285,7 @@ impl Presence {
                         sid: room.source.sid.clone(),
                         realm: room.realm.clone(),
                         is_world: room.is_world,
+                        legacy: room.legacy,
                         scene: room.scene.clone(),
                         participants,
                         observed,
@@ -321,6 +318,7 @@ impl Presence {
             budget.include(room.participants.len(), bytes)?;
             if background
                 && room.is_world
+                && !room.legacy
                 && let Some((_, seen)) = self.partial.lock().as_mut()
             {
                 seen.extend(
@@ -341,6 +339,7 @@ impl Presence {
                 a.source != b.source
                     || a.realm != b.realm
                     || a.is_world != b.is_world
+                    || a.legacy != b.legacy
                     || a.scene != b.scene
             })
         {
