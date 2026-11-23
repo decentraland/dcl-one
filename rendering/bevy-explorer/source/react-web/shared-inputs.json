@@ -6210,7 +6210,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/avatarSaveApi.test.ts",
-      "sha256": "e640c5cdb4176ebf39366080435e16ac32c76f3d36050a80cb41b32bc56b1276"
+      "sha256": "40be313455ce471e2dd8849fa1501ecf20841aaa208f255cf7ae95b7ea3b70cb"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/baseDomain.test.ts",
@@ -8925,11 +8925,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/DiscoverCard.module.css",
-      "sha256": "b2ef1a0c9edd64025a18729a242d7390178dfeee9b7e5877952e269b1a85b85b"
+      "sha256": "63f79542083602fbac7f2c9cb9971b4f57cff88ecc41b4110450499eed433a70"
     },
     {
       "path": "library/ui/apps/hud/design/DiscoverCard.tsx",
-      "sha256": "f39e21ebf036b612bb822be71c1596a34be8fc4db18538f3f3435826d4b7b8cd"
+      "sha256": "2f8cde2c75181d71d79c39b125f161c08455194964bb8524c2433185085d4fd4"
     },
     {
       "path": "library/ui/apps/hud/design/Dropdown.module.css",
@@ -9085,7 +9085,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.module.css",
-      "sha256": "b0a97ea018712f30ea60565dfda2155085e050ce865b02fe13aaf4440df2fddf"
+      "sha256": "b4963829aac8b2c95b4664abdb03537c6aed991e1f26b7c914d94d9d58e988e8"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.tsx",

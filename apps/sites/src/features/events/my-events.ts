@@ -9,7 +9,7 @@ import {
 } from "@/data/lib/catalyst/places/event-management";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
 import type { Zone } from "../components/event-schedule";
-import { eventCreator, relativeStart } from "./view";
+import { eventCreator, eventImage, relativeStart } from "./view";
 
 /**
  * The member's own read, every page of it, under `["private", account, "events", "mine"]`: sign-out and
@@ -28,7 +28,7 @@ export function myEventsQuery(identity: AuthIdentity | null) {
  */
 export function myEventCards(
   events: readonly ManagedEvent[],
-  ctx: { signer: string; now: number; zone: Zone; profiles: CreatorProfiles; locale: EventsLocale },
+  ctx: { signer: string; now: number; zone: Zone; pageOrigin: string; profiles: CreatorProfiles; locale: EventsLocale },
 ): MyEventCardProps[] {
   const owner = ctx.signer.toLowerCase();
   return events
@@ -42,7 +42,7 @@ export function myEventCards(
     .map(({ event, start }) => ({
       id: event.id,
       title: event.name || eventText(ctx.locale, "Untitled event"),
-      image: event.image,
+      image: eventImage(event.image, ctx.pageOrigin),
       href: editEventHref(event.id),
       creator: eventCreator(event, ctx.profiles, ctx.locale),
       time: { label: relativeStart(start, ctx.now, ctx.zone, ctx.locale), dateTime: start },

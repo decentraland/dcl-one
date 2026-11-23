@@ -1416,8 +1416,12 @@ export async function aiSend(
   const turnId = `t-${randomUUID()}`;
   const startedAt = Date.now();
   const projectIdPromise = getProjectId(projectDir).catch((): string => '');
+  // The renderer's chat id. It also names the shared conversation: the renderer excludes and
+  // erases a chat's turns by it, so a turn without one is not recorded (an id made up here could
+  // never be erased).
+  const sessionId = params.sessionId ?? '';
   // Only for a creator who opted in to sharing; null otherwise, and then nothing is recorded.
-  const shareAddress = await sharingAddress(params).catch(() => null);
+  const shareAddress = sessionId === '' ? null : await sharingAddress(params).catch(() => null);
   const toolsHash =
     shareAddress === null
       ? null
@@ -1431,7 +1435,7 @@ export async function aiSend(
     shareAddress !== null && params.share !== undefined && toolsHash !== null
       ? await TurnRecorder.start({
           address: shareAddress,
-          conversationId: params.sessionId ?? '',
+          conversationId: sessionId,
           turnId,
           share: params.share,
           startedAt,
@@ -1470,7 +1474,6 @@ export async function aiSend(
     } as needed before answering — you can view images directly with your Read tool, and reference any file by its path when building or editing the scene:\n${lines}]`;
   }
   // Resume the CLI thread saved for THIS session (empty id = a default single bucket).
-  const sessionId = params.sessionId ?? '';
   const turnCtx: TurnCtx = {
     text: prompt,
     model: params.model,

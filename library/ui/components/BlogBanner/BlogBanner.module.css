@@ -67,7 +67,16 @@
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   min-height: 200px;
+  overflow: hidden;
   background: var(--dcl-transparencies-white-10);
+}
+
+/* A bare picture given as the cover fills the slot, whatever its own size; the slot clips anything larger. */
+.cover > :where(img, video) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 @media (min-width: 1920px) {

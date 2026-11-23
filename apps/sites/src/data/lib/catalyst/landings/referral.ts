@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { getJSON } from "../client";
+import { CatalystError, getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { ETH_ADDRESS_RE } from "../format/address";
 
@@ -60,12 +60,15 @@ export function referrerFromAddress(address: string | null): ReferrerVM {
   return { name: null, address, hasClaimedName: false, resolved: false, face256: null };
 }
 
-/** The wallet an invite names: the address itself, or the owner of the NAME. */
+/** The wallet an invite names: the address itself, or the owner of the NAME. None when the NAME has no owner; a lookup that fails throws. */
 export async function resolveReferrerAddress(referrer: string, opts: GetOptions = {}): Promise<string | null> {
   const p = referrer.trim();
   if (ETH_ADDRESS_RE.test(p)) return p.toLowerCase();
   if (!p) return null;
-  const raw = await getJSON<{ owner?: unknown } | null>(`/lambdas/names/${encodeURIComponent(p)}/owner`, opts).catch(() => null);
+  const raw = await getJSON<{ owner?: unknown } | null>(`/lambdas/names/${encodeURIComponent(p)}/owner`, opts).catch((err) => {
+    if (err instanceof CatalystError && err.status === 404) return null;
+    throw err;
+  });
   return raw?.owner ? String(raw.owner).toLowerCase() : null;
 }
 
