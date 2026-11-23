@@ -1,7 +1,8 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
-import { ChromeNavContext } from "@ui/web/frames/chrome-nav";
+import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 import type { DocsPageView } from "@/data/lib/docs/types";
 import DocsPage from "./DocsPage";
 const space = {
@@ -33,11 +34,13 @@ describe("when Docs adapts its offsets to the owning header layout", () => {
     (layout) => {
       const html = renderToString(
         <MemoryRouter>
-          <ChromeNavContext.Provider
-            value={{ headerLayout: layout === "native" ? "native" : undefined }}
-          >
-            <DocsPage view={view} />
-          </ChromeNavContext.Provider>
+          <QueryClientProvider client={new QueryClient()}>
+            <ChromeNavContext.Provider
+              value={{ headerLayout: layout === "native" ? "native" : undefined }}
+            >
+              <DocsPage view={view} />
+            </ChromeNavContext.Provider>
+          </QueryClientProvider>
         </MemoryRouter>,
       );
       expect(html).toMatch(

@@ -63,7 +63,7 @@ jobs:
                                  r'|^bevy-native-v1-[a-z]+-(Linux|macOS|Windows)-(X64|ARM64)-'
                                  r'|^bevy-web-unopt-v1-(main|pr)-')
           image_namespace = re.compile(
-              r'images-v2-(main|pr-[1-9][0-9]*)-(catalyst|sites|apis|sites-app)-(amd64|arm64)-[0-9a-f]{64}')
+              r'images-v2-(main|pr-[1-9][0-9]*)-(catalyst|sites|apis|sites-app|ui-gallery)-(amd64|arm64)-[0-9a-f]{64}')
           for cache in caches:
               cache_ref = cache.get('ref', '')
               if targeted:

@@ -9,7 +9,6 @@ export type DclDevKit = {
   signOut: () => void;
   identity: () => AuthIdentity | null;
   openSignIn: () => Promise<void>;
-  closeSignIn: () => Promise<void>;
   preview: (component: string, props?: Record<string, unknown>, opts?: { wrap?: string }) => void;
   clearAll: () => void;
 };
@@ -63,11 +62,6 @@ function makeKit(): DclDevKit {
     async openSignIn() {
       const { openSignIn } = await import("../../components/auth/signin-store");
       openSignIn();
-    },
-
-    async closeSignIn() {
-      const { closeSignIn } = await import("../../components/auth/signin-store");
-      closeSignIn();
     },
 
     preview(component, props, opts = {}) {

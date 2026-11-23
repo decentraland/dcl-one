@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 
-import { asset } from "@ui/asset";
-import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import banner from "@dcl/one-ui/apps/sites/assets/creator-hub-banner.png";
+import logo from "./creator-hub-download-logo.svg?url";
+import SitesLayout from "../components/chrome/SitesLayout";
 
 import type { DownloadOption, OsKey } from "@/data/lib/download/creator-hub.server";
 import { detectMacChip, isTouchMac, preferChip } from "@/data/lib/download/mac-chip";
 import { track } from "@/core/lib/telemetry/track";
 
+import { SubNav } from "../creators/components/SubNav";
 import { CREATOR_HUB_DOWNLOAD_STORY, useCreatorHubDownloadClick } from "./creator-hub-click";
 import CreatorHubDownload from "./CreatorHubDownload";
+import CreatorHubElsewhere from "./CreatorHubElsewhere";
 import styles from "./CreatorHubDownloadPage.module.css";
 
 const copy = { title: "Decentraland Creator Hub" };
@@ -23,7 +25,7 @@ type Props = {
   macChipUnknown: boolean;
   detectedOs: OsKey;
   detectedArch: string;
-  /** None on phones, tablets and Linux, which then see the title and banner only. */
+  /** None on phones, tablets and Linux, which then get the docs and a link to send to a computer. */
   primary: DownloadOption | null;
   secondary: DownloadOption[];
 };
@@ -61,23 +63,26 @@ export default function CreatorHubDownloadPage({
 
   const main = offered.primary;
   return (
-    <SitesChrome active="none" overlayNav>
+    <SitesLayout active="create">
+      <SubNav />
       <main className={styles.root} data-os={main?.osKey} data-arch={main?.arch} data-version={version}>
         <div className={styles.card}>
           <div className={styles.info}>
             <img className={styles.logo} src={logo} alt="Decentraland" width="20" height="20" />
             <h1 className={styles.title}>{copy.title}</h1>
 
-            {main && (
+            {main ? (
               <div className={styles.actions}>
                 <CreatorHubDownload primary={main} others={offered.others} onDownload={onDownload} />
               </div>
+            ) : (
+              <CreatorHubElsewhere sid={sid} />
             )}
           </div>
 
           <img
             className={styles.banner}
-            src={asset("assets/creator-hub-banner.png")}
+            src={banner}
             width={752}
             height={500}
             alt="Decentraland Creator Hub"
@@ -89,6 +94,6 @@ export default function CreatorHubDownloadPage({
           </noscript>
         )}
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

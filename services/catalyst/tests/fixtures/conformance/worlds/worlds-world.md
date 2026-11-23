@@ -290,7 +290,7 @@ content-type check and the multipart parse under the upload timeout, then author
 the update under the processing deadline. The body is not read before the signed fetch (WW-24).
 
 Fields (upstream `parseMultipartInput`, `world-settings-handler.ts:40-153`; dcl-one `parse_multipart`,
-`settings.rs:222-470`):
+`settings.rs:222-465`):
 
 | field | upstream | dcl-one | verdict |
 |---|---|---|---|
@@ -298,10 +298,10 @@ Fields (upstream `parseMultipartInput`, `world-settings-handler.ts:40-153`; dcl-
 | `description` | same with 3..1000 | same | MATCH |
 | `content_rating` | defined (every value non-empty) and in `RP, E, T, A, R`, else 400 `Invalid content rating: <v>. Expected one of: RP, E, T, A, R` | same | MATCH |
 | `spawn_coordinates` | defined; `parseCoordinate` (`split(',')` into exactly two, `parseInt`, bounds ±150), else 400 `Invalid spawnCoordinates format: "<v>".`; then inside the row lock: no deployed scene is 400 `Invalid spawnCoordinates "<v>". The world has no deployed scenes.`, outside the shape is 400 `…It must be within the world shape rectangle: (x,y) to (x,y).` | `Parcel::parse` plus bounds (`settings.rs` `parse_coordinate`), same messages (`store_settings.rs` `update_world_settings`), same lock | DIVERGENT: `parseInt` leniency, intended (WW-25) |
-| `skybox_time` | `"null"` clears; else `Number(v)` must be an integer in the i32 range, else 400 `Invalid skybox_time: <v>. Expected an integer between -2147483648 and 2147483647, or null.` | same (`settings.rs:390-400`) | MATCH |
-| `categories` | repeatable; `["null"]` clears to `[]`; more than 20 is 400 `Invalid categories: <n> items. Expected at most 20` | same (`settings.rs:418-431`) | MATCH |
+| `skybox_time` | `"null"` clears; else `Number(v)` must be an integer in the i32 range, else 400 `Invalid skybox_time: <v>. Expected an integer between -2147483648 and 2147483647, or null.` | same (`settings.rs:385-395`) | MATCH |
+| `categories` | repeatable; `["null"]` clears to `[]`; more than 20 is 400 `Invalid categories: <n> items. Expected at most 20` | same (`settings.rs:413-426`) | MATCH |
 | `single_player`, `show_in_places` | defined; `=== 'true'` | same | MATCH |
-| `thumbnail` file | over 1 MiB is 400 `Invalid thumbnail: size <n> bytes exceeds maximum of 1048576 bytes (1MB).`; PNG/JPEG/GIF87a/GIF89a/WebP magic, else 400 `Invalid thumbnail: expected a PNG, JPEG, GIF or WebP image.`; stored as SHA-256 hex | same checks (`settings.rs:293-301,455-467`, `settings_policy.rs`); stored as CIDv1 after authorization | MATCH on checks; hash intended (WW-28) |
+| `thumbnail` file | over 1 MiB is 400 `Invalid thumbnail: size <n> bytes exceeds maximum of 1048576 bytes (1MB).`; PNG/JPEG/GIF87a/GIF89a/WebP magic, else 400 `Invalid thumbnail: expected a PNG, JPEG, GIF or WebP image.`; stored as SHA-256 hex | same checks (`settings.rs:288-296,450-462`, `settings_policy.rs`); stored as CIDv1 after authorization | MATCH on checks; hash intended (WW-28) |
 | a non-repeatable field sent twice | 400 `Duplicate form field '<name>'` (`multipart/middleware.ts:233-240`) | the same (`categories` and the dcl-one `preview_wearable_urns` repeat) | MATCH (WW-22) |
 | `realm_name_override`, `preview_wearable_urns` | ignored | dcl-one only fields | dcl-one superset |
 
@@ -519,8 +519,12 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - dcl-one strips `.dcl.eth` for locally published worlds (`WORLDS_REALM_NAME_STRIP_ENS`, default true) and applies
       `realm_name_override` (`about.rs:209-210,303-326`); worlds-compatibility.md, "Realm name".
     - Drop-in: a client that compares `realmName` with the world name gets a different string;
-      `WORLDS_REALM_NAME_STRIP_ENS=false` gives a byte-equal answer.
-    - Severity: none (closed).
+      `WORLDS_REALM_NAME_STRIP_ENS=false` gives a byte-equal answer. A client that signs the stripped name back
+      reaches the world: with a realm URL, or (the Unity explorer on `/get-scene-adapter`) as realm and as scene.
+      An override is not resolved in that second form: the client gets the shared room `scene:<name>:<name>`.
+      An override that names another world with a scene here (its label or its `.eth` name) is refused on
+      `PUT /world/{name}/settings` and not advertised by `/about`, so it never seats visitors in that world's room.
+    - Severity: none for the stripped name (closed); low for an override signed without a realm URL (open).
 
 13. **WW-13 · `/about` · operator disable and live-holder quota block.** Status: intended (worlds-compatibility.md).
     - dcl-one: worlds-compatibility.md, "Operator disables apply at once".
@@ -571,7 +575,7 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream: every validation failure is `400 {"error":"<message>"}` (`world-settings-handler.ts:208-213`); the spec asserts `error`
       for each message (`world-settings-handler.spec.ts:332-1160`).
     - dcl-one: the field validations and the two spawn refusals of `store::update_world_settings` answer
-      `400 {error: <message>}` (`SettingsError::invalid`, `settings.rs:252-258`); the parser's refusals
+      `400 {error: <message>}` (`SettingsError::invalid`, `settings.rs:255-261`); the parser's refusals
       (Content-Length, duplicates, content type) keep the http-commons shape, as upstream. Pinned by
       `core/tests.rs` `settings_empty_values_follow_the_upstream_handler`.
     - Severity: none (closed).
@@ -588,7 +592,7 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       `Field '<name>' is too large. The maximum allowed size per field is 1048576 bytes.`
       (`src/controllers/multipart/middleware.ts:159-200,330-336`).
     - dcl-one: every size and count branch answers `upload_limits::too_large` with upstream's text; the fields
-      cap is `upload_limits::too_many_fields_message` (`settings.rs:178-183,384-495`,
+      cap is `upload_limits::too_many_fields_message` (`settings.rs:178-183,379-490`,
       `worlds/src/core/upload_limits.rs`). Pinned by `settings.rs` `parse_multipart_caps_each_field_value_at_one_megabyte`,
       `parse_multipart_rejects_more_than_one_hundred_fields`, `parse_multipart_rejects_more_than_the_parts_limit`,
       and `core/tests.rs` `a_settings_put_declaring_too_many_bytes_answers_413` and `every_route_answers_its_contract`
@@ -599,14 +603,14 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream: a second `title` (any field but `categories`, or any file name seen twice) is
       `400 {"error":"Bad request","message":"Duplicate form field 'title'"}`.
     - dcl-one: `parse_multipart` refuses a name seen before unless both parts are fields of `categories` or the
-      dcl-one `preview_wearable_urns` (`settings.rs:102,398-403`). Pinned by `settings.rs` `a_repeated_form_field_is_refused`.
+      dcl-one `preview_wearable_urns` (`settings.rs:102,393-398`). Pinned by `settings.rs` `a_repeated_form_field_is_refused`.
     - Severity: none (closed).
 
 23. **WW-23 · `PUT /settings` · timeouts and the concurrency slot.** Status: MATCH, no work, for the timeout text; the slot and the processing deadline intended (worlds-compatibility.md).
     - Upstream: 408 with `describeUploadTimeout`'s text (`multipart/errors.ts:32-50`); no processing deadline and no
       process-wide upload count on this route.
     - dcl-one: 408 with `describe_upload_timeout`'s text over the body bytes received and the declared length
-      (`settings.rs:206-228,318-329`); the `MAX_CONCURRENT_UPLOADS` slot and the
+      (`settings.rs:206-228,313-324`); the `MAX_CONCURRENT_UPLOADS` slot and the
       `DEPLOYMENT_PROCESSING_TIMEOUT_MS` deadline are under worlds-compatibility.md, "Settings uploads". Pinned by
       `settings.rs` `the_timeout_message_is_upstreams` and `core/tests.rs`
       `a_stalled_settings_upload_answers_the_upstream_timeout_text`.
@@ -625,7 +629,7 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
 
 25. **WW-25 · `PUT /settings` · `spawn_coordinates` parsing.** Status: intended (worlds-compatibility.md).
     - Upstream `parseCoordinate` splits on `,` and uses `parseInt`, so `5abc,3`, `5.9,3` and ` 5,3` pass and are stored as sent.
-    - dcl-one: `Parcel::parse` refuses trailing garbage and fractions (`settings.rs:659`); worlds-compatibility.md,
+    - dcl-one: `Parcel::parse` refuses trailing garbage and fractions (`settings.rs:654`); worlds-compatibility.md,
       "Settings uploads".
     - Severity: none (closed).
 
@@ -820,4 +824,4 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
 | GET | `/worlds/status` | `worlds/src/status.rs` (route `lib.rs:354`) | worlds status under the root mount |
 | GET | `/admin/worlds`, `/admin/worlds/{world_name}`, `…/ban-status`; POST `…/enable`, `…/disable` | `worlds/src/core/admin.rs` (routes `core/mod.rs:680-693`) | operator world reads and the disable that WW-13 refers to |
 | GET | `/openapi.json` (under `/worlds-content-server`) | `worlds/src/lib.rs:419-422` | the worlds OpenAPI document |
-| PUT fields | `realm_name_override`, `preview_wearable_urns` on `/world/{world_name}/settings` | `core/settings.rs:402-446` | dcl-one-only settings (WW-18) |
+| PUT fields | `realm_name_override`, `preview_wearable_urns` on `/world/{world_name}/settings` | `core/settings.rs:397-441` | dcl-one-only settings (WW-18) |

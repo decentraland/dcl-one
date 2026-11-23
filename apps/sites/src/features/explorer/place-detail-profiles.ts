@@ -4,7 +4,7 @@ import { sameOriginContentUrl } from "@ui/data/catalyst/profile";
 import { asAddress } from "@ui/data/catalyst/sceneOwner";
 import { fetchCommunityProfiles } from "@ui/data/hooks/useCommunityProfiles";
 import { qk, STALE } from "@ui/data/queryKeys";
-import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@ui/shop/discovery/lib/avatarColor";
+import { getAvatarBackgroundColor, getDisplayName, syntheticAvatar } from "@web-core/profile/avatarColor";
 
 import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
 import type { Place } from "@/data/lib/catalyst/schema";

@@ -1,4 +1,4 @@
-const REDIRECT_TARGET = "/create/wearables";
+const REDIRECT_TARGET = "/create/collections";
 
 type RedirectResult = {
   location: string;

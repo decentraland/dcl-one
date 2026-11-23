@@ -35,6 +35,12 @@ export type PurchaseOffer = {
   quotedAt: number;
   /** The creator coupon the quotes are discounted by: settlement must use this one, or the line is stale. */
   coupon?: OfferCoupon | null;
+  /**
+   * The credits node authorizes a Credits part for this line, the rest paid in MANA in the same call (`policy::split_price`):
+   * a store mint or a listing paid in the chain's MANA, which this session may pay both ways. Absent: no split. A MANA quote
+   * alone says nothing about it (a USD-pegged listing is quoted in MANA too).
+   */
+  splittable?: boolean;
 };
 
 /** The identity and economics of the coupon an offer was priced with. */

@@ -3,8 +3,8 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import CreatorHubChrome from "./CreatorHubChrome";
-import { ChromeAuthContext, type ChromeAuth } from "../../web/frames/chrome-auth";
-import { ChromeNavContext } from "../../web/frames/chrome-nav";
+import { ChromeAuthContext, type ChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import { ChromeNavContext } from "@dcl/one-ui/components/AppChrome/chrome-nav";
 
 const ACCOUNT = "0x4d02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa7bf2";
 
@@ -96,7 +96,7 @@ test("one mobile toggle opens both global and Creator Hub links and closes after
     const collections = within(creatorNav).getByRole("link", { name: "Collections" });
     expect(collections).toHaveAttribute("aria-current", "page");
     await userEvent.click(collections);
-    expect(navigate).toHaveBeenCalledWith("/create/wearables");
+    expect(navigate).toHaveBeenCalledWith("/create/collections");
     expect(onTab).not.toHaveBeenCalled();
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(toggle);

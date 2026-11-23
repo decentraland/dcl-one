@@ -13,6 +13,56 @@ pub use crate::entity::{ContentMapping, Entity, EntityType};
 
 pub type Timestamp = i64;
 
+/// An uploaded file as the validator sees it: its bytes in memory, or a
+/// part spooled to disk (`POST /entities`), whose bytes a rule reads only
+/// when it inspects them, with ordinary I/O whose failure is this node's.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UploadedFile {
+    Bytes(Bytes),
+    Spooled { len: u64, path: std::path::PathBuf },
+}
+
+impl UploadedFile {
+    pub fn len(&self) -> u64 {
+        match self {
+            Self::Bytes(bytes) => bytes.len() as u64,
+            Self::Spooled { len, .. } => *len,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The bytes when they are in memory (the entity file always is).
+    pub fn bytes(&self) -> Option<&Bytes> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes),
+            Self::Spooled { .. } => None,
+        }
+    }
+
+    /// The whole file, read from the spool when it is there.
+    pub async fn read(&self) -> std::io::Result<Bytes> {
+        match self {
+            Self::Bytes(bytes) => Ok(bytes.clone()),
+            Self::Spooled { path, .. } => tokio::fs::read(path).await.map(Bytes::from),
+        }
+    }
+}
+
+impl From<Bytes> for UploadedFile {
+    fn from(bytes: Bytes) -> Self {
+        Self::Bytes(bytes)
+    }
+}
+
+impl From<Vec<u8>> for UploadedFile {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Bytes(bytes.into())
+    }
+}
+
 /// One deployment, borrowed from the write path: the parsed entity file,
 /// the uploaded files keyed by their content hash (the entity file under
 /// the entity id) and the signer's auth chain. The old `DeploymentToValidate`
@@ -20,7 +70,7 @@ pub type Timestamp = i64;
 #[derive(Clone, Copy)]
 pub struct Deployment<'a> {
     pub entity: &'a Entity,
-    pub files: &'a HashMap<String, Bytes>,
+    pub files: &'a HashMap<String, UploadedFile>,
     pub auth_chain: &'a AuthChain,
 }
 
@@ -38,7 +88,7 @@ impl Deployment<'_> {
 #[cfg(test)]
 pub(crate) struct OwnedDeployment {
     pub entity: Entity,
-    pub files: HashMap<String, Bytes>,
+    pub files: HashMap<String, UploadedFile>,
     pub auth_chain: AuthChain,
 }
 

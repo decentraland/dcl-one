@@ -516,8 +516,8 @@ async fn seed_indexes(pool: &PgPool) {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(pool)
@@ -1206,8 +1206,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "{uri}"
     );
     // An active escrow grant joins the explorer's on-chain copies only where
-    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
-    // as lamb2 lists chain-owned tokens only).
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off unless the operator opts
+    // in, as lamb2 lists chain-owned tokens only).
     sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
         .bind(OWNER)
         .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
@@ -1868,8 +1868,8 @@ async fn user_lands_read_the_registries_of_the_configured_network() {
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true)",
+        "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history, chain_id) \
+         VALUES ('nft', 'ethereum', 0, 10, 10, $1, true, 1)",
     )
     .bind(now)
     .execute(&db.pool)

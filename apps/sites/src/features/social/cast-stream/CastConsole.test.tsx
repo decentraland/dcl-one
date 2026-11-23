@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,7 +51,11 @@ function setup(opts: { requestPermissions?: RequestPermissionsFn } = {}) {
   const router = createMemoryRouter([{ path: "/cast/s/:token", Component: Page }], {
     initialEntries: ["/cast/s/stream-key"],
   });
-  const { container } = render(<RouterProvider router={router} />);
+  const { container } = render(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
   return { container, requestPermissions, goLive, shareScreen, endCast, live };
 }
 

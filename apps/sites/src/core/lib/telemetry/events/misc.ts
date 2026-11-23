@@ -1,10 +1,7 @@
 export type MiscEvents = {
   catalyst_schema_drift: {
-    issues?: string[];
-    issues_count?: number;
-    kind?: string;
-    module?: string;
-    path?: string;
+    issues_count: number;
+    kind: string;
   };
   client_error: {
     client_ts: string;
@@ -32,7 +29,7 @@ export type MiscEvents = {
     place_id: string;
   };
   place_list_viewed: {
-    category: null | string;
+    category: "art" | "business" | "education" | "fashion" | "featured" | "game" | "music" | "shop" | "social" | "sports" | null;
     count: number;
     search: null | string;
   };

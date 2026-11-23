@@ -44,6 +44,8 @@ concurrency:
   group: development-${{ github.ref }}
   # Main runs finish: they are the macOS check for source that PRs test on Linux only.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  ERROR_PAGE_LFS: library/ui/apps/sites/assets/errors/**,library/ui/apps/sites/assets/custom-welcome-background.webp,library/ui/apps/sites/assets/logo-pattern.webp,library/ui/foundations/typography/fonts/**
 jobs:
   changes:
     name: Changes
@@ -232,6 +234,8 @@ jobs:
           fi
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the embedded error-page images and fonts
+        run: git lfs pull --include="$ERROR_PAGE_LFS" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
@@ -375,8 +379,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fetch the pinned docs integration-test diagram
-        run: git lfs pull --include='apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp' --exclude=''
+      - name: Fetch the pinned docs integration-test diagram and the error-page art, background and Inter files the static pages embed
+        run: git lfs pull --include="apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp,${ERROR_PAGE_LFS}" --exclude=''
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:

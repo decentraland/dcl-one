@@ -726,9 +726,8 @@ fn drive_profile_deploys(
         } = deploys.swap_remove(index);
         let version = submitted.profile.version;
         let outcome = result.map_err(|error| {
-            let message = profile_deploy_message(&error);
-            error!("failed to deploy profile v{version}: {message}");
-            message
+            error!("failed to deploy profile v{version}: {error:#}");
+            profile_deploy_message(&error)
         });
         let landed = outcome.is_ok();
         current.finish_deploy(submitted, outcome);
@@ -811,7 +810,7 @@ pub struct CurrentUserProfile {
     /// failed here may still have reached the server (an error after the catalyst took it),
     /// and a peer that read it skips any other profile announced under the same number, so the
     /// next edit never reuses it.
-    pub last_versions: HashMap<Address, u32>,
+    pub(crate) last_versions: HashMap<Address, u32>,
 }
 
 /// The base, active submission and edits waiting for the next payload, in arrival order.
@@ -1416,7 +1415,7 @@ pub fn process_profile_events(
 
                         // what peers may know about: not an edit still deploying
                         let Some(current_profile) = current_profile.peer_profile() else {
-                            return;
+                            continue;
                         };
 
                         let serialized_profile =

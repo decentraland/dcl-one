@@ -1,7 +1,8 @@
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setSplitPaymentForTests } from "@shop/payment/present";
 
 import { manaFromWhole, usdCents, type ManaWei, type UsdCents } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
@@ -11,6 +12,7 @@ import { ruleFor } from "@shop/payment/rule";
 import { withCreditsOutage } from "../fixtures";
 import type { OffersStatus } from "../offers";
 import type { GuidanceRevalidation } from "../../wallet/ManaGuidance";
+import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 import PaymentPanel, { type ListingPrice, type WalletView } from "./PaymentPanel";
 
 const WALLET: WalletView = { account: BOOK.buyer, walletAccount: BOOK.buyer, chainId: 137, pendingChainId: null, accountMismatch: false };
@@ -53,6 +55,15 @@ function show(
   return { onBuy, onAddToCart, onRetry };
 }
 
+
+// The split (Credits and MANA together) follows its rollout (`dapps-shop-credits-mana-split`), off unless a render says
+// on: these tests cover it as it runs once it is offered.
+let undoSplit: () => void = () => {};
+beforeEach(() => {
+  undoSplit = setSplitPaymentForTests(true);
+});
+afterEach(() => undoSplit());
+
 describe("an eligible primary wearable (a store mint)", () => {
   it("web3: credits first and selected, MANA second in exact units, buy with credits", () => {
     const { onBuy } = show(storeMint(web3()), web3());
@@ -87,6 +98,34 @@ describe("an eligible primary wearable (a store mint)", () => {
     expect(screen.getByTestId("cta-buy").querySelector("span")!.textContent).toBe("Buy with Credits and MANA");
     fireEvent.click(screen.getByTestId("cta-buy"));
     expect(onBuy).toHaveBeenLastCalledWith("mana", expect.anything(), expect.objectContaining({ credits: 5, creditsCents: 50 }));
+  });
+
+  it("the split follows the flags file as this page holds it: off while it is absent or false, on only when it says true", () => {
+    // Without the tests' switch: only the page's rollout (`dapps-shop-credits-mana-split`) can offer it.
+    undoSplit();
+    const offer = storeMint(web3());
+    expect(offer.splittable).toBe(true);
+    const splitShown = (flags: Record<string, boolean> | null) => {
+      primeRemoteFlags(flags);
+      show(offer, web3(), { creditsBalance: usdCents(50) });
+      fireEvent.click(screen.getByTestId("pay-mana"));
+      const shown = screen.queryByTestId("mixed-payment") !== null;
+      cleanup();
+      return shown;
+    };
+    try {
+      expect(splitShown(null)).toBe(false);
+      expect(splitShown({})).toBe(false);
+      expect(splitShown({ "dapps-shop-credits-mana-split": false })).toBe(false);
+      expect(splitShown({ "dapps-shop-credits-mana-split": true })).toBe(true);
+      // The flag on, for an offer the node does not mark (an older node, or its rollout off): nothing.
+      primeRemoteFlags({ "dapps-shop-credits-mana-split": true });
+      show({ ...offer, splittable: false }, web3(), { creditsBalance: usdCents(50) });
+      fireEvent.click(screen.getByTestId("pay-mana"));
+      expect(screen.queryByTestId("mixed-payment")).toBeNull();
+    } finally {
+      primeRemoteFlags(null);
+    }
   });
 
   it("the split is not offered when the wallet's MANA cannot cover the rest", () => {

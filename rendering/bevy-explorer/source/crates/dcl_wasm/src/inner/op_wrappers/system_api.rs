@@ -207,6 +207,14 @@ pub async fn op_get_world_access(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_satellite_tile(
+    state: &WorkerContext,
+    path: String,
+) -> Result<String, WasmError> {
+    Ok(dcl_js::system_api::op_get_satellite_tile(state.rc(), path).await?)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_get_satellite_view(state.rc()).await)
 }

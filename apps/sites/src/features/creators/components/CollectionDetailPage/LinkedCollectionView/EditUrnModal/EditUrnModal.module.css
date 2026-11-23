@@ -1,0 +1,11 @@
+.preview {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--dcl-neutrals-gray);
+  overflow-wrap: anywhere;
+
+  & strong {
+    color: var(--dcl-neutrals-white);
+  }
+}

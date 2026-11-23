@@ -155,13 +155,6 @@ extern "C" {
     #[wasm_bindgen(js_name = "__setEngineTextFocus")]
     fn set_engine_text_focus(focused: bool);
 
-    /// Shows or hides the page's `#shader-compiling` indicator (the HUD's `renderBusy` probe)
-    /// while gpu_cache.js compiles pipelines asynchronously on the render worker; boot.js
-    /// defines it, gpu_cache.js calls the relay directly.
-    #[allow(dead_code)]
-    #[wasm_bindgen(js_name = "__setShaderCompiling")]
-    fn set_shader_compiling(on: bool);
-
     /// The render worker's gpu cache is warm (`engine_render_setup` done): boot.js completes
     /// the loading bar's gpu step.
     #[wasm_bindgen(js_name = "__gpuCacheReady")]
@@ -668,28 +661,18 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
 }
 
 /// Send a console command to the engine from JavaScript.
-/// `command_line` is the full command string, e.g. `"/teleport 10 20"`.
+/// `command_line` is the full command string, e.g. `"/teleport 10 20"`, split as
+/// `console::line` says (`"two words"` is one argument).
 /// Returns a Promise that resolves with the command output or rejects with an error message.
 #[wasm_bindgen]
 pub async fn engine_console_command(command_line: String) -> Result<JsValue, JsValue> {
-    let mut parts = command_line.split_whitespace();
-    let Some(cmd) = parts.next() else {
-        return Err(JsValue::from_str("empty command"));
-    };
-    let cmd = if cmd.starts_with('/') {
-        cmd.to_string()
-    } else {
-        format!("/{cmd}")
-    };
-    let args: Vec<String> = parts.map(String::from).collect();
-
     let Some(sender) = CONSOLE_BRIDGE_SENDER.get() else {
         return Err(JsValue::from_str("engine not initialized"));
     };
 
     let (sx, rx) = RpcResultSender::channel();
     sender
-        .send(SystemApi::ConsoleCommand(cmd, args, sx))
+        .send(SystemApi::ConsoleLine(command_line, sx))
         .map_err(|_| JsValue::from_str("engine channel closed"))?;
 
     rx.await
@@ -704,17 +687,18 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
         .commands
         .iter()
         .map(|(name, cmd)| {
-            let trailing = cmd.is_trailing_var_arg_set();
+            // the predicate the engine splits the line by: the page sends such a command's words
+            // unquoted
+            let rest = console::line::takes_rest(cmd);
             let positional: Vec<_> = cmd
                 .get_arguments()
                 .filter(|a| a.get_long().is_none() && a.get_short().is_none())
                 .collect();
-            let last_id = positional.last().map(|a| a.get_id().as_str());
             let args: Vec<serde_json::Value> = positional
                 .iter()
                 .map(|arg| {
                     let id = arg.get_id().as_str();
-                    let kind = if (trailing && Some(id) == last_id) || id == "json" {
+                    let kind = if id == "json" {
                         "json"
                     } else if id == "entity" {
                         "entity"
@@ -732,7 +716,7 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
                     arg_json
                 })
                 .collect();
-            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args });
+            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args, "rest": rest });
             if let Some(about) = cmd.get_about() {
                 cmd_json["help"] = serde_json::Value::String(about.to_string());
             }

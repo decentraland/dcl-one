@@ -4,10 +4,10 @@
 import { Link } from "react-router";
 
 import { Button } from "@dcl/one-ui";
-import { asset } from "@ui/asset";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 
 import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
+import notFoundAvatar from "@dcl/one-ui/apps/sites/assets/errors/not-found-avatar.webp";
 import styles from "./NotFoundPage.module.css";
 
 export default function NotFoundPage() {
@@ -35,7 +35,7 @@ export default function NotFoundPage() {
         </Button>
       </div>
       <div className={styles.graphic}>
-        <img className={styles.avatar} src={asset("assets/errors/not-found-avatar.webp")} width={801} height={698} alt="" />
+        <img className={styles.avatar} src={notFoundAvatar} width={801} height={698} alt="" />
       </div>
     </main>
   );

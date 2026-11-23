@@ -600,6 +600,9 @@ describe("the cart page", () => {
 
   it("closed, the cart's dialog gives focus back to the Checkout that opened it", async () => {
     renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat", quantity: 5 }], balanceCents: 30 });
+    // Once the cart is first priced, the wallet's account and chain price it again (wallet.revision), and Checkout is
+    // disabled until that check returns: waiting only for an enabled Checkout can press it disabled, and nothing opens.
+    await walletSettled();
     await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
     const checkout = screen.getByTestId("pay-with-credits-topup");
     checkout.focus();

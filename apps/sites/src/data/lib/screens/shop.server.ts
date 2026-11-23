@@ -8,7 +8,7 @@ import {
 } from "../catalyst/marketplace/index";
 import type { MarketEnvelope } from "../catalyst/marketplace/schema";
 import { withDeadline } from "../request-deadline";
-import type { PublicFreshness } from "@ui/data/screens/section";
+import type { PublicFreshness } from "@web-core/freshness/section";
 import {
   readShopFilters, SHOP_OVERVIEW_SIZE, SHOP_PAGE_SIZE,
   type ShopScreen, type ShopSectionState,

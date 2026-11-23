@@ -109,3 +109,13 @@ export function revertedTxHash(err: unknown): string | null {
 export function isPendingTxError(err: unknown): boolean {
   return err instanceof TxPendingError || (err as { name?: string } | null)?.name === "TxPendingError";
 }
+
+/**
+ * The buyer turned the request down in the wallet (EIP-1193 4001, or ethers' ACTION_REJECTED): the one answer to a
+ * transaction handed to the wallet that proves it was not sent. Any other failure there (4900 disconnected, 4901,
+ * -32002, -32603, no code) may come after the wallet broadcast it.
+ */
+export function isWalletRefusal(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 4001 || code === "ACTION_REJECTED";
+}

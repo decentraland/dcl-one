@@ -1,0 +1,749 @@
+.card {
+  width: 560px;
+  max-width: 80vw;
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow: hidden;
+  background: var(--dcl-brand-purple-dark);
+  border-radius: var(--dcl-radius-lg);
+  padding: 12px 16px 16px;
+  box-shadow: 0 16px 48px var(--dcl-transparencies-black-60);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--dcl-neutrals-snow);
+  font-family: var(--creators-font);
+
+  /* It takes focus as a dialog does; the ring belongs to the controls inside it. */
+  &:focus {
+    outline: none;
+  }
+
+  /* The credits mark is pinned near-black for white cards (Icon.css); on this one it has to be light. */
+  & [data-inline] {
+    color: var(--dcl-neutrals-snow);
+  }
+
+  /* The shared notice is drawn for white surfaces: dark red text that disappears on this card. */
+  & [data-testid="creator-sale-error"] {
+    border-color: rgba(255, 45, 85, 0.5);
+    background: rgba(255, 45, 85, 0.16);
+    color: var(--dcl-brand-ruby);
+  }
+  & [data-testid="creator-sale-error"] > span {
+    color: var(--dcl-neutrals-white);
+  }
+
+  @media (max-width: 768px) {
+    max-width: 100%;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.divider {
+  flex: none;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--color-glass-hover);
+}
+
+.steps {
+  padding: 8px 0 4px;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--dcl-neutrals-gray);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fieldLabel {
+  font-size: 14px;
+  line-height: 1.57;
+  color: var(--dcl-neutrals-snow);
+}
+
+.fieldHint {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--dcl-neutrals-gray);
+}
+
+.collectionRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--dcl-radius-md);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rowThumb {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--dcl-neutrals-pearl);
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowName {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--dcl-neutrals-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowMeta {
+  font-size: 13px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+
+  @media (max-width: 768px) {
+    gap: 8px;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--dcl-transparencies-white-20);
+  color: var(--dcl-neutrals-white);
+  font-family: var(--creators-font);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.46px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+
+  &:hover:not(:disabled):not([data-selected]) {
+    background: var(--color-glass-hover);
+  }
+  &[data-selected] {
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+}
+
+.inlineInput {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dcl-neutrals-snow);
+
+  &:focus-within {
+    border-color: var(--dcl-neutrals-snow);
+  }
+  &[aria-invalid="true"] {
+    border-color: var(--dcl-brand-ruby);
+  }
+  /* The custom discount, open in its own pill: lit like a picked one. */
+  &[data-selected] {
+    height: 40px;
+    padding: 0 16px;
+    border-color: var(--dcl-neutrals-snow);
+    border-radius: 20px;
+    background: var(--dcl-neutrals-snow);
+    color: var(--dcl-neutrals-shadow);
+
+    & input {
+      color: var(--dcl-neutrals-shadow);
+    }
+  }
+  &[data-selected][aria-invalid="true"] {
+    border-color: var(--dcl-brand-ruby);
+  }
+
+  & input {
+    width: 3ch;
+    border: 0;
+    outline: none;
+    background: transparent;
+    font-family: var(--creators-font);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--dcl-neutrals-white);
+
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    &[type="number"] {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
+  }
+}
+
+.whenWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.whenAnchor {
+  position: fixed;
+  z-index: calc(var(--creators-z-overlay) + 1);
+  pointer-events: none;
+
+  & > * {
+    pointer-events: auto;
+  }
+}
+
+.whenTrigger {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 56px;
+  padding: 0 12px;
+  border: 1px solid var(--dcl-neutrals-silver);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dcl-neutrals-snow);
+  font-family: var(--creators-font);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  text-align: left;
+  cursor: pointer;
+
+  /* It takes focus as a dialog does; the ring belongs to the controls inside it. */
+  &:focus {
+    outline: none;
+  }
+
+  & > span:not([data-sale-icon]) {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & [data-sale-icon] {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    transition: transform 0.15s ease;
+  }
+  & [data-sale-icon][data-open] {
+    transform: rotate(180deg);
+  }
+  &:focus-visible,
+  &[aria-expanded="true"] {
+    border-color: var(--dcl-neutrals-white);
+    outline: 0;
+  }
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    & [data-sale-icon] {
+      transition: none;
+    }
+  }
+}
+
+.capLabel {
+  font-size: 14px;
+  line-height: 1.57;
+  color: var(--dcl-neutrals-snow);
+}
+
+.capInput {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 54px;
+  padding: 8px;
+  border: 1.5px solid var(--dcl-neutrals-white);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+
+  & input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--dcl-neutrals-snow);
+    font-family: var(--creators-font);
+    font-size: 16px;
+    outline: 0;
+  }
+  & input::placeholder {
+    color: var(--dcl-neutrals-pearl);
+    opacity: 1;
+  }
+  & > span {
+    flex: none;
+    font-size: 14px;
+    color: var(--dcl-neutrals-pearl);
+    font-variant-numeric: tabular-nums;
+  }
+  &[data-disabled] {
+    opacity: 0.6;
+  }
+}
+
+.capHint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--dcl-neutrals-silver);
+}
+
+.previewHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stripArrows {
+  display: flex;
+  gap: 6px;
+
+  /* A phone swipes the row; the arrows are for a pointer. */
+  @media (max-width: 768px) {
+    display: none;
+  }
+}
+
+.stripArrow {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  &:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.32);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+  }
+}
+
+.previewStrip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.previewCard {
+  flex: none;
+  width: 148px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: var(--dcl-radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.previewMedia {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--dcl-neutrals-pearl);
+
+  & img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+
+.previewTag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+}
+
+.previewName {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dcl-neutrals-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewPrices {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.previewNow {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--dcl-neutrals-white);
+}
+
+.previewWas {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dcl-neutrals-gray);
+  text-decoration: line-through;
+}
+
+.marked {
+  font-weight: 700;
+  color: var(--dcl-neutrals-white);
+  white-space: nowrap;
+
+  & [data-sale-icon] {
+    margin-right: 0.3em;
+  }
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Room for the focus rings the scroll box would otherwise clip. */
+  margin: -4px;
+  padding: 4px;
+}
+
+.actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-glass-hover);
+
+  & > button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  @media (max-width: 768px) {
+    gap: 12px;
+
+    & > button {
+      flex-basis: 100%;
+    }
+    & > button[data-variant="secondary"] {
+      order: 1;
+    }
+  }
+}
+
+.actionsNote {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.successDetail {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--dcl-neutrals-gray);
+}
+
+/* The default pill is purple on a purple tint, made for light surfaces; on this dark card the value goes white. */
+.successCountdown {
+  padding: 0;
+  background: none;
+  color: var(--dcl-neutrals-white);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.reviewSummary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--dcl-radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.reviewPct {
+  justify-self: start;
+  display: inline-flex;
+}
+
+.reviewWhenRow {
+  display: grid;
+  /* Fixed, not content-sized: each row is its own grid, so a max-content track would line each label up
+     with nothing. 86px clears the longest label in any locale. */
+  grid-template-columns: 86px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.reviewWhenLabel {
+  color: var(--dcl-neutrals-gray);
+  font-size: 13px;
+}
+
+.reviewWhenValue {
+  font-weight: 700;
+  color: var(--dcl-neutrals-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reviewWhenLeft {
+  flex: none;
+  padding: 0;
+  background: none;
+  color: var(--dcl-neutrals-gray);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.reviewGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reviewGroupTitle {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--dcl-neutrals-white);
+}
+
+.reviewList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Long collections stay inside the modal instead of pushing the actions off-screen. */
+  max-height: 232px;
+  overflow-y: auto;
+}
+
+.reviewRow {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+
+  &[data-muted] {
+    opacity: 0.7;
+  }
+}
+
+.reviewThumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--dcl-neutrals-pearl);
+}
+
+.reviewName {
+  font-size: 15px;
+  color: var(--dcl-neutrals-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reviewPrices {
+  display: grid;
+  grid-template-columns: minmax(34px, auto) minmax(46px, auto);
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.reviewWas {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  color: var(--dcl-neutrals-gray);
+  text-decoration: line-through;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.reviewNow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--dcl-neutrals-white);
+}
+
+.reviewUnaffected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dcl-neutrals-gray);
+  white-space: nowrap;
+}
+
+.unaffectedInfo {
+  /* Drawn at 14px, hit at 26px: padding cancelled by an equal negative margin. */
+  width: 14px;
+  height: 14px;
+  padding: 6px;
+  margin: -6px;
+  box-sizing: content-box;
+  color: var(--dcl-neutrals-gray);
+  cursor: help;
+
+  &:focus-visible {
+    outline: 2px solid var(--dcl-neutrals-snow);
+    outline-offset: 2px;
+    border-radius: 50%;
+  }
+}
+
+.reviewFoot {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--dcl-radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--dcl-neutrals-snow);
+
+  & b {
+    font-weight: 700;
+    color: var(--dcl-neutrals-white);
+  }
+  & svg {
+    flex: none;
+    color: var(--dcl-neutrals-gray);
+  }
+}
+
+.reviewFootNote {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--dcl-neutrals-gray);
+}

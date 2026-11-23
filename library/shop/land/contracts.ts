@@ -7,6 +7,7 @@
 
 import { evmAddress, type EvmAddress } from "../model/address";
 import { CHAIN, type ChainId } from "../model/chain";
+import { selectEthereumChain, type ShopChainSelection } from "../checkout/chain/selection";
 
 export type LandNetwork = {
   chainId: ChainId;
@@ -46,11 +47,20 @@ export const LAND_NETWORKS: Record<number, LandNetwork> = {
 /** The Rentals contract's EIP-712 domain (`Rentals`, version 1), as the signatures server verifies it. */
 export const RENTALS_DOMAIN = { name: "Rentals", version: "1" } as const;
 
-/** The contracts on `chainId` (the host's choice; ui3: land/chain.ts `landChainId`). */
+/** The contracts on the host's chosen chain. */
 export function landNetwork(chainId: ChainId): LandNetwork {
   const found = LAND_NETWORKS[chainId];
   if (!found) throw new RangeError(`LAND and NAMEs do not live on chain ${chainId}`);
   return found;
+}
+
+export function selectLandChain(selection: ShopChainSelection & { landChainId?: ChainId }): ChainId {
+  const chosen = selection.landChainId ?? selectEthereumChain(selection);
+  return LAND_NETWORKS[chosen] ? chosen : CHAIN.ETHEREUM;
+}
+
+export function landTokenId(x: number, y: number): string {
+  return ((BigInt.asUintN(128, BigInt(x)) << 128n) | BigInt.asUintN(128, BigInt(y))).toString();
 }
 
 export type LandCategory = "parcel" | "estate";
