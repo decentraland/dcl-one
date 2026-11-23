@@ -266,7 +266,11 @@ fn derive_final_authority(chain: &AuthChain) -> Result<String, String> {
         .last()
         .ok_or_else(|| "Auth chain is required".to_string())?;
     match last.link_type {
-        AuthLinkType::SIGNER => Err("Could not get final authority from auth chain".to_string()),
+        AuthLinkType::SIGNER
+        | AuthLinkType::EcdsaScopedEphemeral
+        | AuthLinkType::EcdsaEip1654ScopedEphemeral => {
+            Err("Could not get final authority from auth chain".to_string())
+        }
         AuthLinkType::EcdsaEphemeral | AuthLinkType::EcdsaEip1654Ephemeral => {
             let (_, ephemeral, _) = parse_ephemeral_payload(&last.payload)
                 .map_err(|e| format!("Could not get final authority from auth chain: {}", e))?;
@@ -886,6 +890,44 @@ mod tests {
             invalid(validate_identity_chain(&stub_auth_chain(), None).await),
             "Could not get final authority from auth chain"
         );
+    }
+
+    #[tokio::test]
+    async fn a_scoped_login_is_refused() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "explore".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                4_000_000_000_000,
+                &grants,
+                "payload",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        invalid(validate_auth_chain(&chain, None).await);
+
+        for link_type in [
+            AuthLinkType::EcdsaScopedEphemeral,
+            AuthLinkType::EcdsaEip1654ScopedEphemeral,
+        ] {
+            let mut identity = chain[..2].to_vec();
+            identity[1].link_type = link_type;
+            assert_eq!(
+                invalid(validate_auth_chain(&identity, None).await),
+                "Could not get final authority from auth chain"
+            );
+            invalid(validate_identity_chain(&identity, None).await);
+        }
     }
 
     #[tokio::test]

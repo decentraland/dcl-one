@@ -81,7 +81,9 @@ takes `#![expect(dead_code, reason = …)]` with the reason that
 ## Async work
 
 - IO goes on `IoTaskPool`; the result comes back through a channel or a `Task<T>` polled from
-  a system, and lands in a component. Systems never block.
+  a system, and lands in a component. Systems never block. The scene loop is the one exception:
+  it paces the frame, and sleeps for a bounded wait between passes (see
+  [the scene loop](scheduling.md#the-scene-loop)).
 - The worker that knows the outcome reports it, per item and structured: `Vec<Result<T, E>>`
   in request order with a small named error enum. The caller relays; it does not re-derive
   failures by diffing what it asked for against what came back.

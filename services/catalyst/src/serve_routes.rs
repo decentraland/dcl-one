@@ -150,6 +150,7 @@ pub(super) fn build_routes(
     let statistics = archipelago.statistics.clone();
     let blobs = content.clone();
     let report_storage = blobs.storage.clone();
+    let max_deploy_body = content::create_entity::max_deployment_body_bytes(&content.settings);
     let app = content::build_router(content)
         .merge(shop::market::router(market.clone()))
         .merge(shop_routes(shop::States {
@@ -267,16 +268,19 @@ pub(super) fn build_routes(
         .merge(ops::admin::router(ops_admin))
         .merge(shared::writes::status_router(write_switches(config)));
     // A request a gate, an auth check or a handler answers before reading
-    // its body is drained, not reset: nginx writes a buffered upload after
-    // the answer, and a reset fails that write, answers 502 and counts the
-    // process down. Up to the largest body a route admits (a deployment).
+    // its body is drained, not reset: nginx is still writing the upload
+    // after the answer, and a reset fails that write, answers 502 and counts
+    // the process down. Up to the largest body a route admits (a deployment,
+    // `MAX_UPLOAD_TOTAL_SIZE` plus framing): the drain discards each chunk
+    // as it arrives, so the bound costs bandwidth, never memory or disk. A
+    // content deploy streams through nginx unbuffered, so its drain runs at
+    // the client's pace; it ends at `DRAIN_DEADLINE` (300 s) whatever is left.
     // Forwarding headers name the client only from a loopback or listed proxy.
     let app =
         shared::client_ip::pin_client_headers(app, config.node.http_trusted_proxy_cidrs.clone());
     let app = shared::drain::drain_unread(
         app,
-        content::create_entity::MAX_DEPLOYMENT_BYTES
-            .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
+        max_deploy_body.max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
     // Upstream's router under /content/: static segments matched whatever
     // their case, and its `Allow` list on a 405 (also under

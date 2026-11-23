@@ -944,6 +944,7 @@ mod tests {
                 .spawn(crate::global_crdt::GlobalCrdtState::new(None));
             app.world_mut().send_event(crate::SetCurrentScene {
                 realm_name: "realm".into(),
+                realm_about_url: about_url.into(),
                 scene_id: scene_id.into(),
             });
             app.update();

@@ -161,7 +161,8 @@ describe('LivePreviewPage', () => {
     await screen.findByTestId('avatar-preview')
     expect(screen.getByTestId('live-preview-animation')).toBeInTheDocument()
     expect(screen.queryByTestId('live-preview-properties')).not.toBeInTheDocument()
-    expect(screen.getByTestId('ui2-emote-controls')).toBeInTheDocument()
+    // The overlay mounts after the renderer is picked; `avatar-preview` also marks the loader.
+    expect(await screen.findByTestId('ui2-emote-controls')).toBeInTheDocument()
   })
 
   it('explains a blocked local network connection and offers a retry', async () => {

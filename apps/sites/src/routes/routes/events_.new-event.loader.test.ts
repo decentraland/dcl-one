@@ -9,6 +9,8 @@ vi.mock("@/data/lib/catalyst/places/events", async (original) => ({
   fetchEventCategories: vi.fn(),
 }));
 
+const EVENT_ID = "5f0c6a52-6b1d-4c1e-9a77-0e8f5b2c4d10";
+
 const args = (path: string, params: Record<string, string> = {}) =>
   ({ request: new Request(`https://sites.test${path}`), params, context: new RouterContextProvider() }) as never;
 
@@ -47,11 +49,21 @@ describe("when the hangout editor loads", () => {
   describe("and the visitor opens /events/edit-event/:id", () => {
     describe("and the path id names an event", () => {
       beforeEach(async () => {
-        ({ data } = await editLoader(args("/events/edit-event/ev-1?community_id=c-1", { id: "ev-1" })));
+        ({ data } = await editLoader(args(`/events/edit-event/${EVENT_ID}?community_id=c-1`, { id: EVENT_ID })));
       });
 
       it("should open the editor in edit mode for the event in the path", () => {
-        expect(data).toMatchObject({ mode: "edit", eventId: "ev-1", communityId: "" });
+        expect(data).toMatchObject({ mode: "edit", eventId: EVENT_ID, communityId: "" });
+      });
+    });
+
+    describe("and the path id is not a UUID", () => {
+      beforeEach(async () => {
+        ({ data } = await editLoader(args("/events/edit-event/not-an-id", { id: "not-an-id" })));
+      });
+
+      it("should treat it as no event", () => {
+        expect(data).toMatchObject({ mode: "edit", eventId: null });
       });
     });
 

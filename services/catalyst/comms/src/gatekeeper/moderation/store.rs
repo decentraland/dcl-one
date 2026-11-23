@@ -148,6 +148,24 @@ impl Moderation {
             .collect())
     }
 
+    /// The admins of `place_id` with their granters: those active, and those
+    /// whose grant a place removal at `revoked_at` ended (that cleanup stamps
+    /// its `removed_at`).
+    pub async fn notice_admins(
+        &self,
+        place_id: &str,
+        revoked_at: Option<NaiveDateTime>,
+    ) -> Result<Vec<(String, String)>, ApiError> {
+        Ok(sqlx::query_as(
+            "SELECT admin_address, added_by FROM social.scene_admins \
+             WHERE place_id = $1 AND (active OR removed_at = $2)",
+        )
+        .bind(place_id)
+        .bind(revoked_at)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     /// Re-adding a removed admin flips the same row back to active.
     pub async fn add_admin(
         &self,
@@ -347,13 +365,13 @@ impl Moderation {
     pub async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {
         self.ban_at(
             actor,
-            scene.map(crate::world_identity::SceneId::as_str),
+            scene.map(crate::access::SceneBanKey::as_str),
             device,
             now,
         )
@@ -920,7 +938,7 @@ impl super::BanStatus for Moderation {
     async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {

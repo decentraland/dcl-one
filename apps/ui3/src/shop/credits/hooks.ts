@@ -11,31 +11,14 @@ import { readManaBalanceWei } from "../checkout/lib/mana";
 import { manaRateQueryOptions } from "../checkout/lib/mana-rate";
 import { settlementChainId } from "../checkout/chain/config";
 import { useShopServices } from "../checkout/services";
-import { getUsdBalance, type UsdBalance } from "@shop/credits/credits";
+import type { UsdBalance } from "@shop/credits/credits";
+import { creditsBalanceQuery } from "@shop/credits/balance-query";
 import { CREDIT_PACKS, fetchCreditPacks, type CreditPack } from "./payments";
-
-const POLL_MS = 15_000;
-
-export function nextBalancePoll(balance: UsdBalance | undefined, now: number = Date.now()): number | false {
-  const held = balance?.held;
-  if (!held) return false;
-  const eta = held.releasesAtSeconds;
-  if (eta == null) return POLL_MS;
-  const untilDue = eta * 1000 - now + 1_000;
-  return untilDue > 0 ? Math.min(untilDue, POLL_MS) : POLL_MS;
-}
 
 /** The signed-in account's spendable credits (1 credit = $0.10). */
 export function useBalance(address: string | null | undefined) {
   const { client } = useShopServices();
-  return useQuery<UsdBalance>({
-    queryKey: [SHOP_QUERY_KEYS.balance, address?.toLowerCase() ?? null],
-    enabled: !!address,
-    staleTime: 30_000,
-    refetchOnWindowFocus: (query) => !!query.state.data?.held,
-    refetchInterval: (query) => nextBalancePoll(query.state.data),
-    queryFn: ({ signal }) => getUsdBalance(address!, client, signal),
-  });
+  return useQuery(creditsBalanceQuery(address, client));
 }
 
 /** A dash when the balance failed to load: a misleading 0 reads as "you have no credits". */

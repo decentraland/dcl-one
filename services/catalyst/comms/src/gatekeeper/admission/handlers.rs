@@ -136,14 +136,21 @@ pub async fn get_scene_adapter(
     }
     let is_world = is_world_realm_name(&realm_name);
     let resolved = scene::resolve_adapter_room(&state, &realm_name, &scene_id).await?;
-    if !is_world {
-        scene::require_genesis_deployment(&state, &resolved).await?;
-    }
+    let genesis = if is_world {
+        None
+    } else {
+        scene::require_genesis_deployment(&state, &resolved).await?
+    };
     let resolved_scene_id = resolved
         .scene_id
         .as_ref()
         .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?
         .as_str();
+    // A Genesis scene's bans are on the place of the deployment found.
+    let ban_key = genesis.as_ref().unwrap_or(&resolved).ban_key();
+    let ban_key = ban_key
+        .as_ref()
+        .map_or(resolved_scene_id, |key| key.as_str());
     let device_id = device_identifier(&sf.metadata);
     let secret = scene::meta_str(&sf.metadata, "secret");
     let started = if let Some(world) = resolved.realm.world() {
@@ -170,7 +177,7 @@ pub async fn get_scene_adapter(
             // Record only an admitted connection: a refused one must not replace the recorded device.
             let gate = state
                 .moderation
-                .connection_gate(&identity, device_id.as_deref(), resolved_scene_id)
+                .connection_gate(&identity, device_id.as_deref(), ban_key)
                 .await;
             if record && gate.is_allowed() {
                 record_connection(&state, &identity, &headers, device_id.as_deref()).await;

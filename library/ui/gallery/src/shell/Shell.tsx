@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { breakpoints } from '@dcl/one-ui'
 import { entries } from '../examples'
 import { foundationPages } from '../foundations/FoundationPages'
+import { HUD_OVERVIEW, hudPages, hudSections } from '../hudPages'
 import { HEIGHT_MESSAGE } from '../messages'
 import {
   MAX_WIDTH,
@@ -9,21 +10,20 @@ import {
   canvasHref,
   galleryHref,
   generatedHref,
+  pageAliases,
   parseRoute,
   widthPresets,
   type Route,
+  type View,
   type Width
 } from '../url'
 import styles from './Shell.module.css'
 
 const componentNames = entries.map((entry) => entry.name)
 // Exports shown on a page named after another export open by their own name too.
-const aliases = Object.fromEntries(
-  entries.flatMap((entry) =>
-    entry.components.filter((name) => name !== entry.name).map((name) => [name, entry.name])
-  )
-)
+const aliases = pageAliases(entries)
 const foundationNames = foundationPages.map((page) => page.name)
+const hudNavigation = [{ name: HUD_OVERVIEW, components: [] }, ...hudSections]
 const presets = widthPresets(breakpoints)
 const groups = [...new Set(entries.map((entry) => entry.group))]
 
@@ -51,7 +51,7 @@ function NavLink({
   href: string
   current: boolean
   label: string
-  source: 'runtime' | 'generated'
+  source: 'runtime' | 'hud' | 'generated'
   /** Shown only for a name both sources have. */
   badge?: string
   navigate: Navigate
@@ -90,7 +90,7 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
   const matches = (...names: readonly string[]) =>
     names.some((name) => name.toLowerCase().includes(filter.trim().toLowerCase()))
   const width = route.source === 'runtime' ? route.width : undefined
-  const isCurrent = (view: string, name: string) =>
+  const isCurrent = (view: View, name: string) =>
     route.source === 'runtime' && route.view === view && route.name === name
   const generatedName =
     route.source === 'generated' ? new URLSearchParams(route.query).get('component') : null
@@ -145,6 +145,24 @@ function Navigation({ route, navigate }: { route: Route; navigate: Navigate }) {
           </section>
         ) : null
       })}
+      <h2 className={styles.navHeading}>HUD</h2>
+      <p className={styles.navNote}>
+        The Explorer HUD&apos;s design primitives: the sections of its Showcase.
+      </p>
+      <ul className={styles.navList}>
+        {hudNavigation
+          .filter((section) => matches(section.name, ...section.components))
+          .map((section) => (
+            <NavLink
+              key={section.name}
+              href={galleryHref({ hud: section.name, width })}
+              current={isCurrent('hud', section.name)}
+              label={section.name}
+              source="hud"
+              navigate={navigate}
+            />
+          ))}
+      </ul>
       <details className={styles.reference} open={route.source === 'generated' || undefined}>
         <summary className={styles.navHeading}>Figma reference</summary>
         <p className={styles.navNote}>
@@ -255,9 +273,50 @@ function RuntimeView({
     window.addEventListener('message', receive)
     return () => window.removeEventListener('message', receive)
   }, [])
-  const entry = entries.find((item) => item.name === route.name)
-  const page = foundationPages.find((item) => item.name === route.name)
-  const title = route.view === 'component' ? route.name : (page?.title ?? route.name)
+  // A canvas wider than the space beside the sidebar is drawn scaled down, not scrolled: it keeps the chosen width,
+  // which is what its media queries read, and the whole of it stays in view.
+  const viewport = useRef<HTMLDivElement>(null)
+  const [fit, setFit] = useState({ scale: 1, width: 0, height: 0 })
+  useEffect(() => {
+    const area = viewport.current
+    const canvas = frame.current
+    if (!area || !canvas || route.width === 'fill') {
+      setFit({ scale: 1, width: 0, height: 0 })
+      return
+    }
+    const measure = () => {
+      const style = getComputedStyle(area)
+      const room =
+        area.clientWidth -
+        (parseFloat(style.paddingLeft) || 0) -
+        (parseFloat(style.paddingRight) || 0)
+      const width = canvas.offsetWidth
+      const scale = width > room && room > 0 ? room / width : 1
+      setFit((previous) =>
+        previous.scale === scale &&
+        previous.width === width &&
+        previous.height === canvas.offsetHeight
+          ? previous
+          : { scale, width, height: canvas.offsetHeight }
+      )
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(area)
+    observer.observe(canvas)
+    measure()
+    return () => observer.disconnect()
+  }, [route.width])
+  // Page names repeat across views (the HUD has a Button too), so each view looks up its own.
+  const hud = route.view === 'hud'
+  const entry =
+    route.view === 'component' ? entries.find((item) => item.name === route.name) : undefined
+  const page =
+    route.view === 'foundations'
+      ? foundationPages.find((item) => item.name === route.name)
+      : undefined
+  const section = hud ? hudSections.find((item) => item.name === route.name) : undefined
+  const title = page?.title ?? route.name
+  const shown = entry?.components ?? section?.components ?? []
   return (
     <>
       <header className={styles.header}>
@@ -268,32 +327,66 @@ function RuntimeView({
         ) : null}
         {route.missing ? (
           <p role="alert" className={styles.missing}>
-            No runtime page named “{route.missing}”; showing {title}.
+            No {hud ? 'HUD section' : 'runtime page'} named “{route.missing}”; showing {title}.
           </p>
         ) : null}
         <h1 className={styles.title}>
           {title}
-          {figmaNames.has(title) ? <SourceBadge label="runtime" /> : null}
+          {hud ? (
+            <SourceBadge label="HUD" />
+          ) : figmaNames.has(title) ? (
+            <SourceBadge label="runtime" />
+          ) : null}
         </h1>
-        <p className={styles.summary}>{entry?.summary ?? page?.summary}</p>
-        {entry ? (
+        <p className={styles.summary}>
+          {entry?.summary ??
+            page?.summary ??
+            section?.title ??
+            "Every section of the Explorer HUD's Showcase, as ?showcase=1 shows them in a HUD host, then its glyphs."}
+        </p>
+        {hud ? (
+          <p className={styles.summary}>
+            A window of the chosen width, 16:9 and at least 480px high: the HUD scales to it as it
+            does in a host.
+          </p>
+        ) : null}
+        {shown.length ? (
           <p className={styles.exports}>
             Exports shown:{' '}
-            {entry.components.map((name) => (
+            {shown.map((name) => (
               <code key={name}>{name}</code>
             ))}
           </p>
         ) : null}
         <WidthControl route={route} navigate={navigate} />
       </header>
-      <div className={styles.viewport} data-width={route.width}>
-        <iframe
-          ref={frame}
-          className={styles.canvas}
-          title={`${title} canvas`}
-          src={canvasHref(route.view, route.name)}
-          style={{ width: route.width === 'fill' ? '100%' : `${route.width}px`, height }}
-        />
+      <div ref={viewport} className={styles.viewport} data-width={route.width}>
+        {fit.scale < 1 ? (
+          <p className={styles.scaled}>
+            Shown at {Math.round(fit.scale * 100)}% to fit this window; the canvas is {route.width}
+            px wide.
+          </p>
+        ) : null}
+        <div
+          className={styles.fit}
+          style={
+            fit.scale < 1
+              ? { width: fit.width * fit.scale, height: fit.height * fit.scale }
+              : undefined
+          }
+        >
+          <iframe
+            ref={frame}
+            className={hud ? `${styles.canvas} ${styles.window}` : styles.canvas}
+            title={`${title} canvas`}
+            src={canvasHref(route.view, route.name)}
+            style={{
+              width: route.width === 'fill' ? '100%' : `${route.width}px`,
+              ...(hud ? {} : { height }),
+              ...(fit.scale < 1 ? { transform: `scale(${fit.scale})` } : {})
+            }}
+          />
+        </div>
       </div>
     </>
   )
@@ -342,7 +435,7 @@ export function Shell({ search: initial }: { search: string }) {
     window.history.pushState(null, '', url)
     setSearch(url.search)
   }, [])
-  const route = parseRoute(search, componentNames, foundationNames, aliases)
+  const route = parseRoute(search, componentNames, foundationNames, aliases, hudPages)
   return (
     <div className={styles.layout}>
       <Navigation route={route} navigate={navigate} />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatConsoleReply, HUD_HIDDEN_COMMANDS, parseChatCommand, splitArgs, HELP_TEXT } from './chatCommands'
+import { formatConsoleReply, HUD_HIDDEN_COMMANDS, parseChatCommand, HELP_TEXT } from './chatCommands'
 
 describe('parseChatCommand', () => {
   it('passes a normal message through as send (trimmed)', () => {
@@ -52,13 +52,18 @@ describe('parseChatCommand', () => {
     expect(parseChatCommand('/goto 1 2 3').kind).toBe('system')
   })
 
-  it('any other /command passes through to the engine console with split args', () => {
-    expect(parseChatCommand('/dance')).toEqual({ kind: 'console', command: 'dance', args: [] })
-    expect(parseChatCommand('/Emote 3')).toEqual({ kind: 'console', command: 'emote', args: ['3'] })
+  it('any other /command passes to the engine console as the line typed, for the engine to split', () => {
+    expect(parseChatCommand('/dance')).toEqual({ kind: 'console', command: 'dance', hasArgs: false, line: '/dance' })
+    expect(parseChatCommand('/Emote 3')).toEqual({ kind: 'console', command: 'emote', hasArgs: true, line: '/emote 3' })
     expect(parseChatCommand('/changerealm boedo.dcl.eth "https://x.y/content"')).toEqual({
       kind: 'console',
       command: 'changerealm',
-      args: ['boedo.dcl.eth', 'https://x.y/content']
+      hasArgs: true,
+      line: '/changerealm boedo.dcl.eth "https://x.y/content"'
+    })
+    // quotes, escapes and JSON reach the engine untouched
+    expect(parseChatCommand(`/emote_state {"a": "b  c"} it's "x\\"y"`)).toMatchObject({
+      line: `/emote_state {"a": "b  c"} it's "x\\"y"`
     })
     // A bare slash is not a command.
     expect(parseChatCommand('/').kind).toBe('system')
@@ -74,15 +79,10 @@ describe('parseChatCommand', () => {
   })
 
   it('/reload <hash> and /help <command> go to the engine; the bare forms stay local', () => {
-    expect(parseChatCommand('/reload bafyabc')).toEqual({ kind: 'console', command: 'reload', args: ['bafyabc'] })
-    expect(parseChatCommand('/help teleport')).toEqual({ kind: 'console', command: 'help', args: ['/teleport'] })
-    expect(parseChatCommand('/help /teleport')).toEqual({ kind: 'console', command: 'help', args: ['/teleport'] })
+    expect(parseChatCommand('/reload bafyabc')).toEqual({ kind: 'console', command: 'reload', hasArgs: true, line: '/reload bafyabc' })
+    expect(parseChatCommand('/help teleport')).toEqual({ kind: 'console', command: 'help', hasArgs: true, line: '/help /teleport' })
+    expect(parseChatCommand('/help /teleport')).toEqual({ kind: 'console', command: 'help', hasArgs: true, line: '/help /teleport' })
     expect(parseChatCommand('/help').kind).toBe('system')
-  })
-
-  it('splitArgs honours quotes', () => {
-    expect(splitArgs(`a "b c" 'd e' f`)).toEqual(['a', 'b c', 'd e', 'f'])
-    expect(splitArgs('')).toEqual([])
   })
 })
 

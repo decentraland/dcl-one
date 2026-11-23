@@ -167,6 +167,7 @@ pub async fn serve(
     db::bootstrap(&pool).await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
     worlds::rooms::ensure_scene_admin_place_release(&pool).await?;
+    worlds::rooms::ensure_genesis_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -194,9 +195,9 @@ pub async fn serve(
         &content.settings.content_public_url,
     );
 
-    // ONE outbound client: the RPC validator uses it as is (`raw`), every
-    // mirror and upstream reader through the guard; peer sync has its own
-    // (`content::sync::sync_http_client`).
+    // ONE outbound client: every mirror and upstream reader goes through the
+    // guard; peer sync (`content::sync::sync_http_client`) and the RPC
+    // validator have their own.
     let http_client = http::Outbound::new(http::HttpClientCfg::serve(
         config.content.connections_max_idle,
     ))
@@ -255,21 +256,38 @@ pub async fn serve(
     let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
         .content
         .eth_rpc_url()?
-        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
+        .map(|url| {
+            // The shared client's settings without redirects: one would hand the check
+            // to another node.
+            let client = http::HttpClientCfg {
+                max_redirects: None,
+                ..http::HttpClientCfg::serve(config.content.connections_max_idle)
+            }
+            .build()
+            .context("building the EIP-1654 RPC client")?;
+            anyhow::Ok(crate::auth::cached_rpc_validator(url, client))
+        })
+        .transpose()?;
 
     // The content validator of the local write path (src/content/validator):
-    // the old catalyrst-validator rules over the ONE pool (the escrow
+    // the old catalyrst-validator rules over the ONE pool (the opt-in escrow
     // overlay), store and client, the shared EIP-1654 validator and the
     // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
-    let validator_settings = content::validator::Settings::parse(
-        config.validator.ignore_blockchain_access_checks,
-        config.writes.content_writes_enabled,
-        config.validator.additional_decentraland_address.as_deref(),
-        &config.node.eth_network,
-        config.content.eth_rpc_url()?,
-        config.economy.rpc_endpoint_polygon.as_deref(),
-    )
-    .context("content validator configuration")?;
+    if let Some(warning) = config.escrow_lease_flags_warning() {
+        tracing::warn!("{warning}");
+    }
+    let validator_settings = content::validator::Settings {
+        escrow_lease_ownership: config.validator.content_escrow_lease_ownership_enabled,
+        ..content::validator::Settings::parse(
+            config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes(),
+            config.validator.additional_decentraland_address.as_deref(),
+            &config.node.eth_network,
+            config.content.eth_rpc_url()?,
+            config.economy.rpc_endpoint_polygon.as_deref(),
+        )
+        .context("content validator configuration")?
+    };
     // Sync and the read-through validate every entity a peer serves.
     let judges_peer_entities = sync_settings.is_some() || config.content.read_through_enabled;
     if judges_peer_entities {
@@ -284,7 +302,7 @@ pub async fn serve(
         eip1654.clone(),
         validator_settings,
     ));
-    if (config.writes.content_writes_enabled || judges_peer_entities)
+    if (config.writes.content_writes() || judges_peer_entities)
         && !config.validator.ignore_blockchain_access_checks
     {
         content_validator
@@ -563,6 +581,7 @@ pub async fn serve(
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
+    explorer_api.attach_land_authz(land.clone());
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -591,10 +610,22 @@ pub async fn serve(
     .with_land_authz(Some(land.clone()))
     .with_denylist(content.denylist.clone())
     .with_forwarder(content_forwarder);
-    content.attach_writes(config.writes.content_writes_enabled, Arc::new(deployer));
+    content.attach_writes(config.writes.content_writes(), Arc::new(deployer));
+    // Spool directories of POST /entities requests a crashed process left;
+    // older than any live request, so a running replica's are never touched.
+    {
+        let spool_root = content.spool_root.clone();
+        let stale_after = catalyst_storage::gc::orphan_age_floor(
+            config.worlds.multipart_upload_timeout_ms,
+            config.worlds.deployment_processing_timeout_ms,
+        );
+        tokio::spawn(async move {
+            catalyst_storage::upload_spool::sweep_stale(&spool_root, stale_after).await;
+        });
+    }
     // Expired partial uploads (content::partial_deployments) are reclaimed
     // only where they can be made: a node taking local writes.
-    if config.writes.content_writes_enabled {
+    if config.writes.content_writes() {
         content::partial_deployments::spawn(
             &jobs,
             pool.clone(),
@@ -625,10 +656,24 @@ pub async fn serve(
         );
     }
     content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
-    if config.writes.content_writes_enabled {
+    let gateway_cap = content::create_entity::gateway_cap_warning(&content.settings);
+    for warning in config
+        .content
+        .upload_limit_warnings()
+        .into_iter()
+        .chain(gateway_cap)
+    {
+        tracing::warn!("{warning}");
+    }
+    if config.writes.content_writes() {
         tracing::warn!(
             denylisted,
             "CONTENT_WRITES_ENABLED=true: this node is the authority for local deployments and unpublishes"
+        );
+    } else if config.writes.read_only {
+        tracing::info!(
+            denylisted,
+            "READ_ONLY=true: POST /entities and DELETE /scenes/{{coord}} answer 404, whatever CONTENT_WRITES_ENABLED says"
         );
     } else {
         tracing::info!(
@@ -1020,7 +1065,10 @@ pub async fn serve(
             shop::mana::Settings {
                 writes_enabled: config.writes.data_writes_enabled,
                 track_interval: Duration::from_secs(
-                    config.marketplace.marketplace_index_interval_secs,
+                    config
+                        .marketplace
+                        .marketplace_executions_track_interval_secs
+                        .max(1),
                 ),
                 collections_chain_id: config.economy.collections_chain_id,
             },
@@ -1109,6 +1157,11 @@ pub async fn serve(
     social
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
+    if social.communities.flags_configured() {
+        comms_stage
+            .gatekeeper
+            .set_platform_moderator_flags(social.communities.flags.clone());
+    }
     social
         .communities
         .referral

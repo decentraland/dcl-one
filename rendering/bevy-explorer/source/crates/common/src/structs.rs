@@ -607,6 +607,18 @@ pub struct PreviousLogin {
 pub fn default_home_realm() -> String {
     crate::base_domain::url(crate::base_domain::Service::RealmProvider, "/main")
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PinnedHome {
+    pub realm: String,
+    pub location: IVec2,
+}
+
+/// The key of an account's entry in [`AppConfig::homes`].
+pub fn home_account(address: &Address) -> String {
+    format!("{address:#x}")
+}
+
 /// The values the "Live Scene Ring" setting takes, in parcel rings.
 pub const LIVE_SCENE_RINGS: RangeInclusive<u16> = 0..=3;
 /// The values the "Near LOD Ring" setting takes, in parcel rings.
@@ -618,15 +630,20 @@ pub const FAR_LOD_RINGS: RangeInclusive<u16> = 5..=40;
 #[derive(Serialize, Deserialize, Resource, Clone)]
 #[serde(default)]
 pub struct AppConfig {
-    /// The pinned home scene. Written ONLY by SetHomeScene; None = never pinned, so the
-    /// home keeps tracking the base-domain-derived default. A pinned home persists (and
-    /// survives switching base domains) even when it happens to equal some domain's
-    /// default. --realm / --position are startup params (like the web's ?realm= /
-    /// ?position=) and are deliberately never merged in here — the config file is
-    /// rewritten wholesale on any settings change, which would silently persist a
-    /// one-off CLI target as home.
+    /// A home pinned for no account: the first account to sign in adopts it
+    /// ([`Self::adopt_home`]), and the headless server boots from it. --realm / --position are
+    /// startup params (like the web's ?realm= / ?position=) and are deliberately never merged
+    /// in here — the config file is rewritten wholesale on any settings change, which would
+    /// silently persist a one-off CLI target as home.
     pub home_realm: Option<String>,
     pub home_location: Option<IVec2>,
+    /// The home each account pinned, by [`home_account`]. An account with no entry has no home,
+    /// and starts at the base-domain-derived default realm, on 0,0. A pinned home persists (and
+    /// survives switching base domains) even when it happens to equal some domain's default.
+    pub homes: HashMap<String, PinnedHome>,
+    /// The account a home was last read for: the one whose home applies at startup when no
+    /// sign-in is stored.
+    pub home_last_account: Option<String>,
     pub previous_login: Option<PreviousLogin>,
     /// The root key of the benchmark autopilot's local guest (`wallet::local_guest`): it signs each
     /// ephemeral identity, so an expired one is signed again for the same account. Nothing but the
@@ -717,6 +734,8 @@ impl Default for AppConfig {
         Self {
             home_realm: None,
             home_location: None,
+            homes: HashMap::new(),
+            home_last_account: None,
             previous_login: None,
             guest_root_key: None,
             accepted_terms: None,
@@ -790,14 +809,58 @@ impl AppConfig {
         }
     }
 
-    /// The effective home realm: the pinned value, else the base-domain-derived default.
-    pub fn home_realm(&self) -> String {
-        self.home_realm.clone().unwrap_or_else(default_home_realm)
+    fn startup_home_account(&self) -> Option<String> {
+        self.previous_login
+            .as_ref()
+            .map(|login| home_account(&login.root_address))
+            .or_else(|| self.home_last_account.clone())
     }
 
-    /// The effective home parcel: the pinned value, else 0,0.
+    fn accountless_home(&self) -> Option<PinnedHome> {
+        (self.home_realm.is_some() || self.home_location.is_some()).then(|| PinnedHome {
+            realm: self.home_realm.clone().unwrap_or_else(default_home_realm),
+            location: self.home_location.unwrap_or(IVec2::ZERO),
+        })
+    }
+
+    /// The account-less home stands in until an account adopts it.
+    pub fn pinned_home(&self, account: Option<&str>) -> Option<PinnedHome> {
+        account
+            .and_then(|account| self.homes.get(account).cloned())
+            .or_else(|| self.accountless_home())
+    }
+
+    pub fn startup_home(&self) -> Option<PinnedHome> {
+        self.pinned_home(self.startup_home_account().as_deref())
+    }
+
+    /// Record `account` as the one signed in: it takes the account-less home unless it has its
+    /// own, and no later account inherits it. True when the config changed.
+    pub fn adopt_home(&mut self, account: &str) -> bool {
+        let mut changed = false;
+        if let Some(home) = self.accountless_home() {
+            self.homes.entry(account.to_owned()).or_insert(home);
+            self.home_realm = None;
+            self.home_location = None;
+            changed = true;
+        }
+        if self.home_last_account.as_deref() != Some(account) {
+            self.home_last_account = Some(account.to_owned());
+            changed = true;
+        }
+        changed
+    }
+
+    /// The realm the engine starts in: the startup home's, else the base-domain-derived default.
+    pub fn home_realm(&self) -> String {
+        self.startup_home()
+            .map_or_else(default_home_realm, |home| home.realm)
+    }
+
+    /// The parcel the engine starts on: the startup home's, else 0,0.
     pub fn home_location(&self) -> IVec2 {
-        self.home_location.unwrap_or(IVec2::ZERO)
+        self.startup_home()
+            .map_or(IVec2::ZERO, |home| home.location)
     }
 
     /// one-time migrations for configs saved with an older generation, keeping everything
@@ -1105,7 +1168,7 @@ impl Default for GraphicsSettings {
             // FXAA, not MSAA, so depth of field stays on (see `DofSetting::apply_to_camera`)
             msaa: AaSetting::FxaaHigh,
             fps_target: 60,
-            // one 4096 cascade (`visuals`), so a short distance keeps its texels small
+            // one cascade on the 2048 map (`visuals`), so a short distance keeps its texels small
             shadow_distance: 20.0,
             // one cascade
             shadow_settings: ShadowSetting::Low,
@@ -1289,6 +1352,9 @@ pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
 /// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
+/// How far Low's one cascade reaches, in metres, whatever the shadow distance: past it the
+/// 2048 map's texels are too large to hold an avatar's shadow (see decisions.md).
+pub const SUN_LOW_MAX_DISTANCE: f32 = 40.0;
 
 /// A light with its own cascades (the lobby stage's key light): the shadow settings only turn its
 /// shadows on or off.
@@ -1305,7 +1371,8 @@ pub struct ShadowlessLight;
 #[derive(Component)]
 pub struct StageCamera;
 
-/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows. Low's
+/// one cascade stops at `SUN_LOW_MAX_DISTANCE`.
 pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
     if distance <= 0.0 {
         return None;
@@ -1313,7 +1380,7 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
     let far = distance.max(MIN_CASCADE + f32::EPSILON);
     let bounds = match setting {
         ShadowSetting::Off => return None,
-        ShadowSetting::Low => vec![far],
+        ShadowSetting::Low => vec![far.min(SUN_LOW_MAX_DISTANCE)],
         ShadowSetting::High => {
             let mut previous = MIN_CASCADE;
             SUN_CASCADE_4_SPLITS
@@ -2712,8 +2779,15 @@ mod tests {
         let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
         assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
         assert_eq!(high.minimum_distance, MIN_CASCADE);
-        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
-        assert_eq!(medium.bounds, vec![60.0]);
+        let medium = sun_cascades(ShadowSetting::Low, 20.0).unwrap();
+        assert_eq!(medium.bounds, vec![20.0]);
+        // Low's one cascade stops at 40 m; High's four reach the whole distance
+        for distance in [40.0, 60.0, 300.0] {
+            let low = sun_cascades(ShadowSetting::Low, distance).unwrap();
+            assert_eq!(low.bounds, vec![SUN_LOW_MAX_DISTANCE]);
+        }
+        let far = sun_cascades(ShadowSetting::High, 300.0).unwrap();
+        assert_eq!(far.bounds.last(), Some(&300.0));
         assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
         assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
         // a distance under the minimum still yields a strictly increasing config
@@ -3244,5 +3318,106 @@ mod tests {
         ] {
             assert!(!meta(field).declares_portable_experience(), "{field}");
         }
+    }
+
+    fn home(realm: &str, x: i32, y: i32) -> PinnedHome {
+        PinnedHome {
+            realm: realm.to_owned(),
+            location: IVec2::new(x, y),
+        }
+    }
+
+    #[test]
+    fn an_account_with_no_home_starts_at_the_default() {
+        let mut config = AppConfig::default();
+        assert_eq!(config.pinned_home(Some("0xa")), None);
+        assert_eq!(config.startup_home(), None);
+        assert_eq!(config.home_location(), IVec2::ZERO);
+        assert_eq!(config.home_realm(), default_home_realm());
+
+        config.homes.insert("0xa".into(), home("w.dcl.eth", 0, 0));
+        assert_eq!(config.pinned_home(Some("0xb")), None);
+        assert_eq!(config.pinned_home(None), None);
+    }
+
+    #[test]
+    fn each_account_keeps_its_own_home_and_clearing_one_leaves_the_other() {
+        let mut config = AppConfig::default();
+        config.homes.insert("0xa".into(), home("realm-a", 3, 4));
+        config.homes.insert("0xb".into(), home("realm-b", -5, 6));
+        assert_eq!(config.pinned_home(Some("0xa")), Some(home("realm-a", 3, 4)));
+        assert_eq!(
+            config.pinned_home(Some("0xb")),
+            Some(home("realm-b", -5, 6))
+        );
+
+        config.homes.remove("0xa");
+        assert_eq!(config.pinned_home(Some("0xa")), None);
+        assert_eq!(
+            config.pinned_home(Some("0xb")),
+            Some(home("realm-b", -5, 6))
+        );
+    }
+
+    #[test]
+    fn the_first_account_adopts_the_accountless_home_and_no_later_one_inherits_it() {
+        let mut config = AppConfig {
+            home_realm: Some("realm-old".into()),
+            home_location: Some(IVec2::new(7, 8)),
+            ..Default::default()
+        };
+        assert_eq!(config.startup_home(), Some(home("realm-old", 7, 8)));
+
+        assert!(config.adopt_home("0xa"));
+        assert_eq!(
+            config.pinned_home(Some("0xa")),
+            Some(home("realm-old", 7, 8))
+        );
+        assert_eq!(
+            (config.home_realm.clone(), config.home_location),
+            (None, None)
+        );
+        assert!(!config.adopt_home("0xa"));
+
+        assert!(config.adopt_home("0xb"));
+        assert_eq!(config.pinned_home(Some("0xb")), None);
+    }
+
+    #[test]
+    fn an_account_with_its_own_home_keeps_it_over_the_accountless_one() {
+        let mut config = AppConfig {
+            home_location: Some(IVec2::new(7, 8)),
+            ..Default::default()
+        };
+        config.homes.insert("0xa".into(), home("realm-a", 1, 2));
+        assert!(config.adopt_home("0xa"));
+        assert_eq!(config.pinned_home(Some("0xa")), Some(home("realm-a", 1, 2)));
+        assert_eq!(config.home_location, None);
+    }
+
+    #[test]
+    fn startup_uses_the_stored_sign_in_then_the_last_account() {
+        let mut config = AppConfig::default();
+        let address = Address::repeat_byte(0x11);
+        let account = home_account(&address);
+        assert_eq!(account, format!("0x{}", "11".repeat(20)));
+        config.homes.insert(account.clone(), home("realm-a", 9, 9));
+        config.homes.insert("0xb".into(), home("realm-b", 2, 2));
+
+        config.home_last_account = Some("0xb".into());
+        assert_eq!(config.home_location(), IVec2::new(2, 2));
+        assert_eq!(config.home_realm(), "realm-b");
+
+        config.previous_login = Some(PreviousLogin {
+            root_address: address,
+            ephemeral_key: Vec::new(),
+            auth: Vec::new(),
+            guest_account: false,
+        });
+        assert_eq!(config.home_location(), IVec2::new(9, 9));
+
+        let old: AppConfig =
+            serde_json::from_str(r#"{"home_realm":"r","home_location":[1,2]}"#).unwrap();
+        assert_eq!(old.startup_home(), Some(home("r", 1, 2)));
     }
 }

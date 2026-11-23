@@ -143,9 +143,10 @@ async fn build(
                     .ok_or_else(|| bad("the bid names no token id".into()))?;
                 checks.push(owner_check(reader, contract, token_id, actor).await);
                 if let Some(net) = chain.net {
-                    let (verdict, ready) = facts::trade_verdict(&state.pool, net, &trade.id)
-                        .await
-                        .map_err(|e| bad(e.to_string()))?;
+                    let (verdict, ready) =
+                        facts::trade_verdict(&state.pool, net, chain.chain_id.0 as i64, &trade.id)
+                            .await
+                            .map_err(|e| bad(e.to_string()))?;
                     checks.push(verify::trade_verdict_check(
                         verdict.as_ref(),
                         trade.checks.uses,

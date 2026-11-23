@@ -8,7 +8,7 @@
 //! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
-//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
+//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`, `first_wear_outbox`,
 //! `land_transfer_cursor`; the first-wear cursor is the `friend_first_wear`
 //! row of `badge_cursors`.
 //!
@@ -88,7 +88,7 @@ pub struct Settings {
     /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never, but
     /// a hold for a missing key still ends): see [`delivery::expire`].
     pub delivery_max_age: Option<Duration>,
-    /// Deployment origin used by event notice links (`/whats-on/{id}`).
+    /// Deployment origin used by event notice links (the Sites `/events` pages).
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,

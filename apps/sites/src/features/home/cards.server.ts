@@ -2,7 +2,7 @@ import type { WhatsOnCardData } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import {
   getAvatarBackgroundColor,
   getDisplayName,
-} from "@ui/shop/discovery/lib/avatarColor";
+} from "@web-core/profile/avatarColor";
 import type {
   LiveNowCard,
   Profile,
