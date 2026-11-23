@@ -364,7 +364,8 @@ def check(base='HEAD', staged=False):
 SHARED_IMPORT_ROOTS = ('apps/', 'library/', 'tooling/')
 SHARED_IMPORT_EXTENSIONS = SCRIPT_EXTENSIONS + ('.mts', '.cts')
 SHARED_UI_DEEP = re.compile(r'^@dcl/one-ui/(?!apps/(?:shop|hud)/)(?!\S*\.css(?:\?\S*)?$)[\w.-]\S*$')
-# Files PR #2028 rewrites; it moves their imports to @dcl/one-ui and empties this list.
+# Files PR #2028 rewrites. Every name they import is exported from @dcl/one-ui, so #2028 can switch them and empty
+# this list; until then they keep their paths.
 SHARED_IMPORT_PENDING = frozenset({
     'apps/sites/scripts/gen-error-pages.test.mts',
     'apps/sites/src/features/not-found/NotFoundPage.test.tsx',
