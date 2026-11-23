@@ -224,6 +224,11 @@ across workers:
   - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF
     containers hidden until `update_ready_gltfs` has processed them, a node at a time within the
     same slice.
+- Transform propagation (`mark_dirty_trees`, `propagate_parent_transforms`,
+  `sync_simple_transforms`) is its own schedule, `PropagateTransforms`, which
+  `TransformPropagate` runs with `propagate_transforms`. The explorer's early pass runs the same
+  schedule, so each run walks only the trees changed since the previous one; two instances of
+  the systems would each walk every tree the other had already walked.
 - `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
   twice per frame (the explorer's early pass plus bevy's own).
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale

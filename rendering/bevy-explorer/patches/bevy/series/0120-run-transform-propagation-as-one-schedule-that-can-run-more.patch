@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000
+Subject: Run transform propagation as one schedule that can run more than once a frame
+Date: 2026-11-23T20:06:25+00:00
+
+mark_dirty_trees, propagate_parent_transforms and sync_simple_transforms
+move into their own schedule, PropagateTransforms, which
+TransformPropagate runs through propagate_transforms in PostStartup and
+PostUpdate. An app that needs current globals earlier in the frame (the
+explorer runs a pass ahead of its collider, player and camera updates) runs
+the same schedule there.
+
+Change detection is relative to a system's previous run. With a second
+instance of the three systems, each instance's previous run was a frame
+ago, so each walked every tree that the other had just walked: the late
+pass re-marked and re-propagated everything the early pass had done that
+frame, and the early pass did the same with the late pass's work from the
+frame before. With one instance run twice, each run sees only the changes
+since the other.
+---
+diff --git a/crates/bevy_transform/src/plugins.rs b/crates/bevy_transform/src/plugins.rs
+index 3b22aefb14fc561ef5641484fd293ee03af9f7f9..1d1b5185e1d55073825e983f8967bb6f61fdc5db 100644
+--- a/crates/bevy_transform/src/plugins.rs
++++ b/crates/bevy_transform/src/plugins.rs
+@@ -1,6 +1,9 @@
+ use crate::systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms};
+ use bevy_app::{App, Plugin, PostStartup, PostUpdate};
+-use bevy_ecs::schedule::{IntoScheduleConfigs, SystemSet};
++use bevy_ecs::{
++    schedule::{IntoScheduleConfigs, ScheduleLabel, SystemSet},
++    world::World,
++};
+ 
+ /// Set enum for the systems relating to transform propagation
+ #[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
+@@ -9,6 +12,19 @@ pub enum TransformSystem {
+     TransformPropagate,
+ }
+ 
++/// The schedule that holds the transform propagation systems.
++/// [`TransformSystem::TransformPropagate`] runs it in `PostStartup` and `PostUpdate`, and an app
++/// that needs current globals earlier in a frame runs it there too, with
++/// [`propagate_transforms`]. The systems are the same instances at every point, so each run
++/// propagates only what changed since the previous run, whichever point ran it.
++#[derive(ScheduleLabel, Debug, Hash, PartialEq, Eq, Clone)]
++pub struct PropagateTransforms;
++
++/// Runs the [`PropagateTransforms`] schedule.
++pub fn propagate_transforms(world: &mut World) {
++    world.run_schedule(PropagateTransforms);
++}
++
+ /// The base plugin for handling [`Transform`](crate::components::Transform) components
+ #[derive(Default)]
+ pub struct TransformPlugin;
+@@ -20,28 +36,24 @@ impl Plugin for TransformPlugin {
+             .register_type::<crate::components::TransformTreeChanged>()
+             .register_type::<crate::components::GlobalTransform>();
+ 
+-        app
+-            // add transform systems to startup so the first update is "correct"
+-            .add_systems(
+-                PostStartup,
+-                (
+-                    mark_dirty_trees,
+-                    propagate_parent_transforms,
+-                    sync_simple_transforms,
+-                )
+-                    .chain()
+-                    .in_set(TransformSystem::TransformPropagate),
++        app.add_systems(
++            PropagateTransforms,
++            (
++                mark_dirty_trees,
++                propagate_parent_transforms,
++                // TODO: Adjust the internal parallel queries to make this system more efficiently share and fill CPU time.
++                sync_simple_transforms,
+             )
+-            .add_systems(
+-                PostUpdate,
+-                (
+-                    mark_dirty_trees,
+-                    propagate_parent_transforms,
+-                    // TODO: Adjust the internal parallel queries to make this system more efficiently share and fill CPU time.
+-                    sync_simple_transforms,
+-                )
+-                    .chain()
+-                    .in_set(TransformSystem::TransformPropagate),
+-            );
++                .chain(),
++        )
++        // add transform systems to startup so the first update is "correct"
++        .add_systems(
++            PostStartup,
++            propagate_transforms.in_set(TransformSystem::TransformPropagate),
++        )
++        .add_systems(
++            PostUpdate,
++            propagate_transforms.in_set(TransformSystem::TransformPropagate),
++        );
+     }
+ }
