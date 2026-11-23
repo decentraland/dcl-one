@@ -15,6 +15,7 @@ pub mod code {
     pub const INVALID_CONTRACT_ADDRESS: &str = "invalid_contract_address";
     pub const SALE_PRICE_TOO_LOW: &str = "sale_price_too_low";
     pub const QUOTA_REACHED: &str = "quota_reached";
+    pub const API_LIMIT_REACHED: &str = "api_limit_reached";
     /// The relayer's daily budget for free (non-sale) calls is spent.
     pub const RELAY_BUDGET_SPENT: &str = "relay_budget_spent";
     pub const HIGH_CONGESTION: &str = "high_congestion";
@@ -51,6 +52,11 @@ pub enum ApiError {
         message: String,
         retry_at: Option<i64>,
     },
+    /// One client address sent more relay requests than its window allows: `retry_at` the unix
+    /// second at which it earns its next request (as `Retry-After`), read off the clock by the
+    /// caller.
+    #[error("{message}")]
+    RateLimited { message: String, retry_at: i64 },
     #[error("{0}")]
     HighCongestion(String),
     #[error("{0}")]
@@ -92,6 +98,7 @@ impl ApiError {
             ApiError::InvalidTransaction(_) => (400, Some(code::INVALID_TRANSACTION)),
             ApiError::RelayReverted(_) => (400, Some(code::INVALID_TRANSACTION)),
             ApiError::QuotaReached { .. } => (429, Some(code::QUOTA_REACHED)),
+            ApiError::RateLimited { .. } => (429, Some(code::API_LIMIT_REACHED)),
             ApiError::RelayBudgetSpent { .. } => (429, Some(code::RELAY_BUDGET_SPENT)),
             ApiError::HighCongestion(_) => (503, Some(code::HIGH_CONGESTION)),
             ApiError::RelayerUnavailable(_) => (503, Some(code::UNKNOWN)),
@@ -145,6 +152,7 @@ impl IntoResponse for ApiError {
                 *retry_at
             }
             ApiError::RelayBudgetSpent { retry_at, .. } => *retry_at,
+            ApiError::RateLimited { retry_at, .. } => Some(*retry_at),
             _ => None,
         };
         if let Some(at) = retry_at {
@@ -202,6 +210,16 @@ mod tests {
         assert_eq!(
             spent,
             json!({ "ok": false, "error": "relay_budget_spent", "code": "relay_budget_spent", "message": "spent", "retryAt": 1_795_100_000 })
+        );
+        let (status, limited) = body_of(ApiError::RateLimited {
+            message: "slow down".to_string(),
+            retry_at: 1_795_100_002,
+        })
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            limited,
+            json!({ "ok": false, "error": "api_limit_reached", "code": "api_limit_reached", "message": "slow down", "retryAt": 1_795_100_002 })
         );
         let (_, labeled) = body_of(ApiError::HighCongestion("busy".to_string())).await;
         assert_eq!(

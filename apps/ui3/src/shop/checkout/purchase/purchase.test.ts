@@ -38,6 +38,9 @@ import { reviewCart, resolveLine, partitionReservations, couponForTrade, classif
 import { AFTER_PENDING, resumeCheckout, runGroup, runGroups, splitPriceOf, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
 import type { RailContext } from "./rail";
+import { AuthorizationKind, setAuthorization, type ShopAuthorization } from "../lib/authorizations";
+import { isRequestLimited } from "../lib/errors";
+import { requireContracts } from "../chain/contracts";
 import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 
 function memoryStorage(): CartStorage & { data: Map<string, string> } {
@@ -579,6 +582,44 @@ describe("a credits group the relay refuses for its limits", () => {
     const result = await runGroup(h.deps, h.group, h.resolved);
     expect(result).toMatchObject({ status: "pending" });
     expect(released(h)).toBeUndefined();
+  });
+
+  it("a web3 wallet over the relay's request limit is told to wait and try again, never sent to pay gas itself", async () => {
+    const h = await harness({ relay: "refuse", refuseStatus: 429, refuseBody: { error: "api_limit_reached", message: "Too many requests. Retry in 2 seconds.", retryAt: 1 } });
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { message: "Too many requests from your connection. Wait a few seconds and try again." } });
+    expect(h.wallet.sent).toHaveLength(0);
+    expect(released(h)).toEqual({ salts: [`0x${"a1".repeat(32)}`] });
+  });
+
+  it("a web3 wallet over the relay's request limit buys a MANA group later, not from the wallet now", async () => {
+    const h = await harness({ method: "mana", relay: "refuse", refuseStatus: 429, refuseBody: { error: "api_limit_reached", message: "Too many requests. Retry in 2 seconds.", retryAt: 1 } });
+    h.chain.allowances.set(`137:${BOOK.buyer}:${BOOK.marketplace.contract}`, 10n ** 20n);
+    const result = await runGroup(h.deps, h.group, h.resolved);
+    expect(result).toMatchObject({ status: "failed", failure: { message: "Too many requests from your connection. Wait a few seconds and try again." } });
+    expect(h.wallet.sent).toHaveLength(0);
+  });
+
+  it("a web3 wallet over the relay's request limit on the MANA approval gets the limit back, never sent to approve with gas", async () => {
+    const h = await harness({ method: "mana", relay: "refuse", refuseStatus: 429, refuseBody: { error: "api_limit_reached", message: "Too many requests. Retry in 2 seconds.", retryAt: 1 } });
+    const { ctx } = h.deps;
+    const auth: ShopAuthorization = { kind: AuthorizationKind.Allowance, contractAddress: requireContracts(137).mana.address, spenderAddress: BOOK.marketplace.contract, chainId: 137 };
+    // The grant AuthorizeStep runs (useCheckout's requestApproval); the step shows the error it throws.
+    const refused = await setAuthorization({
+      auth,
+      active: true,
+      provider: ctx.provider,
+      account: ctx.buyer,
+      walletKind: ctx.walletKind,
+      reader: ctx.reader,
+      relayerUrl: ctx.relayerUrl,
+      fetchImpl: ctx.fetchImpl,
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(isRequestLimited(refused)).toBe(true);
+    expect(h.wallet.sent).toHaveLength(0);
   });
 });
 

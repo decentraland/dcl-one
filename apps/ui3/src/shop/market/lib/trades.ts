@@ -20,6 +20,7 @@ import {
   type ContractData,
 } from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "./metaTx";
+import { isRequestLimited } from "../../checkout/lib/errors";
 import { readContract } from "./rpc";
 import { chainSalt, declined, sendCall, signTypedData, waitForReceipt, walletAccount, type WaitOptions } from "./tx";
 import { shopClient } from "../../api/host";
@@ -459,8 +460,11 @@ export type CancelMode = "auto" | "gasless-only" | "direct";
 
 export class GaslessCancelFailedError extends Error {
   override name = "GaslessCancelFailedError";
+  /** The relay's own refusal, kept so a quota or budget limit still reads as that limit. */
+  readonly refusal: MetaTransactionError["refusal"] | undefined;
   constructor(readonly original: unknown) {
     super("The gasless cancellation was not confirmed");
+    this.refusal = original instanceof MetaTransactionError ? original.refusal : undefined;
   }
 }
 
@@ -482,7 +486,8 @@ export async function cancelTrade(opts: { provider: Eip1193Provider; trade: Trad
       const hash = await sendMetaTransaction({ provider, contract: marketplace, kind: "offchain", functionData: data });
       return await waitForReceipt(trade.chainId, hash, "The cancellation", opts.wait);
     } catch (e) {
-      if (declined(e)) throw e;
+      // A request limit frees up within seconds: reported as is, never offered as a paid cancellation.
+      if (declined(e) || isRequestLimited(e)) throw e;
       if (mode === "gasless-only") throw new GaslessCancelFailedError(e);
       if (!(e instanceof MetaTransactionError)) throw e;
     }

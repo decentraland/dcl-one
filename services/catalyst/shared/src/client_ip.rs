@@ -121,22 +121,58 @@ pub fn peer_client_ip(
     Some(ip.to_string())
 }
 
-/// [`peer_client_ip`] only when it names one client: a trusted proxy's
-/// `X-Real-IP`, or a peer that is not internal (an unlisted gateway's own
-/// address would put every client in one bucket).
-pub fn distinct_client_ip(
+/// [`peer_client_ip`] unless the peer is an internal address outside
+/// `trusted_proxies` (an unlisted gateway's own address would put every client
+/// in one bucket). A trusted proxy's `X-Real-IP` is returned canonical, even when
+/// internal; [`public_client_ip`] skips that too.
+fn distinct_client_addr(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> Option<IpAddr> {
+    let ip = peer?.ip().to_canonical();
+    if is_trusted_proxy(ip, trusted_proxies) {
+        return single_real_ip(headers);
+    }
+    (!is_internal(ip)).then_some(ip)
+}
+
+/// [`distinct_client_addr`] only when it is public ([`is_non_public`]): a trusted
+/// proxy's internal `X-Real-IP` (an unlisted load balancer in front of the
+/// gateway) or a reserved one (such as Cloudflare's Pseudo IPv4 `240.0.0.0/4`)
+/// names no one client. NAT64, Teredo and 6to4 clients are counted.
+pub fn public_client_ip(
     headers: &HeaderMap,
     peer: Option<std::net::SocketAddr>,
     trusted_proxies: &[ipnet::IpNet],
 ) -> Option<String> {
-    let ip = peer?.ip().to_canonical();
-    if is_trusted_proxy(ip, trusted_proxies) {
-        return peer_client_ip(headers, peer, trusted_proxies);
+    distinct_client_addr(headers, peer, trusted_proxies)
+        .filter(|ip| !is_non_public(*ip))
+        .map(|ip| ip.to_string())
+}
+
+/// [`is_internal`] or a reserved IPv4 range that names no single client:
+/// `0.0.0.0/8`, `192.0.0.0/24`, benchmarking `198.18.0.0/15` and reserved `240.0.0.0/4`.
+/// NAT64 (`64:ff9b::/96`, `64:ff9b:1::/48`), Teredo `2001::/32` and 6to4 `2002::/16`
+/// sources are real clients, so they stay limitable. `NON_PUBLIC_NETWORKS` in
+/// `infra/gateway/gateway.py` is a superset for another question: which networks may
+/// never be a trusted proxy, so it also lists those transition prefixes.
+pub fn is_non_public(ip: IpAddr) -> bool {
+    if is_internal(ip) {
+        return true;
     }
-    (!is_internal(ip)).then(|| ip.to_string())
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => {
+            let [a, b, c, _] = v4.octets();
+            a == 0 || (a == 192 && b == 0 && c == 0) || (a == 198 && b & 0xfe == 18) || a >= 240
+        }
+        IpAddr::V6(_) => false,
+    }
 }
 
 /// Loopback, unspecified, private (RFC 1918, CGNAT, IPv6 ULA) or link-local.
+/// Kept narrow: an untrusted peer here is not limited; [`is_non_public`] adds
+/// the reserved IPv4 ranges.
 pub fn is_internal(ip: std::net::IpAddr) -> bool {
     match ip.to_canonical() {
         std::net::IpAddr::V4(v4) => {
@@ -179,6 +215,22 @@ pub fn source_key(client_ip: &str) -> String {
     format!("{network}/{IPV6_SOURCE_PREFIX_BITS}")
 }
 
+/// The IPv6 /48 an address belongs to, the wider key a host cycling /64s still shares; `None`
+/// for IPv4 and IPv4-mapped addresses.
+pub fn ipv6_48_key(client_ip: &str) -> Option<String> {
+    use std::net::{IpAddr, Ipv6Addr};
+    let Ok(IpAddr::V6(v6)) = client_ip.parse::<IpAddr>() else {
+        return None;
+    };
+    if v6.to_ipv4_mapped().is_some() {
+        return None;
+    }
+    Some(format!(
+        "{}/48",
+        Ipv6Addr::from(u128::from(v6) & (u128::MAX << 80))
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,7 +248,17 @@ mod tests {
     }
 
     #[test]
-    fn distinct_client_ip_skips_internal_peers_unless_trusted() {
+    fn ipv6_48_key_names_the_network_and_skips_ipv4() {
+        assert_eq!(
+            ipv6_48_key("2001:db8:7:2::1").as_deref(),
+            Some("2001:db8:7::/48")
+        );
+        assert_eq!(ipv6_48_key("203.0.113.7"), None);
+        assert_eq!(ipv6_48_key("::ffff:203.0.113.7"), None);
+    }
+
+    #[test]
+    fn distinct_client_addr_skips_internal_peers_unless_trusted() {
         let peer = |ip: &str| Some(std::net::SocketAddr::new(ip.parse().unwrap(), 1));
         let real = headers(&[("x-real-ip", "203.0.113.9")]);
         for internal in [
@@ -211,25 +273,106 @@ mod tests {
             "::ffff:10.0.0.5",
         ] {
             assert_eq!(
-                distinct_client_ip(&real, peer(internal), &[]),
+                distinct_client_addr(&real, peer(internal), &[]),
                 None,
                 "{internal}"
             );
         }
         assert_eq!(
-            distinct_client_ip(&real, peer("198.51.100.4"), &[]).as_deref(),
-            Some("198.51.100.4")
+            distinct_client_addr(&real, peer("198.51.100.4"), &[]),
+            Some("198.51.100.4".parse().unwrap())
         );
-        assert_eq!(distinct_client_ip(&real, None, &[]), None);
+        assert_eq!(distinct_client_addr(&real, None, &[]), None);
         let trusted = ["10.0.0.0/8".parse().unwrap()];
         assert_eq!(
-            distinct_client_ip(&real, peer("10.0.0.5"), &trusted).as_deref(),
+            distinct_client_addr(&real, peer("10.0.0.5"), &trusted),
+            Some("203.0.113.9".parse().unwrap())
+        );
+        assert_eq!(
+            distinct_client_addr(&HeaderMap::new(), peer("10.0.0.5"), &trusted),
+            None
+        );
+    }
+
+    #[test]
+    fn public_client_ip_skips_a_trusted_proxys_internal_real_ip() {
+        let peer = |ip: &str| Some(std::net::SocketAddr::new(ip.parse().unwrap(), 1));
+        let trusted = ["10.0.0.0/8".parse().unwrap()];
+        for internal in [
+            "10.1.2.3",
+            "192.168.0.9",
+            "127.0.0.1",
+            "fd00::7",
+            "::ffff:172.18.0.2",
+        ] {
+            let real = headers(&[("x-real-ip", internal)]);
+            assert!(
+                distinct_client_addr(&real, peer("10.0.0.5"), &trusted).is_some(),
+                "{internal}"
+            );
+            assert_eq!(
+                public_client_ip(&real, peer("10.0.0.5"), &trusted),
+                None,
+                "{internal}"
+            );
+        }
+        let real = headers(&[("x-real-ip", "203.0.113.9")]);
+        assert_eq!(
+            public_client_ip(&real, peer("10.0.0.5"), &trusted).as_deref(),
             Some("203.0.113.9")
         );
         assert_eq!(
-            distinct_client_ip(&HeaderMap::new(), peer("10.0.0.5"), &trusted),
-            None
+            public_client_ip(&real, peer("198.51.100.4"), &[]).as_deref(),
+            Some("198.51.100.4")
         );
+        assert_eq!(public_client_ip(&real, peer("10.0.0.5"), &[]), None);
+    }
+
+    #[test]
+    fn public_client_ip_skips_reserved_ranges_and_counts_transition_prefixes() {
+        let peer = |ip: &str| Some(std::net::SocketAddr::new(ip.parse().unwrap(), 1));
+        let trusted = ["10.0.0.0/8".parse().unwrap()];
+        for reserved in [
+            "0.1.2.3",
+            "192.0.0.9",
+            "198.18.0.1",
+            "198.19.255.254",
+            "240.0.0.1",
+            "255.255.255.255",
+        ] {
+            let ip: IpAddr = reserved.parse().unwrap();
+            assert!(is_non_public(ip), "{reserved}");
+            assert!(!is_internal(ip), "{reserved} stays outside is_internal");
+            let real = headers(&[("x-real-ip", reserved)]);
+            assert_eq!(
+                public_client_ip(&real, peer("10.0.0.5"), &trusted),
+                None,
+                "{reserved}"
+            );
+        }
+        for public in [
+            "192.0.2.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "239.255.255.255",
+            "64:ff9b:2::1",
+            "64:ff9b::cb00:7109",
+            "64:ff9b:1::1",
+            "2001:0:4136:e378::1",
+            "2002:cb00:7109::1",
+            "2001:db8::1",
+            "2001:1::1",
+            "2003::1",
+            "2606:4700::1",
+        ] {
+            assert!(!is_non_public(public.parse().unwrap()), "{public}");
+            let real = headers(&[("x-real-ip", public)]);
+            assert_eq!(
+                public_client_ip(&real, peer("10.0.0.5"), &trusted).as_deref(),
+                Some(public),
+                "{public}"
+            );
+        }
     }
 
     #[test]

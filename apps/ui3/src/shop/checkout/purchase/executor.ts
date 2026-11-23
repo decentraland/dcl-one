@@ -28,7 +28,7 @@ import { gaslessEnabled } from "../chain/config";
 import { isGaslessUnavailable, isSignatureDeclined } from "../chain/metatx";
 import { isPendingTxError, isRevertedTxError } from "../chain/wallet";
 import { AuthorizationKind, getAuthorizationStatus, needsApprovalStep, ensureAuthorization, type ShopAuthorization } from "../lib/authorizations";
-import { friendlyError, isRejection, relayLimitText } from "../lib/errors";
+import { friendlyError, isRejection, isRequestLimited, relayLimitText } from "../lib/errors";
 import { isWrongNetworkError } from "../lib/network";
 import { canPayGasItself } from "../lib/wallet-kind";
 import { requireContracts } from "../chain/contracts";
@@ -232,7 +232,8 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
         settled = true;
       } catch (e) {
         // A split never falls back to the wallet: it goes through the relay or not at all.
-        const canFallBack = !split && isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && canPayGasItself(ctx.walletKind) && txHash === null;
+        // A request limit frees up in seconds: the buyer tries again rather than paying gas.
+        const canFallBack = !split && isGaslessUnavailable(e) && e.reason !== "relayer-unreachable" && !isRequestLimited(e) && canPayGasItself(ctx.walletKind) && txHash === null;
         if (!canFallBack) throw e;
         fellBack = true;
         feeFreeNote = relayLimitText(e);

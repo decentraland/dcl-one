@@ -15,14 +15,17 @@ const MARKET = latestOffChainMarketplace(CHAIN.POLYGON).address;
 let restoreChain: (() => void) | null = null;
 const originalFetch = globalThis.fetch;
 let relayOk = true;
+let relayLimited = false;
 let relayed: Hex[] = [];
 
 beforeEach(() => {
   relayOk = true;
+  relayLimited = false;
   relayed = [];
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     if (String(url).endsWith("/transactions")) {
       relayed.push((JSON.parse(String(init?.body)) as { transactionData: { params: [string, Hex] } }).transactionData.params[1]);
+      if (relayLimited) return new Response(JSON.stringify({ ok: false, error: "api_limit_reached", message: "Too many requests. Retry in 2 seconds.", not_sent: true }), { status: 429 });
       return relayOk ? new Response(JSON.stringify({ ok: true, txHash: `0x${"e".repeat(64)}` })) : new Response(JSON.stringify({ ok: false, message: "relay down", code: "UNKNOWN" }), { status: 503 });
     }
     throw new Error(`unexpected fetch ${String(url)}`);
@@ -123,6 +126,43 @@ describe("Remove from sale", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel and pay the gas" }));
     expect(await screen.findByTestId("shop-remove-done")).toBeInTheDocument();
     expect(decodeFunctionData({ abi: MARKETPLACE_ABI, data: wallet.sent[0]!.data }).functionName).toBe("cancelSignature");
+  });
+
+  describe("and the gas offer is already shown", () => {
+    let wallet: ReturnType<typeof fakeWallet>;
+
+    beforeEach(async () => {
+      wallet = fakeWallet();
+      const old = await createManaListing({ provider: wallet, nft: { contractAddress: BOOK.collection, tokenId: "105312", chainId: CHAIN.POLYGON }, priceWei: 1n, expiresAtMs: Date.now() + 1000 });
+      relayOk = false;
+      mountShop({
+        path: `/shop/token/${BOOK.collection}/105312/cancel`,
+        who: "web3",
+        wallet,
+        routes: [
+          nfts(nftRow({ tokenId: "105312", itemId: "7", name: "Neon Jacket", owner: wallet.address, onSale: { price: MANA(1), tradeId: "old-1" } })),
+          { method: "GET", path: /^\/v1\/trades\/old-1$/, reply: () => ({ body: { ok: true, data: { ...old, id: "old-1", contract: MARKET } } }) },
+        ],
+      });
+      fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
+      expect(await screen.findByTestId("shop-gasless-failed")).toBeInTheDocument();
+    });
+
+    it("should keep the offer when the seller declines the free retry in the wallet", async () => {
+      wallet.failNext("eth_signTypedData_v4", Object.assign(new Error("User rejected the request."), { code: 4001 }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      expect(await screen.findByText("You declined in your wallet. Nothing was sent.")).toBeInTheDocument();
+      expect(screen.getByTestId("shop-gasless-failed")).toBeInTheDocument();
+      expect(wallet.sent).toHaveLength(0);
+    });
+
+    it("should withdraw the offer when the free retry hits the relay's request limit", async () => {
+      relayLimited = true;
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      expect(await screen.findByText("Too many requests from your connection. Wait a few seconds and try again.")).toBeInTheDocument();
+      expect(screen.queryByTestId("shop-gasless-failed")).toBeNull();
+      expect(wallet.sent).toHaveLength(0);
+    });
   });
 
   it("a token that is not on sale says so, and Confirm stays disabled", async () => {

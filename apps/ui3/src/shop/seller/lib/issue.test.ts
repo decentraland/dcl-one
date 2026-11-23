@@ -1,5 +1,5 @@
 // from: shop@94584a5c:app/src/lib/issue.spec.ts (ported with its module)
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 
 // decentraland-transactions ships an ESM build that Node can't directory-import under vitest; mock it
 // (mirrors transfer-item.spec / buy.spec) so importing ~/lib/issue and its deps loads cleanly. The pure
@@ -14,7 +14,11 @@ vi.mock('decentraland-transactions', () => ({
 }))
 vi.mock('~/config', () => ({ config: { chainId: 80002, rpcUrl: 'http://localhost' } }))
 
-import { buildIssueArgs, isIssueValid, isValidIssueAddress, totalToIssue, type IssueEntry } from './issue'
+import { CHAIN } from '@shop/model/chain'
+import { BOOK } from '@shop/payment/fixtures'
+import { COLLECTION_V2_ABI } from '@shop/market/lib/contracts'
+import { fakeChain, fakeWallet, noWait } from '../../market/testing'
+import { buildIssueArgs, isIssueValid, isValidIssueAddress, issueTokens, totalToIssue, type IssueEntry } from './issue'
 
 const A = '0x1111111111111111111111111111111111111111'
 const B = '0x2222222222222222222222222222222222222222'
@@ -113,6 +117,30 @@ describe('lib/issue', () => {
         { address: '', amount: 0 }
       ]
       expect(isIssueValid(rows, 5)).toBe(true)
+    })
+  })
+
+  describe('issueTokens', () => {
+    const originalFetch = globalThis.fetch
+    let restore: (() => void) | null = null
+
+    afterEach(() => {
+      restore?.()
+      restore = null
+      globalThis.fetch = originalFetch
+    })
+
+    describe('and the relay refuses for its per-connection request limit', () => {
+      it('should report the refusal instead of sending the mint from the wallet', async () => {
+        const wallet = fakeWallet({ chainId: CHAIN.POLYGON })
+        restore = fakeChain({ contracts: { [BOOK.collection]: { abi: COLLECTION_V2_ABI, answer: () => 0n } } })
+        const limited = { ok: false, not_sent: true, error: 'api_limit_reached', code: 'api_limit_reached', message: 'Too many requests. Retry in 2 seconds.', retryAt: 1 }
+        globalThis.fetch = (async () => new Response(JSON.stringify(limited), { status: 429 })) as typeof fetch
+        await expect(
+          issueTokens({ provider: wallet, contractAddress: BOOK.collection, chainId: CHAIN.POLYGON, entries: [{ address: A, amount: 1 }], itemId: '0', wait: noWait })
+        ).rejects.toMatchObject({ refusal: { error: 'api_limit_reached' } })
+        expect(wallet.sent).toHaveLength(0)
+      })
     })
   })
 })

@@ -15,10 +15,10 @@
 //! the forward answered with a retryable 429 and `Retry-After` (a forward
 //! the index already holds is settled unstored instead). Each signer may
 //! forward [`FORWARDS_PER_MINUTE`] a minute; before the signature is checked
-//! a client source (a trusted proxy's `X-Real-IP`, or a public TCP peer; IPv6
-//! by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
+//! a client source (a trusted proxy's public `X-Real-IP`, or a public TCP peer;
+//! IPv6 by /64) may send [`PREAUTH_PER_MINUTE`], an IPv6 /48
 //! [`PREAUTH_PER_MINUTE_PER_48`]; a private or loopback peer (an unlisted
-//! gateway) is not limited before it.
+//! gateway), or a trusted proxy's non-public `X-Real-IP`, is not limited before it.
 //! A signed forward the MANA transfer index cannot serve is refused and
 //! nothing is stored. With no `mana_transfers` cursor (past
 //! [`FIRST_PASS_GRACE`] with the local setting on), one without its whole
@@ -40,7 +40,7 @@
 //! uuid v5 of the transaction hash.
 
 use std::collections::{BTreeMap, HashMap};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -234,11 +234,8 @@ impl ForwardLimiter {
 /// The pre-auth keys of a client address and their budgets a minute.
 fn source_keys(ip: &str) -> Vec<(String, u32)> {
     let mut keys = vec![(crate::shared::client_ip::source_key(ip), PREAUTH_PER_MINUTE)];
-    if let Ok(IpAddr::V6(v6)) = ip.parse::<IpAddr>()
-        && v6.to_ipv4_mapped().is_none()
-    {
-        let net = Ipv6Addr::from(u128::from(v6) & (u128::MAX << 80));
-        keys.push((format!("{net}/48"), PREAUTH_PER_MINUTE_PER_48));
+    if let Some(net) = crate::shared::client_ip::ipv6_48_key(ip) {
+        keys.push((net, PREAUTH_PER_MINUTE_PER_48));
     }
     keys
 }
@@ -298,8 +295,8 @@ async fn forward(
     body: Bytes,
 ) -> Response {
     let peer = peer.map(|Extension(ConnectInfo(p))| p);
-    // Only an address naming one client: a gateway peer (HTTP_TRUSTED_PROXY_CIDRS unset) would be one shared bucket.
-    let ip = crate::shared::client_ip::distinct_client_ip(
+    // Only a public address names one client: an untrusted private peer or a trusted proxy's internal X-Real-IP is not limited.
+    let ip = crate::shared::client_ip::public_client_ip(
         &headers,
         peer,
         &state.settings.market.trusted_proxy_cidrs,
@@ -1098,6 +1095,22 @@ mod tests {
             StatusCode::BAD_REQUEST,
             "past the limiters to the body check"
         );
+    }
+
+    /// A trusted proxy's internal or reserved `X-Real-IP` (an unlisted load
+    /// balancer in front of it) names no one client, so it builds no bucket.
+    #[tokio::test]
+    async fn a_trusted_proxys_non_public_client_address_shares_no_bucket() {
+        let app = forward_app(&["192.0.2.0/24"]);
+        for real_ip in ["10.77.0.9", "240.77.0.9"] {
+            for _ in 0..3 * PREAUTH_PER_MINUTE {
+                assert_eq!(
+                    send_from(&app, "192.0.2.5", Some(real_ip)).await,
+                    StatusCode::UNAUTHORIZED,
+                    "{real_ip}"
+                );
+            }
+        }
     }
 
     /// Unsigned junk from one client never spends a signer's budget; each

@@ -40,7 +40,8 @@ function retryWhen(retryAt: unknown, now: Date): string | null {
 /**
  * The relay's own limits, as the buyer reads them, each over a rolling 24 hours (nothing resets at midnight): the
  * account's fee-free quota is spent, or the relay's shared limit on fee-free operations that aren't sales (approvals,
- * ...) is, which is no limit of the account's. Each says when it frees up when the relay said so. Null for any other
+ * ...) is, which is no limit of the account's. Each says when it frees up when the relay said so. A connection sending
+ * too many requests waits a few seconds. Null for any other
  * refusal. Never throws: it runs while a failed purchase is still being wound down.
  */
 export function relayLimitText(e: unknown, now: Date = new Date()): string | null {
@@ -54,7 +55,18 @@ export function relayLimitText(e: unknown, now: Date = new Date()): string | nul
     return `You've used ${used} this account gets in 24 hours. ${when ? `Try again ${when}.` : "Try again later."}`;
   }
   if (refusal.error === "relay_budget_spent") return `The shared fee-free limit for this operation has been reached. ${when ? `Try again ${when}.` : "Try again later."}`;
+  // A per-connection limit that frees up within seconds: no clock time to show.
+  if (refusal.error === "api_limit_reached") return "Too many requests from your connection. Wait a few seconds and try again.";
   return null;
+}
+
+/**
+ * The relay refused only for its per-connection request limit (`api_limit_reached`), which frees up within seconds:
+ * the buyer waits and tries again, so it is never a reason to fall back to a transaction the wallet pays for.
+ */
+export function isRequestLimited(e: unknown): boolean {
+  const refusal = e && typeof e === "object" ? (e as Refused).refusal : undefined;
+  return refusal?.error === "api_limit_reached";
 }
 
 /** The buyer bailed out: a wallet rejection (4001), an aborted fetch, or a reject/deny/cancel message. */

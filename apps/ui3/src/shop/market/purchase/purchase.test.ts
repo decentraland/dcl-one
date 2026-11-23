@@ -128,6 +128,17 @@ describe("transfers", () => {
     await transferItem({ provider: wallet, contractAddress: BOOK.registrar.contract, chainId: CHAIN.ETHEREUM, tokenId: "42", to: BOOK.reseller, collection: false, wait: noWait });
     expect(decodeFunctionData({ abi: ERC721_ABI, data: wallet.sent[0]!.data }).functionName).toBe("transferFrom");
   });
+
+  it("over the relay's request limit, reports it instead of sending the transfer from the wallet", async () => {
+    const wallet = fakeWallet({ chainId: CHAIN.POLYGON });
+    restore = fakeChain({ contracts: { [BOOK.collection]: { abi: COLLECTION_V2_ABI, answer: () => 0n } } });
+    const limited = { ok: false, not_sent: true, error: "api_limit_reached", code: "api_limit_reached", message: "Too many requests. Retry in 2 seconds.", retryAt: 1 };
+    globalThis.fetch = (async () => new Response(JSON.stringify(limited), { status: 429 })) as typeof fetch;
+    await expect(transferItem({ provider: wallet, contractAddress: BOOK.collection, chainId: CHAIN.POLYGON, tokenId: "42", to: BOOK.reseller, wait: noWait })).rejects.toMatchObject({
+      refusal: { error: "api_limit_reached" },
+    });
+    expect(wallet.sent).toHaveLength(0);
+  });
 });
 
 describe("buying a listed token is MANA only", () => {

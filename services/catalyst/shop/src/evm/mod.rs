@@ -74,6 +74,7 @@ use chrono::NaiveDateTime;
 use sqlx::PgPool;
 
 use crate::http::Outbound;
+use crate::shared::limits::RateLimiter;
 use crate::shared::writes::DataWrites;
 
 use admin::RuntimeConfig;
@@ -179,6 +180,9 @@ pub struct Settings {
     /// `OPS_WRITES_ENABLED` (false): the relay's write gate under `CREDITS_TRIAL_MODE`
     /// ([`router`]), in place of `DATA_WRITES_ENABLED`.
     pub ops_writes_enabled: bool,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client to the relay's
+    /// per-client limit.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Settings {
@@ -224,6 +228,7 @@ impl Settings {
             usd_pegged_slippage_bps: 100,
             data_writes_enabled: false,
             ops_writes_enabled: false,
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 
@@ -401,7 +406,20 @@ pub struct State {
     /// The NAMEs chain signer (Ethereum), when the key and `ETH_RPC_URL` are set.
     pub eth_signer: Option<Arc<DirectSigner>>,
     pub runtime: Arc<RuntimeConfig>,
+    /// `POST /v1/transactions` per client address ([`RELAY_REQUESTS_PER_WINDOW`] per
+    /// [`RELAY_RATE_WINDOW`]), checked before any validation. In memory: each API process
+    /// counts its own requests, and a restart clears it.
+    pub relay_limiter: RateLimiter,
+    /// The same requests per IPv6 /48 ([`RELAY_REQUESTS_PER_WINDOW_PER_48`]), so a client
+    /// cycling /64s inside its network still shares one budget.
+    pub relay_limiter_per_48: RateLimiter,
 }
+
+/// The relay requests one client address may make per [`RELAY_RATE_WINDOW`].
+pub const RELAY_REQUESTS_PER_WINDOW: u32 = 30;
+/// The relay requests every /64 of one IPv6 /48 may make together per [`RELAY_RATE_WINDOW`].
+pub const RELAY_REQUESTS_PER_WINDOW_PER_48: u32 = 120;
+pub const RELAY_RATE_WINDOW: Duration = Duration::from_secs(60);
 
 pub type SharedState = Arc<State>;
 
@@ -583,6 +601,13 @@ impl State {
             contracts,
             eth_signer,
             runtime,
+            relay_limiter: RateLimiter::new(RELAY_REQUESTS_PER_WINDOW, RELAY_RATE_WINDOW)
+                .with_max_buckets(200_000),
+            relay_limiter_per_48: RateLimiter::new(
+                RELAY_REQUESTS_PER_WINDOW_PER_48,
+                RELAY_RATE_WINDOW,
+            )
+            .with_max_buckets(200_000),
         })
     }
 }

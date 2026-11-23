@@ -9,6 +9,7 @@ import { parseEvmAddress, sameAddress } from "@shop/model/address";
 import { isPolygon, type ChainId } from "@shop/model/chain";
 import { collectionV2, ERC721_ABI } from "@shop/market/lib/contracts";
 import { MetaTransactionError, sendMetaTransaction } from "../lib/metaTx";
+import { isRequestLimited } from "../../checkout/lib/errors";
 import { declined, isTxPending, sendCall, waitForReceipt, walletAccount, type WaitOptions } from "../lib/tx";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -50,7 +51,7 @@ export async function transferItem(opts: {
       opts.onSubmitted?.(hash);
       return await waitForReceipt(opts.chainId, hash, "The transfer", opts.wait);
     } catch (e) {
-      if (declined(e) || isTxPending(e) || !(e instanceof MetaTransactionError)) throw e;
+      if (declined(e) || isTxPending(e) || !(e instanceof MetaTransactionError) || isRequestLimited(e)) throw e;
     }
   }
   const hash = await sendCall(opts.provider, { chainId: opts.chainId, to: opts.contractAddress, abi: ERC721_ABI, functionName: "transferFrom", args });

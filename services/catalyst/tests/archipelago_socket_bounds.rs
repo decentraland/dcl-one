@@ -1661,6 +1661,44 @@ async fn upgrade_cap_is_shared_across_paths_and_mounts_and_released_after_transp
     drop(socket);
     wait(|| state.sockets.available_permits() == 1).await;
 }
+/// Behind a listed proxy the per-source socket cap counts a public, 6to4, Teredo or NAT64
+/// `X-Real-IP`, and skips an internal one, which names no single client.
+#[tokio::test]
+async fn the_per_source_socket_cap_counts_only_a_forwarded_public_address() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut settings = Settings::for_tests();
+    settings.server.max_sockets_per_ip = 1;
+    settings.server.trusted_proxy_cidrs = vec!["127.0.0.0/8".parse().unwrap()];
+    let (port, _state) = server_with(settings).await;
+    let connect = |real_ip: &'static str| async move {
+        let mut request = format!("ws://127.0.0.1:{port}/ws")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("x-real-ip", real_ip.parse().unwrap());
+        tokio_tungstenite::connect_async(request).await
+    };
+    for counted in [
+        "203.0.113.9",
+        "2002:cb00:7109::1",
+        "2001:0:4136:e378::1",
+        "64:ff9b::cb00:7109",
+    ] {
+        let (held, _) = connect(counted).await.unwrap();
+        let Error::Http(response) = connect(counted).await.unwrap_err() else {
+            panic!("HTTP refusal expected for {counted}")
+        };
+        assert_eq!(response.status().as_u16(), 429, "{counted}");
+        drop(held);
+    }
+    let held = (
+        connect("10.1.2.3").await.unwrap(),
+        connect("10.1.2.3").await.unwrap(),
+    );
+    drop(held);
+}
+
 #[tokio::test]
 async fn a_full_pending_share_evicts_its_oldest_handshake_instead_of_refusing_new_joins() {
     let mut settings = Settings::for_tests();

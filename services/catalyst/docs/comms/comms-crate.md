@@ -165,7 +165,7 @@ a socket must send its challenge request within `CHALLENGE_REQUEST_TIMEOUT` (def
 within `HANDSHAKE_TIMEOUT` (default 60 s, as the pinned upstream ws-connector) of the challenge;
 `WS_MAX_SOCKETS_PER_IP` (default 64, 0 unlimited) per client source (IPv4 address or IPv6 /64)
 attributable through `HTTP_TRUSTED_PROXY_CIDRS`, beyond it 429; an unattributable upgrade (a gateway peer outside that
-list, or no `X-Real-IP`) is not counted, logs one warning and increments
+list, no `X-Real-IP`, or a listed proxy's internal or reserved IPv4 `X-Real-IP`) is not counted, logs one warning and increments
 `comms_ws_unattributed_upgrades_total` (registered at 0, exported with the other `comms_` series on `SERVE_METRICS_BIND`); positions coalesce
 for ownership control to one per 500 ms; statistical observations retain every decoded position; a flooding socket closes with 1008; one 64-item output budget across assignment mailboxes, validation and the physical writer;
 accepted assignments retain arrival order, exhaustion rejects new mailbox assignments, and
