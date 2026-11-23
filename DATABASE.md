@@ -322,7 +322,9 @@ cannot consume a mark before its source update commits. The leased
 oldest entries with `SKIP LOCKED`; the update or removal of the corresponding
 aggregate and the consumption of its mark commit together. The worker reads
 world and scene rows without taking row locks. A failed refresh rolls back
-both effects. A full reconciliation runs at its configured interval and can
+both effects. Consecutive refresh failures back off to at most 30 seconds
+between checks. A successful check resumes the two-second interval.
+A full reconciliation runs at its configured interval and can
 delay processing queued edits while it runs. The local projection and mirror
 upserts of worlds share an advisory transaction lock. The mirror checks for
 local authority after acquiring the lock, so it cannot reinsert a world

@@ -49,6 +49,7 @@ pub const PAGE: i64 = 1000;
 pub const BEFORE_FIRST_SCENE: i32 = i32::MIN;
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(300);
 const WORLD_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+const WORLD_UPDATE_MAX_RETRY: Duration = Duration::from_secs(30);
 const WORLD_UPDATE_BATCH: i64 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -916,6 +917,7 @@ pub fn spawn_job(
             let next_update = tokio::time::sleep(WORLD_UPDATE_INTERVAL);
             tokio::pin!(next_full, next_update);
             let mut failures: u32 = 0;
+            let mut update_delay = WORLD_UPDATE_INTERVAL;
             loop {
                 tokio::select! {
                     biased;
@@ -939,14 +941,19 @@ pub fn spawn_job(
                     }
                     _ = &mut next_update => {
                         match refresh_queued_worlds(&pool, &url).await {
-                            Ok(0) => {}
-                            Ok(worlds) => ctx.progress(format!("{worlds} world listings refreshed")),
+                            Ok(worlds) => {
+                                update_delay = WORLD_UPDATE_INTERVAL;
+                                if worlds > 0 {
+                                    ctx.progress(format!("{worlds} world listings refreshed"));
+                                }
+                            }
                             Err(error) => {
-                                tracing::warn!(%error, "queued world place refresh failed");
+                                update_delay = (update_delay * 2).min(WORLD_UPDATE_MAX_RETRY);
+                                tracing::warn!(%error, retry_in_secs = update_delay.as_secs(), "queued world place refresh failed");
                                 ctx.error(error.to_string());
                             }
                         }
-                        next_update.as_mut().reset(tokio::time::Instant::now() + WORLD_UPDATE_INTERVAL);
+                        next_update.as_mut().reset(tokio::time::Instant::now() + update_delay);
                     }
                 }
             }
