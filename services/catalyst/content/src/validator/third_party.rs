@@ -87,7 +87,10 @@ pub fn validate_third_party_merkle_proof_content(
         ));
     }
 
-    let metadata_keys = metadata_keys_in_property_order(deployment, metadata);
+    let metadata_keys = match metadata_keys_in_property_order(deployment) {
+        Ok(keys) => keys,
+        Err(unavailable) => return unavailable,
+    };
     if let Some(error) = full_commit_error(
         &metadata_keys,
         &tp_props.merkle_proof.hashing_keys,
@@ -130,25 +133,13 @@ pub fn validate_third_party_merkle_proof_content(
         .and_then(UploadedFile::bytes)
     {
         Some(bytes) => bytes,
-        None => {
-            return ValidationResponse::unavailable(format!(
-                "The entity file bytes for '{}' were not available to recompute the third-party \
-                 merkle proof hash, so the deployment could not be validated. Please retry.",
-                entity.id
-            ));
-        }
+        None => return entity_bytes_missing(&entity.id),
     };
 
     let hashing_keys = &tp_props.merkle_proof.hashing_keys;
     let generated = match entity_hash_from_entity_bytes(entity_bytes, hashing_keys) {
         Some(hash) => hash,
-        None => {
-            return ValidationResponse::unavailable(format!(
-                "The entity file bytes for '{}' could not be parsed to recompute the third-party \
-                 merkle proof hash, so the deployment could not be validated. Please retry.",
-                entity.id
-            ));
-        }
+        None => return entity_bytes_unparsable(&entity.id),
     };
 
     if !tp_props
@@ -219,27 +210,38 @@ fn full_commit_error(
 
 /// The metadata's top-level keys as `Object.keys` lists them after `JSON.parse`
 /// of the uploaded entity bytes, so the first uncommitted field reported is the
-/// reference's. Falls back to the parsed metadata's keys without the bytes.
+/// reference's. Without readable bytes the decision is deferred, as in the hash step.
 fn metadata_keys_in_property_order(
     deployment: &Deployment<'_>,
-    metadata: &serde_json::Value,
-) -> Vec<String> {
-    let from_bytes = deployment
+) -> Result<Vec<String>, ValidationResponse> {
+    let entity_id = &deployment.entity.id;
+    let bytes = deployment
         .files
-        .get(&deployment.entity.id)
+        .get(entity_id)
         .and_then(UploadedFile::bytes)
-        .and_then(|bytes| serde_json::from_slice::<LegacyValue>(bytes).ok())
+        .ok_or_else(|| entity_bytes_missing(entity_id))?;
+    serde_json::from_slice::<LegacyValue>(bytes)
+        .ok()
         .and_then(|root| {
             let entries = root.get("metadata")?.as_object()?;
-            let keys = jsjson::property_order(entries.iter().map(|(k, _)| k.as_str()));
+            let keys = jsjson::property_order(entries.iter().map(|(k, _)| k.as_str()), |k| k);
             Some(keys.into_iter().map(str::to_owned).collect())
-        });
-    from_bytes.unwrap_or_else(|| {
-        metadata
-            .as_object()
-            .map(|object| object.keys().cloned().collect())
-            .unwrap_or_default()
-    })
+        })
+        .ok_or_else(|| entity_bytes_unparsable(entity_id))
+}
+
+fn entity_bytes_missing(entity_id: &str) -> ValidationResponse {
+    ValidationResponse::unavailable(format!(
+        "The entity file bytes for '{entity_id}' were not available to recompute the third-party \
+         merkle proof hash, so the deployment could not be validated. Please retry."
+    ))
+}
+
+fn entity_bytes_unparsable(entity_id: &str) -> ValidationResponse {
+    ValidationResponse::unavailable(format!(
+        "The entity file bytes for '{entity_id}' could not be parsed to recompute the third-party \
+         merkle proof hash, so the deployment could not be validated. Please retry."
+    ))
 }
 
 pub fn verify_third_party_merkle_proof(proof: &MerkleProof, root: &[u8; 32]) -> bool {
@@ -488,13 +490,16 @@ mod tests {
     #[test]
     fn uncommitted_metadata_field_is_rejected_for_emotes() {
         // Same rule and message shape through the emote entry point.
-        let mut deployment = edited_woodie(EXTRA_FIELD);
-        let metadata = deployment.entity.metadata.as_mut().unwrap();
-        let keys = metadata["merkleProof"]["hashingKeys"]
-            .as_array_mut()
-            .unwrap();
-        keys.push(serde_json::json!("emoteDataADR74"));
-        metadata["emoteDataADR74"] = serde_json::json!({});
+        let edit = format!(r#"{}"emoteDataADR74":{{}},"#, EXTRA_FIELD.1);
+        let raw = std::str::from_utf8(WOODIE_0)
+            .unwrap()
+            .replacen(EXTRA_FIELD.0, &edit, 1)
+            .replacen(
+                r#""hashingKeys":["#,
+                r#""hashingKeys":["emoteDataADR74","#,
+                1,
+            );
+        let deployment = deployment_from_raw(WOODIE_0_ID, raw.as_bytes());
         assert_eq!(
             woodie_errors(&deployment, "emote"),
             vec![
@@ -521,6 +526,13 @@ mod tests {
                 )]
             );
         }
+    }
+
+    #[test]
+    fn full_commit_is_deferred_without_entity_bytes() {
+        let mut deployment = edited_woodie(EXTRA_FIELD);
+        deployment.files.clear();
+        assert!(validate_woodie(&deployment, "wearable").is_unavailable());
     }
 
     #[test]
