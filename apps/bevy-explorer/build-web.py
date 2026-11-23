@@ -11,6 +11,9 @@ import subprocess
 import sys
 import time
 
+ENVIRONMENT = ('environment: WASM_PACK_MODE is passed to wasm-pack as --mode. The value no-install uses the '
+               'wasm-bindgen on PATH instead of a download, for a sandboxed or offline build. '
+               'No workflow of this tree sets it; the person who runs the build does.')
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
 SOURCE = ROOT / 'rendering/bevy-explorer/source'
@@ -19,19 +22,46 @@ artifact = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(artifact)
 
 
+def git_bash():
+    # `bash` on a Windows PATH is often WSL's launcher (System32). Git for Windows' own bash sits at
+    # <root>/bin/bash.exe, which puts Git's tools on PATH; `git --exec-path` is under <root>.
+    exec_path = subprocess.run(('git', '--exec-path'), capture_output=True, text=True, check=True).stdout
+    for parent in Path(exec_path.strip()).parents:
+        if (parent / 'bin/bash.exe').is_file():
+            return str(parent / 'bin/bash.exe')
+    raise SystemExit('Git Bash not found: install Git for Windows (scripts/gen-ts-bindings.sh needs bash)')
+
+
+def executable(name):
+    # Windows starts corepack (corepack.cmd) only by its full path, not by the bare name.
+    if os.name != 'nt':
+        return name
+    return git_bash() if name == 'bash' else shutil.which(name) or name
+
+
 def run(*args, cwd=SOURCE, env=None):
     started = time.monotonic()
-    subprocess.run(args, cwd=cwd, env=env, check=True)
+    subprocess.run((executable(str(args[0])), *args[1:]), cwd=cwd, env=env, check=True)
     print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 
-def compile_wasm(no_opt, env):
+def build_environment():
+    return {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
+            'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
+
+
+def cargo_wasm(no_opt, features, env):
+    """Compile both modules in one feature graph; returns the directory that holds the two .wasm files."""
     if no_opt:
         env = {**env, 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS': '16'}
     run('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
         '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
-        '--features=decentra-bevy/livekit,decentra-bevy/social', env=env)
-    target = Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
+        '--features=' + ','.join(f'decentra-bevy/{feature}' for feature in features), env=env)
+    return Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
+
+
+def compile_wasm(no_opt, features, env):
+    target = cargo_wasm(no_opt, features, env)
     for name, directory in (('webgpu_build', 'pkg'), ('dcl_scene_wasm', 'pkg-scene')):
         output = SOURCE / 'deploy/web/engine' / directory
         run('wasm-bindgen', str(target / f'{name}.wasm'), '--target', 'web',
@@ -43,8 +73,11 @@ def compile_wasm(no_opt, env):
             optimized.replace(wasm)
 
 
-def prepare_engine(no_opt, engine_cache, shared_build, env):
+def prepare_engine(no_opt, engine_cache, shared_build, features, env):
     flags = ['--no-opt'] if no_opt else []
+    # WASM_PACK_MODE=no-install needs the Cargo.lock's wasm-bindgen-cli installed (see ENVIRONMENT).
+    if mode := os.environ.get('WASM_PACK_MODE'):
+        flags += ['--mode', mode]
     revision = os.environ.get('GITHUB_SHA', 'local')
     if engine_cache and engine_cache.exists():
         engine = artifact.restore_engine(engine_cache, ROOT, allow_unoptimized=no_opt)
@@ -56,10 +89,10 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
             if target.exists():
                 shutil.rmtree(target)
         if shared_build:
-            compile_wasm(no_opt, env)
+            compile_wasm(no_opt, features, env)
         else:
             run('wasm-pack', 'build', '--target', 'web', *flags, '--out-dir', './deploy/web/engine/pkg',
-                '--no-default-features', '--features=livekit,social', env=env)
+                '--no-default-features', '--features=' + ','.join(features), env=env)
             run('wasm-pack', 'build', 'crates/dcl_scene_wasm', '--target', 'web', *flags,
                 '--out-dir', '../../deploy/web/engine/pkg-scene', '--no-default-features', env=env)
         pkg = SOURCE / 'deploy/web/engine/pkg'
@@ -73,14 +106,24 @@ def prepare_engine(no_opt, engine_cache, shared_build, env):
     return engine
 
 
-def web(no_opt=False, engine_cache=None, shared_build=False):
-    env = {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
-           'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
+def web_features(performance_profiler):
+    return ['livekit', 'social', *(['performance-profiler'] if performance_profiler else [])]
+
+
+def web(no_opt=False, engine_cache=None, shared_build=False, performance_profiler=False):
+    # the release engine leaves out `performance-profiler`: its spans and allocation counter cost
+    # every frame even while the profiler records nothing
+    features = web_features(performance_profiler)
+    env = build_environment()
     revision = os.environ.get('GITHUB_SHA', 'local')
     with ThreadPoolExecutor(max_workers=2) as pool:
-        installations = [pool.submit(run, 'npm', 'ci', '--prefix', project, env=env)
-                         for project in ('react-web', 'react-web/bridge-scene')]
-        engine = prepare_engine(no_opt, engine_cache, shared_build, env)
+        installations = [
+            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web',
+                        'install', '--frozen-lockfile', '--ignore-scripts', env=env),
+            pool.submit(run, 'corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+                        'install', '--frozen-lockfile', '--ignore-scripts', env=env),
+        ]
+        engine = prepare_engine(no_opt, engine_cache, shared_build, features, env)
         for installation in installations:
             installation.result()
     run('node', './react-web/scripts/shared-inputs.mjs', '--check', env=env)
@@ -94,9 +137,16 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
         raise SystemExit('Sandbox worker must have one entry point and export nothing')
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
-    run('npm', 'run', 'build', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene', env=web_env)
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'build', env=web_env)
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene',
+        '--filter', '@dcl/hashing', 'build', env=web_env)
+    run('node', str(ROOT / 'tooling/check-local-hashing.mjs'),
+        str(SOURCE / 'react-web/bridge-scene'), env=web_env)
+    # Node 25+ ships a localStorage global (empty without --localstorage-file) that
+    # vitest keeps over jsdom's; CI runs Node 24, so the tests see it switched off.
+    node_options = ' '.join(filter(None, [env.get('NODE_OPTIONS'), '--no-experimental-webstorage']))
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web', 'run', 'test', env={**web_env, 'NODE_OPTIONS': node_options})
+    run('corepack', 'pnpm@12.21.0', '--dir', 'react-web/bridge-scene', 'run', 'bundle', env=web_env)
     output = APP / 'dist/web'
     if output.exists():
         shutil.rmtree(output)
@@ -115,14 +165,31 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, epilog=ENVIRONMENT)
     parser.add_argument('--no-opt', action='store_true', help='Skip wasm-opt for development/PR builds')
     parser.add_argument('--engine-cache', type=Path,
                         help='CI-only compiled WASM cache, restored with an exact input key')
     parser.add_argument('--shared-build', action='store_true',
                         help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
+    parser.add_argument('--performance-profiler', action='store_true',
+                        help="Compile in the Profiler section's spans and allocation counter (off in release builds)")
+    parser.add_argument('--target-only', action='store_true',
+                        help='Run only the Cargo steps of a shared build (the two modules and the bindings '
+                             'test build) and stop; CI fills a target cache with them')
     args = parser.parse_args()
-    web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build)
+    if args.performance_profiler and args.engine_cache:
+        parser.error('--performance-profiler builds a different engine than the cache holds')
+    if args.target_only:
+        if args.engine_cache or args.shared_build:
+            parser.error('--target-only packs no engine: it takes neither --engine-cache nor --shared-build')
+        env = build_environment()
+        cargo_wasm(args.no_opt, web_features(args.performance_profiler), env)
+        # The bindings script compiles a test build in the same target; a build that restores
+        # the target without it compiles that again.
+        run('bash', './scripts/gen-ts-bindings.sh', env=env)
+        return
+    web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build,
+        args.performance_profiler)
 
 
 if __name__ == '__main__':

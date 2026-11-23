@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use alloy_core::primitives::Address;
 use dcl_component::proto_components::pulse;
 
@@ -5,6 +7,223 @@ use super::*;
 
 const SUBJECT: u32 = 42;
 const WALLET: &str = "0x0000000000000000000000000000000000000001";
+
+fn decoder_with_retry_gap(now: Instant) -> PulseDecoder {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
+    let events = decoder.handle_at(delta(SUBJECT, 7, 8, 1500, 5.0), now);
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+    decoder
+}
+
+#[test]
+fn unanswered_resyncs_retry_at_bounded_deadlines_without_inbound_packets() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    for seconds in [1, 3, 7, 12, 17, 22] {
+        let deadline = now + Duration::from_secs(seconds);
+        assert!(decoder
+            .retry_resyncs(deadline - Duration::from_nanos(1))
+            .is_empty());
+        let events = decoder.retry_resyncs(deadline);
+        assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+        assert!(decoder.retry_resyncs(deadline).is_empty());
+    }
+}
+
+#[test]
+fn a_late_retry_poll_makes_one_attempt_and_schedules_from_the_current_time() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    let later = now + Duration::from_secs(3600);
+    assert!(is_one_resync(&decoder.retry_resyncs(later), SUBJECT, 5));
+    assert!(decoder.retry_resyncs(later).is_empty());
+    assert!(decoder
+        .retry_resyncs(later + Duration::from_millis(1999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(later + Duration::from_secs(2)),
+        SUBJECT,
+        5
+    ));
+}
+
+#[test]
+fn stale_and_equal_snapshots_and_duplicate_gaps_preserve_retry_deadlines() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    for message in [
+        player_state_full(4, 900, 0.0),
+        player_state_full(5, 1000, 1.0),
+        emote_started(5, 1100, "wave", 1.0),
+        emote_stopped(5, 1200, 1.0),
+        delta(SUBJECT, 7, 8, 1500, 5.0),
+    ] {
+        decoder.handle_at(message, now + Duration::from_millis(900));
+    }
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+    for message in [
+        player_state_full(4, 900, 0.0),
+        emote_started(5, 1100, "wave", 1.0),
+        delta(SUBJECT, 7, 8, 1500, 5.0),
+    ] {
+        decoder.handle_at(message, now + Duration::from_secs(2));
+    }
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_millis(2999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(3)),
+        SUBJECT,
+        5
+    ));
+}
+
+#[test]
+fn sequence_progress_resets_backoff_and_recovery_stops_all_retries() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    decoder.retry_resyncs(now + Duration::from_secs(1));
+    let progress_at = now + Duration::from_millis(1500);
+    let events = decoder.handle_at(player_state_full(6, 1400, 4.0), progress_at);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, PulseEvent::Resync(request) if request.known_seq == 6)));
+    assert!(decoder
+        .retry_resyncs(progress_at + Duration::from_millis(999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(progress_at + Duration::from_secs(1)),
+        SUBJECT,
+        6
+    ));
+    let recovered_at = progress_at + Duration::from_millis(1100);
+    decoder.handle_at(player_state_full(7, 1450, 4.0), recovered_at);
+    assert!(decoder.pending_resync.is_empty());
+    assert!(decoder
+        .retry_resyncs(recovered_at + Duration::from_secs(60))
+        .is_empty());
+}
+
+#[test]
+fn a_displaced_delta_destination_keeps_retrying_after_its_payload_is_gone() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    decoder.handle_at(delta(SUBJECT, 6, 7, 1400, 4.0), now);
+    let progressed_at = now + Duration::from_millis(100);
+    decoder.handle_at(player_state_full(6, 1300, 3.0), progressed_at);
+    assert!(decoder.subjects[&SUBJECT].pending_delta.is_none());
+    assert_eq!(decoder.subjects[&SUBJECT].last_seq, 7);
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(progressed_at + Duration::from_secs(1)),
+        SUBJECT,
+        7
+    ));
+}
+
+#[test]
+fn retry_deadlines_end_with_the_subject_or_connection_lifetime() {
+    let now = Instant::now();
+    for ending in ["left", "reset", "rejoined", "id-reused", "wallet-replaced"] {
+        let mut decoder = decoder_with_retry_gap(now);
+        match ending {
+            "left" => {
+                decoder.handle_at(
+                    server_msg(pulse::server_message::Message::PlayerLeft(
+                        pulse::PlayerLeft {
+                            subject_id: SUBJECT,
+                        },
+                    )),
+                    now,
+                );
+            }
+            "reset" => {
+                decoder.reset();
+            }
+            "rejoined" => {
+                decoder.handle_at(server_msg(joined(9, (1.0, 2.0, 3.0), 0)), now);
+            }
+            "id-reused" => {
+                let pulse::server_message::Message::PlayerJoined(mut replacement) =
+                    joined(0, (1.0, 2.0, 3.0), 0)
+                else {
+                    unreachable!()
+                };
+                replacement.user_id = "0x0000000000000000000000000000000000000002".to_owned();
+                decoder.handle_at(
+                    server_msg(pulse::server_message::Message::PlayerJoined(replacement)),
+                    now,
+                );
+            }
+            "wallet-replaced" => {
+                let pulse::server_message::Message::PlayerJoined(mut replacement) =
+                    joined(0, (1.0, 2.0, 3.0), 0)
+                else {
+                    unreachable!()
+                };
+                replacement.state.as_mut().unwrap().subject_id = SUBJECT + 1;
+                decoder.handle_at(
+                    server_msg(pulse::server_message::Message::PlayerJoined(replacement)),
+                    now,
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert!(decoder.pending_resync.is_empty(), "{ending}");
+        assert!(
+            decoder
+                .retry_resyncs(now + Duration::from_secs(60))
+                .is_empty(),
+            "{ending}"
+        );
+    }
+}
+
+#[test]
+fn subjects_have_independent_retry_deadlines_and_recovery() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    let pulse::server_message::Message::PlayerJoined(mut other) = joined(5, (1.0, 2.0, 3.0), 0)
+    else {
+        unreachable!()
+    };
+    other.user_id = "0x0000000000000000000000000000000000000002".to_owned();
+    other.state.as_mut().unwrap().subject_id = SUBJECT + 1;
+    decoder.handle_at(
+        server_msg(pulse::server_message::Message::PlayerJoined(other)),
+        now,
+    );
+    decoder.handle_at(
+        delta(SUBJECT + 1, 7, 8, 1500, 5.0),
+        now + Duration::from_millis(500),
+    );
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_millis(1500)),
+        SUBJECT + 1,
+        5
+    ));
+    decoder.handle_at(
+        player_state_full(7, 1400, 3.0),
+        now + Duration::from_secs(2),
+    );
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(3))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_millis(3500)),
+        SUBJECT + 1,
+        5
+    ));
+}
 
 // Parcel (10, 20) under the default grid: min_x = min_z = -150 - 2 = -152, width = 318.
 // index = (10 - -152) + (20 - -152) * 318 = 162 + 172*318 = 54858. World base = (160, _, 320).
@@ -81,7 +300,7 @@ fn consecutive_ticks_stay_distinct_at_realistic_magnitudes() {
     const TICKS: [u32; 3] = [2350530722, 2350530821, 2350530940];
 
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
-    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(joined_with_tick(WALLET, 5, TICKS[0] - 100, 1.0));
 
     let stamps: Vec<f64> = TICKS
         .iter()
@@ -124,6 +343,67 @@ fn parcel_decode_matches_server_scheme() {
     approx(world.x, 161.0); // 10*16 + 1
     approx(world.y, 2.0);
     approx(world.z, 323.0); // 20*16 + 3
+}
+
+#[test]
+fn encoding_covers_the_grid_edges_and_refuses_beyond_them() {
+    // Default grid: x in [-152, 165], z in [-152, 160] (bounds plus 2 padding), 16 m parcels.
+    let grid = PulseParcelGrid::default();
+    let at = |x: f32, z: f32| grid.encode_to_parcel(Vec3::new(x, 0.0, z));
+    let (width, height) = (165 - -152 + 1, 160 - -152 + 1);
+
+    assert_eq!(at(-152.0 * 16.0, -152.0 * 16.0).unwrap().0, 0);
+    let (last, local) = at(166.0 * 16.0 - 0.01, 161.0 * 16.0 - 0.01).unwrap();
+    assert_eq!(last, width * height - 1);
+    assert!(local.x < 16.0 && local.z < 16.0);
+    // A round trip through the decoder lands on the same spot.
+    let world = Vec3::new(161.0, 2.0, 323.0);
+    let (index, local) = grid.encode_to_parcel(world).unwrap();
+    assert_eq!(grid.decode_to_world(index, local), world);
+
+    // One past each edge: z would be an index the server refuses, x would wrap into another row.
+    assert_eq!(at(-152.0 * 16.0 - 0.01, 0.0), None);
+    assert_eq!(at(166.0 * 16.0, 0.0), None);
+    assert_eq!(at(0.0, -152.0 * 16.0 - 0.01), None);
+    assert_eq!(at(0.0, 161.0 * 16.0), None);
+    assert_eq!(at(f32::MAX, 0.0), None);
+    assert_eq!(at(0.0, f32::MIN), None);
+    assert_eq!(at(f32::NAN, 0.0), None);
+}
+
+#[test]
+fn clamping_moves_a_position_onto_the_nearest_edge() {
+    let grid = PulseParcelGrid::default();
+    let (index, local) = grid.encode_clamped(Vec3::new(1e9, 2.0, -1e9)).unwrap();
+    // Far x edge (165) in the near z row (-152).
+    assert_eq!(index, 165 - -152);
+    assert!(local.x < 16.0 && local.z >= 0.0 && local.y == 2.0);
+    let inside = Vec3::new(161.0, 2.0, 323.0);
+    assert_eq!(grid.encode_clamped(inside), grid.encode_to_parcel(inside));
+    assert_eq!(grid.encode_clamped(Vec3::NAN), None);
+}
+
+#[test]
+fn skipped_inputs_and_teleports_are_logged_apart() {
+    let mut log = OutOfGridLog::default();
+    let now = Instant::now();
+
+    assert!(log.should_log(OutOfGrid::Input, now));
+    assert!(!log.should_log(OutOfGrid::Input, now));
+    // A stream of skipped inputs does not hide a skipped teleport.
+    assert!(log.should_log(OutOfGrid::Teleport, now));
+    assert!(log.should_log(OutOfGrid::Input, now + OUT_OF_GRID_LOG_INTERVAL));
+}
+
+#[test]
+fn movement_outside_the_grid_has_no_pulse_state() {
+    let movement = rfc4::Movement {
+        position_x: 0.0,
+        position_z: 161.0 * 16.0,
+        ..Default::default()
+    };
+
+    assert_eq!(from_movement(&movement, &PulseParcelGrid::default()), None);
 }
 
 #[test]
@@ -193,7 +473,7 @@ fn head_angles_round_trip_signed() {
         head_pitch: -20.0,
         ..Default::default()
     };
-    let state = from_movement(&movement, &grid);
+    let state = from_movement(&movement, &grid).unwrap();
 
     let mut decoder = PulseDecoder::new(grid);
     let out = only_movement(decoder.handle(server_msg(
@@ -230,6 +510,7 @@ fn sequence_gap_requests_resync_without_applying() {
         subject_id: SUBJECT,
         baseline_seq: 6,
         new_seq: 7,
+        server_tick: 1100,
         position_x: Some(200),
         ..Default::default()
     };
@@ -614,15 +895,46 @@ fn emits_emote_start(events: &[PulseEvent]) -> bool {
 }
 
 /// The reply to a resync and the regular deltas travel on different channels, so one can arrive
-/// leading on from a state we have already passed. That is nothing to ask the server about.
+/// leading on from a state we have already passed while advertising a newer destination.
 #[test]
-fn a_delta_behind_the_baseline_is_dropped_without_a_resync() {
+fn a_delta_behind_the_baseline_requests_its_newer_destination_without_applying_its_mask() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
 
     // new_seq 6 is ahead of our last_seq 5, but baseline_seq 4 is behind it.
     let events = decoder.handle(delta(SUBJECT, 4, 6, 1500, 5.0));
-    assert!(events.is_empty(), "{events:?}");
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+    assert_eq!(decoder.subjects[&SUBJECT].last_seq, 5);
+    assert_eq!(decoder.subjects[&SUBJECT].latest_pending_seq, 6);
+}
+
+#[test]
+fn a_late_resync_delta_with_an_old_base_recovers_after_a_full_state_closed_the_gap() {
+    let now = Instant::now();
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
+    decoder.handle_at(delta(SUBJECT, 6, 7, 1500, 5.0), now);
+    decoder.handle_at(player_state_full(8, 1800, 4.0), now);
+    assert!(decoder.pending_resync.is_empty());
+
+    let events = decoder.handle_at(delta(SUBJECT, 5, 9, 1900, 9.0), now);
+    assert!(is_one_resync(&events, SUBJECT, 8), "{events:?}");
+    assert_eq!(decoder.subjects[&SUBJECT].last_seq, 8);
+    assert!(decoder.subjects[&SUBJECT].pending_delta.is_none());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        8
+    ));
+    let events = decoder.handle_at(
+        delta(SUBJECT, 8, 9, 2000, 9.0),
+        now + Duration::from_secs(1),
+    );
+    approx(only_movement(events).position_x, 169.0);
+    assert!(decoder.pending_resync.is_empty());
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(60))
+        .is_empty());
 }
 
 /// A gap shows in every delta after it, so one resync stays in flight per subject until something
@@ -641,7 +953,7 @@ fn a_burst_of_gaps_sends_one_resync() {
 }
 
 #[test]
-fn a_consecutive_delta_clears_the_pending_resync() {
+fn a_consecutive_delta_renews_the_remaining_gap_resync() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
 
@@ -651,13 +963,13 @@ fn a_consecutive_delta_clears_the_pending_resync() {
     // the stream is back on track, whether this is the resync's reply or just the next in line
     let events = decoder.handle(delta(SUBJECT, 5, 6, 1600, 5.0));
     assert!(
-        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }, PulseEvent::Resync(request)] if request.known_seq == 6),
         "{events:?}"
     );
 
-    // so a gap now is a new one, asked for from where we are now
+    // The remaining gap is already requested from the updated baseline.
     let events = decoder.handle(delta(SUBJECT, 8, 9, 1700, 5.0));
-    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+    assert!(events.is_empty(), "{events:?}");
 }
 
 #[test]
@@ -782,9 +1094,9 @@ fn a_stale_teleport_keeps_the_realm() {
     assert_eq!(&**realm, "home");
 }
 
-/// Any full state completes a resync, whether or not it is newer than what is held.
+/// An old reply does not complete the request for a newer baseline.
 #[test]
-fn an_older_full_state_still_clears_the_pending_resync() {
+fn an_older_full_state_keeps_the_outstanding_gap_resync() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
     decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
@@ -796,7 +1108,7 @@ fn an_older_full_state_still_clears_the_pending_resync() {
     assert!(events.is_empty(), "{events:?}");
 
     let events = decoder.handle(delta(SUBJECT, 8, 9, 1700, 5.0));
-    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+    assert!(events.is_empty(), "{events:?}");
 }
 
 #[test]
@@ -854,20 +1166,82 @@ fn reset_clears_the_pending_resyncs() {
     assert!(decoder.pending_resync.is_empty());
 }
 
-/// The plugin could not send the request (its queue was full, or the link gone), so nothing waits
-/// on an answer, and the next gap asks again.
 #[test]
-fn a_resync_that_was_not_sent_is_asked_for_again() {
+fn newer_gaps_preserve_the_pending_request_and_its_initial_retry_deadline() {
+    let now = Instant::now();
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
-    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
 
-    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    let events = decoder.handle_at(delta(SUBJECT, 7, 8, 1500, 5.0), now);
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
 
-    decoder.resync_not_sent(SUBJECT);
-
-    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    // A later gap extends the recovery goal without another immediate request.
+    assert!(decoder
+        .handle_at(
+            delta(SUBJECT, 8, 9, 1600, 5.0),
+            now + Duration::from_millis(900),
+        )
+        .is_empty());
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_millis(999))
+        .is_empty());
+    let events = decoder.retry_resyncs(now + Duration::from_secs(1));
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+}
+
+#[test]
+fn an_older_baseline_reply_extends_a_pending_goal_without_duplicating_or_delaying_the_request() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    let events = decoder.handle_at(
+        delta(SUBJECT, 4, 9, 1800, 6.0),
+        now + Duration::from_millis(900),
+    );
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_millis(999))
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+
+    // The held 7 → 8 delta still replays; the incompatible 4 → 9 fields do not.
+    let events = decoder.handle_at(
+        player_state_full(7, 1400, 3.0),
+        now + Duration::from_millis(1100),
+    );
+    assert!(
+        events.iter().any(|event| matches!(event,
+            PulseEvent::Resync(request) if request.known_seq == 8
+        )),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 165.0);
+    let events = decoder.handle_at(
+        delta(SUBJECT, 8, 9, 1900, 7.0),
+        now + Duration::from_millis(1200),
+    );
+    approx(only_movement(events).position_x, 167.0);
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(60))
+        .is_empty());
+}
+
+#[test]
+fn acknowledging_a_request_after_its_subject_left_does_not_restore_retry_state() {
+    let now = Instant::now();
+    let mut decoder = decoder_with_retry_gap(now);
+    decoder.handle_at(left(SUBJECT), now);
+
+    decoder.resync_sent(SUBJECT);
+
+    assert!(decoder.pending_resync.is_empty());
+    assert!(!decoder.subjects.contains_key(&SUBJECT));
+    assert!(decoder
+        .retry_resyncs(now + Duration::from_secs(60))
+        .is_empty());
 }
 
 #[test]
@@ -1128,4 +1502,603 @@ fn a_wallet_that_left_is_no_longer_held() {
     assert_eq!(decoder.reset(), [other()]);
     // nor, after the reset, is any other
     assert!(decoder.reset().is_empty());
+}
+
+#[test]
+fn buffered_delta_applies_when_its_full_baseline_arrives() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 5, 6, 1500, 2.0));
+    assert!(is_one_resync(
+        &decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0)),
+        SUBJECT,
+        6
+    ));
+
+    let events = decoder.handle(player_state_full(7, 1600, 3.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { timestamp, teleport: false, .. }] if *timestamp == 1.7
+        ),
+        "{events:?}"
+    );
+    let movement = only_movement(events);
+    approx(movement.position_x, 165.0);
+    assert!(movement.position_precision.is_some());
+    assert!(decoder.pending_resync.is_empty());
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 8, 9, 1800, 6.0))).position_x,
+        166.0,
+    );
+}
+
+#[test]
+fn buffered_delta_applies_when_a_delta_reaches_its_baseline() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+
+    let events = decoder.handle(delta(SUBJECT, 5, 7, 1600, 3.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { timestamp, .. }] if *timestamp == 1.7
+        ),
+        "{events:?}"
+    );
+    let movement = only_movement(events);
+    approx(movement.position_x, 165.0);
+    assert!(decoder.pending_resync.is_empty());
+    approx(
+        only_movement(decoder.handle(bare_delta(8, 9, 1800))).position_x,
+        165.0,
+    );
+}
+
+#[test]
+fn buffered_delta_keeps_the_newest_update_from_the_same_baseline() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 7, 9, 1700, 6.0));
+    decoder.handle(delta(SUBJECT, 7, 8, 1600, 5.0));
+    decoder.handle(delta(SUBJECT, 7, 10, 1800, 7.0));
+
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1500, 3.0))).position_x,
+        167.0,
+    );
+    assert!(decoder.handle(bare_delta(9, 10, 1900)).is_empty());
+    approx(
+        only_movement(decoder.handle(bare_delta(10, 11, 2000))).position_x,
+        167.0,
+    );
+}
+
+#[test]
+fn buffered_delta_prefers_the_nearest_missing_baseline_during_a_burst() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 8, 9, 1800, 6.0));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+    for baseline in 9..100 {
+        assert!(decoder
+            .handle(delta(SUBJECT, baseline, baseline + 1, 1900, 7.0))
+            .is_empty());
+    }
+
+    let events = decoder.handle(player_state_full(7, 1600, 3.0));
+    assert!(
+        events.iter().any(|event| matches!(event,
+            PulseEvent::Resync(request) if request.known_seq == 8
+        )),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 165.0);
+    // Displaced later states remain a gap until the stream or a resync supplies them.
+    approx(
+        only_movement(decoder.handle(bare_delta(8, 9, 2000))).position_x,
+        165.0,
+    );
+}
+
+#[test]
+fn buffered_delta_renews_resync_when_a_full_state_does_not_close_the_gap() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 8, 9, 1800, 6.0));
+
+    let events = decoder.handle(player_state_full(7, 1600, 3.0));
+    assert!(
+        events.iter().any(|event| matches!(event,
+            PulseEvent::Resync(request) if (request.subject_id, request.known_seq) == (SUBJECT, 7)
+        )),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 163.0);
+    for sequence in [7, 6, 7, 5] {
+        let events = decoder.handle(player_state_full(sequence, 1600, 3.0));
+        assert!(events.is_empty(), "{events:?}");
+    }
+    approx(
+        only_movement(decoder.handle(player_state_full(8, 1700, 4.0))).position_x,
+        166.0,
+    );
+}
+
+#[test]
+fn buffered_delta_renews_resync_when_a_delta_does_not_close_the_gap() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 8, 9, 1800, 6.0));
+
+    let events = decoder.handle(delta(SUBJECT, 5, 7, 1600, 3.0));
+    assert!(
+        events.iter().any(|event| matches!(event,
+            PulseEvent::Resync(request) if request.known_seq == 7
+        )),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 163.0);
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 7, 8, 1700, 4.0))).position_x,
+        166.0,
+    );
+}
+
+#[test]
+fn buffered_delta_survives_a_stale_full_state_and_a_retry() {
+    let now = Instant::now();
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle_at(server_msg(joined(5, (1.0, 2.0, 3.0), 0)), now);
+    decoder.handle_at(delta(SUBJECT, 7, 8, 1700, 5.0), now);
+    let stale = decoder.handle_at(player_state_full(4, 900, 0.0), now);
+    assert!(stale.is_empty(), "{stale:?}");
+    assert!(decoder
+        .handle_at(delta(SUBJECT, 7, 8, 1700, 5.0), now)
+        .is_empty());
+    assert!(is_one_resync(
+        &decoder.retry_resyncs(now + Duration::from_secs(1)),
+        SUBJECT,
+        5
+    ));
+    approx(
+        only_movement(decoder.handle_at(
+            player_state_full(7, 1600, 3.0),
+            now + Duration::from_secs(1),
+        ))
+        .position_x,
+        165.0,
+    );
+}
+
+#[test]
+fn buffered_delta_is_discarded_when_a_full_state_has_passed_it() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+    let movement = only_movement(decoder.handle(player_state_full(9, 1800, 6.0)));
+    approx(movement.position_x, 166.0);
+    assert!(movement.position_precision.is_none());
+    assert!(decoder.pending_resync.is_empty());
+    assert!(decoder.handle(player_state_full(7, 1600, 3.0)).is_empty());
+    approx(
+        only_movement(decoder.handle(bare_delta(9, 10, 1900))).position_x,
+        166.0,
+    );
+}
+
+#[test]
+fn buffered_delta_preserves_a_teleport_and_its_new_realm() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined_in_realm(
+        SUBJECT,
+        WALLET,
+        "home",
+        (1.0, 2.0, 3.0),
+    )));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+
+    let events = decoder.handle(teleported(7, 1600, "elsewhere"));
+    assert!(
+        matches!(events.as_slice(), [
+            PulseEvent::Joined { realm: joined_realm, .. },
+            PulseEvent::Movement { realm, teleport: true, timestamp, .. },
+        ] if &**joined_realm == "elsewhere" && &**realm == "elsewhere" && *timestamp == 1.7
+        ),
+        "{events:?}"
+    );
+    let movement = only_movement(events);
+    approx(movement.position_x, 165.0);
+    let precision = movement
+        .position_precision
+        .expect("replayed delta precision");
+    assert_eq!(precision.x, 16.0 / 255.0 * 0.5);
+    assert_eq!(precision.y, 200.0 / 8191.0 * 0.5);
+    assert_eq!(precision.z, 16.0 / 255.0 * 0.5);
+}
+
+#[test]
+fn buffered_delta_is_discarded_when_a_teleport_passes_its_destination() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined_in_realm(
+        SUBJECT,
+        WALLET,
+        "home",
+        (1.0, 2.0, 3.0),
+    )));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+
+    let events = decoder.handle(teleported(9, 1800, "elsewhere"));
+    assert!(
+        matches!(events.as_slice(), [
+            PulseEvent::Joined { realm: joined_realm, .. },
+            PulseEvent::Movement { realm, teleport: true, timestamp, .. },
+        ] if &**joined_realm == "elsewhere" && &**realm == "elsewhere" && *timestamp == 1.8
+        ),
+        "{events:?}"
+    );
+    let movement = only_movement(events);
+    approx(movement.position_x, 164.0);
+    assert!(movement.position_precision.is_none());
+    assert!(decoder.pending_resync.is_empty());
+    approx(
+        only_movement(decoder.handle(bare_delta(9, 10, 1900))).position_x,
+        164.0,
+    );
+}
+
+#[test]
+fn buffered_delta_is_applied_before_an_emote_start_or_stop() {
+    for start in [true, false] {
+        let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+        decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+        decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+        let events = decoder.handle(if start {
+            emote_started(7, 1600, "wave", 3.0)
+        } else {
+            emote_stopped(7, 1600, 3.0)
+        });
+        assert!(
+            matches!(events.first(), Some(PulseEvent::Movement { timestamp, .. }) if *timestamp == 1.7),
+            "{events:?}"
+        );
+        assert!(
+            matches!(
+                events.last(),
+                Some(PulseEvent::EmoteStart { .. } | PulseEvent::EmoteStop { .. })
+            ),
+            "{events:?}"
+        );
+        approx(only_movement(events).position_x, 165.0);
+    }
+}
+
+#[test]
+fn buffered_delta_does_not_cross_a_subject_lifetime() {
+    const OTHER: &str = "0x0000000000000000000000000000000000000002";
+    for ending in ["leave", "reset", "rejoin", "wallet replacement", "id reuse"] {
+        let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+        decoder.handle(joined_home(SUBJECT, WALLET));
+        decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+        match ending {
+            "leave" => {
+                decoder.handle(left(SUBJECT));
+            }
+            "reset" => {
+                decoder.reset();
+            }
+            "rejoin" => {}
+            "wallet replacement" => {
+                decoder.handle(joined_home(SUBJECT + 1, WALLET));
+            }
+            "id reuse" => {
+                decoder.handle(joined_home(SUBJECT, OTHER));
+            }
+            _ => unreachable!(),
+        }
+        decoder.handle(joined_home(SUBJECT, WALLET));
+        let events = decoder.handle(player_state_full(7, 1600, 3.0));
+        assert!(
+            matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+            "{ending}: {events:?}"
+        );
+        approx(only_movement(events).position_x, 163.0);
+        assert!(decoder.pending_resync.is_empty(), "{ending}");
+    }
+}
+
+#[test]
+fn buffered_delta_is_isolated_from_other_subjects() {
+    const OTHER: &str = "0x0000000000000000000000000000000000000002";
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, OTHER));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+    let events = decoder.handle(delta(SUBJECT + 1, 1, 7, 1600, 3.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { address, .. }] if *address == other()),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 163.0);
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        165.0,
+    );
+}
+
+#[test]
+fn buffered_delta_rejects_nonadvancing_sequences_without_losing_a_valid_link() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+    for (baseline, new) in [(6, 6), (6, 5), (8, 7)] {
+        assert!(decoder
+            .handle(delta(SUBJECT, baseline, new, 1800, 6.0))
+            .is_empty());
+    }
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        165.0,
+    );
+}
+
+#[test]
+fn buffered_delta_is_not_retained_before_a_subject_joins() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    assert!(decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0)).is_empty());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        163.0,
+    );
+}
+
+#[test]
+fn buffered_delta_renews_resync_when_progress_passes_its_baseline_but_not_its_end() {
+    for full_state in [true, false] {
+        let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+        decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+        decoder.handle(delta(SUBJECT, 7, 10, 1800, 6.0));
+
+        let events = decoder.handle(if full_state {
+            player_state_full(8, 1700, 4.0)
+        } else {
+            delta(SUBJECT, 5, 8, 1700, 4.0)
+        });
+        assert!(
+            events.iter().any(|event| matches!(event,
+                PulseEvent::Resync(request) if request.known_seq == 8
+            )),
+            "{events:?}"
+        );
+        // The old baseline cannot safely be overlaid on sequence 8.
+        approx(only_movement(events).position_x, 164.0);
+        approx(
+            only_movement(decoder.handle(player_state_full(10, 1900, 6.0))).position_x,
+            166.0,
+        );
+        assert!(decoder.pending_resync.is_empty());
+    }
+}
+
+#[test]
+fn buffered_delta_remembers_a_later_destination_after_keeping_a_nearer_link() {
+    for nearest_first in [true, false] {
+        let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+        decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+        let nearest = delta(SUBJECT, 7, 8, 1700, 5.0);
+        let later = delta(SUBJECT, 9, 10, 1900, 7.0);
+        if nearest_first {
+            decoder.handle(nearest);
+            decoder.handle(later);
+        } else {
+            decoder.handle(later);
+            decoder.handle(nearest);
+        }
+
+        let events = decoder.handle(player_state_full(7, 1600, 3.0));
+        assert!(
+            events.iter().any(|event| matches!(event,
+                PulseEvent::Resync(request) if request.known_seq == 8
+            )),
+            "{events:?}"
+        );
+        approx(only_movement(events).position_x, 165.0);
+        approx(
+            only_movement(decoder.handle(player_state_full(10, 2000, 7.0))).position_x,
+            167.0,
+        );
+        assert!(decoder.pending_resync.is_empty());
+    }
+}
+
+#[test]
+fn buffered_delta_keeps_one_request_during_repeated_stale_and_equal_snapshots() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    assert!(is_one_resync(
+        &decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0)),
+        SUBJECT,
+        5
+    ));
+
+    for _ in 0..4 {
+        for message in [
+            player_state_full(4, 900, 0.0),
+            player_state_full(5, 1000, 1.0),
+            teleported(4, 900, "old"),
+            teleported(5, 1000, "old"),
+        ] {
+            let events = decoder.handle(message);
+            assert!(events.is_empty(), "{events:?}");
+            assert!(decoder.pending_resync.contains_key(&SUBJECT));
+        }
+    }
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        165.0,
+    );
+    assert!(decoder.pending_resync.is_empty());
+}
+
+#[test]
+fn buffered_delta_keeps_its_request_while_equal_sequence_emotes_are_reported() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 7, 8, 1700, 5.0));
+
+    let events = decoder.handle(emote_started(5, 1100, "wave", 1.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { .. }, PulseEvent::EmoteStart { .. }]
+        ),
+        "{events:?}"
+    );
+    assert!(decoder.pending_resync.contains_key(&SUBJECT));
+
+    for _ in 0..3 {
+        let events = decoder.handle(emote_started(5, 1100, "wave", 1.0));
+        assert!(
+            matches!(
+                events.as_slice(),
+                [PulseEvent::Movement { .. }, PulseEvent::EmoteStart { .. }]
+            ),
+            "{events:?}"
+        );
+        assert!(decoder.pending_resync.contains_key(&SUBJECT));
+    }
+
+    let events = decoder.handle(emote_stopped(5, 1200, 1.0));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Movement { .. }, PulseEvent::EmoteStop { .. }]
+        ),
+        "{events:?}"
+    );
+    assert!(decoder.pending_resync.contains_key(&SUBJECT));
+    approx(
+        only_movement(decoder.handle(player_state_full(7, 1600, 3.0))).position_x,
+        165.0,
+    );
+    assert!(decoder.pending_resync.is_empty());
+}
+
+fn joined_with_tick(wallet: &str, sequence: u32, tick: u32, x: f32) -> pulse::ServerMessage {
+    let pulse::server_message::Message::PlayerJoined(mut message) =
+        joined_in_realm(SUBJECT, wallet, "home", (x, 2.0, 3.0))
+    else {
+        unreachable!()
+    };
+    let full = message.state.as_mut().unwrap();
+    full.sequence = sequence;
+    full.server_tick = tick;
+    server_msg(pulse::server_message::Message::PlayerJoined(message))
+}
+
+#[test]
+fn a_reused_subject_id_drops_deltas_from_before_its_join() {
+    const OTHER: &str = "0x0000000000000000000000000000000000000002";
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 2, 1000, 1.0));
+    decoder.handle(left(SUBJECT));
+    decoder.handle(joined_with_tick(OTHER, 0, 10000, 10.0));
+
+    let events = decoder.handle(delta(SUBJECT, 2, 3, 1000, 2.0));
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder.pending_resync.is_empty());
+    let events = decoder.handle(delta(SUBJECT, 0, 2, 10100, 11.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { address, timestamp, .. }]
+        if *address == other() && *timestamp == 10.1),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 171.0);
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 2, 3, 10200, 12.0))).position_x,
+        172.0,
+    );
+}
+
+#[test]
+fn a_subject_accepts_deltas_at_the_exact_join_tick() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, 10000, 10.0));
+    assert!(is_one_resync(
+        &decoder.handle(delta(SUBJECT, 2, 3, 10000, 12.0)),
+        SUBJECT,
+        0
+    ));
+    let events = decoder.handle(delta(SUBJECT, 0, 2, 10000, 11.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { timestamp, .. }]
+        if *timestamp == 10.0),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 172.0);
+}
+
+#[test]
+fn a_subject_lifetime_floor_unwraps_the_server_tick_rollover() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, u32::MAX - 50, 10.0));
+    assert!(decoder
+        .handle(delta(SUBJECT, 2, 3, u32::MAX - 100, 2.0))
+        .is_empty());
+    let events = decoder.handle(delta(SUBJECT, 0, 2, 25, 11.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { timestamp, .. }]
+        if (*timestamp - ((1u64 << 32) + 25) as f64 / 1000.0).abs() < 1e-6),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 171.0);
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 2, 3, 30, 12.0))).position_x,
+        172.0,
+    );
+}
+
+#[test]
+fn a_subject_can_resume_after_a_full_tick_rollover_while_other_peers_advance_the_clock() {
+    const OTHER: &str = "0x0000000000000000000000000000000000000002";
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, 1000, 10.0));
+    let pulse::server_message::Message::PlayerJoined(mut peer) =
+        joined_in_realm(SUBJECT + 1, OTHER, "home", (4.0, 2.0, 3.0))
+    else {
+        unreachable!()
+    };
+    peer.state.as_mut().unwrap().sequence = 0;
+    decoder.handle(server_msg(pulse::server_message::Message::PlayerJoined(
+        peer,
+    )));
+    for (sequence, tick) in [0x4000_0000, 0x8000_0000, 0xc000_0000, 0x100]
+        .into_iter()
+        .enumerate()
+    {
+        let sequence = sequence as u32;
+        let events = decoder.handle(delta(SUBJECT + 1, sequence, sequence + 1, tick, 4.0));
+        assert!(
+            matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+            "{events:?}"
+        );
+    }
+    let events = decoder.handle(delta(SUBJECT, 0, 1, 0x101, 11.0));
+    approx(only_movement(events).position_x, 171.0);
+}
+
+#[test]
+fn an_emote_start_before_the_join_does_not_lower_the_delta_lifetime_floor() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_with_tick(WALLET, 0, 10000, 10.0));
+    let events = decoder.handle(emote_started(0, 1000, "wave", 10.0));
+    assert!(emits_emote_start(&events), "{events:?}");
+    approx(only_movement(events).position_x, 170.0);
+    assert!(decoder.handle(delta(SUBJECT, 2, 3, 2000, 2.0)).is_empty());
+    approx(
+        only_movement(decoder.handle(delta(SUBJECT, 0, 2, 10100, 11.0))).position_x,
+        171.0,
+    );
 }

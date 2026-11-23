@@ -18,16 +18,15 @@ use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
 use crate::shared::identity::Address;
 use crate::shared::signed_fetch::{
     AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, SignedFetchError,
-    SignedPath, build_legacy_payload, build_payload_v6, candidate_paths, check_symmetric_skew,
+    SignedPath, build_legacy_payload, build_payload_v6, candidate_paths, check_timestamp_window,
     header_str, is_refused_signer, map_auth_error, parse_metadata,
 };
 use crate::worlds_envelope::ApiError;
 
 /// Upstream's `setupRouter` passes no `expiration` to `wellKnownComponents`, so every
 /// route on this surface runs on crypto-middleware's `DEFAULT_EXPIRATION` of `1000 * 60`
-/// (core-libs/libs/crypto-middleware/src/types.ts). The world-storage surface already
-/// reads the same default.
-pub const SIGNED_FETCH_EXPIRATION_SECS: i64 = 60;
+/// (core-libs/libs/crypto-middleware/src/types.ts), the window every signed route shares.
+pub const SIGNED_FETCH_EXPIRATION_SECS: i64 = crate::auth::signed_fetch::SIGNED_FETCH_WINDOW_SECS;
 
 /// The explorer comms handshakes. The js explorers still sign the folded payload with
 /// camelCase metadata while bevy-explorer mints the 6.x payload, so the fallback stays
@@ -160,10 +159,24 @@ fn objects_to_inspect<'a>(value: &'a Value, out: &mut Vec<&'a Map<String, Value>
     }
 }
 
-/// `assertLegacyMetadataKeys`: the message for the first declared key whose
-/// delivered spelling differs (keys only; values such as `secret` are
-/// case-sensitive and travel verbatim).
-fn first_respelled_key(metadata: &Value, canonical_keys: &[&str]) -> Option<String> {
+/// The first mismatch in declared-path, segment and array order. Values and
+/// undeclared keys are not inspected for spelling.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MetadataKeyMismatch<'a> {
+    Spelling {
+        expected: &'a str,
+        delivered: &'a str,
+    },
+    Collision {
+        expected: &'a str,
+        count: usize,
+    },
+}
+
+pub(crate) fn first_metadata_key_mismatch<'a>(
+    metadata: &'a Value,
+    canonical_keys: &[&'a str],
+) -> Option<MetadataKeyMismatch<'a>> {
     for declared_path in canonical_keys {
         let mut containers: Vec<&Value> = vec![metadata];
         for segment in declared_path.split('.') {
@@ -182,18 +195,16 @@ fn first_respelled_key(metadata: &Value, canonical_keys: &[&str]) -> Option<Stri
                     [] => continue,
                     [one] if one.as_str() == segment => {}
                     [one] => {
-                        return Some(format!(
-                            "Invalid chain metadata: expected \"{}\", got \"{}\"",
-                            safe(segment),
-                            safe(one)
-                        ));
+                        return Some(MetadataKeyMismatch::Spelling {
+                            expected: segment,
+                            delivered: one,
+                        });
                     }
                     many => {
-                        return Some(format!(
-                            "Invalid chain metadata: \"{}\" delivered under {} spellings",
-                            safe(segment),
-                            many.len()
-                        ));
+                        return Some(MetadataKeyMismatch::Collision {
+                            expected: segment,
+                            count: many.len(),
+                        });
                     }
                 }
                 if let Some(value) = object.get(segment) {
@@ -209,6 +220,25 @@ fn first_respelled_key(metadata: &Value, canonical_keys: &[&str]) -> Option<Stri
     None
 }
 
+/// Render the signed-fetch refusal without exposing untrusted key contents.
+fn first_respelled_key(metadata: &Value, canonical_keys: &[&str]) -> Option<String> {
+    first_metadata_key_mismatch(metadata, canonical_keys).map(|mismatch| match mismatch {
+        MetadataKeyMismatch::Spelling {
+            expected,
+            delivered,
+        } => format!(
+            "Invalid chain metadata: expected \"{}\", got \"{}\"",
+            safe(expected),
+            safe(delivered)
+        ),
+        MetadataKeyMismatch::Collision { expected, count } => format!(
+            "Invalid chain metadata: \"{}\" delivered under {} spellings",
+            safe(expected),
+            count
+        ),
+    })
+}
+
 async fn validate_over_paths(
     chain: &AuthChain,
     payloads: &[String],
@@ -217,7 +247,7 @@ async fn validate_over_paths(
 ) -> Result<Address, SignedFetchRefusal> {
     let mut verdict = None;
     for payload in payloads {
-        match crate::auth::verify_auth_chain_async(chain, payload, Some(now * 1000), validator)
+        match crate::auth::verify_login_chain_async(chain, payload, Some(now * 1000), validator)
             .await
         {
             Ok(()) => {
@@ -270,7 +300,7 @@ pub async fn require_verified(
         .to_string();
     let now_ms = chrono::Utc::now().timestamp_millis();
     let now = now_ms.div_euclid(1000);
-    check_symmetric_skew(&ts, now, SIGNED_FETCH_EXPIRATION_SECS).map_err(|cause| {
+    check_timestamp_window(&ts, now, SIGNED_FETCH_EXPIRATION_SECS).map_err(|cause| {
         let message = match (&cause, ts.parse::<i64>()) {
             (SignedFetchError::Expired { .. }, Ok(signed)) if signed > now_ms => format!(
                 "Signature timestamp is too far in the future: signature timestamp: {signed}, local timestamp: {now_ms}"
@@ -348,6 +378,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn metadata_traversal_keeps_path_array_and_segment_precedence() {
+        let metadata = serde_json::json!({
+            "rows": [[null, {"nested": [{"SceneId": "value"}]}], {"Nested": {"sceneId": "value"}}],
+            "Other": true
+        });
+        // Every container at a segment is checked before descending further.
+        assert_eq!(
+            first_respelled_key(&metadata, &["rows.nested.sceneId", "other"]).as_deref(),
+            Some("Invalid chain metadata: expected \"nested\", got \"Nested\"")
+        );
+        assert_eq!(
+            first_respelled_key(&metadata, &["other", "rows.nested.sceneId"]).as_deref(),
+            Some("Invalid chain metadata: expected \"other\", got \"Other\"")
+        );
+        let metadata = serde_json::json!({"rows": [[{"SceneId": "first"}], {"SCENEID": "second"}]});
+        assert_eq!(
+            first_respelled_key(&metadata, &["rows.sceneId"]).as_deref(),
+            Some("Invalid chain metadata: expected \"sceneId\", got \"SceneId\"")
+        );
+    }
+
+    #[test]
+    fn metadata_traversal_preserves_unicode_collisions_and_absent_paths() {
+        let metadata = serde_json::json!({"rows": [[{"Ä": 1, "ä": 2}]]});
+        assert_eq!(
+            first_respelled_key(&metadata, &["rows.ä"]).as_deref(),
+            Some("Invalid chain metadata: \"ä\" delivered under 2 spellings")
+        );
+        for metadata in [
+            serde_json::json!({"rows": [null, 1, [], {"other": "SceneId"}]}),
+            serde_json::json!({"rows": [{"sceneId": "UPPERCASE VALUE"}]}),
+            serde_json::json!(null),
+        ] {
+            assert_eq!(
+                first_metadata_key_mismatch(&metadata, &["rows.sceneId"]),
+                None
+            );
+        }
+        let metadata = serde_json::json!({"İ": true});
+        assert!(matches!(
+            first_metadata_key_mismatch(&metadata, &["i\u{307}"]),
+            Some(MetadataKeyMismatch::Spelling {
+                delivered: "İ", ..
+            })
+        ));
+    }
+
+    #[test]
     fn echoed_fragments_are_cut_like_crypto_middleware() {
         assert_eq!(safe("short"), "short");
         let long = "x".repeat(70);
@@ -373,6 +451,59 @@ mod tests {
         assert_eq!(
             first_respelled_key(&metadata, EXPLORER_METADATA_KEYS).as_deref(),
             Some(r#"Invalid chain metadata: "intent" delivered under 2 spellings"#)
+        );
+    }
+
+    /// A chain whose delegation starts with `first_line`, its ephemeral key
+    /// signing `payload`.
+    fn chain_delegating(first_line: &str, payload: &str) -> AuthChain {
+        use crate::auth::{AuthLink, AuthLinkType, Wallet};
+
+        let owner = Wallet::random().unwrap();
+        let ephemeral = Wallet::random().unwrap();
+        let delegation = format!(
+            "{first_line}\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+            ephemeral.address()
+        );
+        vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: owner.address(),
+                signature: None,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEphemeral,
+                signature: Some(owner.sign_message(delegation.as_bytes()).unwrap()),
+                payload: delegation,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaSignedEntity,
+                signature: Some(ephemeral.sign_message(payload.as_bytes()).unwrap()),
+                payload: payload.into(),
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn another_delegation_purpose_is_settled_before_the_next_payload() {
+        let payloads = ["get:/other:1:{}".to_string(), "get:/:1:{}".to_string()];
+        let now = 1_700_000_000;
+
+        let login = chain_delegating("Decentraland Login", &payloads[1]);
+        assert!(
+            validate_over_paths(&login, &payloads, now, None)
+                .await
+                .is_ok()
+        );
+
+        let other = chain_delegating("Decentraland Storage Delegation", &payloads[1]);
+        let refusal = validate_over_paths(&other, &payloads, now, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(refusal.cause, SignedFetchError::MalformedChain { .. }),
+            "{:?}",
+            refusal.cause
         );
     }
 }

@@ -1,15 +1,10 @@
-//! Memoized platform bans for connector admission. External wallet lists live in crate::deny_list.
+//! Platform bans for connector admission. External wallet lists live in crate::deny_list.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::gatekeeper::moderation::{BanStatus, admission_ban};
 use crate::interfaces::AccessPolicy;
-use crate::shared::cache::TtlMap;
 use crate::shared::identity::Address;
-
-const BAN_VERDICT_TTL: Duration = Duration::from_secs(10);
-const BAN_VERDICT_MAX_ENTRIES: usize = 20_000;
 
 pub fn encode_uri_component(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -41,45 +36,22 @@ fn hex_upper(nibble: u8) -> char {
 pub struct BanChecker {
     policy: Arc<dyn AccessPolicy>,
     bans: Arc<dyn BanStatus>,
-    /// Verdicts keyed on the address as asked; a lookup that failed open is
-    /// never stored, so the next caller asks again.
-    verdicts: Arc<TtlMap<String, bool>>,
 }
 
 impl BanChecker {
     pub fn new(policy: Arc<dyn AccessPolicy>, bans: Arc<dyn BanStatus>) -> Arc<Self> {
-        Arc::new(Self {
-            policy,
-            bans,
-            verdicts: Arc::new(TtlMap::bounded(BAN_VERDICT_TTL, BAN_VERDICT_MAX_ENTRIES)),
-        })
+        Arc::new(Self { policy, bans })
     }
 
-    /// Memoized for a few seconds; the sweep uses `is_banned_fresh` instead.
+    /// Reads the store on every call, so a ban issued on any replica refuses the next handshake.
     pub async fn is_banned(&self, address: &str) -> bool {
-        let policy = self.policy.as_ref();
-        self.verdicts
-            .get_or_fetch(address.to_string(), || {
-                Self::lookup(policy, self.bans.as_ref(), address)
-            })
+        Self::lookup(self.policy.as_ref(), self.bans.as_ref(), address)
             .await
             .unwrap_or(false)
     }
 
-    /// Always asks the policy and refreshes the memo with what it said.
-    pub async fn is_banned_fresh(&self, address: &str) -> bool {
-        let policy = self.policy.as_ref();
-        match Self::lookup(policy, self.bans.as_ref(), address).await {
-            Ok(banned) => {
-                self.verdicts.insert(address.to_string(), banned);
-                banned
-            }
-            Err(()) => false,
-        }
-    }
-
     /// A malformed address is never banned (it cannot hold a ban row); a store fault fails open
-    /// exactly as the old HTTP hop did, logged, and is not memoized.
+    /// exactly as the old HTTP hop did, logged.
     async fn lookup(
         policy: &dyn AccessPolicy,
         bans: &dyn BanStatus,
@@ -149,22 +121,47 @@ mod tests {
                 .is_banned("0x0000000000000000000000000000000000000abc")
                 .await
         );
-        assert!(
-            !checker
-                .is_banned_fresh("0x0000000000000000000000000000000000000abc")
-                .await
-        );
     }
 
     #[tokio::test]
-    async fn required_policy_ban_is_enforced_by_cached_and_fresh_checks() {
+    async fn required_policy_ban_is_enforced() {
         let checker = BanChecker::new(
             Arc::new(StubPolicy::default()),
             Arc::new(StubBanStatus(Ok(Some(crate::access::Ban::Platform)))),
         );
         let address = "0x0000000000000000000000000000000000000abc";
         assert!(checker.is_banned(address).await);
-        assert!(checker.is_banned_fresh(address).await);
+    }
+
+    /// Answers "not banned" until `issued` is set, as the store does around a new ban.
+    struct IssuedLater {
+        issued: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait::async_trait]
+    impl BanStatus for IssuedLater {
+        async fn ban(
+            &self,
+            _: &Address,
+            _: Option<&crate::access::SceneBanKey>,
+            _: Option<&str>,
+            _: chrono::NaiveDateTime,
+        ) -> Result<Option<crate::access::Ban>, AuthorityNotEstablished> {
+            Ok(self
+                .issued
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .then_some(crate::access::Ban::Platform))
+        }
+    }
+    #[tokio::test]
+    async fn a_ban_issued_after_a_clean_check_refuses_the_next_check() {
+        let bans = Arc::new(IssuedLater {
+            issued: false.into(),
+        });
+        let checker = BanChecker::new(Arc::new(StubPolicy::default()), bans.clone());
+        let address = "0x0000000000000000000000000000000000000abc";
+        assert!(!checker.is_banned(address).await);
+        bans.issued.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(checker.is_banned(address).await);
     }
 
     struct FailingBans(std::sync::atomic::AtomicUsize);
@@ -173,7 +170,7 @@ mod tests {
         async fn ban(
             &self,
             _: &Address,
-            _: Option<&crate::world_identity::SceneId>,
+            _: Option<&crate::access::SceneBanKey>,
             _: Option<&str>,
             _: chrono::NaiveDateTime,
         ) -> Result<Option<crate::access::Ban>, AuthorityNotEstablished> {
@@ -191,8 +188,7 @@ mod tests {
         let address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         assert!(!checker.is_banned(address).await);
         assert!(!checker.is_banned(address).await);
-        assert!(!checker.is_banned_fresh(address).await);
-        assert_eq!(raw.0.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(raw.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

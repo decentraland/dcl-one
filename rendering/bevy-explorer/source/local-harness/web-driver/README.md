@@ -5,7 +5,10 @@ launches Chrome over the DevTools protocol and gives a test what the standalone'
 and CEF input give it:
 
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
-  app frame and returns what it resolves with, or rejects with the page's message.
+  app frame and returns what it resolves with, or rejects with the page's message. A command whose
+  document is replaced or closed before it answers (a click that loads the page again) rejects at
+  once with the exported `APP_GONE` message; the next command runs in the new document once it is
+  ready.
 - **Trusted input.** `/hud_click`, `/hud_fill`, `/press_key` and `/click_at` (page side:
   `library/explorer-core/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
   events, so the page sees `isTrusted` events.
@@ -24,8 +27,9 @@ node driver.mjs --url <url> [--chrome <path>] [--headed] [--arg <flag>]... [comm
 ```
 
 One JSON line per command, `{"command", "ok", "output"}` or `{"command", "ok": false, "error"}`,
-with the credential of a `/login_identity` or `/hud_login` line (the first word that is neither a
-flag nor a flag's value, an identity valid for days) replaced by `<redacted>` wherever it appears;
+with the credentials of a `/login_identity` or `/hud_login` line (an identity valid for days, found
+by its shape wherever the line puts it: base64 of its JSON, every one on the line, or the JSON
+itself) replaced by `<redacted>` wherever they appear;
 without commands it reads them from stdin, one per line. Exit code 1 if a command failed, 2 for
 a bad command line. On Git Bash for Windows, pass commands on stdin: it rewrites an argument that
 starts with `/`.
@@ -41,9 +45,15 @@ await driver.close()
 ```
 
 `findChrome()` takes `CHROME_PATH`, else the places `local-harness/benchmark` looks. `launch`
-takes `headless` (default true), `args` (more Chrome flags) and `windowSize`. `ready()` waits for
+takes `headless` (default true), `args` (more Chrome flags), `windowSize` and `profile`: a
+directory for Chrome's profile that `close()` leaves in place, so the page's storage and caches
+carry over to the next launch with it (one Chrome at a time). Without it each launch has a
+temporary profile that `close()` removes. `ready()` waits for
 a frame of the page's origin with both `window.engine_console_command` and
-`window.__dclTrustedInput`. `frameTargets()` lists the page and the out-of-process iframes.
+`window.__dclTrustedInput`, and for the page to draw it (see "Wire protocol"); it rejects when its
+`timeout` (default 120 s) passes first. A page that never draws, such as a minimised headed window,
+makes `ready()` reject at that timeout. `frameTargets()` lists the page and the out-of-process
+iframes.
 `DCL_WEB_DRIVER_DEBUG=1` logs what the driver ignores or cannot answer.
 
 `consoleMessages()` is what the page said so far, every frame's: `console.*` calls, uncaught
@@ -79,9 +89,14 @@ It serves a call only from a default (not isolated-world) context of the origin 
 Control 2, Meta 4, Shift 8 in CDP's `modifiers`) until sent with `up`, and are on every event
 between. A key held with Alt, Control or Meta sends no text.
 
-Before the first click on a document the runner takes a screenshot of the page. A frame that has
-only just appeared cannot be hit-tested until its first frame is composited, and a click sent
-earlier is lost (it was, one time in five, with several browsers starting at once).
+The runner takes a screenshot of the page once for each document, which waits for the document's
+first frame. A frame that has only just appeared cannot be hit-tested until its first frame is
+composited, and a click sent earlier is lost (it was, one time in five, with several browsers
+starting at once). `ready()` waits for that screenshot within its own timeout, because a browser's
+first start on a machine can draw its first frame more than 5 s after the page's scripts have run.
+A click from a document `ready()` has not seen waits for it up to 5 s, less than the 10 s the page
+waits for the answer, and is then sent. A document pays that wait one time: later clicks are sent
+at once.
 
 ## Why the frame is offset
 

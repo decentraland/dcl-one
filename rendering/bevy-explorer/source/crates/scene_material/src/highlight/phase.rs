@@ -174,8 +174,10 @@ impl GetFullBatchData for HighlightBatch {
 }
 
 mod uniform {
-    // the ShaderType derive's layout check function is never called
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{math::Vec4, render::render_resource::ShaderType};
 
@@ -358,7 +360,6 @@ pub fn extract_highlight_phases(
     phases.retain(|view, _| live.contains(view));
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn queue_highlight_meshes(
     draw_functions: Res<DrawFunctions<HighlightMaskItem>>,
     mask_pipeline: Res<HighlightMaskPipeline>,

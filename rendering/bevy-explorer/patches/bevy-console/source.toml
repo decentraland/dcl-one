@@ -1,0 +1,13 @@
+name       = "bevy-console"
+upstream   = "https://github.com/makspll/bevy-console"
+commit     = "0750eb7b0dcb052fb8cd5382054d64836cb00372"
+ref        = "v0.14.0"
+origin     = "https://github.com/robtfm/bevy-console"
+origin_rev = "4a48b6bd3b85c87e26d0f80c837cedfc6c4ec34d"
+license    = "MIT"
+paths      = ["."]
+exclude    = [".github"]
+base_tree  = "d465604737d96131b6912532336603b8d0f3ef5c"
+tree       = "2d49d4925be6a85b230a39a26231eb785e503374"
+rev        = "62b94f3c152da9e748d7790c7e9126aed493d327"
+nix_hash   = "sha256-2ycoQJyyW11OqCV/hlSCiMZc/yPiuz9tEujYdD9a04o="

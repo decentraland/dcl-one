@@ -23,7 +23,12 @@ gh api -X PUT "repos/$repo/actions/permissions/selected-actions" \
   -f 'patterns_allowed[]=cachix/install-nix-action@*' \
   -f 'patterns_allowed[]=nix-community/cache-nix-action@*' \
   -f 'patterns_allowed[]=Mozilla-Actions/sccache-action@*' \
-  -f 'patterns_allowed[]=docker/setup-buildx-action@*'
+  -f 'patterns_allowed[]=docker/setup-buildx-action@*' \
+  -f 'patterns_allowed[]=paulhatch/semantic-version@*' \
+  -f 'patterns_allowed[]=peter-evans/find-comment@*' \
+  -f 'patterns_allowed[]=peter-evans/create-or-update-comment@*' \
+  -f 'patterns_allowed[]=nick-fields/retry@*' \
+  -f 'patterns_allowed[]=aws-actions/configure-aws-credentials@*'
 # GitHub only accepts this setting for a public repository: on a private one the call is skipped,
 # and the script is run again once the repository is public.
 if [ "$(gh api "repos/$repo" --jq .private)" = false ]; then

@@ -39,12 +39,19 @@ impl PartitionData {
 /// band the partition decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
+    /// the player's own body, wearables and the emotes they play: few, small, and what the
+    /// player is waiting on, so ahead of the scenes they stand in
+    OwnAvatar,
     /// the scenes the player stands in, portables and global scenes
     Active,
-    /// avatars' bodies and wearables: all before any other scene, nearest avatar first
+    /// the other avatars' bodies, wearables and emotes: all before any other scene, nearest
+    /// avatar first
     Avatar,
     /// the other scenes in range, nearest first
     Scene,
+    /// a scene's stand-in: the scene's files while no live scene holds its hash, after every
+    /// live scene's
+    Lod,
     /// no scene's and no avatar's: NFT images, URL-form fonts, imposter archives
     Other,
     /// a scene that has left while its downloads wait
@@ -63,7 +70,15 @@ pub struct LoadPriority {
 }
 
 impl LoadPriority {
-    /// The player's scenes.
+    /// First: the player's own avatar, whatever its partition.
+    pub const OWN_AVATAR: Self = Self {
+        tier: Tier::OwnAvatar,
+        parcel_distance: 0,
+        is_behind: false,
+        sqr_distance: FloatOrd(0.0),
+    };
+
+    /// The player's scenes: the top of everything but the player's own avatar.
     pub const TOP: Self = Self {
         tier: Tier::Active,
         parcel_distance: 0,
@@ -98,6 +113,14 @@ impl LoadPriority {
     /// The bottom of the avatar tier: an avatar that has no partition yet.
     pub const AVATAR_PENDING: Self = Self {
         tier: Tier::Avatar,
+        parcel_distance: u16::MAX,
+        is_behind: true,
+        sqr_distance: FloatOrd(f32::MAX),
+    };
+
+    /// The bottom of the LOD tier: a stand-in that has no partition yet.
+    pub const LOD_PENDING: Self = Self {
+        tier: Tier::Lod,
         parcel_distance: u16::MAX,
         is_behind: true,
         sqr_distance: FloatOrd(f32::MAX),
@@ -181,9 +204,9 @@ pub fn point_partition(origin: Vec3, camera: Option<(Vec3, Vec3)>, point: Vec3) 
 
 /// The content hashes behind a set of collectible urns, each once, sorted: `resolve` gives a
 /// urn's hash once its pointer is known. What an avatar's downloads are filed under.
-pub fn resolved_hashes<'a>(
-    urns: impl IntoIterator<Item = &'a str>,
-    resolve: impl FnMut(&'a str) -> Option<String>,
+pub fn resolved_hashes<U>(
+    urns: impl IntoIterator<Item = U>,
+    resolve: impl FnMut(U) -> Option<String>,
 ) -> Vec<String> {
     let mut hashes: Vec<String> = urns.into_iter().filter_map(resolve).collect();
     hashes.sort();

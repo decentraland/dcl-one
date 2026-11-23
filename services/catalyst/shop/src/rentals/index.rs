@@ -21,19 +21,16 @@
 //! (`chain_walk::is_ready`); before that a listing is `open` as posted, and
 //! the rent quote (`shop::mana`) checks the nonces on chain instead.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::{SolType, sol_data};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::{Value, json};
 use sqlx::{PgConnection, PgPool, Row};
 
-use crate::jobs::{Jobs, PeriodicCfg};
-use crate::land_authz::indexer::RpcLog;
-use crate::market::MarketplaceState;
+use crate::chain_index::rpc::RpcLog;
 use crate::market::chain_walk::{self, ChainIndex, ChainNet, LogGroup};
 
 pub const INDEXER_RENTALS: &str = "rentals";
@@ -104,17 +101,6 @@ pub struct DecodeError {
     pub index: i32,
     pub what: &'static str,
     pub why: String,
-}
-
-fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 fn lower(a: Address) -> String {
@@ -438,6 +424,7 @@ pub async fn fold(
     venue: &str,
     since: Option<i64>,
     now: DateTime<Utc>,
+    owner: &chain_walk::Owner,
 ) -> anyhow::Result<u64> {
     let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
@@ -447,6 +434,7 @@ pub async fn fold(
     chain_walk::analyze_if_stale(&mut tx, "shop", "rental_event", since < 0).await?;
     let verdicts = changed_verdicts(&mut tx, venue, since).await?;
     let written = apply_verdicts(&mut tx, &verdicts, now.naive_utc()).await?;
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(written)
 }
@@ -528,11 +516,42 @@ impl ChainIndex for RentalsIndex {
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let written = fold(pool, &self.venue, since, Utc::now()).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let written = fold(pool, &self.venue, since, Utc::now(), owner).await?;
         tracing::info!(venue = %self.venue, listings = written, "rentals index: folded");
         Ok(true)
     }
+}
+
+/// Whether this index walks `venue`: only the mainnet Rentals contract.
+pub fn walks(venue: &str) -> bool {
+    venue.eq_ignore_ascii_case(RENTALS_MAINNET)
+}
+
+/// The asset's most recent rent at `venue`: its lessor and when it ends
+/// (unix seconds; the rentals subgraph's `endsAt`, block time plus days).
+pub async fn latest_rent(
+    pool: &PgPool,
+    venue: &str,
+    contract_address: &str,
+    token_id: &str,
+) -> sqlx::Result<Option<(String, i64)>> {
+    sqlx::query_as(
+        "SELECT signer, block_time + rental_days::bigint * 86400 FROM shop.rental_event \
+         WHERE rentals_address = $1 AND contract_address = $2 AND token_id = $3::numeric AND kind = 'rented' \
+         ORDER BY block_number DESC, log_index DESC LIMIT 1",
+    )
+    .bind(venue.to_ascii_lowercase())
+    .bind(contract_address.to_ascii_lowercase())
+    .bind(token_id)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Whether the statuses may be trusted at `now` (the cursor is published).
@@ -551,64 +570,16 @@ pub async fn status(pool: &PgPool) -> Value {
     json!({
         "ethereum": c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds,
+            "ready": chain_walk::is_ready(&c, Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at,
         })),
         "venue": RENTALS_MAINNET,
     })
 }
 
-/// Attaches `rentals-index` when `enabled` (`SHOP_RENTALS_INDEX_ENABLED`)
-/// and a chain-1 JSON-RPC endpoint is configured (`TRADE_RPC_URLS` 1=, or
-/// `ETH_RPC_URL` on mainnet), on the market indexes' cadence and budget.
-/// Run by `catalyst index`; a fresh cursor walks from the contract's deployment.
-pub fn spawn_job(market: &Arc<MarketplaceState>, jobs: &Jobs, enabled: bool) {
-    if !enabled {
-        tracing::info!(
-            "rentals index off (SHOP_RENTALS_INDEX_ENABLED=false): rental listings keep the status they were posted with"
-        );
-        return;
-    }
-    // The venue is mainnet's: off mainnet ETH_RPC_URL serves another chain.
-    let Some(url) = market.venue_rpc_url(1) else {
-        tracing::warn!(
-            "rentals index enabled but no chain-1 JSON-RPC endpoint is configured (TRADE_RPC_URLS 1=, or ETH_RPC_URL on mainnet): it stays off"
-        );
-        return;
-    };
-    let settings = market.settings.market.indexes.clone();
-    let market = market.clone();
-    jobs.spawn_periodic_leased(
-        "rentals-index",
-        PeriodicCfg::every(settings.interval)
-            .with_jitter(Duration::from_secs(20))
-            .with_error_backoff(Duration::from_secs(1800)),
-        move |ctx| {
-            let (market, url, settings) = (market.clone(), url.clone(), settings.clone());
-            async move {
-                let rpc = crate::land_authz::indexer::Rpc::at(&market.http, &url);
-                crate::market::ensure_chain(&rpc, 1).await?;
-                let progress = |m: String| ctx.progress(m);
-                let outcome = chain_walk::run_pass(
-                    &market.pool,
-                    &rpc,
-                    &RentalsIndex::mainnet(),
-                    &settings,
-                    Some(&ctx.cancel),
-                    &progress,
-                )
-                .await?;
-                tracing::info!(summary = %outcome.summary(), "rentals index pass");
-                ctx.progress(outcome.summary());
-                Ok(())
-            }
-        },
-    );
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::keccak256;
+    use alloy_primitives::{U256, keccak256};
     use alloy_sol_types::SolValue;
 
     #[test]
@@ -1067,8 +1038,19 @@ pub(crate) mod tests {
             .await
             .unwrap();
         drop(conn);
+        let owner = chain_walk::test_owner(
+            &pool,
+            &RentalsIndex::mainnet(),
+            &chain_walk::IndexSettings::default(),
+        )
+        .await;
 
-        assert_eq!(fold(&pool, &venue, Some(99), Utc::now()).await.unwrap(), 3);
+        assert_eq!(
+            fold(&pool, &venue, Some(99), Utc::now(), &owner)
+                .await
+                .unwrap(),
+            3
+        );
         assert_eq!(
             status_of(&pool, rented).await,
             ("executed".into(), Some(TENANT.into()), Some(7), true)
@@ -1091,13 +1073,17 @@ pub(crate) mod tests {
             .unwrap();
         drop(conn);
         assert_eq!(
-            fold(&pool, &venue, Some(102), Utc::now()).await.unwrap(),
+            fold(&pool, &venue, Some(102), Utc::now(), &owner)
+                .await
+                .unwrap(),
             1,
             "only the claimed one moves"
         );
         assert_eq!(status_of(&pool, rented).await.0, "claimed");
         assert_eq!(
-            fold(&pool, &venue, Some(110), Utc::now()).await.unwrap(),
+            fold(&pool, &venue, Some(110), Utc::now(), &owner)
+                .await
+                .unwrap(),
             0,
             "nothing new past the fold's block"
         );
@@ -1105,7 +1091,10 @@ pub(crate) mod tests {
         // A reorg rewind: the rent and the claim vanish; the rebuild reopens
         // the listing (the venue's other listings' verdicts still hold).
         sqlx::query("DELETE FROM shop.rental_event WHERE network = 'ethereum' AND contract_address = $1 AND token_id = 1").bind(&land).execute(&pool).await.unwrap();
-        assert_eq!(fold(&pool, &venue, None, Utc::now()).await.unwrap(), 1);
+        assert_eq!(
+            fold(&pool, &venue, None, Utc::now(), &owner).await.unwrap(),
+            1
+        );
         assert_eq!(status_of(&pool, rented).await.0, "open");
         assert_eq!(status_of(&pool, bumped).await.0, "cancelled");
 

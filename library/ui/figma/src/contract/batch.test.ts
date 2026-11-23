@@ -1,5 +1,5 @@
 import { readdir, rm } from 'node:fs/promises'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveBatch } from './batch.js'
 import { findMappingFiles } from './library.js'
 
@@ -13,6 +13,7 @@ import { buttonSet, makeLibrary, mappingSource } from './test-fixtures.js'
 const created: string[] = []
 
 afterEach(async () => {
+  vi.resetAllMocks()
   await Promise.all(created.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
@@ -28,12 +29,21 @@ async function library() {
 }
 
 describe('resolveBatch', () => {
-  describe('when the batch mixes resolvable, unmapped and unknown entries', () => {
-    it('should answer every entry in input order and count them', async () => {
-      const { root, mappingRoot } = await library()
-      const before = (await readdir(root, { recursive: true })).sort()
-      const unmapped = { ...buttonSet, setId: '5:5', name: 'Badge', variants: [] }
+  let root: string
+  let mappingRoot: string
+  beforeEach(async () => {
+    ;({ root, mappingRoot } = await library())
+  })
 
+  describe('when the batch mixes resolvable, unmapped and unknown entries', () => {
+    let before: string[]
+    let unmapped: typeof buttonSet
+    beforeEach(async () => {
+      before = (await readdir(root, { recursive: true })).sort()
+      unmapped = { ...buttonSet, setId: '5:5', name: 'Badge', variants: [] }
+    })
+
+    it('should answer every entry in input order and count them', async () => {
       const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet, unmapped] }, [
         { nodeId: '1:1', variantProperties: { Kind: 'Secondary' } },
         { name: 'Badge' },
@@ -57,56 +67,54 @@ describe('resolveBatch', () => {
   })
 
   describe('when entries carry booleanProperties', () => {
-    it('should accept them and keep entries that differ only in a boolean apart', async () => {
-      const { mappingRoot } = await library()
+    describe('and every boolean value is a string', () => {
+      it('should accept them and keep entries that differ only in a boolean apart', async () => {
+        const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+          {
+            name: 'Button',
+            variantProperties: { Kind: 'Primary' },
+            booleanProperties: { Icon: 'true' }
+          },
+          {
+            name: 'Button',
+            variantProperties: { Kind: 'Primary' },
+            booleanProperties: { Icon: 'false' }
+          },
+          {
+            name: 'Button',
+            variantProperties: { Kind: 'Primary' },
+            booleanProperties: { Icon: 'true' }
+          }
+        ])
 
-      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
-        {
-          name: 'Button',
-          variantProperties: { Kind: 'Primary' },
-          booleanProperties: { Icon: 'true' }
-        },
-        {
-          name: 'Button',
-          variantProperties: { Kind: 'Primary' },
-          booleanProperties: { Icon: 'false' }
-        },
-        {
-          name: 'Button',
-          variantProperties: { Kind: 'Primary' },
-          booleanProperties: { Icon: 'true' }
-        }
-      ])
-
-      expect('results' in batch && batch.results.map((entry) => entry.repeats)).toEqual([
-        undefined,
-        undefined,
-        0
-      ])
-      expect('summary' in batch && batch.summary).toMatchObject({ requested: 3, resolved: 3 })
+        expect('results' in batch && batch.results.map((entry) => entry.repeats)).toEqual([
+          undefined,
+          undefined,
+          0
+        ])
+        expect('summary' in batch && batch.summary).toMatchObject({ requested: 3, resolved: 3 })
+      })
     })
 
-    it('should fail an entry whose booleanProperties hold a non-string value', async () => {
-      const { mappingRoot } = await library()
+    describe('and a boolean value is not a string', () => {
+      it('should fail that entry with invalid-input', async () => {
+        const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+          {
+            name: 'Button',
+            variantProperties: { Kind: 'Primary' },
+            booleanProperties: { Icon: true }
+          }
+        ])
 
-      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
-        {
-          name: 'Button',
-          variantProperties: { Kind: 'Primary' },
-          booleanProperties: { Icon: true }
-        }
-      ])
-
-      expect('summary' in batch && batch.summary.failed).toEqual([
-        { index: 0, code: 'invalid-input' }
-      ])
+        expect('summary' in batch && batch.summary.failed).toEqual([
+          { index: 0, code: 'invalid-input' }
+        ])
+      })
     })
   })
 
   describe('when every entry resolves without a capture', () => {
     it('should pass', async () => {
-      const { mappingRoot } = await library()
-
       const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
         { name: 'Button', variantProperties: { Kind: 'Primary' } },
         { name: 'button', variantProperties: { Kind: 'Secondary' } }
@@ -120,10 +128,11 @@ describe('resolveBatch', () => {
   })
 
   describe('when the batch has several distinct entries', () => {
-    it('should read the mappings once for the whole batch', async () => {
-      const { mappingRoot } = await library()
+    beforeEach(() => {
       vi.mocked(findMappingFiles).mockClear()
+    })
 
+    it('should read the mappings once for the whole batch', async () => {
       await resolveBatch({ mappingRoot, figmaSets: [] }, [
         { name: 'Button', variantProperties: { Kind: 'Primary' } },
         { name: 'Button', variantProperties: { Kind: 'Secondary' } },
@@ -155,8 +164,6 @@ describe('resolveBatch', () => {
     ['null', null]
   ])('when the batch is %s', (_label, entries) => {
     it('should refuse the whole batch with invalid-input', async () => {
-      const { mappingRoot } = await library()
-
       expect(await resolveBatch({ mappingRoot, figmaSets: [] }, entries)).toMatchObject({
         ok: false,
         errors: [expect.objectContaining({ code: 'invalid-input' })]
@@ -172,8 +179,6 @@ describe('resolveBatch', () => {
     ['neither id nor name', { variantProperties: { Kind: 'Primary' } }]
   ])('when an entry has %s', (_label, entry) => {
     it('should fail only that entry with invalid-input', async () => {
-      const { mappingRoot } = await library()
-
       const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [
         { nodeId: '1:1' },
         entry
@@ -187,36 +192,34 @@ describe('resolveBatch', () => {
   })
 
   describe('when an entry repeats an earlier one', () => {
-    it('should share the earlier answer with an identical repeat and name the first entry', async () => {
-      const { mappingRoot } = await library()
+    describe('and the repeat is identical', () => {
+      it('should share the earlier answer and name the first entry', async () => {
+        const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [
+          { nodeId: '1:1', variantProperties: { Kind: 'Primary', Blocked: 'No' } },
+          { variantProperties: { Blocked: 'No', Kind: 'Primary' }, nodeId: '1:1' }
+        ])
 
-      const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [
-        { nodeId: '1:1', variantProperties: { Kind: 'Primary', Blocked: 'No' } },
-        { variantProperties: { Blocked: 'No', Kind: 'Primary' }, nodeId: '1:1' }
-      ])
-
-      if (!('results' in batch)) throw new Error('expected per-entry results')
-      expect(batch.ok).toBe(true)
-      expect(batch.results[1]).toMatchObject({ repeats: 0, result: { ok: true } })
-      expect(batch.summary).toMatchObject({ requested: 2, resolved: 2, failed: [] })
+        if (!('results' in batch)) throw new Error('expected per-entry results')
+        expect(batch.ok).toBe(true)
+        expect(batch.results[1]).toMatchObject({ repeats: 0, result: { ok: true } })
+        expect(batch.summary).toMatchObject({ requested: 2, resolved: 2, failed: [] })
+      })
     })
 
-    it('should treat 1-1 and 1:1 as the same node', async () => {
-      const { mappingRoot } = await library()
+    describe('and the repeat spells the node id with a dash', () => {
+      it('should treat 1-1 and 1:1 as the same node', async () => {
+        const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [
+          { nodeId: '1:1' },
+          { nodeId: '1-1' }
+        ])
 
-      const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [
-        { nodeId: '1:1' },
-        { nodeId: '1-1' }
-      ])
-
-      expect('results' in batch && batch.results[1]!.repeats).toBe(0)
+        expect('results' in batch && batch.results[1]!.repeats).toBe(0)
+      })
     })
   })
 
   describe('when a refused entry carries a field the batch does not accept', () => {
     it('should echo the field name, never its value', async () => {
-      const { mappingRoot } = await library()
-
       const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
         { name: 'Button', componentKey: 'fake-component-key-value' }
       ])

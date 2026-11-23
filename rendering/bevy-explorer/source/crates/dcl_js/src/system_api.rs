@@ -16,12 +16,15 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
-    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
-    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
-    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
-    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
-    VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
+    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, ItemPurchaseRequest, ItemPurchaseState,
+    ListenedCommunity, LiveSceneInfo, LobbyStage, MapPinInfo, OutfitsData, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, PlatformBanNotice, PortableInfo, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetAvatarResult,
+    SetItemPurchaseState, SetPermanentPermission, SetSinglePermission, SystemApi,
+    TextureOptimizationStatus, VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState,
+    WorldAccessEvent, WorldAccessVerdict,
 };
 use tokio::sync::Notify;
 
@@ -231,19 +234,36 @@ pub async fn op_kernel_fetch_headers(
 
 pub async fn op_set_avatar(
     state: Rc<RefCell<impl State>>,
+    owner: String,
     avatar: SetAvatarData,
-) -> Result<u32, anyhow::Error> {
+) -> Result<SetAvatarResult, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("setAvatar is only available to the system scene");
+    }
     let (sx, rx) = RpcResultSender::channel();
 
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetAvatar(avatar, sx))?;
+        .send(SystemApi::SetAvatar(owner, avatar, sx))?;
 
+    Ok(rx.await?)
+}
+
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::DeployOutfits(address, outfits, sx))?;
     rx.await?.map_err(|e| anyhow::anyhow!(e))
 }
 
-pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
+pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> Result<String, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
     state
@@ -252,14 +272,11 @@ pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
         .send(SystemApi::GetNativeInput(sx))
         .unwrap();
 
-    let identifier = rx.await.unwrap();
-    serde_json::to_string(&identifier)
-        .unwrap()
-        .strip_prefix("\"")
-        .unwrap()
-        .strip_suffix("\"")
-        .unwrap()
-        .to_owned()
+    let identifier = rx.await?;
+    match serde_json::to_value(identifier)? {
+        serde_json::Value::String(label) => Ok(label),
+        other => Err(anyhow::anyhow!("input identifier is not a string: {other}")),
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -421,11 +438,62 @@ pub async fn op_get_satellite_view(
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_satellite_tile(
+    state: Rc<RefCell<impl State>>,
+    path: String,
+) -> Result<String, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetSatelliteTile(path, sx))?;
+
+    rx.await
+        .map_err(|e| anyhow::anyhow!(e))?
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_world_access(
+    state: Rc<RefCell<impl State>>,
+    world: String,
+) -> Result<WorldAccessVerdict, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetWorldAccess(world, sx))?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub fn op_set_lobby_stage(state: Rc<RefCell<impl State>>, stage: Option<LobbyStage>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetLobbyStage(stage))
+        .unwrap();
+}
+
 pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: Vector2) {
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetHomeScene(HomeScene { realm, parcel }))
+        .send(SystemApi::SetHomeScene(HomeScene {
+            realm,
+            parcel,
+            pinned: true,
+            pinnable: true,
+        }))
+        .unwrap();
+}
+
+pub fn op_clear_home_scene(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::ClearHomeScene)
         .unwrap();
 }
 
@@ -588,6 +656,21 @@ pub fn op_send_chat(state: Rc<RefCell<impl State>>, message: String, channel: St
         .unwrap();
 }
 
+pub fn op_set_chat_bubble_text(
+    state: Rc<RefCell<impl State>>,
+    message_id: String,
+    message: String,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetChatBubbleText {
+            message_id,
+            message,
+        })
+        .unwrap();
+}
+
 pub async fn op_get_chat_reaction_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -656,9 +739,8 @@ pub async fn op_read_bridge_stream(
     Ok(read_stream(state, rid).await.unwrap_or_default())
 }
 
-/// Any user's full profile (own, nearby, or remote) as the engine holds it, resolved through the
-/// same cache and fetch cascade as nametags and `getPlayerData` — but unlike the latter, not
-/// squeezed into the SDK's `UserData`, so `extra_fields`, `name_color` and emotes survive.
+/// The local player's last confirmed profile, or a nearby or remote player's full profile
+/// resolved through the same cache and fetch cascade as nametags and `getPlayerData`.
 /// Rejects once the cascade has concluded with nothing.
 /// Only the system scene may call it (the web worker exposes every op to every scene): other
 /// scenes read players through `getPlayerData`.
@@ -677,9 +759,9 @@ pub async fn op_get_user_profile(
 
     state
         .borrow_mut()
-        .borrow_mut::<RpcCalls>()
-        .push(RpcCall::GetUserData {
-            user: Some(address),
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetUserProfile {
+            address,
             response: sx,
         })?;
 
@@ -791,6 +873,81 @@ pub fn op_set_single_permission(state: Rc<RefCell<impl State>>, id: usize, allow
         .unwrap();
 }
 
+pub async fn op_get_item_purchase_request_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetItemPurchaseRequestStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_item_purchase_request_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ItemPurchaseRequest>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_set_item_purchase_state(
+    state: Rc<RefCell<impl State>>,
+    id: u32,
+    purchase_state: ItemPurchaseState,
+) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetItemPurchaseState(SetItemPurchaseState {
+            id,
+            state: purchase_state,
+        }))
+        .unwrap();
+}
+
+pub async fn op_get_portables_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPortablesStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_portables_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<PortableInfo>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_map_pins_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetMapPinsStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_map_pins_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<MapPinInfo>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
 pub async fn op_get_world_access_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -808,6 +965,26 @@ pub async fn op_read_world_access_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<WorldAccessEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_platform_ban_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPlatformBanStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_platform_ban_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<PlatformBanNotice>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 
@@ -944,6 +1121,43 @@ pub async fn op_read_voice_stream(
     Ok(read_stream(state, rid).await)
 }
 
+pub async fn op_set_nearby_muted(
+    state: Rc<RefCell<impl State>>,
+    address: String,
+    muted: bool,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetNearbyMuted(address, muted, sx))?;
+
+    rx.await
+        .map_err(|e| anyhow::anyhow!(e))?
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_nearby_mute_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetNearbyMuteStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_nearby_mute_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<Vec<String>>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
 pub async fn op_get_hover_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -962,6 +1176,36 @@ pub async fn op_read_hover_stream(
     rid: u32,
 ) -> Result<Option<HoverEvent>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sender, receiver) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), receiver);
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetConnectivityStream(sender))
+        .unwrap();
+    rid
+}
+
+pub async fn op_read_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ConnectivitySnapshot>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_connectivity_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<ConnectivitySnapshot>(&mut *state.borrow_mut(), rid);
+}
+
+pub fn op_retry_connectivity(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::RetryConnectivity)
+        .unwrap();
 }
 
 pub async fn op_get_proximity_stream(state: Rc<RefCell<impl State>>) -> u32 {
@@ -1061,6 +1305,26 @@ pub async fn op_read_analytics_event_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<AnalyticsEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetTextureOptimizationStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 
@@ -1472,11 +1736,14 @@ pub async fn op_read_community_connectivity_stream(
     Ok(read_stream(state, rid).await)
 }
 
-pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+pub fn op_set_community_channels(
+    state: Rc<RefCell<impl State>>,
+    communities: Vec<ListenedCommunity>,
+) {
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetCommunityChannels(ids))
+        .send(SystemApi::SetCommunityChannels(communities))
         .unwrap();
 }
 
@@ -1553,7 +1820,7 @@ mod profile_read_tests {
     use crate::test_state::TestState;
     use futures_lite::future::{block_on, poll_once};
 
-    fn scene(system: bool) -> Rc<RefCell<TestState>> {
+    fn ordinary_scene() -> Rc<RefCell<TestState>> {
         let mut state = TestState::default();
         state.put(RpcCalls::default());
         state.put(CrdtContext::new(
@@ -1564,29 +1831,80 @@ mod profile_read_tests {
             false,
             false,
         ));
-        if system {
-            state.put(SuperUserScene(tokio::sync::mpsc::unbounded_channel().0));
-        }
         Rc::new(RefCell::new(state))
     }
 
     #[test]
     fn the_system_scene_reads_profiles() {
-        let state = scene(true);
-        let full = op_get_user_profile(state.clone(), "0x1".to_owned());
-        assert!(block_on(poll_once(full)).is_none());
+        let state = ordinary_scene();
+        let (system, mut events) = tokio::sync::mpsc::unbounded_channel();
+        state.borrow_mut().put(SuperUserScene(system));
+        let mut full = std::pin::pin!(op_get_user_profile(state.clone(), "0x1".to_owned()));
+        assert!(block_on(poll_once(full.as_mut())).is_none());
+        assert!(state.borrow().borrow::<RpcCalls>().is_empty());
+        let SystemApi::GetUserProfile { address, response } = events.try_recv().unwrap() else {
+            panic!("expected a profile read on the system channel");
+        };
+        assert_eq!(address, "0x1");
+        let profile = SerializedProfile::default();
+        response.send(Ok(profile.clone()));
+        assert_eq!(block_on(full).unwrap(), profile);
+
         let compact = op_get_compact_profiles(state.clone(), vec!["0x1".to_owned()]);
         assert!(block_on(poll_once(compact)).is_none());
 
         let state = state.borrow();
         let calls = state.borrow::<RpcCalls>();
-        assert!(matches!(calls[0], RpcCall::GetUserData { .. }));
-        assert!(matches!(calls[1], RpcCall::GetCompactProfiles { .. }));
+        assert!(matches!(calls[0], RpcCall::GetCompactProfiles { .. }));
+    }
+
+    #[test]
+    fn a_save_preserves_the_observed_owner_and_serializes_a_committed_profile_on_failure() {
+        let state = ordinary_scene();
+        let (system, mut events) = tokio::sync::mpsc::unbounded_channel();
+        state.borrow_mut().put(SuperUserScene(system));
+        let owner = "0xabcdef0000000000000000000000000000000001";
+        let patch = serde_json::from_value(serde_json::json!({})).unwrap();
+        let mut save = std::pin::pin!(op_set_avatar(state, owner.to_owned(), patch));
+        assert!(block_on(poll_once(save.as_mut())).is_none());
+        let SystemApi::SetAvatar(observed, _, response) = events.try_recv().unwrap() else {
+            panic!("expected a profile edit");
+        };
+        assert_eq!(observed, owner);
+        let profile = SerializedProfile {
+            eth_address: owner.to_owned(),
+            name: "Saved name".to_owned(),
+            version: 3,
+            ..Default::default()
+        };
+        response.send(Err(system_bridge::SetAvatarError {
+            message: "deploy failed".to_owned(),
+            account_changed: false,
+            profile: Some(Box::new(profile.clone())),
+        }));
+        let result = block_on(save).unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({ "Err": { "message": "deploy failed", "accountChanged": false, "profile": profile } })
+        );
+    }
+
+    #[test]
+    fn ordinary_identity_reads_keep_the_scene_profile() {
+        let state = ordinary_scene();
+        let own = crate::user_identity::op_get_user_data(state.clone());
+        let player = crate::user_identity::op_get_player_data(state.clone(), "0x1".into());
+        assert!(block_on(poll_once(own)).is_none());
+        assert!(block_on(poll_once(player)).is_none());
+        let state = state.borrow();
+        let calls = state.borrow::<RpcCalls>();
+        assert!(matches!(&calls[0], RpcCall::GetUserData { user: None, .. }));
+        assert!(matches!(&calls[1], RpcCall::GetUserData { user: Some(id), .. } if id == "0x1"));
     }
 
     #[test]
     fn an_ordinary_scene_reads_no_profiles() {
-        let state = scene(false);
+        let state = ordinary_scene();
         let address = || "0x1".to_owned();
         assert!(block_on(op_get_user_profile(state.clone(), address())).is_err());
         assert!(block_on(op_get_compact_profiles(state.clone(), vec![address()])).is_err());
@@ -1606,6 +1924,45 @@ mod stream_tests {
         let mut state = TestState::default();
         state.put(SuperUserScene(sx));
         (Rc::new(RefCell::new(state)), rx)
+    }
+
+    #[test]
+    fn connectivity_reads_and_retry_use_the_trusted_system_channel() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let snapshot = ConnectivitySnapshot {
+            connection_lost: true,
+            ..Default::default()
+        };
+        sender.send(snapshot.clone()).unwrap();
+        assert_eq!(
+            block_on(op_read_connectivity_stream(state.clone(), rid)).unwrap(),
+            Some(snapshot)
+        );
+        op_retry_connectivity(state.clone());
+        assert!(matches!(
+            system.try_recv(),
+            Ok(SystemApi::RetryConnectivity)
+        ));
+        drop(state);
+        assert!(sender.is_closed());
+    }
+
+    #[test]
+    fn closing_connectivity_wakes_its_parked_read() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let mut parked = Box::pin(op_read_connectivity_stream(state.clone(), rid));
+        assert!(block_on(poll_once(&mut parked)).is_none());
+        op_close_connectivity_stream(state.clone(), rid);
+        assert!(block_on(parked).unwrap().is_none());
+        assert!(sender.is_closed());
     }
 
     // what the engine does with each request: keep the sender

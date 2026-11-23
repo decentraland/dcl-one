@@ -63,6 +63,34 @@ fn is_default_pointer(address: &str) -> bool {
     address.starts_with("default")
 }
 
+/// Distinct pointers looked up in one entity read by the uncapped profile
+/// routes (`/profiles/metadata` here and on the Registry host): bounds the
+/// one `POST /entities/active` a read-through node sends upstream.
+pub(super) const PROFILE_LOOKUP_CHUNK: usize = 1000;
+
+/// Counts profile answers that left something out because a lookup layer
+/// failed, by `route` and `layer` (`entities`, `ownership`): those answers
+/// are `200`s, as the Registry's, so 5xx alerting does not see them.
+pub(super) const PROFILE_LOOKUP_FAILURES: &str = "profiles_lookup_failures_total";
+
+pub(super) fn count_lookup_failure(route: &'static str, layer: &'static str) {
+    metrics::counter!(PROFILE_LOOKUP_FAILURES, "route" => route, "layer" => layer).increment(1);
+}
+
+/// A pointer that can name a profile: an address (`0x` and 40 hex digits,
+/// lowercased by the caller) or `default` followed by one to three digits.
+/// The body bounds address lookups; the default namespace has 1,110 distinct
+/// spellings. Other nonempty strings remain valid input but are not looked up.
+pub(super) fn is_profile_pointer(pointer: &str) -> bool {
+    let address = pointer
+        .strip_prefix("0x")
+        .is_some_and(|hex| hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
+    let default = pointer
+        .strip_prefix("default")
+        .is_some_and(|n| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit()));
+    address || default
+}
+
 /// `splitUrnAndTokenId`: a seven-part non-third-party URN ends in its token id.
 pub(crate) fn split_urn_and_token_id(urn: &str) -> (&str, Option<&str>) {
     let segment_count = urn.split(':').count();
@@ -178,8 +206,21 @@ fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens
                 })
                 .collect(),
         };
+        let validated = validated.into_iter().map(normalize_slot).collect();
         avatar_obj.insert("emotes".to_string(), Value::Array(validated));
     }
+}
+
+/// An emote's or outfit's non-negative integral `slot` in float form (`1.0`,
+/// `1e0`, `1e10`), served as the integer the reference's JSON round trip emits.
+pub(super) fn normalize_slot(mut entry: Value) -> Value {
+    if let Some(slot) = entry.get_mut("slot")
+        && !slot.is_u64()
+        && let Some(n) = catalyst_shared::json_number::as_integral_u64(slot)
+    {
+        *slot = Value::from(n);
+    }
+    entry
 }
 
 /// Every non-base wearable the profile's avatars wear, for the third-party check.
@@ -541,6 +582,20 @@ enum Failure {
 }
 
 impl Failure {
+    fn layer(&self) -> &'static str {
+        match self {
+            Failure::Db => "entities",
+            Failure::Reader(_) => "ownership",
+        }
+    }
+
+    fn log(&self, context: &str) {
+        match self {
+            Failure::Db => tracing::warn!("{context}: profile read failed"),
+            Failure::Reader(e) => tracing::warn!(error = %e, "{context}: ownership reader failed"),
+        }
+    }
+
     fn into_response(self) -> Response {
         match self {
             Failure::Db => lambdas_internal_error(),
@@ -792,19 +847,31 @@ pub struct ProfileMetadata {
 }
 
 /// `None` for a profile without an avatar, where upstream's mapper would throw.
-pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<ProfileMetadata> {
-    let avatar = profile.get("avatars")?.as_array()?.first()?;
+/// The thumbnail is `thumbnail_url` when given, else the first avatar's
+/// `face256` snapshot.
+pub fn profile_metadata(
+    pointer: &str,
+    profile: &Value,
+    thumbnail_url: Option<&str>,
+) -> Option<ProfileMetadata> {
+    let avatar = profile
+        .get("avatars")?
+        .as_array()?
+        .first()
+        .filter(|avatar| avatar.is_object())?;
     let field = |key: &str| avatar.get(key).cloned();
+    let thumbnail_url = thumbnail_url.unwrap_or_else(|| {
+        avatar
+            .pointer("/avatar/snapshots/face256")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    });
     Some(ProfileMetadata {
         pointer: pointer.to_string(),
         has_claimed_name: field("hasClaimedName"),
         name: field("name"),
         name_color: field("nameColor"),
-        thumbnail_url: avatar
-            .pointer("/avatar/snapshots/face256")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        thumbnail_url: thumbnail_url.to_string(),
     })
 }
 
@@ -829,9 +896,10 @@ fn unique_pointers(ids: &[String]) -> Vec<String> {
 /// node's processed profiles (the same ownership filtering and claimed-name
 /// check as `profiles`, so the compact and full answers agree). `ids` must be
 /// an array of non-empty strings; a body that is not JSON is the bare 500
-/// `request.json()` throws into. Unlike the registry, which reads precomputed
-/// rows, every id here costs an ownership pass, so the distinct ids are
-/// capped at `PROFILE_IDS_MAX` as on `/lambdas/profiles`.
+/// `request.json()` throws into. As the registry, the ids are not capped and
+/// a failed read answers `200` with what was found: only ids that can name a
+/// profile ([`is_profile_pointer`]) are looked up, [`PROFILE_LOOKUP_CHUNK`] at
+/// a time, and a chunk whose read fails is left out, never served unvalidated.
 pub async fn profiles_metadata(
     State(state): State<SharedState>,
     body: axum::body::Bytes,
@@ -846,21 +914,25 @@ pub async fn profiles_metadata(
     else {
         return bad_request(METADATA_IDS_MSG);
     };
-    let pointers = unique_pointers(&ids);
-    if pointers.len() > PROFILE_IDS_MAX {
-        return early_profiles_response(ProfileIdsCheck::TooMany)
-            .expect("TooMany is an early response");
-    }
-    match processed_profiles(&state, &pointers).await {
-        Ok(found) => {
-            let compact: Vec<ProfileMetadata> = found
-                .iter()
-                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile))
-                .collect();
-            Json(compact).into_response()
+    let pointers: Vec<String> = unique_pointers(&ids)
+        .into_iter()
+        .filter(|pointer| is_profile_pointer(pointer))
+        .collect();
+    let mut compact: Vec<ProfileMetadata> = Vec::new();
+    for chunk in pointers.chunks(PROFILE_LOOKUP_CHUNK) {
+        match processed_profiles(&state, chunk).await {
+            Ok(found) => compact.extend(
+                found
+                    .iter()
+                    .filter_map(|(pointer, profile)| profile_metadata(pointer, profile, None)),
+            ),
+            Err(failure) => {
+                failure.log("profiles/metadata: answering what was found");
+                count_lookup_failure("lambdas_profiles_metadata", failure.layer());
+            }
         }
-        Err(f) => f.into_response(),
     }
+    Json(compact).into_response()
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
@@ -882,6 +954,35 @@ pub async fn profile_alias(State(state): State<SharedState>, Path(id): Path<Stri
 
 #[cfg(test)]
 mod tests {
+    /// Only an address or a curated `default<n>` look is looked up by the
+    /// uncapped routes: anything else cannot name a profile.
+    #[test]
+    fn profile_pointers_are_addresses_or_default_looks() {
+        for pointer in [
+            "0x0000000000000000000000000000000000000000",
+            "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "default1",
+            "default160",
+            "default000",
+            "default999",
+        ] {
+            assert!(is_profile_pointer(pointer), "{pointer}");
+        }
+        for pointer in [
+            "a0",
+            "0x",
+            "0xabc",
+            "0x00000000000000000000000000000000000000000",
+            "0xgggggggggggggggggggggggggggggggggggggggg",
+            "default",
+            "default1000",
+            "defaultx",
+            "bafkreiexample",
+        ] {
+            assert!(!is_profile_pointer(pointer), "{pointer}");
+        }
+    }
+
     use super::*;
     use std::sync::Arc;
 
@@ -919,7 +1020,7 @@ mod tests {
         let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
             pool.clone(),
             storage,
-            reqwest::Client::new(),
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
             vec![source],
             None,
             crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
@@ -954,6 +1055,127 @@ mod tests {
         let resp = super::super::lambdas_catalog::outfits(State(with), Path(address.clone())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// Actual upstream reads filter invalid pointers, retain every valid pointer,
+    /// cap each fill and reuse negative results on repeated HTTP requests.
+    #[tokio::test]
+    async fn registry_profile_routes_bound_actual_read_through_requests() {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+            return;
+        };
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let observed = requests.clone();
+        let peer = axum::Router::new().route(
+            "/content/entities/active",
+            post(move |Json(body): Json<Value>| {
+                let observed = observed.clone();
+                async move {
+                    let pointers = serde_json::from_value(body["pointers"].clone()).unwrap();
+                    observed.lock().unwrap().push(pointers);
+                    Json(json!([]))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, peer).await.unwrap() });
+        let tmp = std::env::temp_dir().join(format!(
+            "catalyst-profile-budget-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&tmp).await.unwrap());
+        let read_through = Arc::new(crate::content::read_through::ReadThrough::new(
+            pool.clone(),
+            storage,
+            crate::content::sync::test_sync_client(reqwest::Client::new()),
+            vec![format!("http://{address}/content")],
+            None,
+            crate::content::read_through::Fills::new(1, Duration::from_secs(30)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
+        let state = Arc::new(
+            MarketplaceState::new(
+                pool,
+                crate::http::Outbound::for_tests(),
+                super::super::Settings::for_tests(),
+            )
+            .with_read_through(Some(read_through)),
+        );
+        let app = super::super::router(state.clone())
+            .nest("/asset-bundle-registry", registry::router(state));
+        let pointer_tag = uuid::Uuid::new_v4().simple().to_string();
+        for (route_index, route) in [
+            "/asset-bundle-registry/profiles",
+            "/asset-bundle-registry/profiles/metadata",
+            "/lambdas/profiles/metadata",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            requests.lock().unwrap().clear();
+            let short_ids: Vec<_> = (0..30_000).map(|i| format!("a{i}")).collect();
+            let valid_ids: Vec<_> = (0..1001)
+                .map(|i| format!("0x{pointer_tag}{route_index:04x}{i:04x}"))
+                .chain([format!("default{}", route_index + 1)])
+                .collect();
+            for ids in [&short_ids, &valid_ids] {
+                let mut request_ids = ids.clone();
+                if ids.len() == valid_ids.len() {
+                    request_ids.push(valid_ids[0].to_uppercase());
+                    request_ids.push("not-a-profile".into());
+                }
+                let body = json!({"ids": request_ids}).to_string();
+                assert!(body.len() < 256 * 1024);
+                for _ in 0..2 {
+                    let response = app
+                        .clone()
+                        .oneshot(
+                            Request::post(route)
+                                .header("content-type", "application/json")
+                                .body(Body::from(body.clone()))
+                                .unwrap(),
+                        )
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(
+                        to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+                        b"[]"
+                    );
+                }
+                let calls = requests.lock().unwrap();
+                if ids.len() == short_ids.len() {
+                    assert!(
+                        calls.is_empty(),
+                        "{route}: invalid pointers must not reach upstream"
+                    );
+                } else {
+                    assert_eq!(
+                        calls.len(),
+                        2,
+                        "{route}: two bounded fills; repeat uses negative cache"
+                    );
+                    assert!(calls.iter().all(|call| call.len() <= PROFILE_LOOKUP_CHUNK));
+                    let mut actual: Vec<_> = calls.iter().flatten().cloned().collect();
+                    actual.sort();
+                    let mut expected = valid_ids.clone();
+                    expected.sort();
+                    assert_eq!(
+                        actual, expected,
+                        "{route}: every valid pointer is queried once"
+                    );
+                }
+            }
+        }
+        server.abort();
         let _ = std::fs::remove_dir_all(tmp);
     }
 
@@ -1061,6 +1283,28 @@ mod tests {
                 {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance:3"},
             ]),
             "the `mainnet` spelling and a base-scene emote are not owned"
+        );
+    }
+
+    #[test]
+    fn integral_float_emote_slots_are_served_as_integers() {
+        let mut avatars: Vec<Value> = vec![
+            serde_json::from_str(
+                r#"{"avatar": {"emotes": [
+                    {"slot": 1.0, "urn": "wave"},
+                    {"slot": 2e0, "urn": "clap"},
+                    {"slot": -0.0, "urn": "kiss"},
+                    {"slot": 3.5, "urn": "money"},
+                    {"slot": 4, "urn": "shrug"},
+                    {"slot": 1e10, "urn": "dance"}
+                ]}}"#,
+            )
+            .unwrap(),
+        ];
+        filter_avatars_by_ownership(&mut avatars, None);
+        assert_eq!(
+            serde_json::to_string(&avatars[0]["avatar"]["emotes"]).unwrap(),
+            r#"[{"slot":1,"urn":"wave"},{"slot":2,"urn":"clap"},{"slot":0,"urn":"kiss"},{"slot":3.5,"urn":"money"},{"slot":4,"urn":"shrug"},{"slot":10000000000,"urn":"dance"}]"#
         );
     }
 
@@ -1198,7 +1442,7 @@ mod tests {
     }
 
     fn metadata_json(pointer: &str, profile: &Value) -> String {
-        serde_json::to_string(&profile_metadata(pointer, profile).unwrap()).unwrap()
+        serde_json::to_string(&profile_metadata(pointer, profile, None).unwrap()).unwrap()
     }
 
     #[test]
@@ -1226,7 +1470,16 @@ mod tests {
 
     #[test]
     fn profile_metadata_skips_a_profile_without_avatars() {
-        assert!(profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })).is_none());
+        assert!(
+            profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 }), None).is_none()
+        );
+        for first in [json!(null), json!(1), json!("avatar")] {
+            let profile = json!({ "avatars": [first], "timestamp": 1 });
+            assert!(
+                profile_metadata("0xabc", &profile, None).is_none(),
+                "{profile}"
+            );
+        }
     }
 
     #[test]

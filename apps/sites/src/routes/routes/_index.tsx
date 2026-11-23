@@ -1,15 +1,19 @@
-import "@dcl/one-ui/foundations/foundations.css";
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 
-import SitesChrome from "@ui/web/frames/SitesChrome";
-import AnimatedBackground from "@ui/shop/discovery/components/animated-background/AnimatedBackground";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
+import { SitesLocaleContext, sitesLanguage, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import { homeCopy } from "@/features/home/locale";
+import { sitesFooterCopy } from "@dcl/one-ui/apps/sites/chrome/footer-copy";
+import { parseCookies } from "@/core/lib/telemetry/session";
+import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
 import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
-import { downloadActions } from "@/features/download/actions";
+import { homeDownloadActions } from "@/features/home/actions";
+import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
 import {
   homeAgentContent,
@@ -17,44 +21,60 @@ import {
   WEEKLY_RITUALS,
 } from "@/features/home/content";
 
-import { heroEventCards } from "@/data/lib/catalyst/landings/home";
-import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
-import { loadHomeEvents } from "@/data/lib/catalyst/landings/home.server";
+import { loadDownloadCounts } from "@/data/lib/download/counts.server";
+import { explorerInstallersUrl } from "@/data/lib/catalyst/bases";
+import { loadHomeLive } from "@/data/lib/catalyst/landings/home.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
+import { homeMeta, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/_index";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
 export const handle = {
   agentMarkdown: "discover",
-} satisfies AgentMarkdownHandle;
+  sitesLocalized: true,
+} satisfies AgentMarkdownHandle & SitesLocaleHandle;
 
 const STORY = "discover";
+/** The reference's count while its download counter loads or fails. */
+const DOWNLOADS_FALLBACK = "+400K";
 
-export function meta() {
-  return [{ title: "Decentraland" }];
+export function meta({ matches }: Route.MetaArgs) {
+  return homeMeta(publicBase(matches));
 }
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = sidLoader(request, context);
-  const [{ content: loadedContent }, downloads] = await Promise.all([
-    loadHomeEvents(),
-    loadDownloadsLabel(),
-  ]);
-  const content = homeAgentContent(loadedContent);
+  const [{ content: loadedContent, cards, profiles }, downloads] =
+    await Promise.all([loadHomeLive(), loadDownloadCounts()]);
+  const locale = sitesLanguage(
+    parseCookies(request.headers.get("cookie")).lang,
+  ).code;
+  const content = homeAgentContent(loadedContent, locale);
   const payload = {
     sid,
+    locale,
     content,
-    downloads,
+    downloads: downloads ?? DOWNLOADS_FALLBACK,
     platform: detectPlatform(request.headers.get("user-agent")),
+    installers: explorerInstallersUrl() !== null,
+    cards: whatsOnCards(cards, profiles),
+    faces: Object.fromEntries(
+      VIBE_CLIPS.map((clip) => [
+        clip.address,
+        profiles[clip.address]?.face ?? null,
+      ]),
+    ),
   };
   return wrap(payload);
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { sid, content, platform, downloads } = loaderData;
+  const { sid, platform, installers, downloads, cards, faces } = loaderData;
 
+  const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
+  const copy = homeCopy[locale];
   const viewed = useRef(false);
   useEffect(() => {
     if (viewed.current) return;
@@ -62,71 +82,82 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     track("lp_discover_viewed", {}, { sid, story: STORY });
   }, [sid]);
 
-  const { actions, store } = downloadActions(platform, downloads);
+  const { hero, hangOut, store, alternateStore } = homeDownloadActions(
+    platform,
+    downloads,
+    installers,
+    copy.download,
+  );
   const labels = {
-    previous: "Previous slide",
-    next: "Next slide",
-    goTo: (n: number) => `Go to slide ${n}`,
-    position: (n: number, total: number) => `Slide ${n} of ${total}`,
+    previous: copy.slides.previous,
+    next: copy.slides.next,
+    goTo: (n: number) => `${copy.slides.goTo} ${n}`,
+    position: (n: number, total: number) =>
+      copy.slides.position
+        .replace("{current}", String(n))
+        .replace("{total}", String(total)),
   };
   return (
-    <SitesChrome active="play" overlayNav headerSurface="overlay">
+    <SitesLayout
+      active="play"
+      overlayNav
+      headerSurface="overlay"
+      footerCopy={sitesFooterCopy[locale]}
+    >
       <main>
         <Hero
-          title="Close the Feed. Come Hang Out."
-          imageAlt="Friends exploring Decentraland"
-          actions={actions}
+          title={copy.hero.title}
+          imageAlt={copy.hero.imageAlt}
+          actions={hero}
           mobile={{
-            title: "Hang Out From Anywhere",
-            subtitle: "Decentraland now on mobile.",
+            title: copy.hero.mobileTitle,
+            subtitle: copy.hero.subtitle,
             store,
+            alternateStore,
           }}
         />
         <WhatsOn
-          title="Jump Into What's Happening"
-          labels={{ live: "LIVE", by: "by" }}
-          viewAll={{ label: "View all", href: "/whats-on" }}
-          cards={(heroEventCards(content) ?? []).map((card) => ({
-            id: card.id,
-            title: card.title,
-            image: card.image,
-            href: homeEventHref(card.id),
-          }))}
+          title={copy.whatsOn.title}
+          labels={copy.whatsOn}
+          carouselLabels={labels}
+          viewAll={{ label: copy.whatsOn.view_all, href: "/events" }}
+          background={<AnimatedBackground />}
+          cards={cards}
         />
         <CatchTheVibe
-          title="Catch the Vibe"
-          labels={{
-            play: "Play",
-            pause: "Pause",
-            mute: "Mute",
-            unmute: "Unmute",
-          }}
+          title={copy.vibe}
+          labels={copy.media}
           carouselLabels={labels}
           items={VIBE_CLIPS.map((clip) => ({
             id: clip.id,
             image: clip.image,
             video: clip.video,
-            creator: { name: clip.name, href: `/profile/${clip.address}` },
+            creator: {
+              name: clip.name,
+              href: `/profile/${clip.address}`,
+              avatarUrl: faces[clip.address] ?? undefined,
+            },
           }))}
+          hangOut={{ label: copy.hangOutNow, href: "/play/" }}
         />
         <WeeklyRituals
-          title="Your Weekly Rituals"
+          title={copy.rituals.title}
           labels={labels}
           cards={WEEKLY_RITUALS.map((ritual) => ({
             id: ritual.id,
-            title: ritual.title,
+            title: copy.rituals[ritual.id],
             href: homeEventHref(ritual.eventId),
             image: ritual.image,
             mobileImage: ritual.mobileImage,
           }))}
         />
         <ComeHangOut
-          title="Come Hang Out"
+          title={copy.hangOut}
           background={<AnimatedBackground />}
-          actions={actions}
+          actions={hangOut}
           store={store}
         />
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

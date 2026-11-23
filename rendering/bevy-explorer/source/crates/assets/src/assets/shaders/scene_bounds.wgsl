@@ -25,13 +25,24 @@ const SCENE_BOUNDED: u32 = 1u;
 const SCENE_FULL_RECT: u32 = 2u;
 // an avatar: dither as a whole, by the capsule at the mesh origin (bound_material_effect.wgsl)
 const SCENE_DITHER_CAPSULE: u32 = 4u;
+// an SDK material's emissive rules (bound_material.wgsl)
+const SCENE_PLAIN_EMISSIVE: u32 = 8u;
+// the alpha texture is bound (bound_material.wgsl)
+const SCENE_ALPHA_TEXTURE: u32 = 16u;
 
 @group(2) @binding(100)
 var<uniform> scene_bounds: SceneBoundData;
+#ifndef NO_SCENE_CELLS
 @group(2) @binding(101)
 var<storage, read> scene_cells: SceneCells;
+#endif
 
 fn cell_region(cell: vec2<i32>) -> u32 {
+#ifdef NO_SCENE_CELLS
+    // no storage buffers: the cell table is left out (scene_material's `webgl2`), so no cell is
+    // in a scene and a bounded scene fades by its rectangle only
+    return 0u;
+#else
     let local = cell - scene_bounds.origin;
     if any(local < vec2(0)) || any(vec2<u32>(local) >= scene_bounds.size) {
         return 0u;
@@ -39,10 +50,15 @@ fn cell_region(cell: vec2<i32>) -> u32 {
     let ix = u32(local.y) * scene_bounds.size.x + u32(local.x);
     let word = scene_cells.data[scene_cells.height_count + (ix >> 1u)];
     return (word >> ((ix & 1u) * 16u)) & 0xFFFFu;
+#endif
 }
 
 fn region_height(region: u32) -> f32 {
+#ifdef NO_SCENE_CELLS
+    return 0.0;
+#else
     return bitcast<f32>(scene_cells.data[region - 1u]);
+#endif
 }
 
 // distance outside the scene: the larger of the xz (chebyshev) distance to the nearest scene parcel
@@ -60,6 +76,10 @@ fn scene_outside_amount(world_position: vec3<f32>) -> f32 {
         return max(max(outside_xy.x, outside_xy.y), world_position.y - scene_bounds.rect_height);
     }
 
+#ifdef NO_SCENE_CELLS
+    // no cell table (scene_material's `webgl2`): only a full rectangle fades
+    return 0.0;
+#else
     let cell = vec2<i32>(floor(p / 16.0));
     let region = cell_region(cell);
     if region != 0u {
@@ -94,4 +114,5 @@ fn scene_outside_amount(world_position: vec3<f32>) -> f32 {
         }
     }
     return amount;
+#endif
 }

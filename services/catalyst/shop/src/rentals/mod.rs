@@ -19,7 +19,14 @@
 //!   replaces the crate's `squid.nft` probe; without
 //!   `MARKETPLACE_SUBGRAPH_URL` the route answers
 //!   `marketplace::unavailable(Source::MarketplaceSubgraph)` (the old 503
-//!   "NFT ownership verification is unavailable").
+//!   "NFT ownership verification is unavailable"). A listing must name the
+//!   served Ethereum chain and its Rentals contract (stored as the
+//!   contract's address); an asset whose last rent at that contract is
+//!   still running answers 409, and an asset the contract still holds may
+//!   be listed by that rent's lessor once the `rentals` index is ready (the
+//!   unavailable envelope until then). The index walks only the mainnet
+//!   contract, so off mainnet no rent is read and an asset the contract
+//!   holds is refused as not the lessor's (401).
 //! - `PATCH /v1/rentals-listings/{id}`: the same reader refreshes the asset
 //!   row; behind the write switch; the same envelope without a reader (the
 //!   old crate answered the stored row unchanged, which presents stale
@@ -27,7 +34,8 @@
 //! - Rental status sync (`open -> executed | cancelled | claimed`): the
 //!   `rentals` chain index ([`index`], `shop.rental_event`, the Rentals
 //!   contract's own logs instead of the rentals subgraph the old crate
-//!   configured and never ran), behind `SHOP_RENTALS_INDEX_ENABLED`;
+//!   configured and never ran), on whenever a chain-1 endpoint is configured
+//!   unless `SHOP_RENTALS_INDEX_ENABLED=false`;
 //!   `GET /v1/rentals-index` reports its cursor. Until it publishes, a
 //!   listing keeps the status it was posted with and the rent quote
 //!   (`shop::mana`) reads the nonces on chain.
@@ -36,7 +44,7 @@
 //!
 //! Not carried: the per-service `/ping`, `/health`, `/health/live` (the
 //! content server owns `/status` and `/health` at the root),
-//! `AUTH_EXPIRATION_SECONDS` (the shared verifier's window is five minutes
+//! `AUTH_EXPIRATION_SECONDS` (the shared verifier's window is 60 seconds
 //! for every surface), `DAPPS_PG_COMPONENT_PSQL_*` (no squid),
 //! `SIGNATURES_PG_CONNECTION_STRING` (the ONE pool), the `updates` table and
 //! the `update_type` enum (nothing read or wrote them).
@@ -63,10 +71,10 @@ mod tests;
 
 use std::sync::Arc;
 
+use crate::shared::routing::{erase, get, patch, post};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderMap;
-use axum::routing::{get, patch};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -100,7 +108,6 @@ pub struct State {
 pub type SharedState = Arc<State>;
 
 pub use crate::shared::signed_fetch::SignedPath;
-pub use index::spawn_job;
 
 pub(crate) fn signed_path(original: &axum::http::Uri, local: impl Into<String>) -> SignedPath {
     SignedPath::at(original, local)
@@ -205,8 +212,7 @@ pub fn router(state: SharedState) -> Router {
     let v1 = Router::new()
         .route(
             "/rentals-listings",
-            axum::routing::post(handlers::create_rentals_listing)
-                .get(handlers::get_rentals_listings),
+            post(handlers::create_rentals_listing).get(erase(handlers::get_rentals_listings)),
         )
         .route(
             "/rentals-listings/{id}",
@@ -220,9 +226,9 @@ pub fn router(state: SharedState) -> Router {
     let router = Router::new()
         .nest("/v1", v1)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(axum::middleware::from_fn(
-            crate::shared::cors::cors_middleware,
-        ))
         .with_state(state);
-    DataWrites::guard(router, writes_enabled)
+    // Outside the gate, so a refused write still carries the CORS headers.
+    DataWrites::guard(router, writes_enabled).layer(axum::middleware::from_fn(
+        crate::shared::cors::decentraland_cors,
+    ))
 }

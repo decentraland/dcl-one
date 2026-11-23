@@ -7,6 +7,7 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/decentraland.sdk.development.rs"));
 }
 
+use crate::textures::import::{ImportState, ImportStatus};
 use proto::{UpdateModel, UpdateModelType, UpdateScene, WsSceneMessage, ws_scene_message};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +57,50 @@ pub fn update_model_frame(scene_id: &str, src: &str, hash: &str, removed: bool) 
     }))
 }
 
+fn state_name(state: ImportState) -> &'static str {
+    match state {
+        ImportState::Running => "RUNNING",
+        ImportState::Ready => "READY",
+        ImportState::Failed => "FAILED",
+    }
+}
+
+/// The background texture import's status as JSON; `state` is `RUNNING`,
+/// `READY` or `FAILED`. `replay` marks the last status sent again to a client
+/// as it connects.
+pub fn texture_optimization_json(scene_id: &str, status: &ImportStatus, replay: bool) -> String {
+    json!({
+        "type": "TEXTURE_OPTIMIZATION",
+        "payload": {
+            "sceneId": scene_id,
+            "state": state_name(status.state),
+            "done": status.done,
+            "total": status.total,
+            "failed": status.failed,
+            "bytesBefore": status.bytes_before,
+            "bytesAfter": status.bytes_after,
+            "enabled": status.enabled,
+            "replay": replay,
+        }
+    })
+    .to_string()
+}
+
+/// The background texture import's status: one JSON text frame and no
+/// `WsSceneMessage`. A client that treats every binary frame it can't name as
+/// a scene update (the Unity explorer's preview socket) would reload on each
+/// status, and one that reads only binary frames never sees text, so the
+/// status rides on text alone. Reloads nothing by itself.
+pub fn texture_optimization_frames(
+    scene_id: &str,
+    status: &ImportStatus,
+    replay: bool,
+) -> Vec<ReloadFrame> {
+    vec![ReloadFrame::Text(texture_optimization_json(
+        scene_id, status, replay,
+    ))]
+}
+
 pub fn model_src(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -73,7 +118,15 @@ pub fn reload_frames(
         ReloadEvent::Scene => update_scene_frame(scene_id),
         ReloadEvent::Model { path, removed } => {
             let src = model_src(root, path);
-            let hash = b64_content_hash(&root.join(&src).display().to_string(), machine);
+            // a model the texture overlay rewrote is served from its stage
+            let hash = match crate::textures::staged_source(root, &src) {
+                Some(staged) => crate::scene::b64_content_hash_in_root(
+                    &crate::scene::root_tag(root, machine),
+                    &src,
+                    &staged,
+                ),
+                None => b64_content_hash(&root.join(&src).display().to_string(), machine),
+            };
             update_model_frame(scene_id, &src, &hash, *removed)
         }
     };
@@ -184,6 +237,54 @@ mod tests {
         );
         assert_eq!(u.scene_id, "scene-1");
         assert_eq!(u.r#type(), UpdateModelType::UmtChange);
+    }
+
+    fn status(state: ImportState) -> ImportStatus {
+        ImportStatus {
+            state,
+            done: 2,
+            total: 3,
+            failed: 1,
+            bytes_before: 300,
+            bytes_after: 200,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn texture_optimization_is_one_json_text_frame() {
+        let frames = texture_optimization_frames("scene-1", &status(ImportState::Running), false);
+        // no binary frame: a client that reads every binary frame as a scene update must not reload
+        let [ReloadFrame::Text(text)] = frames.as_slice() else {
+            panic!("one text frame: {frames:?}");
+        };
+        let v: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "type": "TEXTURE_OPTIMIZATION",
+                "payload": {
+                    "sceneId": "scene-1",
+                    "state": "RUNNING",
+                    "done": 2,
+                    "total": 3,
+                    "failed": 1,
+                    "bytesBefore": 300,
+                    "bytesAfter": 200,
+                    "enabled": true,
+                    "replay": false
+                }
+            })
+        );
+        for (state, name) in [
+            (ImportState::Ready, "READY"),
+            (ImportState::Failed, "FAILED"),
+        ] {
+            let text = texture_optimization_json("x", &status(state), false);
+            assert!(text.contains(&format!("\"state\":\"{name}\"")), "{text}");
+        }
+        let replayed = texture_optimization_json("x", &status(ImportState::Ready), true);
+        assert!(replayed.contains("\"replay\":true"), "{replayed}");
     }
 
     #[test]

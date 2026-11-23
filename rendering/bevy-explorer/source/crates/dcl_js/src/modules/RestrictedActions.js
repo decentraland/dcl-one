@@ -1,3 +1,34 @@
+function makeEnum(entries) {
+    const result = {};
+    for (const [name, value] of entries) {
+        result[name] = value;
+        result[value] = name;
+    }
+    return result;
+}
+
+module.exports.ExplorerUi = makeEnum([
+    ['EU_SETTINGS', 0],
+    ['EU_MAP', 1],
+    ['EU_BACKPACK', 2],
+    ['EU_CAMERA_REEL', 3],
+    ['EU_COMMUNITIES', 4],
+    ['EU_PLACES', 5],
+    ['EU_EVENTS', 6],
+    ['EU_ITEM_PURCHASE', 7],
+    ['UNRECOGNIZED', -1],
+]);
+
+module.exports.OpenExplorerUiResult = makeEnum([
+    ['UNSPECIFIED', 0],
+    ['OPENED', 1],
+    ['WAS_ALREADY_OPEN', 2],
+    ['REJECTED_NOT_CURRENT_SCENE', 3],
+    ['REJECTED_FEATURE_DISABLED', 4],
+    ['REJECTED_NO_USER_GESTURE', 5],
+    ['UNRECOGNIZED', -1],
+]);
+
 module.exports.movePlayerTo = async function (body) {
     const success = await Deno.core.ops.op_move_player_to(
         body.newRelativePosition,
@@ -59,7 +90,11 @@ module.exports.openNftDialog = async function (body) {
     return { success: true }
 }
 module.exports.openExplorerUi = async function (body) {
-    const openResult = await Deno.core.ops.op_open_explorer_ui(Number(body.ui ?? 0))
+    const openResult = await Deno.core.ops.op_open_explorer_ui(
+        Number(body.ui ?? 0),
+        Number(body.requestId ?? 0),
+        body.itemPurchase?.urn ?? null,
+    )
     return { openResult }
 }
 module.exports.setCommunicationsAdapter = async function (body) { 

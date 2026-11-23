@@ -17,13 +17,16 @@
 //! the synthesized `Movement` carries `scene_driven_animation = None`; the real rider keeps
 //! arriving over LiveKit and converges on the same wallet `Address`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_core::primitives::Address;
 use bevy::math::{IVec2, Vec3};
+use bevy::platform::time::Instant;
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
+pub(crate) mod movement_pacing;
 pub mod pacing;
 pub mod plugin;
 pub mod reconnect;
@@ -48,30 +51,33 @@ pub struct PulseParcelGrid {
     min_x: i32,
     min_z: i32,
     width: i32,
+    height: i32,
     parcel_size: i32,
 }
 
 impl PulseParcelGrid {
     /// Takes the server's full `ParcelEncoder` option set (1:1) so deployments can be configured
-    /// straight from the instance's `appsettings`. `max_parcel_z` only bounds index *validity* on
-    /// the server (`width * height`); the decode itself needs only `width`, so it's accepted but
-    /// unused here — we trust server-issued indices.
+    /// straight from the instance's `appsettings`. `max_parcel_z` bounds what we encode, as it bounds
+    /// index validity on the server (`width * height`); decoding trusts server-issued indices.
     pub fn new(
         min_parcel_x: i32,
         min_parcel_z: i32,
         max_parcel_x: i32,
-        _max_parcel_z: i32,
+        max_parcel_z: i32,
         padding: i32,
         parcel_size: i32,
     ) -> Self {
         let min_x = min_parcel_x - padding;
         let min_z = min_parcel_z - padding;
         let max_x = max_parcel_x + padding;
+        let max_z = max_parcel_z + padding;
         let width = max_x - min_x + 1;
+        let height = max_z - min_z + 1;
         Self {
             min_x,
             min_z,
             width,
+            height,
             parcel_size,
         }
     }
@@ -90,16 +96,51 @@ impl PulseParcelGrid {
 
     /// Inverse of [`Self::decode_to_world`]: a world position (DCL convention) → the server's
     /// `parcel_index` plus the in-parcel local offset, matching the server's `ParcelEncoder.Encode`
-    /// + relative-position split. Used to build our own `TeleportRequest`.
-    pub fn encode_to_parcel(&self, world: Vec3) -> (i32, Vec3) {
-        let parcel = self.parcel_coords(world);
+    /// plus relative-position split. Used to build our own `TeleportRequest` and inputs. `None` outside
+    /// the grid, where the server refuses the index for good and an x past the edge would wrap into
+    /// the next row.
+    pub fn encode_to_parcel(&self, world: Vec3) -> Option<(i32, Vec3)> {
+        if !world.is_finite() {
+            return None;
+        }
+        let size = self.parcel_size as f32;
+        let (x, z) = ((world.x / size).floor(), (world.z / size).floor());
+        // Checked as floats so a huge coordinate can't saturate into range.
+        let in_range = |value: f32, min: i32, len: i32| {
+            value >= min as f32 && value < (min as i64 + len as i64) as f32
+        };
+        if !in_range(x, self.min_x, self.width) || !in_range(z, self.min_z, self.height) {
+            return None;
+        }
+        let parcel = IVec2::new(x as i32, z as i32);
         let parcel_index = (parcel.x - self.min_x) + (parcel.y - self.min_z) * self.width;
         let local = Vec3::new(
             world.x - (parcel.x * self.parcel_size) as f32,
             world.y,
             world.z - (parcel.y * self.parcel_size) as f32,
         );
-        (parcel_index, local)
+        Some((parcel_index, local))
+    }
+
+    /// [`Self::encode_to_parcel`] for the nearest point inside the grid: a position past an edge
+    /// moves onto it. `None` only for a non-finite position.
+    pub fn encode_clamped(&self, world: Vec3) -> Option<(i32, Vec3)> {
+        if !world.is_finite() {
+            return None;
+        }
+        let size = self.parcel_size as f32;
+        // Just inside the far edge, so the floor lands on the last parcel.
+        let clamp = |value: f32, min: i32, len: i32| {
+            let low = min as f32 * size;
+            let high = (min as i64 + len as i64) as f32 * size - 0.01;
+            value.clamp(low, high)
+        };
+        let clamped = Vec3::new(
+            clamp(world.x, self.min_x, self.width),
+            world.y,
+            clamp(world.z, self.min_z, self.height),
+        );
+        self.encode_to_parcel(clamped)
     }
 
     /// The parcel a world position (DCL convention) stands in, as `(x, z)` coordinates rather than
@@ -228,11 +269,55 @@ struct Subject {
     realm: Arc<str>,
     /// Latest version the server has told us of, from `PlayerJoined` then each announcement.
     profile_version: i32,
+    /// Unwrapped snapshot time of this subject's join. Subject ids can be reused while an old
+    /// unreliable delta is still in flight; its sequence can look ahead of the new subject's.
+    joined_at: f64,
     last_seq: u32,
     /// Raw server tick of the state in `baseline`, so a replay can stamp it honestly.
     last_tick: u32,
     baseline: SubjectState,
     emote: EmoteTrack,
+    /// One missing link per live subject. Prefer the closest future baseline, then the newest
+    /// update for that baseline, so later gaps cannot displace the first one we can bridge.
+    pending_delta: Option<pulse::PlayerStateDeltaTier0>,
+    /// A displaced update can still be newer than the state we recover. Remember its destination
+    /// so recovery requests it after the nearest missing link has been supplied.
+    latest_pending_seq: u32,
+}
+
+const RESYNC_RETRY_INITIAL: Duration = Duration::from_secs(1);
+const RESYNC_RETRY_MAX: Duration = Duration::from_secs(5);
+
+struct ResyncRetry {
+    retry_at: Instant,
+    delay: Duration,
+    /// Failed admissions keep their place; a successful enqueue moves to the back.
+    admission_order: u64,
+}
+
+impl Subject {
+    fn apply_delta(&mut self, delta: &pulse::PlayerStateDeltaTier0) {
+        self.baseline.apply_delta(delta);
+        self.last_seq = delta.new_seq;
+        self.last_tick = delta.server_tick;
+    }
+
+    /// A full state or delta may supply the missing baseline. Take in the held update before
+    /// emitting movement so a teleport keeps its discontinuity at the final position.
+    fn replay_pending_delta(&mut self) -> bool {
+        let Some(delta) = self.pending_delta.take() else {
+            return false;
+        };
+        if delta.baseline_seq > self.last_seq {
+            self.pending_delta = Some(delta);
+            return false;
+        }
+        if delta.baseline_seq != self.last_seq {
+            return false;
+        }
+        self.apply_delta(&delta);
+        true
+    }
 }
 
 /// What a subject's emote events have left of its emote. It keeps a sequence of its own because an
@@ -410,12 +495,17 @@ pub struct PulseDecoder {
     /// newer one authenticates, though the older one's `PlayerLeft` can arrive after the newer
     /// one's join, so a join replaces the subject held for its wallet under another id.
     wallets: HashMap<Address, u32>,
-    /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
-    /// shows in every one after it, so without this each would ask again. A full state, a delta
-    /// that applies, a join (its own, or a newer one of its wallet's, which replaces it), a leave
-    /// and `reset` each end the wait, as does `resync_not_sent`. Only a held subject is asked for
-    /// (a delta for any other is dropped, see `on_delta`), so no entry outlives its subject.
-    pending_resync: HashSet<u32>,
+    /// Subjects with an outstanding `Resync`. Only sequence progress releases the request gate;
+    /// if a newer observed destination is still missing, recovery starts another request from
+    /// the advanced baseline. Stale states and equal-sequence emotes preserve the gate. A join,
+    /// leave or `reset` also releases it. Each subject keeps a retry deadline, so a full outbound
+    /// queue or an unanswered request cannot leave a stopped peer stranded. No entry outlives
+    /// its subject.
+    pending_resync: HashMap<u32, ResyncRetry>,
+    /// Time of the message currently handled by `handle_at`; helpers use it to schedule
+    /// initial recovery. The connection pump passes its own time to `retry_resyncs`.
+    resync_now: Instant,
+    next_resync_order: u64,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
     /// add to it (a multiple of 2^32) to keep the emitted timestamps monotonic across rollovers.
@@ -429,7 +519,9 @@ impl PulseDecoder {
             grid,
             subjects: HashMap::new(),
             wallets: HashMap::new(),
-            pending_resync: HashSet::new(),
+            pending_resync: HashMap::new(),
+            resync_now: Instant::now(),
+            next_resync_order: 0,
             newest_tick: None,
             tick_epoch_ms: 0,
         }
@@ -437,6 +529,11 @@ impl PulseDecoder {
 
     /// Decode one server message, advancing per-subject state and emitting downstream events.
     pub fn handle(&mut self, msg: pulse::ServerMessage) -> Vec<PulseEvent> {
+        self.handle_at(msg, Instant::now())
+    }
+
+    fn handle_at(&mut self, msg: pulse::ServerMessage, now: Instant) -> Vec<PulseEvent> {
+        self.resync_now = now;
         use pulse::server_message::Message;
 
         let Some(message) = msg.message else {
@@ -521,6 +618,7 @@ impl PulseDecoder {
 
         let baseline = SubjectState::from_player_state(&state);
         let movement = self.to_movement(&baseline);
+        let joined_at = self.tick_secs(full.server_tick);
         let realm: Arc<str> = Arc::from(joined.realm.as_str());
         // A newcomer in another realm: the wallet leaves the replaced subject's, and its emote
         // goes with it.
@@ -536,10 +634,13 @@ impl PulseDecoder {
                 wallet: address,
                 realm: realm.clone(),
                 profile_version: joined.profile_version,
+                joined_at,
                 last_seq: full.sequence,
                 last_tick: full.server_tick,
                 baseline,
                 emote: EmoteTrack::default(),
+                pending_delta: None,
+                latest_pending_seq: full.sequence,
             },
         );
         self.pending_resync.remove(&full.subject_id);
@@ -562,7 +663,7 @@ impl PulseDecoder {
                 realm: realm.clone(),
                 // the avatar jumps from wherever the subject it replaces left it
                 teleport: replaced.is_some(),
-                timestamp: self.tick_secs(full.server_tick),
+                timestamp: joined_at,
             },
         ]);
         // The avatar may be playing the replaced subject's emote, and this one has none yet.
@@ -597,12 +698,11 @@ impl PulseDecoder {
     }
 
     /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
-    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
-    /// state leaves the baseline as it is, an older teleport's realm included, and announces
-    /// nothing. Any state for a known subject ends the wait for its resync, an older one too; a
-    /// message without a state does not, and an unknown subject has no wait to end. Unknown
-    /// subjects are dropped: full state carries no wallet, so without a prior `PlayerJoined` we
-    /// can't address it.
+    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). Older
+    /// states preserve the baseline, realm and outstanding resync without emitting events.
+    /// Sequence progress, including a buffered replay, releases the request gate and requests
+    /// any still-missing destination from the advanced baseline. Unknown subjects are dropped:
+    /// full state carries no wallet, so without a prior `PlayerJoined` we can't address it.
     fn on_full(
         &mut self,
         subject_id: u32,
@@ -618,7 +718,7 @@ impl PulseDecoder {
             return Vec::new();
         };
 
-        self.pending_resync.remove(&subject_id);
+        let previous_seq = subject.last_seq;
         let newer = match kind {
             FullKind::Refresh | FullKind::Teleport(_) => sequence > subject.last_seq,
             FullKind::Emote => sequence >= subject.last_seq,
@@ -641,7 +741,12 @@ impl PulseDecoder {
         };
         let address = subject.wallet;
         let realm = subject.realm.clone();
-        let movement = self.to_movement_for(subject_id);
+        let replayed = subject.replay_pending_delta();
+        let tick = subject.last_tick;
+        if subject.last_seq > previous_seq {
+            self.pending_resync.remove(&subject_id);
+        }
+        let movement = self.to_movement_for(subject_id, replayed);
         // Entering a realm is announced like a first sighting: an observer there filtered out
         // whatever it was sent while the subject was elsewhere, and the server won't re-announce a
         // subject it already has in view.
@@ -654,8 +759,9 @@ impl PulseDecoder {
             movement: Box::new(movement),
             realm,
             teleport,
-            timestamp: self.tick_secs(server_tick),
+            timestamp: self.tick_secs(tick),
         });
+        events.extend(self.resync_buffered_delta(subject_id));
         events
     }
 
@@ -705,7 +811,7 @@ impl PulseDecoder {
     }
 
     fn on_delta(&mut self, delta: pulse::PlayerStateDeltaTier0) -> Vec<PulseEvent> {
-        let Some(subject) = self.subjects.get_mut(&delta.subject_id) else {
+        let Some(subject) = self.subjects.get(&delta.subject_id) else {
             // Not held. Either its `PlayerJoined`, reliable and carrying the full state, is still
             // on its way, or it has left, or a newer join of its wallet replaced it, and this delta
             // arrived after that (the two channels keep no order between them), and the server
@@ -715,67 +821,128 @@ impl PulseDecoder {
         };
 
         // Already have this (e.g. a reliable resync retransmit of a seq we applied unreliably).
-        if delta.new_seq <= subject.last_seq {
+        if delta.new_seq <= subject.last_seq || delta.new_seq <= delta.baseline_seq {
             return Vec::new();
         }
+        let joined_at = subject.joined_at;
+        if self.tick_secs(delta.server_tick) < joined_at {
+            return Vec::new();
+        }
+        let subject = self.subjects.get_mut(&delta.subject_id).unwrap();
 
-        // The delta is diffed from `baseline_seq`; we can only apply it if our state is exactly
-        // that sequence. Ahead of us, we missed an intermediate delta — resync from what we have.
-        //
-        // Known gap: a delta whose baseline is AHEAD of us is dropped here even though the missing
-        // link may be a reliable full state still in flight (unreliable deltas can overtake it):
-        // full 0, delta 0→1, delta 2→3, full 2 leaves us at 2 with 3 discarded, and the resync
-        // reply (from 1) then mismatches too, so the subject stalls for two round-trips. If that
-        // shows up in practice, hold the single ahead-of-us delta per subject and chain it after
-        // the next successful apply (delta or full) instead of dropping it — still send the resync,
-        // since the gap may be genuine loss.
+        // A reliable baseline may still be in flight. Keep one future update to chain when it
+        // arrives; request a resync too, since the gap may be genuine packet loss.
         if delta.baseline_seq > subject.last_seq {
+            let subject_id = delta.subject_id;
+            subject.latest_pending_seq = subject.latest_pending_seq.max(delta.new_seq);
+            if subject.pending_delta.as_ref().is_none_or(|held| {
+                delta.baseline_seq < held.baseline_seq
+                    || (delta.baseline_seq == held.baseline_seq && delta.new_seq > held.new_seq)
+            }) {
+                subject.pending_delta = Some(delta);
+            }
+            let known_seq = subject.last_seq;
+            return self.request_resync(subject_id, known_seq);
+        }
+        // A delayed reply may start behind us yet advertise a newer destination. Its mask is
+        // relative to the old baseline, so ask again from our current state without applying it.
+        if delta.baseline_seq < subject.last_seq {
+            subject.latest_pending_seq = subject.latest_pending_seq.max(delta.new_seq);
             let known_seq = subject.last_seq;
             return self.request_resync(delta.subject_id, known_seq);
-        }
-        // Behind us, it leads on from a state we are already past — the reply to a resync that a
-        // later state has since answered. There is nothing to ask for.
-        if delta.baseline_seq < subject.last_seq {
-            return Vec::new();
         }
 
         // Back on track, whether this is the next in line or the reply to the resync.
         self.pending_resync.remove(&delta.subject_id);
-        subject.baseline.apply_delta(&delta);
-        subject.last_seq = delta.new_seq;
-        subject.last_tick = delta.server_tick;
+        subject.apply_delta(&delta);
+        subject.replay_pending_delta();
+        let tick = subject.last_tick;
         let address = subject.wallet;
         let realm = subject.realm.clone();
-        let mut movement = self.to_movement_for(delta.subject_id);
-        // A delta carries position quantized to the parcel grid, so the true position is only known
-        // to within ±half a step. Hand that box to the interpolator (via the rfc4 carrier) so it
-        // dead-reckons inside the box instead of snapping to the quantized centre every packet.
-        // Full-state / join movements leave this unset (exact position).
-        movement.position_precision = Some(rfc4::PositionPrecision {
-            x: pulse::PlayerStateDeltaTier0::position_x_step() * 0.5,
-            y: pulse::PlayerStateDeltaTier0::position_y_step() * 0.5,
-            z: pulse::PlayerStateDeltaTier0::position_z_step() * 0.5,
-        });
-        vec![PulseEvent::Movement {
+        let movement = self.to_movement_for(delta.subject_id, true);
+        let mut events = vec![PulseEvent::Movement {
             address,
             movement: Box::new(movement),
             realm,
             teleport: false,
-            timestamp: self.tick_secs(delta.server_tick),
-        }]
+            timestamp: self.tick_secs(tick),
+        }];
+        events.extend(self.resync_buffered_delta(delta.subject_id));
+        events
     }
 
-    /// The `Resync` for `subject_id` never left (no link, or a full queue), so nothing will answer
-    /// it: the next gap may ask again.
-    pub fn resync_not_sent(&mut self, subject_id: u32) {
-        self.pending_resync.remove(&subject_id);
+    /// Only an admitted request yields its place to subjects whose outbound queue was full.
+    pub fn resync_sent(&mut self, subject_id: u32) {
+        if let Some(retry) = self.pending_resync.get_mut(&subject_id) {
+            retry.admission_order = self.next_resync_order;
+            self.next_resync_order += 1;
+        }
+    }
+
+    /// A response can advance the baseline without reaching the latest observed destination.
+    /// Request that remaining gap from the new baseline. Its retry deadline survives a rejected
+    /// enqueue or a missing answer, independently of later movement packets.
+    fn resync_buffered_delta(&mut self, subject_id: u32) -> Vec<PulseEvent> {
+        let Some(subject) = self.subjects.get(&subject_id) else {
+            return Vec::new();
+        };
+        if subject.last_seq < subject.latest_pending_seq {
+            self.request_resync(subject_id, subject.last_seq)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Retry unanswered or unqueued requests on the connection's monotonic clock. A late poll
+    /// makes one attempt per subject and schedules from `now`, without catching up missed ticks.
+    pub fn retry_resyncs(&mut self, now: Instant) -> Vec<PulseEvent> {
+        let mut due = Vec::new();
+        let subjects = &self.subjects;
+        self.pending_resync.retain(|subject_id, retry| {
+            let Some(subject) = subjects.get(subject_id) else {
+                return false;
+            };
+            // Sequence progress cancels recovery before scheduling any remaining gap.
+            debug_assert!(subject.last_seq < subject.latest_pending_seq);
+            if subject.last_seq >= subject.latest_pending_seq {
+                return false;
+            }
+            if now >= retry.retry_at {
+                retry.delay = (retry.delay * 2).min(RESYNC_RETRY_MAX);
+                retry.retry_at = now + retry.delay;
+                due.push((
+                    retry.admission_order,
+                    pulse::ResyncRequest {
+                        subject_id: *subject_id,
+                        known_seq: subject.last_seq,
+                    },
+                ));
+            }
+            true
+        });
+        due.sort_unstable_by_key(|(order, _)| *order);
+        due.into_iter()
+            .map(|(_, request)| PulseEvent::Resync(request))
+            .collect()
     }
 
     /// A `Resync` for `subject_id`, unless one is already waiting on its answer.
     fn request_resync(&mut self, subject_id: u32, known_seq: u32) -> Vec<PulseEvent> {
-        if !self.pending_resync.insert(subject_id) {
+        if !self.subjects.contains_key(&subject_id) {
             return Vec::new();
         }
+        let std::collections::hash_map::Entry::Vacant(entry) =
+            self.pending_resync.entry(subject_id)
+        else {
+            return Vec::new();
+        };
+        // The deadline survives a full outbound queue as well as an unanswered sent request.
+        entry.insert(ResyncRetry {
+            retry_at: self.resync_now + RESYNC_RETRY_INITIAL,
+            delay: RESYNC_RETRY_INITIAL,
+            admission_order: self.next_resync_order,
+        });
+        self.next_resync_order += 1;
         vec![PulseEvent::Resync(pulse::ResyncRequest {
             subject_id,
             known_seq,
@@ -865,8 +1032,17 @@ impl PulseDecoder {
     }
 
     /// Convenience: convert an already-stored subject baseline.
-    fn to_movement_for(&self, subject_id: u32) -> rfc4::Movement {
-        self.to_movement(&self.subjects[&subject_id].baseline)
+    fn to_movement_for(&self, subject_id: u32, delta: bool) -> rfc4::Movement {
+        let mut movement = self.to_movement(&self.subjects[&subject_id].baseline);
+        // Deltas describe a quantization box; full states without a replay remain precise.
+        if delta {
+            movement.position_precision = Some(rfc4::PositionPrecision {
+                x: pulse::PlayerStateDeltaTier0::position_x_step() * 0.5,
+                y: pulse::PlayerStateDeltaTier0::position_y_step() * 0.5,
+                z: pulse::PlayerStateDeltaTier0::position_z_step() * 0.5,
+            });
+        }
+        movement
     }
 
     /// A server tick (absolute milliseconds) as seconds, unwrapped across the `u32` rollover. `f64`
@@ -945,8 +1121,8 @@ impl PulseDecoder {
             head_yaw: state.head_yaw.map(signed_angle).unwrap_or(0.0),
             head_pitch: state.head_pitch.map(signed_angle).unwrap_or(0.0),
             scene_driven_animation: None,
-            // Stamped only on delta-derived movements (see `on_delta`); a full state carries an
-            // exact position, so the shared builder leaves the box unset (precise).
+            // `to_movement_for` sets this for delta-derived positions, including a full state or
+            // teleport that replays a buffered delta. Other full-state positions remain precise.
             position_precision: None,
         }
     }
@@ -971,16 +1147,20 @@ fn signed_angle(deg: f32) -> f32 {
 /// bool fields are folded back into `state_flags`; head yaw/pitch and point-at ride only when their
 /// enable flag is set (matching Unity's `WritePlayerState`). Fields with no Pulse equivalent
 /// (`is_jumping`, `is_emoting`, `scene_driven_animation`) are dropped — animation stays on LiveKit.
+/// `None` outside the parcel grid: the server would refuse the input for good.
 pub(crate) fn from_movement(
     movement: &rfc4::Movement,
     grid: &PulseParcelGrid,
-) -> pulse::PlayerState {
+) -> Option<pulse::PlayerState> {
     let world = Vec3::new(
         movement.position_x,
         movement.position_y,
         movement.position_z,
     );
-    let (parcel_index, local) = grid.encode_to_parcel(world);
+    let Some((parcel_index, local)) = grid.encode_to_parcel(world) else {
+        warn_out_of_grid(OutOfGrid::Input, world);
+        return None;
+    };
 
     let mut state_flags = 0u32;
     let mut set = |on: bool, f: pulse::PlayerAnimationFlags| {
@@ -1007,7 +1187,7 @@ pub(crate) fn from_movement(
     );
 
     use pulse::PlayerState as P;
-    pulse::PlayerState {
+    Some(pulse::PlayerState {
         parcel_index,
         position_x: P::position_x_quantized(local.x),
         position_y: P::position_y_quantized(local.y),
@@ -1038,6 +1218,45 @@ pub(crate) fn from_movement(
         point_at_z: movement
             .is_pointing_at
             .then(|| P::point_at_z_quantized(movement.point_at_z)),
+    })
+}
+
+/// How often a skipped out-of-grid send is logged.
+const OUT_OF_GRID_LOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// What a skipped out-of-grid send was; each kind is rate-limited on its own, so a stream of
+/// skipped inputs never hides a skipped teleport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutOfGrid {
+    Input,
+    Teleport,
+}
+
+/// When each kind of skipped send was last logged.
+#[derive(Default)]
+pub(crate) struct OutOfGridLog([Option<Instant>; 2]);
+
+impl OutOfGridLog {
+    /// Whether a skip of `kind` at `now` is logged: at most once per [`OUT_OF_GRID_LOG_INTERVAL`].
+    pub(crate) fn should_log(&mut self, kind: OutOfGrid, now: Instant) -> bool {
+        let last = &mut self.0[kind as usize];
+        if last.is_some_and(|last| now.duration_since(last) < OUT_OF_GRID_LOG_INTERVAL) {
+            return false;
+        }
+        *last = Some(now);
+        true
+    }
+}
+
+/// Log a send skipped because `world` (DCL convention) is outside the parcel grid, at most once per
+/// [`OUT_OF_GRID_LOG_INTERVAL`] for each kind: a player standing outside skips one every tick.
+pub(crate) fn warn_out_of_grid(kind: OutOfGrid, world: Vec3) {
+    static LOG: std::sync::Mutex<OutOfGridLog> = std::sync::Mutex::new(OutOfGridLog([None; 2]));
+    let Ok(mut log) = LOG.lock() else {
+        return;
+    };
+    if log.should_log(kind, Instant::now()) {
+        bevy::log::warn!("pulse: {kind:?} at {world} is outside the parcel grid; not sent as is");
     }
 }
 

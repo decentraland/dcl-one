@@ -1,9 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import StCastWatcher from "@ui/web/pages/StCastWatcher";
+import StCastWatcher from "@dcl/one-ui/apps/sites/cast/StCastWatcher";
 
 import { track, type TrackContext } from "@/core/lib/telemetry/track";
 import type { WatchResult } from "@/data/lib/catalyst/landings/cast-watcher";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 const JOIN_CLASS = "stcastwatcher__join";
 const LEAVE_CLASS = "stcastwatcher__leave";
@@ -15,6 +16,25 @@ const ICON_CHAT = 1;
 
 type WatcherState = "onboarding" | "joining" | "live" | "waiting";
 
+/** Why a real join did not go live: the watcher page shows it in place of the stream. */
+export type WatchRefusal = { kind: "waiting" | "error"; title: string; message: string };
+
+/** A join's outcome: connected to `roomId`, or refused. */
+export type WatchJoin = { roomId: string; refused?: undefined } | { refused: WatchRefusal; roomId?: undefined };
+
+/** A real LiveKit session behind the watcher page; the story page leaves it out. */
+export type WatchLive = {
+  join: () => Promise<WatchJoin>;
+  leave: () => void;
+  stage: (muted: boolean) => ReactNode;
+  participantCount: number;
+  /** Calls `onLost` when the room goes away while watching; answers the unsubscribe. */
+  bindLost: (onLost: (why: WatchRefusal) => void) => () => void;
+  /** The browser blocks playback until a click (Safari). */
+  audioBlocked: boolean;
+  enableAudio: () => void;
+};
+
 type CastWatchProps = {
   trackCtx: TrackContext;
   watch: WatchResult;
@@ -22,6 +42,7 @@ type CastWatchProps = {
   participantCount?: number;
   unreadCount?: number;
   onTrack?: typeof track;
+  live?: WatchLive;
 };
 
 export default function CastWatch({
@@ -31,31 +52,73 @@ export default function CastWatch({
   participantCount,
   unreadCount,
   onTrack = track,
+  live,
 }: CastWatchProps) {
   const initialState: WatcherState = watch.status === "live" ? "onboarding" : "waiting";
 
   const [state, setState] = useState<WatcherState>(initialState);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isTabMuted, setIsTabMuted] = useState(false);
+  const [refusal, setRefusal] = useState<WatchRefusal | null>(null);
 
   const roomId = watch.credentials?.roomId ?? "";
   const placeName = watch.placeName;
 
   const join = useCallback(() => {
     setState("joining");
-    onTrack(
-      "cast_watch_joined",
-      { room_id: roomId, place_name: placeName, stub: true },
-      trackCtx,
+    setRefusal(null);
+    if (!live) {
+      onTrack(
+        "cast_watch_joined",
+        { room_id: roomId, place_name: placeName, stub: true },
+        trackCtx,
+      );
+      setTimeout(() => setState("live"), 600);
+      return;
+    }
+    live.join().then(
+      (joined) => {
+        if (joined.refused) {
+          const refused = joined.refused;
+          onTrack("cast_watch_refused", { kind: refused.kind, reason: refused.title }, trackCtx);
+          setRefusal(refused);
+          setState(refused.kind === "waiting" ? "waiting" : "onboarding");
+          return;
+        }
+        onTrack(
+          "cast_watch_joined",
+          { room_id: joined.roomId, place_name: placeName, stub: false },
+          trackCtx,
+        );
+        setState("live");
+      },
+      (err: unknown) => {
+        const reason = err instanceof Error ? err.message : "join failed";
+        onTrack("cast_watch_refused", { kind: "error", reason }, trackCtx);
+        setRefusal({ kind: "error", title: "Could not join the cast", message: "Try again in a moment." });
+        setState("onboarding");
+      },
     );
-    setTimeout(() => setState("live"), 600);
-  }, [onTrack, roomId, placeName, trackCtx]);
+  }, [live, onTrack, roomId, placeName, trackCtx]);
+
+  const bindLost = live?.bindLost;
+  useEffect(
+    () =>
+      bindLost?.((why) => {
+        onTrack("cast_watch_lost", { reason: why.title }, trackCtx);
+        setSidebarOpen(false);
+        setRefusal(why);
+        setState("waiting");
+      }),
+    [bindLost, onTrack, trackCtx],
+  );
 
   const leave = useCallback(() => {
     onTrack("cast_watch_left", {}, trackCtx);
+    live?.leave();
     setSidebarOpen(false);
     setState("onboarding");
-  }, [onTrack, trackCtx]);
+  }, [live, onTrack, trackCtx]);
 
   const toggleMute = useCallback(() => {
     setIsTabMuted((prev) => {
@@ -113,6 +176,11 @@ export default function CastWatch({
     chatFooter?: string;
     participantCount?: number;
     unreadCount?: number;
+    stage?: ReactNode;
+    messages?: Array<{ name: string; time: string; body: string }>;
+    watcherTitle?: ReactNode;
+    watcherMessage?: ReactNode;
+    toasts?: Array<{ title: ReactNode; message: ReactNode; action?: { label?: string; onClick?: () => void } }>;
   }>;
 
   const chatFooter = `Jump into ${placeName} in Decentraland to participate in the chat.`;
@@ -125,15 +193,35 @@ export default function CastWatch({
       data-location={watch.location}
       onClickCapture={onClickCapture}
     >
-      <Watcher
-        streamName={placeName}
-        state={state}
-        sidebarOpen={state === "live" && sidebarOpen}
-        isTabMuted={isTabMuted}
-        chatFooter={chatFooter}
-        participantCount={participantCount}
-        unreadCount={state === "live" && !sidebarOpen ? unreadCount : 0}
-      />
+      <SitesLayout active="legal">
+        <Watcher
+          streamName={placeName}
+          state={state}
+          sidebarOpen={state === "live" && sidebarOpen}
+          isTabMuted={isTabMuted}
+          chatFooter={chatFooter}
+          participantCount={live ? live.participantCount : participantCount}
+          unreadCount={state === "live" && !sidebarOpen && !live ? unreadCount : 0}
+          stage={live && state === "live" ? live.stage(isTabMuted) : undefined}
+          messages={live ? [] : undefined}
+          watcherTitle={refusal?.kind === "waiting" ? refusal.title : undefined}
+          watcherMessage={refusal?.kind === "waiting" ? refusal.message : undefined}
+          toasts={[
+            ...(refusal?.kind === "error"
+              ? [{ title: refusal.title, message: refusal.message, action: { label: "Retry", onClick: join } }]
+              : []),
+            ...(live?.audioBlocked && state === "live"
+              ? [
+                  {
+                    title: "Audio is paused",
+                    message: "Your browser needs a click before the Cast can play sound.",
+                    action: { label: "Enable audio", onClick: live.enableAudio },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </SitesLayout>
       {demoMessages && demoMessages.length === 0 && null}
     </div>
   );

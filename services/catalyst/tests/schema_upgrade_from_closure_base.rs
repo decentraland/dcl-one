@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 17] = [
+const PREPARED_PENDING_STEPS: [&str; 34] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -29,6 +29,23 @@ const PREPARED_PENDING_STEPS: [&str; 17] = [
     "0036_credits_authorization_request_digest",
     "0037_social_badges_catalog_parity",
     "0038_social_badge_processor",
+    "0039_worlds_set_here",
+    "0040_shop_nft_event_tx_hash",
+    "0041_social_federation_entry_privacy",
+    "0042_economy_relay_free_calls",
+    "0043_credits_captcha_generated_at",
+    "0044_camera_reel_image_content_type",
+    "0045_camera_reel_original_filename",
+    "0046_player_report_evidence_source_key",
+    "0047_shop_sale_notification_producers",
+    "0048_broker_purchases_write_ahead",
+    "0049_land_authz_cursor_block_hash",
+    "0050_explore_poster_avif",
+    "0051_explore_auth_identity_request_id",
+    "0052_shop_committee_index",
+    "0053_shop_bid_received_producer",
+    "0054_shop_chain_cursor_ownership",
+    "0055_shop_chain_cursor_divergence",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 /// id, category, is_tier, criteria_steps, published, created_at
@@ -149,7 +166,11 @@ async fn with_schema(schema: &str) -> Option<Old> {
         .connect_with(base.clone().database("postgres"))
         .await
         .unwrap();
-    let name = format!("catalyst_test_{}", uuid::Uuid::new_v4().simple());
+    let name = format!(
+        "catalyst_test_lib_{}_closure_{}",
+        std::process::id(),
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    );
     sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
         .execute(&admin)
         .await
@@ -571,6 +592,54 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .await
         .unwrap();
     let client_events_before = client_events_filenode(pool).await;
+    // Mirrored worlds before 0039_worlds_set_here: one whose owner restricted it and titled it
+    // here, one left as the mirror wrote it.
+    sqlx::raw_sql(
+        "INSERT INTO worlds.worlds (name, access_type, title, mirror_source) \
+           VALUES ('owner-set.dcl.eth', 'allow-list', 'Mine', 'https://up.example'); \
+         INSERT INTO worlds.worlds (name, mirror_source) \
+           VALUES ('as-mirrored.dcl.eth', 'https://up.example')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(!has_column(pool, "credits.captcha_challenges", "generated_at").await);
+    let captcha_id:i64=sqlx::query_scalar("INSERT INTO credits.captcha_challenges(address,answer_x,expires_at) VALUES('0x2222222222222222222222222222222222222222',52.25,timezone('UTC',now())+interval '1 hour') RETURNING id").fetch_one(pool).await.unwrap();
+    let captcha_before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(c) FROM credits.captcha_challenges c WHERE id=$1")
+            .bind(captcha_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO credits.wallets(address,available,earned_available) VALUES('0x2222222222222222222222222222222222222222',12.5,0)").execute(pool).await.unwrap();
+    let wallet_before:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(w) FROM credits.wallets w WHERE address='0x2222222222222222222222222222222222222222'").fetch_one(pool).await.unwrap();
+    assert!(!has_column(pool, "camera_reel.images", "original_filename").await);
+    assert!(!has_column(pool, "camera_reel.images", "image_content_type").await);
+    let photo_id = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, metadata) \
+         VALUES ($1, '0x1111111111111111111111111111111111111111', \
+                 'legacy-photo', 'legacy-thumbnail', \
+                 '{\"userAddress\":\"0x1111111111111111111111111111111111111111\",\"placeId\":\"legacy-place\"}')",
+    )
+    .bind(photo_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let photo_before: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(image) FROM camera_reel.images image WHERE id=$1")
+            .bind(photo_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query(
+        "INSERT INTO explore.poster (kind,file,blob_cid,content_type,byte_size,origin,fetched_at)
+         VALUES ('poster','legacy.bin','fixture','application/octet-stream',12,'upstream',now())",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -580,6 +649,40 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "only steps the prepared capture lacks run; historical steps never replay"
     );
     assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
+    let captcha_after:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        captcha_after.0, captcha_before,
+        "migration keeps the live answer, expiry and consumption state"
+    );
+    let wallet_after:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(w) FROM credits.wallets w WHERE address='0x2222222222222222222222222222222222222222'").fetch_one(pool).await.unwrap();
+    assert_eq!(
+        wallet_before, wallet_after,
+        "new goal relations never alter paid balances"
+    );
+    let goal_relations:i64=sqlx::query_scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='credits' AND table_name IN ('seasons','season_goals','program_opt_outs','goal_progress','photo_goal_receipts','goal_grants','captcha_attempts')").fetch_one(pool).await.unwrap();
+    assert_eq!(goal_relations, 7);
+    let seeded_seasons: i64 = sqlx::query_scalar("SELECT count(*) FROM credits.seasons")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        seeded_seasons, 0,
+        "upgrade never activates monetary programs"
+    );
+
+    let photo_after: (serde_json::Value, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT to_jsonb(image)-'original_filename'-'image_content_type', original_filename, image_content_type \
+         FROM camera_reel.images image WHERE id=$1",
+    )
+    .bind(photo_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        photo_after,
+        (photo_before.clone(), None, None),
+        "the additive photo migrations preserve every existing value without inventing a filename or MIME"
+    );
     assert!(
         !done.created.iter().any(|object| matches!(object,
         schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
@@ -646,6 +749,21 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(worlds, 1);
+    let marked: Vec<(String, bool, Option<String>, bool, Option<String>)> = sqlx::query_as(
+        "SELECT name, access_set_here, access_set_by, settings_set_here, settings_set_by \
+         FROM worlds.worlds WHERE name IN ('owner-set.dcl.eth', 'as-mirrored.dcl.eth') ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marked,
+        vec![
+            ("as-mirrored.dcl.eth".into(), false, None, false, None),
+            ("owner-set.dcl.eth".into(), true, None, true, None),
+        ],
+        "0039 marks what the owner set here, with no known setter"
+    );
     let constraints: Vec<String> =
         sqlx::query_scalar("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass('credits.purchases') AND conname IN ('purchases_quantity_check', 'purchases_source_check') ORDER BY 1")
             .fetch_all(pool)
@@ -685,11 +803,46 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .is_empty(),
         "a second run applies nothing"
     );
+    let photo_after_replay: (serde_json::Value, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT to_jsonb(image)-'original_filename'-'image_content_type', original_filename, image_content_type \
+         FROM camera_reel.images image WHERE id=$1",
+    )
+    .bind(photo_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(photo_after_replay, (photo_before, None, None));
+    let captcha_replayed:(serde_json::Value,chrono::NaiveDateTime)=sqlx::query_as("SELECT to_jsonb(c)-'generated_at',generated_at FROM credits.captcha_challenges c WHERE id=$1").bind(captcha_id).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        captcha_replayed, captcha_after,
+        "replaying migrate never refreshes the challenge solve clock"
+    );
+
     let status =
         schema_migrate::status(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
             .unwrap();
     assert_eq!(status.exit_code(), 0, "{:?}", status.lines());
+
+    sqlx::query(
+        "INSERT INTO explore.poster (kind,file,blob_cid,content_type,byte_size,origin,fetched_at)
+         VALUES ('poster','new.avif','fixture','image/avif',16,'upstream',now())",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let posters: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT file,content_type,byte_size FROM explore.poster ORDER BY file")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        posters,
+        [
+            ("legacy.bin".into(), "application/octet-stream".into(), 12),
+            ("new.avif".into(), "image/avif".into(), 16),
+        ]
+    );
 
     // a change no step covers (a column dropped by hand) is refused, with nothing applied
     sqlx::query("ALTER TABLE worlds.worlds DROP COLUMN title")
@@ -1412,6 +1565,38 @@ async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existi
     catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
         .await
         .expect("a fresh upgraded catalogue does not need a release conversion");
+    let notifications: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_trigger t JOIN pg_proc f ON f.oid = t.tgfoid \
+         WHERE f.oid = 'worlds.notify_world_authority'::regproc AND NOT t.tgisinternal",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        notifications, 5,
+        "the object pass adds the stream key triggers"
+    );
+    // The scene admin release runs after the migrate, which creates what it reads.
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/scene-admin-place-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_scene_admin_place_release(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/genesis-scene-ban-keys.sql"
+    )))
+    .execute(pool)
+    .await
+    .unwrap();
+    catalyst::worlds::rooms::ensure_genesis_scene_ban_release(pool)
+        .await
+        .unwrap();
     // The previous main has the same schema version and throttle relation,
     // but not this additive queue. Only this test-owned database is changed.
     sqlx::query("DROP TABLE social.world_access_rechecks")

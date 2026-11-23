@@ -1,7 +1,8 @@
 // Community detail modal — matches Unity's CommunityCardView: a wide card with a header
 // (thumbnail, name, public/private, members, description, open-chat, Join/Joined, ⋮),
 // ANNOUNCEMENTS / MEMBERS / PLACES / PHOTOS tabs, and an Upcoming Events sidebar. Data
-// (members/posts/places/events) arrives via the bridge `communityDetail` relay.
+// (members/places/events) arrives via the bridge `communityDetail` relay; the announcements are
+// read a page at a time (Announcements.tsx).
 
 import { useEffect, useState } from 'react'
 import { Avatar, BanIcon, Button, ControlButton, EmptyState, SwapLabel, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
@@ -12,7 +13,9 @@ import { nameColor, splitName } from '@explorer-core/lib/identity'
 import { relationshipOf, type Relationship } from '@explorer-core/lib/relationship'
 import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, memberActions, roleLabel } from '@explorer-core/features/communities/roles'
-import { useSession } from '../session/SessionContext'
+import { useOptionalSession, useSession } from '../session/SessionContext'
+import { openPlaceDetail } from '../places/PlaceDetail'
+import { PlaceActionButtons, PlaceJumpIn, travelToPlace, usePlaceActions } from '../places/PlaceActions'
 import { openCommunityEditModal } from './CommunityCreateModal'
 import { RequestRowActions } from './RequestRowActions'
 import { openPassport } from '../profile/Passport'
@@ -31,11 +34,15 @@ import type {
   CommunityRequestMember,
   CommunityPhoto,
   CommunityPlace,
-  CommunityPost
+  DiscoverPlace
 } from '@explorer-core/engine/protocol'
+import type { CommunityPosts } from '../session/useEngineSession'
+import { Announcements } from './Announcements'
 import { inCommunityStream, startCallWith, streamAct, streamLive, streamPending } from '../voiceChat/callGate'
 import styles from './CommunityModal.module.css'
+import { getHudScale } from '@explorer-core/lib/hudScale'
 import { siteUrl } from '@hud-host'
+import { Mark } from '../../design/Glyphs'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
 const TABS: TabItem<Tab>[] = [
@@ -49,9 +56,6 @@ function compact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
   return String(n)
-}
-function postDate(ts: number): string {
-  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 function eventDate(ts: number): string {
   const d = new Date(ts)
@@ -84,13 +88,6 @@ function ChatIcon(): React.JSX.Element {
     </svg>
   )
 }
-function HeartIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
-      <path d="M12 20s-7-4.5-9.5-9C1 8 2.5 4.5 6 4.5c2 0 3.2 1.2 4 2.5.8-1.3 2-2.5 4-2.5 3.5 0 5 3.5 3.5 6.5C19 15.5 12 20 12 20z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-    </svg>
-  )
-}
 function AddFriendIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true">
@@ -114,22 +111,6 @@ function Verified(): React.JSX.Element {
       <path d="M12 2l2.4 1.8 3-.3 1 2.8 2.6 1.5-.9 2.9.9 2.9-2.6 1.5-1 2.8-3-.3L12 22l-2.4-1.8-3 .3-1-2.8L3 16.2l.9-2.9L3 10.4l2.6-1.5 1-2.8 3 .3L12 2z" fill="#4d8dff" />
       <path d="M8.5 12l2.2 2.2 4.5-4.5" stroke="#fff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
-  )
-}
-
-function PostRow({ post }: { post: CommunityPost }): React.JSX.Element {
-  return (
-    <div className={styles.post}>
-      <Avatar src={post.authorPicture} name={post.author} color={knownUserColor(post.authorAddress, post.author)} size={36} />
-      <div className={styles.postBody}>
-        <div className={styles.postHead}>
-          <span className={styles.postAuthor}>{post.author}</span>
-          <span className={styles.postDate}>· {postDate(post.timestamp)}</span>
-          <span className={styles.postLikes}><HeartIcon /> {post.likes}</span>
-        </div>
-        <p className={styles.postText}>{post.text}</p>
-      </div>
-    </div>
   )
 }
 
@@ -237,23 +218,70 @@ function MemberTabs({ tabs, value, requests, onChange }: { tabs: MemberTab[]; va
   return <Tabs variant="subtab" className={styles.memberTabs} items={items} value={value} onChange={onChange} aria-label="Member sections" />
 }
 
-function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean }): React.JSX.Element {
+/** A linked place: cover, name, like rate and position, and delete for a place the user owns. With
+ *  the places service's row and a session, as unity-explorer's PlaceCardView: hovering (or focusing)
+ *  shows Like, Dislike, Favorite, Set as Home, Share and JUMP IN, and a press on the card opens
+ *  Place Detail. A jump closes the community card (`onTravelled`). */
+function PlaceCard({ place, onDelete, deleting = false, onTravelled }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean; onTravelled: () => void }): React.JSX.Element {
+  const session = useOptionalSession()
+  if (session == null || place.detail == null) return <PlaceCardFace place={place} onDelete={onDelete} deleting={deleting} />
+  return <ActionablePlaceCard place={place} detail={place.detail} onDelete={onDelete} deleting={deleting} onTravelled={onTravelled} />
+}
+
+/** `likeRate`: what a vote on the card returned, over the row's. */
+function PlaceCardFace({ place, onDelete, deleting, actions, onOpen, likeRate = place.likeRate }: { place: CommunityPlace; onDelete?: () => void; deleting: boolean; actions?: React.ReactNode; onOpen?: () => void; likeRate?: number | null }): React.JSX.Element {
   return (
-    <div className={styles.place}>
+    <div className={`${styles.place} ${actions != null ? styles.placeActionable : ''}`.trim()} onClick={onOpen}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
+        {onOpen != null && (
+          <Button size="bare" variant="clear" radius="md" className={styles.placeOpen} aria-label={`Open ${place.title}`} onClick={(e) => { e.stopPropagation(); onOpen() }} />
+        )}
         {onDelete != null && (
-          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={onDelete}>
+          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} disabled={deleting} onClick={(e) => { e.stopPropagation(); onDelete() }}>
             <Trash size={14} />
           </button>
         )}
       </div>
       <span className={styles.placeName} title={place.title}>{place.title}</span>
       <div className={styles.placeMeta}>
-        {place.likeRate != null && <span className={styles.placeLike}>👍 {Math.round(place.likeRate * 100)}%</span>}
+        {likeRate != null && <span className={styles.placeLike}>👍 {Math.round(likeRate * 100)}%</span>}
         {place.positions && <span className={styles.placePos}><PinIcon /> {place.positions}</span>}
       </div>
+      {actions}
     </div>
+  )
+}
+
+function ActionablePlaceCard({ place, detail, onDelete, deleting, onTravelled }: { place: CommunityPlace; detail: DiscoverPlace; onDelete?: () => void; deleting: boolean; onTravelled: () => void }): React.JSX.Element {
+  const session = useSession()
+  // the row came from a signed read, so it already carries the user's votes and favourite
+  const actions = usePlaceActions(detail, { readSigned: false, sharedAccess: true })
+  // as the Places, Map and Gallery pages: a jump that goes ahead closes the Communities page too
+  const travel = (to: DiscoverPlace): boolean => {
+    const outcome = travelToPlace(to, session.map)
+    if (outcome === 'refused') return false
+    if (outcome === 'sent' && session.communities.open) session.communities.toggle()
+    onTravelled()
+    return true
+  }
+  const open = (): void => openPlaceDetail({ place: detail, onJumpIn: travel })
+  return (
+    <PlaceCardFace
+      place={place}
+      onDelete={onDelete}
+      deleting={deleting}
+      onOpen={open}
+      likeRate={actions.counts.likeRate}
+      actions={
+        <div className={styles.placeActions} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.placeButtons}>
+            <PlaceActionButtons actions={actions} iconSize={20} toggle={styles.placeToggle} share={styles.placeToggle} />
+          </div>
+          <PlaceJumpIn actions={actions} iconSize={20} className={styles.placeJump} onJumpIn={() => travel(detail)} />
+        </div>
+      }
+    />
   )
 }
 
@@ -356,6 +384,11 @@ export function CommunityModal({
   onLoadSection,
   onManageRequest,
   onUnban,
+  posts = null,
+  onLoadMorePosts,
+  onPost,
+  onDeletePost,
+  onLikePost,
   onClose
 }: {
   community: Community
@@ -399,6 +432,12 @@ export function CommunityModal({
   /** Answer a member's join request, or cancel an invite sent to them. */
   onManageRequest?: (member: CommunityRequestMember, intention: 'accepted' | 'rejected' | 'cancelled') => void
   onUnban?: (member: CommunityRequestMember) => void
+  /** The Announcements tab, read a page at a time, and what can be done there. */
+  posts?: CommunityPosts | null
+  onLoadMorePosts?: () => void
+  onPost?: (content: string) => void
+  onDeletePost?: (postId: string) => void
+  onLikePost?: (postId: string, like: boolean) => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -529,7 +568,7 @@ export function CommunityModal({
     })
   }
   const copyLink = (): void => {
-    void navigator.clipboard?.writeText(siteUrl(`/communities/${community.id}`)).catch(() => undefined)
+    void navigator.clipboard?.writeText(siteUrl(`/social/communities/${encodeURIComponent(community.id)}`)).catch(() => undefined)
     setMenuOpen(false)
   }
 
@@ -579,7 +618,7 @@ export function CommunityModal({
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
             {inviteId != null ? null : member ? (
-              <Button size="sm" variant="ghost" className={styles.joined} disabled>✓ Joined</Button>
+              <Button size="sm" variant="ghost" className={styles.joined} disabled><Mark name="check" /> Joined</Button>
             ) : isPrivate && community.pendingRequestId != null ? (
               <Button size="sm" variant="ghost" aria-label="Cancel join request" onClick={() => onCancelRequest(community.id, community.pendingRequestId!)}>
                 <SwapLabel idle="Request Sent" hover="Cancel Request" />
@@ -590,7 +629,7 @@ export function CommunityModal({
               <Button size="sm" onClick={() => onJoin(community.id)}>Join</Button>
             )}
             <div className={styles.kebabWrap}>
-              <button type="button" className={styles.kebab} aria-label="More" onClick={() => setMenuOpen((o) => !o)}>⋮</button>
+              <button type="button" className={styles.kebab} aria-label="More" onClick={() => setMenuOpen((o) => !o)}><Mark name="kebab" /></button>
               {menuOpen && (
                 <div className={styles.menu}>
                   <button type="button" className={styles.menuItem} onClick={copyLink}>Copy link</button>
@@ -614,10 +653,19 @@ export function CommunityModal({
         <Tabs variant="underline" className={styles.tabs} items={TABS} value={tab} onChange={setTab} aria-label="Community sections" />
 
         <div className={styles.tabBody}>
-          {loading ? (
+          {tab === 'announcements' ? (
+            <Announcements
+              posts={posts}
+              role={community.role}
+              locked={isPrivate && !member}
+              me={me}
+              onLoadMore={() => onLoadMorePosts?.()}
+              onPost={(content) => onPost?.(content)}
+              onDelete={(postId) => onDeletePost?.(postId)}
+              onLike={(postId, like) => onLikePost?.(postId, like)}
+            />
+          ) : loading ? (
             <div className={styles.empty}>Loading…</div>
-          ) : tab === 'announcements' ? (
-            detail.posts.length > 0 ? detail.posts.map((p) => <PostRow key={p.id} post={p} />) : <div className={styles.empty}>No announcements yet.</div>
           ) : tab === 'members' && memberTabs.length > 1 && shownTab !== 'members' ? (
             <>
               <MemberTabs tabs={memberTabs} value={shownTab} requests={requestsCount} onChange={openMemberTab} />
@@ -691,6 +739,7 @@ export function CommunityModal({
                     place={p}
                     onDelete={canModify && p.isMine === true && onRemovePlace != null ? () => confirmRemovePlace(p) : undefined}
                     deleting={removing.has(p.id)}
+                    onTravelled={onClose}
                   />
                 ))}
               </div>
@@ -750,6 +799,12 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   useEffect(() => {
     loadDetail(communityId)
   }, [loadDetail, communityId])
+  // a private community's announcements are read only by its members (the service refuses anyone else)
+  const { loadPosts } = communities
+  const readsPosts = community != null && (community.privacy !== 'private' || isMemberRole(community.role))
+  useEffect(() => {
+    if (readsPosts) loadPosts(communityId)
+  }, [loadPosts, communityId, readsPosts])
 
   const error = communities.error?.id === communityId ? communities.error.message : null
   // deleted: the card goes with it
@@ -804,7 +859,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onMemberMenu={(member, anchor, actions, closed) => {
         // as the friends list's menu: up from the button, 5px right of and 10px above its centre
         const r = anchor.getBoundingClientRect()
-        openProfileCard(member.address, r.left + r.width / 2 + 5, r.top + r.height / 2 - 10, {
+        openProfileCard(member.address, r.left + r.width / 2 + 5 * (getHudScale() || 1), r.top + r.height / 2 - 10 * (getHudScale() || 1), {
           above: true,
           context: 'community',
           communityActions: actions,
@@ -831,6 +886,11 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onLoadSection={(section) => communities.loadMemberSection(communityId, section)}
       onManageRequest={(m, intention) => communities.manageRequest(communityId, m.requestId, intention, m.address)}
       onUnban={(m) => communities.unban(communityId, m.address)}
+      posts={communities.posts?.id === communityId ? communities.posts : null}
+      onLoadMorePosts={communities.loadMorePosts}
+      onPost={(content) => communities.createPost(communityId, content)}
+      onDeletePost={(postId) => communities.deletePost(communityId, postId)}
+      onLikePost={(postId, like) => communities.likePost(communityId, postId, like)}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })

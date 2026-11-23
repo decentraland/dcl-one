@@ -12,7 +12,7 @@
 // | TestOpenChatWithEnterAndCloseWithEscape     | Enter opens it with the input focused; Escape leaves the input, it does not close the panel          | Partial |
 // | TestSendMessageAppearsInHistory             | the message is found in /chat_history as the player's own, not as a rendered entry                    | Partial |
 // | TestSendHyperlinkRendersAsLink              | the URL is a `link` control with the URL as its text (a run-unique URL, so the link is one control)   | Port    |
-// | TestNearbyChannelAndConversationsToolbarPresence | the "<n> nearby" button stands for the Nearby channel; the input and Emoji button; no conversations toolbar, which exists only with a direct message open | Partial |
+// | TestNearbyChannelAndConversationsToolbarPresence | the "<n> nearby" button stands for the Nearby channel; the input and Emoji button; the conversations rail, in every open chat, is not read | Partial |
 // | TestReactToOwnMessage                       | the reaction pill is a button named "you reacted with ..."; the row has no control to hover, so a click just above the input reveals React | Partial |
 import assert from 'node:assert/strict'
 import { spec, until, type ChatHistory, type ChatMessage, type Explorer } from '../driver/index.ts'

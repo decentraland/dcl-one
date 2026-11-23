@@ -15,8 +15,11 @@ use tracing::{debug, error, info, warn};
 
 use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
+use crate::failed_deployments_store::{
+    DueCursor, LiveFailedDeploymentsStore, prune_failed_deployments,
+};
 use crate::storage::Storage;
-use crate::sync_deployer::{DueCursor, LiveFailedDeploymentsStore, LiveSyncDeployer};
+use crate::sync_deployer::LiveSyncDeployer;
 
 const BASE_RETRY_INTERVAL_MS: u64 = 900_000;
 const MAX_RETRY_INTERVAL_MS: u64 = 86_400_000;
@@ -41,6 +44,10 @@ pub struct RetryFailedConfig {
     /// Due records per page of a cycle. A cycle keeps paging until the due set it started with
     /// is drained, so this bounds memory and statement size, not the work a cycle does.
     pub retry_batch_size: usize,
+    /// Discard a due entity a newer active entity overtook instead of deploying it as a
+    /// superseded row. Set where the history prune (`CONTENT_HISTORY_PRUNE_ENABLED`) would remove
+    /// that row again; a node that keeps history stores it.
+    pub discard_overtaken: bool,
 }
 
 impl Default for RetryFailedConfig {
@@ -50,6 +57,7 @@ impl Default for RetryFailedConfig {
             max_retries: DEFAULT_MAX_RETRIES,
             retry_concurrency: DEFAULT_RETRY_CONCURRENCY,
             retry_batch_size: DEFAULT_RETRY_BATCH_SIZE,
+            discard_overtaken: false,
         }
     }
 }
@@ -126,6 +134,14 @@ fn retried_record(
     }
 }
 
+/// What a successful retry did with a due record.
+enum Retried {
+    /// Buffered for the flush, whose transaction deletes the record.
+    Buffered,
+    /// Overtaken by a newer entity: the record is deleted and nothing is written.
+    Discarded,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetryDisposition {
     Due,
@@ -150,7 +166,7 @@ fn classify(failure: &FailedDeployment, max_retries: u32, now_ms: i64) -> RetryD
 
 pub struct RetryFailedDeployments {
     config: RetryFailedConfig,
-    http_client: reqwest::Client,
+    http_client: crate::http::CheckedRedirectClient,
     storage: Arc<Storage>,
     deployer: Arc<LiveSyncDeployer>,
     failed_store: Arc<LiveFailedDeploymentsStore>,
@@ -160,7 +176,7 @@ pub struct RetryFailedDeployments {
 impl RetryFailedDeployments {
     pub fn new(
         config: RetryFailedConfig,
-        http_client: reqwest::Client,
+        http_client: crate::http::CheckedRedirectClient,
         storage: Arc<Storage>,
         deployer: Arc<LiveSyncDeployer>,
         failed_store: Arc<LiveFailedDeploymentsStore>,
@@ -231,6 +247,7 @@ impl RetryFailedDeployments {
         let content_semaphore = Arc::new(Semaphore::new(50));
         let succeeded = AtomicU64::new(0);
         let still_failing = AtomicU64::new(0);
+        let discarded = AtomicU64::new(0);
         let mut skipped: u64 = 0;
         let mut pages: u64 = 0;
 
@@ -290,6 +307,7 @@ impl RetryFailedDeployments {
             let servers_ref: &[String] = servers.as_deref().unwrap_or_default();
             let succeeded_ref = &succeeded;
             let still_failing_ref = &still_failing;
+            let discarded_ref = &discarded;
             let content_semaphore = &content_semaphore;
 
             futures::stream::iter(due)
@@ -297,7 +315,7 @@ impl RetryFailedDeployments {
                     let content_semaphore = content_semaphore.clone();
                     async move {
                         let attempt = next_attempt(failure);
-                        match deploy_entity_streaming(
+                        let outcome = deploy_entity_streaming(
                             ContentSource {
                                 client: &self.http_client,
                                 storage: self.storage.clone(),
@@ -311,14 +329,33 @@ impl RetryFailedDeployments {
                                 context: DeploymentContext::SyncedFix,
                                 report: None,
                                 retry_state: Some(attempt),
+                                discard_overtaken: self.config.discard_overtaken,
                             },
                         )
-                        .await
-                        {
+                        .await;
+                        // A failed discard is re-reported below like any failed attempt, so the
+                        // record backs off instead of being checked again next cycle.
+                        let outcome = match outcome {
+                            Err(SyncError::Overtaken { .. }) => self
+                                .failed_store
+                                .remove_discarded(&failure.entity_id)
+                                .await
+                                .map(|()| Retried::Discarded),
+                            other => other.map(|()| Retried::Buffered),
+                        };
+                        match outcome {
+                            Ok(Retried::Discarded) => {
+                                info!(
+                                    entity_id = %failure.entity_id,
+                                    entity_type = %failure.entity_type,
+                                    "Discarded failed deployment overtaken by newer deployments"
+                                );
+                                discarded_ref.fetch_add(1, Ordering::Relaxed);
+                            }
                             // Buffered, not yet written: the flush transaction that writes
                             // it deletes the failure record, so a crash or a failed flush
                             // before then leaves the record for the next cycle.
-                            Ok(()) => {
+                            Ok(Retried::Buffered) => {
                                 info!(entity_id = %failure.entity_id, "Retried failed deployment");
                                 succeeded_ref.fetch_add(1, Ordering::Relaxed);
                             }
@@ -358,6 +395,7 @@ impl RetryFailedDeployments {
         let stats = RetryStats {
             succeeded: succeeded.load(Ordering::Relaxed),
             still_failing: still_failing.load(Ordering::Relaxed),
+            discarded: discarded.load(Ordering::Relaxed),
             waiting,
             evicted,
             skipped,
@@ -370,6 +408,7 @@ impl RetryFailedDeployments {
             info!(
                 succeeded = stats.succeeded,
                 still_failing = stats.still_failing,
+                discarded = stats.discarded,
                 waiting = stats.waiting,
                 evicted = stats.evicted,
                 skipped = stats.skipped,
@@ -419,6 +458,9 @@ impl RetryFailedDeployments {
 pub struct RetryStats {
     pub succeeded: u64,
     pub still_failing: u64,
+    /// Due records dropped because a newer deployment overtook the entity
+    /// ([`RetryFailedConfig::discard_overtaken`]).
+    pub discarded: u64,
     /// Records whose deadline was still ahead when the cycle started.
     pub waiting: u64,
     pub evicted: u64,
@@ -426,24 +468,6 @@ pub struct RetryStats {
     pub skipped: u64,
     /// Due pages the cycle fetched, the page the peer guard turned back included.
     pub pages: u64,
-}
-
-/// One pass of the old daily prune: records whose first failure is older than `ttl_days`.
-/// Undecided records stay: the retry worker gives up on them after [`UNDECIDED_GIVE_UP_MS`].
-pub async fn prune_failed_deployments(
-    pool: &sqlx::PgPool,
-    ttl_days: i64,
-) -> Result<u64, SyncError> {
-    let result = sqlx::query(
-        "DELETE FROM content.failed_deployments
-         WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)
-           AND reason <> 'Validation undecided'",
-    )
-    .bind(ttl_days as i32)
-    .execute(pool)
-    .await
-    .map_err(|e| SyncError::Storage(e.to_string()))?;
-    Ok(result.rows_affected())
 }
 
 pub async fn run_prune_loop(

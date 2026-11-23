@@ -55,9 +55,10 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
         .unwrap();
     rolled_back.rollback().await.unwrap();
     assert_eq!(counters(&rig, a).await.1, 0);
+    // a photo's place in another case still matches the stored lowercase id
     for _ in 0..2 {
         let mut tx = rig.pool.begin().await.unwrap();
-        ranking::record_photo(&mut tx, &key, &place, now)
+        ranking::record_photo(&mut tx, &key, &place.to_uppercase(), now)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -201,32 +202,16 @@ async fn local_event_ends_use_occurrence_receipts_local_attendees_and_the_tracki
 
 #[tokio::test]
 async fn ranking_upgrade_retains_nonempty_rows_and_starts_tracking_without_replaying_history() {
-    let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+    let Some(database) = crate::db::scratch::OwnedDatabase::new(
+        "ranking_upgrade",
+        crate::db::scratch::Schema::Blank,
+        2,
+    )
+    .await
+    else {
         return;
     };
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect(&base)
-        .await
-        .unwrap();
-    let database = format!(
-        "catalyst_test_ranking_upgrade_{}_{}",
-        std::process::id(),
-        Uuid::new_v4().simple()
-    );
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        "CREATE DATABASE \"{database}\""
-    )))
-    .execute(&admin)
-    .await
-    .unwrap();
-    let mut url = url::Url::parse(&base).unwrap();
-    url.set_path(&format!("/{database}"));
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(2)
-        .connect(url.as_str())
-        .await
-        .unwrap();
+    let pool = database.pool.clone();
     sqlx::raw_sql("CREATE SCHEMA meta; CREATE TABLE meta.schema(id integer PRIMARY KEY,identity text NOT NULL,version integer NOT NULL,applied_at timestamp NOT NULL DEFAULT timezone('UTC',now()));
         CREATE SCHEMA social; CREATE SCHEMA camera_reel;
         CREATE TABLE social.communities(id uuid PRIMARY KEY, ranking_score real NOT NULL DEFAULT 0, retained jsonb NOT NULL);
@@ -302,10 +287,44 @@ async fn ranking_upgrade_retains_nonempty_rows_and_starts_tracking_without_repla
     );
     let index:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='camera_reel' AND indexname='images_ranking_pending_idx'").fetch_one(&pool).await.unwrap();
     assert!(index.contains("WHERE (NOT ranking_published)"));
-    pool.close().await;
-    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{database}\"")))
-        .execute(&admin)
+    database.drop().await;
+}
+
+/// What the import writes (lifetime counters, a thumbnail row) is what the
+/// first ranking pass scores.
+#[tokio::test]
+async fn ranking_pass_scores_imported_counters_and_thumbnails() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let owner = wallet();
+    let id = rig.community(&owner, false).await;
+    sqlx::query("UPDATE social.communities SET ranking_events_count=3,ranking_photos_count=5,ranking_streams_count=2,
+        ranking_events_total_attendees=40,ranking_streams_total_participants=10 WHERE id=$1")
+        .bind(id).execute(&rig.pool).await.unwrap();
+    sqlx::query("INSERT INTO social.community_thumbnails(community_id,thumbnail_hash) VALUES($1,'QmImported') ON CONFLICT (community_id) DO UPDATE SET thumbnail_hash=EXCLUDED.thumbnail_hash")
+        .bind(id).execute(&rig.pool).await.unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    ranking::recalculate_ids(&rig.pool, &[id.as_uuid()], now)
         .await
         .unwrap();
-    admin.close().await;
+    let expected = ranking::score(&Metrics {
+        events_count: 3,
+        photos_count: 5,
+        streams_count: 2,
+        events_total_attendees: 40,
+        streams_total_participants: 10,
+        has_thumbnail: 1,
+        new_members_count: 1,
+        has_description: 1,
+        ..Default::default()
+    }) as f32;
+    let actual: f32 =
+        sqlx::query_scalar("SELECT ranking_score FROM social.communities WHERE id=$1")
+            .bind(id)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap();
+    assert_eq!(actual, expected);
+    rig.finish();
 }

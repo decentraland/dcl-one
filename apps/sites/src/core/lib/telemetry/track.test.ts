@@ -48,8 +48,8 @@ describe("track (fetch mocked)", () => {
   });
 
   it("preserves an event variant when the context does not override it", () => {
-    expect(buildSegmentBody("cl_open_screen_shown", { variant: "base" }, { sid: "test" }).properties.variant).toBe("base");
-    expect(buildSegmentBody("cl_open_screen_shown", { variant: "base" }, { sid: "test", variant: "genesis" }).properties.variant).toBe("genesis");
+    expect(buildSegmentBody("cast_ending", { variant: "base" }, { sid: "test" }).properties.variant).toBe("base");
+    expect(buildSegmentBody("cast_ending", { variant: "base" }, { sid: "test", variant: "genesis" }).properties.variant).toBe("genesis");
   });
 
   it("wraps the body in Segment's HTTP API envelope: the public write key, a message id, timestamps and the library context", () => {
@@ -142,6 +142,29 @@ describe("track (fetch mocked)", () => {
     });
   });
 
+  it("never sends a Cast streaming key, which is the stream link's path", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        href: "https://sites.example/cast/s/live-key-123?step=x",
+        pathname: "/cast/s/live-key-123",
+      },
+      __DCL_PUBLIC__: { SEGMENT_WRITE_KEY: "key-1" },
+    });
+    vi.stubGlobal("document", { referrer: "https://sites.example/cast/s/live-key-123", title: "Cast" });
+    vi.stubGlobal("navigator", { userAgent: "test-agent", language: "en" });
+    trackAny("evt", {}, CTX);
+    await Promise.resolve();
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = init.body as string;
+    expect(body).not.toContain("live-key-123");
+    expect(JSON.parse(body).context.page).toMatchObject({
+      url: "https://sites.example/cast/s/:key?step=x",
+      path: "/cast/s/:key",
+      referrer: "https://sites.example/cast/s/:key",
+    });
+    expect(withoutSensitiveParams("/cast/w/10,10")).toBe("/cast/w/10,10");
+  });
+
   it("drops only the credential parameters, in the query or a query-shaped fragment, in any position or case, and leaves a path without any alone", () => {
     expect(withoutSensitiveParams("/cast-stream?token=abc")).toBe("/cast-stream");
     expect(withoutSensitiveParams("/a?x=1&Access_Token=t&y=2#h")).toBe("/a?x=1&y=2#h");
@@ -152,7 +175,7 @@ describe("track (fetch mocked)", () => {
     expect(withoutSensitiveParams("/a?token=x&")).toBe("/a");
     expect(withoutSensitiveParams("/a?token=x&&y=1")).toBe("/a?y=1");
     expect(withoutSensitiveParams("/a?q=token#token=1")).toBe("/a?q=token");
-    expect(withoutSensitiveParams("/create/scene-editor?project=p#token=abc&x=1")).toBe("/create/scene-editor?project=p#x=1");
+    expect(withoutSensitiveParams("/create/preview?project=p#token=abc&x=1")).toBe("/create/preview?project=p#x=1");
     expect(withoutSensitiveParams("/a#top")).toBe("/a#top");
     expect(withoutSensitiveParams("/a?#token")).toBe("/a?#token");
     expect(withoutSensitiveParams("")).toBe("");

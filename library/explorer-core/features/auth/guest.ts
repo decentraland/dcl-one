@@ -6,24 +6,35 @@ import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { personalSign } from '../../shell/sign'
-import type { AuthIdentity } from './sso'
-import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import type { AuthIdentity, StoredLogin } from './sso'
+import { EmailLoginError, GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
+import { THIRDWEB_GUEST_PARAM } from './guestWalletParam'
+
+/** An email account's sign-in from the HUD lasts 7 days; the Sites sign-in page's own lasts 30. */
+export const EMAIL_IDENTITY_LIFETIME_MS = 7 * 24 * 3600 * 1000
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
 
-/** Where the thirdweb calls run and the session id is kept: the page on web, the bridge scene on native. */
+/** Where the thirdweb calls run: the page on web, which also keeps the session id; the bridge scene
+ *  on native, which keeps nothing. */
 export interface GuestBackend {
-  /** Keep `sessionId` as this device's guest (replacing any earlier one) and sign it in. */
+  /** Sign `sessionId` in; the web backend also keeps it as this device's guest, replacing any earlier one. */
   login(sessionId: string): Promise<GuestWallet>
   sign(token: string, message: string): Promise<string>
+  /** This device's guest session id, kept from an earlier `login`: it reaches the same wallet again. */
+  keptSessionId?(): string | null | Promise<string | null>
 }
 
 export const webGuestBackend: GuestBackend = {
-  login(sessionId) {
+  // kept only once thirdweb has signed it in: a failed login (an origin thirdweb refuses) leaves no
+  // session behind to make the next PLAY AS GUEST pick thirdweb again
+  async login(sessionId) {
+    const wallet = await guestLogin(sessionId)
     localStorage.setItem(GUEST_SESSION_KEY, sessionId)
-    return guestLogin(sessionId)
+    return wallet
   },
-  sign: guestSign
+  sign: guestSign,
+  keptSessionId: () => localStorage.getItem(GUEST_SESSION_KEY)
 }
 
 // thirdweb only serves the guest wallet to the origins it allowlists, Decentraland's own.
@@ -42,9 +53,16 @@ export const localGuestBackend: GuestBackend = {
   sign: (token, message) => Promise.resolve(personalSign(token, message))
 }
 
-/** The guest wallet a web page on `hostname` can reach. */
-export function webGuestBackendFor(hostname: string): GuestBackend {
-  const thirdweb = THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`))
+
+/** The guest wallet a web page at `location` can reach: thirdweb on Decentraland's domains, when the
+ *  page asks for it, or when this browser already keeps a thirdweb guest session (so the guest comes
+ *  back on the same wallet without the parameter); a key made in this browser otherwise. */
+export function webGuestBackendFor(location: { hostname: string; search: string }): GuestBackend {
+  const { hostname, search } = location
+  const thirdweb =
+    THIRDWEB_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`)) ||
+    new URLSearchParams(search).get(THIRDWEB_GUEST_PARAM) === 'thirdweb' ||
+    localStorage.getItem(GUEST_SESSION_KEY) != null
   return thirdweb ? webGuestBackend : localGuestBackend
 }
 
@@ -69,11 +87,11 @@ export interface EphemeralDelegation {
   payload: string
 }
 
-export function newEphemeralDelegation(): EphemeralDelegation {
+export function newEphemeralDelegation(lifetimeMs: number = IDENTITY_LIFETIME_MS): EphemeralDelegation {
   const privateKey = secp256k1.utils.randomSecretKey()
   const publicKey = secp256k1.getPublicKey(privateKey, false)
   const address = publicKeyAddress(publicKey)
-  const expiration = new Date(Date.now() + IDENTITY_LIFETIME_MS).toISOString()
+  const expiration = new Date(Date.now() + lifetimeMs).toISOString()
   return {
     ephemeralIdentity: { address, publicKey: `0x${bytesToHex(publicKey)}`, privateKey: `0x${bytesToHex(privateKey)}` },
     expiration,
@@ -93,12 +111,37 @@ export function signedIdentity(delegation: EphemeralDelegation, signer: string, 
   }
 }
 
-/** Create a new guest wallet and an identity it has signed. Any earlier guest is replaced. */
+/** An identity signed by this device's guest wallet: the kept session's, so the guest that signed out
+ *  comes back the same, as unity-explorer's does; a new wallet when there is none. */
 export async function createGuestIdentity(backend: GuestBackend): Promise<AuthIdentity> {
-  const sessionId = bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
+  const sessionId = (await backend.keptSessionId?.()) || bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
   const { token, walletAddress } = await backend.login(sessionId)
 
   const delegation = newEphemeralDelegation()
   const signature = await backend.sign(token, delegation.payload)
   return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
 }
+
+/** PLAY AS GUEST's wallet step: a new wallet, the kept wallet session again, or none (the kept guest's
+ *  sign-in still runs). */
+export type GuestWalletStep = 'new' | 'existing' | null
+export type GuestLogin = StoredLogin & { wallet: GuestWalletStep }
+
+/** Where an email sign-in's thirdweb calls run: the shell page on web, the bridge scene on native. */
+export interface EmailBackend {
+  /** Check `code` for `email`: the wallet it opens. */
+  complete(email: string, code: string): Promise<GuestWallet>
+  sign(token: string, message: string): Promise<string>
+}
+
+/** Check the code sent to `email` and sign an identity with the wallet it opens, for 7 days. */
+export async function createEmailIdentity(backend: EmailBackend, email: string, code: string): Promise<AuthIdentity> {
+  const { token, walletAddress } = await backend.complete(email, code)
+  const delegation = newEphemeralDelegation(EMAIL_IDENTITY_LIFETIME_MS)
+  // the code was right, but the wallet won't sign from here: the sign-in page can still sign in
+  const signature = await backend.sign(token, delegation.payload).catch((e: unknown) => {
+    throw new EmailLoginError('sign-refused', e instanceof Error ? e.message.slice(0, 80) : 'thirdweb sign')
+  })
+  return signedIdentity(delegation, walletAddress.toLowerCase(), signature)
+}
+

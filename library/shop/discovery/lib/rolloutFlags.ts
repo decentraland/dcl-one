@@ -25,6 +25,24 @@ export const REMOTE_FLAG = {
    * then only they get in (seller/lib/featureFlags.ts).
    */
   myStore: "shop-my-store",
+  /**
+   * Not the Shop's: Sites' Places page reads it from the same `dapps` file (sites@production discover.flags.ts
+   * useLiveMinUsers). While on, its variant's payload is the head count a scene needs for Live Now.
+   */
+  placesLiveMinUsers: "places-live-min-user",
+  /**
+   * Buying with Polygon MANA in the in-world Shop (/play): its purchase dialog lets a self-custody buyer pick Credits
+   * or MANA for one item. Off, the in-world Shop buys with Credits only. Only the /play shell reads it
+   * (play/shell/shop/purchase.ts); a host may declare it (`manaInWorld`).
+   */
+  manaInWorld: "shop-mana-in-world",
+  /**
+   * Credits and MANA paying one item together (the MANA option's split, payment/present.ts): offered only with this on
+   * AND an offer the node marks `splittable`, read per page render (never a module switch), with no host declaration.
+   * The lock is the node's credits service reading the same key: off, it refuses a Credits part on both authorize
+   * routes and marks no offer `splittable`, so the flag is turned on only where the node does.
+   */
+  creditsManaSplit: "shop-credits-mana-split",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
@@ -54,9 +72,12 @@ export function parseRemoteFlags(body: unknown): RemoteFlagsAnswer {
 /** How a host fetches the flags file: a GET of `url`, its status and body as text. */
 export type FlagsTransport = (url: string, init: { signal?: AbortSignal }) => Promise<{ status: number; body: string }>;
 
-/** The flags file at `service` (the host's, normalized), read once through `transport`. */
-export async function readFlagsFile(service: string, transport: FlagsTransport, signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
-  const res = await transport(`${service}/${FLAGS_APP}.json`, { signal });
+/**
+ * One app's flags file at `service` (the host's, normalized), read once through `transport`: the Shop's `dapps`
+ * unless another app is named (the Explorer's `explorer`).
+ */
+export async function readFlagsFile(service: string, transport: FlagsTransport, signal?: AbortSignal, app: string = FLAGS_APP): Promise<RemoteFlagsAnswer> {
+  const res = await transport(`${service}/${app}.json`, { signal });
   if (res.status < 200 || res.status >= 300) throw new Error(`feature flags: HTTP ${res.status}`);
   return parseRemoteFlags(JSON.parse(res.body));
 }
@@ -76,7 +97,7 @@ export type ShopFlags = {
 };
 
 /** The switches a host may declare itself (the native shop, a journey): a declared one stands over the file. */
-export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean };
+export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean; myStore?: boolean; manaInWorld?: boolean };
 
 /** A switch as the host declared it, else as the file answered (`null` while it has not). */
 export function declaredOr(declared: HostShopFlags, key: keyof HostShopFlags, remote: boolean | null): boolean | null {

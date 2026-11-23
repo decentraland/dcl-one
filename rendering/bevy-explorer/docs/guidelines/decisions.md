@@ -10,13 +10,101 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Toon MASK wearables.** Unity alpha-blends after the cutoff, so thin masked lines look
   fine there and fat and black here. Bevy stays glTF-spec-correct (MASK is binary). We don't
   match.
+- **Toon avatars are fogged.** Like everything else; Unity's toon computes a fog factor its
+  fragment never applies.
+- **Toon avatars take only the sun.** No point or spot light reaches them, as in Unity, whose
+  toon additional-light loop is commented out.
+- **The toon ambient floor is the sky envmap's irradiance.** It stands in for Unity's
+  spherical harmonics, read up and down, and without the world's dielectric factor, as Unity reads
+  `ShadeSH9` raw. Avatars in shade sit about 4% above a white world surface; that matches Unity
+  and is not to be removed.
+- **Without the sky envmap, toon avatars take the view's flat ambient.** Such a view (the
+  Backpack preview, a photo booth) has no Trilight ambient. The Backpack is lit flat; a booth
+  carries a one-light-unit key light, or its avatars would sit at the night floor.
+- **Face features are lit by the ambient alone.** As Unity's facial shader: no sun and no bands,
+  so they are brighter than the body at noon and darker at night. A view without the sky envmap
+  takes the noon horizon colour, since its flat ambient would light them twentyfold. They keep
+  the body's outline, which Unity's face shader does not draw.
+- **The toon outline is a screen-space line, not an inverted hull.** It keeps Unity's colour,
+  width falloff and 8 m cutoff. Kept differences: the cutoff is per mesh, not per avatar; an
+  overlap shallower than the edge threshold gets no line, so a curved surface draws none on
+  itself; creases inside the silhouette darken, which the look relies on; and an orthographic
+  view (the Backpack) skips the cutoff, in place of Unity's preview flag.
+- **A hovered avatar glows through the shared highlight pass.** Unity's colour, opacity, width
+  and 0.1 s fade, through the pass scene entities use, so the glow shows through what stands in
+  front and ignores the camera dither and the ghost reveal. Kept differences: every opaque or
+  alpha-tested mesh under the player glows, an emote's props included, where Unity lists the
+  wearables only; an avatar shown with `ShowOnlyWearables` glows like any other.
 - **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
+- **Scene environment components.** Skybox cloud speed accepts finite negative values for
+  reverse rotation, as the public protocol specifies. Unity's environment profile at
+  `c78b1f0c59545b0d3b1ff43e109fa63997267850` clamps negative speed to zero. Missing overrides
+  retain this renderer's time-of-day atmosphere, lighting and quality settings; component
+  compatibility does not imply identical default pixels across renderers. A sky image changes
+  the visible sky while the authored color bands continue to drive ambient lighting: an
+  authored zenith, horizon or nadir replaces the sky, equator or ground colour of the Trilight
+  ambient, and the sky preset keeps the bands a scene leaves out. A scene's fog density is in the
+  sky preset's units, so it goes through the same conversion to bevy's falloff, and it takes the
+  place of the `/fog` density while the scene is active.
+- **Scene colour gradients are linear (#1293).** Sun, sky, fog and cloud gradients are read as
+  linear colours, as `gradient.proto` specifies for `ColorKey.color`, with values above 1
+  allowed. A Sun key above 1 is scaled back to 1 for the hue, and the light is multiplied by its
+  largest channel. Unity's environment profile at `0a8bafca9e62ced7f34ac182158b11edd0c842a4`
+  puts the Sun gradient straight into the light colour, which it decodes as sRGB: the same key
+  gives a darker, more saturated hue there, and a key of (2, 2, 2) lights the scene about 4.6
+  times rather than 2. We follow the protocol.
+- **A root light source replaces what it sets.** Point and spot light intensities are scaled to
+  the sky preset's light unit (the default 16000 is 8 units). A `LightSource` on a scene's root
+  entity replaces the sun's colour and, when it gives an intensity, the sun's intensity as lux,
+  unscaled: the Unity client creates no light for a light source without a type, so there is no
+  unit to match, and scenes already set it in lux here. Without an intensity the sky preset's
+  light stays: the lamps' default of 16000 is not applied to the sun, where it is over four
+  times the preset's noon.
+- **The light sets with the sun.** From sunset until the swing to the moon, and from the swing
+  back until sunrise, the directional light stays on the sun's arc below the horizon while the
+  intensity curve fades it, as in Unity. It grazes walls from under the horizon and floors get
+  no direct light; at most a tenth of a light unit points upward. It is not clamped to the
+  horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
-  the extension is not the fix; the long-term answer is still open.
+  the extension is not the fix; the long-term answer is still open. A glTF emissive factor of 1
+  draws five times as bright as a lit white surface, and the strength multiplies that.
+- **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
+  unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
+  colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
+  its texture's alpha, and its emissive factor is tinted by its base colour texture. The
+  material the engine writes to a scene for a glTF has to draw the same once the scene sends it
+  back with one field changed, and the SDK fields cannot say either thing. So a Material with a
+  `gltf` reference reads `alpha_test`, the diffuse alpha and the emissive by the glTF's rules;
+  one without it, which includes `GltfNodeModifiers`, reads them by the SDK's. The imposter
+  bake applies the same alpha-texture and emissive rules, so a scene keeps its look when its
+  imposter takes over.
+  A normal map follows the texture, not the reference: an SDK `bumpTexture` has its green
+  channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
+  keeps its orientation when it comes back, and a bump texture the scene puts in its place is
+  read as the SDK's.
+- **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
+  surface here is about half as strong as Unity draws it, and 0.5 matches its captures
+  (`BLOOM_SCATTER`).
+- **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
+  colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
+  reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
+  terms split inside the lighting functions.
+- **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
+  ambient keys are interpolated linearly; Unity's curve tangents are not carried.
+- **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
+  UI, at no extra cost. Below it, the world renders to an image that a 2D camera composites onto
+  the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
+  at full resolution; `/screenshot` captures the window. The primary camera always keeps the
+  depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
+  while the avatar outline is on or the camera has SSAO (native only).
+- **Render Resolution stops at 100%.** Unity's Resolution Scale moves in the same 10% steps
+  but reaches 120%. The compositor only upscales, so the range is 50–100%. A saved value
+  between steps or outside that range moves to the nearest step in it once, when the saved
+  settings are migrated, so the slider shows what is rendered.
 - **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
   URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
   normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
@@ -27,19 +115,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
   75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
   keeps it.
-- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
-  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
-  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
-  ambient lands, and the two get tuned together after that.
 - **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
   the shadow distance. We fade over the same squared-distance curve, but towards a partial
   shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
   worst-case change between near and far is smaller. Fading to no shadow looked worse about
   half the time.
 - **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
-  the default preset and the filter applies per view, spot shadows included, so Low keeps
-  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
-  and web. High uses `Gaussian`.
+  the Medium preset's shadow quality and the filter applies per view, spot shadows included, so
+  Low keeps bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on
+  weak GPUs and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
@@ -63,24 +147,32 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
-  the head of the best-ranked queue (one per scene or wearable hash, and one for requests with
-  no hash): the player's scenes, then avatars' wearables, then the other scenes, the last two by
-  parcel ring, in front before behind, then raw distance; then requests no scene or avatar owns
-  (no hash, or a hash nobody holds), oldest first; last, the downloads of a scene that has left.
+  the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
+  with no hash): the player's own wearables and the emotes they play or have equipped, then the
+  player's scenes,
+  then the other avatars' wearables and emotes, then the
+  other scenes, the last two by parcel ring, in front before behind, then raw distance; then
+  requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
+  downloads of a scene that has left.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+  The same key orders scene spawns, which come in loading waves of at most six
+  ([ADR](../../../../docs/adr/2026-11-09-explorer-scene-streaming.md)).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
-  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
-    the call mic while a call is connected and the nearby mic otherwise. A community listener's
-    `V` does nothing, since a listener can't speak.
+  - The `Microphone` key is `T`, Unity's `Talk` key. The chat opens with `Enter`, so the chat
+    panel has no default key. The `Microphone` key drives the call mic while a call is connected
+    and the nearby mic otherwise, as Unity's `T` does. Nearby, a press opens the mic and its
+    release closes it. In a call, a press shorter than 0.5 s leaves the mic open and a longer one
+    is push-to-talk. A press while the mic is open closes it on release. A community listener's
+    `T` does nothing, since a listener can't speak.
   - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
     whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
     after a re-dial: what the user chose since then stands.
   - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
     user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
-    same state.
+    same state (a focus pause is the exception, below).
   - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
     nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
     microphone; a device picker is next work.
@@ -121,6 +213,64 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
     ignored: the server tells only the caller about a reject, so a second ring would never stop.
   - Don't show the "stream in this scene" banner to guests: they can't join.
+- **A scene can turn nearby voice off.** `featureToggles.nearbyVoiceChat` in `scene.json` is on
+  when absent, not a string, empty or `enabled` (any case); any other string turns nearby voice off for a player
+  standing in that parcel scene. An empty parcel and a portable experience never do.
+  - Don't leave the mic open: entering closes it, the `Microphone` key and the HUD cannot open it,
+    and leaving does not reopen it. Each refused open counts in `MicState.refusals`, and the HUD
+    toasts "Nearby voice chat unavailable in this scene." when the count goes up.
+  - Don't play nearby players or show their speaking badge there. Their tracks stay subscribed, so
+    hearing returns on the way out.
+  - Don't touch calls and community streams: their mic, audio, badges and mic on/off sounds are
+    unaffected.
+  - Don't offer Speak there: the nearby voice popover still opens, with Speak disabled and the same
+    hint, so hearing and volume stay adjustable; the minimap header lists "Nearby voice disabled".
+  - A scene room that refuses the player as banned (a platform, world or scene ban, as
+    `SceneAdmission` reads the refusal) turns nearby voice off the same way. The room asks again
+    every 15 s, since an unban reaches only the players inside it; an admission, or a new scene,
+    realm or wallet, lifts it without reopening the mic. A recheck with no answer (a network
+    error, a 503) keeps the refusal. The interval bounds both the gatekeeper requests from a
+    player who stays banned and the wait before an unban is noticed. Platform bans recheck here
+    too: the platform ban-status poll (every 300 s) reads the ban but never admits the room
+    again. unity-explorer suppresses on any 401 or 403 from the scene room and lifts it on the
+    room's next connect or disconnect; its scene room asks again every 5 s while refused.
+- **The mic pauses while the Explorer lacks focus** (the primary window natively,
+  `document.hasFocus()` on the web), so it never captures while the player is in another app
+  or tab: it stops capturing and publishing for nearby voice and calls alike, and resumes when
+  focus returns. The mic setting does not change, and neither pause nor resume plays the mic
+  on/off sound. The HUD shows the paused mic off: the call panel at once, the nearby mic toggle
+  at its next mic state poll (up to 1 s).
+  - In a community stream no `MuteSpeakerFromCommunityVoiceChat` is sent for the pause, so
+    other clients keep showing the paused speaker unmuted while no audio arrives; the mute
+    entry above holds only for a mute the player chooses.
+  - unity-explorer pauses only the nearby mic and lets the player turn the pause off in
+    settings ("mute mic in background", on by default); the Explorer has no such setting.
+- **Blocked and scene-banned players are not heard nearby.** A player blocked in either
+  direction, or banned by the connected scene room, carries `BlockedOrBanned`, and their nearby
+  voice track is unsubscribed while it lasts; unity-explorer keeps the track and creates no audio
+  source. Calls and community streams still carry them. Scene bans apply without the
+  `alfa-banned-users-from-scene` flag unity-explorer reads, as in Nearby chat.
+- **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
+  list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
+  fails, a saved list that only adds to what the user did before it arrived, and a muted player
+  silenced but still subscribed, with the hushed badge in place of the speaking bars. These differ:
+  - The list belongs to the account. A change of account drops it and reads the new account's;
+    unity-explorer reads it once at start and keeps it for whoever signs in next.
+  - `nearby_voice_user_mute` is sent for the user's Hush or Hear only; unity-explorer also sends
+    it for every mute read from the saved list.
+  - Muting oneself is refused, as the service refuses it; the menu never offers it.
+  - Changes are saved one at a time, in the order the user made them, and only once the saved
+    list has been read: the service applies each request on its own, so a Hush and a Hear sent
+    together could land in either order, and a row removed while the list is read page by page
+    makes the next page skip one. unity-explorer sends each change as it is made, cancels the
+    one in flight when the next is made, and does not wait for the list.
+  - A saved list that cannot be read is read again from the first page after 2, 4 and 8 seconds;
+    after that it stays unread until the account changes. unity-explorer repeats a single page
+    request up to twice on a transient network error and does not read the list again.
+  - Hush and Hear are on the profile card's default and friend menus, for a blocked user too, as
+    unity-explorer's user menu has them; the request, blocked-list and community-member menus
+    do not carry them.
+  - Don't apply it to calls or community streams: as in unity-explorer it is nearby voice only.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:
@@ -131,6 +281,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   go to that deployment's asset-bundle registry instead. This path is to be removed once those
   catalysts serve the route. See the
   [ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md).
+- **Overlapping profile saves (#1453).** The engine applies editor patches in arrival order.
+  Each upload carries the edits accepted before it starts, and those callers share its result.
+  Later edits build on the last confirmed profile. The local avatar previews them immediately,
+  while peers and the player's Passport read the confirmed version. [Profile ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md)
 - **Own profile versions never repeat.** unity-explorer's `SelfProfile` numbers an edit one above
   the profile it holds, so after a failed publish puts the old profile back, the next edit reuses
   the failed version. A failed deploy may still have reached the server, and a peer that read it
@@ -180,8 +334,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, Call, the
   owner's and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove
   Member, Ban) with unity-explorer's rules and confirmations, then Block and Report, then Invite
-  to Community. Gift is left out until gifting exists (unity-explorer shows it only behind its
-  gifting flag). Chat is always offered in-world: unity-explorer greys it
+  to Community. Gift sits after Call, greyed for a blocked member (see the gifting entries below). Chat is
+  always offered in-world: unity-explorer greys it
   only while its chat area is down. unity-explorer's row shows no presence, so neither does
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
@@ -231,6 +385,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what it showed and tries again on the next read, so a first read that fails looks empty); each section reads its first 100 rows without paging, as the Members list does;
   the section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's
   buttons are disabled, with no spinner, while its answer runs.
+- **Community announcements.** As unity-explorer: the card's ANNOUNCEMENTS tab reads 10 a page,
+  the next as the list's end comes into view, newest first. Owners and moderators get the composer
+  first ("Any Announcement to share with your Community?", 500 characters counted as UTF-16 units,
+  so most emoji take two, with a counter shown once there is text, the chat's emoji panel and `:` suggestions, a POST button held with a spinner
+  while it posts), then a separator. The owner deletes any announcement and an author their own,
+  asked first ("Are you sure you want to delete this Announcement?", DELETE and CANCEL); a
+  moderator cannot delete another member's. Anyone who sees the list likes and unlikes, one
+  request at a time for each announcement, and the count changes once the service answers. The
+  author shows a verified mark or their #tag, and the official mark when the post comes marked
+  `isOfficial` by the social API. A post or a delete reads the first page again. Every failure is
+  toasted with unity-explorer's four texts. A member who sees no announcements reads "No
+  Announcements here yet!". A private community's announcements are not read for someone who
+  isn't a member (the service refuses them); their tab stays empty. Differences: POST stays off
+  for a draft of only whitespace, and the text is posted without leading and trailing whitespace
+  (unity-explorer enables POST for any text and sends it as typed; the service refuses a post that
+  starts with whitespace); a failed post stops the button's spinner (unity-explorer
+  leaves it spinning); and the official mark comes with the post, not from the client: this
+  node's social API marks each post (`isOfficial`, a field the Foundation's API doesn't have)
+  when its author is in the explorer feature flags' `alfa-official-wallets` list (`wallets`
+  variant, first CSV line), which unity-explorer reads itself. Against the Foundation's social
+  API, which sends no such field, no post shows the official mark.
 - **One answer to "banned or blocked?".** The `ban_block` crate is a facade: it reads the
   social client's block sets and comms' scene admission and scene-room lists through one
   `BanBlock` system parameter and owns only the platform-ban check, where unity-explorer keeps
@@ -242,16 +417,44 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
   notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
   push reaches an idle client here, and the period promises no freshness, as a failed check
-  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  fails open, as there, and the state says so instead of guessing; a failed check keeps a ban
+  already known, past its `expiresAt` too, since the local clock lifts no ban; once a known ban's
+  `expiresAt` passes it is checked again once, after any `Retry-After`); a ban whose record the
   gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
   so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
-  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
-  stands. The local user's scene ban is the refusal of the
+  marks the platform ban. The endpoint's "not banned" does not lift it while the refusal stands:
+  it asks the gatekeeper for that scene's room again, and the gatekeeper's admission lifts it, so
+  a ban that expired or was lifted ends without a scene or realm change. Until then the notice
+  shows the refusal's ban, which carries no reason or period. The local user's scene
+  ban is the refusal of the
   scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
   ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
   there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
+- **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
+  (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
+  banned from Decentraland"), so the lobby's pick, a link held for the
+  terms and an in-world realm change all stay where they are and nothing loads or connects. A ban
+  learnt while a change waits on world access (a world's password prompt) stops it with the same
+  answer; one learnt after the realm's own fetch has started does not stop that change. The
+  HUD reads the same ban from one stream: before the world it covers the lobby, welcome page,
+  picker or loader with a blocking notice that a sign-out or a "not banned" answer closes, and a
+  ban answered during the first entry keeps it open over the world (B1); a refused in-world
+  travel shows the same notice, dismissible, and the player stays put (B5). A ban learnt after the
+  first world entry opens nothing until a travel is refused, and an open notice words the period
+  again each minute. Differences from
+  unity-explorer, which checks once in its login flow and ends on a terminal blocked screen with
+  Exit and Support:
+  - Entering does not wait for the first check: an unknown or failed check lets the player in,
+    and a ban answered later refuses realm changes from then on. unity-explorer awaits the request.
+    The check starts at sign-in, before the lobby shows, so a ban is normally known before the
+    pick; a launch straight to a link's destination can enter first and the gatekeeper's own
+    refusal of the scene adapter then applies.
+  - In-world realm changes are refused too, which unity-explorer does not check.
+  - Sign Out instead of Exit: the web has no application to exit.
+  - The notice words the period as unity-explorer does (hours under a day, else days, rounded
+    up) and adds the ban's custom message.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
@@ -271,6 +474,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
   repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+- **The client never sends what the Pulse server refuses for good.** A one-shot emote longer than
+  60 s goes out without a duration and ends with an explicit stop, and inputs and teleports from
+  outside the parcel grid are not sent (`lib.rs`, `pulse/mod.rs`).
+- **A second device on the same wallet takes over; Pulse tells the old one.** Pulse ends the older
+  session with `DuplicateSession` and the gatekeeper removes it from its island room; on
+  `DuplicateSession` a player ends its island connection for good: the realm's rooms end in the
+  identity-conflict state, which nothing retries, and a realm change starts them again, as it ends
+  Pulse's terminal stop. A removal from the island room on its own stays a transient failure. The
+  archipelago leaves the older socket open and sends it nothing more: it replaces, and tells with
+  `Kicked`, only this device's own stale socket (same session key). `already_connected` is set in
+  both cases, so it is only logged. A newer device that never reaches Pulse tells the older one
+  nothing through Pulse (`archipelago.rs`, `pulse/plugin.rs`).
+- **The scene-room request always signs as the explorer.** The engine's own gatekeeper requests
+  carry `signer: dcl:explorer` and the comms-handshake intent; only fetches a scene makes sign as
+  `decentraland-kernel-scene` (`lib.rs`, `restricted_actions`).
 - **IPv6 when no IPv4 address resolves.** The native driver connects to the first IPv4 address and
   falls back to the first IPv6 one, on an IPv6 socket, only when there is none. unity-explorer
   fails without an IPv4 address, and the servers bind IPv4 by default.
@@ -332,16 +550,371 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **Smart wearable permissions are asked on use, not at equip.** unity-explorer asks once, when a
+  smart wearable is equipped (or at login for one already worn), to allow the permissions its
+  `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
+  portable like any other: each restricted action goes through the stored rules and the per-use
+  prompt, which shows what is being done (the URL to open, the realm to change to). So
+  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
+  permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
+  declared-permission check on them would be bypassable.
+- **`portableExperiences: disabled` pauses every listed portable.** unity-explorer unloads smart
+  wearables while the player stands in a scene that disables portable experiences and loads them
+  again on leaving. Here every portable the player can see (not startup ones, not the HUD's scene)
+  is paused through `RendererSceneContext.blocked` and its UI is hidden, so it keeps its state
+  across the crossing and nothing has to remember a portable that is not running.
+
+- **Donate is on `/play` only, and for web3 sign-ins only.** unity-explorer offers it to any
+  signed-in player through its wallet. Here only the Sites `/play` web shell holds a wallet that can
+  sign a transfer, so the Explorer's own HUD shows no Donate. MANA is shown to web3 wallet
+  sign-ins only (AGENTS.md), so an in-app (managed) sign-in sees no Donate either, and the shell
+  refuses one that asks. See [the ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md).
+- **The Donate panel is drawn by the web shell, over the app.** The amount is confirmed where the
+  wallet is, and the shell resolves the creator itself; the HUD names the place only.
+- **An unclear tip outcome is shown as processing, with no Try again.** unity-explorer's error
+  view always offers Try again. Here a failure that may have reached the chain (the relay's answer
+  lost or a 5xx after signing, a transaction not yet mined) shows the tip as processing and watches
+  it; Try again appears only after a clear failure (the wallet declined, nothing was signed, the
+  transaction reverted), so a player never tips twice. A tip still unconfirmed after 30 minutes
+  stays "still being processed" with no retry, and opening Donate again shows it until it settles.
+  There is no fallback to a transaction from the wallet: the relay's refusal fails the tip, and
+  trying again signs the same nonce (pinned), so at most one can land; once that nonce is used, the
+  next send signs nothing and watches the failed attempts until one is seen mined.
+- **The MANA price comes from the deployment.** unity-explorer reads the MANA/USD rate from
+  CoinGecko; the panel reads the catalyst's price service (`/price/api/v3/simple/price`), which
+  answers in the same shape.
+- **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
+  goes to, is the deployer of the place's scene here.
+- **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
+  the map's place panel has it in its row of actions, between Home and Share, as there. The fourth
+  amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
+- **Gifting is on `/play` only, for web3 and managed sign-ins, never a guest.** As with Donate, only
+  the Sites `/play` web shell holds a wallet that can sign the transfer, so the Explorer's own HUD
+  offers no Gift; it still shows the gift-received popup, which signs nothing. Both wallet kinds
+  sign the gasless meta-transaction, so both may gift; a guest can't, as in the Shop. See
+  [the ADR](../../../../docs/adr/2026-11-16-play-shell-signs-gifts.md).
+- **The shell asks for a second confirmation.** unity-explorer's picker SEND GIFT starts the
+  transfer. Here it opens the shell's "Send Gift to" step (the item and the recipient's name and
+  address as the shell read them, SEND GIFT and CANCEL), and only that press signs: an email or
+  social account's wallet signs with no prompt, so the app frame alone must not be able to move
+  items. The shell also re-reads the token's owner on chain, checks the collection is the
+  marketplace index's on the build's chain and that the recipient is another account, and signs
+  nothing else (the guard). Closing it before the wallet signs cancels the gift.
+- **"Gift Sent" shows once the relay takes it.** As in unity-explorer. A token moves only once,
+  so a gift can't be sent twice; an answer lost on the way is settled by the token's owner, and
+  TRY AGAIN after a refusal signs the same nonce. There is no fallback to a transaction from the
+  wallet.
+- **Ethereum items are listed, and refused on SEND.** unity-explorer lists every on-chain item
+  and its transfer of a `collections-v1` item can't succeed; here the picker lists them too and
+  SEND shows "Cannot send this item as a gift because it's not a transferable NFT.", since the
+  relay serves Polygon only.
+- **Pending gifts are kept by the shell, per account, for a week.** unity-explorer keeps them in
+  its player preferences. The app frame has no storage here, so the shell keeps them; the picker
+  hides a token only while the owned catalog still lists it with the `transferredAt` it had when
+  sent.
+- **The slow-transfer link opens `/shop`'s Activity page.** unity-explorer links the Marketplace's
+  activity; here the Shop's Activity page is that page.
+- **Where Gift is offered.** The profile card of chat names, nametags and the friend row (after
+  View Profile), the community member menu (after Call; greyed for a blocked member either way),
+  and another player's passport options (before Block; the picker replaces the passport). The
+  voice-stream panel's menu has none, as in unity-explorer. As there, a guest recipient is offered
+  Gift too. A picker error is a toast and the
+  picker stays open; unity-explorer closes its picker on SEND before it can show the error.
+- **Gifting's analytics events and popup sounds are not ported.** unity-explorer reports sent,
+  successful, failed and cancelled gifts and plays a sound with the sent and received popups; this
+  port leaves both out for now. The shell's "Preparing Gift for" tile shows the
+  marketplace index's item category (wearable or emote), so its corner glyph is the generic one.
+- **Media reopens on the web.** The web backend keeps unity-explorer's counts and delays: a
+  failed URL source is reopened up to 5 times, 2, 4, 8, 16 and 32 s after each failure, the count
+  restarts when the scene changes the source, and a source that gave up stays failed until the
+  source changes. It differs in five ways:
+  - *States between reopens.* unity-explorer reports `VsError` after every failed attempt; here a
+    scheduled reopen reports `VsLoading`, so `VsError` means the source gave up or is failed and
+    paused.
+  - *Failures during playback.* unity-explorer reopens only a source that failed to open; here an
+    element error at any time starts the schedule, and a live stream that ends (its feed dropped)
+    counts as a failure rather than a normal end, so a stream whose feed drops reconnects without a
+    scene reload. A reopened source that is not live resumes where it failed, or where the scene
+    seeked meanwhile.
+  - *Count restart.* unity-explorer clears the count as soon as a reopen opens; here it restarts
+    only after 5 s of playback since the last failure, so a source that keeps failing at the same
+    point gives up.
+  - *Pause.* unity-explorer reopens a failed source whether or not it plays; here a failed source is
+    reopened only while the scene plays it, so a paused screen requests nothing. A failure while
+    paused, or before the scene first plays the source, counts and reports `VsError`. The next play
+    reports `VsLoading` and reopens once the current delay has passed since the failure, so toggling
+    playback never reopens faster than the schedule, and a pause keeps the count. A pause during a
+    loading reopen lets it load, as a paused first open does. A live stream resumes at its live
+    edge, not at a saved position.
+  - *The screen.* unity-explorer renders black whenever a player is in `VsError` or `VsNone`; here
+    the image turns black when the source gives up or a non-looping source ends, and keeps the
+    last frame while a reopen is pending, so a short drop shows no black flash; the failed source
+    is detached meanwhile. A non-looping source that ends reports `VsNone`, as in unity-explorer.
+    A source the scene clears (an empty `src`, such as the Admin Toolkit's Deactivate) shows black
+    at once on native and web, whatever played before.
+
+  Native (FFmpeg) has no reopen: its first error ends playback. A non-looping source that ends
+  there reports `VsPaused` and keeps its last frame, where the web reports `VsNone` and clears it.
+- **The map's markers are HUD elements, not a rendered scene.** unity-explorer draws its map and
+  markers with a camera into a texture; here the atlas and every marker are elements of the HUD
+  page, placed from the map camera's position and zoom. The seven zoom levels, the marker sizes at
+  each, the clustering grid, the draw order and the hover and appear timings are the same. Culling
+  and pooling have no counterpart, and a click goes to the topmost marker under the pointer.
+  The sea around the city is one image, rendered once from unity-explorer's sea shader and placed
+  under the satellite map like its tiles; its water stands still, where unity-explorer animates
+  it every frame. Nothing on the map is drawn per frame.
+- **The minimap draws the full map's layers.** As unity-explorer's, it shows live events,
+  points of interest, other players, the home pin and the route, and the full map's Layers panel
+  switches them on both, from one read the two maps share; the minimap has no category pins or
+  markers setting of its own. A destination's pin stands on the minimap's edge in its direction,
+  as unity-explorer's. unity-explorer's minimap doesn't zoom and moves the pin to the edge past a
+  fixed distance (about eight parcels); this one zooms, so the pin moves to the edge exactly when
+  the destination leaves the visible map. It is the full map's destination pin, and the minimap
+  being square, it runs along the square's edge rather than a circle. Scene map pins are on
+  both (below). The header's heart marks the place the player stands in as a favourite; in
+  a World, the World's scene there.
+- **Scene map pins come only from portable experiences.** The engine reads `MapPin` only from
+  scenes running as a portable (from the launch option or console, spawned by a scene, or a smart
+  wearable's) whose scene.json also declares `isPortableExperience: true`, and streams them to the
+  HUD (`getMapPinsStream`); every other scene's pins are ignored, and no flag turns them on for
+  other scenes. unity-explorer reads them from any scene that declares `isPortableExperience:
+  true`, however it was loaded, and from every scene under `alfa-map-pins`; here a parcel scene or
+  World that declares it can't put pins on its visitors' maps. The Layers panel's Quest Mini-Games
+  switch (on by default, for the session) shows or hides them on the full map and the minimap. A
+  pin stands on the centre of its parcel, its position rounded halves to even; it is never
+  clustered, its title and description are not drawn, and a click opens the place panel for its
+  parcel. It shows the scene's own icon, a content file of the scene, cut round on a white disc;
+  with no such file (another texture kind, a src that parses as a url, a missing file, or an image
+  that fails to load) it shows the default quest pin, so a scene can't make the HUD request a host
+  of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
+  icon. The title is cut to 100 characters. unity-explorer loads that icon only under
+  `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
+  This explorer loads no global portable experience at startup: unity-explorer loads the quests'
+  one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
+  launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
+- **Arrival is checked on every position report.** unity-explorer checks the route only after
+  the player's squared distance from the map's origin has changed by 300 map units, which can
+  skip the arrival spot when the player stops on it or reaches it sideways, so the route never
+  ends. The arrival rule itself is the same: within about 5.6 m of the destination parcel's
+  centre, then "You have arrived to your destination" and the pin goes.
+- **Home belongs to the account, and can be taken back.** As in unity-explorer, the engine keeps
+  one home per wallet address in its config, and Set as Home on the place that is home (the place
+  panel's and the place detail's buttons, the minimap's switch) takes it back. An account with
+  no home has no home pin and no Set as Home on, and starts on parcel 0,0 of the default realm.
+  Before sign-in the home is the stored sign-in's account's, else the last account's. A home an
+  install kept before homes were per account goes to the first account that signs in. A guest
+  with no account (a scene preview's `?guest=1`, `/login_guest`) has a new address each session,
+  so it is no account here: it reads the home that applies before sign-in, is not offered Set as
+  Home, and neither takes nor writes a home. A guest account signs in and keeps its home like any
+  other account.
+- **Jump back to Genesis City lands on the home parcel, else on 0,0.** The minimap's button in a
+  World travels to the default realm naming a parcel: the account's home when it is in Genesis
+  City, Genesis Plaza otherwise; `/goto genesis` always names 0,0. A realm change that names no
+  parcel keeps the player's parcel, clamped to the new realm's map, which from a World is a parcel
+  of that World's grid. unity-explorer lands the button on its start parcel, read once at launch
+  (a launch position, the home parcel, or `alfa-genesis-spawn-parcel`); here the home is read when
+  the button is pressed, so a home set during the session counts.
+- **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
+  detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
+  World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there
+  that goes ahead ends a route to that place, as the map's does. unity-explorer also sets home from
+  Places cards, which have no such control here. The minimap's menu is unity-explorer's: Set
+  as Home, Copy Link and Reload Scene, then this HUD's own Minimap settings. As unity-explorer's,
+  the minimap saves the parcel the player stands on, where the place panel saves the place's base
+  parcel (a road's, the picked one), and it compares a World's name without case where the place
+  panel compares it exactly. A World's copied link names the World and the parcel and carries the
+  sharer's address, as unity-explorer's.
+- **The map fixes what the upstream panel leaves broken.** Search results carry their LIVE badge
+  (upstream keys the lookup by a malformed parcel, so none shows); "remind me" on an event row
+  starts from the player's saved interest and keeps working after the list is rebuilt; a like or
+  a dislike refreshes the rating shown; a like, a favourite or an interest the service refuses
+  goes back to what it was; a place without photos says so; closing the map forgets the whole
+  back history; "Link copied!" is a toast of its own instead of replacing the worlds warning's
+  text; and the text of a post on X and of a calendar entry is url-encoded.
+- **Escape in the map's search field clears it first.** The next press leaves the field and the
+  one after closes the map, as on the HUD's other pages.
+- **Events page: JUMP IN closes the page and the event detail.** unity-explorer leaves both open
+  while the player travels. Here a jump reconnects the realm under the loading screen, and every
+  other page closes on a jump, so Events does too.
+- **Events page: its links carry the HUD's `utm_source`.** unity-explorer tags them
+  `utm_source=explorer`; here they carry `bevy-web-client` or `bevy-desktop-client` like every
+  other link out, and keep `utm_campaign=discover`. Event names and descriptions are URL-encoded
+  in the share and calendar links, and so are the world, the referrer and the event id in the
+  jump and event links; unity-explorer leaves all of them raw.
+- **Events page: JUMP IN travels to a world only by its name.** The events service takes any
+  text as an event's `server`, and the engine reads anything but a world name as a realm's
+  address. unity-explorer builds the worlds server's address from it; here a `server` that is
+  not a `.eth` name does not travel, and a toast says the world cannot be reached.
+- **Events page: the calendar never steps before today.** unity-explorer steps back by the days
+  shown and locks the arrow only on today itself, so after the highlighted events come or go,
+  or past midnight, it reaches earlier days. Here a step back stops at today.
+- **Events page: a recurrent date's offset keeps its minutes.** unity-explorer writes whole
+  hours, `(UTC+5)` in a `+5:30` zone; here it reads `(UTC+5:30)`.
+- **Events page: a failed read shows an error with Retry.** unity-explorer shows a toast and
+  leaves the loading placeholders up. A read the bridge has not answered in 10 seconds counts as
+  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows,
+  and so does a reminder the service confirms late.
+- **Events page: one copy of an event.** unity-explorer changes the reminder on the card's own
+  copy, so a card scrolled out and back shows the old state; its day view's card buttons are not
+  wired, and its banner is drawn before the friends list arrives. Here the calendar, the day
+  view, the banner and the detail read one event, every card's buttons act, and friends show
+  when they arrive.
+- **Events page: analytics.** unity-explorer reports `event_card_clicked` from calendar cards
+  only and nothing for an open from the sidebar; here a day view's cards report it too, and the
+  sidebar reports `events_section_opened` with `source: sidebar`.
+- **Place detail: no analytics for home or navigation.** unity-explorer reports
+  `place_set_as_home` and `place_navigation_started` from its place detail, and
+  `home_position_set` whenever home changes; this explorer reports none of them, from the place
+  detail or the map.
+- **Events page: no "error loading friends" or "My Communities" toast.** The friends list and
+  the member-of list reach the HUD as snapshots with no failure signal, so there is nothing to
+  report; cards show friends and community marks once the lists are there.
+- **Events page: shapes are CSS, icons are unity-explorer's.** Its rounded containers, outlines
+  and gradients are nine-slice sprites there; drawn as masks at the HUD's fractional scale they
+  show seams between the slices, so here they are radii, borders and gradients with the sprites'
+  colours. The canvas scales by the smaller of width and height, as every menu page does, where
+  unity-explorer's scales by width.
+- **Jump to Location closes the passport.** unity-explorer's passport does not close itself
+  when its Jump to Location runs; here the passport closes once the friend's parcel or World is
+  known, as it already does for a photo's teleport. A friend found nowhere leaves it open, and
+  nothing is shown, as there. The profile card offers the jump after View Profile, since its rows
+  already follow a different order from unity-explorer's user menu.
+- **INVITE FRIENDS is for a signed-in player only.** unity-explorer's copy runs for any
+  identity it holds. Here neither kind of guest gets the button: not the throwaway guest, and not a
+  guest account. As there, it copies the deployment site's `/invite/<address>`
+  and says "Link copied!"; the panel stays open.
+- **A new referral tier opens the site's Referral Rewards tab.** unity-explorer opens
+  `profile/accounts/<address>/referral`, which this site does not serve; its profile names the
+  same page `/profile/<address>/referral-rewards`.
+- **The hills follow the Landscape Distance.** The distance is the config's `landscape_distance`
+  (default 1000 m), read at startup and held to 500 to 7000 m.
+  Unity displaces its whole terrain and its Landscape Distance setting does not drive it. Here the
+  ground's rings are displaced out to the Landscape Distance from the player, never less than the
+  832 m the parcel-sized rings cover, and the hills flatten over a further tenth of it, so
+  the rest of the 13 km ground costs the vertex shader nothing and walking moves no vertex abruptly.
+  Each ring coarser than a parcel snaps to its own cell size, so its vertices stay on the same
+  terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **The sea is always drawn.** Unity culls its water chunks one by one beyond the Landscape
+  Distance. Bevy has one sea plane, a single opaque quad that casts no shadows, so hiding it would
+  save almost nothing, and the water material draws without fog, so nothing would soften it
+  appearing and disappearing.
+- **The wave ocean is not ported.** Unity's ocean (a wave grid, foam and an alpha-blended surface)
+  was ported and compared in the same views, and it looked worse than Bevy's current sea, so the
+  sea stays as it is.
+- **The lens flare's rings are procedural, and its random copies use a hash.** Unity draws the
+  rings from URP's sample textures, which are not carried; Bevy draws bands of colour measured
+  from them (radius, width and brightness per channel, and the partial ring's arc). Unity places
+  the copies with its seeded random generator.
+- **The lens flare sees transparent surfaces only through depth of field.** Its occlusion test
+  reads the depth buffer and, where the view has depth of field's transparent focus texture, the
+  transparent coverage in it. A view without that texture (every MSAA view) is hidden only by
+  opaque geometry, not by imposters. The flare is off while a scene hides the sun and moon discs.
+- **Graphics presets set fewer settings than Unity's, and four differently.** Low, Medium and High
+  carry Unity's values for the frame rate, VSync, render scale, avatar outline, jiggle bones, sun
+  shadow quality, the Low and High shadow distances and scene lights; Medium is the default and
+  the one every saved config migrates to, except jiggle bones, which stay off by default (see the
+  spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
+  preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
+  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
+  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
+  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
+  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
+  shows as Custom.
+- **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
+  of the resolved main texture, so a multisampled transparent pass with depth of field fails
+  wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before
+  the transparent pass. Unlike Unity, which has none, the presets keep depth of field on, because
+  it hides the lack of detail in distant imposters, and they use FXAA so it stays on: the yield
+  only applies when a player picks MSAA. SSAO is off in every preset: bevy 0.16's SSAO is not
+  good enough to put in one.
+- **VSync caps the frame rate; it does not set it.** Unity's `vSyncCount` hands the rate to the
+  monitor and ignores the frame limit. Here VSync only removes tearing: the explorer paces to the
+  lower of the Target Frame Rate (or a session override) and the monitor's refresh rate. Medium's
+  60 fps holds on a 120 or 144 Hz monitor, and the debug panel's 30 FPS limit, `/fps` and
+  `--fps` still apply; Max means the monitor's rate. A target that does not divide the refresh rate
+  shows frames for an uneven number of refreshes (60 fps on 144 Hz alternates 2 and 3), so motion
+  can judder slightly; 60 fps on 60 or 120 Hz is even.
+- **No satellite floor.** unity-explorer lays the minimap's satellite images flat at 0.205 m under the
+  terrain in Genesis City; here the ground covers that plane everywhere, so the floor would never be
+  seen and is not shipped.
+- **Spring bones skip avatars the avatar limit hides.** Unity ranks every avatar in front of the
+  camera for its ten simulated places. Here an avatar hidden for being beyond the `max_avatars`
+  nearest to the player takes no place: its bones stay at rest and the place goes to the next
+  visible avatar, since a swing nobody sees would cost a place and its transform walks. Do not
+  rank hidden avatars to match.
 
 ## Deliberate choices that look like mistakes
 
+- **Fog does not hide the loading edge.** The fog is the sky preset's: one exponential density
+  (0.0005 per metre) and a colour by time of day, as the Unity client renders it. It does not
+  thicken with a shorter scene load distance, so the edge of the loaded scenes shows through it,
+  and a scene's global light does not tint it. A scene sets fog colour and density with its fog
+  component. The Off setting is no fog at all.
+- **glTF occlusion textures are ignored.** Scene materials drop a glTF's occlusion texture, so
+  baked ambient occlusion does not darken the ambient light. The Unity client's scene shader
+  does not sample it either, and content is authored against that look.
+- **Colliders are bounded by the scene's rectangle, meshes by its parcels.** A scene collider is
+  off as a whole while its box reaches outside the rectangle around the scene's parcels or above
+  the scene's height limit; the shaders clip meshes to the parcels themselves. One large collider
+  often covers an irregular scene's whole footprint: Genesis Plaza's ground and building colliders
+  span the notches its road scenes sit in, and a test against the parcels would turn them off as
+  a whole. Unity (`333aa8826979186f1380058cc75f74b9630e4879`) tests the same rectangle, with the
+  same allowance at the edge. The height limit splits the same way: colliders take one limit from
+  the scene's whole parcel count, as Unity does, while the shaders clip each connected group of
+  parcels at its own, so over a scene in several pieces a collider can be solid above the height
+  its mesh is drawn to (two parcels apart: meshes to 20 m, colliders to 31.7 m). The box tested
+  for a mesh collider is the mesh's own box turned with the collider, which can be larger than the
+  mesh: a wall that runs diagonally in its own model can turn off while it is still inside the
+  rectangle. Triggers are not tested in either client. Preview, loopback and editor runs draw
+  out-of-bounds geometry and leave its colliders on too, so a creator can stand on, bump into
+  and select what reaches outside; every other run turns them off.
+- **The map carries over upstream's marker rules as they are**, so the two clients' maps match.
+  A place of several parcels is marked on the parcel a walk over them stops at, which depends on
+  their order and is not always the middle one; a cluster stands half a parcel south-west of the
+  average of its markers; the clustering grid is coarser at zoom level 2 (27 parcels) than at
+  level 1 (25); the other players are read when the People layer comes on and after a teleport,
+  not on a timer; a route keeps its destination across a teleport; and an empty search says "No results
+  founds".
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
   the executable's assets directory and the IPFS cache lives elsewhere. Containment is done
   in `ipfs_path.rs` instead. See the security page.
+- **Only a url's cached file is dropped when its asset fails to load.** A load its loader rejects
+  drops the entry it read, once per entry per session, when that entry is filed under a url, and
+  every asset that failed on it is then reloaded once. So a url whose bytes never decode is
+  downloaded again in every session. An entry under a content hash is never dropped this way: it
+  was checked against the hash before it was written, so a bad one is the asset processor's
+  output or disk damage, which belong to the processor and the disk, not to a retry.
+- **The service worker does not answer content requests from the content cache.** The engine
+  reads `ipfs-path-cache-v2` itself before it queues a download (`crates/ipfs/src/lib.rs`, the
+  variants client), so a lookup in the worker could only repeat that miss; the worker only trims
+  the cache. A hit missed in between (the same hash finishing under another url, another tab), or
+  one that appears before a retry (the engine reads the cache only before the first attempt),
+  costs one more download of the same bytes (#726).
 - **Web-only engine switches are page params**, not `LaunchOptions` fields.
+- **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
+  protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
+  the array. Changing it to the protocol's shape would break those scenes here.
+- **A scene's messages use the scene room that carries the scene.** The message bus and topic
+  messages, sent and received, and the `isConnectedSceneRoom` flag in `RealmInfo` all ask
+  `comms::scene_rooms::SceneRooms`. A message sent while that room is connecting or reconnecting
+  waits in the room's channel and goes out once it is connected; with no room that carries the
+  scene it is dropped. The flag is true only while that room is connected. A client's room carries
+  the scene the player is in. In a local preview or a world with one scene it carries every scene
+  of the realm.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**
+- **HLS plays natively on the web.** A media source is assigned to the element's `src` whatever
+  its format; there is no hls.js. Desktop Chrome plays TS and fMP4 HLS, live streams included,
+  through a plain `src` with `crossOrigin = "anonymous"`, and its frames copy into a
+  `VideoFrame`. HEVC in HLS and Chromium builds without proprietary codecs do not play; neither
+  is a target.
 - **The end-to-end tests use no Playwright.** They drive the client through its console on both
   shells, so one spec runs on the web and the standalone, and what they need from a browser (real
   input, pages outside the client such as sign-in, screenshots) the in-repo web driver does
@@ -356,6 +929,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Collectible cache retention must be generic** across wearables and emotes, and an emote's
   ownership is its membership of the avatar's animation graph. A pruning PR that special-cases
   emotes (#1323) is parked for that reason.
+- **Definitive failures on hash-keyed content reads are remembered for the session.** Outside
+  preview, a definitive failure (404 and similar) is remembered for that URL when read by hash.
+  A catalyst only activates an entity once it holds all of its files, so the answer is final.
+  Other reads and failures keep the 10 s retry. Preview asks again on every read (#727).
+- **A download checked against its content hash fails on a mismatch.** The failure follows
+  the 10 s retry window for dropped transfers. The read that starts the download determines
+  whether to check its bytes. Other reads joining the same URL share its result, which can be
+  unchecked if the first read used a URL key or a name the check cannot verify. A read under an
+  unverifiable content name stays uncached. The content-hash cache serves every origin, so it
+  accepts only verified bytes. All 4574 sampled files from live scenes, worlds,
+  wearables and emotes matched.
 - **Camera layers are identified by entity**, not by an explicit layer number; the cleanup in
   #1320 waits on the protocol change.
 - **`-logFile` with one dash is accepted** (rewritten to `--log-file` before clap, `main.rs`):
@@ -378,6 +962,95 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
+- **The profiler is opt-in.** The
+  `performance-profiler` cargo feature (Bevy's `trace` spans, the scope profiler's layer, its
+  console commands and the Render and Profiler debug panel sections, the counting allocator,
+  Bevy's render and system-information diagnostics) is out of `default` and of the web build's features: those
+  inputs cost every frame even while nothing records (process CPU per frame +2.1% with recording
+  off, +9.8% with it on, native release on an Apple M4 Max), and a macOS build with the feature
+  renders incorrectly, recording or not ([profiling](profiling.md)). Tracy covers native
+  profiling. A build with the feature, native or web, profiles Bevy's systems. On the web,
+  Bevy's `tracing-wasm` layer marks and measures every span on the page's performance timeline,
+  entries nothing clears, so a web build with the feature grows the page's memory and main-thread
+  time over the session; Bevy keeps that layer, since only profiling builds pay for
+  it. Recording stays a runtime switch within a `performance-profiler` build. See
+  [profiling](profiling.md#profiler-profile_top-count---sort-metric-profile_enable-onoffreset).
+- **The analytics performance event reads the sampler's snapshot.** `PerformanceMetrics` counts
+  hiccups against the sampler's threshold (the larger of 50 ms and two target frames, so 66.7 ms
+  at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
+  in world and focused only, instead of once per 1000 frames of virtual time through loading
+  screens and unfocused windows. The old event's own sampling was removed rather than kept beside
+  the sampler. Dashboards comparing across this change see a step from the definitions.
+  The event records the applied threshold, raw hiccup counts and measured sample counts for CPU
+  and, when readings are available, GPU. These counts let dashboards compute session rates.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.
+- **The HUD scales with the window, with no legibility floor.** `--ui-scale` is
+  `min(width / 1920, height / 1080)` (`library/explorer-core/lib/hudScale.ts`), the same rule
+  the Unity client's canvas follows, so one layout holds at every size: nothing wraps, hides or
+  collides in a small window, and a 4K window gets a proportionally larger HUD. The 0.25 and 4
+  bounds only keep the value finite for the layout boxes that divide by it. Known limitation:
+  text shrinks with everything else. A 16 px label is about 10.7 px in a 1280x720 window and
+  about 5 px at 640x480, which is not legible. A floor on the scale would trade that for a
+  layout that no longer fits the window at those sizes.
+- **The open chat does not fade out when idle.** Its message column stays tinted and the
+  conversation rail is on screen for as long as the chat is open, with Nearby's tab on it even
+  when there is no other conversation, so the chat's controls stay reachable without first
+  waking the panel. Only the title bar and its navigation wait for hover or focus.
+- **Places is one grid.** The page has no separate Live Now or Featured sections: every
+  destination appears once, in the order of the chosen sort, and a featured place carries a
+  ribbon on its card. The layout is the Unity client's, so a place is found the same way in
+  either client; search, the category chips and the sort all act on the one grid.
+- **Settings tabs are Graphics, Sounds, Controls, Chat; key bindings sit under Controls.** The
+  row is the Unity client's, so a setting is found in the same place in either client; any other
+  category the engine sends follows in the engine's order. Key bindings are (action, keys) rows
+  from the bindings relay, not engine settings, so they get a card of their own below the
+  Controls rows instead of a tab, and the Controls tab is there even when the engine sends no
+  Controls category.
+- **The rail's order is fixed.** From the top: Sidebar settings, Me, Map, Discover, Shop, System,
+  Notifications; Scene permissions, Skybox, Volume, Emotes, Friends, Camera, Nearby Voice, Chat.
+  Me, Discover and System open a panel of rows beside the rail: Me has Backpack, Profile
+  and Badges, then Sign Out (a sign-in on the web, a guest's included) and Exit (where the page can
+  close); Discover has Events, Places and Communities; System has Settings, Create, Report Bug
+  and the help links. Shop opens its panel where the Shop runs in world, and the web Shop in
+  a new tab elsewhere. Volume opens a panel of controls; Camera opens the rows Take A Shot and
+  Gallery.
+  The end-to-end suite reads these buttons by name
+  (`apps/bevy-explorer/e2e/specs/navbar.test.ts`).
+- **A guest signs out as unity-explorer's does.** Sign Out ends a guest's session and keeps the
+  guest, and so does an account signing in. The next start does not sign the guest in on its own,
+  and Play as guest brings the same guest back: on the web its kept sign-in, or its kept wallet
+  session once that sign-in has run out; on the desktop client its kept wallet session, since
+  Sign Out drops the sign-in the engine keeps (`/logout --forget`). The desktop client signs out
+  from the start lobby only: the engine refuses a sign-out once the world is entered.
+- **The Shop tab is kept.** The menu's top bar has Shop and the rail has a Shop button. Shop is
+  a destination of this HUD, and matching another client's tab row is not grounds for dropping
+  it.
+- **A control without a function is hidden, not shown disabled.** The HUD renders a button, tab
+  or menu row only when it does something. A dead or greyed control promises a function the
+  HUD does not have and reads as a fault; the control appears when its function exists. The
+  Portable experiences button follows the same rule and shows only while an experience is
+  active.
+- **The embedded assets stay in plain git, not Git LFS.** `crates/assets/build.rs` embeds whatever
+  is on disk, so an LFS pointer would compile and be wrong at runtime, and an LFS checkout would
+  have to be pulled by every Explorer build and matched by every check that hashes the build's
+  inputs. The build fails on a file that is an LFS pointer. Revisit if the landscape folder
+  (`crates/assets/src/assets/landscape`) reaches tens of MB.
+- **Avatar processing has no frame budget.** `process_avatar` processes every avatar whose parts
+  are written, whole, in the frame it becomes ready, outside the instantiation slice. It was
+  measured before deciding (web build in Chrome, 60 fps target, 64 and 200 demo avatars in base
+  wearables spawned at once and then re-dressed three times). The scene spawner writes avatar
+  parts under the slice, so avatars become ready one or two a frame, at most five: the longest
+  frame of avatar processing took 1.7 ms against a slice of 4.17 ms, and an avatar takes 0.35 ms
+  at the median. That is well under a slice of its own, so a gate would only move a millisecond
+  or two of work to a later frame. The `instantiation/avatar_processing` diagnostic and the
+  Instantiation section of the debug panel show the smoothed cost; with `spawn_timing=debug` in
+  the log filter, each frame that took a millisecond or more is logged. Reopen with a
+  measurement of a frame of avatar processing over the slice, taken on an idle machine: with a
+  compile running alongside, single avatars took up to 43 ms in frames of 100 to 500 ms. Not
+  measured: what the scene spawner, glTF processing and avatar processing take together in a
+  frame (avatars become ready in frames where the spawner has used the slice, so at worst about
+  a slice plus the avatar work); the commands `process_avatar` queues, which are applied after
+  it; wearables much heavier than the base set; a target above 60 fps (the slice is 1.7 ms at
+  144 fps); and the native client.

@@ -65,7 +65,7 @@ impl Plugin for ParticleSystemPlugin {
 
         app.init_resource::<ActiveScenes>();
         app.init_resource::<ParticleMeshes>();
-        debug_panel::register(app);
+        app.add_plugins(debug_panel::ParticleDebugPanelPlugin);
 
         app.add_crdt_lww_component::<PbParticleSystem, ParticleSystem>(
             SceneComponentId::PARTICLE_SYSTEM,
@@ -192,7 +192,6 @@ fn collect_active_scenes(
 }
 
 /// Create or update the renderer child for every new or changed `ParticleSystem`.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn sync_emitters(
     mut commands: Commands,
     particle_systems: Query<
@@ -338,7 +337,6 @@ fn particle_system_on_remove(
 /// Build this frame's simulation steps: the spawner decides how many particles to emit,
 /// the ring tracks which slots are live, the shader does the rest. The live range goes to
 /// the vertex shader through the mesh tag, and the mesh is sized to the live count.
-#[allow(clippy::type_complexity)]
 fn tick_emitters(
     time: Res<Time>,
     active_scenes: Res<ActiveScenes>,

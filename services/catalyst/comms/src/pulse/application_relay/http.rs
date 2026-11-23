@@ -7,11 +7,10 @@ use super::{
 use crate::protocol::room_authority::{
     self as wire, AUTHORITY_PATH, MAX_BODY, MAX_LEASES, address_bytes,
 };
+use crate::shared::signed_request;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures::StreamExt;
-use hmac::{Hmac, KeyInit, Mac};
 use prost::Message;
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     future::Future,
@@ -36,6 +35,7 @@ struct Registry {
     last_prune: Option<Instant>,
 }
 struct Inner {
+    generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
     client: reqwest::Client,
     endpoint: reqwest::Url,
     service_key: [u8; 32],
@@ -73,10 +73,36 @@ impl Drop for FlightGuard {
 }
 
 impl HttpAuthority {
-    pub fn new(
+    pub fn new_with_generation(
         endpoint: &str,
         encoded_service_key: &str,
         allow_loopback_http: bool,
+        generation: Arc<dyn crate::interfaces::PulseGeneration>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            generation.binding().valid() && !generation.lost().is_cancelled(),
+            "room authority requires a live root generation capability"
+        );
+        Self::new_inner(
+            endpoint,
+            encoded_service_key,
+            allow_loopback_http,
+            Some(generation),
+        )
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unfenced_test(
+        endpoint: &str,
+        encoded_service_key: &str,
+        allow_loopback_http: bool,
+    ) -> anyhow::Result<Self> {
+        Self::new_inner(endpoint, encoded_service_key, allow_loopback_http, None)
+    }
+    fn new_inner(
+        endpoint: &str,
+        encoded_service_key: &str,
+        allow_loopback_http: bool,
+        generation: Option<Arc<dyn crate::interfaces::PulseGeneration>>,
     ) -> anyhow::Result<Self> {
         let endpoint = reqwest::Url::parse(endpoint)
             .map_err(|_| anyhow::anyhow!("invalid room authority URL"))?;
@@ -123,6 +149,7 @@ impl HttpAuthority {
             .build()?;
         Ok(Self {
             inner: Arc::new(Inner {
+                generation,
                 client,
                 endpoint,
                 service_key,
@@ -142,20 +169,27 @@ fn context(inner: &Inner, nonce: &[u8; 32], lease: &wire::Lease) -> wire::Contex
         authority_incarnation: lease.authority_incarnation.clone(),
     }
 }
-fn signed_headers(key: &[u8; 32], body: &[u8], timestamp: &str, nonce: &str) -> Result<String, ()> {
-    let hash = Sha256::digest(body)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let input = format!("POST\n{AUTHORITY_PATH}\n{timestamp}\n{nonce}\n{hash}");
-    let mut signature = Hmac::<Sha256>::new_from_slice(key).map_err(|_| ())?;
-    signature.update(input.as_bytes());
-    Ok(URL_SAFE_NO_PAD.encode(signature.finalize().into_bytes()))
+fn signed_headers_with_source(
+    key: &[u8; 32],
+    body: &[u8],
+    timestamp: &str,
+    nonce: &str,
+    source: Option<&str>,
+) -> Result<String, ()> {
+    let preimage = signed_request::preimage(AUTHORITY_PATH, timestamp, nonce, source, body);
+    Ok(signed_request::sign(key, &preimage))
 }
 async fn request(
     inner: &Inner,
     operation: wire::authority_request::Operation,
 ) -> Result<wire::AuthorityResponse, ()> {
+    if inner
+        .generation
+        .as_ref()
+        .is_some_and(|authority| authority.lost().is_cancelled())
+    {
+        return Err(());
+    }
     let body = wire::AuthorityRequest {
         operation: Some(operation),
     }
@@ -167,8 +201,13 @@ async fn request(
     getrandom::fill(&mut nonce).map_err(|_| ())?;
     let nonce = URL_SAFE_NO_PAD.encode(nonce);
     let timestamp = chrono::Utc::now().timestamp().to_string();
-    let signature = signed_headers(&inner.service_key, &body, &timestamp, &nonce)?;
-    let response = inner
+    let source = inner
+        .generation
+        .as_ref()
+        .map(|authority| authority.binding().source_incarnation.as_str());
+    let signature =
+        signed_headers_with_source(&inner.service_key, &body, &timestamp, &nonce, source)?;
+    let request = inner
         .client
         .post(inner.endpoint.clone())
         .header("Content-Type", "application/x-protobuf")
@@ -176,10 +215,13 @@ async fn request(
         .header("X-Pulse-Authority-Timestamp", timestamp)
         .header("X-Pulse-Authority-Nonce", nonce)
         .header("X-Pulse-Authority-Signature", signature)
-        .body(body)
-        .send()
-        .await
-        .map_err(|_| ())?;
+        .body(body);
+    let request = if let Some(source) = source {
+        request.header("X-Pulse-Authority-Source", source)
+    } else {
+        request
+    };
+    let response = request.send().await.map_err(|_| ())?;
     if response.status() != reqwest::StatusCode::OK
         || !response
             .headers()
@@ -215,6 +257,14 @@ impl RoomAuthority for HttpAuthority {
         input: AuthorityInput,
     ) -> Pin<Box<dyn Future<Output = Result<Admission, AuthorityError>> + Send + '_>> {
         Box::pin(async move {
+            if self
+                .inner
+                .generation
+                .as_ref()
+                .is_some_and(|authority| authority.lost().is_cancelled())
+            {
+                return Err(AuthorityError::Unavailable);
+            }
             let _permit = self
                 .inner
                 .permits
@@ -323,6 +373,14 @@ impl RoomAuthority for HttpAuthority {
                 }
                 _ => AuthorityError::Unavailable,
             };
+            if self
+                .inner
+                .generation
+                .as_ref()
+                .is_some_and(|authority| authority.lost().is_cancelled())
+            {
+                return Err(AuthorityError::Unavailable);
+            }
             let valid = result
                 .ok()
                 .and_then(|response| match response.result {
@@ -423,7 +481,7 @@ impl HttpAuthority {
             return;
         };
         let inner = self.inner.clone();
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let _permit = permit;
             let operation =
                 wire::authority_request::Operation::Release(context(&inner, &nonce, &lease));
@@ -436,8 +494,58 @@ impl HttpAuthority {
 mod tests {
     use super::*;
     use crate::pulse::application_relay::PendingJoin;
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::{Digest, Sha256};
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    struct Generation {
+        binding: crate::interfaces::PulseGenerationBinding,
+        lost: tokio_util::sync::CancellationToken,
+    }
+    impl crate::interfaces::PulseGeneration for Generation {
+        fn binding(&self) -> &crate::interfaces::PulseGenerationBinding {
+            &self.binding
+        }
+        fn lost(&self) -> &tokio_util::sync::CancellationToken {
+            &self.lost
+        }
+    }
+    #[tokio::test]
+    async fn generation_loss_refuses_a_late_http_lease_and_further_cached_admission() {
+        let (entered, waiting) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let (fixture, server) =
+            fixture(vec![(200, lease(7, 2000), Answer::Held(entered, released))]).await;
+        let generation = Arc::new(Generation {
+            binding: crate::interfaces::PulseGenerationBinding {
+                audience: "fixture".into(),
+                epoch: 1,
+                source_incarnation: uuid::Uuid::new_v4().to_string(),
+            },
+            lost: tokio_util::sync::CancellationToken::new(),
+        });
+        let authority = HttpAuthority::new_with_generation(
+            fixture.inner.endpoint.as_str(),
+            &URL_SAFE_NO_PAD.encode([5; 32]),
+            true,
+            generation.clone(),
+        )
+        .unwrap();
+        let pending = {
+            let authority = authority.clone();
+            tokio::spawn(async move { authority.authorize(credential()).await })
+        };
+        waiting.await.unwrap();
+        generation.lost.cancel();
+        release.send(()).unwrap();
+        assert_eq!(pending.await.unwrap(), Err(AuthorityError::Unavailable));
+        assert_eq!(
+            authority.authorize(credential()).await,
+            Err(AuthorityError::Unavailable)
+        );
+        assert!(authority.inner.registry.lock().unwrap().entries.is_empty());
+        assert_eq!(server.await.unwrap().len(), 1);
+    }
     fn credential() -> AuthorityInput {
         AuthorityInput::Join(PendingJoin {
             wallet: "0x1111111111111111111111111111111111111111".into(),
@@ -527,11 +635,15 @@ mod tests {
                 assert_eq!(header("content-type"), "application/x-protobuf");
                 assert_eq!(
                     header("x-pulse-authority-signature"),
-                    signed_headers(
+                    signed_headers_with_source(
                         &[5; 32],
                         body,
                         &header("x-pulse-authority-timestamp"),
-                        &header("x-pulse-authority-nonce")
+                        &header("x-pulse-authority-nonce"),
+                        headers.lines().find_map(|line| line
+                            .split_once(':')
+                            .filter(|(key, _)| key.eq_ignore_ascii_case("x-pulse-authority-source"))
+                            .map(|(_, value)| value.trim())),
                     )
                     .unwrap()
                 );
@@ -567,7 +679,8 @@ mod tests {
             seen
         });
         (
-            HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode([5; 32]), true).unwrap(),
+            HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode([5; 32]), true)
+                .unwrap(),
             handle,
         )
     }
@@ -1003,7 +1116,13 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}{AUTHORITY_PATH}", listener.local_addr().unwrap());
         let server_authority = Arc::new(
-            RelayAuthority::new(Arc::new(AllowPolicy), "key".into(), vec![7; 32], [5; 32]).unwrap(),
+            RelayAuthority::unfenced_test(
+                Arc::new(AllowPolicy),
+                "key".into(),
+                vec![7; 32],
+                [5; 32],
+            )
+            .unwrap(),
         );
         let server = tokio::spawn(async move {
             axum::serve(listener, relay_authority::router::<()>(server_authority))
@@ -1011,7 +1130,8 @@ mod tests {
                 .unwrap();
         });
         let authority = Arc::new(
-            HttpAuthority::new(&endpoint, &URL_SAFE_NO_PAD.encode([5; 32]), true).unwrap(),
+            HttpAuthority::unfenced_test(&endpoint, &URL_SAFE_NO_PAD.encode([5; 32]), true)
+                .unwrap(),
         );
         let mut relay = ApplicationRelay::new(authority.clone());
         let now = Instant::now();
@@ -1110,14 +1230,16 @@ mod tests {
     fn insecure_urls_and_wrong_service_keys_are_rejected() {
         let key = URL_SAFE_NO_PAD.encode([5; 32]);
         assert!(
-            HttpAuthority::new(&format!("http://127.0.0.1{AUTHORITY_PATH}"), &key, false).is_err()
+            HttpAuthority::unfenced_test(&format!("http://127.0.0.1{AUTHORITY_PATH}"), &key, false)
+                .is_err()
         );
         assert!(
-            HttpAuthority::new(&format!("http://192.0.2.1{AUTHORITY_PATH}"), &key, true).is_err()
+            HttpAuthority::unfenced_test(&format!("http://192.0.2.1{AUTHORITY_PATH}"), &key, true)
+                .is_err()
         );
-        assert!(HttpAuthority::new("https://example.test/wrong", &key, false).is_err());
+        assert!(HttpAuthority::unfenced_test("https://example.test/wrong", &key, false).is_err());
         assert!(
-            HttpAuthority::new(
+            HttpAuthority::unfenced_test(
                 &format!("https://example.test{AUTHORITY_PATH}"),
                 "short",
                 false

@@ -15,11 +15,34 @@ use std::time::Duration;
 use bytes::Bytes;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use web_transport_quinn::{Request, Session};
+use web_transport_quinn::{Request, Session, quinn};
 
 /// Buffer size for a single reliable-stream read. Raw chunks are forwarded as-is.
 const STREAM_READ_BUF: usize = 16 * 1024;
 const STREAM_SEND_WINDOW: u64 = 64 * 1024;
+
+/// Bidirectional streams a client may hold open: the HTTP/3 CONNECT stream that carries the
+/// session and the one reliable stream Pulse reads, with headroom for a client that opens
+/// another. The host never accepts a second Pulse stream; [`CONNECTION_RECEIVE_WINDOW`] caps
+/// what unread ones hold.
+const MAX_CONCURRENT_BIDI_STREAMS: u32 = 4;
+/// Unidirectional streams a client may hold open: the HTTP/3 control stream and the two QPACK
+/// streams (RFC 9114 section 6.2), plus room for reserved stream types a browser may open
+/// first, in any order. Pulse itself uses none; [`CONNECTION_RECEIVE_WINDOW`] caps what they
+/// hold.
+const MAX_CONCURRENT_UNI_STREAMS: u32 = 16;
+/// Per-stream receive window: sixteen default-size (4 KiB) Pulse messages in flight. The
+/// reliable stream is drained as it arrives, so this bounds what an unread stream can hold.
+const STREAM_RECEIVE_WINDOW: u32 = 64 * 1024;
+/// Receive window shared by every stream of one connection: the cap on stream data a
+/// connection buffers, however many streams it opens.
+const CONNECTION_RECEIVE_WINDOW: u32 = 4 * STREAM_RECEIVE_WINDOW;
+/// Inbound datagrams buffered before the oldest is dropped: about fifty 1200-byte Pulse
+/// datagrams. The maximum datagram frame size it advertises stays at its 65535-byte cap.
+const DATAGRAM_RECEIVE_BUFFER: usize = 64 * 1024;
+/// How long a connection may stay silent before it is closed (the QUIC default, stated
+/// explicitly).
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Settings for constructing a [`Host`].
 pub struct HostConfig {
@@ -29,6 +52,9 @@ pub struct HostConfig {
     pub cert_pem: String,
     /// PEM-encoded PKCS#8 / SEC1 private key.
     pub key_pem: String,
+    /// How long a connection may stay silent before it is closed; [`IDLE_TIMEOUT`] in
+    /// production.
+    pub idle_timeout: Duration,
 }
 
 /// Errors returned by [`Host::new`].
@@ -99,14 +125,12 @@ impl Host {
         let (certs, key) = parse_pem(&config.cert_pem, &config.key_pem)?;
         let bind_addr = config.bind_addr;
 
-        // `with_certificate` constructs a quinn endpoint, which needs a runtime context.
-        let server = runtime
-            .block_on(async move {
-                web_transport_quinn::ServerBuilder::new()
-                    .with_addr(bind_addr)
-                    .with_certificate(certs, key)
-            })
+        let server_config = server_config(certs, key, config.idle_timeout)?;
+        // Binding a quinn endpoint needs a runtime context.
+        let endpoint = runtime
+            .block_on(async move { quinn::Endpoint::server(server_config, bind_addr) })
             .map_err(|e| HostError::Endpoint(e.to_string()))?;
+        let server = web_transport_quinn::Server::new(endpoint);
 
         let local_addr = server
             .local_addr()
@@ -117,13 +141,13 @@ impl Host {
         let accept_peers = peers.clone();
 
         // Accept loop: assign sequential peer ids and serve each session on its own task.
-        runtime.spawn(async move {
+        crate::shared::task::spawn_on(runtime.handle(), async move {
             let mut server = server;
             let mut next_id: u64 = 1;
             while let Some(request) = server.accept().await {
                 let peer_id = next_id;
                 next_id += 1;
-                tokio::spawn(serve_connection(
+                crate::shared::task::spawn(serve_connection(
                     request,
                     peer_id,
                     events_tx.clone(),
@@ -254,9 +278,9 @@ async fn serve_connection(
     });
 
     // Unreliable datagrams in.
-    tokio::spawn(datagram_loop(session.clone(), peer_id, events_tx.clone()));
+    crate::shared::task::spawn(datagram_loop(session.clone(), peer_id, events_tx.clone()));
     // Reliable bidi stream: the peer opens it; we forward raw chunks and write queued bytes.
-    tokio::spawn(stream_loop(
+    crate::shared::task::spawn(stream_loop(
         session.clone(),
         peer_id,
         events_tx.clone(),
@@ -297,7 +321,7 @@ async fn stream_loop(
         Err(_) => return,
     };
 
-    let reader = tokio::spawn(async move {
+    let reader = crate::shared::task::spawn(async move {
         let mut buf = vec![0u8; STREAM_READ_BUF];
         while let Ok(Some(n)) = recv.read(&mut buf).await {
             let data = Bytes::copy_from_slice(&buf[..n]);
@@ -328,6 +352,56 @@ async fn stream_loop(
     reader.abort();
 }
 
+/// The QUIC server configuration: TLS 1.3 with the HTTP/3 ALPN, as `web-transport-quinn`'s
+/// builder sets it up, plus [`transport_config`]'s stream and buffer limits.
+fn server_config(
+    certs: Vec<rustls_pki_types::CertificateDer<'static>>,
+    key: rustls_pki_types::PrivateKeyDer<'static>,
+    idle_timeout: Duration,
+) -> Result<quinn::ServerConfig, HostError> {
+    let mut tls = rustls::ServerConfig::builder_with_provider(
+        web_transport_quinn::crypto::default_provider(),
+    )
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .map_err(|e| HostError::Cert(e.to_string()))?
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .map_err(|e| HostError::Cert(e.to_string()))?;
+    tls.alpn_protocols = vec![web_transport_quinn::ALPN.as_bytes().to_vec()];
+    let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+        .map_err(|e| HostError::Cert(e.to_string()))?;
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(tls));
+    config.transport_config(Arc::new(transport_config(idle_timeout)));
+    Ok(config)
+}
+
+/// Stream counts, flow-control windows and buffers sized to what one Pulse session uses, so
+/// quinn buffers at most [`CONNECTION_RECEIVE_WINDOW`] of stream data and
+/// [`DATAGRAM_RECEIVE_BUFFER`] of datagrams per connection. These caps stop at quinn: the
+/// stream and datagram loops forward what they read into the host's unbounded events channel,
+/// which grows if [`Host::service`] falls behind.
+///
+/// A connection silent for a third of the idle timeout is pinged, as ENet pings its peers: a
+/// live client that sends nothing stays connected until Pulse ends its session with a reason
+/// (the authentication timeout equals the idle timeout), while one that stops answering still
+/// times out.
+fn transport_config(idle_timeout: Duration) -> quinn::TransportConfig {
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .max_concurrent_bidi_streams(MAX_CONCURRENT_BIDI_STREAMS.into())
+        .max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into())
+        .stream_receive_window(STREAM_RECEIVE_WINDOW.into())
+        .receive_window(CONNECTION_RECEIVE_WINDOW.into())
+        .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER))
+        .max_idle_timeout(Some(
+            idle_timeout
+                .try_into()
+                .expect("the idle timeout fits a QUIC varint"),
+        ))
+        .keep_alive_interval(Some(idle_timeout / 3));
+    transport
+}
+
 /// Parse a PEM certificate chain and private key into the rustls types
 /// `web-transport-quinn` expects.
 fn parse_pem(
@@ -354,4 +428,156 @@ fn parse_pem(
         .ok_or_else(|| HostError::Cert("no private key found in PEM".into()))?;
 
     Ok((certs, key))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    /// How long a stream open or write may wait before the test treats it as held back.
+    const HELD_BACK: Duration = Duration::from_millis(500);
+
+    #[test]
+    fn the_transport_config_carries_every_pulse_limit() {
+        // quinn exposes no getters, so read the values back from its field-by-field Debug.
+        let config = format!("{:?}", transport_config(IDLE_TIMEOUT));
+        for field in [
+            "max_concurrent_bidi_streams: 4,",
+            "max_concurrent_uni_streams: 16,",
+            "max_idle_timeout: Some(30000),",
+            "stream_receive_window: 65536,",
+            "receive_window: 262144,",
+            "datagram_receive_buffer_size: Some(65536),",
+        ] {
+            assert!(config.contains(field), "missing `{field}` in {config}");
+        }
+    }
+
+    fn listen() -> (Host, Vec<u8>) {
+        listen_with_idle_timeout(IDLE_TIMEOUT)
+    }
+
+    fn listen_with_idle_timeout(idle_timeout: Duration) -> (Host, Vec<u8>) {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let hash = Sha256::digest(cert.cert.der()).to_vec();
+        let host = Host::new(HostConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            cert_pem: cert.cert.pem(),
+            key_pem: cert.signing_key.serialize_pem(),
+            idle_timeout,
+        })
+        .unwrap();
+        (host, hash)
+    }
+
+    async fn connect(address: SocketAddr, hash: Vec<u8>) -> Session {
+        web_transport_quinn::ClientBuilder::new()
+            .with_server_certificate_hashes(vec![hash])
+            .unwrap()
+            .connect(url::Url::parse(&format!("https://{address}/")).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// Writes until the peer's flow control holds the stream back; returns the bytes accepted.
+    async fn fill(send: &mut web_transport_quinn::SendStream) -> usize {
+        let chunk = vec![0u8; 16 * 1024];
+        let mut accepted = 0;
+        while accepted < 4 * 1024 * 1024 {
+            match tokio::time::timeout(HELD_BACK, send.write(&chunk)).await {
+                Ok(Ok(n)) => accepted += n,
+                _ => break,
+            }
+        }
+        accepted
+    }
+
+    #[test]
+    fn a_live_session_that_sends_nothing_outlives_the_idle_timeout() {
+        // Pulse ends a session that never authenticates after 30 s, the idle timeout too: the
+        // session must stay open for Pulse to close it with its reason.
+        let idle_timeout = Duration::from_secs(1);
+        let (mut host, hash) = listen_with_idle_timeout(idle_timeout);
+        let address = host.local_addr();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let session = runtime.block_on(connect(address, hash));
+
+        let deadline = std::time::Instant::now() + 3 * idle_timeout;
+        while std::time::Instant::now() < deadline {
+            if let Some(Event::Disconnect { .. }) = host.service(Duration::from_millis(50)) {
+                panic!("the idle timeout closed a live session that sends nothing");
+            }
+        }
+        drop(session);
+    }
+
+    #[test]
+    fn a_session_gets_its_reliable_stream_and_no_more_than_the_stream_limit() {
+        let (mut host, hash) = listen();
+        let address = host.local_addr();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (_session, _send) = runtime.block_on(async move {
+            let session = connect(address, hash).await;
+            let (mut send, _recv) = session.open_bi().await.unwrap();
+            send.write_all(b"pulse").await.unwrap();
+            // The CONNECT stream and the Pulse stream hold two of the limit.
+            let mut extra = vec![];
+            for _ in 2..MAX_CONCURRENT_BIDI_STREAMS {
+                extra.push(session.open_bi().await.unwrap());
+            }
+            assert!(
+                tokio::time::timeout(HELD_BACK, session.open_bi())
+                    .await
+                    .is_err(),
+                "a bidirectional stream past the limit must wait for stream credit"
+            );
+            (session, (send, extra))
+        });
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reliable stream data not delivered"
+            );
+            if let Some(Event::StreamData { data, .. }) = host.service(Duration::from_millis(50)) {
+                assert_eq!(&data[..], b"pulse");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn unread_unidirectional_streams_buffer_at_most_the_connection_window() {
+        let (host, hash) = listen();
+        let address = host.local_addr();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async move {
+            let session = connect(address, hash).await;
+            // The client's HTTP/3 control stream already holds one of the limit.
+            let mut streams = vec![];
+            for _ in 1..MAX_CONCURRENT_UNI_STREAMS {
+                streams.push(session.open_uni().await.unwrap());
+            }
+            assert!(
+                tokio::time::timeout(HELD_BACK, session.open_uni())
+                    .await
+                    .is_err(),
+                "a unidirectional stream past the limit must wait for stream credit"
+            );
+            // Enough streams that their windows together exceed the connection window.
+            let filled = (CONNECTION_RECEIVE_WINDOW / STREAM_RECEIVE_WINDOW + 1) as usize;
+            let mut total = 0;
+            for send in &mut streams[..filled] {
+                let accepted = fill(send).await;
+                assert!(
+                    accepted <= STREAM_RECEIVE_WINDOW as usize,
+                    "an unread stream accepted {accepted} bytes"
+                );
+                total += accepted;
+            }
+            assert!(total <= CONNECTION_RECEIVE_WINDOW as usize);
+        });
+    }
 }

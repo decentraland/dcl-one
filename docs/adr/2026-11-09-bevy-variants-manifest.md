@@ -1,0 +1,193 @@
+# ADR: Bevy variants manifest
+
+- Status: Proposed
+- Date: 2026-11-09
+
+## Context
+
+A scene's content files are what its creator deployed: PNG and JPEG textures,
+GLBs with their images embedded, sometimes a creator-made UASTC KTX2. The
+Explorer turns each texture into a GPU format after download (BC7 on desktop)
+and caches the result, which costs time on every cold visit, and GLBs travel
+uncompressed. The asset-bundle generator (abgen) already reads every entity and
+can produce GPU-ready files ahead of time.
+
+The alternative of one pack per entity was measured on Genesis Plaza and
+rejected: every byte saved came from BC7 textures, meshopt meshes and brotli,
+which all work per file; a pack adds nothing to size, loses per-file caching
+(a redeploy invalidates the whole pack) and had cold builds of several minutes.
+
+## Decision
+
+abgen publishes, per scene, wearable and emote entity, a manifest that maps each
+original content CID to the paths of its GPU-ready variants. The Explorer reads
+the manifest when present and loads a variant instead
+of the original; without a manifest, without a usable variant or on any failure
+it loads the deployment's own file. The service can be switched off at any time
+and Decentraland keeps working.
+
+abgen names a variant by its inputs (the original's CID, how the scene uses
+it, the encoder's generation), so it can find an existing variant before doing
+any work and never encodes the same file twice across scenes or redeploys. A
+path's bytes are fixed for the life of its generation; a new encoder
+generation, or a forced rebuild, moves variants to new paths and regenerates
+the manifests that named the old ones. The Explorer needs no version of its
+own: it fetches what the manifest names. Because a path's bytes never change, the
+manifest carries no hash for them, and the Explorer trusts a variant by its path
+from the configured service, rejecting only what fails to decode.
+
+### Routes (served by abgen)
+
+- `GET {base}/bevy/manifest/{entityId}.json`: `200` with the manifest, or
+  `404` when there is none (not built yet, or nothing to build).
+- `GET {base}/{variant path}`, where the path is `bevy/{prefix}/{name}`: the
+  variant's bytes, served with `Cache-Control: immutable`. A path's bytes are
+  fixed for the life of its generation.
+
+### Manifest schema
+
+```json
+{
+  "v": 3,
+  "lanes": { "texture": "t4", "mesh": "m2", "glb": "g4" },
+  "files": {
+    "<image cid>": ["bevy/t4/<image cid>_srgb"],
+    "<model cid>": ["bevy/g4/<model cid>", "bevy/m2/<model cid>"]
+  }
+}
+```
+
+- Keys are original content CIDs (the entity's `content[].hash`); the path to
+  CID mapping comes from the entity. The manifest is fetched at the entity's own
+  URL and names no entity.
+- An original has at most one variant per class, in the generator's order of
+  preference; the Explorer takes the first one it supports.
+- A path is relative to the base: `bevy`, a prefix of ASCII letters and digits
+  other than `manifest`, and a name of ASCII letters, digits and `_`. The
+  prefix's first letter is the variant's class: `t` a BC KTX2 texture, `m` a
+  `glb-br` model, `g` a GLB; the rest names the generation and build options
+  (`g4`, `t4z9`). A reader drops a path of any other shape or class. A reader
+  maps every prefix of a class to the same format whatever its generation, so a
+  change to what a class holds that an existing reader cannot load (a `g`
+  variant with embedded images other than BC1, BC5 or BC7, say) takes a new
+  class letter, not a new generation.
+- `lanes` records which generation each variant class was built from; it is for
+  abgen, and a reader only shows it.
+- `v` is abgen's too: with `lanes` it tells abgen when to rewrite an entity's
+  manifest. A reader does not use it to decide whether a manifest is accepted.
+  A reader requires `files`, each CID mapped to a list of path strings, and
+  ignores fields it does not know, so it loads what any manifest of this shape
+  lists, whichever generation built it. A change to `files` that an existing
+  reader cannot load therefore takes a new manifest URL, not a new `v`; new
+  data goes in new fields.
+- Earlier versions listed a CID, format and size for each variant; a reader
+  rejects those object entries. abgen keeps them in records beside each
+  variant, which it does not serve.
+
+Classes:
+
+- `t`, a texture: KTX2 with a BC payload, whose header's vkFormat names BC7, BC1
+  or BC5 UNORM, and zstd supercompression, level 0 alone or with its mip chain,
+  longest side at most 1024. The Explorer applies sRGB or linear from how the
+  texture is requested. Level 0 must be whole 4×4 blocks (width and height
+  multiples of 4), because the GPU refuses anything else; a reader rejects such
+  a file and loads the original, so the generator pads, resizes or emits no
+  variant. Lower mips may be smaller than a block. BC1 is for fully opaque images, BC5 for images the
+  entity's models use only as normal maps, BC7 otherwise. Images of two pixels
+  or fewer a side get no variant. A creator UASTC KTX2 is transcoded block for
+  block to BC7, one level, no resize or re-encode, so the variant is
+  pixel-identical to the Explorer's own transcode; no variant when a level
+  cannot be block-transcoded. A variant larger than its original is kept: the
+  Explorer holds a PNG or JPEG as RGBA, so the BC copy still saves memory.
+- `g`, a GLB: a GLB with Draco decoded (a model whose Draco does not decode
+  gets no variant, so a `g` variant never needs Draco), `KHR_texture_basisu`
+  resolved to a core `source`, external buffers inlined, and each embedded image
+  replaced by a KTX2 of the `t` class's format (`mimeType: "image/ktx2"`, in a
+  buffer view of the GLB's binary chunk). Every KTX2 in it is BC: a GLB whose
+  embedded KTX2 does not transcode gets no variant. An embedded PNG or JPEG
+  that gets no encode (too small, undecodable) keeps its own bytes and MIME
+  type. External image URIs stay as they are; they resolve to their own
+  original CID, which has its own texture variant. Geometry, nodes and
+  materials stay as in the original. A Brotli copy sits beside it at
+  `{path}.br` only when it is smaller, and the server sends it, with
+  `Content-Encoding: br`, to a client that asks for `{path}` and accepts `br`.
+  A cache in front of that server must key on the encoding (`Vary:
+  Accept-Encoding`): a cached `br` body sent to native, which doesn't decode
+  it, fails the `glTF` check and loses the `g` variants for the session.
+- `m`, a `glb-br` model: the original `.glb`, byte for byte, with a Brotli copy
+  beside it at `{path}.br`, stored with `Content-Encoding: br`. A CDN does not
+  pick the copy by `Accept-Encoding`, so a reader asks for `{path}.br` by name.
+
+Excluded from variants: source maps, audio, video and scene code.
+
+### Explorer rules
+
+- The base is the launch option, web parameter or config field when one is
+  set, else abgen's CDN for the base domain (`https://abgen-cdn.<base>`, the
+  `abgen_cdn` service, which a gateway can route like any other); `off` in any
+  of them turns variants off. Preview mode, local scenes (`b64-` ids) and entities served
+  from a loopback or file content server never ask for a manifest; in preview
+  mode that includes wearables and emotes, so a preview shows deployed files.
+- One manifest request per entity per session: each scene when it loads, and
+  each wearable and emote when its entity is fetched for an avatar. A `404` is
+  remembered as "no manifest". A wearable or emote takes its content server from
+  the catalyst it was fetched from, so it is eligible on any realm.
+- A scene's manifest is requested when its entity file is, from the entity id,
+  not after that file arrives. Manifests and variants are fetched in one attempt
+  with short timeouts and no retry: a file's original is its retry, so a host
+  that does not answer holds a request slot for seconds, not minutes.
+- An entity's files wait for its manifest for at most two seconds from the
+  request. A file read after that loads its original at once, so a slow service
+  delays a load by that much at worst; a manifest that arrives later still serves
+  the files read after it.
+- A content file reads as a variant only when its original CID has a variant of
+  a class the Explorer supports for that file type and GPU: original CID, first
+  supported variant, fetch from `{base}/{path}`, decode. Any failure (fetch, a
+  KTX2 that does not unwrap, a texture or GLB that does not load) falls back to the
+  original, per file; a variant that failed is not tried again in the session,
+  its cached copy is dropped and the asset is reloaded from the original. Repeated transport failures turn the
+  service off for the session.
+- Variant bytes are cached under a digest of the URL they came from, never under
+  the original's content hash, so a variant can never stand in for an original
+  in the content cache. A texture variant is handed to the image loaders as its
+  KTX2; the reader checks only its header, and the loaders unwrap it to the DDS
+  they decode, so the inflated levels are held only inside an asset load.
+- The supported classes are one table in the manifest client
+  (`crates/ipfs/src/bevy_variants`): the class, the file types it may replace,
+  what the GPU must support and what the bytes decode as. The table holds the
+  BC texture class (BC1, BC5 or BC7, read from the KTX2 header) and, in the web
+  build only, `glb-br`: the browser decodes the Brotli copy, the bytes must hash
+  to the original's own CID (they are the original byte for byte, so a copy that
+  passes needs no reload if the glTF loader then fails), and the GLB goes to the
+  glTF loader of the original path. Native loads original models for `glb-br`
+  until its http client can decode Brotli.
+- The table also holds `glb`, on a GPU with BC textures, for `.glb` files. It
+  is fetched at its own path on every platform, since its Brotli copy may not
+  exist; a browser that accepts `br` gets the copy and decodes it. The cache
+  keeps it as served, and the reader hands it to the glTF loader as it is,
+  after checking only that it starts with the GLB magic. The glTF loader
+  decodes each embedded image itself and recognises a KTX2 by its leading
+  bytes; it goes through the same host KTX2 transcoder as a texture variant,
+  which unwraps BC1, BC5 or BC7 to the DDS it decodes, so the textures stay BC
+  in memory. The loader picks sRGB or linear for each image from how the
+  materials use it. An embedded KTX2 that does not unwrap fails the GLB's load,
+  and a GLB that fails to load from a `glb` variant is reloaded from the
+  original. A scene's container retries it; an avatar waits for that reload
+  (up to two minutes) instead of assembling without the piece. The asset
+  keeps the original path, so every user of the model shares one loaded copy. Image processing skips a GLB read from a variant.
+
+## Consequences
+
+- A cold visit downloads BC textures that need no transcode; the stored
+  deployment and its CIDs are untouched, and the texture path of a deployment is
+  unchanged for anyone not configured with a base URL.
+- abgen is the only producer of variants, and the Explorer trusts the configured
+  variants service for their content: with no hash in the manifest, a file that
+  decodes is shown as served. A malformed file is dropped per file without
+  affecting the scene. Only a deployment's own service may be configured on web
+  (the launch gate refuses other hosts); a native launch option is the
+  operator's choice.
+- The manifest names classes the Explorer does not take yet; adding one is a
+  row in the client's table and the decoder it needs, not a schema change.
+- Measured savings and render-parity evidence belong in the task reports and the
+  PR that enables a base URL, not in this record.

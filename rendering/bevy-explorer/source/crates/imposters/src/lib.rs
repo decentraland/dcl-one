@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod bake_scene;
 mod debug_panel;
 pub mod floor_imposter;
@@ -27,7 +29,7 @@ impl Plugin for DclImposterPlugin {
             .add_preview_console_command::<ImpostMultisampleCommand, _>(set_impost_multi)
             .add_preview_console_command::<DebugImpostersCommand, _>(toggle_debug_imposters);
         app.insert_resource(self.clone());
-        debug_panel::register(app);
+        app.add_plugins(debug_panel::LodDebugPanelPlugin);
     }
 }
 

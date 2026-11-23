@@ -84,7 +84,10 @@ impl Plugin for BoundedNodePlugin {
 }
 
 mod decl {
-    #![allow(dead_code)]
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
 
     use bevy::{math::Vec4, render::render_resource::ShaderType};
 
@@ -132,7 +135,6 @@ impl UiMaterial for BoundedImageMaterial {
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_bounded_nodes(
     mut commands: Commands,
     new_children: Query<

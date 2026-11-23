@@ -4,6 +4,7 @@
 //! atomically with the event. Dispatch pages commit their recipient cursor
 //! with notification/email-outbox inserts, so crashes and retries are safe.
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use chrono::{Duration as Span, NaiveDateTime, Utc};
@@ -11,7 +12,7 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use super::store::{NewNotification, insert_event_notifications};
+use super::store::{NewNotification, community_opt_out, insert_event_notifications};
 use crate::identity::Address;
 
 const PAGE: i64 = 100;
@@ -53,11 +54,13 @@ struct Recipient {
 /// The sites the notices point at and the Slack switch.
 #[derive(Clone, Debug)]
 pub struct Links {
-    /// The events site (`/whats-on/{id}`): the link of the notices the old
+    /// The Sites origin of the Events pages: the link of the notices the old
     /// service sent without one (rejected, deleted, community created).
     pub base: String,
-    /// Backend asset origin and mount for relative default posters.
+    /// Backend events asset mount (`<origin>/events`) for the bundled default image.
     pub asset_base: String,
+    /// `PUBLIC_URL` as the event read projection uses it for poster URLs.
+    pub public_base: Option<String>,
     /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
     /// for the reminder, start and approval notices.
     pub jump_in_site_url: String,
@@ -79,7 +82,9 @@ fn occurrence_id(event_id: &str, starts_at: NaiveDateTime, kind: &str) -> Uuid {
 // stale until the next catalogue refresh. Bound live candidates before expanding
 // recurrence, then keyset-order the unqueued occurrences. The unique queue key
 // makes concurrent scans safe and avoids losing late approvals behind a cursor.
-const SCAN_SQL: &str = "
+static SCAN_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "
     SELECT DISTINCT e.id AS event_id,e.raw - 'recurrent_dates' AS event,e.origin='local' AS local_event,
            d.starts_at,d.starts_at - $2::int4 * interval '1 second' AS due_at
     FROM explore.event e CROSS JOIN LATERAL (
@@ -100,15 +105,17 @@ const SCAN_SQL: &str = "
                SELECT 1 FROM social.communities c JOIN social.community_members m ON m.community_id=c.id
                WHERE c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END
                  AND c.origin='local' AND c.active AND NOT c.suspended
-                 AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o
-                     WHERE o.address=m.member_address AND o.scope='community' AND CASE WHEN pg_input_is_valid(o.scope_id,'uuid') THEN o.scope_id::uuid END=c.id))))
+                 AND NOT EXISTS ({opt_out}))))
       AND d.starts_at - $2::int4 * interval '1 second' >= $4
       AND d.starts_at - $2::int4 * interval '1 second' <= $3
       AND CASE WHEN $1='events_starts_soon' THEN d.starts_at > $3
                ELSE d.starts_at + e.duration_ms * interval '1 millisecond' > $3 END
       AND NOT EXISTS (SELECT 1 FROM social.event_notification_intents q
                       WHERE q.event_id=e.id AND q.occurrence_start=d.starts_at AND q.kind=$1)
-    ORDER BY due_at,event_id LIMIT $5";
+    ORDER BY due_at,event_id LIMIT $5",
+        opt_out = community_opt_out("m.member_address", "c.id")
+    )
+});
 
 async fn scan_kind(
     pool: &PgPool,
@@ -120,7 +127,7 @@ async fn scan_kind(
     sqlx::query("SET LOCAL statement_timeout = '2s'")
         .execute(&mut *tx)
         .await?;
-    let rows: Vec<Occurrence> = sqlx::query_as(SCAN_SQL)
+    let rows: Vec<Occurrence> = sqlx::query_as(sqlx::AssertSqlSafe(SCAN_SQL.as_str()))
         .bind(kind)
         .bind(ahead)
         .bind(now)
@@ -149,18 +156,22 @@ async fn scan_kind(
     Ok(rows.len() as u64)
 }
 
+/// `Date.prototype.toISOString()`: UTC, millisecond precision, `Z`.
+fn js_iso(t: NaiveDateTime) -> String {
+    t.and_utc()
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 fn text<'a>(event: &'a Value, field: &str) -> &'a str {
     event.get(field).and_then(Value::as_str).unwrap_or_default()
 }
 
-async fn recipients(
-    tx: &mut Transaction<'_, Postgres>,
-    intent: &Intent,
-) -> anyhow::Result<Vec<Recipient>> {
-    let community_id = Uuid::parse_str(text(&intent.event, "community_id")).ok();
-    // Upstream scoped events_started to the community for every recipient: a
-    // member who opted out of the community gets no notice, even with an RSVP.
-    let rows = sqlx::query_as(
+/// The page of an intent's recipients after `$6`: the event's author for a
+/// moderation notice, its RSVPs for a reminder (on a started community event,
+/// not those who opted out of the community) and the community's members for
+/// a community event, unless opted out.
+static RECIPIENTS_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
         "WITH candidates AS ( \
             SELECT $3::text AS address,false AS community,NULL::text AS community_name,false AS community_thumbnail \
             WHERE $2 IN ('event_approved','event_rejected','event_deleted') AND $3 > $6 \
@@ -174,8 +185,7 @@ async fn recipients(
                   WHERE m.community_id=$5::uuid AND m.member_address=a.signer \
                     AND c.origin='local' AND c.active AND NOT c.suspended \
                     AND CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END=$5::uuid \
-                    AND EXISTS (SELECT 1 FROM social.subscription_opt_outs o \
-                        WHERE o.address=m.member_address AND o.scope='community' AND CASE WHEN pg_input_is_valid(o.scope_id,'uuid') THEN o.scope_id::uuid END=$5::uuid))) \
+                    AND EXISTS ({opt_out}))) \
             ORDER BY a.signer LIMIT $7) \
             UNION ALL \
             (SELECT m.member_address,true,c.name,EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id=c.id) \
@@ -186,21 +196,49 @@ async fn recipients(
               AND c.origin='local' AND c.active AND NOT c.suspended AND e.approved \
               AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
-              AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o \
-                  WHERE o.address=m.member_address AND o.scope='community' AND CASE WHEN pg_input_is_valid(o.scope_id,'uuid') THEN o.scope_id::uuid END=$5::uuid) \
+              AND NOT EXISTS ({opt_out}) \
             ORDER BY m.member_address LIMIT $7) \
         ) SELECT address,bool_or(community) AS community,max(community_name) AS community_name, \
                  bool_or(community_thumbnail) AS community_thumbnail \
           FROM candidates WHERE address > $6 GROUP BY address ORDER BY address LIMIT $7",
-    ).bind(&intent.event_id).bind(&intent.kind).bind(text(&intent.event,"user"))
-        .bind(intent.local_event).bind(community_id).bind(&intent.recipient_after)
-        .bind(PAGE).fetch_all(&mut **tx).await?;
+        opt_out = community_opt_out("m.member_address", "$5::uuid")
+    )
+});
+
+async fn recipients(
+    tx: &mut Transaction<'_, Postgres>,
+    intent: &Intent,
+) -> anyhow::Result<Vec<Recipient>> {
+    let community_id = Uuid::parse_str(text(&intent.event, "community_id")).ok();
+    // Upstream scoped events_started to the community for every recipient: a
+    // member who opted out of the community gets no notice, even with an RSVP.
+    let rows = sqlx::query_as(sqlx::AssertSqlSafe(RECIPIENTS_SQL.as_str()))
+        .bind(&intent.event_id)
+        .bind(&intent.kind)
+        .bind(text(&intent.event, "user"))
+        .bind(intent.local_event)
+        .bind(community_id)
+        .bind(&intent.recipient_after)
+        .bind(PAGE)
+        .fetch_all(&mut **tx)
+        .await?;
     Ok(rows)
 }
 
 fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     let base = links.base.trim_end_matches('/');
-    let name = text(&intent.event, "name");
+    let name = crate::explore::sanitize::strip_all_markup(text(&intent.event, "name"));
+    let community_name = recipient
+        .community_name
+        .as_deref()
+        .map(crate::explore::sanitize::strip_all_markup)
+        .filter(|n| !n.is_empty());
+    // A name that was only markup is left out of the sentence.
+    let named = if name.is_empty() {
+        String::new()
+    } else {
+        format!(" {name}")
+    };
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
     // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
@@ -213,35 +251,43 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
                 &intent.event,
             )
         }
-        _ => format!("{base}/whats-on/{}", urlencoding::encode(&intent.event_id)),
+        // A rejected event is not public, so its owner lands in its editor; a
+        // deleted one has no page left, so My Events.
+        "event_rejected" => format!(
+            "{base}/events/edit-event/{}",
+            urlencoding::encode(&intent.event_id)
+        ),
+        "event_deleted" => format!("{base}/events?tab=my"),
+        _ => format!("{base}/events?id={}", urlencoding::encode(&intent.event_id)),
     };
     let (title, description) = match intent.kind.as_str() {
         // `Notifications/index.ts:56-57`
         "events_starts_soon" => (
             "Event starts in an hour".to_string(),
-            format!("The event {name} starts in an hour."),
+            format!("The event{named} starts in an hour."),
         ),
         "events_started" if recipient.community => (
             "Community Event starting".into(),
             format!(
                 "A {} event is about to start.",
-                recipient.community_name.as_deref().unwrap_or("community")
+                community_name.as_deref().unwrap_or("community")
             ),
         ),
         "events_started" => (
             "Event started".into(),
-            format!("The event {name} has begun!"),
+            format!("The event{named} has begun!"),
         ),
         "event_created" => (
             "Community Event Added".into(),
             format!(
                 "The {} Community has added a new event.",
-                recipient.community_name.as_deref().unwrap_or("community")
+                community_name.as_deref().unwrap_or("community")
             ),
         ),
+        _ if name.is_empty() => ("Event".to_string(), description),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::node_assets::notice_image_url(text(&intent.event,"image"),links.public_base.as_deref(),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if matches!(
         intent.kind.as_str(),
         "events_starts_soon" | "events_started" | "event_created"
@@ -256,17 +302,17 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             .max(0);
-        metadata["startsAt"] = json!(start.and_utc().to_rfc3339());
+        metadata["startsAt"] = json!(js_iso(start));
         metadata["endsAt"] = json!(
             Span::try_milliseconds(duration)
                 .and_then(|duration| start.checked_add_signed(duration))
-                .map(|time| time.and_utc().to_rfc3339())
+                .map(js_iso)
         );
     }
     if recipient.community {
         let community = text(&intent.event, "community_id");
         metadata["communityId"] = json!(community);
-        metadata["communityName"] = json!(recipient.community_name);
+        metadata["communityName"] = json!(community_name);
         if recipient.community_thumbnail {
             // The stored thumbnail lives under the canonical UUID.
             let id = Uuid::parse_str(community).map_or(community.to_string(), |id| id.to_string());
@@ -278,7 +324,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
         intent.kind.as_str(),
         "event_approved" | "event_rejected" | "event_deleted"
     ) {
-        metadata["myHangouts"] = json!(format!("{base}/whats-on?tab=my"));
+        metadata["myHangouts"] = json!(format!("{base}/events?tab=my"));
     }
     if intent.kind == "event_rejected" {
         metadata["reason"] = json!(text(&intent.event, "rejection_reason"));
@@ -575,10 +621,21 @@ mod tests {
 
     const CDN: &str = "https://cdn.example.org";
 
+    #[test]
+    fn times_read_as_javascript_iso_strings() {
+        let t = chrono::DateTime::from_timestamp_millis(4_084_016_400_123)
+            .unwrap()
+            .naive_utc();
+        assert_eq!(js_iso(t), "2099-06-01T17:00:00.123Z");
+        let micros = t + Span::microseconds(456);
+        assert_eq!(js_iso(micros), "2099-06-01T17:00:00.123Z");
+    }
+
     fn origins(link: &str, assets: &str) -> Links {
         Links {
             base: link.into(),
             asset_base: assets.into(),
+            public_base: None,
             jump_in_site_url: "https://decentraland.org/jump".into(),
             community_cdn: CDN.into(),
             slack_notices: false,
@@ -784,7 +841,7 @@ mod tests {
             "an RSVP from a non-member keeps the generic notice"
         );
         assert_eq!(
-            metadata["endsAt"], "2099-06-01T19:00:00+00:00",
+            metadata["endsAt"], "2099-06-01T19:00:00.000Z",
             "occurrence duration, not series finish"
         );
         assert_eq!(
@@ -909,13 +966,15 @@ mod tests {
         .await
         .unwrap();
         assert!(finished);
-        catch_up_pages_live_audiences_and_retention(&pool).await;
-        bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
-        drain_waits_for_an_intent_claimed_by_another_transaction(&pool).await;
-        blocked_metrics_preserve_notification_delivery(&pool).await;
     }
 
-    async fn blocked_metrics_preserve_notification_delivery(pool: &PgPool) {
+    #[tokio::test]
+    async fn blocked_metrics_preserve_notification_delivery() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let id = Uuid::new_v4();
         let event_id = format!("metric-lock-{id}");
         let now = Utc::now().naive_utc();
@@ -938,7 +997,13 @@ mod tests {
         assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 
-    async fn drain_waits_for_an_intent_claimed_by_another_transaction(pool: &PgPool) {
+    #[tokio::test]
+    async fn drain_waits_for_an_intent_claimed_by_another_transaction() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let id = Uuid::new_v4();
         let event_id = format!("claimed-{id}");
         let now = Utc::now().naive_utc();
@@ -1060,7 +1125,13 @@ mod tests {
         );
     }
 
-    async fn catch_up_pages_live_audiences_and_retention(pool: &PgPool) {
+    #[tokio::test]
+    async fn catch_up_pages_live_audiences_and_retention() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let pool = &pool;
         let now = chrono::DateTime::parse_from_rfc3339("2101-06-01T18:00:00Z")
             .unwrap()
             .naive_utc();
@@ -1095,7 +1166,8 @@ mod tests {
             .await
             .unwrap();
         let plan: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {SCAN_SQL}"
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {}",
+            SCAN_SQL.as_str()
         )))
         .bind("events_started")
         .bind(0_i32)
@@ -1333,7 +1405,13 @@ mod tests {
         );
     }
 
-    async fn bounded_work_preserves_fairness_cleanup_and_polling(pool: &PgPool) {
+    #[tokio::test]
+    async fn bounded_work_preserves_fairness_cleanup_and_polling() {
+        use crate::db::scratch::{OwnedDatabase, Schema};
+        let Some(db) = OwnedDatabase::new("event_fairness", Schema::Full, 6).await else {
+            return;
+        };
+        let pool = &db.pool;
         let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
             .unwrap()
             .naive_utc();
@@ -1694,13 +1772,7 @@ mod tests {
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
         );
-        // This fixture's wall-clock events (a local community one among them)
-        // would otherwise count as endings in the metric tests of this process.
-        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
-            .bind(format!("{prefix}-%"))
-            .execute(pool)
-            .await
-            .unwrap();
+        db.drop().await;
     }
 
     fn intent(kind: &str, event: Value) -> Intent {
@@ -1742,6 +1814,58 @@ mod tests {
             payload["image"],
             "https://assets.example.org/events/assets/event-default.webp"
         );
+        for (stored, absolute) in [
+            (
+                "/poster/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster/a.webp",
+            ),
+            (
+                "/poster-vertical/a.webp",
+                "https://assets.example.org/events-assets-099ac00/poster-vertical/a.webp",
+            ),
+            (
+                "https://img.example.org/p.png",
+                "https://img.example.org/p.png",
+            ),
+        ] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Poster","image":stored})),
+                &recipient(false, false),
+                &Links {
+                    public_base: Some("https://assets.example.org".into()),
+                    ..origins(
+                        "https://web.example.org",
+                        "https://assets.example.org/events",
+                    )
+                },
+            );
+            assert_eq!(payload["image"], absolute, "{stored}");
+        }
+        // An image the read side drops is sent empty.
+        for dropped in ["javascript:x", "/other/a.webp"] {
+            let payload = metadata(
+                &intent("event_approved", json!({"name":"Dropped","image":dropped})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events",
+                ),
+            );
+            assert_eq!(payload["image"], "", "{dropped}");
+        }
+        // Without `PUBLIC_URL` a poster stays relative, as `GET` serves it.
+        let payload = metadata(
+            &intent(
+                "event_approved",
+                json!({"name":"Poster","image":"/poster/a.webp"}),
+            ),
+            &recipient(false, false),
+            &origins(
+                "https://web.example.org",
+                "https://assets.example.org/events",
+            ),
+        );
+        assert_eq!(payload["image"], "/events-assets-099ac00/poster/a.webp");
         assert_eq!(
             payload["link"], "https://decentraland.org/jump/events?id=legacy-event&position=0%2C0",
             "an approval links the jump-in site (`Notifications/index.ts:205`)"
@@ -1756,8 +1880,20 @@ mod tests {
                     "https://assets.example.org/events/"
                 ),
             )["link"],
-            "https://web.example.org/whats-on/legacy-event",
-            "notices upstream sent without a link keep this node's event page"
+            "https://web.example.org/events/edit-event/legacy-event",
+            "a rejected event is not public, so its notice opens the owner's editor"
+        );
+        assert_eq!(
+            metadata(
+                &intent("event_deleted", json!({"name":"Legacy"})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events/"
+                ),
+            )["link"],
+            "https://web.example.org/events?tab=my",
+            "a deleted event has no page, so its notice opens My Events"
         );
     }
 
@@ -1776,7 +1912,7 @@ mod tests {
                 &links,
             );
             assert_eq!(
-                payload["myHangouts"], "https://web.example.org/whats-on?tab=my",
+                payload["myHangouts"], "https://web.example.org/events?tab=my",
                 "{kind}"
             );
             assert_eq!(payload["title"], "Party", "{kind}");
@@ -1835,6 +1971,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn notice_text_carries_the_event_name_without_rich_text_tags() {
+        let links = test_links("https://example.org");
+        let event =
+            json!({"name":"Party <link=\"file:///x\">here</link><size=300>","description":"d"});
+        let reminder = metadata(
+            &intent("events_starts_soon", event.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(
+            reminder["description"],
+            "The event Party here starts in an hour."
+        );
+        assert_eq!(reminder["name"], "Party here");
+        let approved = metadata(
+            &intent("event_approved", event),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(approved["title"], "Party here");
+        let plain = metadata(
+            &intent("event_approved", json!({"name":"Launch"})),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(plain["title"], "Launch");
+        let tags_only = json!({"name":"<size=300><b>","description":"d"});
+        let reminder = metadata(
+            &intent("events_starts_soon", tags_only.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(reminder["description"], "The event starts in an hour.");
+        let approved = metadata(
+            &intent("event_approved", tags_only.clone()),
+            &recipient(false, false),
+            &links,
+        );
+        assert_eq!(approved["title"], "Event");
+        let mut member = recipient(true, false);
+        member.community_name = Some("<b></b>".into());
+        let started = metadata(&intent("events_started", tags_only), &member, &links);
+        assert_eq!(
+            started["description"],
+            "A community event is about to start."
+        );
+    }
+
     /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
     /// descriptions, jump-in links (`position` and `realm`) and `attendee`.
     #[test]
@@ -1870,8 +2055,8 @@ mod tests {
             "https://decentraland.org/jump/events?id=ev-1&position=10%2C-20&realm=world.dcl.eth"
         );
         assert_eq!(reminder["attendee"], attendee.address);
-        assert_eq!(reminder["startsAt"], "2099-06-01T18:00:00+00:00");
-        assert_eq!(reminder["endsAt"], "2099-06-01T19:00:00+00:00");
+        assert_eq!(reminder["startsAt"], "2099-06-01T18:00:00.000Z");
+        assert_eq!(reminder["endsAt"], "2099-06-01T19:00:00.000Z");
         let started = Intent {
             kind: "events_started".into(),
             ..intent

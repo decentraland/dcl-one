@@ -9,13 +9,22 @@ interface CheckboxProps {
   defaultChecked?: boolean
   onChange?: (checked: boolean) => void
   children?: React.ReactNode
+  /** `light`: a 20px white box, ticked or not (the sign-in screens'). */
+  variant?: 'default' | 'light'
+  /** The box's name when its text sits apart from it (links in the text must not toggle it). */
+  'aria-label'?: string
+  /** The input's id, for a `<label htmlFor>` on that text: a click on the text then toggles the box. */
+  id?: string
 }
 
 export function Checkbox({
   checked,
   defaultChecked = false,
   onChange,
-  children
+  children,
+  variant = 'default',
+  'aria-label': label,
+  id
 }: CheckboxProps): React.JSX.Element {
   const [internal, setInternal] = useState(defaultChecked)
   const isControlled = checked !== undefined
@@ -27,9 +36,11 @@ export function Checkbox({
   }
 
   return (
-    <label className={styles.checkbox}>
+    <label className={`${styles.checkbox} ${variant === 'light' ? styles.light : ''}`.trim()}>
       <input
         type="checkbox"
+        id={id}
+        aria-label={label}
         className={styles.input}
         checked={on}
         onChange={toggle}
@@ -48,7 +59,7 @@ export function Checkbox({
           </svg>
         )}
       </span>
-      <span className={styles.label}>{children}</span>
+      {children != null && <span className={styles.label}>{children}</span>}
     </label>
   )
 }

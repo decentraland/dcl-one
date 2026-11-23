@@ -50,9 +50,15 @@ pub enum PostUpdateSets {
     /// run `.in_set(InverseKinematics)`; consumers that need post-IK bone
     /// globals (e.g. nametag) run `.after(InverseKinematics)`.
     InverseKinematics,
+    /// Spring bones: swings the extra bones of wearables off the post-IK body bones they hang
+    /// from, and writes their local rotations before the final propagate.
+    SpringBones,
     /// Per-frame nametag positioning. Reads post-IK head/position globals,
     /// so it sits after `InverseKinematics` in the chain.
     Nametag,
     AttachSync,
     Billboard,
+    /// Geometry fitted to a camera's final projection: after bevy's `CameraUpdateSystem`, which
+    /// resets a projection's aspect ratio when its target is resized.
+    CameraFit,
 }

@@ -10,6 +10,7 @@ use std::{collections::VecDeque, f32::consts::PI};
 
 use bevy::{
     animation::{AnimationTarget, AnimationTargetId},
+    app::PropagateStop,
     gltf::{Gltf, GltfAssetLabel},
     pbr::NotShadowCaster,
     prelude::*,
@@ -22,7 +23,7 @@ use bevy::{
 use common::structs::{AppConfig, PrimaryUser};
 use comms::{global_crdt::ForeignPlayer, profile::UserProfile};
 use scene_material::{
-    reveal_mesh_tag, unrevealed_mesh_tag, SceneMaterial,
+    highlight::Highlight, reveal_mesh_tag, unrevealed_mesh_tag, SceneMaterial,
     SCENE_MATERIAL_REVEAL_FULL_HEIGHT as REVEAL_HEIGHT,
     SCENE_MATERIAL_REVEAL_HIDE_HEIGHT as HIDE_HEIGHT,
 };
@@ -250,7 +251,6 @@ struct GhostDressing {
 #[derive(Component)]
 struct RevealedBy(Entity);
 
-#[allow(clippy::type_complexity)]
 fn spawn_ghosts(
     mut commands: Commands,
     players: Query<
@@ -284,6 +284,8 @@ fn spawn_ghosts(
                     material: material.clone(),
                     scene: None,
                 },
+                // the hover glow is the avatar's
+                PropagateStop::<Highlight>::default(),
                 ChildOf(player),
             ))
             .id();
@@ -297,7 +299,6 @@ fn spawn_ghosts(
 
 /// spawns the base body under each new ghost, then dresses it: the ghost material on every
 /// mesh, the idle clip on the armature, as `process_avatar` does for an avatar
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn dress_ghosts(
     mut commands: Commands,
     body: Res<GhostBody>,
@@ -404,7 +405,6 @@ fn dress_ghosts(
 
 // an avatar built while its ghost stands in is clipped away, to be revealed by the handover; one
 // rebuilt mid-handover (a look change) joins the reveal at its current height
-#[allow(clippy::type_complexity)]
 fn clip_built_avatars(
     mut commands: Commands,
     built: Query<(Entity, &ChildOf), Added<AvatarProcessed>>,
@@ -690,8 +690,10 @@ mod tests {
 
     /// The ghost's shader, and the avatar shaders with the reveal clip, compile on this machine's
     /// adapter, in a renderer with no window: a dressed ghost (the skinned body in the ghost
-    /// material), a revealed scene-material mesh and a revealed mask mesh in front of a camera
-    /// with the prepasses and a shadowing light. Needs a GPU, so `#[ignore]`d and skipped by CI:
+    /// material), a revealed toon scene-material mesh and a revealed mask mesh in front of two
+    /// cameras with the prepasses, one with an environment map (as the sky envmap gives every
+    /// camera that draws the sky, so the toon ambient lookup compiles) and one without (as the
+    /// avatar preview's), and a shadowing light. Needs a GPU, so `#[ignore]`d and skipped by CI:
     ///
     /// ```text
     /// cargo test -p avatar ghost_and_reveal_shaders -- --ignored --nocapture
@@ -699,20 +701,24 @@ mod tests {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn ghost_and_reveal_shaders_compile() {
-        use assets::test_support::{compile_pipelines, headless_app, render_target};
         use bevy::{
             asset::RenderAssetUsages,
             core_pipeline::prepass::{DepthPrepass, NormalPrepass},
             image::Image,
             render::{
                 camera::RenderTarget,
-                render_resource::{Extent3d, TextureDimension, TextureFormat},
+                render_resource::{
+                    CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, ShaderDefVal,
+                    TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+                },
                 storage::ShaderStorageBuffer,
+                RenderApp,
             },
         };
+        use pipeline_test::{compile_pipelines, headless_app, render_target};
         use scene_material::{
             SceneBound, SceneBounds, EMPTY_SCENE_CELLS, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
-            SCENE_MATERIAL_TOON_MESH_TAG,
+            SCENE_MATERIAL_OUTLINE_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
         };
 
         let mut app = headless_app();
@@ -728,6 +734,8 @@ mod tests {
         load_ghost_body_in(&mut app);
 
         let target = render_target(&mut app);
+        let bare_target = render_target(&mut app);
+        let no_prepass_target = render_target(&mut app);
         let world = app.world_mut();
         // the unbounded scene's cell table, as SceneBoundPlugin inserts it
         world.resource_mut::<Assets<ShaderStorageBuffer>>().insert(
@@ -741,6 +749,23 @@ mod tests {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::all(),
         ));
+        // a sky envmap, so the materials' environment map overrides compile too
+        let mut envmap = Image::new_fill(
+            Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 6,
+            },
+            TextureDimension::D2,
+            &[128, 128, 128, 255],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        envmap.texture_view_descriptor = Some(TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::Cube),
+            ..default()
+        });
+        let envmap = world.resource_mut::<Assets<Image>>().add(envmap);
         let cube = world
             .resource_mut::<Assets<Mesh>>()
             .add(Cuboid::new(0.5, 1.0, 0.5));
@@ -774,6 +799,33 @@ mod tests {
             },
             DepthPrepass,
             NormalPrepass,
+            bevy::pbr::environment_map::EnvironmentMapLight {
+                diffuse_map: envmap.clone(),
+                specular_map: envmap,
+                ..default()
+            },
+            Transform::from_xyz(0.0, 1.0, 4.0).looking_at(Vec3::Y, Vec3::Y),
+        ));
+        // no environment map: the toon light falls back to its floor. The camera above also
+        // draws without one until its cube map is uploaded; this one keeps the variant drawn
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(bare_target.into()),
+                ..default()
+            },
+            DepthPrepass,
+            NormalPrepass,
+            Transform::from_xyz(0.0, 1.0, 4.0).looking_at(Vec3::Y, Vec3::Y),
+        ));
+        // no prepasses, as a camera has with the outline setting off: the outline reads them,
+        // so the materials compile without those reads
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(no_prepass_target.into()),
+                ..default()
+            },
             Transform::from_xyz(0.0, 1.0, 4.0).looking_at(Vec3::Y, Vec3::Y),
         ));
         world.spawn((
@@ -804,12 +856,15 @@ mod tests {
             MeshTag(revealed),
             Transform::from_xyz(-1.0, 0.5, 0.0),
         ));
-        world.spawn((
-            Mesh3d(cube),
-            MeshMaterial3d(mask),
-            MeshTag(revealed),
-            Transform::from_xyz(1.0, 0.5, 0.0),
-        ));
+        // a face mask with and without the avatar outline, which it reads from its tag
+        for (i, outline) in [SCENE_MATERIAL_OUTLINE_MESH_TAG, 0].into_iter().enumerate() {
+            world.spawn((
+                Mesh3d(cube.clone()),
+                MeshMaterial3d(mask.clone()),
+                MeshTag(revealed | outline),
+                Transform::from_xyz(1.0 + i as f32, 0.5, 0.0),
+            ));
+        }
 
         let started = Instant::now();
         while app.world().get::<AnimationPlayer>(body).is_none() {
@@ -824,5 +879,59 @@ mod tests {
         // the skinned ghost, the scene material's main, prepass and shadow passes, the mask
         // material
         assert!(ok >= 5, "only {ok} pipelines compiled");
+
+        // the main passes of the scene material and of the mask material compiled with the toon
+        // defs, both with and without the environment map (the toon ambient lookup only exists
+        // with it) and both with and without the depth prepass (the outline only reads it where
+        // it exists)
+        let has = |defs: &[ShaderDefVal], name: &str| {
+            defs.iter().any(|def| match def {
+                ShaderDefVal::Bool(def_name, true) | ShaderDefVal::UInt(def_name, _) => {
+                    def_name == name
+                }
+                _ => false,
+            })
+        };
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        for name in ["bound_material.wgsl", "mask_material.wgsl"] {
+            let shader = app
+                .world()
+                .resource::<AssetServer>()
+                .get_handle::<Shader>(format!("embedded://shaders/{name}"))
+                .unwrap_or_else(|| panic!("{name} loaded"))
+                .id();
+            let toon_variants = cache
+                .pipelines()
+                .filter(|pipeline| matches!(pipeline.state, CachedPipelineState::Ok(_)))
+                .filter_map(|pipeline| match &pipeline.descriptor {
+                    PipelineDescriptor::RenderPipelineDescriptor(descriptor) => {
+                        descriptor.fragment.as_ref()
+                    }
+                    _ => None,
+                })
+                .filter(|fragment| {
+                    fragment.shader.id() == shader
+                        && has(&fragment.shader_defs, "TOON_LIGHT_UNIT_LUX")
+                })
+                .map(|fragment| {
+                    (
+                        has(&fragment.shader_defs, "ENVIRONMENT_MAP"),
+                        has(&fragment.shader_defs, "DEPTH_PREPASS"),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for present in [true, false] {
+                assert!(
+                    toon_variants.iter().any(|variant| variant.0 == present),
+                    "no {name} toon main pass with the environment map {present}, of \
+                     (environment map, depth prepass): {toon_variants:?}"
+                );
+                assert!(
+                    toon_variants.iter().any(|variant| variant.1 == present),
+                    "no {name} toon main pass with the depth prepass {present}, of \
+                     (environment map, depth prepass): {toon_variants:?}"
+                );
+            }
+        }
     }
 }

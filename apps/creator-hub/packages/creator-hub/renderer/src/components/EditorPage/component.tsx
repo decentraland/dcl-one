@@ -1,0 +1,1145 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  ArrowBackIosIcon,
+  PlayCircleIcon,
+  CodeIcon,
+  SpeedOutlinedIcon,
+  PublicIcon,
+  RefreshIcon,
+} from '@ui/atoms/icons-material';
+import IconButton from '@ui/atoms/IconButton';
+import Spinner from '@ui/atoms/Spinner';
+import Tooltip from '@ui/atoms/Tooltip';
+
+import { isClientNotInstalledError } from '/shared/types/client';
+import { isProjectError } from '/shared/types/projects';
+import { RENDERER } from '/shared/types/settings';
+import { isWorkspaceError } from '/shared/types/workspace';
+
+import { t } from '/@/modules/store/translation/utils';
+import { captureViewportFallback, initRpc } from '/@/modules/rpc';
+import { resizeImage } from '/@/modules/image';
+import { actions as aiActions } from '/@/modules/store/ai';
+import { config } from '/@/config';
+import { useEditor } from '/@/hooks/useEditor';
+import { useSettings } from '/@/hooks/useSettings';
+import { IS_NON_PRODUCTION_BUILD } from '/@/modules/buildMode';
+import { useWorkspace } from '/@/hooks/useWorkspace';
+import { useSceneCustomCode } from '/@/hooks/useSceneCustomCode';
+import { useDeploy } from '/@/hooks/useDeploy';
+import { useConnectionStatus } from '/@/hooks/useConnectionStatus';
+import { useBevyBuildForwarding } from '/@/hooks/useBevyBuildForwarding';
+import { useBevyRealmRestart } from '/@/hooks/useBevyRealmRestart';
+import { useProjectAssetWatch } from '/@/hooks/useProjectAssetWatch';
+import { useSceneMcpDiscovery } from '/@/hooks/useSceneMcpDiscovery';
+import { useSceneOpBridge } from '/@/hooks/useSceneOpBridge';
+import { useDebugLogForwarding } from '/@/hooks/useDebugLogForwarding';
+import { useConsoleSession } from '/@/hooks/useConsoleSession';
+import { useMobileDebugForwarding } from '/@/hooks/useMobileDebugForwarding';
+import { usePreviewCleanup } from '/@/hooks/usePreviewCleanup';
+import { ConnectionStatus } from '/@/lib/connection';
+import { getProjectWorldName } from '/@/lib/project-world';
+
+import EditorPng from '/assets/images/editor.png';
+
+import { ai, analytics, editor as editorApi } from '#preload';
+import { useDispatch, useSelector } from '#store';
+import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
+import { useAiSession } from '/@/hooks/useAiSession';
+import { useSessionRecorder } from '/@/hooks/useSessionRecorder';
+import { actions as snackbarActions } from '/@/modules/store/snackbar';
+import { actions as optimizerActions } from '/@/modules/store/optimizer';
+import {
+  createCustomNotification,
+  createGenericNotification,
+} from '/@/modules/store/snackbar/utils';
+import Button from '@ui/atoms/Button';
+import { Header } from '../Header';
+import { Row } from '../Row';
+import { SplitButton } from '../SplitButton';
+import { ConnectionStatusIndicator } from '../ConnectionStatusIndicator';
+import { MobileQRCode } from '../Modals/MobileQRCode';
+import { AssistantIcon } from '../Icons';
+import { AiChatPanel } from '../AiChatPanel';
+import { RecordButton, RecordingConsentModal } from '../SessionRecorder';
+import { DetachedPlaceholder } from '../AiChatPanel/DetachedPlaceholder';
+import { OptimizeModal } from '../OptimizeModal';
+import type { SplitButtonHandle } from '../SplitButton';
+import { DeployModal } from './DeployModal';
+import { PreviewOptions, PublishOptions } from './MenuOptions';
+import { getPublishButtonText, getPublishOptions } from './utils';
+import { buildInspectorUrl } from './inspectorUrl';
+
+import type { ModalType, ModalState } from './DeployModal';
+import type { PreviewOptionsProps } from './MenuOptions';
+
+import './styles.css';
+
+function Loader({ size = 40, color = 'primary' }: { size?: number; color?: string }) {
+  return (
+    <Spinner
+      ring="wide"
+      role="progressbar"
+      size={size}
+      color={color}
+    />
+  );
+}
+
+// The AI panel is drag-resizable like the inspector's own panels; its width persists
+// across sessions (global, not per-scene). Bounds keep both the panel and the iframe usable.
+const AI_PANEL_WIDTH_KEY = 'creator-hub:ai-panel-width';
+const AI_PANEL_MIN = 320;
+const AI_PANEL_DEFAULT = 360;
+const AI_PANEL_IFRAME_MIN = 360; // never squeeze the editor below this
+
+function clampAiPanelWidth(px: number): number {
+  const max = Math.max(AI_PANEL_MIN, window.innerWidth - AI_PANEL_IFRAME_MIN);
+  return Math.min(Math.max(px, AI_PANEL_MIN), max);
+}
+function readAiPanelWidth(): number {
+  try {
+    const raw = localStorage.getItem(AI_PANEL_WIDTH_KEY);
+    const n = raw === null ? NaN : Number(raw);
+    return Number.isFinite(n) ? clampAiPanelWidth(n) : AI_PANEL_DEFAULT;
+  } catch {
+    return AI_PANEL_DEFAULT;
+  }
+}
+
+// One per scene: a second stop replaces the snackbar, and the editor can close it.
+function realmServerStoppedId(path: string): string {
+  return `realm-server-stopped:${path}`;
+}
+
+// One per scene for each step of an automatic restart (stopped, restarting, a failed
+// attempt): each replaces the last instead of stacking.
+function realmRestartId(path: string): string {
+  return `realm-restart:${path}`;
+}
+
+// The Bevy realm launches `sdk-commands start --no-client --data-layer`; an old
+// scene's local `@dcl/sdk-commands` predates those flags and fails with a raw CLI
+// usage dump (e.g. "unknown or unexpected option: --no-client"). Detect that so we
+// can show a clear "update dependencies" message instead of the dump (#1457).
+// Require BOTH the option-rejection phrasing AND one of our flags — matching a bare
+// "--data-layer"/"--no-client" mention would misfire on an unrelated build error that
+// merely prints the flag as text.
+function isOutdatedDepsError(message: string): boolean {
+  const rejectsOption = /(?:unknown|unexpected|unrecognized|invalid)[^\n]{0,40}option/i.test(
+    message,
+  );
+  const namesBevyFlag = /--(?:no-client|data-layer)/i.test(message);
+  return rejectsOption && namesBevyFlag;
+}
+
+export function EditorPage() {
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const {
+    error,
+    project,
+    refreshProject,
+    saveAndGetThumbnail,
+    inspectorPort,
+    openPreview,
+    openCode,
+    updateScene,
+    loadingPreview,
+    loadingPublish,
+    isInstallingProject,
+    killPreview,
+    leaveProject,
+    publishScene,
+    getMobileQR,
+    supportsMultiInstance,
+    supportsMcp,
+    supportsUiDesigner,
+    isPreviewRunning,
+    startBevyRealm,
+    killBevyRealm,
+  } = useEditor();
+  const { settings, updateAppSettings } = useSettings();
+  const { updatePackages } = useWorkspace();
+  const { flags: featureFlags } = useFeatureFlags();
+  const aiChatEnabled = settings.aiAssistant;
+  const { executeDeployment, getDeployment } = useDeploy();
+  const deployment = project ? getDeployment(project.path) : undefined;
+
+  const isDeploying = loadingPublish || deployment?.status === 'pending';
+
+  const publishButtonText = useMemo(
+    () => getPublishButtonText({ loadingPublish, deployment }),
+    [loadingPublish, deployment],
+  );
+
+  const userId = useSelector(state => state.analytics.userId);
+  const { detectCustomCode, isLoading: isDetectingCustomCode } = useSceneCustomCode(project);
+  const { status } = useConnectionStatus();
+  const iframeRef = useRef<ReturnType<typeof initRpc>>();
+  // Clear the AI selection chips: deselect everything in the inspector (only the renderer
+  // holds the iframe RPC). Optimistically empty the store so the chips vanish immediately;
+  // the next selection poll confirms. No-op under Bevy (no selection RPC).
+  const handleClearAiSelection = useCallback(() => {
+    void iframeRef.current?.scene.clearSelection().catch(() => undefined);
+    dispatch(aiActions.setSelection([]));
+  }, [dispatch]);
+  // The AI session engine + detached-window bridge (#1504). Runs whenever the assistant is
+  // on, independent of whether the chat is shown inline or popped out. It also relays the
+  // detached window's "clear selection" back to the inspector here.
+  const [aiOpen, setAiOpen] = useState(false);
+  const [inspectorReadyNonce, setInspectorReadyNonce] = useState(0);
+  const recorder = useSessionRecorder({
+    enabled: aiChatEnabled,
+    project,
+    rpcRef: iframeRef,
+    inspectorReadyNonce,
+    onFinished: () => setAiOpen(true),
+  });
+  const {
+    detachedOpen: aiDetached,
+    openDetached: openAiWindow,
+    closeDetached: closeAiWindow,
+  } = useAiSession(aiChatEnabled, project?.path, {
+    onClearSelection: handleClearAiSelection,
+    onCloseAssistant: () => setAiOpen(false),
+    onToggleRecording: recorder.press,
+    onCancelRecording: recorder.cancel,
+    onSendRecording: recorder.send,
+  });
+  // A prompt seeded from the inspector (Trigger Area "describe a reaction"). Open the inline
+  // panel on it; ChatView copies the text into the composer and clears the draft.
+  const aiDraftPrompt = useSelector(state => state.ai.draftPrompt);
+  const [modalState, setModalState] = useState<ModalState>({ type: undefined });
+  // Draggable width of the AI panel (like the inspector's own panels). Persisted globally.
+  const [aiPanelWidth, setAiPanelWidth] = useState(readAiPanelWidth);
+  const [aiResizing, setAiResizing] = useState(false);
+  const [mobileQRData, setMobileQRData] = useState<{ url: string; qr: string } | null>(null);
+  // Lets handleShowMobileQR dismiss the Preview options menu itself: a click in the popover is
+  // inside it, so without this it stays open behind the QR modal and reappears once the modal
+  // closes.
+  const previewSplitButtonRef = useRef<SplitButtonHandle>(null);
+  // When the Bevy renderer is selected the engine loads from a headless
+  // sdk-commands realm, and the inspector shares its data-layer WS. We start it
+  // for the project and hold the URLs to thread into the iframe config below.
+  const useBevy = settings.renderer === RENDERER.BEVY;
+  const [bevyRealm, setBevyRealm] = useState<{ url: string; wsUrl: string } | null>(null);
+  // Main stopped restarting the realm after it kept crashing; the error screen offers Retry.
+  const [realmGaveUp, setRealmGaveUp] = useState(false);
+  // A broken scene (e.g. a TS error) makes the Bevy realm's `sdk-commands start`
+  // fail, or the scene never finishes loading — leaving the editor stuck on the
+  // loader with no way out. Capture the failure (or a load timeout) so the loading
+  // screen can offer Back + Open code + the error message (#1380).
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  // A "Reload scene from disk" or a renderer switch reloads the inspector iframe in place.
+  // The iframe paints black until its content boots (a long wait under Bevy, #1652), so we
+  // cover it with the loader until the inspector reports its scene RPC server ready again.
+  const [isReloadingInspector, setIsReloadingInspector] = useState(false);
+  // A reload that never reports ready (e.g. a scene that only loads under one renderer, #1652)
+  // would otherwise spin forever — isReady stays true so the initial-load timeout never fires.
+  // Back this path with its own timeout that offers Retry + Back instead of an endless cover.
+  const [reloadTimedOut, setReloadTimedOut] = useState(false);
+  // Bumped to force-remount the iframe when retrying a stuck reload — the reload may have left
+  // no RPC handle to reload in place, so we recreate the element from scratch.
+  const [iframeReloadKey, setIframeReloadKey] = useState(0);
+
+  const isOffline = status === ConnectionStatus.OFFLINE;
+  const showDebugPanel = settings.previewOptions.debugger;
+
+  // The console can be popped out into its own window (#1272); while it is, the inspector's
+  // inline console tab shows a placeholder instead of the logs.
+  const { detachedOpen: consoleDetached } = useConsoleSession(showDebugPanel, isPreviewRunning);
+  useDebugLogForwarding(
+    iframeRef,
+    isPreviewRunning,
+    showDebugPanel,
+    project?.path,
+    consoleDetached,
+    inspectorReadyNonce,
+  );
+  useMobileDebugForwarding(iframeRef, isPreviewRunning, project?.path, inspectorReadyNonce);
+  useBevyBuildForwarding(iframeRef, useBevy ? project?.path : undefined);
+  // Main restarts the realm after an unexpected stop (bevy-realm.ts); the editor reloads the
+  // inspector on the new realm. A realm that stopped takes the editor with it, so it shows the
+  // loader until the restart. One that only lost its Multiplayer Server keeps serving the
+  // editor until it is replaced.
+  const realmPath = useBevy ? project?.path : undefined;
+  // The server is being replaced, or the editor of the scene closed: Retry has nothing to do.
+  const closeRealmServerStopped = useCallback(() => {
+    if (realmPath) dispatch(snackbarActions.removeSnackbar(realmServerStoppedId(realmPath)));
+  }, [realmPath, dispatch]);
+  useEffect(() => closeRealmServerStopped, [closeRealmServerStopped]);
+  useBevyRealmRestart(realmPath, {
+    onStopped: ({ path, cause, restartInMs, unavailable }) => {
+      if (unavailable) {
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createGenericNotification('warning', t('editor.realm_server_unavailable'), {
+              requestId: `realm-server-unavailable:${path}`,
+            }),
+          ),
+        );
+      } else if (restartInMs !== null) {
+        const message =
+          cause === 'server'
+            ? t('editor.realm_server_restarting')
+            : cause === 'restart'
+              ? t('editor.realm_restart_failed')
+              : t('editor.realm_restarted');
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createGenericNotification('warning', message, { requestId: realmRestartId(path) }),
+          ),
+        );
+        if (cause !== 'server') setBevyRealm(null);
+      } else if (cause === 'server') {
+        dispatch(snackbarActions.removeSnackbar(realmRestartId(path)));
+        dispatch(
+          snackbarActions.pushSnackbar(
+            createCustomNotification(
+              { type: 'realm-server-stopped', path },
+              { duration: 0, requestId: realmServerStoppedId(path) },
+            ),
+          ),
+        );
+      } else {
+        dispatch(snackbarActions.removeSnackbar(realmRestartId(path)));
+        setBevyRealm(null);
+        setRealmGaveUp(true);
+        setLoadError(t('editor.loading.failed.data_layer_crashed'));
+      }
+    },
+    onRestarting: () => {
+      closeRealmServerStopped();
+      setBevyRealm(null);
+    },
+    onRestarted: realm => {
+      closeRealmServerStopped();
+      setRealmGaveUp(false);
+      setLoadError(null);
+      setBevyRealm(realm);
+    },
+  });
+  useProjectAssetWatch(iframeRef, project?.path);
+  useSceneMcpDiscovery(project?.path);
+
+  const handleIframeRef = useCallback(
+    (e: React.SyntheticEvent<HTMLIFrameElement, Event>) => {
+      const iframe = e.currentTarget;
+      if (project) {
+        if (iframeRef.current) {
+          iframeRef.current.dispose();
+          iframeRef.current = undefined;
+        }
+        const rpc = initRpc(iframe, project, {
+          writeFile: updateScene,
+          onReady: ({ scene }) => {
+            void scene.setFeatureFlags(featureFlags).catch(console.error);
+            setInspectorReadyNonce(nonce => nonce + 1);
+          },
+        });
+        iframeRef.current = rpc;
+      }
+    },
+    [project, updateScene, featureFlags],
+  );
+
+  const handleRefresh = useCallback(async () => {
+    const rpc = iframeRef.current;
+    if (!rpc) return;
+    const { iframe } = rpc;
+    const { src } = iframe;
+    setIsReloadingInspector(true);
+    setReloadTimedOut(false);
+    rpc.dispose();
+    iframeRef.current = undefined;
+    // Under Bevy the reload also brings back a realm that stopped or lost its Multiplayer
+    // Server. A replaced realm reaches the editor through the restart events, which remount
+    // the iframe on its URLs; a healthy one is reloaded in place.
+    const path = project?.path;
+    if (useBevy && path) {
+      const realm = await editorApi.ensureBevyRealm(path).catch(() => null);
+      if (!realm || realm.url !== bevyRealm?.url) return;
+    }
+    iframe.src = src;
+  }, [useBevy, project?.path, bevyRealm?.url]);
+
+  const handleRetryRealm = useCallback(() => {
+    const path = project?.path;
+    if (!path) return;
+    setRealmGaveUp(false);
+    setLoadError(null);
+    // A failure comes back as a stopped-realm event, which shows the error again.
+    editorApi.ensureBevyRealm(path).catch(() => {});
+  }, [project?.path]);
+
+  // Retry a stuck reload. The prior attempt may have left no RPC handle (the iframe never
+  // reached onLoad), so recreate the element via its key rather than reloading in place.
+  const handleRetryReload = useCallback(() => {
+    setReloadTimedOut(false);
+    setIsReloadingInspector(true);
+    const rpc = iframeRef.current;
+    if (rpc) {
+      rpc.dispose();
+      iframeRef.current = undefined;
+    }
+    setIframeReloadKey(key => key + 1);
+  }, []);
+
+  // Switching the renderer setting rebuilds the iframe URL, reloading it in place — cover the
+  // black frame with the loader the same way a manual reload does (Bevy→desktop, #1652).
+  const prevRendererRef = useRef(settings.renderer);
+  useEffect(() => {
+    if (prevRendererRef.current === settings.renderer) return;
+    prevRendererRef.current = settings.renderer;
+    setIsReloadingInspector(true);
+    setReloadTimedOut(false);
+  }, [settings.renderer]);
+
+  // Clear the reload cover once the (re)loaded inspector reports its scene RPC ready. The
+  // nonce starts at 0 and first bumps to 1 on the initial load, which the guard ignores.
+  useEffect(() => {
+    if (inspectorReadyNonce > 0) setIsReloadingInspector(false);
+  }, [inspectorReadyNonce]);
+
+  // A reload that never becomes ready would cover the editor forever; surface Retry + Back
+  // after a grace period instead. Resets whenever the cover comes down (ready, or navigated).
+  useEffect(() => {
+    if (!isReloadingInspector) {
+      setReloadTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setReloadTimedOut(true), 45_000);
+    return () => clearTimeout(timer);
+  }, [isReloadingInspector]);
+
+  useEffect(() => {
+    const rpc = iframeRef.current;
+    if (rpc) {
+      void rpc.scene.setFeatureFlags(featureFlags).catch(console.error);
+    }
+  }, [featureFlags]);
+
+  // Answer the `editor_screenshot` tool (in-app assistant or an outside agent): main asks the renderer to capture
+  // the viewport (only the renderer can reach the inspector iframe). Babylon renders its own
+  // canvas via the scene RPC. That path returns null under Bevy (its wgpu canvas can't be
+  // read via toDataURL, and the engine's /screenshot command may be unavailable), so fall
+  // back to a compositor capture of just the viewport region: ask the inspector where the
+  // viewport is inside its (cross-origin) iframe, offset by the iframe's position in this
+  // window, and capturePage that rect in main — then downscale to the requested size (#1526).
+  useEffect(() => {
+    const { cleanup } = ai.onScreenshotRequest(async req => {
+      const rpc = iframeRef.current;
+      let dataUrl: string | null = null;
+      try {
+        if (rpc) dataUrl = await rpc.scene.takeScreenshot(req.width, req.height);
+      } catch {
+        dataUrl = null;
+      }
+      if (dataUrl === null && rpc) {
+        const raw = await captureViewportFallback(rpc.iframe, rpc.scene);
+        dataUrl = raw !== null ? await resizeImage(raw, req.width, req.height) : null;
+      }
+      ai.screenshotResult(req.id, dataUrl);
+    });
+    return cleanup;
+  }, []);
+
+  useSceneOpBridge(iframeRef);
+
+  // While the AI panel is open, keep the assistant aware of the editor selection: poll the
+  // inspector for the selected entities and mirror them into the ai store (shown as a composer
+  // chip, attached as context on send). Cheap read; only runs while the panel is visible.
+  // Rejects harmlessly under the Bevy renderer (no selection RPC) — selection just stays empty.
+  useEffect(() => {
+    dispatch(aiActions.setChatVisible(aiOpen || aiDetached));
+  }, [aiOpen, aiDetached, dispatch]);
+
+  useEffect(() => {
+    // Poll while the chat is visible anywhere — inline or in the detached window (#1504).
+    if (!aiOpen && !aiDetached) {
+      dispatch(aiActions.setSelection([]));
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      const rpc = iframeRef.current;
+      if (!rpc) return;
+      try {
+        const { selected } = await rpc.scene.getSelection();
+        if (!cancelled) dispatch(aiActions.setSelection(selected));
+      } catch {
+        /* Bevy renderer, or a transient miss — leave the last known selection */
+      }
+    };
+    void poll();
+    const timer = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [aiOpen, aiDetached, dispatch]);
+
+  useEffect(() => {
+    if (isWorkspaceError(error, 'PROJECT_NOT_FOUND') || isProjectError(error)) {
+      navigate('/scenes');
+    }
+
+    return () => {
+      const rpc = iframeRef.current;
+      if (rpc) {
+        rpc.dispose();
+        iframeRef.current = undefined;
+      }
+    };
+  }, [error]);
+
+  // Start (or tear down) the Bevy realm as the renderer setting / project changes.
+  // The iframe render is gated on the realm being ready when Bevy is selected, so
+  // the inspector boots already pointed at the right data-layer + realm.
+  const projectPath = project?.path;
+  usePreviewCleanup(projectPath);
+
+  // Usage analytics: fire once each time the inline AI chat panel is opened. Anonymous project
+  // id, matching the id space of the AI Turn events so "opened" and "used" correlate. Fires on
+  // the false→true transition only (aiOpen starts false).
+  useEffect(() => {
+    if (!aiOpen || projectPath === undefined) return;
+    void analytics
+      .getProjectId(projectPath)
+      .then(project_id => analytics.track('AI Chat Opened', { project_id }));
+  }, [aiOpen, projectPath]);
+
+  // Open the panel when the inspector seeds a prompt. The host RPC only sets a draft when the
+  // assistant is enabled, so no extra gate is needed here.
+  useEffect(() => {
+    if (aiDraftPrompt !== null && aiChatEnabled) setAiOpen(true);
+  }, [aiDraftPrompt?.nonce, aiChatEnabled]);
+
+  useEffect(() => {
+    setRealmGaveUp(false);
+    if (!projectPath || !useBevy) {
+      setBevyRealm(null);
+      return;
+    }
+    // Wait for dependency install to finish before starting the realm. On a
+    // freshly created scene CH installs deps, then this effect fires — starting
+    // `sdk-commands start` while node_modules is still being written fails with
+    // "Could not find package.json for module @dcl/sdk-commands". Gating on
+    // isInstallingProject (in the deps below) re-runs this once install completes,
+    // and keeps the loader spinning (not the error screen) meanwhile.
+    if (isInstallingProject) {
+      setBevyRealm(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadError(null);
+    setLoadTimedOut(false);
+    void startBevyRealm(projectPath)
+      .then(realm => {
+        if (!cancelled) setBevyRealm(realm ?? null);
+      })
+      .catch(error => {
+        console.error('[Bevy] Failed to start realm:', error);
+        if (!cancelled) {
+          setBevyRealm(null);
+          // Surface the failure so the loader shows Back + the error instead of
+          // spinning forever. `sdk-commands start` rejects with the build error
+          // line (see bevy-realm.ts waitFor) — show it.
+          setLoadError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+      void killBevyRealm(projectPath);
+    };
+  }, [projectPath, useBevy, isInstallingProject, startBevyRealm, killBevyRealm]);
+
+  useEffect(() => {
+    if (!projectPath || !useBevy) return;
+    return () => {
+      void killBevyRealm(projectPath);
+    };
+  }, [projectPath, useBevy, killBevyRealm]);
+
+  const isReady = !!project && inspectorPort > 0 && (!useBevy || bevyRealm !== null);
+
+  // A load timeout backstop: even if the realm "starts", a broken scene can leave
+  // the editor never becoming ready. After a grace period on the loader, offer the
+  // same escape hatch (Back + Open code) rather than an infinite spinner. Don't run
+  // the timer while deps are still installing — a fresh scene's npm install can
+  // exceed the grace period and isn't a load failure.
+  useEffect(() => {
+    if (isReady || loadError || isInstallingProject) {
+      setLoadTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setLoadTimedOut(true), 45_000);
+    return () => clearTimeout(timer);
+  }, [isReady, loadError, isInstallingProject, projectPath, useBevy]);
+
+  const openModal = useCallback((type: ModalType, initialStep?: ModalState['initialStep']) => {
+    setModalState({ type, initialStep });
+  }, []);
+
+  const handleOpenPreviewWithErrorHandling = useCallback(async () => {
+    try {
+      await openPreview(settings.previewOptions);
+    } catch (error: any) {
+      if (isClientNotInstalledError(error)) {
+        setModalState({ type: 'install-client' });
+      }
+    }
+  }, [openPreview, settings.previewOptions]);
+
+  // The "code elements may only become visible once running" warning describes a
+  // Babylon limitation: it renders only the composite, so code-created entities are
+  // invisible until the scene runs. The Bevy editor runs the scene while editing and
+  // already shows them, so the warning would be false there.
+  const handleActionWithWarningCheck = useCallback(
+    async (action: () => void | Promise<void>) => {
+      if (!settings.previewOptions.showWarnings || useBevy) {
+        await action();
+        return;
+      }
+
+      const hasCustomCode = await detectCustomCode();
+
+      if (hasCustomCode) {
+        setModalState({
+          type: 'warning',
+          onContinue: action,
+        });
+        return;
+      }
+
+      await action();
+    },
+    [settings.previewOptions.showWarnings, useBevy, detectCustomCode],
+  );
+
+  const handleBack = useCallback(async () => {
+    const rpc = iframeRef.current;
+    // Refresh the project (saves + regenerates the thumbnail) on the way out, but
+    // never let it block navigation. The thumbnail is a screenshot over the scene
+    // RPC — Babylon captures its canvas, Bevy captures via its engine's
+    // `/screenshot` command; both are timeout-bounded and non-fatal, so a throw
+    // or stall can't wedge Back.
+    if (rpc) {
+      try {
+        await refreshProject(rpc);
+      } catch (error) {
+        console.error('[Editor] refreshProject on back failed:', error);
+      }
+    }
+    killPreview();
+    leaveProject();
+    navigate('/scenes');
+  }, [navigate, refreshProject, killPreview, leaveProject]);
+
+  // Recover from the outdated-deps load error (#1457): update the scene's packages.
+  // installProject toggles isInstallingProject, which re-runs the realm-start effect
+  // once the install finishes — so the editor retries automatically with fresh deps.
+  // Clear the error now so the loader shows the spinner instead of the error screen.
+  const handleUpdateDependencies = useCallback(() => {
+    if (!project) return;
+    setLoadError(null);
+    updatePackages(project);
+  }, [project, updatePackages]);
+
+  const handleOpenPublishModal = useCallback(async () => {
+    await handleActionWithWarningCheck(() => openModal('publish'));
+  }, [handleActionWithWarningCheck, openModal]);
+
+  const handleCloseModal = useCallback(
+    async (continued: boolean = false) => {
+      setModalState({ type: undefined });
+      if (continued && modalState.onContinue) {
+        await modalState.onContinue();
+      }
+    },
+    [modalState],
+  );
+
+  const handleChangePreviewOptions = useCallback(
+    (options: PreviewOptionsProps['options']) => {
+      updateAppSettings({ ...settings, previewOptions: options });
+    },
+    [settings, updateAppSettings],
+  );
+
+  const handleShowMobileQR = useCallback(async () => {
+    if (!project) return;
+
+    previewSplitButtonRef.current?.close();
+
+    try {
+      const data = await getMobileQR(settings.previewOptions);
+      if (data) {
+        setMobileQRData(data);
+      }
+    } catch (error: unknown) {
+      dispatch(
+        snackbarActions.pushSnackbar(
+          createGenericNotification('error', t('snackbar.generic.mobile_qr_failed')),
+        ),
+      );
+    }
+  }, [project, getMobileQR, settings.previewOptions, dispatch]);
+
+  const handleCloseMobileQR = useCallback(() => {
+    setMobileQRData(null);
+  }, []);
+
+  const handleOpenPreview = useCallback(async () => {
+    await handleActionWithWarningCheck(handleOpenPreviewWithErrorHandling);
+  }, [handleActionWithWarningCheck, handleOpenPreviewWithErrorHandling]);
+
+  // The thumbnail comes from a screenshot over the scene RPC — Babylon captures
+  // its canvas, Bevy captures via its engine's `/screenshot` command. Both are
+  // timeout-guarded and non-fatal, so this can never hang or wedge the flow.
+  const saveThumbnailIfSupported = useCallback(() => {
+    const rpc = iframeRef.current;
+    if (rpc) saveAndGetThumbnail(rpc);
+  }, [saveAndGetThumbnail]);
+
+  const handlePublishScene = useCallback(async () => {
+    saveThumbnailIfSupported();
+    await handleOpenPublishModal();
+  }, [saveThumbnailIfSupported, handleOpenPublishModal]);
+
+  const handleDeployWorld = useCallback(async () => {
+    if (!project) return;
+    saveThumbnailIfSupported();
+    try {
+      const worldName = getProjectWorldName(project);
+      await publishScene({
+        targetContent: config.get('WORLDS_CONTENT_SERVER_URL'),
+        // scene.json may have lost the world (see getProjectWorldName): deploy to it anyway.
+        ...(worldName && {
+          sceneUpdates: { worldConfiguration: { ...project.worldConfiguration, name: worldName } },
+        }),
+      });
+      executeDeployment(project.path);
+    } catch {
+      openModal('publish', 'deploy');
+    }
+  }, [project, saveThumbnailIfSupported, publishScene, executeDeployment, openModal]);
+
+  const handleDeployLand = useCallback(async () => {
+    if (!project) return;
+    saveThumbnailIfSupported();
+    try {
+      await publishScene({ target: config.get('PEER_URL') });
+      executeDeployment(project.path);
+    } catch {
+      openModal('publish', 'deploy');
+    }
+  }, [project, saveThumbnailIfSupported, publishScene, executeDeployment, openModal]);
+
+  const publishOptions = useMemo(
+    () =>
+      getPublishOptions({
+        project,
+        isDeploying,
+        actions: {
+          onPublishScene: handlePublishScene,
+          onDeployWorld: handleDeployWorld,
+          onDeployLand: handleDeployLand,
+        },
+      }),
+    [project, isDeploying, handlePublishScene, handleDeployWorld, handleDeployLand],
+  );
+
+  const iframeUrl = buildInspectorUrl({
+    inspectorPort,
+    useBevy,
+    supportsUiDesigner,
+    bevyRealm,
+    project,
+    userId,
+    // Dev/QA only: never honor the dev-CDN toggle in a production release.
+    useDevAssetCatalog: IS_NON_PRODUCTION_BUILD && !!settings.useDevAssetCatalog,
+  });
+
+  // Drag the divider on the AI panel's left edge to resize it. A transparent overlay covers
+  // the iframe while dragging so it doesn't swallow the mouse-move events.
+  const startAiResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setAiResizing(true);
+    const onMove = (ev: MouseEvent) =>
+      setAiPanelWidth(clampAiPanelWidth(window.innerWidth - ev.clientX));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      setAiResizing(false);
+      setAiPanelWidth(w => {
+        try {
+          localStorage.setItem(AI_PANEL_WIDTH_KEY, String(w));
+        } catch {
+          /* storage unavailable — non-fatal */
+        }
+        return w;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
+
+  const renderLoading = () => {
+    // Recoverable stuck-load state (#1380): the realm failed to start (broken code)
+    // or the scene never finished loading. Offer Back + Open code + the error,
+    // instead of an infinite spinner with no way out.
+    const stuck = loadError !== null || loadTimedOut;
+    if (stuck) {
+      // An outdated-deps failure has a clear fix (Update dependencies), so show a
+      // friendly message + an update action instead of the raw CLI dump (#1457).
+      const outdatedDeps = loadError !== null && isOutdatedDepsError(loadError);
+      return (
+        <div className="loading loading-error">
+          <img src={EditorPng} />
+          <div className="loading-error-title">{t('editor.loading.failed.title')}</div>
+          <div className="loading-error-message">
+            {outdatedDeps
+              ? t('editor.loading.failed.outdated_deps')
+              : (loadError ?? t('editor.loading.failed.timeout'))}
+          </div>
+          <Row>
+            <Button
+              variant="text"
+              className="hub-button hub-button--secondary"
+              startIcon={<ArrowBackIosIcon />}
+              onClick={handleBack}
+            >
+              {t('editor.loading.failed.back')}
+            </Button>
+            {realmGaveUp && (
+              <Button
+                variant="text"
+                className="hub-button hub-button--primary"
+                startIcon={<RefreshIcon />}
+                onClick={handleRetryRealm}
+              >
+                {t('editor.loading.failed.retry')}
+              </Button>
+            )}
+            {outdatedDeps ? (
+              <Button
+                variant="text"
+                className="hub-button hub-button--primary"
+                startIcon={<RefreshIcon />}
+                onClick={handleUpdateDependencies}
+              >
+                {t('editor.loading.failed.update_deps')}
+              </Button>
+            ) : (
+              <Button
+                variant="text"
+                className="hub-button hub-button--secondary"
+                startIcon={<CodeIcon />}
+                onClick={openCode}
+              >
+                {t('editor.header.actions.code')}
+              </Button>
+            )}
+          </Row>
+        </div>
+      );
+    }
+    return (
+      <div className="loading">
+        <img src={EditorPng} />
+        <Row>
+          <Loader />
+          {/* Tell the user WHY the load is taking longer when we're installing a
+              scene's dependencies (e.g. opening a scene whose node_modules was
+              deleted, #1425) — otherwise a long npm install looks like a hang. */}
+          {isInstallingProject ? t('editor.loading.installing') : t('editor.loading.title')}
+        </Row>
+      </div>
+    );
+  };
+
+  const previewIcon = loadingPreview ? (
+    <Loader
+      size={20}
+      color="inherit"
+    />
+  ) : (
+    <PlayCircleIcon />
+  );
+
+  return (
+    <main
+      className="Editor"
+      data-testid="editor-page"
+    >
+      {!isReady ? (
+        renderLoading()
+      ) : (
+        <>
+          <Header hideUserMenu>
+            <>
+              <div
+                className="back"
+                data-testid="editor-page-back-button"
+                onClick={handleBack}
+              >
+                <ArrowBackIosIcon />
+              </div>
+              <div className="title">{project.title}</div>
+              <Tooltip
+                label={t('editor.header.actions.refresh')}
+                side="bottom"
+                portal
+                className="refresh-tip"
+              >
+                <div
+                  className="refresh"
+                  onClick={handleRefresh}
+                  aria-label="refresh-inspector"
+                >
+                  <RefreshIcon />
+                </div>
+              </Tooltip>
+            </>
+            <div className="actions">
+              {/* The Record button lives in the assistant panel. With the panel closed, a
+                  running recording keeps a visible control up here. */}
+              {aiChatEnabled && !aiOpen && recorder.status !== 'idle' && (
+                <RecordButton
+                  status={recorder.status}
+                  startedAt={recorder.startedAt}
+                  micLabel={recorder.micLabel}
+                  tools={recorder.tools}
+                  onClick={recorder.press}
+                />
+              )}
+              {aiChatEnabled && (
+                <Tooltip
+                  label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
+                  side="bottom"
+                  portal
+                >
+                  <IconButton
+                    className={`ai-toggle${aiOpen ? ' active' : ''}`}
+                    aria-label={aiOpen ? t('editor.ai.close') : t('editor.ai.open')}
+                    onClick={() => setAiOpen(open => !open)}
+                  >
+                    <AssistantIcon gradient={!aiOpen} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              <Tooltip
+                label={t('editor.header.actions.optimize')}
+                side="bottom"
+                portal
+              >
+                <Button
+                  variant="text"
+                  className="hub-button hub-button--secondary icon-only"
+                  aria-label={t('editor.header.actions.optimize')}
+                  onClick={() => dispatch(optimizerActions.open())}
+                >
+                  <SpeedOutlinedIcon />
+                </Button>
+              </Tooltip>
+              <Tooltip
+                label={t('editor.header.actions.code')}
+                side="bottom"
+                portal
+              >
+                <Button
+                  variant="text"
+                  className="hub-button hub-button--secondary icon-only"
+                  aria-label={t('editor.header.actions.code')}
+                  onClick={openCode}
+                >
+                  <CodeIcon />
+                </Button>
+              </Tooltip>
+              <div className="preview-control">
+                <SplitButton
+                  ref={previewSplitButtonRef}
+                  look="secondary"
+                  extraTooltip={t('editor.header.actions.preview_options.title')}
+                  popoverOffset={10}
+                  disabled={
+                    loadingPreview || isInstallingProject || isDetectingCustomCode || isOffline
+                  }
+                  onClick={handleOpenPreview}
+                  startIcon={previewIcon}
+                  extra={
+                    <PreviewOptions
+                      options={settings.previewOptions}
+                      onChange={handleChangePreviewOptions}
+                      onShowMobileQR={handleShowMobileQR}
+                      supportsMultiInstance={supportsMultiInstance}
+                      supportsMcp={supportsMcp}
+                      projectPath={project.path}
+                    />
+                  }
+                >
+                  {t('editor.header.actions.play')}
+                </SplitButton>
+              </div>
+              {publishOptions.length > 0 ? (
+                <SplitButton
+                  extraTooltip={t('editor.header.actions.publish_options.title')}
+                  disabled={
+                    loadingPublish || isInstallingProject || isDetectingCustomCode || isOffline
+                  }
+                  data-testid="editor-page-publish-button"
+                  onClick={() => {
+                    if (deployment?.status === 'pending') {
+                      openModal('publish', 'deploy');
+                    } else {
+                      handlePublishScene();
+                    }
+                  }}
+                  startIcon={
+                    isDeploying ? (
+                      <Loader
+                        size={20}
+                        color="inherit"
+                      />
+                    ) : (
+                      <PublicIcon />
+                    )
+                  }
+                  extra={<PublishOptions options={publishOptions} />}
+                >
+                  {publishButtonText}
+                </SplitButton>
+              ) : (
+                <Button
+                  variant="text"
+                  className="hub-button hub-button--primary"
+                  disabled={
+                    loadingPublish || isInstallingProject || isDetectingCustomCode || isOffline
+                  }
+                  data-testid="editor-page-publish-button"
+                  onClick={handlePublishScene}
+                  startIcon={
+                    isDeploying ? (
+                      <Loader
+                        size={20}
+                        color="inherit"
+                      />
+                    ) : (
+                      <PublicIcon />
+                    )
+                  }
+                >
+                  {publishButtonText}
+                </Button>
+              )}
+              <ConnectionStatusIndicator />
+            </div>
+          </Header>
+          <div className="EditorBody">
+            <iframe
+              key={iframeReloadKey}
+              className="inspector"
+              data-testid="editor-page-iframe"
+              src={iframeUrl}
+              onLoad={handleIframeRef}
+              // Grant cross-origin isolation to the inspector iframe so the Bevy
+              // engine (nested one level deeper) can use SharedArrayBuffer. The
+              // renderer document + inspector server carry COOP/COEP, but a
+              // cross-origin child frame only becomes crossOriginIsolated when the
+              // embedder explicitly delegates it via this Permissions-Policy. Inert
+              // for the Babylon renderer.
+              allow="cross-origin-isolated"
+            ></iframe>
+            {isReloadingInspector && (
+              <div className="reload-overlay">
+                {reloadTimedOut ? (
+                  <div className="reload-overlay-error">
+                    <div className="loading-error-title">{t('editor.loading.failed.title')}</div>
+                    <div className="loading-error-message">
+                      {t('editor.loading.failed.timeout')}
+                    </div>
+                    <Row>
+                      <Button
+                        variant="text"
+                        className="hub-button hub-button--secondary"
+                        startIcon={<ArrowBackIosIcon />}
+                        onClick={handleBack}
+                      >
+                        {t('editor.loading.failed.back')}
+                      </Button>
+                      <Button
+                        variant="text"
+                        className="hub-button hub-button--primary"
+                        startIcon={<RefreshIcon />}
+                        onClick={handleRetryReload}
+                      >
+                        {t('editor.loading.failed.retry')}
+                      </Button>
+                    </Row>
+                  </div>
+                ) : (
+                  <Loader />
+                )}
+              </div>
+            )}
+            {aiChatEnabled && aiOpen && (
+              <>
+                {aiResizing && <div className="ai-resize-overlay" />}
+                <div
+                  className="ai-resize-handle"
+                  onMouseDown={startAiResize}
+                  role="separator"
+                  aria-orientation="vertical"
+                />
+                {aiDetached ? (
+                  <DetachedPlaceholder
+                    onDock={closeAiWindow}
+                    width={aiPanelWidth}
+                    onToggleRecording={recorder.press}
+                    onCancelRecording={recorder.cancel}
+                    onSendRecording={recorder.send}
+                  />
+                ) : (
+                  <AiChatPanel
+                    onClose={() => setAiOpen(false)}
+                    onPopOut={openAiWindow}
+                    onClearSelection={handleClearAiSelection}
+                    width={aiPanelWidth}
+                    onToggleRecording={recorder.press}
+                    onCancelRecording={recorder.cancel}
+                    onSendRecording={recorder.send}
+                  />
+                )}
+              </>
+            )}
+          </div>
+          <DeployModal
+            type={modalState.type}
+            project={project}
+            onClose={handleCloseModal}
+            initialStep={modalState.initialStep}
+          />
+          <OptimizeModal project={project} />
+          <RecordingConsentModal
+            open={recorder.consent !== null}
+            downloadMb={recorder.consent?.downloadMb ?? 0}
+            onAccept={recorder.acceptConsent}
+            onCancel={recorder.dismissConsent}
+          />
+          {mobileQRData && (
+            <MobileQRCode
+              open={!!mobileQRData}
+              onClose={handleCloseMobileQR}
+              url={mobileQRData.url}
+              qr={mobileQRData.qr}
+            />
+          )}
+        </>
+      )}
+    </main>
+  );
+}

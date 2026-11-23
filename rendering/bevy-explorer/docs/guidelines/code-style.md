@@ -5,6 +5,12 @@ the code. The one idea behind most of it: lean into the ECS. Bevy already gives 
 change tracking, ownership and cleanup. Code that reinvents those in a resource, a `Local` or a
 side map is not allowed and will fail a review.
 
+Unused code is deleted, used, or gated with `#[cfg]` to the builds that use it. No `allow`,
+`expect` or `warn` covers `dead_code`, `unused` or `warnings`, except the ShaderType derive's
+never-called check fns: a module that holds only `use` items and ShaderType-derived structs
+takes `#![expect(dead_code, reason = …)]` with the reason that
+`tooling/bevy-dead-code-check.py` accepts. Their `impl` blocks and constants live outside it.
+
 ## State lives on the entity it describes
 
 - A fact about an entity is a component on that entity. Not a `HashMap<Entity, T>` in a
@@ -75,19 +81,28 @@ side map is not allowed and will fail a review.
 ## Async work
 
 - IO goes on `IoTaskPool`; the result comes back through a channel or a `Task<T>` polled from
-  a system, and lands in a component. Systems never block.
+  a system, and lands in a component. Systems never block. The scene loop is the one exception:
+  it paces the frame, and sleeps for a bounded wait between passes (see
+  [the scene loop](scheduling.md#the-scene-loop)).
 - The worker that knows the outcome reports it, per item and structured: `Vec<Result<T, E>>`
   in request order with a small named error enum. The caller relays; it does not re-derive
   failures by diffing what it asked for against what came back.
 - Cancellation tokens are threaded through outer layers unchanged. The `select!` sits at the
   one await that can actually hang (the network read, the lock), not around the whole task.
 - On web there is no `Send` and tasks run on the JS event loop. See the platforms page.
+- Anything the scene loader reads, a scene's `EntityDefinition` first, is an asset load: an
+  `AssetLoader` reached through a content path, keyed where needed by an alias in the owning
+  collection (as `request_collectibles` adds `collectible.{ext}`). `SceneIpfsLocation` stays a
+  location. A bad input then fails the load and the scene ends `SceneLoading::Failed` like any
+  other.
 
 ## Errors and invariants
 
 - Scene data is untrusted and malformed scene data must never take the client down. Systems
   handling it warn and skip; they do not `unwrap` or `panic`. The `dcl_assert!` macro is for
   engine invariants and compiles out of release builds unless the `dcl-assert` feature is on.
+- `SceneMeta` is parsed for every scene, so a field added to it parses leniently: a malformed
+  value reads as absent and the scene still loads. Add a field only with the code that reads it.
 - `anyhow` at boundaries (ops, loaders, fetches). A named error enum where a caller branches
   on the kind.
 - When one variant of a `match` is filtered by a flag, the guard goes inside that arm, not in

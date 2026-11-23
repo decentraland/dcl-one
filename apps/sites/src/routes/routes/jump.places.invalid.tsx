@@ -1,7 +1,6 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { data } from "react-router";
 
-import { JumpInvalidRoute } from "@/features/jump/JumpInvalidRoute";
+import { JumpInvalidPage } from "@/pages/jump/JumpInvalidPage";
 
 export function meta() {
   return [{ title: "Invalid link | Decentraland" }, { name: "robots", content: "noindex" }];
@@ -13,5 +12,5 @@ export function loader() {
 }
 
 export default function JumpPlacesInvalid() {
-  return <JumpInvalidRoute kind="place" />;
+  return <JumpInvalidPage kind="place" />;
 }

@@ -21,10 +21,42 @@
 //! holdings and the request's seeds (`neighbours`, built from the nft
 //! index), with the trending floor filling the rest and answering alone
 //! until a build exists (`personalized: false`). Coupons are stored and
-//! served by `/v1/coupons` (`coupons`).
+//! served by `/v1/coupons` (`coupons`). `/v3/catalog/trending` and the
+//! browse reads of `/v3/catalog/unified` are memoized 30 s; item pages and
+//! checkout name their item and read fresh.
 
-use crate::types::ManaUsdRate;
-use std::collections::HashMap;
+#[path = "shop_queries.rs"]
+mod queries;
+pub(crate) use queries::coupon_pairings;
+use queries::{ReferenceItem, since};
+pub use queries::{
+    build_importable_listings_sql, build_items_by_ids_sql, build_legacy_listings_sql,
+    build_related_items_sql, build_shop_listings_sql, build_unified_items_sql,
+    build_unified_listings_sql,
+};
+#[cfg(test)]
+use queries::{
+    id_contracts, named_contracts, related_rarity_sort_key, unified_branch, unified_selection,
+};
+#[path = "shop_projection.rs"]
+mod projection;
+use projection::{
+    listing_type, map_unified_item, map_unified_listing, opt, parse_available, top_level_category,
+};
+#[path = "shop_recommendations.rs"]
+mod recommendations;
+#[cfg(test)]
+use recommendations::{
+    MAX_EQUIPPED, RailCandidate, SeedSource, build_profile, item_id_values, rerank_for_diversity,
+    urn_to_item_id,
+};
+use recommendations::{MIN_PERSONAL_ROWS, personal_rows};
+pub use recommendations::{aggregate_sales, rank_trending};
+
+use crate::content::Denylist;
+use crate::types::{ASSET_TYPE_ERC20, ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -37,10 +69,16 @@ use serde_json::Value;
 use sqlx::Row;
 use sqlx::postgres::PgRow;
 
-use super::catalog::{Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte};
+use super::catalog::{
+    Builder, ITEM_ID_SHIFT, MAX_NUMERIC_NUMBER, escape_like, unified_trades_cte_of,
+};
 use super::items::{USD_WEI_PER_CREDIT, mana_usd_rate, rate_to_numeric_string, recent_sales};
-use super::readers::{self, Ttl, cached};
-use super::wire::{ApiError, ChainId, DataTotal, Network, Params, network_and_chain, where_from};
+use super::readers::{self, Ttl, cached, memoized};
+use super::search::{CreatorProfile, creator_profiles, directory_snapshot};
+use super::wire::{
+    ApiError, ChainId, DataTotal, Network, Params, body_shapes_for_genders, emote_play_mode_clause,
+    network_and_chain, where_from,
+};
 use super::{MarketplaceState, SharedState};
 
 pub const SHOP_DEFAULT_PAGE_SIZE: i64 = 48;
@@ -75,9 +113,6 @@ pub const RELATED_MAX_LIMIT: i64 = 50;
 
 /// 1e30 USD wei: rows above it are dropped rather than overflowing the bigint credit cast.
 pub const MAX_USD_WEI: &str = "1000000000000000000000000000000";
-
-const ASSET_TYPE_ERC20: i64 = 1;
-const ASSET_TYPE_USD_PEGGED_MANA: i64 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShopListingType {
@@ -331,24 +366,6 @@ fn parse_wearable_genders(p: &Params) -> Vec<String> {
         .collect()
 }
 
-/// `unisex` asks for both shapes, the same request as male + female.
-pub fn body_shapes_for_genders(genders: &[String]) -> Option<Vec<String>> {
-    if genders.is_empty() {
-        return None;
-    }
-    let has_unisex = genders.iter().any(|g| g == "unisex");
-    let has_male = has_unisex || genders.iter().any(|g| g == "male");
-    let has_female = has_unisex || genders.iter().any(|g| g == "female");
-    let mut out = Vec::new();
-    if has_male {
-        out.push("BaseMale".to_string());
-    }
-    if has_female {
-        out.push("BaseFemale".to_string());
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
 /// The collections the unified feed is restricted to, or `None` when the
 /// caller named none. A blank value reads as absent; a present non-address
 /// yields an empty set.
@@ -438,9 +455,7 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         include_social_emotes: p.get_string("includeSocialEmotes", None).as_deref()
             != Some("false"),
         listing_type: parse_listing_type(&p),
-        emote_loop: super::items::emote_play_mode_clause(
-            &p.get_list("emotePlayMode", &["loop", "simple"]),
-        ),
+        emote_loop: emote_play_mode_clause(&p.get_list("emotePlayMode", &["loop", "simple"])),
         emote_has_sound: p.get_boolean("emoteHasSound"),
         emote_has_geometry: p.get_boolean("emoteHasGeometry"),
     }
@@ -825,6 +840,12 @@ pub struct UnifiedItem {
     pub chain_id: ChainId,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub created_at: i64,
+    // Never set on the row itself: `with_creator_profiles` adds it to each response's JSON, after
+    // the memo, under the content denylist as it stands.
+    /// The creator's profile on the item and trending feeds (`name_creators`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub creator_profile: Option<CreatorProfile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -856,6 +877,10 @@ pub struct TopCreator {
     pub collections: i64,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub items: i64,
+    /// Set by `get_top_creators`, never cached with the ranking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub profile: Option<CreatorProfile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -943,825 +968,25 @@ pub struct SuggestionsResponse {
 
 pub const SUGGESTIONS_ALGORITHM_VERSION: &str = "v1";
 
-/// One source of listings shaped like the old `mv_trades` join: an open
-/// trade whose sent asset resolves to a mirrored item, or a CollectionStore
-/// mint. The columns are what every feed's filters and projection read.
-fn branch_base(
-    source: UnifiedSource,
-    acquisition: UnifiedAcquisition,
-    primary_only: bool,
-) -> String {
-    match acquisition {
-        UnifiedAcquisition::Trade => {
-            let asset_type = match source {
-                UnifiedSource::Native => ASSET_TYPE_USD_PEGGED_MANA,
-                UnifiedSource::Legacy => ASSET_TYPE_ERC20,
-            };
-            let primary = if primary_only {
-                " AND u.type = 'public_item_order'"
-            } else {
-                ""
-            };
-            format!(
-                "SELECT '{source}'::text AS source, 'trade'::text AS acquisition, u.id::text AS trade_id, u.type AS trade_type, u.signer, \
-                        i.contract_address, i.item_id::text AS item_id, u.token_id::text AS token_id, i.name, i.image, i.rarity, i.item_type, \
-                        i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.emote_has_sound, i.emote_has_geometry, i.creator, \
-                        CASE WHEN u.type = 'public_item_order' THEN i.available END AS available, \
-                        u.amount_received::numeric AS amount, i.network, u.created_at, i.search_is_collection_approved AS approved, \
-                        u.chain_id, lower(u.trade_contract) AS trade_contract, \
-                        CASE WHEN u.type = 'public_nft_order' THEN u.signer END AS seller, \
-                        CASE WHEN u.token_id IS NOT NULL THEN mod(u.token_id::numeric, {shift}::numeric)::text END AS issued_id \
-                 FROM unified_trades u \
-                 JOIN shop.items i ON i.contract_address = u.contract_address_sent AND i.item_id = u.item_id AND i.network = lower(u.network) \
-                 WHERE u.received_asset_type = {asset_type} AND (u.type <> 'public_item_order' OR i.available > 0){primary}",
-                source = source.as_str(),
-                shift = ITEM_ID_SHIFT,
-            )
-        }
-        UnifiedAcquisition::Store => format!(
-            "SELECT 'legacy'::text AS source, 'store'::text AS acquisition, i.contract_address || '-' || i.item_id::text AS trade_id, 'public_item_order'::text AS trade_type, i.creator AS signer, \
-                    i.contract_address, i.item_id::text AS item_id, NULL::text AS token_id, i.name, i.image, i.rarity, i.item_type, \
-                    i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.emote_has_sound, i.emote_has_geometry, i.creator, \
-                    i.available, i.price::numeric AS amount, i.network, (to_timestamp(i.created_at) AT TIME ZONE 'UTC') AS created_at, i.search_is_collection_approved AS approved, \
-                    NULL::integer AS chain_id, NULL::text AS trade_contract, \
-                    NULL::text AS seller, NULL::text AS issued_id \
-             FROM shop.items i \
-             WHERE i.search_is_store_minter = true AND i.search_is_collection_approved = true AND i.available > 0 AND i.price > 0 \
-               AND i.price <> {sentinel}::numeric AND i.emote_outcome_type IS NULL AND i.network <> 'ethereum'",
-            sentinel = MAX_NUMERIC_NUMBER,
-        ),
-    }
-}
-
-const GENDER_EXPR: &str = "CASE WHEN mv.item_type = 'emote_v1' THEN NULL \
-                                WHEN mv.body_shapes @> ARRAY['BaseMale','BaseFemale']::text[] THEN 'unisex' \
-                                WHEN mv.body_shapes @> ARRAY['BaseMale']::text[] THEN 'male' \
-                                WHEN mv.body_shapes @> ARRAY['BaseFemale']::text[] THEN 'female' \
-                                ELSE NULL END";
-
-/// The campaign selection: whole collections, individual items, or both
-/// UNIONED. Fails closed (an empty page, never the unfiltered catalogue) only
-/// when both named sets resolved empty. The item half leads with the
-/// contracts so the index narrows before the composite matches exactly.
-fn unified_selection(b: &mut Builder, unified: &UnifiedCatalogFilters) -> Option<String> {
-    if unified.contract_addresses.is_none() && unified.item_ids.is_none() {
-        return None;
-    }
-    let collections = unified.contract_addresses.as_deref().unwrap_or_default();
-    let items = unified.item_ids.as_deref().unwrap_or_default();
-    if collections.is_empty() && items.is_empty() {
-        return Some("FALSE".to_string());
-    }
-    let mut alternatives = Vec::new();
-    if !collections.is_empty() {
-        let p = b.bind_strings(
-            &collections
-                .iter()
-                .map(|a| a.to_lowercase())
-                .collect::<Vec<_>>(),
-        );
-        alternatives.push(format!("mv.contract_address = ANY({p})"));
-    }
-    if !items.is_empty() {
-        let mut item_contracts: Vec<String> = items
-            .iter()
-            .filter_map(|id| id.rsplit_once('-').map(|(c, _)| c.to_lowercase()))
-            .collect();
-        item_contracts.sort();
-        item_contracts.dedup();
-        let contracts_p = b.bind_strings(&item_contracts);
-        let items_p = b.bind_strings(&items.iter().map(|id| id.to_lowercase()).collect::<Vec<_>>());
-        alternatives.push(format!("(mv.contract_address = ANY({contracts_p}) AND mv.contract_address || '-' || mv.item_id::text = ANY({items_p}))"));
-    }
-    Some(format!("({})", alternatives.join(" OR ")))
-}
-
-/// The filters every feed shares, over the `mv` alias of [`branch_base`].
-fn append_unified_filters(
-    b: &mut Builder,
-    wheres: &mut Vec<String>,
-    unified: &UnifiedCatalogFilters,
-) {
-    let f = &unified.base;
-    wheres.push("mv.approved = true".to_string());
-    if let Some(ca) = f.contract_address.as_deref().filter(|c| !c.is_empty()) {
-        let p = b.bind_string(ca.to_lowercase());
-        wheres.push(format!("mv.contract_address = {p}"));
-    }
-    if let Some(selection) = unified_selection(b, unified) {
-        wheres.push(selection);
-    }
-    if let Some(iid) = &f.item_id {
-        let p = b.bind_string(iid.clone());
-        wheres.push(format!("mv.item_id = {p}"));
-    }
-    if !f.creator.is_empty() {
-        let p = b.bind_strings(
-            &f.creator
-                .iter()
-                .map(|c| c.to_lowercase())
-                .collect::<Vec<_>>(),
-        );
-        wheres.push(format!("lower(mv.creator) = ANY({p})"));
-    }
-    match f.category.as_deref() {
-        Some("emote") => wheres.push("mv.item_type ILIKE 'emote%'".to_string()),
-        Some("wearable") => wheres.push("mv.item_type NOT ILIKE 'emote%'".to_string()),
-        _ => {}
-    }
-    if !f.rarities.is_empty() {
-        let p = b.bind_strings(
-            &f.rarities
-                .iter()
-                .map(|r| r.to_lowercase())
-                .collect::<Vec<_>>(),
-        );
-        wheres.push(format!("lower(mv.rarity) = ANY({p})"));
-    }
-    if !f.wearable_categories.is_empty() {
-        let p = b.bind_strings(
-            &f.wearable_categories
-                .iter()
-                .map(|c| c.to_lowercase())
-                .collect::<Vec<_>>(),
-        );
-        wheres.push(format!("lower(mv.wearable_category) = ANY({p})"));
-    }
-    if f.is_smart {
-        wheres.push("mv.item_type = 'smart_wearable_v1'".to_string());
-    }
-    // A wearable's emote columns are NULL, so these keep emotes only.
-    if let Some(looped) = f.emote_loop {
-        wheres.push(format!("mv.emote_loop = {looped}"));
-    }
-    if f.emote_has_sound {
-        wheres.push("mv.emote_has_sound = true".to_string());
-    }
-    if f.emote_has_geometry {
-        wheres.push("mv.emote_has_geometry = true".to_string());
-    }
-    if let Some(shapes) = body_shapes_for_genders(&f.wearable_genders) {
-        let p = b.bind_strings(&shapes);
-        wheres.push(format!(
-            "(mv.item_type <> 'emote_v1' AND mv.body_shapes @> {p}::text[])"
-        ));
-    }
-    if let Some(term) = f.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        for word in term.split_whitespace().take(8) {
-            let p = b.bind_string(format!("%{}%", escape_like(word)));
-            wheres.push(format!("mv.name ILIKE {p}"));
-        }
-    }
-    if !f.include_social_emotes {
-        wheres.push("mv.emote_outcome_type IS NULL".to_string());
-    }
-    match f.listing_type {
-        Some(ShopListingType::Primary) => {
-            wheres.push("mv.trade_type = 'public_item_order'".to_string())
-        }
-        Some(ShopListingType::Secondary) => {
-            wheres.push("mv.trade_type <> 'public_item_order'".to_string())
-        }
-        None => {}
-    }
-}
-
-/// The chains this deployment sells on, each (chain, marketplace, coupon
-/// manager) pairing of them: a coupon is redeemable only by the marketplace
-/// version its manager is wired into, on the chain it was signed for.
-pub(crate) fn coupon_pairings() -> Vec<(i64, String, String)> {
-    use super::listings::{offchain_marketplace_v2, offchain_marketplace_v3};
-    use crate::coupons::contracts::{CouponMarketplace, coupon_contracts};
-    let served = [
-        super::wire::polygon_chain_id() as i64,
-        super::wire::ethereum_chain_id() as i64,
-    ];
-    served
-        .into_iter()
-        .flat_map(|chain| {
-            coupon_contracts(chain)
-                .into_iter()
-                .filter_map(move |contracts| {
-                    let marketplace = match contracts.marketplace {
-                        CouponMarketplace::OffChainMarketplaceV3 => offchain_marketplace_v3(chain),
-                        CouponMarketplace::OffChainMarketplaceV2 => offchain_marketplace_v2(chain),
-                    }?;
-                    Some((
-                        chain,
-                        marketplace.address.to_lowercase(),
-                        contracts.coupon_manager.address.to_lowercase(),
-                    ))
-                })
-        })
-        .collect()
-}
-
-/// The best live creator coupon for the listing `mv`, as `cp`: signed by the
-/// listing's signer against the manager paired with the marketplace the
-/// listing settles on, on the listing's own chain, covering its collection,
-/// inside its window, neither cancelled nor revoked, with uses left as of the
-/// last on-chain read. Biggest discount wins, then the one ending soonest.
-/// Primaries only: the coupon contract mints collection items. The pairings
-/// are the static registry, inlined.
-fn coupon_join() -> String {
-    let pairings: Vec<String> = coupon_pairings()
-        .into_iter()
-        .map(|(chain, marketplace, manager)| format!("({chain}, '{marketplace}', '{manager}')"))
-        .collect();
-    let paired = if pairings.is_empty() {
-        "FALSE".to_string()
-    } else {
-        format!(
-            "(c.chain_id, mv.trade_contract, lower(c.coupon_manager)) IN (VALUES {})",
-            pairings.join(", ")
-        )
-    };
-    format!(
-        " LEFT JOIN LATERAL ( \
-           SELECT c.id, c.signer, c.coupon_manager, c.coupon_address, c.checks, c.discount_type, c.discount_ppm, c.root, \
-                  c.collections, c.signature, c.expires_at, COALESCE(cs.uses, 0) AS used \
-           FROM shop.coupons c \
-           LEFT JOIN shop.coupon_state cs ON cs.coupon_id = c.id \
-           WHERE mv.trade_type = 'public_item_order' \
-             AND c.signer = lower(mv.signer) \
-             AND c.chain_id = mv.chain_id \
-             AND {paired} \
-             AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
-             AND lower(mv.contract_address) = ANY(c.collections) \
-             AND c.discount_type = 1 AND c.discount_ppm > 0 AND c.discount_ppm < 1000000 \
-             AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
-             AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
-           ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
-           LIMIT 1 \
-         ) cp ON true"
-    )
-}
-
-/// The coupon columns of a branch that can carry one: what the coupon
-/// contract leaves (`price - floor(price * ppm / 1e6)`), the list price as
-/// the compare-at, the units left at the sale price, and the buy-side payload.
-const COUPON_COLUMNS: &str = "cp.id::text AS coupon_id, cp.discount_ppm AS coupon_discount_ppm, \
-     EXTRACT(EPOCH FROM cp.expires_at)::bigint AS sale_ends_at, \
-     CASE WHEN cp.id IS NOT NULL THEN LEAST((cp.checks->>'uses')::numeric - cp.used, \
-          COALESCE(mv.available::numeric, (cp.checks->>'uses')::numeric - cp.used))::bigint END AS sale_units_left, \
-     CASE WHEN cp.id IS NOT NULL THEN jsonb_build_object( \
-          'id', cp.id, 'signer', cp.signer, 'couponManager', cp.coupon_manager, 'couponAddress', cp.coupon_address, \
-          'checks', cp.checks, 'discountType', cp.discount_type, 'discount', cp.discount_ppm, 'root', cp.root, \
-          'collections', to_jsonb(cp.collections), 'signature', cp.signature, 'used', cp.used) END AS coupon";
-const NULL_COUPON_COLUMNS: &str = "NULL::text AS coupon_id, NULL::integer AS coupon_discount_ppm, NULL::bigint AS sale_ends_at, NULL::bigint AS sale_units_left, NULL::jsonb AS coupon";
-
-/// One UNION branch: the base filtered, projected into the feed columns.
-/// `rate_p` converts a MANA amount to USD wei; the native branch is USD already.
-fn unified_branch(
-    b: &mut Builder,
-    source: UnifiedSource,
-    acquisition: UnifiedAcquisition,
-    rate_p: Option<&str>,
-    filters: &UnifiedCatalogFilters,
-) -> String {
-    let primary_only = source == UnifiedSource::Legacy
-        && acquisition == UnifiedAcquisition::Trade
-        && !filters.include_legacy_secondary;
-    let base = branch_base(source, acquisition, primary_only);
-    // Creator coupons discount native primaries only: the coupon contract
-    // mints collection items and settles in USD-pegged MANA.
-    let with_coupons = source == UnifiedSource::Native && acquisition == UnifiedAcquisition::Trade;
-    let usd_wei = match (rate_p, with_coupons) {
-        (Some(rate_p), _) => format!("(mv.amount * {rate_p}::numeric)"),
-        (None, true) => {
-            "COALESCE(mv.amount - FLOOR(mv.amount * cp.discount_ppm / 1000000), mv.amount)"
-                .to_string()
-        }
-        (None, false) => "mv.amount".to_string(),
-    };
-    let (compare_at, coupon_columns, join) = if with_coupons {
-        (
-            "CASE WHEN cp.id IS NOT NULL THEN mv.amount END",
-            COUPON_COLUMNS,
-            coupon_join(),
-        )
-    } else {
-        ("NULL::numeric", NULL_COUPON_COLUMNS, String::new())
-    };
-    let mana_wei = match source {
-        UnifiedSource::Native => "NULL::text",
-        UnifiedSource::Legacy => "mv.amount::text",
-    };
-    let mut wheres = Vec::new();
-    append_unified_filters(b, &mut wheres, filters);
-    match (filters.base.discounted, with_coupons) {
-        (Some(true), true) => wheres.push("cp.id IS NOT NULL".to_string()),
-        (Some(true), false) => wheres.push("FALSE".to_string()),
-        (Some(false), true) => wheres.push("cp.id IS NULL".to_string()),
-        _ => {}
-    }
-    format!(
-        "SELECT mv.source, mv.acquisition, mv.trade_id, mv.trade_type, mv.signer, mv.contract_address, mv.item_id, mv.token_id, mv.name, mv.image, \
-                mv.rarity, mv.item_type, mv.wearable_category, mv.emote_loop, mv.creator, mv.seller, mv.issued_id, \
-                {usd_wei} AS usd_wei, {compare_at} AS compare_at_usd_wei, mv.available::text AS available, upper(mv.network) AS network, \
-                (EXTRACT(EPOCH FROM mv.created_at) * 1000)::bigint AS created_at, {mana_wei} AS mana_wei, \
-                {coupon_columns}, \
-                {GENDER_EXPR} AS gender \
-         FROM ({base}) mv{join} {where_clause}",
-        where_clause = where_from(&wheres),
-    )
-}
-
-/// The branches the request's `source` keeps, joined by UNION ALL.
-fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
-    let rate_p = (filters.source != Some(UnifiedSource::Native))
-        .then(|| b.bind_string(rate_to_numeric_string(rate)));
-    let branches = [
-        (UnifiedSource::Native, UnifiedAcquisition::Trade),
-        (UnifiedSource::Legacy, UnifiedAcquisition::Trade),
-        (UnifiedSource::Legacy, UnifiedAcquisition::Store),
-    ];
-    branches
-        .into_iter()
-        .filter(|(source, _)| filters.source.is_none_or(|s| s == *source))
-        .map(|(source, acquisition)| {
-            let rate = match source {
-                UnifiedSource::Native => None,
-                UnifiedSource::Legacy => rate_p.as_deref(),
-            };
-            unified_branch(b, source, acquisition, rate, filters)
-        })
-        .collect::<Vec<_>>()
-        .join(" UNION ALL ")
-}
-
-/// The outer price bounds, sort and page over the subquery `alias`.
-fn outer_page_clauses(
-    b: &mut Builder,
-    alias: &str,
-    f: &ShopCatalogFilters,
-    mut wheres: Vec<String>,
-) -> (String, String, String, String) {
-    if let Some(bound) = f.min_price_credits.and_then(unified_min_price_bound_wei) {
-        let p = b.bind_string(bound.to_string());
-        wheres.push(format!("{alias}.usd_wei > {p}::numeric"));
-    }
-    if let Some(max_wei) = f.max_price_credits.and_then(credits_to_wei) {
-        let p = b.bind_string(max_wei.to_string());
-        wheres.push(format!("{alias}.usd_wei <= {p}::numeric"));
-    }
-    let explicit = f.sort_by.map(|s| s == ShopSortBy::Relevance);
-    let relevance = match f.search.as_deref() {
-        Some(search) if super::items::ranks_by_relevance(explicit, Some(search)) => {
-            super::items::search_relevance_rank(b, &format!("{alias}.name"), search)
-        }
-        _ => None,
-    };
-    let sort_key = match f.sort_by {
-        _ if relevance.is_some() => {
-            format!("{}, {alias}.created_at DESC", relevance.unwrap_or_default())
-        }
-        Some(ShopSortBy::Cheapest) => format!("{alias}.usd_wei ASC"),
-        Some(ShopSortBy::MostExpensive) => format!("{alias}.usd_wei DESC"),
-        Some(ShopSortBy::Name) => format!("{alias}.name ASC"),
-        Some(ShopSortBy::Discount) => format!(
-            "{alias}.coupon_discount_ppm DESC NULLS LAST, {alias}.sale_ends_at ASC NULLS LAST, {alias}.created_at DESC"
-        ),
-        Some(ShopSortBy::Newest | ShopSortBy::Relevance) | None => {
-            format!("{alias}.created_at DESC")
-        }
-    };
-    let limit_p = b.bind_i64(shop_clamp_first(f.first));
-    let offset_p = b.bind_i64(shop_clamp_skip(f.skip));
-    (
-        where_from(&wheres),
-        format!("ORDER BY {sort_key}, {alias}.trade_id"),
-        limit_p,
-        offset_p,
-    )
-}
-
-/// The `unified_trades` CTE at now, counting mirrored trades from `since`.
-fn with_trades(b: &mut Builder, since: Option<chrono::NaiveDateTime>) {
-    let now_p = b.bind_time(Utc::now().naive_utc());
-    let since_p = b.bind_opt_time(since);
-    b.push("WITH ");
-    b.push(&unified_trades_cte(&now_p, &since_p));
-    b.push(" ");
-}
-
-/// The trades floor of a feed read now ([`super::trades::mirrored_since`]).
-fn since(state: &MarketplaceState) -> Option<chrono::NaiveDateTime> {
-    super::trades::mirrored_since(&state.settings, Utc::now().naive_utc())
-}
-
-fn compare_at_credits_expr(alias: &str) -> String {
-    format!(
-        "CASE WHEN {alias}.compare_at_usd_wei IS NOT NULL THEN CEIL({alias}.compare_at_usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint END"
-    )
-}
-
-pub fn build_shop_listings_sql(
-    f: &ShopCatalogFilters,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let unified = UnifiedCatalogFilters {
-        base: f.clone(),
-        source: Some(UnifiedSource::Native),
-        contract_addresses: None,
-        item_ids: None,
-        include_legacy_secondary: false,
-    };
-    let inner = unified_branch(
-        &mut b,
-        UnifiedSource::Native,
-        UnifiedAcquisition::Trade,
-        None,
-        &unified,
-    );
-    let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
-        &mut b,
-        "sub",
-        f,
-        vec![
-            "sub.usd_wei > 0".to_string(),
-            format!("sub.usd_wei <= {MAX_USD_WEI}::numeric"),
-        ],
-    );
-    b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
-        compare_at = compare_at_credits_expr("sub"),
-    ));
-    b
-}
-
-pub fn build_legacy_listings_sql(
-    f: &LegacyCatalogFilters,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let unified = UnifiedCatalogFilters {
-        base: ShopCatalogFilters {
-            category: f.category.clone(),
-            rarities: f.rarities.clone(),
-            wearable_categories: f.wearable_categories.clone(),
-            search: f.search.clone(),
-            listing_type: Some(ShopListingType::Primary),
-            ..Default::default()
-        },
-        source: Some(UnifiedSource::Legacy),
-        contract_addresses: None,
-        item_ids: None,
-        include_legacy_secondary: false,
-    };
-    let inner = unified_branch(
-        &mut b,
-        UnifiedSource::Legacy,
-        UnifiedAcquisition::Trade,
-        None,
-        &unified,
-    );
-    let order = match f.sort_by {
-        Some(ShopSortBy::Cheapest) => "ORDER BY sub.usd_wei ASC",
-        Some(ShopSortBy::MostExpensive) => "ORDER BY sub.usd_wei DESC",
-        Some(ShopSortBy::Name) => "ORDER BY sub.name ASC",
-        _ => "ORDER BY sub.created_at DESC",
-    };
-    let limit_p = b.bind_i64(shop_clamp_first(f.first));
-    let offset_p = b.bind_i64(shop_clamp_skip(f.skip));
-    b.push(&format!("SELECT sub.*, COUNT(*) OVER() AS total FROM ({inner}) sub {order}, sub.trade_id LIMIT {limit_p} OFFSET {offset_p}"));
-    b
-}
-
-pub fn build_importable_listings_sql(
-    seller: &str,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let unified = UnifiedCatalogFilters {
-        source: Some(UnifiedSource::Legacy),
-        include_legacy_secondary: true,
-        ..Default::default()
-    };
-    let inner = unified_branch(
-        &mut b,
-        UnifiedSource::Legacy,
-        UnifiedAcquisition::Trade,
-        None,
-        &unified,
-    );
-    let seller_p = b.bind_string(seller.to_lowercase());
-    let limit_p = b.bind_i64(SHOP_MAX_PAGE_SIZE);
-    b.push(&format!("SELECT sub.* FROM ({inner}) sub WHERE lower(sub.signer) = {seller_p} ORDER BY sub.created_at DESC, sub.trade_id LIMIT {limit_p}"));
-    b
-}
-
-pub fn build_unified_listings_sql(
-    f: &UnifiedCatalogFilters,
-    rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let inner = unified_inner(&mut b, f, rate);
-    let (where_clause, order, limit_p, offset_p) = outer_page_clauses(
-        &mut b,
-        "sub",
-        &f.base,
-        vec![
-            "sub.usd_wei > 0".to_string(),
-            format!("sub.usd_wei <= {MAX_USD_WEI}::numeric"),
-        ],
-    );
-    b.push(&format!(
-        "SELECT sub.*, CEIL(sub.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits, COUNT(*) OVER() AS total \
-         FROM ({inner}) sub {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}",
-        compare_at = compare_at_credits_expr("sub"),
-    ));
-    b
-}
-
-/// The UNION collapsed to one representative row per item: primary before
-/// secondary, native before legacy, cheapest, trade before store; with the
-/// per-item `listing_count` window. Callers wrap it as `d`.
-fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
-    let inner = unified_inner(b, f, rate);
-    format!(
-        "SELECT DISTINCT ON (f.contract_address, f.item_id) f.*, CEIL(f.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
-         FROM (SELECT u.*, COUNT(*) OVER (PARTITION BY u.contract_address, u.item_id) AS listing_count FROM ({inner}) u WHERE u.usd_wei > 0 AND u.usd_wei <= {MAX_USD_WEI}::numeric) f \
-         ORDER BY f.contract_address, f.item_id, (CASE WHEN f.trade_type = 'public_item_order' THEN 0 ELSE 1 END), (CASE WHEN f.source = 'native' THEN 0 ELSE 1 END), \
-                  f.usd_wei ASC, (CASE WHEN f.acquisition = 'trade' THEN 0 ELSE 1 END), f.trade_id",
-        compare_at = compare_at_credits_expr("f"),
-    )
-}
-
-pub fn build_unified_items_sql(
-    f: &UnifiedCatalogFilters,
-    rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let core = item_unified_core(&mut b, f, rate);
-    let (where_clause, order, limit_p, offset_p) =
-        outer_page_clauses(&mut b, "d", &f.base, vec!["d.usd_wei > 0".to_string()]);
-    b.push(&format!("SELECT d.*, COUNT(*) OVER() AS total FROM ({core}) d {where_clause} {order} LIMIT {limit_p} OFFSET {offset_p}"));
-    b
-}
-
-/// The item core restricted to `<contract>-<itemId>` ids; order is the caller's.
-pub fn build_items_by_ids_sql(
-    ids: &[String],
-    f: &UnifiedCatalogFilters,
-    rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let core = item_unified_core(&mut b, f, rate);
-    let ids_p = b.bind_strings(ids);
-    b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address || '-' || d.item_id) = ANY({ids_p})"));
-    b
-}
-
-const RARITY_ORDER: &[&str] = &[
-    "unique",
-    "mythic",
-    "exotic",
-    "legendary",
-    "epic",
-    "rare",
-    "uncommon",
-    "common",
-];
-const UNKNOWN_RARITY_DISTANCE: usize = RARITY_ORDER.len();
-
-fn rarity_rank(rarity: &str) -> Option<usize> {
-    let lower = rarity.to_ascii_lowercase();
-    RARITY_ORDER.iter().position(|tier| *tier == lower)
-}
-
-/// A distance from the anchor's tier; `None` when the anchor's rarity is
-/// unknown, so the caller omits the key (a bare integer in ORDER BY is a column position).
-fn related_rarity_sort_key(reference_rarity: Option<&str>) -> Option<String> {
-    let anchor = reference_rarity.and_then(rarity_rank)?;
-    let mut expr = String::from("CASE lower(d.rarity)");
-    for (rank, tier) in RARITY_ORDER.iter().enumerate() {
-        expr.push_str(&format!(" WHEN '{tier}' THEN {}", anchor.abs_diff(rank)));
-    }
-    expr.push_str(&format!(" ELSE {UNKNOWN_RARITY_DISTANCE} END"));
-    Some(expr)
-}
-
-struct ReferenceItem {
-    category: &'static str,
-    wearable_category: Option<String>,
-    rarity: Option<String>,
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one argument per related-items query parameter"
-)]
-pub fn build_related_items_sql(
-    contract_address: &str,
-    item_id: &str,
-    reference_category: &str,
-    reference_wearable_category: Option<&str>,
-    reference_rarity: Option<&str>,
-    first: Option<i64>,
-    rail: &RelatedItemsFilters,
-    rate: ManaUsdRate,
-    since: Option<chrono::NaiveDateTime>,
-) -> Builder {
-    let mut b = Builder::new();
-    with_trades(&mut b, since);
-    let f = UnifiedCatalogFilters {
-        base: ShopCatalogFilters {
-            category: Some(reference_category.to_string()),
-            wearable_categories: reference_wearable_category
-                .map(|c| vec![c.to_string()])
-                .unwrap_or_default(),
-            listing_type: rail.listing_type,
-            ..Default::default()
-        },
-        source: None,
-        contract_addresses: None,
-        item_ids: None,
-        include_legacy_secondary: rail.include_legacy_secondary,
-    };
-    let core = item_unified_core(&mut b, &f, rate);
-    let addr_p = b.bind_string(contract_address.to_lowercase());
-    let item_p = b.bind_string(item_id.to_string());
-    let limit_p = b.bind_i64(related_clamp_first(first));
-    let order = match related_rarity_sort_key(reference_rarity) {
-        Some(rarity_expr) => format!("ORDER BY {rarity_expr}, d.created_at DESC, d.trade_id"),
-        None => "ORDER BY d.created_at DESC, d.trade_id".to_string(),
-    };
-    b.push(&format!("SELECT d.* FROM ({core}) d WHERE d.usd_wei > 0 AND (d.contract_address <> {addr_p} OR COALESCE(d.item_id, '') <> {item_p}) {order} LIMIT {limit_p}"));
-    b
-}
-
-fn top_level_category(item_type: Option<&str>) -> &'static str {
-    if item_type
-        .map(|t| t.to_lowercase().starts_with("emote"))
-        .unwrap_or(false)
-    {
-        "emote"
-    } else {
-        "wearable"
-    }
-}
-
-fn listing_type(trade_type: &str) -> &'static str {
-    if trade_type == "public_item_order" {
-        "primary"
-    } else {
-        "secondary"
-    }
-}
-
-fn parse_available(available: Option<&str>) -> i64 {
-    available.and_then(|s| s.parse::<i64>().ok()).unwrap_or(1)
-}
-
-fn opt<T>(r: &PgRow, col: &str) -> Option<T>
-where
-    T: for<'a> sqlx::Decode<'a, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
-{
-    r.try_get::<Option<T>, _>(col).ok().flatten()
-}
-
-/// The sale half of a row: set only when a coupon applies AND the list
-/// price still beats the sale price once both round up to whole credits, so
-/// a card never shows a discount the buyer cannot see. A coupon whose proof
-/// for this collection cannot be built is dropped (a sale the checkout cannot
-/// settle is worse than none).
-fn sale_fields(r: &PgRow) -> ShopSaleFields {
-    let Some(mut coupon) = opt::<Value>(r, "coupon") else {
-        return ShopSaleFields::default();
-    };
-    let price_credits: i64 = r.try_get("price_credits").unwrap_or(0);
-    let compare_at = opt::<i64>(r, "compare_at_credits");
-    let Some(compare_at) = compare_at.filter(|c| *c > price_credits) else {
-        return ShopSaleFields::default();
-    };
-    let contract = opt::<String>(r, "contract_address").unwrap_or_default();
-    let collections: Vec<String> = coupon["collections"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|c| c.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    match crate::coupons::merkle::collection_proof_hex(&collections, &contract) {
-        Ok(proof) => coupon["proof"] = serde_json::json!(proof),
-        Err(e) => {
-            tracing::warn!(coupon = %coupon["id"], contract = %contract, error = %e, "shop: dropping a coupon whose proof cannot be built");
-            return ShopSaleFields::default();
-        }
-    }
-    ShopSaleFields {
-        compare_at_credits: Some(compare_at),
-        sale_ends_at: opt(r, "sale_ends_at"),
-        sale_units_left: opt(r, "sale_units_left"),
-        coupon: Some(coupon),
-    }
-}
-
-fn map_unified_listing(r: &PgRow) -> UnifiedListing {
-    let (network, chain_id) = network_and_chain(&opt::<String>(r, "network").unwrap_or_default());
-    let acquisition: String = r.get("acquisition");
-    let trade_type: String = r.get("trade_type");
-    let listing_type = listing_type(&trade_type);
-    let token_id: Option<String> = opt(r, "token_id");
-    UnifiedListing {
-        source: r.get("source"),
-        trade_id: if acquisition == "store" {
-            None
-        } else {
-            Some(r.get("trade_id"))
-        },
-        acquisition,
-        listing_type: listing_type.to_string(),
-        contract_address: opt::<String>(r, "contract_address").unwrap_or_default(),
-        item_id: opt(r, "item_id"),
-        token_id: token_id.clone(),
-        name: opt::<String>(r, "name").unwrap_or_default(),
-        thumbnail: opt::<String>(r, "image").unwrap_or_default(),
-        rarity: opt::<String>(r, "rarity")
-            .as_deref()
-            .unwrap_or("common")
-            .to_lowercase(),
-        category: top_level_category(opt::<String>(r, "item_type").as_deref()).to_string(),
-        wearable_category: opt(r, "wearable_category"),
-        emote_loop: opt(r, "emote_loop"),
-        gender: opt(r, "gender"),
-        creator: opt::<String>(r, "creator").unwrap_or_default(),
-        seller: opt(r, "seller"),
-        issued_id: opt(r, "issued_id"),
-        price_credits: crate::guards::catalog::credit_price(
-            listing_type,
-            token_id.as_deref(),
-            r.get("price_credits"),
-        ),
-        sale: sale_fields(r),
-        mana_wei: opt(r, "mana_wei"),
-        available: parse_available(opt::<String>(r, "available").as_deref()),
-        network,
-        chain_id,
-        created_at: r.get("created_at"),
-    }
-}
-
-fn map_unified_item(r: &PgRow) -> UnifiedItem {
-    let l = map_unified_listing(r);
-    UnifiedItem {
-        source: l.source,
-        acquisition: l.acquisition,
-        trade_id: l.trade_id,
-        listing_type: l.listing_type,
-        contract_address: l.contract_address,
-        item_id: l.item_id,
-        token_id: l.token_id,
-        name: l.name,
-        thumbnail: l.thumbnail,
-        rarity: l.rarity,
-        category: l.category,
-        wearable_category: l.wearable_category,
-        emote_loop: l.emote_loop,
-        gender: l.gender,
-        creator: l.creator,
-        seller: l.seller,
-        issued_id: l.issued_id,
-        price_credits: l.price_credits,
-        sale: l.sale,
-        mana_wei: l.mana_wei,
-        listing_count: r.get("listing_count"),
-        available: l.available,
-        network: l.network,
-        chain_id: l.chain_id,
-        created_at: l.created_at,
-    }
-}
-
 async fn fetch(state: &MarketplaceState, b: Builder) -> Result<Vec<PgRow>, ApiError> {
     Ok(sqlx::query_with(sqlx::AssertSqlSafe(b.sql), b.args)
         .fetch_all(&state.pool)
         .await?)
 }
 
-fn total_of(rows: &[PgRow]) -> i64 {
-    rows.first().map(|r| r.get::<i64, _>("total")).unwrap_or(0)
+// The count side always returns one row, even when OFFSET exhausts the
+// page. Discard its NULL page before mapping the non-null listing fields.
+fn counted_page(mut rows: Vec<PgRow>) -> (Vec<PgRow>, i64) {
+    let total = rows.first().map(|r| r.get::<i64, _>("total")).unwrap_or(0);
+    rows.retain(|r| r.get::<Option<bool>, _>("page_present") == Some(true));
+    (rows, total)
 }
 
 pub async fn shop_listings(
     state: &MarketplaceState,
     f: &ShopCatalogFilters,
 ) -> Result<(Vec<ShopListing>, i64), ApiError> {
-    let rows = fetch(state, build_shop_listings_sql(f, since(state))).await?;
-    let total = total_of(&rows);
+    let (rows, total) = counted_page(fetch(state, build_shop_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1797,8 +1022,8 @@ pub async fn legacy_listings(
     state: &MarketplaceState,
     f: &LegacyCatalogFilters,
 ) -> Result<(Vec<LegacyListing>, i64), ApiError> {
-    let rows = fetch(state, build_legacy_listings_sql(f, since(state))).await?;
-    let total = total_of(&rows);
+    let (rows, total) =
+        counted_page(fetch(state, build_legacy_listings_sql(f, since(state))).await?);
     let data = rows
         .iter()
         .map(|r| {
@@ -1869,11 +1094,9 @@ pub async fn unified_listings(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedListing>, i64), ApiError> {
-    let rows = fetch(state, build_unified_listings_sql(f, rate, since(state))).await?;
-    Ok((
-        rows.iter().map(map_unified_listing).collect(),
-        total_of(&rows),
-    ))
+    let (rows, total) =
+        counted_page(fetch(state, build_unified_listings_sql(f, rate, since(state))).await?);
+    Ok((rows.iter().map(map_unified_listing).collect(), total))
 }
 
 pub async fn unified_items(
@@ -1881,8 +1104,9 @@ pub async fn unified_items(
     f: &UnifiedCatalogFilters,
     rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedItem>, i64), ApiError> {
-    let rows = fetch(state, build_unified_items_sql(f, rate, since(state))).await?;
-    Ok((rows.iter().map(map_unified_item).collect(), total_of(&rows)))
+    let (rows, total) =
+        counted_page(fetch(state, build_unified_items_sql(f, rate, since(state))).await?);
+    Ok((rows.iter().map(map_unified_item).collect(), total))
 }
 
 pub async fn items_by_ids(
@@ -1950,78 +1174,6 @@ pub struct SaleSignal {
     pub volume: u128,
 }
 
-/// Windowed sale count and settled volume per `<contract>-<itemId>`.
-pub fn aggregate_sales(sales: &[Value]) -> HashMap<String, SaleSignal> {
-    let mut out: HashMap<String, SaleSignal> = HashMap::new();
-    for sale in sales {
-        let (Some(contract), Some(item)) = (
-            readers::opt_str_of(sale, "searchContractAddress"),
-            readers::opt_str_of(sale, "searchItemId"),
-        ) else {
-            continue;
-        };
-        let entry = out
-            .entry(format!("{}-{item}", contract.to_lowercase()))
-            .or_default();
-        entry.sales += 1;
-        entry.volume = entry
-            .volume
-            .saturating_add(readers::str_of(sale, "price").parse::<u128>().unwrap_or(0));
-    }
-    out
-}
-
-/// The old two-pass ranking over the hydrated rows: the first 60% of the
-/// slots by sale count, the rest by volume among what that pass left.
-pub fn rank_trending(
-    mut items: Vec<UnifiedItem>,
-    signals: &HashMap<String, SaleSignal>,
-    first: i64,
-) -> Vec<TrendingItem> {
-    let key = |i: &UnifiedItem| {
-        format!(
-            "{}-{}",
-            i.contract_address,
-            i.item_id.clone().unwrap_or_default()
-        )
-    };
-    let signal = |i: &UnifiedItem| signals.get(&key(i)).cloned().unwrap_or_default();
-    let sales_slots = (first as f64 * TRENDING_SALES_CUT).ceil() as i64;
-    let volume_slots = first - sales_slots;
-    items.sort_by(|a, b| {
-        let (sa, sb) = (signal(a), signal(b));
-        sb.sales
-            .cmp(&sa.sales)
-            .then(sb.volume.cmp(&sa.volume))
-            .then(a.contract_address.cmp(&b.contract_address))
-            .then(a.item_id.cmp(&b.item_id))
-    });
-    let rest = items.split_off((sales_slots.max(0) as usize).min(items.len()));
-    let mut by_sales = items;
-    let mut by_volume = rest;
-    by_volume.sort_by(|a, b| {
-        let (sa, sb) = (signal(a), signal(b));
-        sb.volume
-            .cmp(&sa.volume)
-            .then(sb.sales.cmp(&sa.sales))
-            .then(a.contract_address.cmp(&b.contract_address))
-            .then(a.item_id.cmp(&b.item_id))
-    });
-    by_volume.truncate(volume_slots.max(0) as usize);
-    by_sales.extend(by_volume);
-    by_sales.truncate(first.max(0) as usize);
-    by_sales
-        .into_iter()
-        .map(|item| {
-            let trending_sales = signal(&item).sales;
-            TrendingItem {
-                item,
-                trending_sales,
-            }
-        })
-        .collect()
-}
-
 pub async fn trending_items(
     state: &MarketplaceState,
     first: Option<i64>,
@@ -2077,7 +1229,7 @@ pub async fn top_creators(
             .filter_map(|creator| {
                 let (volume, sales) = ranked.get(&creator).copied()?;
                 let (items, collections) = catalogue.get(&creator).copied().unwrap_or((0, 0));
-                (items >= TOP_CREATORS_MIN_ITEMS).then(|| TopCreator { id: creator, volume_wei: volume.to_string(), sales, total_sales: sales, collections, items })
+                (items >= TOP_CREATORS_MIN_ITEMS).then(|| TopCreator { id: creator, volume_wei: volume.to_string(), sales, total_sales: sales, collections, items, profile: None })
             })
             .collect();
         rows.sort_by(|a, b| b.volume_wei.parse::<u128>().unwrap_or(0).cmp(&a.volume_wei.parse::<u128>().unwrap_or(0)).then(a.id.cmp(&b.id)));
@@ -2094,15 +1246,6 @@ pub async fn top_creators(
 async fn ready(state: &MarketplaceState) -> Result<(), Response> {
     super::mirrors::require_priced(state).await?;
     super::trades::require_ready(state).await
-}
-
-fn hour_cache() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        CACHE_CONTROL,
-        "public,max-age=3600,s-maxage=3600".parse().unwrap(),
-    );
-    headers
 }
 
 pub async fn get_shop_catalog(
@@ -2131,6 +1274,69 @@ pub async fn get_legacy_catalog(
     }
 }
 
+/// Whether a read names what it reads (a collection, an item, a creator or a search): an item
+/// page, checkout, the cart's price read, a creator page or a typed search. It reads fresh and
+/// carries no creator profiles, so it never waits on the creator directory.
+fn names_its_rows(f: &UnifiedCatalogFilters) -> bool {
+    let b = &f.base;
+    f.contract_addresses.is_some()
+        || f.item_ids.is_some()
+        || b.contract_address.is_some()
+        || b.item_id.is_some()
+        || !b.creator.is_empty()
+        || b.search.is_some()
+}
+
+/// The largest page the 30 s memo keeps: the overview's rails ask for 12 rows and the browse
+/// grid's default page is [`SHOP_DEFAULT_PAGE_SIZE`].
+const MEMO_MAX_ROWS: i64 = SHOP_DEFAULT_PAGE_SIZE;
+
+/// Whether a read's filters are the rails' own shape, which the memo keeps: none of the free
+/// text a client can vary at will (a category, rarities, wearable categories or genders, price
+/// bounds, emote filters). Every other value is an enum or a flag, so the keys stay few.
+fn rail_filters(b: &ShopCatalogFilters) -> bool {
+    b.category.is_none()
+        && b.rarities.is_empty()
+        && b.wearable_categories.is_empty()
+        && b.wearable_genders.is_empty()
+        && b.min_price_credits.is_none()
+        && b.max_price_credits.is_none()
+        && !b.is_smart
+        && b.emote_loop.is_none()
+        && !b.emote_has_sound
+        && !b.emote_has_geometry
+}
+
+/// The memo key of a browse read (the overview rails), built from the parsed filters with the
+/// page size clamped, so that parameter order, spelling and unknown keys share one entry. Only a
+/// first page of at most [`MEMO_MAX_ROWS`] rows over [`rail_filters`] has one: another page,
+/// size or filter reads fresh, so a client cannot fill the memo with full-size pages under keys
+/// it makes up. A read that names a collection, an item, a creator or a search (item pages,
+/// checkout, creator pages, typed searches) has no key either.
+fn unified_browse_key(group_by: UnifiedGroupBy, f: &UnifiedCatalogFilters) -> Option<String> {
+    let b = &f.base;
+    let named = names_its_rows(f);
+    let rows = b
+        .first
+        .unwrap_or(SHOP_DEFAULT_PAGE_SIZE)
+        .clamp(SHOP_MIN_PAGE_SIZE, SHOP_MAX_PAGE_SIZE);
+    let first_page = b.skip.unwrap_or(0) <= 0;
+    if named || !first_page || rows > MEMO_MAX_ROWS || !rail_filters(b) {
+        return None;
+    }
+    let mut keyed = f.clone();
+    (keyed.base.first, keyed.base.skip) = (Some(rows), None);
+    Some(format!("unified:{group_by:?}:{keyed:?}"))
+}
+
+fn body_of(v: impl Serialize) -> Result<Value, ApiError> {
+    serde_json::to_value(v).map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+/// A browse read (one that names none of its rows) carries its creators' profiles, added to each
+/// response under the content denylist as it stands (never memoized); the rails' shapes are also
+/// served from a 30 s memo ([`unified_browse_key`]). The readiness gates and the MANA rate read
+/// still run per request, while a memo hit keeps the prices it was built with (at most 30 s old).
 pub async fn get_unified_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -2139,19 +1345,44 @@ pub async fn get_unified_catalog(
         return r;
     }
     let filters = parse_unified_filters(&pairs);
+    let group_by = parse_unified_group_by(&pairs);
     let rate = match mana_usd_rate(&state).await {
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    let result = match parse_unified_group_by(&pairs) {
-        UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
-            .await
-            .map(|(data, total)| Json(DataTotal { data, total }).into_response()),
-        UnifiedGroupBy::Listing => unified_listings(&state, &filters, rate)
-            .await
-            .map(|(data, total)| Json(DataTotal { data, total }).into_response()),
+    let browse_key = unified_browse_key(group_by, &filters);
+    // Every browse read carries its creators' profiles, memoized or not; a read that names its
+    // rows never waits on the creator directory.
+    let with_profiles = !names_its_rows(&filters);
+    let read = || async {
+        match group_by {
+            UnifiedGroupBy::Item => unified_items(&state, &filters, rate)
+                .await
+                .and_then(|(data, total)| body_of(DataTotal { data, total })),
+            UnifiedGroupBy::Listing => unified_listings(&state, &filters, rate)
+                .await
+                .and_then(|(data, total)| body_of(DataTotal { data, total })),
+        }
     };
-    result.unwrap_or_else(IntoResponse::into_response)
+    let with_profiles = with_profiles && group_by == UnifiedGroupBy::Item;
+    let (result, directory) = tokio::join!(
+        async {
+            match browse_key {
+                Some(key) => memoized(&state, Ttl::S30, key, read).await,
+                None => read().await.map(Arc::new),
+            }
+        },
+        async {
+            match with_profiles {
+                true => directory_snapshot(&state).await,
+                false => None,
+            }
+        }
+    );
+    match result {
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), None),
+        Err(e) => e.into_response(),
+    }
 }
 
 pub async fn get_importable_listings(
@@ -2214,6 +1445,8 @@ pub async fn get_related_catalog(
     Json(RelatedResponseBody { data }).into_response()
 }
 
+/// Served from a 30 s memo per clamped request, with its creators' profiles added to each response
+/// as in [`get_unified_catalog`]; the readiness gates still run per request.
 pub async fn get_trending_catalog(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -2226,9 +1459,101 @@ pub async fn get_trending_catalog(
         Ok(rate) => rate,
         Err(envelope) => return envelope,
     };
-    match trending_items(&state, req.first, req.days, &req.filters, rate).await {
-        Ok(data) => (hour_cache(), Json(TrendingResponseBody { data })).into_response(),
+    let (first, days) = (
+        trending_clamp_first(req.first),
+        trending_clamp_days(req.days),
+    );
+    let read = || async {
+        let data = trending_items(&state, Some(first), Some(days), &req.filters, rate).await?;
+        body_of(TrendingResponseBody { data }).map_err(IntoResponse::into_response)
+    };
+    // As the browse memo, only over the rails' filters: free text a client varies reads fresh.
+    let key = rail_filters(&req.filters.base)
+        .then(|| format!("trending:{first}:{days}:{:?}", req.filters));
+    let (body, directory) = tokio::join!(
+        async {
+            match key {
+                Some(key) => memoized(&state, Ttl::S30, key, read).await,
+                None => read().await.map(Arc::new),
+            }
+        },
+        directory_snapshot(&state)
+    );
+    match body {
+        Ok(body) => with_creator_profiles(&state, body, directory.as_deref(), Some(brief_cache())),
         Err(r) => r,
+    }
+}
+
+/// A feed body (`{"data": [row, ...]}`, each row naming its `creator`) as this response serves it:
+/// with each row's `creatorProfile` from the creator directory under the content denylist as it
+/// stands now, so a profile denylisted since the body was memoized leaves it at once. A body that
+/// carries a profile is sent `no-cache` (no copy is used without revalidation); without the
+/// directory it goes as it is, under `cacheable` when given.
+fn with_creator_profiles(
+    state: &MarketplaceState,
+    body: Arc<Value>,
+    directory: Option<&Value>,
+    cacheable: Option<HeaderMap>,
+) -> Response {
+    let Some(directory) = directory else {
+        return match cacheable {
+            Some(headers) => (headers, Json(body.as_ref())).into_response(),
+            None => Json(body.as_ref()).into_response(),
+        };
+    };
+    let mut body = Arc::unwrap_or_clone(body);
+    name_creators(&mut body, directory, &state.denylist);
+    (profiles_revalidate(), Json(body)).into_response()
+}
+
+/// The `Cache-Control` of a trending or top-creators answer sent without the creator directory (a
+/// cold node, a feed that did not lead the directory's read, or a failing read): kept briefly, so
+/// a CDN does not hold an answer without profiles, whose cards each ask `/lambdas/profiles`, for
+/// the hour these feeds were cached before they carried profiles.
+fn brief_cache() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CACHE_CONTROL,
+        "public,max-age=60,s-maxage=60".parse().unwrap(),
+    );
+    headers
+}
+
+/// The `Cache-Control` of a response that carries creator profiles: a cache may keep it only to
+/// revalidate it, so a profile the content denylist withholds is gone from its next answer.
+fn profiles_revalidate() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, "no-cache".parse().unwrap());
+    headers
+}
+
+/// Sets each row's `creatorProfile` from the creator directory (rows of creators it does not hold
+/// get none, and the cards ask `/lambdas/profiles`), so the overview's cards need no request.
+fn name_creators(body: &mut Value, directory: &Value, denylist: &Denylist) {
+    let Some(rows) = body.get_mut("data").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let creator_of = |row: &Value| {
+        row.get("creator")
+            .and_then(Value::as_str)
+            .map(str::to_lowercase)
+    };
+    let wanted: HashSet<String> = rows.iter().filter_map(creator_of).collect();
+    let profiles = creator_profiles(directory, &wanted, denylist);
+    for row in rows.iter_mut() {
+        let profile = creator_of(row).and_then(|c| profiles.get(&c));
+        let Some(fields) = row.as_object_mut() else {
+            continue;
+        };
+        match profile.map(serde_json::to_value) {
+            Some(Ok(profile)) => {
+                fields.insert("creatorProfile".to_string(), profile);
+            }
+            _ => {
+                fields.remove("creatorProfile");
+            }
+        }
     }
 }
 
@@ -2247,235 +1572,6 @@ fn id_list(p: &Params, key: &str, cap: usize) -> Vec<String> {
         .collect()
 }
 
-/// Personal rows the rail needs before it calls itself personalised.
-const MIN_PERSONAL_ROWS: usize = 4;
-const MAX_SEEDS: usize = 20;
-/// Favourites have their own budget: a browsing session's seeds must not
-/// push the deliberate signal out of the profile.
-const MAX_FAVORITES: i64 = 20;
-const MAX_EQUIPPED: usize = 30;
-const MAX_EXCLUDE: usize = 20;
-const MAX_HELD_SEEDS: i64 = 200;
-
-/// Where a profile item came from, which decides both its weight and the
-/// reason a row it explains gives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SeedSource {
-    Owned,
-    Favorite,
-    Equipped,
-    Seed,
-}
-
-impl SeedSource {
-    /// Relative to a holding: what the avatar wears and what the caller saved
-    /// say what it likes now; a viewed or carted seed is weaker intent.
-    fn weight(self) -> f64 {
-        match self {
-            SeedSource::Equipped => 1.5,
-            SeedSource::Favorite => 1.2,
-            SeedSource::Owned => 1.0,
-            SeedSource::Seed => 0.8,
-        }
-    }
-
-    /// A seed was looked at, never held, so it never reads "because you have".
-    fn reason(self) -> &'static str {
-        match self {
-            SeedSource::Owned => "co_owned",
-            SeedSource::Favorite => "favorite_similar",
-            SeedSource::Equipped => "equipped_similar",
-            SeedSource::Seed => "seed_similar",
-        }
-    }
-}
-
-/// `<contract>-<itemId>` validated rather than trusted (it reaches SQL).
-fn normalize_item_id(value: &str) -> Option<String> {
-    let (contract, item) = value.trim().rsplit_once('-')?;
-    (super::is_valid_eth_address(contract)
-        && !item.is_empty()
-        && item.bytes().all(|b| b.is_ascii_digit()))
-    .then(|| format!("{}-{item}", contract.to_lowercase()))
-}
-
-/// `urn:decentraland:{matic,amoy}:collections-v2:<contract>:<itemId>` as the
-/// `<contract>-<itemId>` id; base avatars and anything else are no taste signal.
-fn urn_to_item_id(urn: &str) -> Option<String> {
-    let rest = urn.trim().strip_prefix("urn:decentraland:")?;
-    let rest = rest
-        .strip_prefix("matic:")
-        .or_else(|| rest.strip_prefix("amoy:"))?;
-    let (contract, item) = rest.strip_prefix("collections-v2:")?.split_once(':')?;
-    normalize_item_id(&format!("{contract}-{item}"))
-}
-
-/// A bounded, de-duplicated id list, each value in either spelling: the
-/// equipped list is where the client holds URNs, and a URN is twice an id.
-fn item_id_values(p: &Params, key: &str, cap: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for value in p
-        .get_list(key, &[])
-        .into_iter()
-        .flat_map(|v| v.split(',').map(str::to_string).collect::<Vec<_>>())
-    {
-        let id = if value.contains(':') {
-            urn_to_item_id(&value)
-        } else {
-            normalize_item_id(&value)
-        };
-        if let Some(id) = id.filter(|id| !out.contains(id)) {
-            out.push(id);
-        }
-        if out.len() >= cap {
-            break;
-        }
-    }
-    out
-}
-
-/// One entry per item, keeping its strongest signal rather than the sum, so
-/// an item owned, favourited and worn cannot crowd out everything else.
-fn build_profile(
-    owned: &[String],
-    favorites: &[String],
-    equipped: &[String],
-    seeds: &[String],
-) -> Vec<(String, SeedSource)> {
-    let mut best: Vec<(String, SeedSource)> = Vec::new();
-    let sources = [
-        (owned, SeedSource::Owned),
-        (favorites, SeedSource::Favorite),
-        (equipped, SeedSource::Equipped),
-        (seeds, SeedSource::Seed),
-    ];
-    for (ids, source) in sources {
-        for id in ids {
-            match best.iter_mut().find(|(have, _)| have == id) {
-                Some(entry) if source.weight() > entry.1.weight() => entry.1 = source,
-                Some(_) => {}
-                None => best.push((id.clone(), source)),
-            }
-        }
-    }
-    best
-}
-
-/// A neighbour hydrated for the re-rank.
-#[derive(Debug, Clone)]
-struct RailCandidate {
-    id: String,
-    collection: String,
-    creator: String,
-    sub_category: String,
-    is_wearable: bool,
-    trigger: Option<String>,
-    score: f64,
-}
-
-/// Per collection, per creator: co-ownership is strongest inside a drop, so
-/// score order alone fills the rail from one collection.
-const MAX_PER_COLLECTION: usize = 2;
-const MAX_PER_CREATOR: usize = 3;
-/// Rows one profile item may explain: three "because you have X" read as one
-/// recommendation repeated, whatever the items are.
-const MAX_PER_TRIGGER: usize = 2;
-/// The wearable share when the profile implies none.
-const DEFAULT_WEARABLE_RATIO: f64 = 0.7;
-
-/// Re-ranks the scored head into the rail: caps per collection, creator and
-/// explaining item, a wearable/emote mix following the profile, and no two
-/// rows of one sub-category in a row. Relaxed in tiers when supply is short
-/// (first the run-breaking, then the caps, finally pure score order), since a
-/// short rail is the worst of the three.
-fn rerank_for_diversity(
-    candidates: Vec<RailCandidate>,
-    limit: usize,
-    wearable_ratio: f64,
-) -> Vec<RailCandidate> {
-    let mut ordered = candidates;
-    ordered.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    let ratio = if wearable_ratio.is_finite() && wearable_ratio > 0.0 {
-        wearable_ratio
-    } else {
-        DEFAULT_WEARABLE_RATIO
-    };
-    let wearable_target = (limit as f64 * ratio).round() as usize;
-    let emote_target = limit.saturating_sub(wearable_target);
-    let mut picked: Vec<RailCandidate> = Vec::new();
-    let mut per_collection: HashMap<String, usize> = HashMap::new();
-    let mut per_creator: HashMap<String, usize> = HashMap::new();
-    let mut per_trigger: HashMap<String, usize> = HashMap::new();
-    let (mut wearables, mut emotes) = (0usize, 0usize);
-    let mut last_sub_category: Option<String> = None;
-    for tier in 0..3 {
-        for candidate in &ordered {
-            if picked.len() >= limit {
-                return picked;
-            }
-            if picked.iter().any(|p| p.id == candidate.id) {
-                continue;
-            }
-            if tier < 2 {
-                let count = |m: &HashMap<String, usize>, k: &str| m.get(k).copied().unwrap_or(0);
-                let exceeds_mix = if candidate.is_wearable {
-                    wearables >= wearable_target && emotes < emote_target
-                } else {
-                    emotes >= emote_target && wearables < wearable_target
-                };
-                if (!candidate.collection.is_empty()
-                    && count(&per_collection, &candidate.collection) >= MAX_PER_COLLECTION)
-                    || (!candidate.creator.is_empty()
-                        && count(&per_creator, &candidate.creator) >= MAX_PER_CREATOR)
-                    || candidate
-                        .trigger
-                        .as_deref()
-                        .is_some_and(|t| count(&per_trigger, t) >= MAX_PER_TRIGGER)
-                    || exceeds_mix
-                    || (tier == 0
-                        && !candidate.sub_category.is_empty()
-                        && last_sub_category.as_deref() == Some(candidate.sub_category.as_str()))
-                {
-                    continue;
-                }
-            }
-            *per_collection
-                .entry(candidate.collection.clone())
-                .or_default() += 1;
-            *per_creator.entry(candidate.creator.clone()).or_default() += 1;
-            if let Some(trigger) = &candidate.trigger {
-                *per_trigger.entry(trigger.clone()).or_default() += 1;
-            }
-            if candidate.is_wearable {
-                wearables += 1;
-            } else {
-                emotes += 1;
-            }
-            last_sub_category =
-                (!candidate.sub_category.is_empty()).then(|| candidate.sub_category.clone());
-            picked.push(candidate.clone());
-        }
-    }
-    picked
-}
-
-/// `/v3/catalog/suggested`: the co-ownership neighbours (`neighbours`) of a
-/// weighted profile (the items the wallet holds, the caller's favourites,
-/// the `equipped` ids or URNs, the request's `seeds`), minus the profile and
-/// `exclude`, hydrated through the same item core as the grid and re-ranked
-/// for variety, with the reason naming the item that contributed most
-/// (`co_owned`, `favorite_similar`, `equipped_similar`, `seed_similar`); the
-/// trending floor fills the rest. Fewer than four personal rows, or no
-/// neighbours build yet, answer the floor alone (`personalized: false`).
-/// The signature is optional and unlocks exactly the favourites, read only
-/// for the address it proves (and only when `address` is absent or that
-/// same one; a signed caller naming nobody means themselves). The old rail's
-/// content neighbours and taste blend are not carried.
 pub async fn get_suggested_catalog(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -2559,159 +1655,6 @@ pub async fn get_suggested_catalog(
         .into_response()
 }
 
-async fn personal_rows(
-    state: &MarketplaceState,
-    p: &Params<'_>,
-    verified: Option<&str>,
-    filters: &UnifiedCatalogFilters,
-    rate: ManaUsdRate,
-    limit: usize,
-) -> Result<Vec<SuggestedItem>, ApiError> {
-    let wallet = p
-        .get_address("address", true, None)
-        .map(|w| w.to_lowercase());
-    let favorites_for = verified.filter(|v| wallet.as_deref().is_none_or(|w| w == *v));
-    let profile_for = wallet.as_deref().or(verified);
-    let requested: Vec<String> = id_list(p, "seeds", MAX_SEEDS)
-        .iter()
-        .filter_map(|id| normalize_item_id(id))
-        .collect();
-    let equipped = item_id_values(p, "equipped", MAX_EQUIPPED);
-    let exclude = id_list(p, "exclude", MAX_EXCLUDE);
-    let held = match profile_for {
-        Some(w) => super::neighbours::held_items(&state.pool, w, MAX_HELD_SEEDS).await?,
-        None => Vec::new(),
-    };
-    let held_ids: Vec<String> = held.iter().map(|(_, c, i)| format!("{c}-{i}")).collect();
-    let favorites: Vec<String> = match favorites_for {
-        Some(address) => match super::lists::get_picks_by_list_id(
-            &state.pool,
-            super::lists::DEFAULT_LIST_ID,
-            Some(address),
-            MAX_FAVORITES,
-            0,
-        )
-        .await
-        {
-            Ok((picks, _)) => picks
-                .iter()
-                .filter_map(|pick| normalize_item_id(&pick.item_id))
-                .collect(),
-            Err(e) => {
-                tracing::warn!(error = ?e, "suggestions: could not read favorites");
-                Vec::new()
-            }
-        },
-        None => Vec::new(),
-    };
-    let profile = build_profile(&held_ids, &favorites, &equipped, &requested);
-    if profile.is_empty() {
-        return Ok(Vec::new());
-    }
-    let (contracts, items): (Vec<String>, Vec<String>) = profile
-        .iter()
-        .filter_map(|(id, _)| id.rsplit_once('-'))
-        .map(|(c, i)| (c.to_string(), i.to_string()))
-        .unzip();
-    let rows = sqlx::query(
-        "SELECT DISTINCT ON (i.contract_address, i.item_id) i.network, i.contract_address, i.item_id::text AS item_id, i.item_type \
-         FROM UNNEST($1::text[], $2::text[]) AS s(contract_address, item_id) \
-         JOIN shop.items i ON i.contract_address = s.contract_address AND i.item_id = s.item_id::numeric \
-         ORDER BY i.contract_address, i.item_id, i.network DESC",
-    )
-    .bind(&contracts)
-    .bind(&items)
-    .fetch_all(&state.pool)
-    .await?;
-    let mut seeds: Vec<(String, String, String, f64)> = Vec::new();
-    let (mut wearable_weight, mut total_weight) = (0.0f64, 0.0f64);
-    for r in &rows {
-        let (contract, item): (String, String) = (r.get("contract_address"), r.get("item_id"));
-        let Some((_, source)) = profile
-            .iter()
-            .find(|(id, _)| *id == format!("{contract}-{item}"))
-        else {
-            continue;
-        };
-        let is_wearable = !opt::<String>(r, "item_type")
-            .unwrap_or_default()
-            .to_lowercase()
-            .starts_with("emote");
-        total_weight += source.weight();
-        if is_wearable {
-            wearable_weight += source.weight();
-        }
-        seeds.push((r.get("network"), contract, item, source.weight()));
-    }
-    let wearable_ratio = if total_weight > 0.0 {
-        wearable_weight / total_weight
-    } else {
-        0.0
-    };
-    let mut skip: Vec<String> = exclude;
-    skip.extend(profile.iter().map(|(id, _)| id.clone()));
-    let scored =
-        super::neighbours::weighted_neighbours_of(&state.pool, &seeds, &skip, (limit * 3) as i64)
-            .await?;
-    if scored.is_empty() {
-        return Ok(Vec::new());
-    }
-    let ids: Vec<String> = scored.iter().map(|s| s.id.clone()).collect();
-    let hydrated = items_by_ids(state, &ids, filters, rate).await?;
-    let by_id: HashMap<String, &UnifiedItem> = hydrated
-        .iter()
-        .map(|i| {
-            (
-                format!(
-                    "{}-{}",
-                    i.contract_address,
-                    i.item_id.clone().unwrap_or_default()
-                ),
-                i,
-            )
-        })
-        .collect();
-    let candidates: Vec<RailCandidate> = scored
-        .iter()
-        .filter_map(|s| {
-            let item = by_id.get(&s.id)?;
-            Some(RailCandidate {
-                id: s.id.clone(),
-                collection: item.contract_address.clone(),
-                creator: item.creator.clone(),
-                sub_category: format!(
-                    "{}:{}",
-                    item.category,
-                    item.wearable_category.clone().unwrap_or_default()
-                ),
-                is_wearable: item.category != "emote",
-                trigger: Some(s.seed.clone()),
-                score: s.score,
-            })
-        })
-        .collect();
-    Ok(rerank_for_diversity(candidates, limit, wearable_ratio)
-        .into_iter()
-        .filter_map(|c| {
-            let item = (*by_id.get(&c.id)?).clone();
-            let source = profile
-                .iter()
-                .find(|(id, _)| Some(id) == c.trigger.as_ref())
-                .map(|(_, s)| *s)
-                .unwrap_or(SeedSource::Seed);
-            Some(SuggestedItem {
-                item,
-                reason: SuggestionReason {
-                    kind: source.reason(),
-                    item_id: c.trigger,
-                    creator: None,
-                },
-                score: c.score,
-            })
-        })
-        .collect())
-}
-
 pub async fn get_top_creators(
     State(state): State<SharedState>,
     Query(pairs): Query<Vec<(String, String)>>,
@@ -2720,14 +1663,30 @@ pub async fn get_top_creators(
         return r;
     }
     let p = Params::new(&pairs);
-    match top_creators(
-        &state,
-        finite_i64(p.get_number("first", None)),
-        finite_i64(p.get_number("days", None)),
-    )
-    .await
-    {
-        Ok(data) => (hour_cache(), Json(TopCreatorsResponseBody { data })).into_response(),
+    let (ranked, directory) = tokio::join!(
+        top_creators(
+            &state,
+            finite_i64(p.get_number("first", None)),
+            finite_i64(p.get_number("days", None)),
+        ),
+        directory_snapshot(&state)
+    );
+    match ranked {
+        Ok(mut data) => {
+            let Some(directory) = directory.as_deref() else {
+                return (brief_cache(), Json(TopCreatorsResponseBody { data })).into_response();
+            };
+            let ids = data.iter().map(|c| c.id.clone()).collect();
+            let profiles = creator_profiles(directory, &ids, &state.denylist);
+            for creator in &mut data {
+                creator.profile = profiles.get(&creator.id).cloned();
+            }
+            (
+                profiles_revalidate(),
+                Json(TopCreatorsResponseBody { data }),
+            )
+                .into_response()
+        }
         Err(r) => r,
     }
 }
@@ -2741,6 +1700,85 @@ mod tests {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn browse_reads_share_one_memo_key_and_named_reads_have_none() {
+        let key = |q: &[(&str, &str)]| {
+            let p = pairs(q);
+            unified_browse_key(parse_unified_group_by(&p), &parse_unified_filters(&p))
+        };
+        let newest = key(&[
+            ("first", "12"),
+            ("sortBy", "newest"),
+            ("listingType", "primary"),
+            ("groupBy", "item"),
+        ]);
+        assert!(newest.is_some());
+        assert_eq!(
+            newest,
+            key(&[
+                ("groupBy", "item"),
+                ("utm_source", "x"),
+                ("listingType", "primary"),
+                ("sortBy", "newest"),
+                ("first", "12")
+            ]),
+            "order and unknown keys do not split the entry"
+        );
+        assert_ne!(
+            newest,
+            key(&[
+                ("first", "12"),
+                ("sortBy", "discount"),
+                ("discounted", "true"),
+                ("listingType", "primary"),
+                ("groupBy", "item")
+            ])
+        );
+        assert_ne!(
+            newest,
+            key(&[
+                ("first", "12"),
+                ("sortBy", "newest"),
+                ("listingType", "primary")
+            ]),
+            "grouped by listing"
+        );
+        assert_eq!(
+            key(&[("groupBy", "item")]),
+            key(&[("groupBy", "item"), ("first", "48"), ("skip", "0")]),
+            "the default page and an explicit one share the entry"
+        );
+        // Only the rails' shapes are kept: a larger page, a later page or free text reads fresh,
+        // so a client cannot fill the memo with full-size pages under made-up keys.
+        for fresh in [
+            vec![("first", "49")],
+            vec![("first", "1000")],
+            vec![("first", "5095")],
+            vec![("first", "12"), ("skip", "12")],
+            vec![("first", "12"), ("category", "wearable")],
+            vec![("first", "12"), ("rarity", "mythic")],
+            vec![("first", "12"), ("wearableCategory", "hat")],
+            vec![("first", "12"), ("wearableGender", "female")],
+            vec![("first", "12"), ("minPriceCredits", "1")],
+            vec![("first", "12"), ("isSmart", "true")],
+            vec![("first", "12"), ("emoteHasSound", "true")],
+        ] {
+            assert_eq!(key(&fresh), None, "{fresh:?}");
+        }
+        let c = "0x1111111111111111111111111111111111111111";
+        let item = format!("{c}-1");
+        for named in [
+            ("contractAddress", c),
+            ("contractAddress", "junk"),
+            ("itemId", "1"),
+            ("items", item.as_str()),
+            ("creator", c),
+            ("search", "hat"),
+        ] {
+            assert_eq!(key(&[("first", "5"), named]), None, "{named:?}");
+        }
     }
 
     #[test]
@@ -3111,6 +2149,51 @@ mod tests {
     }
 
     #[test]
+    fn items_by_ids_read_only_the_open_trades_of_the_ids_contracts() {
+        let ids = vec![
+            "0xaa-1".to_string(),
+            "0xAA-2".to_string(),
+            "0xbb-3".to_string(),
+        ];
+        assert_eq!(id_contracts(&ids), vec!["0xaa", "0xbb"]);
+        let rate = ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+        let by_ids =
+            build_items_by_ids_sql(&ids, &UnifiedCatalogFilters::default(), rate, None).sql;
+        assert!(
+            by_ids.contains(
+                "sent.direction = 'sent' AND sent.contract_address IN (SELECT unnest($3::text[]))"
+            ) && by_ids.contains("(d.contract_address || '-' || d.item_id) = ANY("),
+            "{by_ids}"
+        );
+        let feed = build_unified_items_sql(&UnifiedCatalogFilters::default(), rate, None).sql;
+        assert!(
+            !feed.contains("unnest("),
+            "a feed reads every open trade: {feed}"
+        );
+    }
+
+    #[test]
+    fn a_read_names_the_contracts_of_its_filter_and_its_selection() {
+        let (a, b, c) = (
+            "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+        );
+        let named = |list: &[(&str, &str)]| named_contracts(&parse_unified_filters(&pairs(list)));
+        assert_eq!(named(&[("first", "5")]), None);
+        assert_eq!(
+            named(&[("contractAddress", a), ("itemId", "0")]),
+            Some(vec![a.to_lowercase()])
+        );
+        let items = format!("{c}-1,{a}-2");
+        assert_eq!(
+            named(&[("contractAddress", b), ("items", &items)]),
+            Some(vec![a.to_lowercase(), b.to_string(), c.to_string()])
+        );
+        assert_eq!(named(&[("contractAddress", "nope")]), Some(vec![]));
+    }
+
+    #[test]
     fn clamps_and_floors_follow_the_old_bounds() {
         assert_eq!(
             (
@@ -3256,9 +2339,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn trending_takes_the_sales_cut_then_volume() {
-        let mk = |c: &str, i: &str| UnifiedItem {
+    fn unified_item(c: &str, i: &str) -> UnifiedItem {
+        UnifiedItem {
             source: "native".into(),
             acquisition: "trade".into(),
             trade_id: Some("t".into()),
@@ -3284,7 +2366,59 @@ mod tests {
             network: Network::Matic,
             chain_id: ChainId::MaticMainnet,
             created_at: 0,
+            creator_profile: None,
+        }
+    }
+
+    #[test]
+    fn the_feeds_name_their_creators_inline() {
+        let row = |creator: &str| UnifiedItem {
+            creator: creator.into(),
+            ..unified_item("0xc", "1")
         };
+        let page = serde_json::to_value(DataTotal {
+            data: vec![row("0xAA"), row("0xcc")],
+            total: 2,
+        })
+        .unwrap();
+        let directory = json!([{ "address": "0xaa", "entity_id": "bafyquack", "name": "Quack", "face": null, "claimed": true, "names": ["Quack"], "items": 2, "collections": 1 }]);
+        let denylist = Denylist::default();
+        assert!(
+            page["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("creatorProfile").is_none()),
+            "a memoized page carries no profile"
+        );
+        let mut body = page.clone();
+        name_creators(&mut body, &directory, &denylist);
+        assert_eq!(
+            body["data"][0]["creatorProfile"],
+            json!({ "name": "Quack", "face": null, "claimed": true })
+        );
+        assert!(
+            body["data"][1].get("creatorProfile").is_none(),
+            "an unknown creator is left to the client: {}",
+            body["data"][1]
+        );
+        // A profile denylisted since the page was memoized leaves the next response, as
+        // /lambdas/profiles leaves it out.
+        denylist.set_remote(
+            "https://registry.example/denylist",
+            ["bafyquack".to_string()],
+        );
+        let mut body = page.clone();
+        name_creators(&mut body, &directory, &denylist);
+        assert_eq!(
+            body["data"][0]["creatorProfile"],
+            json!({ "name": "", "face": null, "claimed": false })
+        );
+    }
+
+    #[test]
+    fn trending_takes_the_sales_cut_then_volume() {
+        let mk = unified_item;
         let sales = |c: &str, i: &str, n: usize, price: &str| {
             (0..n)
                 .map(|_| json!({"searchContractAddress": c, "searchItemId": i, "price": price}))

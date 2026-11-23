@@ -1,0 +1,111 @@
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { useId, useRef } from "react";
+
+import { Button, Spinner, Tag } from "@dcl/one-ui";
+import { GeneralVerified } from "@dcl/one-ui/foundations/icons";
+
+import { useAuth } from "@/data/lib/auth/context";
+import { shortAddress } from "@/data/lib/catalyst/format/address";
+import type { CommunityInfo, CommunityMember } from "@/data/lib/catalyst/social/community-detail";
+import { membersQuery } from "@/data/lib/community/queries";
+
+import styles from "./CommunityLists.module.css";
+import { useLoadMore } from "./useLoadMore";
+import { faceUrl, roleLabel } from "./view";
+
+/**
+ * A private community's members are read signed, as the member viewing it (only members see them);
+ * a public one's as anyone, which is what the server prefetched.
+ */
+function useMembers(community: CommunityInfo) {
+  const { identity } = useAuth();
+  return useInfiniteQuery(membersQuery(community.id, community.privacy === "private" ? identity : null));
+}
+
+export function CommunityMembers({ community }: { community: CommunityInfo }) {
+  const titleId = useId();
+  const query = useMembers(community);
+  const members = query.data?.pages.flatMap((page) => page.members) ?? [];
+  const total = query.data?.pages[0]?.total ?? community.membersCount;
+  // The list scrolls inside a fixed height, as source, and its next page loads as it nears the end.
+  const scroller = useRef<HTMLDivElement>(null);
+  const loader = useLoadMore(
+    Boolean(query.hasNextPage) && !query.isFetchNextPageError,
+    query.isFetchingNextPage, () => void query.fetchNextPage(), scroller);
+  return (
+    <section className={styles.section} aria-labelledby={titleId} aria-busy={query.isPending || undefined}>
+      <h2 id={titleId} className={styles.title}>
+        Members ({total})
+      </h2>
+      {query.isPending ? (
+        <div className={styles.loader}>
+          <Spinner variant="light" label="Loading members" />
+        </div>
+      ) : query.isError && members.length === 0 ? (
+        <div className={styles.retry} role="alert">
+          <p className={styles.empty}>We couldn't load the members right now.</p>
+          <Button variant="secondary" size="sm" onClick={() => void query.refetch()}>
+            Try again
+          </Button>
+        </div>
+      ) : members.length === 0 ? (
+        <p className={styles.empty}>No members found</p>
+      ) : (
+        // Focusable so a keyboard can scroll it: its rows hold no control.
+        <div ref={scroller} className={styles.membersScroller} role="group" aria-labelledby={titleId} tabIndex={0}>
+          <ul className={styles.members}>
+            {members.map((member) => (
+              <MemberRow key={member.memberAddress} member={member} />
+            ))}
+          </ul>
+          {query.isFetchNextPageError ? (
+            <div className={styles.retry} role="alert">
+              <p className={styles.empty}>We couldn't load more members.</p>
+              <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+                Try again
+              </Button>
+            </div>
+          ) : query.hasNextPage ? (
+            <div ref={loader.ref} className={styles.sentinel}>
+              {query.isFetchingNextPage ? (
+                <Spinner variant="light" label="Loading more members" />
+              ) : loader.manual ? (
+                <Button variant="secondary" size="sm" onClick={() => void query.fetchNextPage()}>
+                  Load more
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MemberRow({ member }: { member: CommunityMember }) {
+  const name = member.name || shortAddress(member.memberAddress);
+  // A path on this site renders the same on the server and in the browser.
+  const face = faceUrl(member.profilePictureUrl);
+  return (
+    <li className={styles.member}>
+      {face ? (
+        <img className={styles.avatar} src={face} alt="" loading="lazy" />
+      ) : (
+        <span className={styles.avatar} aria-hidden="true">
+          {name.charAt(0).toUpperCase()}
+        </span>
+      )}
+      <span className={styles.memberText}>
+        <span className={styles.memberName}>
+          <span className={styles.memberLabel}>{name}</span>
+          {member.hasClaimedName ? (
+            <span className={styles.verified} role="img" aria-label="Claimed name" title="Claimed name">
+              <GeneralVerified size={16} aria-hidden="true" />
+            </span>
+          ) : null}
+        </span>
+        <Tag variant="role">{roleLabel(member.role)}</Tag>
+      </span>
+    </li>
+  );
+}

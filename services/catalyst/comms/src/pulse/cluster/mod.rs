@@ -10,6 +10,7 @@
 //! than on a thread of its own: `PulseServer` owns every board through `&mut self`, so there is no
 //! worker concurrency to defend against and no lock-free board discipline to keep.
 
+mod assignments;
 pub mod control;
 pub mod feed;
 pub mod nats;
@@ -36,6 +37,10 @@ pub const DEFAULT_PASS_INTERVAL_MS: u64 = 1000;
 pub const DEFAULT_DWELL_PASSES: u32 = 3;
 
 pub const DEFAULT_ID_PREFIX: &str = "C";
+
+pub(super) fn format_cluster_id(prefix: &str, boot_id: uuid::Uuid, number: u64) -> String {
+    format!("{prefix}{}-{number}", boot_id.simple())
+}
 
 /// Passes a departed wallet's last published assignment is retained, so a new session arriving
 /// inside the window can name it as displaced. Zero disables the annotation.
@@ -170,6 +175,7 @@ struct PassMember {
     wallet: String,
     session: String,
     owner_epoch: u64,
+    selected_origin: i32,
     position: Vector3,
     parcel: i32,
     is_teleport: bool,
@@ -251,12 +257,18 @@ pub struct ClusterTracker {
     actual_peer_capacity: usize,
 
     pass_number: u64,
+    /// Existing LiveKit rooms can outlive the tracker and its counter.
+    /// This ID also scopes rooms when no assignment feed or source binding is configured.
+    boot_id: uuid::Uuid,
     next_cluster_number: u64,
     /// Passes in a row that overran their share of the tick; warned from the second.
     consecutive_overruns: u32,
 }
 
 impl ClusterTracker {
+    pub fn publisher(&self) -> Arc<dyn ClusterFeedPublisher> {
+        self.publisher.clone()
+    }
     pub fn new(
         options: ClusterOptions,
         max_peers: usize,
@@ -283,8 +295,15 @@ impl ClusterTracker {
             control: control::ControlSnapshot::default(),
             actual_peer_capacity: max_peers,
             pass_number: 0,
+            boot_id: uuid::Uuid::new_v4(),
             next_cluster_number: 0,
             consecutive_overruns: 0,
+        }
+    }
+
+    pub fn bind_identity(&self, identity: &mut IdentityBoard) {
+        if let Some(current) = self.publisher.current_assignments() {
+            identity.attach_assignments(current);
         }
     }
 
@@ -418,7 +437,7 @@ impl ClusterTracker {
 
         let mut controls: BTreeMap<String, BTreeMap<i64, Vec<control::ControlMember>>> =
             BTreeMap::new();
-        let native_winners = self.native_control_winners(grids, board, identity);
+        let native_winners = self.native_control_winners(identity);
         for member in self.control.members.iter().cloned() {
             if native_winners.contains(&member.wallet) {
                 continue;
@@ -450,22 +469,14 @@ impl ClusterTracker {
         }
     }
 
-    fn native_control_winners(
-        &self,
-        grids: &RealmSpatialGrids,
-        board: &SnapshotBoard,
-        identity: &IdentityBoard,
-    ) -> HashSet<String> {
+    fn native_control_winners(&self, identity: &IdentityBoard) -> HashSet<String> {
         self.control
             .members
             .iter()
             .filter_map(|member| {
-                let peer = identity.peer_by_wallet(&member.wallet)?;
-                let session = identity.session_by_peer(peer).unwrap_or(&member.wallet);
-                (session.eq_ignore_ascii_case(&member.session)
-                    && board.try_read(peer).is_some()
-                    && grids.realm_of(peer).is_some())
-                .then(|| member.wallet.clone())
+                identity
+                    .peer_by_wallet(&member.wallet)
+                    .map(|_| member.wallet.clone())
             })
             .collect()
     }
@@ -537,15 +548,6 @@ impl ClusterTracker {
             return;
         }
         let session = identity.session_by_peer(peer).unwrap_or(wallet).to_string();
-        if self
-            .control
-            .owners
-            .get(&wallet.to_ascii_lowercase())
-            .is_some_and(|owner| owner.closed || !owner.session.eq_ignore_ascii_case(&session))
-        {
-            return;
-        }
-
         self.peer_states[peer as usize].last_seen_pass = self.pass_number;
 
         if let Some(seen) = self.assignment_by_wallet.get_mut(&wallet.to_lowercase()) {
@@ -557,6 +559,7 @@ impl ClusterTracker {
             wallet: wallet.to_string(),
             session,
             owner_epoch: identity.registration_by_peer(peer),
+            selected_origin: 1,
             position: snapshot.global_position,
             parcel: snapshot.parcel,
             is_teleport: snapshot.is_teleport,
@@ -579,6 +582,7 @@ impl ClusterTracker {
             wallet: member.wallet.clone(),
             session: member.session.clone(),
             owner_epoch: member.epoch,
+            selected_origin: member.origin,
             position: member.position,
             parcel: 0,
             is_teleport: false,
@@ -761,7 +765,11 @@ impl ClusterTracker {
     /// pass's assignments, so a freshly minted ID cannot be contested within its own pass.
     fn mint_cluster_id(&mut self) -> String {
         self.next_cluster_number += 1;
-        let id = format!("{}{}", self.options.id_prefix, self.next_cluster_number);
+        let id = format_cluster_id(
+            &self.options.id_prefix,
+            self.boot_id,
+            self.next_cluster_number,
+        );
         self.cluster_records.insert(
             id.clone(),
             ClusterRecord {
@@ -957,6 +965,7 @@ impl ClusterTracker {
                     cluster_id: state.published_cluster_id.clone()?,
                     realm: state.published_realm.clone()?,
                     owner_epoch: member.owner_epoch,
+                    selected_origin: member.selected_origin,
                     owner_peer: member.peer,
                     registration: (member.peer < self.actual_peer_capacity as u32)
                         .then(|| identity.registration_guard(member.peer)),
@@ -1091,11 +1100,14 @@ mod idle_tests {
             session_retention_passes: 0,
             ..Default::default()
         };
+        let mut identity = IdentityBoard::new(CAP);
+        let tracker = ClusterTracker::new(options, CAP, feed);
+        tracker.bind_identity(&mut identity);
         (
             RealmSpatialGrids::new(SPATIAL_GRID_CELL_SIZE, CAP),
             SnapshotBoard::new(CAP, 4),
-            IdentityBoard::new(CAP),
-            ClusterTracker::new(options, CAP, feed),
+            identity,
+            tracker,
         )
     }
 

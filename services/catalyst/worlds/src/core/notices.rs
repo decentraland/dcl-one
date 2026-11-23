@@ -13,7 +13,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::comms::access::QUOTA_BLOCK_GRACE;
-use crate::comms::interfaces::{SocialDirectory, UserNotification};
+use crate::comms::interfaces::{
+    SocialDirectory, UserNotification, UserNotificationAlias, UserNotificationPersistence,
+};
 use crate::comms::world_identity::WorldName;
 use crate::policy::Permission;
 use crate::shared::identity::Address;
@@ -89,11 +91,15 @@ impl Notices {
             (PERMISSION_REVOKED, "World Permission Revoked")
         };
         let (world, permission) = (world.key(), permission.as_str());
-        // The owner-chosen name stays out of the free text.
-        let description = if granted {
-            format!("You have been granted {permission} permission for a world.")
+        let target = if super::reprocess::matches_world_name_pattern(world) {
+            format!("world {world}")
         } else {
-            format!("Your {permission} permission for a world has been revoked.")
+            "a world".to_string()
+        };
+        let description = if granted {
+            format!("You have been granted {permission} permission for {target}.")
+        } else {
+            format!("Your {permission} permission for {target} has been revoked.")
         };
         // Keyed on the change itself, so a later change is always a new notice.
         let version = now.and_utc().timestamp_micros();
@@ -120,6 +126,7 @@ impl Notices {
                 recipient,
                 kind,
                 occurred_at: now,
+                persistence: UserNotificationPersistence::Refresh,
             })
             .collect()
     }
@@ -187,8 +194,8 @@ impl Notices {
     }
 }
 
-/// The old `detected-<...>` event key per kind and wallet, keyed on the
-/// block's full creation time so a later block is a new notice.
+/// One notice per kind, wallet and UTC block-creation day. Exact timestamp
+/// aliases preserve notices for a block already active when the key changes.
 fn quota_notice(
     kind: &'static str,
     wallet: &Address,
@@ -196,14 +203,30 @@ fn quota_notice(
     occurred_at: NaiveDateTime,
     metadata: serde_json::Value,
 ) -> UserNotification {
-    let key = format!("detected-{}", created_at.and_utc().timestamp_micros());
-    let identity = format!("{kind}\n{key}\n{}", wallet.as_str());
+    let daily_key = format!("detected-{}", created_at.date());
+    let timestamp_key = format!("detected-{}", created_at.and_utc().timestamp_micros());
+    let identity = |kind: &str, key: &str| {
+        Uuid::new_v5(
+            &QUOTA_NS,
+            format!("{kind}\n{key}\n{}", wallet.as_str()).as_bytes(),
+        )
+    };
     UserNotification {
-        id: Uuid::new_v5(&QUOTA_NS, identity.as_bytes()),
+        id: identity(kind, &daily_key),
         recipient: wallet.clone(),
         kind,
         metadata,
         occurred_at,
+        persistence: UserNotificationPersistence::InsertOnce {
+            aliases: [MISSING_RESOURCES, ACCESS_RESTRICTED, ACCESS_RESTORED]
+                .into_iter()
+                .map(|kind| UserNotificationAlias {
+                    legacy_id: identity(kind, &timestamp_key),
+                    daily_id: identity(kind, &daily_key),
+                    kind,
+                })
+                .collect(),
+        },
     }
 }
 
@@ -236,7 +259,7 @@ mod tests {
             out[0].metadata,
             json!({
                 "title": "World Permission Granted",
-                "description": "You have been granted deployment permission for a world.",
+                "description": "You have been granted deployment permission for world foo.dcl.eth.",
                 "world": "foo.dcl.eth",
                 "permissions": ["deployment"],
                 "url": "https://builder.example/worlds?tab=dcl",
@@ -254,8 +277,35 @@ mod tests {
         assert_eq!(out[0].metadata["title"], "World Permission Revoked");
         assert_eq!(
             out[0].metadata["description"],
-            "Your streaming permission for a world has been revoked."
+            "Your streaming permission for world foo.dcl.eth has been revoked."
         );
+    }
+
+    #[test]
+    fn a_name_outside_the_world_name_pattern_stays_out_of_the_text() {
+        let notices = Notices::default();
+        for raw in ["<b>x.dcl.eth", "foo.dcl.eth.com", "x_y.eth", "foo"] {
+            let world = WorldName::parse(raw).unwrap();
+            let changed = |granted| {
+                notices.permission_changed(
+                    granted,
+                    &world,
+                    Permission::Access,
+                    &[WALLET.to_string()],
+                    at(0),
+                )[0]
+                .metadata["description"]
+                    .clone()
+            };
+            assert_eq!(
+                changed(true),
+                "You have been granted access permission for a world."
+            );
+            assert_eq!(
+                changed(false),
+                "Your access permission for a world has been revoked."
+            );
+        }
     }
 
     #[test]
@@ -285,19 +335,65 @@ mod tests {
     }
 
     #[test]
-    fn a_second_block_on_the_same_day_is_a_new_notice() {
+    fn quota_identity_uses_kind_wallet_and_utc_block_creation_day() {
         let notices = Notices::default();
         let wallet = Address::parse(WALLET).unwrap();
-        let first = at(1_800_000_000);
+        let other = Address::parse("0x2222222222222222222222222222222222222222").unwrap();
+        let first = chrono::NaiveDate::from_ymd_opt(2027, 1, 15)
+            .unwrap()
+            .and_hms_micro_opt(8, 0, 0, 123456)
+            .unwrap();
         let second = first + chrono::TimeDelta::hours(1);
-        assert_ne!(
-            notices.quota_block(&wallet, first, first).id,
-            notices.quota_block(&wallet, second, second).id
+        let ids = |wallet: &Address, created| {
+            [
+                notices.quota_block(wallet, created, created).id,
+                notices
+                    .quota_block(
+                        wallet,
+                        created,
+                        created + QUOTA_BLOCK_GRACE + chrono::TimeDelta::seconds(1),
+                    )
+                    .id,
+                notices
+                    .quota_restored(wallet, created, created + chrono::TimeDelta::days(3))
+                    .id,
+            ]
+        };
+        let first_ids = ids(&wallet, first);
+        assert_eq!(first_ids, ids(&wallet, second));
+        assert_eq!(
+            first_ids,
+            ids(&wallet, first + chrono::TimeDelta::microseconds(1))
         );
-        assert_ne!(
-            notices.quota_restored(&wallet, first, second).id,
-            notices.quota_restored(&wallet, second, second).id
+        for other_ids in [
+            ids(&other, first),
+            ids(&wallet, first + chrono::TimeDelta::days(1)),
+        ] {
+            for (first_id, other_id) in first_ids.into_iter().zip(other_ids) {
+                assert_ne!(first_id, other_id);
+            }
+        }
+        assert_ne!(first_ids[0], first_ids[1]);
+        assert_ne!(first_ids[0], first_ids[2]);
+        assert_ne!(first_ids[1], first_ids[2]);
+        assert_eq!(
+            first_ids[2],
+            notices
+                .quota_restored(&wallet, first, first + chrono::TimeDelta::days(7))
+                .id
         );
+        let midnight = first
+            .date()
+            .succ_opt()
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        for (before, after) in ids(&wallet, midnight - chrono::TimeDelta::microseconds(1))
+            .into_iter()
+            .zip(ids(&wallet, midnight))
+        {
+            assert_ne!(before, after);
+        }
     }
 
     #[test]

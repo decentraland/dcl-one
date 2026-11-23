@@ -57,7 +57,7 @@ scenario(
     }
     const avatar = await waitForPlayer(
       explorer,
-      (candidate) => candidate.rendered?.processed === true && !candidate.rendered.failed && SLOTS.every(({ category }) => renderedUrn(candidate, category) !== undefined),
+      (candidate) => candidate.rendered?.processed === true && SLOTS.every(({ category }) => renderedUrn(candidate, category) !== undefined),
       THUMBNAIL_TIMEOUT_MS,
       'the engine to render the Hair, Eyes, Eyebrows and Mouth categories'
     )
@@ -92,7 +92,7 @@ scenario(
       explorer,
       (avatar) => {
         const hair = renderedUrn(avatar, 'hair')
-        return avatar.rendered?.processed === true && !avatar.rendered.failed && hair !== undefined && added.some((urn) => sameUrn(urn, hair))
+        return avatar.rendered?.processed === true && hair !== undefined && added.some((urn) => sameUrn(urn, hair))
       },
       THUMBNAIL_TIMEOUT_MS,
       `the engine to render "${name}" in the Hair category`

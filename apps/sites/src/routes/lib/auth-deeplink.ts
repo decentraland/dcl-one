@@ -4,7 +4,42 @@ const FLOW_PARAM = "flow";
 const DEEP_LINK_FLOW_VALUE = "deeplink";
 const BRIDGE_ONLY_PARAM = "bridgeOnly";
 const AUTH_REQUEST_ID_PARAM = "authRequestId";
+const TARGET_CONFIG_PARAM = "targetConfigId";
 const EXPLORER_DEEP_LINK = "decentraland://";
+
+/**
+ * The desktop app a deep-link sign-in hands back to, picked by `targetConfigId`.
+ * `holdsVerifier`: the app derives its request id from a verifier it presents
+ * when it fetches the identity.
+ */
+export type DeepLinkTarget = { appName: string; deepLink: string; holdsVerifier: boolean };
+
+const EXPLORER_TARGET: DeepLinkTarget = {
+  appName: "Decentraland",
+  deepLink: EXPLORER_DEEP_LINK,
+  holdsVerifier: false,
+};
+
+const DEEP_LINK_TARGETS: Record<string, DeepLinkTarget> = {
+  "creator-hub": { appName: "Creator Hub", deepLink: "dcl-creator-hub://", holdsVerifier: true },
+};
+
+export function getDeepLinkTarget(params: URLSearchParams): DeepLinkTarget {
+  const id = (params.get(TARGET_CONFIG_PARAM) ?? "").toLowerCase();
+  return Object.hasOwn(DEEP_LINK_TARGETS, id) ? DEEP_LINK_TARGETS[id] : EXPLORER_TARGET;
+}
+
+/**
+ * The request id a deep-link identity is bound to: only for an app that holds
+ * the verifier, since the server then refuses any pickup without it.
+ */
+export function identityBindingFor(loaded: {
+  id: string;
+  deepLinkIdValid: boolean;
+  target: DeepLinkTarget;
+}): string | undefined {
+  return loaded.deepLinkIdValid && loaded.target.holdsVerifier ? loaded.id : undefined;
+}
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

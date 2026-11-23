@@ -1,10 +1,15 @@
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+
 use serde_json::Value;
 
+use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::{
-    AuthChain, AuthLinkType, parse_ephemeral_payload, recover_address, verify_auth_chain,
+    AuthChain, AuthError, AuthLinkType, parse_ephemeral_payload, recover_address,
+    verify_login_chain_async,
 };
 
 use super::CreateRequestBody;
+use super::contract_checks::{BUDGET_SPENT, Spent};
 
 const DISALLOWED_METHODS: [&str; 1] = ["dcl_personal_sign"];
 const MAX_METHOD_LENGTH: usize = 256;
@@ -77,6 +82,12 @@ pub(super) fn validate_request_message(
         ));
     }
 
+    // The method is stored as text, and in the challenge text: PostgreSQL
+    // refuses a NUL there. (params are stored serialized, a NUL escaped.)
+    if body.method.contains('\0') {
+        return Err("method must not contain NUL characters".into());
+    }
+
     if params.len() > MAX_PARAMS_ITEMS {
         return Err(format!(
             "params must have at most {} items",
@@ -112,9 +123,96 @@ pub(super) struct VerifiedChain {
     pub sender: String,
 }
 
-pub(super) fn validate_auth_chain(chain: &AuthChain) -> Result<VerifiedChain, String> {
+/// Why a chain was refused: invalid (400), a contract-wallet link no
+/// validator could decide (503), or one not asked because the network's or
+/// the replica's budget of contract-wallet calls was spent (429).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ChainRefusal {
+    Invalid(String),
+    Unavailable,
+    Throttled(Spent),
+}
+
+/// Whether `chain` has a contract-wallet link, whose check is an RPC call.
+pub(super) fn needs_contract_check(chain: &AuthChain) -> bool {
+    chain.iter().any(|link| {
+        matches!(
+            link.link_type,
+            AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity
+        )
+    })
+}
+
+static NO_VALIDATOR_WARNED: AtomicBool = AtomicBool::new(false);
+static VALIDATION_FAILED_WARNED_AT: AtomicI64 = AtomicI64::new(i64::MIN);
+const VALIDATION_FAILED_WARN_EVERY_SECS: i64 = 60;
+
+/// Whether a warning last given at `last` is due again at `now_secs`; claims it when due.
+fn warn_due(last: &AtomicI64, now_secs: i64, every_secs: i64) -> bool {
+    let prev = last.load(Ordering::Relaxed);
+    now_secs.saturating_sub(prev) >= every_secs
+        && last
+            .compare_exchange(prev, now_secs, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+}
+
+impl From<String> for ChainRefusal {
+    fn from(msg: String) -> Self {
+        Self::Invalid(msg)
+    }
+}
+
+async fn verify_chain(
+    chain: &AuthChain,
+    final_authority: &str,
+    eip1654: Option<&dyn Eip1654Validator>,
+) -> Result<(), ChainRefusal> {
+    match verify_login_chain_async(chain, final_authority, None, eip1654).await {
+        Ok(()) => Ok(()),
+        Err(e) => Err(refusal(e)),
+    }
+}
+
+/// The refusal for a chain verification error, logging why a contract-wallet
+/// link could not be decided.
+pub(super) fn refusal(err: AuthError) -> ChainRefusal {
+    match err {
+        AuthError::Eip1654NotImplemented => {
+            if !NO_VALIDATOR_WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "auth-api: contract-wallet chain refused, no EIP-1654 validator configured"
+                );
+            }
+            ChainRefusal::Unavailable
+        }
+        // A spent budget, not the RPC: the handler answers it as a 429.
+        AuthError::Eip1654ValidationFailed(detail) if detail == BUDGET_SPENT => {
+            ChainRefusal::Unavailable
+        }
+        AuthError::Eip1654ValidationFailed(detail) => {
+            // Callers can provoke this one; repeats within the interval go to debug.
+            let now = chrono::Utc::now().timestamp();
+            if warn_due(
+                &VALIDATION_FAILED_WARNED_AT,
+                now,
+                VALIDATION_FAILED_WARN_EVERY_SECS,
+            ) {
+                tracing::warn!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
+            } else {
+                tracing::debug!(%detail, "auth-api: contract-wallet chain refused, EIP-1654 validation failed");
+            }
+            ChainRefusal::Unavailable
+        }
+        e => ChainRefusal::Invalid(e.to_string()),
+    }
+}
+
+pub(super) async fn validate_auth_chain(
+    chain: &AuthChain,
+    eip1654: Option<&dyn Eip1654Validator>,
+) -> Result<VerifiedChain, ChainRefusal> {
     if chain.is_empty() {
-        return Err("Auth chain is required".into());
+        return Err(ChainRefusal::Invalid("Auth chain is required".into()));
     }
     assert_chain_structure(chain)?;
     let sender = chain
@@ -122,9 +220,7 @@ pub(super) fn validate_auth_chain(chain: &AuthChain) -> Result<VerifiedChain, St
         .map(|l| l.payload.clone())
         .ok_or_else(|| "Auth chain is required".to_string())?;
     let final_authority = derive_final_authority(chain)?;
-    verify_auth_chain(chain, &final_authority, None)
-        .map(|_| ())
-        .map_err(|e| e.to_string())?;
+    verify_chain(chain, &final_authority, eip1654).await?;
     Ok(VerifiedChain { sender })
 }
 
@@ -152,15 +248,16 @@ fn assert_chain_structure(chain: &AuthChain) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn validate_identity_chain(chain: &AuthChain) -> Result<(String, String), String> {
+pub(super) async fn validate_identity_chain(
+    chain: &AuthChain,
+    eip1654: Option<&dyn Eip1654Validator>,
+) -> Result<(String, String), ChainRefusal> {
     let (Some(first), Some(last)) = (chain.first(), chain.last()) else {
-        return Err("Auth chain is required".into());
+        return Err(ChainRefusal::Invalid("Auth chain is required".into()));
     };
     let (_, final_authority, _) = parse_ephemeral_payload(&last.payload)
         .map_err(|_| "Could not get final authority from auth chain".to_string())?;
-    verify_auth_chain(chain, &final_authority, None)
-        .map(|_| ())
-        .map_err(|e| e.to_string())?;
+    verify_chain(chain, &final_authority, eip1654).await?;
     Ok((first.payload.clone(), final_authority))
 }
 
@@ -169,7 +266,11 @@ fn derive_final_authority(chain: &AuthChain) -> Result<String, String> {
         .last()
         .ok_or_else(|| "Auth chain is required".to_string())?;
     match last.link_type {
-        AuthLinkType::SIGNER => Err("Could not get final authority from auth chain".to_string()),
+        AuthLinkType::SIGNER
+        | AuthLinkType::EcdsaScopedEphemeral
+        | AuthLinkType::EcdsaEip1654ScopedEphemeral => {
+            Err("Could not get final authority from auth chain".to_string())
+        }
         AuthLinkType::EcdsaEphemeral | AuthLinkType::EcdsaEip1654Ephemeral => {
             let (_, ephemeral, _) = parse_ephemeral_payload(&last.payload)
                 .map_err(|e| format!("Could not get final authority from auth chain: {}", e))?;
@@ -184,6 +285,67 @@ fn derive_final_authority(chain: &AuthChain) -> Result<String, String> {
                 .map_err(|e| format!("Could not recover signer from final link: {}", e))?;
             Ok(recovered)
         }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod contract_wallet {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::auth::eip1654::Eip1654Validator;
+    use crate::auth::{AuthChain, AuthError, AuthLink, AuthLinkType};
+
+    pub const CONTRACT: &str = "0x00000000000000000000000000000000c0ffee00";
+    pub const SIGNATURE: &str = "0xc0de";
+
+    /// Answers for [`CONTRACT`] alone, accepting only [`SIGNATURE`]; counts its calls.
+    #[derive(Default)]
+    pub struct Wallet(AtomicUsize);
+
+    impl Wallet {
+        pub fn calls(&self) -> usize {
+            self.0.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Eip1654Validator for Wallet {
+        async fn validate_signature(
+            &self,
+            contract_address: &str,
+            _hash: &[u8],
+            signature: &[u8],
+        ) -> Result<bool, AuthError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(contract_address == CONTRACT && signature == [0xc0, 0xde])
+        }
+    }
+
+    pub struct Unreachable;
+
+    #[async_trait::async_trait]
+    impl Eip1654Validator for Unreachable {
+        async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+            Err(AuthError::Eip1654ValidationFailed("rpc down".into()))
+        }
+    }
+
+    /// [`CONTRACT`] delegating to `ephemeral` with `signature`.
+    pub fn chain(ephemeral: &str, signature: &str) -> AuthChain {
+        vec![
+            AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: CONTRACT.into(),
+                signature: None,
+            },
+            AuthLink {
+                link_type: AuthLinkType::EcdsaEip1654Ephemeral,
+                payload: format!(
+                    "Decentraland Login\nEphemeral address: {ephemeral}\nExpiration: 2100-01-01T00:00:00.000Z"
+                ),
+                signature: Some(signature.into()),
+            },
+        ]
     }
 }
 
@@ -249,25 +411,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn validate_auth_chain_rejects_a_lone_unsigned_signer() {
+    #[tokio::test]
+    async fn validate_auth_chain_rejects_a_lone_unsigned_signer() {
         let attacker = "0x00000000000000000000000000000000deadbeef";
         for signature in [None, Some("")] {
             let chain = vec![signer_link(attacker, signature)];
-            let err = validate_auth_chain(&chain).unwrap_err();
+            let err = invalid(validate_auth_chain(&chain, None).await);
             assert_eq!(err, "Auth chain must have at least 2 links");
         }
-        assert!(validate_auth_chain(&stub_auth_chain()).is_err());
+        assert!(validate_auth_chain(&stub_auth_chain(), None).await.is_err());
     }
 
-    #[test]
-    fn validate_auth_chain_requires_every_ecdsa_link_to_carry_a_signature() {
+    #[tokio::test]
+    async fn validate_auth_chain_requires_every_ecdsa_link_to_carry_a_signature() {
         let chain = vec![
             signer_link(TEST_EPHEMERAL_ADDRESS, None),
             ecdsa_link("some ephemeral payload", Some("")),
         ];
         assert_eq!(
-            validate_auth_chain(&chain).unwrap_err(),
+            invalid(validate_auth_chain(&chain, None).await),
             "auth-chain link 1 is missing its signature"
         );
         let chain = vec![
@@ -275,19 +437,19 @@ mod tests {
             ecdsa_link("some ephemeral payload", None),
         ];
         assert_eq!(
-            validate_auth_chain(&chain).unwrap_err(),
+            invalid(validate_auth_chain(&chain, None).await),
             "auth-chain link 1 is missing its signature"
         );
     }
 
-    #[test]
-    fn validate_auth_chain_rejects_a_signer_link_out_of_position() {
+    #[tokio::test]
+    async fn validate_auth_chain_rejects_a_signer_link_out_of_position() {
         let chain = vec![
             signer_link(TEST_EPHEMERAL_ADDRESS, None),
             signer_link(TEST_EPHEMERAL_ADDRESS, None),
         ];
         assert_eq!(
-            validate_auth_chain(&chain).unwrap_err(),
+            invalid(validate_auth_chain(&chain, None).await),
             "SIGNER link at non-zero index 1"
         );
     }
@@ -421,6 +583,23 @@ mod tests {
         );
     }
 
+    /// A NUL in the method is a 400 here, not a 500 at the text insert; one in
+    /// params is stored escaped.
+    #[test]
+    fn create_request_refuses_a_nul_in_the_method() {
+        let err = validate_request_message(&request("eth_\0call", vec![], Some(stub_auth_chain())))
+            .unwrap_err();
+        assert_eq!(err, "method must not contain NUL characters");
+        assert!(
+            validate_request_message(&request(
+                "eth_call",
+                vec![json!("a\0b")],
+                Some(stub_auth_chain())
+            ))
+            .is_ok()
+        );
+    }
+
     #[test]
     fn create_request_refuses_properties_outside_the_wire_shape() {
         let body = parse(
@@ -511,6 +690,13 @@ mod tests {
         );
     }
 
+    fn invalid<T: std::fmt::Debug>(verdict: Result<T, ChainRefusal>) -> String {
+        match verdict.unwrap_err() {
+            ChainRefusal::Invalid(msg) => msg,
+            other => panic!("expected an invalid chain, got {other:?}"),
+        }
+    }
+
     fn wallet(key: &str) -> alloy_signer_local::PrivateKeySigner {
         key.parse().unwrap()
     }
@@ -520,10 +706,19 @@ mod tests {
     }
 
     fn delegated_chain(signer_key: &str, ephemeral_key: &str, expiration: &str) -> AuthChain {
+        delegated_chain_for("Decentraland Login", signer_key, ephemeral_key, expiration)
+    }
+
+    fn delegated_chain_for(
+        first_line: &str,
+        signer_key: &str,
+        ephemeral_key: &str,
+        expiration: &str,
+    ) -> AuthChain {
         use alloy_signer::SignerSync;
         let signer = wallet(signer_key);
         let message = format!(
-            "Decentraland Login\nEphemeral address: {}\nExpiration: {expiration}",
+            "{first_line}\nEphemeral address: {}\nExpiration: {expiration}",
             address_of(ephemeral_key)
         );
         let signature = format!(
@@ -553,42 +748,191 @@ mod tests {
     const EPHEMERAL_KEY: &str =
         "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
-    #[test]
-    fn identity_chain_yields_owner_and_ephemeral_final_authority() {
+    #[tokio::test]
+    async fn identity_chain_yields_owner_and_ephemeral_final_authority() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
-        let (owner, final_authority) = validate_identity_chain(&chain).unwrap();
+        let (owner, final_authority) = validate_identity_chain(&chain, None).await.unwrap();
         assert_eq!(owner, chain[0].payload);
         assert!(final_authority.eq_ignore_ascii_case(&address_of(EPHEMERAL_KEY)));
     }
 
     #[test]
-    fn identity_chain_refuses_a_forged_delegation() {
+    fn only_contract_wallet_links_need_a_contract_check() {
+        use super::contract_wallet::{SIGNATURE, chain};
+        let ephemeral = address_of(EPHEMERAL_KEY);
+        assert!(needs_contract_check(&chain(&ephemeral, SIGNATURE)));
+        assert!(!needs_contract_check(&delegated_chain(
+            SIGNER_KEY,
+            EPHEMERAL_KEY,
+            "2100-01-01T00:00:00.000Z"
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_forged_link_after_a_contract_one_is_refused_without_the_rpc() {
+        use super::contract_wallet::{SIGNATURE, chain};
+        let mut forged = chain(&address_of(EPHEMERAL_KEY), SIGNATURE);
+        forged.push(crate::auth::AuthLink {
+            link_type: AuthLinkType::EcdsaSignedEntity,
+            payload: "entity".into(),
+            signature: Some(format!("0x{}", "00".repeat(65))),
+        });
+        assert!(matches!(
+            validate_auth_chain(&forged, Some(&crate::auth::PeerValidated)).await,
+            Err(ChainRefusal::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_repeated_warning_is_due_once_per_interval() {
+        let last = AtomicI64::new(i64::MIN);
+        assert!(warn_due(&last, 1_000, 60));
+        assert!(!warn_due(&last, 1_030, 60));
+        assert!(warn_due(&last, 1_060, 60));
+    }
+
+    #[tokio::test]
+    async fn contract_wallet_chains_are_asked_of_the_validator() {
+        use super::contract_wallet::{CONTRACT, SIGNATURE, Unreachable, Wallet, chain};
+        let ephemeral = address_of(EPHEMERAL_KEY);
+        let wallet = Wallet::default();
+
+        let verified = validate_auth_chain(&chain(&ephemeral, SIGNATURE), Some(&wallet))
+            .await
+            .unwrap();
+        assert_eq!(verified.sender, CONTRACT);
+        let (owner, final_authority) =
+            validate_identity_chain(&chain(&ephemeral, SIGNATURE), Some(&wallet))
+                .await
+                .unwrap();
+        assert_eq!(
+            (owner.as_str(), final_authority),
+            (CONTRACT, ephemeral.clone())
+        );
+
+        let forged = chain(&ephemeral, "0xbad0");
+        assert!(
+            invalid(validate_auth_chain(&forged, Some(&wallet)).await).contains("rejected"),
+            "a signature the contract refuses is a bad request"
+        );
+        assert!(
+            validate_identity_chain(&forged, Some(&wallet))
+                .await
+                .is_err()
+        );
+
+        for validator in [None, Some(&Unreachable as &dyn Eip1654Validator)] {
+            assert_eq!(
+                validate_auth_chain(&chain(&ephemeral, SIGNATURE), validator)
+                    .await
+                    .unwrap_err(),
+                ChainRefusal::Unavailable
+            );
+            assert_eq!(
+                validate_identity_chain(&chain(&ephemeral, SIGNATURE), validator)
+                    .await
+                    .unwrap_err(),
+                ChainRefusal::Unavailable
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn eoa_chains_need_no_validator() {
+        let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
+        let without = validate_auth_chain(&chain, None).await.unwrap();
+        let with = validate_auth_chain(&chain, Some(&super::contract_wallet::Unreachable))
+            .await
+            .unwrap();
+        assert_eq!(without.sender, with.sender);
+    }
+
+    #[tokio::test]
+    async fn identity_chain_refuses_a_forged_delegation() {
         let mut chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
         chain[0].payload = TEST_EPHEMERAL_ADDRESS.into();
-        assert!(validate_identity_chain(&chain).is_err());
+        assert!(validate_identity_chain(&chain, None).await.is_err());
     }
 
-    #[test]
-    fn identity_chain_refuses_an_expired_delegation() {
+    #[tokio::test]
+    async fn identity_chain_refuses_an_expired_delegation() {
         let chain = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2020-01-01T00:00:00.000Z");
-        assert!(validate_identity_chain(&chain).is_err());
+        assert!(validate_identity_chain(&chain, None).await.is_err());
     }
 
-    #[test]
-    fn identity_chain_must_end_in_an_ephemeral_delegation() {
+    #[tokio::test]
+    async fn requests_and_identities_need_a_login_delegation() {
+        let login = delegated_chain(SIGNER_KEY, EPHEMERAL_KEY, "2100-01-01T00:00:00.000Z");
+        assert!(validate_auth_chain(&login, None).await.is_ok());
+        assert!(validate_identity_chain(&login, None).await.is_ok());
+
+        let other = delegated_chain_for(
+            "Decentraland Storage Delegation",
+            SIGNER_KEY,
+            EPHEMERAL_KEY,
+            "2100-01-01T00:00:00.000Z",
+        );
+        for err in [
+            invalid(validate_auth_chain(&other, None).await.map(|_| ())),
+            invalid(validate_identity_chain(&other, None).await.map(|_| ())),
+        ] {
+            assert!(err.starts_with("Invalid ephemeral payload"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn identity_chain_must_end_in_an_ephemeral_delegation() {
         assert_eq!(
-            validate_identity_chain(&vec![]).unwrap_err(),
+            invalid(validate_identity_chain(&vec![], None).await),
             "Auth chain is required"
         );
         assert_eq!(
-            validate_identity_chain(&stub_auth_chain()).unwrap_err(),
+            invalid(validate_identity_chain(&stub_auth_chain(), None).await),
             "Could not get final authority from auth chain"
         );
     }
 
-    #[test]
-    fn validate_auth_chain_rejects_a_lone_signer_with_no_signature() {
-        let err = validate_auth_chain(&stub_auth_chain()).unwrap_err();
+    #[tokio::test]
+    async fn a_scoped_login_is_refused() {
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "explore".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                4_000_000_000_000,
+                &grants,
+                "payload",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        invalid(validate_auth_chain(&chain, None).await);
+
+        for link_type in [
+            AuthLinkType::EcdsaScopedEphemeral,
+            AuthLinkType::EcdsaEip1654ScopedEphemeral,
+        ] {
+            let mut identity = chain[..2].to_vec();
+            identity[1].link_type = link_type;
+            assert_eq!(
+                invalid(validate_auth_chain(&identity, None).await),
+                "Could not get final authority from auth chain"
+            );
+            invalid(validate_identity_chain(&identity, None).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_auth_chain_rejects_a_lone_signer_with_no_signature() {
+        let err = invalid(validate_auth_chain(&stub_auth_chain(), None).await);
         assert_eq!(err, "Auth chain must have at least 2 links");
 
         let victim = vec![crate::auth::AuthLink {
@@ -597,7 +941,7 @@ mod tests {
             signature: None,
         }];
         assert!(
-            validate_auth_chain(&victim).is_err(),
+            validate_auth_chain(&victim, None).await.is_err(),
             "a bare SIGNER naming an arbitrary victim must not authenticate"
         );
     }

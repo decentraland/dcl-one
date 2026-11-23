@@ -34,7 +34,8 @@ import Blockie from "./settings/Blockie";
 import { EnsureQueryClient, useShopServices } from "./services";
 import "./settingspage.css";
 
-type Grant = ShopAuthorizationDescriptor & { spenderName: string; tokenName: string };
+/** `revokeOnly`: never granted from this page, listed only while the chain holds it, so it can be revoked. */
+type Grant = ShopAuthorizationDescriptor & { spenderName: string; tokenName: string; revokeOnly?: boolean };
 
 const BIDS: Partial<Record<number, string>> = {
   [CHAIN.ETHEREUM]: "0xe479dfd9664c693b2e2992300930b00bfde08233",
@@ -61,7 +62,7 @@ function mana(chainId: ChainId, spender: string, spenderName: string, section: s
 }
 
 /** The MANA approvals for buying. The marketplaces (resales, LAND orders) are listed only with the Marketplace on;
- * the Shop's own (the collection store, the credits manager) always. */
+ * the collection store always. The credits managers are not here (`managerGrants`). */
 function buyingGrants(eth: ChainId, pol: ChainId, marketplace: boolean): Grant[] {
   const e = chainContracts(eth);
   const p = chainContracts(pol);
@@ -73,10 +74,20 @@ function buyingGrants(eth: ChainId, pol: ChainId, marketplace: boolean): Grant[]
     for (const m of p?.offChainMarketplaces ?? []) out.push(mana(pol, m.address, m.label, "buying"));
   }
   if (p?.collectionStore) out.push(mana(pol, p.collectionStore.address, p.collectionStore.label, "buying"));
-  if (p?.creditsManager) out.push(mana(pol, p.creditsManager.address, p.creditsManager.label, "buying"));
-  // The registry manager a build replaced: listed so an approval made to it can still be revoked.
+  return out;
+}
+
+/**
+ * The CreditsManager, and the registry manager a build replaced: never granted from here. A purchase paying Credits and
+ * MANA approves it exactly the MANA that purchase needs, and no standing allowance is left to it while its admin key is
+ * a hot key. Each is listed only while the chain holds an allowance to it, so that allowance can be revoked.
+ */
+function managerGrants(pol: ChainId): Grant[] {
+  const p = chainContracts(pol);
+  const out: Grant[] = [];
+  if (p?.creditsManager) out.push({ ...mana(pol, p.creditsManager.address, p.creditsManager.label, "buying"), revokeOnly: true });
   const replaced = replacedCreditsManager(pol);
-  if (replaced) out.push(mana(pol, replaced.address, replaced.label, "buying"));
+  if (replaced) out.push({ ...mana(pol, replaced.address, replaced.label, "buying"), revokeOnly: true });
   return out;
 }
 
@@ -114,7 +125,7 @@ function Authorization({ grant, account, canChange }: { grant: Grant; account: s
 
   async function change(active: boolean) {
     const provider = wallet.host?.provider?.() ?? null;
-    if (!provider) return;
+    if (!provider || (active && grant.revokeOnly)) return;
     setBusy(true);
     setError(null);
     try {
@@ -153,7 +164,7 @@ function Authorization({ grant, account, canChange }: { grant: Grant; account: s
             className="shop-settings-auth__radio"
             aria-checked={granted}
             aria-label={`${grant.tokenName} for ${grant.spenderName} on ${network}`}
-            disabled={!canChange || status.isError}
+            disabled={!canChange || status.isError || (grant.revokeOnly && !granted)}
             onClick={() => void change(!granted)}
           />
         )}
@@ -172,6 +183,9 @@ function Authorization({ grant, account, canChange }: { grant: Grant; account: s
           grant.spenderName
         )}{" "}
         contract to operate {grant.tokenName} on your behalf on {network}
+        {grant.revokeOnly ? (
+          <span> Purchases with Credits and MANA approve it only what each one needs, so this allowance can be revoked.</span>
+        ) : null}
       </div>
       {error ? (
         <div className="shop-settings-auth__error" role="alert">
@@ -229,7 +243,7 @@ function SettingsScreen() {
   const bidding = marketplace ? allBidding : NO_GRANTS;
   const renting = marketplace ? allRenting : NO_GRANTS;
   // Without the Marketplace its approvals are not offered, but one already granted is listed so it can be revoked (as
-  // the replaced credits manager is): only those whose allowance the chain still holds.
+  // the credits managers are): only those whose allowance the chain still holds.
   const dormant = useMemo(() => {
     if (marketplace) return NO_GRANTS;
     const shops = new Set(buyingGrants(eth, pol, false).map((g) => g.id));
@@ -244,6 +258,16 @@ function SettingsScreen() {
     })),
   });
   const revocable = dormant.filter((_, i) => dormantStatus[i]?.data === true);
+  const managers = useMemo(() => managerGrants(pol), [pol]);
+  const managerStatus = useQueries({
+    queries: managers.map((g) => ({
+      queryKey: statusKey(g, account ?? ""),
+      queryFn: () => getAuthorizationStatus(g, account!, undefined, services.reader),
+      staleTime: 30_000,
+      enabled: !!account,
+    })),
+  });
+  const grantedManagers = managers.filter((_, i) => managerStatus[i]?.data === true);
 
   const held = useQuery({
     queryKey: ["shop-held-collections", account],
@@ -335,7 +359,7 @@ function SettingsScreen() {
               Your account approves what each purchase needs as you buy, so there is nothing to set up here.
             </FlowBanner>
           ) : null}
-          <Group label="For buying" grants={buying} account={account} canChange={selfCustody} />
+          <Group label="For buying" grants={[...buying, ...grantedManagers]} account={account} canChange={selfCustody} />
           {bidding.length > 0 ? <Group label="For bidding" grants={bidding} account={account} canChange={selfCustody} /> : null}
           {renting.length > 0 ? <Group label="For renting" grants={renting} account={account} canChange={selfCustody} /> : null}
           {revocable.length > 0 || (!marketplace && selling.length > 0) ? (

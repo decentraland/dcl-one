@@ -21,9 +21,11 @@ storage = 4
 price = 4
 chain_index = 4
 land_authz = 5
+# the community chat message router: its own process over db, shared and config
+message_router = 5
 content = 6
 explore = 7
-# comms: pulse, the archipelago connector, the gatekeeper and live presence; worlds, social and shop call it
+# comms: pulse, the archipelago connector, the gatekeeper and live presence; worlds and social call it
 comms = 8
 worlds = 9
 social = 10

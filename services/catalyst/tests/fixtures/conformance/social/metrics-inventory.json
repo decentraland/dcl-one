@@ -43,6 +43,13 @@
       "source_buckets": null,
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/stats/runtime.rs",
+          "line": 73,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
           "line": 312,
           "kind": "histogram",
@@ -54,7 +61,7 @@
           ]
         }
       ],
-      "status": "literal_shape_present_runtime_unverified"
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "http_requests_total",
@@ -67,6 +74,13 @@
       "source_buckets": null,
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/stats/runtime.rs",
+          "line": 72,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
           "line": 311,
           "kind": "counter",
@@ -78,7 +92,7 @@
           ]
         }
       ],
-      "status": "literal_shape_present_runtime_unverified"
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "http_request_size_bytes",
@@ -91,6 +105,13 @@
       "source_buckets": null,
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/stats/runtime.rs",
+          "line": 76,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
           "path": "services/catalyst/social/src/rpc/http.rs",
           "line": 209,
           "kind": "histogram",
@@ -102,7 +123,7 @@
           ]
         }
       ],
-      "status": "literal_shape_present_runtime_unverified"
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "wkc_logger_logs_total",
@@ -202,7 +223,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 199,
+          "line": 178,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -212,7 +233,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 215,
+          "line": 208,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -347,14 +368,14 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 155,
+          "line": 154,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 156,
+          "line": 155,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -420,7 +441,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 83,
+          "line": 82,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -463,7 +484,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 221,
+          "line": 214,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -678,7 +699,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 709,
+          "line": 700,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -687,7 +708,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 719,
+          "line": 710,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -707,7 +728,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 693,
+          "line": 684,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -736,7 +757,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 501,
+          "line": 492,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -745,7 +766,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 507,
+          "line": 498,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -765,7 +786,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 540,
+          "line": 531,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -774,7 +795,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 609,
+          "line": 600,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -794,7 +815,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 256,
+          "line": 247,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -866,7 +887,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/metrics.rs",
-          "line": 160,
+          "line": 173,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1005,7 +1026,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/service/mod.rs",
-          "line": 179,
+          "line": 187,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [

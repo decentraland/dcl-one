@@ -178,8 +178,13 @@ pub struct PassOutcome {
     pub cancelled: bool,
     /// True only when every page fetched and every row upserted cleanly; the
     /// delete sweep is gated on it so a flaky cycle can never wipe rows it
-    /// merely failed to see.
+    /// merely failed to see. A resumed events or worlds pass is never
+    /// complete: what it skipped before the interruption is not persisted.
     pub complete: bool,
+    /// This run fetched every page it asked for and ended at the listing's
+    /// end, not at the offset ceiling; what it cannot know is whether an
+    /// interrupted run before it skipped a page.
+    pub fetched_all: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,27 +221,32 @@ pub struct MirrorRow {
     pub raw: Value,
 }
 
-/// The sleeps before each retry of one page fetch. One 25 s read timeout in
-/// a 250-page places pass used to fail the whole pass into the job's backoff.
-const PAGE_RETRY_DELAYS: [Duration; 3] = [
+/// The sleeps before each retry of one page fetch, which both passes take as
+/// `retry`. One 25 s read timeout in a 250-page places pass used to fail the
+/// whole pass into the job's backoff.
+pub const PAGE_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(2),
     Duration::from_secs(4),
     Duration::from_secs(8),
 ];
 
-/// One page, retried over [`PAGE_RETRY_DELAYS`] while the failure is one the
-/// upstream or the path to it mends on its own ([`retryable_page_error`]);
+/// One page, retried after each of `retry`'s delays while the failure is one
+/// the upstream or the path to it mends on its own ([`retryable_page_error`]);
 /// any other error, and the last retry's, is the caller's. Both passes call
 /// this inside a `select!` on the cancel token, which covers the sleeps.
-async fn fetch_page(client: &crate::http::Outbound, url: &str) -> Result<Value> {
-    let mut delays = PAGE_RETRY_DELAYS.iter();
+async fn fetch_page(
+    client: &crate::http::Outbound,
+    url: &str,
+    retry: &[Duration],
+) -> Result<Value> {
+    let mut delays = retry.iter();
     loop {
         match fetch_page_once(client, url).await {
             Ok(body) => return Ok(body),
             Err(e) => match delays.next() {
                 Some(delay) if retryable_page_error(&e) => {
                     tracing::info!(
-                        attempt = PAGE_RETRY_DELAYS.len() - delays.len(),
+                        attempt = retry.len() - delays.len(),
                         wait_s = delay.as_secs(),
                         url = %url,
                         error = %format!("{e:#}"),
@@ -365,6 +375,7 @@ pub async fn run_places_pass(
     pool: &PgPool,
     source: &MirrorSource,
     interval: Duration,
+    retry: &[Duration],
     cancel: &CancellationToken,
 ) -> Result<PassOutcome> {
     let base = source.base();
@@ -372,6 +383,7 @@ pub async fn run_places_pass(
     let start = mirror_state::begin_pass(pool, PLACES_MIRROR, base).await?;
     let mut out = PassOutcome {
         complete: true,
+        fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -391,7 +403,7 @@ pub async fn run_places_pass(
                 out.complete = false;
                 return Ok(out);
             }
-            fetched = fetch_page(client, &url) => match fetched {
+            fetched = fetch_page(client, &url, retry) => match fetched {
                 Ok(body) => body,
                 Err(e) => {
                     let _ = mirror_state::record_error(pool, PLACES_MIRROR, &format!("{e:#}")).await;
@@ -436,6 +448,7 @@ pub async fn run_places_pass(
                 "places mirror: offset ceiling reached; ending pass incomplete"
             );
             out.complete = false;
+            out.fetched_all = false;
             ceiling_error = Some(format!(
                 "offset ceiling {MAX_OFFSET} reached with upstream total {total}"
             ));
@@ -558,13 +571,17 @@ pub async fn run_worlds_pass(
     pool: &PgPool,
     source: &MirrorSource,
     interval: Duration,
+    retry: &[Duration],
     cancel: &CancellationToken,
 ) -> Result<PassOutcome> {
     let base = source.base();
     reclaim_local(pool).await?;
     let start = mirror_state::begin_pass(pool, WORLDS_MIRROR, base).await?;
     let mut out = PassOutcome {
-        complete: true,
+        // The cursor does not record the pages or rows skipped before the
+        // interruption, so a resumed pass never counts as complete.
+        complete: !start.resumed,
+        fetched_all: true,
         resumed_from: start.resumed.then_some(start.offset),
         upserted: start.rows as usize,
         ..Default::default()
@@ -580,6 +597,7 @@ pub async fn run_worlds_pass(
         if offset >= MAX_OFFSET {
             tracing::warn!(offset, "worlds mirror: offset ceiling reached; ending pass");
             out.complete = false;
+            out.fetched_all = false;
             break;
         }
         let url = format!("{base}/api/worlds?limit={PAGE}&offset={offset}");
@@ -589,7 +607,7 @@ pub async fn run_worlds_pass(
                 out.complete = false;
                 return Ok(out);
             }
-            fetched = fetch_page(client, &url) => fetched.and_then(|b| parse_page(&b)),
+            fetched = fetch_page(client, &url, retry) => fetched.and_then(|b| parse_page(&b)),
         };
         match fetched {
             Ok(worlds) => {
@@ -608,6 +626,7 @@ pub async fn run_worlds_pass(
             Err(e) => {
                 out.failed_pages += 1;
                 out.complete = false;
+                out.fetched_all = false;
                 consecutive_failures += 1;
                 tracing::warn!(error = %e, url = %url, "worlds mirror: page fetch failed; skipped");
                 let _ = mirror_state::record_error(pool, WORLDS_MIRROR, &format!("{e:#}")).await;
@@ -634,10 +653,14 @@ pub async fn run_worlds_pass(
             rows: out.upserted as i64,
             swept: out.swept as i64,
             error: (!out.complete).then(|| {
-                format!(
+                let mut reason = format!(
                     "{} failed pages, {} failed rows",
                     out.failed_pages, out.failed_rows
-                )
+                );
+                if let Some(offset) = out.resumed_from {
+                    reason.push_str(&format!("; resumed at offset {offset}"));
+                }
+                reason
             }),
         },
     )
@@ -898,6 +921,35 @@ mod tests {
         assert!(!retryable_page_error(&anyhow!(
             "upstream returned ok!=true"
         )));
+    }
+
+    #[test]
+    fn production_page_retries_wait_two_four_and_eight_seconds() {
+        assert_eq!(PAGE_RETRY_DELAYS.map(|d| d.as_secs()), [2, 4, 8]);
+    }
+
+    #[tokio::test]
+    async fn a_failing_page_is_asked_once_per_retry_delay_plus_once() {
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = asked.clone();
+        let app = axum::Router::new().route(
+            "/down",
+            axum::routing::get(move || {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/down", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let retry = [Duration::ZERO; PAGE_RETRY_DELAYS.len()];
+        fetch_page(&crate::http::Outbound::for_tests(), &url, &retry)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            retry.len() + 1
+        );
     }
 
     fn fixture() -> Value {

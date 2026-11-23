@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, ModalShell, Select, TextInput, Toggle, openPopup } from '../../design'
+import { debugPanelLauncherEnabled } from '@explorer-core/lib/debugPanelLauncher'
+import { Button, ModalShell, Select, TextInput, Toggle } from '../../design'
+import { Mark } from '../../design/Glyphs'
+import type { EngineSession } from '../session/useEngineSession'
+import { closeDebugPanel, useDebugPanel } from './useDebugPanel'
+import { isEditableTarget } from '../../lib/bindingLabels'
 import styles from './DebugPanel.module.css'
 
 type RunCommand = (line: string) => Promise<string>
@@ -11,6 +16,7 @@ export interface DebugSection {
   fields: [label: string, path: string][]
   actions: [label: string, command: string][]
   inputs?: WidgetInput[]
+  poll?: boolean
 }
 
 interface WidgetInput {
@@ -104,7 +110,7 @@ function StructuredReading({ value, label }: { value: object; label: string }) {
   return (
     <>
       <Button size="sm" variant="ghost" aria-label={label + ' details'} aria-expanded={open} onClick={() => setOpen(!open)}>
-        {count} {count === 1 ? 'entry' : 'entries'} {open ? '▴' : '▾'}
+        {count} {count === 1 ? 'entry' : 'entries'} <Mark name={open ? 'up' : 'down'} />
       </Button>
       {open && <pre className={styles.reply}>{JSON.stringify(value, null, 2)}</pre>}
     </>
@@ -219,7 +225,7 @@ function InputWidget({ input, live, reason, busy, submit }: {
 }
 
 function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
-  const { value, error, refresh } = useCommandResult<unknown>(run, section.query, true)
+  const { value, error, refresh } = useCommandResult<unknown>(run, section.query, section.poll !== false)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState('')
   async function invoke(line: string) {
@@ -266,14 +272,21 @@ function SectionRow({ section, run, open, toggle }: {
   return (
     <section className={styles.section}>
       <Button size="sm" variant="ghost" aria-expanded={open} onClick={toggle}>
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span> {section.title}
+        <span aria-hidden="true"><Mark name={open ? 'down' : 'right'} /></span> {section.title}
       </Button>
       {open && <Widgets section={section} run={run} />}
     </section>
   )
 }
 
-function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => void; initial: string }) {
+/** After a pointer click (`detail > 0`), drops focus from the clicked control so a later Space or
+ *  Enter does not press it again; a text field keeps focus. */
+function releasePointerFocus(event: React.MouseEvent<HTMLElement>) {
+  const focused = document.activeElement
+  if (event.detail > 0 && focused instanceof HTMLElement && event.currentTarget.contains(focused) && !isEditableTarget(focused)) focused.blur()
+}
+
+function DebugPanel({ run, initial, className }: { run: RunCommand; initial: string; className: string }) {
   const { value: sections, error } = useCommandResult<DebugSection[]>(run, '/debug_panel', false)
   const [filter, setFilter] = useState(initial)
   const [expanded, setExpanded] = useState<string[]>(initial ? [initial.toLowerCase()] : [])
@@ -287,23 +300,28 @@ function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => voi
     ...s.actions.map(([label]) => label), ...(s.inputs ?? []).flatMap(i => i.kind.type === 'actionButton'
       ? [i.label, i.kind.options.enable[0], i.kind.options.disable[0]] : [i.label])].some((label) => label.toLowerCase().includes(term)))
   return (
-    <ModalShell title="Debug panel" ariaLabel="Debug panel" onClose={close} className={styles.panel}>
-      <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"
-        value={filter} onChange={setFilter} />
-      {error ? <p role="status">Could not load debug sections. {error}</p> :
-        !sections ? <p>Loading debug sections…</p> :
-        sections.length === 0 ? <p>No plugins registered debug sections.</p> :
-        matches?.length === 0 ? <p>No matching controls.</p> :
-          matches?.map((section) =>
-            <SectionRow key={section.title} section={section} run={run} open={isOpen(section)} toggle={() => toggle(section)} />)}
+    <ModalShell title="Debug panel" ariaLabel="Debug panel" modal={false} onClose={closeDebugPanel}
+      className={className}>
+      <div onClick={releasePointerFocus}>
+        <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"
+          value={filter} onChange={setFilter} />
+        {error ? <p role="status">Could not load debug sections. {error}</p> :
+          !sections ? <p>Loading debug sections…</p> :
+          sections.length === 0 ? <p>No plugins registered debug sections.</p> :
+          matches?.length === 0 ? <p>No matching controls.</p> :
+            matches?.map((section) =>
+              <SectionRow key={section.title} section={section} run={run} open={isOpen(section)} toggle={() => toggle(section)} />)}
+      </div>
     </ModalShell>
   )
 }
 
-export function openDebugPanel(run: RunCommand, initial: string, onClose: () => void,
-  launcherLayer: (element: HTMLDivElement | null) => void): () => void {
-  return openPopup((close) => <>
-    <div className={styles.launcherLayer} ref={launcherLayer} />
-    <DebugPanel run={run} close={close} initial={initial} />
-  </>, { dim: false, onClose })
+/** Renders the open panel outside the popup stack: no backdrop, no focus trap. `underPage`
+ *  stacks it below the lobby and menu pages, keeping it open. */
+export function DebugPanelHost({ session, underPage = false }: { session: EngineSession; underPage?: boolean }) {
+  const { state, run } = useDebugPanel(session)
+  let className = styles.panel
+  if (debugPanelLauncherEnabled()) className += ` ${styles.besideLauncher}`
+  if (underPage) className += ` ${styles.underPage}`
+  return state && <DebugPanel key={state.opened} run={run} initial={state.target} className={className} />
 }

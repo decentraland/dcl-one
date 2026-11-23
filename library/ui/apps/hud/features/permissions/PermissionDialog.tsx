@@ -32,7 +32,7 @@ const PASSIVE: Record<string, string> = {
   Fetch: 'fetch data from a remote server',
   Websocket: 'open a web socket to communicate with a remote server',
   OpenUrl: 'open a url in your browser',
-  OpenExplorerUi: 'open an explorer menu panel (map, backpack, settings, ...)'
+  OpenExplorerUi: 'open an explorer menu panel (map, backpack, settings, ...) or the purchase confirmation for an item'
 }
 
 /** The "wants permission to …" clause for a permission type. */
@@ -47,7 +47,7 @@ const LEVELS: { value: PermissionRuleLevel; label: string }[] = [
   { value: 'global', label: 'Always for Global' }
 ]
 
-function LockIcon(): React.JSX.Element {
+export function LockIcon(): React.JSX.Element {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" fill="none">
       <rect x="4" y="10" width="16" height="11" rx="2" fill="currentColor" />

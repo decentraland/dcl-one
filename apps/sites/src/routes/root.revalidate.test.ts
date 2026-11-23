@@ -1,7 +1,7 @@
 import { createMemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 
-import type { CreatorHubHost } from "@ui/creatorhub/explorer-host";
+import type { CreatorHubHost } from "@web-core/creator-hub-host";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { adoptExplorerHost, followExplorerIdentity, reloadingForAccount } from "@/features/components/chrome/explorer-host";
 
@@ -33,23 +33,31 @@ it("reloads root's data too (the wallet and its committee seat) when the Explore
   const rootLoader = vi.fn(() => null);
   const pageLoader = vi.fn(() => null);
   const router = createMemoryRouter(
-    [{ id: "root", path: "/", loader: rootLoader, shouldRevalidate, children: [{ path: "create/scenes", loader: pageLoader }] }],
-    { initialEntries: ["/create/scenes"] },
+    [{ id: "root", path: "/", loader: rootLoader, shouldRevalidate, children: [{ path: "create/preview", loader: pageLoader }] }],
+    { initialEntries: ["/create/preview"] },
   );
   await vi.waitFor(() => expect(router.state.initialized).toBe(true));
   // Another visit to the same page reloads only the page's own data.
-  await router.navigate("/create/scenes", { replace: true });
+  await router.navigate("/create/preview", { replace: true });
   expect(pageLoader).toHaveBeenCalledTimes(2);
   expect(rootLoader).toHaveBeenCalledOnce();
 
-  followExplorerIdentity(win, () => router.navigate("/create/scenes", { replace: true }));
+  followExplorerIdentity(win, () => router.navigate("/create/preview", { replace: true }));
   for (const listener of listeners) listener(next);
   expect(reloadingForAccount()).toBe(true);
   await vi.waitFor(() => expect(reloadingForAccount()).toBe(false));
   expect(pageLoader).toHaveBeenCalledTimes(3);
   expect(rootLoader).toHaveBeenCalledTimes(2);
 
-  await router.navigate("/create/scenes", { replace: true });
+  await router.navigate("/create/preview", { replace: true });
   expect(rootLoader).toHaveBeenCalledTimes(2);
   router.dispose();
+});
+
+it("reloads root's data when a visitor enters the Creator Hub, which alone reads the committee seat", () => {
+  const args = (from: string, to: string) =>
+    ({ currentUrl: new URL(`https://sites.test${from}`), nextUrl: new URL(`https://sites.test${to}`), defaultShouldRevalidate: false }) as never;
+  expect(shouldRevalidate(args("/profile/me", "/create/preview"))).toBe(true);
+  expect(shouldRevalidate(args("/create/preview", "/create/collections"))).toBe(false);
+  expect(shouldRevalidate(args("/create/preview", "/blog"))).toBe(false);
 });

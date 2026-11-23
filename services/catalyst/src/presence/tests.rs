@@ -46,14 +46,12 @@ struct FakeSources {
 
 #[async_trait]
 impl Sources for FakeSources {
-    async fn peers(&self) -> anyhow::Result<Vec<Peer>> {
-        Ok(self.peers.clone())
-    }
-    async fn islands(&self) -> anyhow::Result<Vec<Island>> {
-        Ok(self.islands.clone())
-    }
-    async fn hot_scenes(&self) -> anyhow::Result<Vec<HotScene>> {
-        Ok(self.hot_scenes.clone())
+    async fn statistics(&self) -> anyhow::Result<super::sources::Statistics> {
+        Ok(super::sources::Statistics {
+            peers: self.peers.clone(),
+            islands: self.islands.clone(),
+            hot_scenes: self.hot_scenes.clone(),
+        })
     }
     async fn scene_participants(
         &self,
@@ -803,113 +801,787 @@ async fn daily_stats_rolls_a_day_up_and_rebuilds_on_rerun() {
 }
 
 mod module_sources {
-    use super::super::sources::{
-        HOT_SCENES_LIMIT, hot_scenes_of, island_of, peer_of, peers_per_tile,
+    use crate::comms::{
+        gatekeeper::bus::InProcessBus,
+        protocol::bus::statistics::{
+            Change, Frames, Peer, SNAPSHOTS_SUBJECT, Snapshot, Update, frames,
+        },
+        stats,
     };
-    use crate::comms::archipelago::content::Scene;
-    use crate::comms::archipelago::feed::IslandReport;
-    use crate::comms::archipelago::peers::PeerState;
-    use std::collections::HashMap;
-
-    fn peer_state(address: &str, x: f32, z: f32) -> PeerState {
-        PeerState {
-            address: address.into(),
-            position: [x, 1.0, z],
-            parcel: [0, 0],
-            realm: "main".into(),
-            last_heartbeat: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
-            island_id: None,
+    use async_trait::async_trait;
+    use std::sync::Arc;
+    struct NoContent;
+    #[async_trait]
+    impl stats::content::Source for NoContent {
+        async fn fetch(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<crate::content::OrderedJson>, stats::content::Error> {
+            panic!("empty peer population must not fetch content")
         }
     }
-
-    fn scene(id: &str, base: [i32; 2], parcels: &[&str]) -> Scene {
-        Scene {
-            id: id.into(),
-            name: Some(id.to_uppercase()),
-            base,
-            parcels: parcels.iter().map(|p| p.to_string()).collect(),
-            thumbnail: None,
-            creator: Some("0xc".into()),
-            project_id: None,
-            description: None,
-        }
-    }
-
-    #[test]
-    fn a_peer_row_carries_the_parcel_of_its_position_and_its_ping_in_ms() {
-        let p = peer_of(&peer_state("0xAb", 96.5 * 16.0, -132.0 * 16.0));
-        assert_eq!(
-            (p.address.as_str(), p.parcel_x, p.parcel_y),
-            ("0xAb", Some(96), Some(-132))
+    #[tokio::test]
+    async fn validated_historical_sync_order_reaches_hot_scenes_http() {
+        use crate::content::sync_deployer::{LiveSyncDeployer, SyncValidation};
+        use alloy::signers::{Signer as _, local::PrivateKeySigner};
+        let pool = crate::db::scratch::pool(3)
+            .await
+            .expect("test database required");
+        let temp = std::env::temp_dir().join(format!("ordered-ingestion-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&temp).await.unwrap());
+        let code = bytes::Bytes::from_static(b"export function onUpdate() {}");
+        let hash = dcl_auth::hash_bytes_v1(&code);
+        storage.store(&hash, code).await.unwrap();
+        // Historical sync legitimately skips the modern primitive-type metadata schema.
+        // Access is explicitly controlled; all other content validation runs.
+        let metadata = r#"{"main":"bin/index.js","scene":{"base":"23,24","parcels":["23,24"]},"display":{"title":{"z":9007199254740993,"a":2},"description":"archive text"},"contact":{"name":"creator"},"source":{"origin":"builder","projectId":"project"}}"#;
+        let raw = format!(
+            r#"{{"version":"v3","type":"scene","pointers":["23,24"],"timestamp":1650000000000,"content":[{{"file":"bin/index.js","hash":"{hash}"}}],"metadata":{metadata}}}"#
         );
-        assert_eq!(
-            (p.position_x, p.position_y, p.position_z),
-            (Some(1544.0), Some(1.0), Some(-2112.0))
+        let id = dcl_auth::hash_bytes_v1(raw.as_bytes());
+        storage
+            .store(&id, bytes::Bytes::copy_from_slice(raw.as_bytes()))
+            .await
+            .unwrap();
+        let key = PrivateKeySigner::random();
+        let chain = serde_json::from_value(serde_json::json!([
+            {"type":"SIGNER","payload":format!("{:#x}",key.address()),"signature":""},
+            {"type":"ECDSA_SIGNED_ENTITY","payload":id,"signature":key.sign_message(id.as_bytes()).await.unwrap().to_string()}
+        ])).unwrap();
+        let sources = crate::content::validator::Sources::new(
+            pool.clone(),
+            storage.clone(),
+            crate::http::Outbound::for_tests(),
+            None,
+            crate::content::validator::Settings {
+                ignore_blockchain_access: true,
+                eth_network: "mainnet".into(),
+                ..Default::default()
+            },
         );
-        assert_eq!(p.last_ping, Some(1_700_000_000_000));
-    }
-
-    #[test]
-    fn an_island_counts_only_the_members_this_replica_knows() {
-        let known: HashMap<String, PeerState> = [("0xa".to_string(), peer_state("0xa", 0.0, 0.0))]
-            .into_iter()
-            .collect();
-        let report = IslandReport {
-            id: "I1".into(),
-            peers: vec!["0xa".into(), "0xghost".into()],
-            max_peers: 100,
-            center: [1.0, 2.0, 3.0],
-            radius: 50.0,
+        let deployer = LiveSyncDeployer::new(
+            pool.clone(),
+            storage.clone(),
+            1,
+            SyncValidation::Content(Arc::new(sources)),
+        );
+        deployer
+            .deploy_entity(
+                raw.as_bytes(),
+                &id,
+                &chain,
+                crate::content::sync::DeploymentContext::Synced,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        deployer.flush().await.unwrap();
+        assert_eq!(
+            storage.retrieve(&id).await.unwrap().unwrap().as_ref(),
+            raw.as_bytes()
+        );
+        let stored: String = sqlx::query_scalar(
+            "SELECT entity_metadata::text FROM content.deployments WHERE entity_id=$1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, format!(r#"{{"v":{metadata}}}"#));
+        eprintln!("historical_sync_sql={stored}");
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _sub = reader.subscribe(&bus);
+        let source = Arc::new(stats::content::Content {
+            pool: pool.clone(),
+            denylist: Arc::new(crate::content::Denylist::default()),
+        });
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: "historical".into(),
+                position: [368., 0., 384.],
+                time: 1,
+            }],
+            ..Default::default()
         };
-        let i = island_of(&report, &known);
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let archive = super::super::sources::statistics(&reader, source.as_ref(), "")
+            .await
+            .unwrap();
+        assert_eq!(archive.hot_scenes.len(), 1);
+        assert_eq!(archive.hot_scenes[0].scene_id, id);
+        assert_eq!(archive.hot_scenes[0].name, None);
         assert_eq!(
-            (i.island_id.as_str(), i.peer_count, i.max_peers),
-            ("I1", 1, Some(100))
+            archive.hot_scenes[0].description.as_deref(),
+            Some("archive text")
         );
+        assert_eq!(archive.hot_scenes[0].creator.as_deref(), Some("creator"));
+        struct Hooks;
+        #[async_trait]
+        impl stats::http::Hooks for Hooks {
+            async fn probe(&self, _: bool) -> stats::http::Lifecycle {
+                Default::default()
+            }
+            async fn metrics(&self) -> Result<String, stats::content::Error> {
+                Ok(String::new())
+            }
+            async fn diagnostics(&self) -> Result<String, stats::content::Error> {
+                Ok(String::new())
+            }
+            fn observe(&self, _: stats::http::Observation) {}
+        }
+        let app = stats::http::standalone(stats::http::State::new(
+            reader,
+            source,
+            Arc::new(Hooks),
+            Default::default(),
+            stats::http::test_support::matcher(),
+        ));
+        async fn request(
+            app: axum::Router,
+            method: &str,
+            path: &str,
+        ) -> (axum::http::StatusCode, axum::http::HeaderMap, String) {
+            use tower::ServiceExt;
+            let response = app
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, headers, String::from_utf8(body.to_vec()).unwrap())
+        }
+        let (status, headers, body) = request(app.clone(), "GET", "/hot-scenes").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
         assert_eq!(
-            (i.center_x, i.center_y, i.center_z, i.radius),
-            (Some(1.0), Some(2.0), Some(3.0), Some(50.0))
+            body,
+            format!(
+                r#"[{{"id":"{id}","name":{{"z":9007199254740992,"a":2}},"baseCoords":[23,24],"usersTotalCount":1,"parcels":[[23,24]],"creator":"creator","projectId":"project","description":"archive text"}}]"#
+            )
+        );
+        assert_eq!(headers["content-length"], body.len().to_string());
+        eprintln!("historical_sync_hot_scenes={body}");
+        assert!(request(app, "HEAD", "/hot-scenes").await.2.is_empty());
+        sqlx::query("DELETE FROM content.active_pointers WHERE entity_id=$1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM content.content_files WHERE deployment IN (SELECT id FROM content.deployments WHERE entity_id=$1)").bind(&id).execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM content.deployments WHERE entity_id=$1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(storage);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn selected_sql_archive_observes_shared_content_policy() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("test database required");
+        let tag = uuid::Uuid::new_v4();
+        let coordinate = 1_600_000 + (tag.as_u128() % 100_000) as i32;
+        let ids = [format!("allowed-{tag}"), format!("denied-{tag}")];
+        // Synthetic persisted rows test the read policy, not deployment admission.
+        for (i, id) in ids.iter().enumerate() {
+            let pointer = format!("{},0", coordinate + i as i32);
+            let metadata = serde_json::json!({"v":{"scene":{"base":pointer,"parcels":[pointer]},"display":{"title":"allowed title","description":"text"},"contact":{"name":"creator"}}});
+            sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2,to_timestamp(1),$3,to_timestamp(1),'[]'::json)").bind(id).bind(metadata).bind(vec![pointer.clone()]).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(pointer).bind(id).execute(&pool).await.unwrap();
+        }
+        let denylist = Arc::new(crate::content::Denylist::default());
+        denylist.set_operator([ids[1].clone()]);
+        let source = stats::content::Content {
+            pool,
+            denylist: denylist.clone(),
+        };
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _sub = reader.subscribe(&bus);
+        let snapshot = Snapshot {
+            peers: (0..2)
+                .map(|i| Peer {
+                    address: format!("peer-{i}"),
+                    position: [f64::from(coordinate + i) * 16., 0., 0.],
+                    time: 1,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let result = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.peers.len(),
+            2,
+            "content policy leaves the retained population intact"
+        );
+        assert_eq!(result.hot_scenes.len(), 1);
+        let scene = &result.hot_scenes[0];
+        assert_eq!(scene.scene_id, ids[0]);
+        assert_eq!(scene.name.as_deref(), Some("allowed title"));
+        assert_eq!(scene.description.as_deref(), Some("text"));
+        assert_eq!(scene.creator.as_deref(), Some("creator"));
+        assert_eq!(scene.users_count, Some(1));
+        denylist.set_operator(ids);
+        let next = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        assert!(next.hot_scenes.is_empty());
+        assert_eq!(next.peers.len(), 2);
+        source.pool.close().await;
+        assert!(
+            super::super::sources::statistics(&reader, &source, "")
+                .await
+                .is_err(),
+            "SQL failure remains an archive failure even when every ID is denied"
+        );
+        for frame in frames(&Snapshot::default(), uuid::Uuid::nil(), 2, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let empty = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        assert!(
+            empty.hot_scenes.is_empty(),
+            "empty population skips the closed SQL source"
+        );
+        assert!(empty.peers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_reads_selected_sql_metadata_and_omits_non_string_fields() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("test database required");
+        let id = format!("archive-{}", uuid::Uuid::new_v4());
+        let coordinate = 1_500_000 + (uuid::Uuid::new_v4().as_u128() % 100_000) as i32;
+        let pointer = format!("{coordinate},0");
+        let metadata = format!(
+            r#"{{"v":{{"scene":{{"base":"{pointer}","parcels":["{pointer}","{pointer}"]}},"display":{{"title":{{"z":1,"a":2}},"description":{{"z":true,"a":null}}}},"contact":{{"name":["legacy"]}}}}}}"#
+        );
+        sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ('0x0000000000000000000000000000000000000001','v3','scene',$1,$2::json,to_timestamp(1),$3,to_timestamp(1),'[]'::json)").bind(&id).bind(metadata).bind(vec![pointer.clone()]).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'scene')").bind(&pointer).bind(&id).execute(&pool).await.unwrap();
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _sub = reader.subscribe(&bus);
+        let snapshot = Snapshot {
+            peers: vec![Peer {
+                address: "archive".into(),
+                position: [f64::from(coordinate) * 16., 0., 0.],
+                time: 1,
+            }],
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let source = stats::content::Content {
+            pool,
+            denylist: Arc::new(crate::content::Denylist::default()),
+        };
+        let result = super::super::sources::statistics(&reader, &source, "")
+            .await
+            .unwrap();
+        let scene = &result.hot_scenes[0];
+        assert_eq!(scene.scene_id, id);
+        assert_eq!(scene.users_count, Some(2));
+        assert_eq!(scene.parcel_count, 2);
+        assert_eq!(scene.base_x, Some(coordinate));
+        assert_eq!(scene.name, None);
+        assert_eq!(scene.creator, None);
+        assert_eq!(scene.description, None);
+        use stats::content::Source;
+        let docs = source.fetch(&[pointer.clone()]).await.unwrap();
+        let http = stats::content::hot_scenes(&docs, &[(pointer, 1)], "").unwrap();
+        assert!(http.contains(r#""name":{"z":1,"a":2}"#));
+        assert!(http.contains(r#""usersTotalCount":2"#));
+        assert!(http.contains(&format!(r#""id":"{id}""#)));
+    }
+
+    #[tokio::test]
+    async fn archive_rejects_count_overflow_instead_of_saturating() {
+        use prost::Message;
+        let bus = Arc::new(InProcessBus::new());
+        let reader = Arc::new(stats::Reader::default());
+        let _subscription = reader.subscribe(bus.as_ref());
+        let snapshot = Snapshot {
+            islands: crate::comms::protocol::archipelago::archipelago::IslandStatusMessage {
+                data: vec![
+                    crate::comms::protocol::archipelago::archipelago::IslandData {
+                        id: "oversized-capacity".into(),
+                        max_peers: u32::MAX,
+                        center: Some(Default::default()),
+                        ..Default::default()
+                    },
+                ],
+            }
+            .encode_to_vec(),
+            ..Default::default()
+        };
+        for frame in frames(&snapshot, uuid::Uuid::nil(), 1, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        assert!(
+            super::super::sources::statistics(&reader, &NoContent, "")
+                .await
+                .is_err()
         );
     }
 
-    #[test]
-    fn hot_scenes_sum_their_parcels_and_come_busiest_first() {
-        let peers = vec![
-            peer_state("a", 0.0, 0.0),
-            peer_state("b", 5.0, 5.0),
-            peer_state("c", 16.0, 0.0),
-            peer_state("d", 800.0, 800.0),
-        ];
-        let per_tile = peers_per_tile(&peers);
-        assert_eq!(per_tile.get("0,0"), Some(&2));
-        assert_eq!(per_tile.get("1,0"), Some(&1));
-        assert_eq!(per_tile.get("50,50"), Some(&1));
-        let hot = hot_scenes_of(
-            &per_tile,
-            vec![
-                scene("far", [50, 50], &["50,50"]),
-                scene("plaza", [0, 0], &["0,0", "1,0", "2,0"]),
-            ],
-        );
+    fn numeric_snapshot() -> Snapshot {
+        use crate::comms::protocol::archipelago::{
+            Position,
+            archipelago::{
+                IslandData, IslandStatusMessage, ServiceDiscoveryMessage, ServiceStatus,
+            },
+        };
+        use prost::Message;
+        Snapshot {
+            peers: [
+                ("negative", [-0.5, 0., 0.]),
+                ("large", [f64::from(2_f32.powi(35)), 0., 0.]),
+                ("zErO", [-0., 0., -0.]),
+                ("extreme", [f64::from(f32::MAX), 0., -f64::from(f32::MAX)]),
+                ("nonfinite", [f64::NAN, f64::INFINITY, f64::NEG_INFINITY]),
+            ]
+            .into_iter()
+            .map(|(address, position)| Peer {
+                address: address.into(),
+                position,
+                time: 1_700_000_000_123,
+            })
+            .collect(),
+            islands: IslandStatusMessage {
+                data: vec![IslandData {
+                    id: "supported".into(),
+                    peers: ["negative", "unknown", "large", "negative", "nonfinite"]
+                        .map(str::to_owned)
+                        .to_vec(),
+                    max_peers: 0,
+                    center: Some(Position {
+                        x: 0.1,
+                        y: 2.,
+                        z: 3.,
+                    }),
+                    radius: 1.0000000001,
+                }],
+            }
+            .encode_to_vec(),
+            discovery: ServiceDiscoveryMessage {
+                status: Some(ServiceStatus {
+                    current_time: chrono::Utc::now().timestamp_millis() as u64,
+                    user_count: u32::MAX,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }
+    }
+
+    fn publish_snapshot(bus: &InProcessBus, snapshot: &Snapshot, revision: u64) {
+        for frame in frames(snapshot, uuid::Uuid::nil(), revision, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+    }
+
+    #[tokio::test]
+    async fn numeric_statistics_reach_about_and_realm_routes_without_signed_narrowing() {
+        use crate::content::about_comms::{AboutCommsState, CommsCore, Settings};
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _subscription = reader.subscribe(&bus);
+        let snapshot = numeric_snapshot();
+        publish_snapshot(&bus, &snapshot, 1);
         assert_eq!(
-            hot.iter()
-                .map(|h| (h.scene_id.as_str(), h.users_count, h.parcel_count))
-                .collect::<Vec<_>>(),
-            vec![("plaza", Some(3), 3), ("far", Some(1), 1)]
+            reader.realm_view(),
+            (u64::from(u32::MAX), vec![((-1, 0), 1), ((0, 0), 1)])
         );
+
+        let files = std::env::temp_dir().join(format!("numeric-about-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&files).await.unwrap());
+        let mut settings = crate::content::Settings::for_tests();
+        settings.about_resource_check = false;
+        settings.content_public_url = "https://content.example/content".into();
+        settings.realm_name = Some("numeric".into());
+        let content = Arc::new(crate::content::ContentState::new(
+            super::state_without_db(true).pool.clone(),
+            settings,
+            storage,
+        ));
+        content.sync.set_state(crate::content::SyncState::Syncing);
+        let max_users = u64::from(u32::MAX) + 1;
+        let about = Arc::new(AboutCommsState::new(Settings {
+            protocol: "v3".into(),
+            fixed_adapter: "ws-room:wss://comms.example/ws".into(),
+            version: None,
+            commit_hash: None,
+            v4: None,
+            max_users: Some(max_users),
+            offline_when_unreachable: false,
+        }));
+        assert!(about.attach_core(reader.clone()));
+        assert!(content.attach_about_comms(about));
+        let app = crate::content::build_router(content.clone());
+        for path in ["/about", "/lambdas/about"] {
+            let (status, _, body) = super::get(&app, path).await;
+            assert_eq!(status, axum::http::StatusCode::OK);
+            assert_eq!(body["comms"]["usersCount"], u32::MAX);
+            assert_eq!(body["comms"]["healthy"], true);
+            assert_eq!(body["acceptingUsers"], true);
+        }
+        let (status, _, body) = super::get(&app, "/lambdas/explore/realms").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(
+            body,
+            serde_json::json!([{
+                "serverName":"numeric", "url":"https://content.example",
+                "usersCount":u32::MAX, "maxUsers":max_users,
+                "userParcels":[[-1,0],[0,0]],
+            }])
+        );
+        // Advertised population and representable parcel population are independent.
+        assert_eq!(reader.snapshot().peers.len(), 5);
+        drop(app);
+        drop(content);
+        std::fs::remove_dir_all(files).unwrap();
+    }
+
+    type ContentResult = Result<Vec<crate::content::OrderedJson>, stats::content::Error>;
+
+    struct BlockedContent {
+        entered: tokio::sync::Semaphore,
+        release: tokio::sync::Semaphore,
+        next: std::sync::Mutex<Option<ContentResult>>,
+    }
+    impl BlockedContent {
+        fn new() -> Self {
+            Self {
+                entered: tokio::sync::Semaphore::new(0),
+                release: tokio::sync::Semaphore::new(0),
+                next: std::sync::Mutex::new(None),
+            }
+        }
+        async fn wait_for_fetch(&self) {
+            tokio::time::timeout(std::time::Duration::from_secs(5), self.entered.acquire())
+                .await
+                .expect("collector reaches content I/O")
+                .unwrap()
+                .forget();
+        }
+    }
+    #[async_trait]
+    impl stats::content::Source for BlockedContent {
+        async fn fetch(
+            &self,
+            pointers: &[String],
+        ) -> Result<Vec<crate::content::OrderedJson>, stats::content::Error> {
+            assert_eq!(
+                pointers,
+                &[
+                    "-1,0",
+                    "2147483648,0",
+                    "0,0",
+                    "2.1267646664908054e+37,-2.1267646664908054e+37",
+                    "NaN,-Infinity",
+                ]
+            );
+            self.entered.add_permits(1);
+            self.release.acquire().await.unwrap().forget();
+            self.next
+                .lock()
+                .unwrap()
+                .take()
+                .expect("controlled content outcome")
+        }
+    }
+    struct ReaderSources {
+        reader: Arc<stats::Reader>,
+        content: Arc<BlockedContent>,
+    }
+    #[async_trait]
+    impl super::Sources for ReaderSources {
+        async fn statistics(&self) -> anyhow::Result<super::super::sources::Statistics> {
+            super::super::sources::statistics(
+                &self.reader,
+                self.content.as_ref(),
+                "https://content.example/content/",
+            )
+            .await
+        }
+        async fn scene_participants(
+            &self,
+            realm: &str,
+            pointer: &str,
+        ) -> anyhow::Result<Option<Vec<String>>> {
+            assert_eq!((realm, pointer), ("main", "-1,0"));
+            Ok(Some(vec!["0xAA".into(), "0xaa".into()]))
+        }
+        async fn world_participants(&self, _: &str) -> anyhow::Result<Option<Vec<String>>> {
+            panic!("no active worlds in this pass")
+        }
+        async fn worlds_live_data(&self) -> anyhow::Result<Option<super::LiveData>> {
+            Ok(None)
+        }
+    }
+    fn archive_document() -> crate::content::OrderedJson {
+        serde_json::from_str(r#"{"id":"retained","metadata":{"scene":{"base":"-1,0","parcels":["-1,0","-1,0"]},"display":{"title":"Retained"}}}"#).unwrap()
+    }
+
+    #[tokio::test]
+    async fn archive_retains_one_statistics_snapshot_while_content_awaits() {
+        use crate::comms::protocol::archipelago::archipelago::IslandStatusMessage;
+        use prost::Message;
+        let _lock = super::DB_LOCK.lock().await;
+        let pool = crate::db::scratch::pool(4)
+            .await
+            .expect("test database required");
+        let reader = Arc::new(stats::Reader::default());
+        let bus = InProcessBus::new();
+        let _subscription = reader.subscribe(&bus);
+        let snapshot = numeric_snapshot();
+        publish_snapshot(&bus, &snapshot, 1);
+        let content = Arc::new(BlockedContent::new());
+        *content.next.lock().unwrap() = Some(Ok(vec![archive_document()]));
+        let state = Arc::new(super::PresenceState::new(
+            pool.clone(),
+            super::Settings::new(true),
+            Arc::new(ReaderSources {
+                reader: reader.clone(),
+                content: content.clone(),
+            }),
+        ));
+        let app = axum::Router::new().nest("/presence", super::router(state.clone()));
+        let paths = [
+            "/presence/current",
+            "/presence/current/scenes",
+            "/presence/current/worlds",
+            "/presence/scenes/history?pointer=-1,0",
+        ];
+        let mut previous = Vec::new();
+        for path in paths {
+            previous.push(super::get(&app, path).await);
+        }
+        let pass_at = super::now();
+        *state.last_aggregated.lock() = Some((pass_at - chrono::Duration::days(1)).date_naive());
+        let before: i64 = sqlx::query_scalar("SELECT count(*) FROM presence.snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let running = state.clone();
+        let pass = tokio::spawn(async move { super::collector::run_pass(&running, pass_at).await });
+        content.wait_for_fetch().await;
+        let update = Update::Change {
+            revision: 2,
+            change: Change::Remove("zErO".into()),
+        };
+        for frame in Frames::new(&update, uuid::Uuid::nil(), 2, 65536).unwrap() {
+            bus.inject(SNAPSHOTS_SUBJECT, &frame);
+        }
+        let live = reader.snapshot();
+        assert_eq!(live.peers.len(), 4);
+        assert!(live.peers.iter().all(|peer| peer.address != "zErO"));
+        publish_snapshot(&bus, &Snapshot::default(), 3);
+        assert!(reader.snapshot().peers.is_empty());
+        let during: i64 = sqlx::query_scalar("SELECT count(*) FROM presence.snapshots")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            during, before,
+            "blocked source I/O must not persist a partial pass"
+        );
+        for (path, expected) in paths.into_iter().zip(&previous) {
+            assert_eq!(
+                &super::get(&app, path).await,
+                expected,
+                "blocked source I/O must preserve {path}"
+            );
+        }
+        content.release.add_permits(1);
+        let summary = tokio::time::timeout(std::time::Duration::from_secs(5), pass)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (
-                hot[0].base_x,
-                hot[0].base_y,
-                hot[0].name.as_deref(),
-                hot[0].creator.as_deref()
+                summary.peers,
+                summary.islands,
+                summary.hot_scenes,
+                summary.scene_users
             ),
-            (Some(0), Some(0), Some("PLAZA"), Some("0xc"))
+            (5, 1, 1, 1)
         );
-        let many: Vec<Scene> = (0..HOT_SCENES_LIMIT + 5)
-            .map(|i| scene(&format!("s{i}"), [i as i32, 0], &[]))
-            .collect();
-        assert_eq!(hot_scenes_of(&HashMap::new(), many).len(), HOT_SCENES_LIMIT);
+        let id = summary.snapshot_id;
+        type PeerRow = (String, Vec<Option<i32>>, Vec<Option<f64>>, Option<i64>);
+        let peers: Vec<PeerRow> = sqlx::query_as(
+            "SELECT address, ARRAY[parcel_x,parcel_y], ARRAY[position_x,position_y,position_z], last_ping FROM presence.peer_snapshots WHERE snapshot_id=$1 ORDER BY address"
+        ).bind(id).fetch_all(&pool).await.unwrap();
+        let t = Some(1_700_000_000_123);
+        assert_eq!(
+            peers,
+            vec![
+                (
+                    "extreme".into(),
+                    vec![None, None],
+                    vec![
+                        Some(f64::from(f32::MAX)),
+                        Some(0.),
+                        Some(-f64::from(f32::MAX))
+                    ],
+                    t
+                ),
+                (
+                    "large".into(),
+                    vec![None, Some(0)],
+                    vec![Some(34_359_738_368.), Some(0.), Some(0.)],
+                    t
+                ),
+                (
+                    "negative".into(),
+                    vec![Some(-1), Some(0)],
+                    vec![Some(-0.5), Some(0.), Some(0.)],
+                    t
+                ),
+                (
+                    "nonfinite".into(),
+                    vec![None, None],
+                    vec![None, None, None],
+                    t
+                ),
+                (
+                    "zErO".into(),
+                    vec![Some(0), Some(0)],
+                    vec![Some(0.), Some(0.), Some(0.)],
+                    t
+                ),
+            ]
+        );
+        type IslandRow = (String, i32, Option<i32>, Vec<Option<f64>>, Option<f64>);
+        let island: IslandRow = sqlx::query_as(
+            "SELECT island_id, peer_count, max_peers, ARRAY[center_x,center_y,center_z], radius FROM presence.island_snapshots WHERE snapshot_id=$1"
+        ).bind(id).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            island,
+            (
+                "supported".into(),
+                4,
+                Some(0),
+                vec![Some(f64::from(0.1_f32)), Some(2.), Some(3.)],
+                Some(1.0000000001)
+            )
+        );
+        let scene: (String, Option<i32>, Option<i32>, Option<i32>, i32) = sqlx::query_as(
+            "SELECT scene_id, base_x, base_y, users_count, parcel_count FROM presence.hot_scene_snapshots WHERE snapshot_id=$1"
+        ).bind(id).fetch_one(&pool).await.unwrap();
+        assert_eq!(scene, ("retained".into(), Some(-1), Some(0), Some(2), 2));
+        let mut committed = Vec::new();
+        for path in paths {
+            let (status, _, body) = super::get(&app, path).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{path}");
+            committed.push(body);
+        }
+        assert_eq!(committed[0]["current"]["snapshot_id"], id);
+        assert_eq!(committed[0]["current"]["peers_count"], 5);
+        assert_eq!(committed[0]["current"]["islands_count"], 1);
+        assert_eq!(committed[0]["current"]["hot_scenes_count"], 1);
+        assert_eq!(committed[1]["scenes"][0]["pointer"], "-1,0");
+        assert_eq!(committed[1]["scenes"][0]["scene_name"], "Retained");
+        assert_eq!(committed[1]["scenes"][0]["count"], 1);
+        assert_eq!(committed[2]["worlds"], serde_json::json!([]));
+        assert_eq!(committed[3]["history"].as_array().unwrap().len(), 1);
+        assert_eq!(committed[3]["history"][0], committed[1]["scenes"][0]);
+
+        for (index, (answer, expected_error)) in [
+            (
+                Err(stats::content::Error),
+                "archive active content query failed",
+            ),
+            (
+                Ok(vec![
+                    serde_json::from_str(
+                        r#"{"id":"bad","metadata":{"scene":{"base":true,"parcels":[]}}}"#,
+                    )
+                    .unwrap(),
+                ]),
+                "archive hot scene projection failed",
+            ),
+            (
+                Ok(vec![archive_document()]),
+                "synthetic maxPeers conversion",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut next = snapshot.clone();
+            if index == 2 {
+                // This exceeds the current producer's maxPeers=0; it tests checked storage only.
+                let mut islands = IslandStatusMessage::decode(next.islands.as_slice()).unwrap();
+                islands.data[0].max_peers = u32::MAX;
+                next.islands = islands.encode_to_vec();
+            }
+            publish_snapshot(&bus, &next, 4 + index as u64);
+            *content.next.lock().unwrap() = Some(answer);
+            let running = state.clone();
+            let pass = tokio::spawn(async move {
+                super::collector::run_pass(
+                    &running,
+                    pass_at + chrono::Duration::seconds(index as i64 + 1),
+                )
+                .await
+            });
+            content.wait_for_fetch().await;
+            content.release.add_permits(1);
+            let error = tokio::time::timeout(std::time::Duration::from_secs(5), pass)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err();
+            if index == 2 {
+                assert!(error.is::<std::num::TryFromIntError>(), "{error:#}");
+            } else {
+                assert!(format!("{error:#}").contains(expected_error), "{error:#}");
+            }
+            assert_eq!(
+                super::count_where(
+                    &pool,
+                    "SELECT count(*) FROM presence.snapshots WHERE id > $1",
+                    id
+                )
+                .await,
+                0
+            );
+            for (path, expected) in paths.into_iter().zip(&committed) {
+                let (status, _, body) = super::get(&app, path).await;
+                assert_eq!(status, axum::http::StatusCode::OK);
+                assert_eq!(
+                    &body, expected,
+                    "failed pass leaves the cached current view and stored history unchanged: {path}"
+                );
+            }
+        }
+        super::delete_snapshots(&pool, &[id]).await;
     }
 }
 
@@ -988,4 +1660,58 @@ fn the_schema_carries_the_snapshot_relations() {
             "{table}"
         );
     }
+}
+
+#[tokio::test]
+async fn current_bundle_retains_children_when_retention_commits_between_reads() {
+    let _lock = DB_LOCK.lock().await;
+    let Some(state) = state(FakeSources::default(), true).await else {
+        return;
+    };
+    let id = store_snapshot(&state.pool, &sample(now())).await.unwrap();
+    let mut retention = state.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE presence.scene_occupancy IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *retention)
+        .await
+        .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *retention)
+        .await
+        .unwrap();
+    let reader = tokio::spawn({
+        let state = state.clone();
+        async move { state.queries.current_bundle().await.unwrap() }
+    });
+    // The header has been read when the child SELECT blocks on this lock.
+    assert!(
+        crate::shared::test_wait::until(async || {
+            sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(blocker)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap()
+        })
+        .await
+    );
+    sqlx::query("DELETE FROM presence.snapshots WHERE id=$1")
+        .bind(id)
+        .execute(&mut *retention)
+        .await
+        .unwrap();
+    retention.commit().await.unwrap();
+    let bundle = reader.await.unwrap();
+    assert_eq!(bundle.current.as_ref().unwrap().snapshot_id, id);
+    assert_eq!(bundle.scenes.len(), 2);
+    assert_eq!(bundle.worlds.len(), 2);
+    assert_eq!(
+        count_where(
+            &state.pool,
+            "SELECT count(*) FROM presence.snapshots WHERE id=$1",
+            id
+        )
+        .await,
+        0
+    );
 }

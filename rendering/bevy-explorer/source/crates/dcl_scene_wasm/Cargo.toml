@@ -3,6 +3,9 @@ name = "dcl_scene_wasm"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 # The scene runtime a sandbox worker runs its scene on, in its own memory. Web only; built as
 # its own wasm artifact (deploy/web/engine/pkg-scene).
 [lib]

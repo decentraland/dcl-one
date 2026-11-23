@@ -1,5 +1,8 @@
+#![forbid(unsafe_code)]
+
 pub mod crash;
 pub mod data_definition;
+pub mod feature_flags;
 pub mod frame;
 pub mod in_world;
 pub mod loading;

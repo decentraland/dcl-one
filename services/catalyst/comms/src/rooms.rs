@@ -100,12 +100,12 @@ pub fn worlds_service_world_room(world: &WorldName) -> String {
 /// key, not its character count; both keys may themselves contain colons.
 /// Preserve entity ID bytes: case-bearing hashes name distinct deployments.
 pub fn worlds_service_scene_room(world: &WorldName, scene: &SceneId) -> String {
-    format!(
-        "{SCENE_ROOM_PREFIX}{}:{}{}",
-        base36(world.key().len()),
-        world.key(),
-        encode_scene_v1(scene)
-    )
+    world_scene_room_prefix(world.key()) + &encode_scene_v1(scene)
+}
+
+/// What the scene rooms of the world with this key start with, and no other room.
+pub fn world_scene_room_prefix(world: &str) -> String {
+    format!("{SCENE_ROOM_PREFIX}{}:{world}", base36(world.len()))
 }
 
 /// Decode identity without granting deployment or participant authority.
@@ -278,6 +278,19 @@ pub struct ActiveDeployment {
     pub local: bool,
 }
 
+impl ActiveDeployment {
+    /// The place this scene's explicit admins are granted on
+    /// (`social.scene_admins.place_id`): its storage scope, which a redeploy
+    /// of the same place keeps. A world scene without an identity has its
+    /// entity id alone.
+    pub fn place_key(&self) -> String {
+        self.namespace.as_ref().map_or_else(
+            || self.scene_id.as_str().to_owned(),
+            SceneNamespace::scene_namespace,
+        )
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
     #[error("unknown or ambiguous canonical room {0}")]
@@ -348,18 +361,65 @@ impl ReplacedScene {
     }
 }
 
+/// A local preview scene: a `b64-` scene id or a `preview`/`localpreview` realm.
+pub fn is_local_preview(realm_name: &str, scene_id: &str) -> bool {
+    scene_id.starts_with("b64-")
+        || realm_name.eq_ignore_ascii_case("preview")
+        || realm_name.eq_ignore_ascii_case("localpreview")
+}
+
 impl ResolvedRoom {
-    /// The key this scene's bans live under; `None` for the world lobby.
+    /// The key this scene's bans live under; `None` for the world lobby. A
+    /// scene with no deployment here (a local preview) has its entity id.
     pub fn ban_key(&self) -> Option<crate::access::SceneBanKey> {
         match (&self.realm, &self.deployment) {
             (RealmId::World(world), Some(deployment)) => {
                 Some(crate::access::SceneBanKey::world(world, deployment.base))
             }
+            (_, Some(deployment)) => Some(crate::access::SceneBanKey::genesis(deployment)),
             _ => self
                 .scene_id
                 .as_ref()
                 .map(crate::access::SceneBanKey::scene),
         }
+    }
+
+    /// [`Self::ban_key`], reading the deployment that a Genesis room name
+    /// does not carry, so the key is the scene's place. A Genesis scene this
+    /// node does not hold (an overwritten deployment) is
+    /// [`ResolveError::UnresolvedRoom`], never its entity id; a local preview
+    /// keeps its entity id only with `ALLOW_LOCAL_PREVIEW` (`allow_preview`).
+    pub async fn resolve_ban_key(
+        &self,
+        scenes: &dyn crate::interfaces::SceneIdentity,
+        allow_preview: bool,
+    ) -> Result<Option<crate::access::SceneBanKey>, ResolveError> {
+        if self.deployment.is_none()
+            && !self.realm.is_world()
+            && let Some(scene) = &self.scene_id
+        {
+            let request = RoomRequest::Adapter {
+                realm: &self.realm,
+                scene,
+            };
+            if allow_preview && is_local_preview(self.realm.as_str(), scene.as_str()) {
+                return Ok(self.ban_key());
+            }
+            return match scenes.resolve(request).await {
+                Ok(found)
+                    if found.realm == self.realm
+                        && found
+                            .deployment
+                            .as_ref()
+                            .is_some_and(|d| d.scene_id == *scene) =>
+                {
+                    Ok(found.ban_key())
+                }
+                Err(error @ ResolveError::Db(_)) => Err(error),
+                Ok(_) | Err(_) => Err(ResolveError::UnresolvedRoom(self.room.clone())),
+            };
+        }
+        Ok(self.ban_key())
     }
 }
 
@@ -738,12 +798,22 @@ fn identifier(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
 }
 
+/// Whether a room name can classify as anything but
+/// [`RoomClassification::Unrelated`]: a world scene, world lobby, upstream
+/// `scene-` or gatekeeper `scene:` name. Island and voice chat rooms cannot.
+pub(crate) fn may_classify_relevant(room: &str) -> bool {
+    [
+        SCENE_ROOM_PREFIX,
+        "scene-",
+        WORLD_ROOM_PREFIX,
+        GATEKEEPER_SCENE_ROOM_PREFIX,
+    ]
+    .iter()
+    .any(|prefix| room.starts_with(prefix))
+}
+
 pub(crate) fn room_scope(room: &str) -> Option<RoomScope<'_>> {
-    if room.starts_with(SCENE_ROOM_PREFIX)
-        || room.starts_with("scene-")
-        || room.starts_with(WORLD_ROOM_PREFIX)
-        || room.starts_with(GATEKEEPER_SCENE_ROOM_PREFIX)
-    {
+    if may_classify_relevant(room) {
         return Some(RoomScope::WorldScene(room));
     }
     room.strip_prefix(ISLAND_ROOM_PREFIX)
@@ -757,6 +827,90 @@ pub(crate) fn room_scope(room: &str) -> Option<RoomScope<'_>> {
 pub fn is_world_room(room: &str, world: &WorldName) -> bool {
     room == worlds_service_world_room(world)
         || decode_world_scene_room(room).is_some_and(|(owner, _)| owner == *world)
+}
+
+#[cfg(test)]
+mod ban_key_tests {
+    use super::*;
+    use crate::interfaces::test_support::StubScenes;
+
+    fn genesis(scene: &str, realm: &str) -> ResolvedRoom {
+        let realm = RealmId::Shared(realm.into());
+        let base = Parcel::parse("4,5").unwrap();
+        let scene = SceneId::parse(scene).unwrap();
+        ResolvedRoom {
+            room: gatekeeper_scene_room(realm.as_str(), scene.as_str()),
+            scene_id: Some(scene.clone()),
+            deployment: Some(ActiveDeployment {
+                title: None,
+                scene_id: scene,
+                parcels: [base].into_iter().collect(),
+                base,
+                namespace: SceneNamespace::new(&realm, base, None),
+                local: true,
+            }),
+            realm,
+        }
+    }
+
+    /// A Genesis room name carries no deployment: its bans are on the place
+    /// of the deployment the resolver holds for that realm and scene; any
+    /// other answer refuses the room, and a store fault is not a key.
+    #[tokio::test]
+    async fn a_genesis_room_name_reads_its_bans_on_the_place() {
+        let Some(ParsedRoom::Local(named)) = parse_room("scene:main:bafyA") else {
+            panic!("Genesis")
+        };
+        let key = |room: Result<ResolvedRoom, ResolveError>| {
+            let named = named.clone();
+            async move {
+                let scenes = StubScenes {
+                    room,
+                    ..Default::default()
+                };
+                named
+                    .resolve_ban_key(&scenes, false)
+                    .await
+                    .map(|key| key.map(|key| key.as_str().to_owned()))
+            }
+        };
+        assert_eq!(
+            key(Ok(genesis("bafyA", "main"))).await.unwrap().as_deref(),
+            Some("4,5")
+        );
+        for other in [genesis("bafyB", "main"), genesis("bafyA", "other")] {
+            assert!(matches!(
+                key(Ok(other)).await,
+                Err(ResolveError::UnresolvedRoom(_))
+            ));
+        }
+        let unknown = ResolveError::UnresolvedRoom("bafyA".into());
+        assert!(matches!(
+            key(Err(unknown)).await,
+            Err(ResolveError::UnresolvedRoom(_))
+        ));
+        // A local preview has no deployment here: its entity id.
+        let Some(ParsedRoom::Local(preview)) = parse_room("scene:preview:bafyP") else {
+            panic!("preview")
+        };
+        let scenes = StubScenes::default();
+        let preview_key = preview
+            .resolve_ban_key(&scenes, true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(preview_key.as_str(), "bafyP");
+        // Without `ALLOW_LOCAL_PREVIEW` a preview room is refused like any other.
+        assert!(matches!(
+            preview.resolve_ban_key(&scenes, false).await,
+            Err(ResolveError::UnresolvedRoom(_))
+        ));
+        assert!(
+            key(Err(ResolveError::Db(sqlx::Error::PoolClosed)))
+                .await
+                .is_err()
+        );
+    }
 }
 
 #[cfg(test)]

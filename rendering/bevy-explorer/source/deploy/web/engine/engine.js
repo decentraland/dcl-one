@@ -1,8 +1,9 @@
 // Engine logic - ES module
 // Handles WASM/WebGPU initialization and game execution
 
-import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active } from "./pkg/webgpu_build.js";
+import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
 import { createSandboxHost } from "./sandbox_host.js";
+import { installContentCachePageFunctions, requestPersistentStorage } from "./content_cache.js";
 
 // Re-export for main.js
 export { engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash };
@@ -273,49 +274,12 @@ export async function initEngine() {
     if (!window.open(url, "_blank")) console.warn("[Main JS] window.open blocked:", url);
   };
 
-  // Setup HLS video source callback
-  window.setVideoSource = (video, src) => {
-    async function isHlsStream(url) {
-      try {
-        const response = await fetch(url, {
-          method: "HEAD",
-          mode: "cors",
-        });
-
-        if (!response.ok) {
-          return false;
-        }
-
-        const contentType = response.headers.get("Content-Type");
-
-        if (contentType) {
-          return (
-            contentType.includes("application/vnd.apple.mpegurl") ||
-            contentType.includes("application/x-mpegURL")
-          );
-        }
-
-        return false;
-      } catch (error) {
-        return false;
-      }
-    }
-
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-    } else if (Hls.isSupported()) {
-      // check if we need hls
-      setTimeout(async () => {
-        if (await isHlsStream(src)) {
-          var hls = new Hls();
-          hls.loadSource(src);
-          hls.attachMedia(video);
-        } else {
-          video.src = src;
-        }
-      }, 0);
-    }
-  };
+  // The content cache's upkeep (content_cache.js): the engine's workers ask, the service worker trims.
+  installContentCachePageFunctions(window);
+  requestPersistentStorage().then(
+    (granted) => console.log(`[Main JS] persistent storage ${granted ? "granted" : "not granted"}`),
+    (e) => console.warn("[Main JS] persistent storage request failed", e),
+  );
 
   // The scene sandbox workers (sandbox_host.js), behind the page functions the engine calls.
   const sandboxes = createSandboxHost({
@@ -410,6 +374,16 @@ export function start(options = {}) {
     return new Promise((resolve) => resolve(page.command.run(page.rest)));
   };
 
+  // A word the engine splits back into the same argument (crates/console/src/line.rs): quoted
+  // when it is empty or holds a double quote or whitespace as the engine counts it (Unicode's
+  // White_Space: `\s` lacks U+0085). A command that takes the rest of the line (`rest`) is split
+  // on whitespace alone, quotes kept, and a page command splits its own line, so their words go
+  // unquoted.
+  const quoteWord = (word) =>
+    word === "" || /[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"]/.test(word)
+      ? `"${word.replace(/[\\"]/g, "\\$&")}"`
+      : word;
+
   // Callback invoked by Rust once console command metadata is available.
   window._buildEngineApi = (json) => {
     try {
@@ -417,6 +391,7 @@ export function start(options = {}) {
         cmd,
         args: command.args,
         help: command.help,
+        rest: true,
       }));
       const api = JSON.parse(json).concat(pageApi);
       window.engine = {};
@@ -428,14 +403,15 @@ export function start(options = {}) {
         const body = [
           `var parts = [${JSON.stringify(cmd.cmd)}];`,
           `var defs = ${JSON.stringify(cmd.args)};`,
+          `var word = ${cmd.rest ? 'String' : 'quoteWord'};`,
           `for (var i = 0; i < defs.length; i++) {`,
           `  var val = arguments[i];`,
           `  if (val === undefined) { if (!defs[i].optional) throw new Error(${JSON.stringify(jsName)} + ": missing arg '" + defs[i].name + "'"); break; }`,
-          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : String(val));`,
+          `  parts.push(defs[i].kind === 'json' ? JSON.stringify(val) : word(String(val)));`,
           `}`,
           `return window.engine_console_command(parts.join(' ')).then(function(r) { try { return JSON.parse(r); } catch(e) { return r; } });`,
         ].join('\n');
-        const fn = new Function(...paramNames, body);
+        const fn = new Function('quoteWord', `return function (${paramNames.join(', ')}) {\n${body}\n};`)(quoteWord);
         const sig = cmd.args.map(a => {
           const name = a.kind === 'json' ? `${a.name}: object` : a.name;
           return a.optional ? `[${name}]` : `<${name}>`;
@@ -503,6 +479,32 @@ export function start(options = {}) {
   };
   document.addEventListener("visibilitychange", updateViewport);
   updateViewport();
+
+  // report `document.hasFocus()` to the engine on every change
+  const updatePageFocus = () => engine_set_page_focus(document.hasFocus());
+  window.addEventListener("focus", updatePageFocus);
+  window.addEventListener("blur", updatePageFocus);
+  document.addEventListener("visibilitychange", updatePageFocus);
+  updatePageFocus();
+
+  // the HUD's main-thread cost window, every second: the window ends only once the engine
+  // stored it, so one refused while the engine holds its lock stays and grows until the next
+  // tick; what accumulated while the tab was hidden is discarded when it shows again
+  setInterval(() => {
+    const cost = window.__bevyPeekHudMainThreadCost?.();
+    if (!cost) return;
+    const commits = cost.reactCommits;
+    const frames = cost.longAnimationFrames;
+    const stored = engine_set_hud_main_thread_cost(
+      cost.coveredSeconds,
+      commits !== null, commits?.commitCount ?? 0, commits?.commitTimeSumMs ?? 0,
+      frames !== null, frames?.frameCount ?? 0, frames?.hudScriptTimeSumMs ?? 0, frames?.styleAndLayoutTimeSumMs ?? 0,
+    );
+    if (stored) window.__bevyTakeHudMainThreadCost();
+  }, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) window.__bevyDiscardHudMainThreadCost?.();
+  });
 
   // The engine worker cannot see the document's pointer-lock state (Escape, a refused request):
   // report it through the shared wasm memory (src/web.rs report_pointer_lock).

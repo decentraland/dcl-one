@@ -12,7 +12,7 @@ import type { PageToScene, SceneToPage } from './protocol'
 // because the two implementations drive it differently (console vs rpc).
 
 /** What a first-time login's new profile starts as: a name and one of the curated default looks
- *  by number (`default<look>`), picked before the account existed (the guest start page). */
+ *  by number (`default<look>`), picked before the account existed. */
 export interface NewAccountPick {
   name: string
   look: number
@@ -34,9 +34,20 @@ export interface LoginDriver {
    *  with it, replacing any earlier guest. Absent where there is no engine to take the identity;
    *  `loginGuest` stays the throwaway guest (?guest=1, scene previews). */
   loginPersistentGuest?(pick?: NewAccountPick): Promise<void>
+  /** Email sign-in, in three steps so a wrong code is told before the lobby: send the code to
+   *  `email`; check it, which makes the account's identity where its key is kept (the web shell, or
+   *  this page on native) and fails with an EmailLoginError code (features/auth/thirdweb.ts) for a
+   *  wrong code or a refused address; then sign in with that identity. Absent where there is no
+   *  page to make the thirdweb calls. */
+  /** False where the methods exist but can't work (a page outside the shell has nowhere to keep the key). */
+  emailAvailable?: boolean
+  emailSendCode?(email: string): Promise<void>
+  emailVerify?(email: string, code: string): Promise<AuthIdentity>
+  loginEmail?(identity: AuthIdentity): Promise<void>
   loginCancel(): Promise<void>
-  /** Sign out of the current account → back to the login screen. */
-  logout(): Promise<void>
+  /** Sign out of the current account → back to the login screen. `forget` also drops the sign-in the
+   *  engine keeps (a person signing out), so the next start opens on sign-in. */
+  logout(forget?: boolean): Promise<void>
   /** Hand a same-domain SSO identity to the engine (replaces the auth-server poll).
    *  `defaultOnError` continues with (and deploys) a default profile if the user's current
    *  profile can't be fetched — it OVERWRITES the server-side profile, so only pass it after
@@ -68,6 +79,9 @@ export interface LoginDriver {
   engineReady?(): boolean
   /** Tell the transport the bridge scene is now expected, so its absence can be reported. */
   expectBridge?(): void
+  /** Whether the bridge scene has answered the page's handshake. Optional — the mock has no
+   *  bridge to wait for. */
+  bridgeReady?(): boolean
   /** Real weighted boot progress (0–100) + active step id, surfaced from the engine loader for
    *  the login footer bar. Optional — the mock has no engine to download. */
   loadProgress?(): number
@@ -85,7 +99,7 @@ export interface LoginDriver {
   launch?(realm?: string, position?: string, host?: LaunchHostOptions): void
   /** The engine's persisted home scene — the Skip target. Available pre-launch; null until the
    *  engine module is up. Native and mock clients request it through the scene bridge instead. */
-  homeScene?(): { realm: string | null; parcel: string } | null
+  homeScene?(): { realm: string | null; parcel: string; pinned: boolean } | null
   /** Whether this install has accepted the terms, pre-launch (null = unknown), so a link can launch
    *  holding the world for the welcome page. Native decides that hold itself (src/lib.rs). */
   termsAccepted?(): boolean | null

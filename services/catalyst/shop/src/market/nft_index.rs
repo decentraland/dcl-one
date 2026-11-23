@@ -16,7 +16,8 @@
 //! latest transfer's `to`, the mint the first), `nft_order` (the latest
 //! legacy order event per token) and `land_data` (the latest Update per
 //! token), each a deterministic function of the log: a touched key is
-//! refolded over its whole history, `since = None` rebuilds.
+//! refolded over its whole history (for `land_data` the window is enough: a
+//! touched token's latest Update is in it), `since = None` rebuilds.
 //!
 //! The address set grows with the mirror. A collection enters the walk at
 //! the first window whose end its `created_at` may precede (an upper bound
@@ -26,17 +27,17 @@
 //! main range and refolded whole when it completes. A network publishes only
 //! with no backfill owed.
 
+use crate::market::chain_walk::{topic_address, topic_u256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use alloy_primitives::U256;
 use alloy_sol_types::{SolType, sol_data};
 use anyhow::Context;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool, Row};
 
 use super::chain_walk::{self, ChainIndex, ChainNet, INDEXER_NFT, LogGroup};
-use crate::land_authz::indexer::{Rpc, RpcLog};
+use crate::chain_index::rpc::RpcLog;
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET, LAND_START_BLOCK_MAINNET};
 
 pub const TOPIC_TRANSFER: &str =
@@ -135,6 +136,9 @@ pub struct NftEvent {
     pub amount: Option<String>,
     pub expires_at: Option<i64>,
     pub detail: Option<String>,
+    /// The transaction of an `order_successful` (NULL on other kinds and on
+    /// rows indexed before 0040).
+    pub tx_hash: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -144,17 +148,6 @@ pub struct DecodeError {
     pub index: i32,
     pub what: &'static str,
     pub why: String,
-}
-
-pub(crate) fn topic_address(topic: &str) -> Option<String> {
-    let hex = topic.strip_prefix("0x")?;
-    (hex.len() == 64).then(|| format!("0x{}", &hex[24..]).to_ascii_lowercase())
-}
-
-pub(crate) fn topic_u256(topic: &str) -> Option<String> {
-    U256::from_str_radix(topic.strip_prefix("0x")?, 16)
-        .ok()
-        .map(|v| v.to_string())
 }
 
 /// A legacy order's `expiresAt`: the 2018 Ethereum contract took seconds
@@ -202,6 +195,7 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
         amount: None,
         expires_at: None,
         detail: None,
+        tx_hash: None,
     };
     let event = match topic0.as_str() {
         TOPIC_TRANSFER => {
@@ -284,6 +278,10 @@ pub fn decode_log(log: &RpcLog, block_time: i64) -> Result<Option<NftEvent>, Dec
                 to_address: buyer,
                 amount: Some(price.to_string()),
                 detail: Some(format!("{id:#x}")),
+                tx_hash: log
+                    .transaction_hash
+                    .as_ref()
+                    .map(|h| h.to_ascii_lowercase()),
                 ..base(KIND_ORDER_SUCCESSFUL, format!("{nft:#x}"), token)
             }
         }
@@ -350,7 +348,7 @@ pub fn parse_land_data(raw: &str) -> Option<(Option<String>, Option<String>)> {
     Some((field(1), field(2)))
 }
 
-/// Appends a window's rows (`ON CONFLICT (network, block_number, log_index) DO NOTHING`).
+/// Appends a window's rows; a row already kept only gains a missing `tx_hash`.
 pub async fn insert_events(
     conn: &mut PgConnection,
     net: ChainNet,
@@ -360,11 +358,12 @@ pub async fn insert_events(
     for chunk in rows.chunks(1_000) {
         let r = sqlx::query(
             "INSERT INTO shop.nft_event \
-                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail) \
-             SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d \
-             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[]) \
-                  AS u(b, i, t, k, em, c, tok, f, tt, a, x, d) \
-             ON CONFLICT (network, block_number, log_index) DO NOTHING",
+                 (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address, amount, expires_at, detail, tx_hash) \
+             SELECT $1, b, i, t, k, em, c, tok::numeric, f, tt, a::numeric, x, d, h \
+             FROM UNNEST($2::bigint[], $3::int[], $4::bigint[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[], $12::bigint[], $13::text[], $14::text[]) \
+                  AS u(b, i, t, k, em, c, tok, f, tt, a, x, d, h) \
+             ON CONFLICT (network, block_number, log_index) DO UPDATE SET tx_hash = EXCLUDED.tx_hash \
+             WHERE shop.nft_event.tx_hash IS NULL AND EXCLUDED.tx_hash IS NOT NULL",
         )
         .bind(net.db_name())
         .bind(chunk.iter().map(|r| r.block_number).collect::<Vec<_>>())
@@ -379,6 +378,7 @@ pub async fn insert_events(
         .bind(chunk.iter().map(|r| r.amount.clone()).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.expires_at).collect::<Vec<_>>())
         .bind(chunk.iter().map(|r| r.detail.clone()).collect::<Vec<_>>())
+        .bind(chunk.iter().map(|r| r.tx_hash.clone()).collect::<Vec<_>>())
         .execute(&mut *conn)
         .await?;
         written += r.rows_affected() as usize;
@@ -386,7 +386,7 @@ pub async fn insert_events(
     Ok(written)
 }
 
-const TWO_POW_216: &str = "105312291668557186697918027683670432318895095400549111254310977536";
+use crate::shared::collections::ITEM_SHIFT as TWO_POW_216;
 
 /// The keys a fold past `$2` touches, counted before the fold decides its
 /// join strategy (`NESTED_LOOP_TOUCHED_MAX`); the same two arms as the
@@ -526,8 +526,13 @@ pub struct FoldCounts {
 /// The three folds of `net` in one transaction: the keys an event past
 /// `since` touched (`None`: every key) and every token of a contract whose
 /// backfill completed since (`refold_owed`, cleared here), each over its
-/// whole history.
-pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::Result<FoldCounts> {
+/// whole history; `land_data` reads only the window.
+pub async fn fold(
+    pool: &PgPool,
+    net: ChainNet,
+    since: Option<i64>,
+    owner: &chain_walk::Owner,
+) -> anyhow::Result<FoldCounts> {
     let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
     // A job, not a request (the land_authz fold's reasons): the rebuild
@@ -586,6 +591,7 @@ pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::R
             .execute(&mut *tx)
             .await?;
     }
+    owner.check(&mut tx).await?;
     tx.commit().await?;
     Ok(FoldCounts {
         nfts,
@@ -594,20 +600,26 @@ pub async fn fold(pool: &PgPool, net: ChainNet, since: Option<i64>) -> anyhow::R
     })
 }
 
+/// Materialized so the per-token order does not shape the window's scan.
+pub(super) const LAND_DATA_SQL: &str = "WITH w AS MATERIALIZED (\
+    SELECT contract_address, token_id, detail, block_number, log_index FROM shop.nft_event \
+    WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
+SELECT DISTINCT ON (w.contract_address, w.token_id) w.contract_address, w.token_id::text AS token_id, w.detail, w.block_number, w.log_index \
+FROM w ORDER BY w.contract_address, w.token_id, w.block_number DESC, w.log_index DESC";
+
 /// The latest Update per touched LAND/estate token, parsed in Rust (the CSV
 /// has quoting SQL would re-implement badly) and upserted.
 async fn fold_land_data(conn: &mut PgConnection, since: i64) -> anyhow::Result<u64> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT ON (e.contract_address, e.token_id) e.contract_address, e.token_id::text AS token_id, e.detail, e.block_number, e.log_index \
-         FROM shop.nft_event e \
-         WHERE e.network = 'ethereum' AND e.kind = 'land_data' \
-           AND (e.contract_address, e.token_id) IN (SELECT contract_address, token_id FROM shop.nft_event \
-                                                     WHERE network = 'ethereum' AND kind = 'land_data' AND block_number > $1) \
-         ORDER BY e.contract_address, e.token_id, e.block_number DESC, e.log_index DESC",
-    )
-    .bind(since)
-    .fetch_all(&mut *conn)
-    .await?;
+    // The cross-chain `block_number` misestimate (see `NESTED_LOOP_TOUCHED_MAX`) makes custom plans scan the table.
+    if since >= 0 {
+        sqlx::query("SET LOCAL enable_seqscan = off")
+            .execute(&mut *conn)
+            .await?;
+    }
+    let rows = sqlx::query(LAND_DATA_SQL)
+        .bind(since)
+        .fetch_all(&mut *conn)
+        .await?;
     type Columns = (
         Vec<String>,
         Vec<String>,
@@ -763,6 +775,26 @@ pub async fn mirror_complete(pool: &PgPool, net: ChainNet) -> bool {
 impl ChainIndex for NftIndex {
     fn indexer(&self) -> &'static str {
         INDEXER_NFT
+    }
+
+    fn abandon(&self) {
+        self.reset();
+    }
+
+    fn begin_pass(&self) {
+        self.reset();
+    }
+
+    /// A walk that owes a backfill runs its lanes, alone.
+    async fn walks_alone(&self, pool: &PgPool) -> anyhow::Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM shop.nft_contract \
+             WHERE network = $1 AND backfill_from_block IS NOT NULL \
+               AND COALESCE(backfilled_to_block, backfill_from_block - 1) < walked_from_block - 1)",
+        )
+        .bind(self.net.db_name())
+        .fetch_one(pool)
+        .await?)
     }
 
     fn net(&self) -> ChainNet {
@@ -930,13 +962,30 @@ impl ChainIndex for NftIndex {
             .bind(to)
             .execute(&mut *conn)
             .await?;
+        // The bids fold inferred sellers from these transfers: it infers
+        // again the seller of every bid created past the rewind.
+        if self.net == ChainNet::Matic {
+            sqlx::query(
+                "INSERT INTO shop.bid_seller_recheck (network, from_block) VALUES ($1, $2)",
+            )
+            .bind(self.net.db_name())
+            .bind(to)
+            .execute(&mut *conn)
+            .await?;
+        }
         // The cleared marker makes the next fold a rebuild, which also
         // restores the deleted keys' rows from their remaining history.
         Ok(())
     }
 
-    async fn fold(&self, pool: &PgPool, since: Option<i64>, _upto: i64) -> anyhow::Result<bool> {
-        let counts = fold(pool, self.net, since).await?;
+    async fn fold(
+        &self,
+        pool: &PgPool,
+        since: Option<i64>,
+        _upto: i64,
+        owner: &chain_walk::Owner,
+    ) -> anyhow::Result<bool> {
+        let counts = fold(pool, self.net, since, owner).await?;
         tracing::info!(
             network = self.net.db_name(),
             nfts = counts.nfts,
@@ -957,11 +1006,13 @@ impl ChainIndex for NftIndex {
     async fn lanes(
         &self,
         pool: &PgPool,
-        rpc: &Rpc<'_>,
+        source: &dyn chain_walk::LogSource,
         _anchor: (u64, i64),
         budget: usize,
         chunk: &mut usize,
-    ) -> anyhow::Result<usize> {
+        owner: &chain_walk::Owner,
+        cursor: Option<(u64, &str)>,
+    ) -> anyhow::Result<chain_walk::Spent> {
         self.reset();
         let owed: Vec<WalkedContract> = sqlx::query_as(
             "SELECT contract_address, walked_from_block, backfill_from_block, backfilled_to_block FROM shop.nft_contract \
@@ -972,7 +1023,10 @@ impl ChainIndex for NftIndex {
         .bind(self.net.db_name())
         .fetch_all(pool)
         .await?;
-        let mut used = 0usize;
+        let mut used = chain_walk::Spent::default();
+        // The cursor block's header that closed the last lane window opens
+        // the next one: one read a window, the bracket unbroken.
+        let mut opened: Option<crate::chain_index::rpc::BlockHeader> = None;
         for contract in owed {
             let Some((mut next, last)) = contract.owed() else {
                 continue;
@@ -982,18 +1036,51 @@ impl ChainIndex for NftIndex {
                 topics: collection_topics(self.net),
             }];
             while next <= last {
-                if used >= budget {
+                if used.charge >= budget {
                     return Ok(used);
                 }
                 let to = (next + 10_000 - 1).min(last);
-                let w = chain_walk::fetch_window(rpc, next as u64, to as u64, &group, chunk)
+                // Bracketed by the cursor block's header: rows below the
+                // cursor join its prefix only when read on its branch.
+                let before = match (cursor, opened.take()) {
+                    (Some(_), Some(last)) => Some(last),
+                    (Some((block, _)), None) => {
+                        let h = source.header(block).await?;
+                        used.read(h.requests);
+                        Some(h.value)
+                    }
+                    (None, _) => None,
+                };
+                let w = source
+                    .window(next as u64, to as u64, &group, chunk)
                     .await
                     .with_context(|| {
                         format!("backfill of {} [{next}, {to}]", contract.contract_address)
                     })?;
-                used += w.requests;
-                let (times, extra) = chain_walk::block_times(rpc, &w.logs).await?;
-                used += extra;
+                used.window(&w);
+                source.lane_read();
+                let times = source.block_times(&w.logs).await?;
+                used.read(times.requests);
+                let times = times.value;
+                if let (Some(before), Some((block, stored))) = (before, cursor) {
+                    let after = source.header(block).await?;
+                    used.read(after.requests);
+                    anyhow::ensure!(
+                        before == after.value,
+                        "chain changed while backfilling {}",
+                        contract.contract_address
+                    );
+                    if after.value.hash != stored {
+                        return Err(chain_walk::Diverged {
+                            block,
+                            stored: stored.to_string(),
+                            chain: after.value.hash,
+                            requests: used.requests,
+                        }
+                        .into());
+                    }
+                    opened = Some(after.value);
+                }
                 let mut rows = Vec::new();
                 for log in &w.logs {
                     if let Ok(Some(row)) = decode_log(
@@ -1023,6 +1110,7 @@ impl ChainIndex for NftIndex {
                 .bind(w.reached as i64)
                 .execute(&mut *tx)
                 .await?;
+                owner.check(&mut tx).await?;
                 tx.commit().await?;
                 next = w.reached as i64 + 1;
             }
@@ -1050,7 +1138,7 @@ pub async fn status(pool: &PgPool) -> serde_json::Value {
         .unwrap_or(0);
         out.insert(net.db_name().to_string(), json!(c.map(|c| json!({
             "lastBlock": c.last_block, "foldedBlock": c.folded_block, "fullHistory": c.full_history,
-            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "backfillsOwed": owed,
+            "ready": chain_walk::is_ready(&c, chrono::Utc::now()), "reorgRewinds": c.reorg_rewinds, "divergedAt": c.diverged_at, "backfillsOwed": owed,
         }))));
     }
     serde_json::Value::Object(out)
@@ -1076,7 +1164,7 @@ pub async fn ready_networks(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::{Address, FixedBytes, keccak256};
+    use alloy_primitives::{Address, FixedBytes, U256, keccak256};
     use alloy_sol_types::SolValue;
     use std::str::FromStr;
 
@@ -1283,7 +1371,7 @@ pub(crate) mod tests {
             ev.detail.as_deref(),
             Some(format!("0x{}", "42".repeat(32)).as_str())
         );
-        let sold = log(
+        let mut sold = log(
             market,
             vec![
                 TOPIC_ORDER_SUCCESSFUL.into(),
@@ -1295,10 +1383,15 @@ pub(crate) mod tests {
             23,
             0,
         );
+        sold.transaction_hash = Some(format!("0x{}", "AB".repeat(32)));
         let ev = decode_log(&sold, 1).unwrap().unwrap();
         assert_eq!(
-            (ev.kind, ev.to_address.as_deref()),
-            (KIND_ORDER_SUCCESSFUL, Some(c))
+            (ev.kind, ev.to_address.as_deref(), ev.tx_hash),
+            (
+                KIND_ORDER_SUCCESSFUL,
+                Some(c),
+                Some(format!("0x{}", "ab".repeat(32)))
+            )
         );
         let cancelled = log(
             market,
@@ -1336,6 +1429,18 @@ pub(crate) mod tests {
             parse_land_data(ev.detail.as_deref().unwrap()),
             Some((Some("1x2 Estate".to_string()), None))
         );
+    }
+
+    /// `land_data` is folded only past the marker, so backfill must never write Updates below it.
+    #[test]
+    fn backfill_topics_leave_out_land_updates() {
+        for net in [ChainNet::Ethereum, ChainNet::Matic] {
+            assert!(
+                !collection_topics(net)
+                    .to_string()
+                    .contains(TOPIC_LAND_UPDATE)
+            );
+        }
     }
 
     #[test]

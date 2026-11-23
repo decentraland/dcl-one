@@ -1,0 +1,108 @@
+.root {
+  --site-sidebar-width: 248px;
+  --site-header-h: var(--native-site-header-h, 72px);
+  display: grid;
+  grid-template-columns: var(--site-sidebar-width) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 100dvh;
+  align-items: start;
+  color: var(--site-layout-color, var(--dcl-text-primary));
+  background: var(--site-layout-background, var(--dcl-bg-page));
+  font-family: var(--site-layout-font, Inter, system-ui, sans-serif);
+}
+.root:not([data-site-layout-sections]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.navigation {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  height: var(--site-header-h);
+  min-width: 0;
+  z-index: 20;
+}
+.sidebar {
+  box-sizing: border-box;
+  position: sticky;
+  top: var(--site-header-h);
+  height: calc(100dvh - var(--site-header-h));
+  overflow-y: auto;
+  padding: var(--dcl-space-24) var(--dcl-space-16);
+  background: var(--site-nav-bg, var(--dcl-bg-page));
+  border-right: 1px solid var(--site-nav-line, var(--dcl-border-subtle));
+  scrollbar-width: thin;
+}
+.content {
+  min-width: 0;
+  min-height: 0;
+}
+.content > [data-site-layout-fill] {
+  position: relative;
+  inset: auto;
+  z-index: 0;
+  height: calc(100dvh - var(--site-header-h));
+  min-height: 0;
+}
+@media (max-width: 991px) {
+  .root {
+    --site-header-h: var(--native-site-header-h, 64px);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .navigation {
+    height: 64px;
+    flex: 0 0 64px;
+  }
+  .sidebar {
+    display: none;
+  }
+  .content {
+    flex: 1 1 auto;
+  }
+}
+
+/* The native header is the Sites top bar, decentraland.org's 92px from 992px and 64px under it (apps/sites SitesTopBar.module.css). */
+.root[data-header-layout='native'] {
+  --native-site-header-h: 92px;
+  --site-header-h: var(--native-site-header-h);
+}
+
+@media (max-width: 991px) {
+  .root[data-header-layout='native'] {
+    --native-site-header-h: 64px;
+    --site-header-h: var(--native-site-header-h);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .root[data-header-layout='native'] > .navigation {
+    height: 64px;
+    flex: 0 0 64px;
+  }
+  .root[data-header-layout='native'] > .sidebar {
+    display: none;
+  }
+  .root[data-header-layout='native'] > .content {
+    flex: 1 1 auto;
+  }
+}
+
+.root[data-header-layout='native'][data-header-overlay] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.root[data-header-layout='native'][data-header-overlay] > .navigation {
+  grid-area: 1 / 1 / 2 / -1;
+  height: 0;
+  flex: 0 0 0;
+}
+.root[data-header-layout='native'][data-header-overlay] > .content {
+  grid-area: 1 / 1 / 2 / -1;
+}
+@media (max-width: 991px) {
+  /* The column layout keeps the overlay nav's 64px: with the page's negative margin (siteschrome.css) the content starts under the bar, not above the page. */
+  .root[data-header-layout='native'][data-header-overlay] > .navigation {
+    height: 64px;
+    flex: 0 0 64px;
+  }
+}

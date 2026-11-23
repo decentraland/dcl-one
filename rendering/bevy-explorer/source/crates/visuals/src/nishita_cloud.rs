@@ -1,6 +1,3 @@
-// temporary for ShaderType macro, remove in future
-#![allow(dead_code)]
-
 use bevy::{
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     prelude::*,
@@ -104,37 +101,66 @@ pub struct NishitaCloud {
     pub cloud_sharpness: f32,
     /// coverage value the contrast curve is centred on.
     pub cloud_sharp_mid: f32,
+    /// Scene-authored linear sky colors; alpha flags whether each band is overridden.
+    pub scene_zenith: Vec4,
+    pub scene_horizon: Vec4,
+    pub scene_nadir: Vec4,
+    pub scene_rim: Vec4,
+    pub scene_cloud_color: Vec4,
+    pub scene_cloud_opacity: f32,
+    pub scene_cloud_rotation: f32,
+    pub scene_sun_visible: f32,
 }
 
-#[derive(ShaderType)]
-pub struct NishitaCloudUniform {
-    pub ray_origin: Vec3,
-    pub sun_position: Vec3,
-    pub sun_intensity: f32,
-    pub planet_radius: f32,
-    pub atmosphere_radius: f32,
-    pub rayleigh_coefficient: Vec3,
-    pub rayleigh_scale_height: f32,
-    pub mie_coefficient: f32,
-    pub mie_scale_height: f32,
-    pub mie_direction: f32,
-    pub time: f32,
-    pub cloudy: f32,
-    pub tick: u32,
-    pub sun_color: Vec3,
-    pub dir_light_intensity: f32,
-    /// flat night-sky colour, added per view direction weighted by
-    /// max(0, -sun·ray) so it fades in as the sun drops below the horizon.
-    pub night_color: Vec3,
-    /// world-space direction to the moon (own low orbit, never overhead).
-    pub moon_position: Vec3,
-    pub cloud_density_cap: f32,
-    pub cloud_shadow: f32,
-    pub cloud_scale: f32,
-    pub cloud_steps: u32,
-    pub cloud_lacunarity: f32,
-    pub cloud_sharpness: f32,
-    pub cloud_sharp_mid: f32,
+pub use decl::NishitaCloudUniform;
+
+mod decl {
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits a never-called check fn per field"
+    )]
+
+    use super::*;
+
+    #[derive(ShaderType)]
+    pub struct NishitaCloudUniform {
+        pub ray_origin: Vec3,
+        pub sun_position: Vec3,
+        pub sun_intensity: f32,
+        pub planet_radius: f32,
+        pub atmosphere_radius: f32,
+        pub rayleigh_coefficient: Vec3,
+        pub rayleigh_scale_height: f32,
+        pub mie_coefficient: f32,
+        pub mie_scale_height: f32,
+        pub mie_direction: f32,
+        pub time: f32,
+        pub cloudy: f32,
+        pub tick: u32,
+        pub sun_color: Vec3,
+        pub dir_light_intensity: f32,
+        /// flat night-sky colour, added per view direction weighted by
+        /// max(0, -sun·ray) so it fades in as the sun drops below the horizon.
+        pub night_color: Vec3,
+        /// world-space direction to the moon (own low orbit, never overhead).
+        pub moon_position: Vec3,
+        pub cloud_density_cap: f32,
+        pub cloud_shadow: f32,
+        pub cloud_scale: f32,
+        pub cloud_steps: u32,
+        pub cloud_lacunarity: f32,
+        pub cloud_sharpness: f32,
+        pub cloud_sharp_mid: f32,
+        /// Scene-authored linear sky colors; alpha flags whether each band is overridden.
+        pub scene_zenith: Vec4,
+        pub scene_horizon: Vec4,
+        pub scene_nadir: Vec4,
+        pub scene_rim: Vec4,
+        pub scene_cloud_color: Vec4,
+        pub scene_cloud_opacity: f32,
+        pub scene_cloud_rotation: f32,
+        pub scene_sun_visible: f32,
+    }
 }
 
 impl From<&NishitaCloud> for NishitaCloudUniform {
@@ -164,6 +190,14 @@ impl From<&NishitaCloud> for NishitaCloudUniform {
             cloud_lacunarity: value.cloud_lacunarity,
             cloud_sharpness: value.cloud_sharpness,
             cloud_sharp_mid: value.cloud_sharp_mid,
+            scene_zenith: value.scene_zenith,
+            scene_horizon: value.scene_horizon,
+            scene_nadir: value.scene_nadir,
+            scene_rim: value.scene_rim,
+            scene_cloud_color: value.scene_cloud_color,
+            scene_cloud_opacity: value.scene_cloud_opacity,
+            scene_cloud_rotation: value.scene_cloud_rotation,
+            scene_sun_visible: value.scene_sun_visible,
         }
     }
 }
@@ -196,6 +230,14 @@ impl Default for NishitaCloud {
             cloud_lacunarity: 2.0,
             cloud_sharpness: 50.0,
             cloud_sharp_mid: 0.1,
+            scene_zenith: Vec4::ZERO,
+            scene_horizon: Vec4::ZERO,
+            scene_nadir: Vec4::ZERO,
+            scene_rim: Vec4::ZERO,
+            scene_cloud_color: Vec4::ZERO,
+            scene_cloud_opacity: 1.0,
+            scene_cloud_rotation: 0.0,
+            scene_sun_visible: 1.0,
         }
     }
 }

@@ -71,8 +71,8 @@ impl IpfsAsset for bevy_kira_audio::AudioSource {
 /// The name an asset is cached under.
 #[derive(Debug, Clone)]
 pub enum CacheKey {
-    /// The content's own hash, taken from data a server gave us. The cache only takes bytes
-    /// that match it.
+    /// The content's own hash, taken from data a server gave us. A download whose bytes don't
+    /// match it fails, and the cache only takes bytes that match it.
     Content(String),
     /// A digest of the url, made here.
     Url(String),
@@ -119,10 +119,22 @@ pub enum IpfsType {
 }
 
 impl IpfsType {
+    /// The file part takes the content map's key form (relative and lowercase, as
+    /// `ContentMap::key` stores it), so every load of one deployed file gets one asset path
+    /// whatever case the caller spelled it in: a scene's `GltfContainer` may name
+    /// `models/Tree.glb` while the near LOD finds `models/tree.glb` in the content map, and two
+    /// paths would download and parse the file twice. The lookup is case-insensitive either way.
+    /// A url keeps its case: a content-map miss fetches it as written.
     pub fn new_content_file(content_hash: String, file_path: String) -> Self {
+        let file_path = content_file_path(&file_path);
+        let file_path = if is_url(&file_path) {
+            file_path.into_owned()
+        } else {
+            file_path.to_lowercase()
+        };
         Self::ContentFile {
             content_hash,
-            file_path: content_file_path(&file_path).into_owned(),
+            file_path,
         }
     }
 
@@ -143,28 +155,37 @@ impl IpfsType {
                 content_hash: scene_hash,
                 file_path,
                 ..
-            } => context
-                .entities
-                .get(scene_hash)
-                .ok_or_else(|| anyhow::anyhow!("required collection hash not found: {scene_hash}"))?
-                .collection
-                .hash(file_path)
-                .map(|hash| format!("{base_url}{hash}"))
-                .or_else(|| {
-                    // On an authoritative server a content-map miss must NOT fall through to
-                    // fetching the file_path as a raw URL: that turns any asset load of a
-                    // missing entry into a scene-controlled outbound request (SSRF). Clients
-                    // keep the URL fallthrough.
-                    // TODO: check scene.json for allowed domains (include these in context like baseUrls)
-                    if common::structs::server_mode() {
-                        None
-                    } else {
-                        is_url(file_path).then_some(file_path.to_owned())
-                    }
-                })
-                .ok_or_else(|| {
-                    anyhow::anyhow!("file not found in content map: {file_path:?} in {scene_hash}")
-                }),
+            } => {
+                // a url resolves as itself even when the scene's content map is not registered:
+                // a far LOD (`scene_lod`) names its mesh under the scene's hash alone, so the
+                // download ranks under it
+                let collection = context
+                    .entities
+                    .get(scene_hash)
+                    .map(|entity| &entity.collection);
+                collection
+                    .and_then(|collection| collection.hash(file_path))
+                    .map(|hash| format!("{base_url}{hash}"))
+                    .or_else(|| {
+                        // On an authoritative server a content-map miss must NOT fall through to
+                        // fetching the file_path as a raw URL: that turns any asset load of a
+                        // missing entry into a scene-controlled outbound request (SSRF). Clients
+                        // keep the URL fallthrough.
+                        // TODO: check scene.json for allowed domains (include these in context like
+                        // baseUrls)
+                        if common::structs::server_mode() {
+                            None
+                        } else {
+                            is_url(file_path).then_some(file_path.to_owned())
+                        }
+                    })
+                    .ok_or_else(|| match collection {
+                        None => anyhow::anyhow!("required collection hash not found: {scene_hash}"),
+                        Some(_) => anyhow::anyhow!(
+                            "file not found in content map: {file_path:?} in {scene_hash}"
+                        ),
+                    })
+            }
             IpfsType::Entity { hash, .. } => Ok(format!("{base_url}{hash}")),
             IpfsType::SceneContent { content_hash, .. } => Ok(format!("{base_url}{content_hash}")),
             IpfsType::UrlCached { url, .. } | IpfsType::UrlUncached { url, .. } => {
@@ -200,11 +221,11 @@ impl IpfsType {
                 ..
             } => context
                 .entities
-                .get(scene_hash)?
-                .collection
-                .hash(file_path)
+                .get(scene_hash)
+                .and_then(|entity| entity.collection.hash(file_path))
                 .or_else(|| {
-                    // not in the content map: only a url can still be fetched (see `url_target`)
+                    // not in the content map, or no content map registered: only a url can still
+                    // be fetched (see `url_target`)
                     is_url(file_path).then(|| {
                         let digest =
                             multihash_codetable::Code::Sha2_256.digest(file_path.as_bytes());
@@ -410,12 +431,39 @@ where
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum IpfsKey {
     BaseUrl,
+    /// What part of a file the load takes, when not all of it: [`COLLIDERS_PART`]. The file
+    /// resolves, downloads and caches as without it; only the asset path differs, so the part
+    /// loads with its own settings beside the whole file's asset.
+    Part,
 }
+
+/// The [`IpfsKey::Part`] of a glTF loaded for its colliders only (`scene_lod`).
+pub const COLLIDERS_PART: &str = "colliders";
+
+/// The file name every image a colliders-part glTF references by uri resolves to
+/// ([`ContentPathExt::resolve_content_uri`]), answered with [`COLLIDER_TEXTURE_PNG`] and never
+/// fetched.
+const COLLIDER_TEXTURE: &str = "collider-texture.png";
+
+/// A 1x1 white PNG.
+pub const COLLIDER_TEXTURE_PNG: [u8; 68] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0x0f, 0x04, 0x00,
+    0x09, 0xfb, 0x03, 0xfd, 0xfb, 0x5e, 0x6b, 0x2b, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+    0xae, 0x42, 0x60, 0x82,
+];
+
+/// Image extensions a glTF may reference by uri.
+const IMAGE_EXTENSIONS: [&str; 9] = [
+    "png", "jpg", "jpeg", "webp", "ktx2", "basis", "dds", "gif", "bmp",
+];
 
 impl AsRef<Path> for IpfsKey {
     fn as_ref(&self) -> &Path {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
+            IpfsKey::Part => Path::new("&part"),
         }
     }
 }
@@ -426,6 +474,7 @@ impl TryFrom<&str> for IpfsKey {
     fn try_from(key: &str) -> Result<Self, Self::Error> {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
+            "&part" => Ok(Self::Part),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }
@@ -622,9 +671,10 @@ impl IpfsPath {
         Ok(self.ipfs_type.context_free_hash()?.map(ToOwned::to_owned))
     }
 
+    /// Preview `b64-` ids and full urls (an entity registered inline maps its files to urls, which
+    /// may be `data:` or `blob:`) name no content, so nothing is cached under them.
     pub fn should_cache(&self, hash: &str) -> bool {
-        !hash.starts_with("b64-")
-        //        true // TODO only if hash is some and is not b64-
+        !hash.starts_with("b64-") && !is_url(hash)
     }
 
     pub fn base_url(&self) -> Option<&str> {
@@ -662,6 +712,13 @@ impl IpfsPath {
 
     pub fn get(&self, key: &IpfsKey) -> Option<&str> {
         self.key_values.get(key).map(Deref::deref)
+    }
+
+    /// An image a colliders-part glTF references: answered with [`COLLIDER_TEXTURE_PNG`], never
+    /// fetched.
+    pub fn is_collider_texture(&self) -> bool {
+        self.get(&IpfsKey::Part) == Some(COLLIDERS_PART)
+            && self.content_path() == Some(COLLIDER_TEXTURE)
     }
 }
 
@@ -725,7 +782,7 @@ pub fn content_file_path(file_path: &str) -> Cow<'_, str> {
 ///
 /// Deliberately not `Url::parse`, and deliberately only http(s): those are the only schemes the
 /// fetcher can use, and the wider syntax admits shapes that are better treated as paths.
-fn is_http_url(file_path: &str) -> bool {
+pub(crate) fn is_http_url(file_path: &str) -> bool {
     let Some((scheme, _)) = file_path.split_once("://") else {
         return false;
     };
@@ -777,6 +834,20 @@ impl ContentPathExt for Path {
             return self.join(uri);
         };
 
+        // a glTF loaded for its colliders samples no texture: every image it references by uri
+        // resolves to one placeholder the reader answers without a request. Images embedded in
+        // the file are the glTF loader's: empty material usages register them as placeholders
+        let prefix = &segments[..prefix_len];
+        if prefix
+            .windows(2)
+            .any(|pair| pair == ["&part", COLLIDERS_PART])
+            && is_image(uri)
+        {
+            let mut placeholder = prefix.to_vec();
+            placeholder.push(COLLIDER_TEXTURE);
+            return PathBuf::from(placeholder.join("/"));
+        }
+
         // force the uri relative first - an absolute one would otherwise discard the prefix
         let uri = content_file_path(uri);
 
@@ -802,6 +873,20 @@ impl ContentPathExt for Path {
     }
 }
 
+/// True when `uri`'s extension names an image ([`IMAGE_EXTENSIONS`]), ignoring case and any
+/// query or fragment.
+fn is_image(uri: &str) -> bool {
+    let path = uri.split(['?', '#']).next().unwrap_or_default();
+    Path::new(path)
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|ext| {
+            IMAGE_EXTENSIONS
+                .iter()
+                .any(|image| image.eq_ignore_ascii_case(ext))
+        })
+}
+
 /// Fn-pointer form of [`ContentPathExt::resolve_content_uri`], for
 /// [`bevy::gltf::GltfPlugin::with_uri_resolver`].
 pub fn resolve_content_uri(parent_path: &Path, uri: &str) -> PathBuf {
@@ -813,8 +898,10 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        content_file_path, is_http_url, resolve_content_uri, ContentPathExt, IpfsPath, IpfsType,
+        content_file_path, is_http_url, resolve_content_uri, CacheKey, ContentPathExt, IpfsKey,
+        IpfsPath, IpfsType, COLLIDERS_PART,
     };
+    use crate::{ContentMap, IpfsContext, IpfsEntity};
 
     #[test]
     fn content_paths_are_forced_relative() {
@@ -927,6 +1014,53 @@ mod tests {
             resolve_content_uri(parent, "../../optimized-textures/Image_2.png"),
             Path::new("$ipfs/$content_file/bafyhash/assets/optimized-textures/Image_2.png")
         );
+    }
+
+    /// A colliders-part glTF keeps its part in every uri it resolves, so its buffers download as
+    /// the whole file's do, while each image it references becomes the one placeholder the
+    /// reader answers.
+    #[test]
+    fn a_colliders_part_resolves_its_images_to_the_placeholder() {
+        let model = IpfsPath::new(IpfsType::new_content_file(
+            "bafyhash".to_owned(),
+            "models/Tree.gltf".to_owned(),
+        ))
+        .with_keyvalue(IpfsKey::Part, COLLIDERS_PART.to_owned());
+        let path = PathBuf::from(&model);
+        assert_eq!(
+            path,
+            Path::new("$ipfs/&part/colliders/$content_file/bafyhash/models/.tree.gltf")
+        );
+        assert_eq!(IpfsPath::new_from_path(&path).unwrap(), Some(model));
+
+        let parent = path.parent().unwrap();
+        assert_eq!(
+            resolve_content_uri(parent, "tree.bin"),
+            Path::new("$ipfs/&part/colliders/$content_file/bafyhash/models/tree.bin")
+        );
+        for image in ["bark.png", "../textures/Leaf.JPG", "leaf.ktx2?v=2"] {
+            let resolved = resolve_content_uri(parent, image);
+            assert_eq!(
+                resolved,
+                Path::new("$ipfs/&part/colliders/$content_file/bafyhash/collider-texture.png")
+            );
+            assert!(IpfsPath::new_from_path(&resolved)
+                .unwrap()
+                .unwrap()
+                .is_collider_texture());
+        }
+
+        // the whole file's images still resolve as before
+        let whole = Path::new("$ipfs/$content_file/bafyhash/models");
+        let resolved = resolve_content_uri(whole, "bark.png");
+        assert_eq!(
+            resolved,
+            Path::new("$ipfs/$content_file/bafyhash/models/bark.png")
+        );
+        assert!(!IpfsPath::new_from_path(&resolved)
+            .unwrap()
+            .unwrap()
+            .is_collider_texture());
     }
 
     #[test]
@@ -1057,6 +1191,41 @@ mod tests {
         assert_eq!(hash("scenehash", "dance"), None);
         assert!(hash("scenehash", "https://example.com/foo.glb").is_some());
         assert_eq!(hash("otherhash", "models/emotes/foo.glb"), None);
+        // a url under a scene with no registered content map (a far LOD's mesh) still resolves
+        assert!(hash("otherhash", "https://example.com/foo.glb").is_some());
+    }
+
+    #[test]
+    fn a_url_resolves_under_a_scene_with_no_content_map() {
+        let context = crate::IpfsContext::default();
+        let target = |file: &str| {
+            IpfsType::new_content_file("bafyscene".to_owned(), file.to_owned())
+                .url_target(&context, "https://peer/contents/")
+        };
+        assert_eq!(
+            target("https://cdn.example/lods/bafyscene_1.glb").unwrap(),
+            "https://cdn.example/lods/bafyscene_1.glb"
+        );
+        assert!(target("models/foo.glb")
+            .unwrap_err()
+            .to_string()
+            .contains("required collection hash not found"));
+    }
+
+    #[test]
+    fn content_files_share_one_path_across_case() {
+        let path = |file: &str| {
+            PathBuf::from(&IpfsPath::new(IpfsType::new_content_file(
+                "bafyscene".to_owned(),
+                file.to_owned(),
+            )))
+        };
+        assert_eq!(path("models/Tree.glb"), path("models/tree.glb"));
+        let url = "https://example.com/Tree.glb";
+        assert!(matches!(
+            IpfsType::new_content_file("bafyscene".to_owned(), url.to_owned()),
+            IpfsType::ContentFile { file_path, .. } if file_path == url
+        ));
     }
 
     #[test]
@@ -1085,5 +1254,63 @@ mod tests {
             ext: "png".to_owned(),
         });
         assert_eq!(url.scene_hash(), None);
+    }
+
+    #[test]
+    fn content_reads_are_keyed_by_hash_and_url_reads_by_url() {
+        let mut context = IpfsContext::default();
+        context.entities.insert(
+            "scene".to_owned(),
+            IpfsEntity {
+                collection: ContentMap::new_single("a.png".to_owned(), "filehash".to_owned()),
+                metadata: None,
+            },
+        );
+
+        // a content file found in the scene's content map is named by its own hash
+        let found = IpfsPath::new(IpfsType::new_content_file(
+            "scene".to_owned(),
+            "a.png".to_owned(),
+        ));
+        assert!(matches!(
+            found.cache_key(&context),
+            Some(CacheKey::Content(hash)) if hash == "filehash"
+        ));
+
+        // a file that is not in the map has no hash of its own to name it by
+        let missing = IpfsPath::new(IpfsType::new_content_file(
+            "scene".to_owned(),
+            "b.png".to_owned(),
+        ));
+        assert!(missing.cache_key(&context).is_none());
+
+        // a url inside the content map's miss path is named by a digest of the url
+        let remote = IpfsPath::new(IpfsType::new_content_file(
+            "scene".to_owned(),
+            "https://example.com/b.png".to_owned(),
+        ));
+        assert!(matches!(remote.cache_key(&context), Some(CacheKey::Url(_))));
+
+        let entity = IpfsPath::new(IpfsType::Entity {
+            hash: "entityhash".to_owned(),
+            ext: "json".to_owned(),
+        });
+        assert!(matches!(
+            entity.cache_key(&context),
+            Some(CacheKey::Content(hash)) if hash == "entityhash"
+        ));
+
+        let scene_content = IpfsPath::new(IpfsType::SceneContent {
+            scene_hash: "scene".to_owned(),
+            content_hash: "contenthash".to_owned(),
+            ext: "png".to_owned(),
+        });
+        assert!(matches!(
+            scene_content.cache_key(&context),
+            Some(CacheKey::Content(hash)) if hash == "contenthash"
+        ));
+
+        let by_url = IpfsPath::new_from_url("https://example.com/a.png", "png");
+        assert!(matches!(by_url.cache_key(&context), Some(CacheKey::Url(_))));
     }
 }

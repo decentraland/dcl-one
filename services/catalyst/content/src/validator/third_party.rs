@@ -6,13 +6,14 @@
 use serde::{Deserialize, Serialize};
 
 use super::error::ValidationResponse;
-use super::jsjson::{self, JsValue};
+use super::jsjson::{self, LegacyValue};
 use super::types::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MerkleProof {
     pub proof: Vec<String>,
+    #[serde(deserialize_with = "safe_integer_index")]
     pub index: u64,
     pub entity_hash: String,
     pub hashing_keys: Vec<String>,
@@ -25,6 +26,21 @@ pub struct ThirdPartyProps {
     #[serde(default)]
     pub content: std::collections::HashMap<String, String>,
     pub id: String,
+}
+
+/// The largest integer a JSON number reader holds exactly (`Number.MAX_SAFE_INTEGER`).
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
+/// A merkle index in any integral number form, up to `MAX_SAFE_INTEGER`: above
+/// it the value the signer committed to is not recoverable from the JSON.
+fn safe_integer_index<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    let index = catalyst_shared::json_number::integral_u64(d)?;
+    if index > MAX_SAFE_INTEGER {
+        return Err(serde::de::Error::custom(format!(
+            "merkle index {index} is above {MAX_SAFE_INTEGER}"
+        )));
+    }
+    Ok(index)
 }
 
 pub const WEARABLE_REQUIRED_HASHING_KEYS: &[&str] = &["id", "content", "data"];
@@ -99,7 +115,11 @@ pub fn validate_third_party_merkle_proof_content(
         );
     }
 
-    let entity_bytes = match deployment.files.get(&entity.id) {
+    let entity_bytes = match deployment
+        .files
+        .get(&entity.id)
+        .and_then(UploadedFile::bytes)
+    {
         Some(bytes) => bytes,
         None => {
             return ValidationResponse::unavailable(format!(
@@ -165,9 +185,9 @@ pub fn verify_third_party_merkle_proof(proof: &MerkleProof, root: &[u8; 32]) -> 
 /// it in JS property order. `None` when the bytes are not valid JSON or carry
 /// no `metadata` object.
 fn entity_hash_from_entity_bytes(entity_bytes: &[u8], hashing_keys: &[String]) -> Option<String> {
-    let root: JsValue = serde_json::from_slice(entity_bytes).ok()?;
+    let root: LegacyValue = serde_json::from_slice(entity_bytes).ok()?;
     let metadata = root.get("metadata")?.as_object()?;
-    let mut picked: Vec<(&str, &JsValue)> = Vec::new();
+    let mut picked: Vec<(&str, &LegacyValue)> = Vec::new();
     for key in hashing_keys {
         if picked.iter().any(|(k, _)| k == key) {
             continue;
@@ -199,6 +219,22 @@ pub fn hex_to_bytes(value: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn third_party_hash_explicitly_retains_legacy_number_marker_interpretation() {
+        let keys = vec!["name".to_owned()];
+        assert_eq!(
+            entity_hash_from_entity_bytes(br#"{"metadata":{"name":9007199254740993}}"#, &keys),
+            Some(hex::encode(alloy_primitives::keccak256(
+                br#"{"name":9007199254740992}"#
+            )))
+        );
+        let marker = br#"{"metadata":{"name":{"$serde_json::private::Number":"12"}}}"#;
+        assert_eq!(
+            entity_hash_from_entity_bytes(marker, &keys),
+            Some(hex::encode(alloy_primitives::keccak256(br#"{"name":12}"#)))
+        );
+    }
 
     const WOODIE_0: &[u8] = include_bytes!("third_party_fixtures/woodie_0.entity.json");
     const WOODIE_1: &[u8] = include_bytes!("third_party_fixtures/woodie_1.entity.json");
@@ -337,6 +373,38 @@ mod tests {
         );
         assert_eq!(hex_to_bytes("deadbeef"), Some(vec![0xde, 0xad, 0xbe, 0xef]));
         assert_eq!(hex_to_bytes("0x"), Some(vec![]));
+    }
+
+    #[test]
+    fn merkle_proof_index_accepts_every_integral_json_number_form() {
+        let parse = |index: &str| {
+            serde_json::from_str::<MerkleProof>(&format!(
+                r#"{{"proof": [], "index": {index}, "entityHash": "", "hashingKeys": []}}"#
+            ))
+            .map(|p| p.index)
+        };
+        for (index, expected) in [
+            ("1", 1),
+            ("1.0", 1),
+            ("1e0", 1),
+            ("0.0", 0),
+            ("2e1", 20),
+            ("9007199254740991", MAX_SAFE_INTEGER),
+            ("9007199254740991.0", MAX_SAFE_INTEGER),
+        ] {
+            assert_eq!(parse(index).unwrap(), expected, "{index}");
+        }
+        for index in [
+            "1.5",
+            "-1",
+            "-1.0",
+            "\"1\"",
+            "9007199254740992",
+            "9007199254740992.0",
+            "1e18",
+        ] {
+            assert!(parse(index).is_err(), "{index}");
+        }
     }
 
     #[test]

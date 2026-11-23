@@ -1,0 +1,17 @@
+nodeLinker: hoisted
+packages:
+  - .
+  - ../../../../../library/hashing
+overrides:
+  '@dcl/hashing': workspace:*
+  "protobufjs": "7.6.6"
+  "minimatch@9.0.3": "9.0.7"
+  "cookie": "^0.7.2"
+  "@dcl/sdk-commands>esbuild": "0.28.1"
+  # extract-zip 2 has no fixed release. Creator Hub's zip-extract has the same call and makes no link.
+  extract-zip: file:../../../../../apps/creator-hub/packages/zip-extract
+minimumReleaseAge: 1440
+allowBuilds:
+  '@dcl/sdk-commands': false
+  esbuild: false
+  protobufjs: false

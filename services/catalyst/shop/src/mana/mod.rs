@@ -30,12 +30,12 @@ pub mod wire;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::shared::routing::{erase, get, post};
 use alloy_primitives::Address;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
-use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::auth::eip1654::Eip1654Validator;
@@ -49,7 +49,7 @@ use crate::types::ChainId;
 pub struct Settings {
     /// `DATA_WRITES_ENABLED`.
     pub writes_enabled: bool,
-    /// Between two tracker passes (the market indexes' cadence by default).
+    /// Between two tracker passes (`MARKETPLACE_EXECUTIONS_TRACK_INTERVAL_SECS`).
     pub track_interval: Duration,
     /// `COLLECTIONS_CHAIN_ID`: which book of venues the process settles on
     /// ([`settlement_book`]).
@@ -278,7 +278,7 @@ pub fn shop_router(state: SharedState) -> Router {
         .route(actions::ROUTE, post(actions::post_action))
         .route(
             executions::ROUTE,
-            post(executions::post_execution).get(executions::list_executions),
+            post(executions::post_execution).get(erase(executions::list_executions)),
         )
         .route(executions::ROUTE_ONE, get(executions::get_execution))
         .layer(DefaultBodyLimit::max(128 * 1024))

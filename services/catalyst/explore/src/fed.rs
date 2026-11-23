@@ -406,19 +406,50 @@ pub async fn changes_view(pool: &PgPool, since: i64, limit: i64) -> Result<Value
         .map(|r| {
             let seq: i64 = r.get("seq");
             max_seq = max_seq.max(seq);
+            let action_type: String = r.get("action_type");
+            let (signer, payload) = published(
+                &action_type,
+                r.get("signer"),
+                &r.get::<Value, _>("message_payload"),
+            );
             json!({
                 "seq": seq,
                 "signature_hash": r.get::<String, _>("signature_hash"),
-                "signer": r.get::<String, _>("signer"),
+                "signer": signer,
                 "place_id": r.get::<Option<String>, _>("subject_id").unwrap_or_default(),
-                "action_type": r.get::<String, _>("action_type"),
-                "payload": r.get::<Value, _>("message_payload"),
+                "action_type": action_type,
+                "payload": payload,
                 "signed_at": r.get::<i64, _>("signed_at"),
                 "origin_peer": r.get::<Option<String>, _>("origin_peer"),
             })
         })
         .collect();
     Ok(json!({ "since": since, "limit": limit, "latest_seq": max_seq, "actions": actions }))
+}
+
+/// What the anonymous changes feed publishes of a logged action: its signer
+/// and the payload fields allowed for its kind. Favorites and votes are
+/// public signed actions; a report keeps its reporter and reason to the
+/// admin-only reports list, so it publishes neither. A kind not listed
+/// publishes no signer and an empty payload.
+fn published(action_type: &str, signer: String, payload: &Value) -> (Option<String>, Value) {
+    let (public_signer, fields): (bool, &[&str]) = match action_type {
+        "favorite" | "unfavorite" => (true, &["place_id", "action", "signed_at"]),
+        "vote_up" | "vote_down" | "vote_withdraw" => (true, &["place_id", "score", "signed_at"]),
+        "report" => (false, &["place_id", "signed_at"]),
+        _ => {
+            tracing::warn!(
+                action_type,
+                "places feed action kind has no published fields; publishing no signer and an empty payload"
+            );
+            (false, &[])
+        }
+    };
+    let kept: serde_json::Map<String, Value> = fields
+        .iter()
+        .filter_map(|f| payload.get(*f).map(|v| ((*f).to_owned(), v.clone())))
+        .collect();
+    (public_signer.then_some(signer), Value::Object(kept))
 }
 
 #[derive(Debug, Deserialize)]
@@ -485,7 +516,9 @@ mod tests {
 
     /// Envelopes: a favorite and a vote logged once and applied, a replayed
     /// nonce refused, a foreign domain refused; a moderator's schedule and a
-    /// wallet's own settings; the places feeds page the log.
+    /// wallet's own settings; the places feeds page the log, publishing a
+    /// favorite's and a vote's signer and allowed fields but neither a
+    /// report's reporter nor its reason.
     #[tokio::test]
     async fn envelopes_are_logged_once_applied_and_fed() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -601,8 +634,10 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "outside the skew window");
 
+        let reporter = PrivateKeySigner::random();
+        let reporter_wallet = format!("{:#x}", reporter.address());
         let report = sign(
-            &key,
+            &reporter,
             catalyst_fed::domains::places(),
             PlaceReport {
                 place_id: place.clone(),
@@ -631,16 +666,63 @@ mod tests {
             None,
         )
         .await;
-        let types: Vec<&str> = page["actions"]
+        let ours: Vec<&Value> = page["actions"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|a| a["place_id"] == json!(place))
+            .collect();
+        let types: Vec<&str> = ours
+            .iter()
             .map(|a| a["action_type"].as_str().unwrap())
             .collect();
         assert_eq!(types, ["favorite", "vote_down", "report"]);
+        // Favorites and votes publish their signer and allowed fields; a
+        // report keeps its reporter and reason to the admin-only list.
+        let (favorite, voted, reported) = (ours[0], ours[1], ours[2]);
+        assert_eq!(
+            (
+                favorite["signer"].clone(),
+                favorite["signature_hash"].clone(),
+                favorite["payload"].clone(),
+            ),
+            (
+                json!(wallet),
+                json!(fav.signature_hash()),
+                json!({ "place_id": place, "action": "add", "signed_at": fav.message.signed_at }),
+            )
+        );
+        assert_eq!(
+            (voted["signer"].clone(), voted["payload"].clone()),
+            (
+                json!(wallet),
+                json!({ "place_id": place, "score": -1, "signed_at": vote.message.signed_at }),
+            )
+        );
+        assert_eq!(
+            (
+                reported["signature_hash"].clone(),
+                reported["signed_at"].clone(),
+            ),
+            (json!(report.signature_hash()), json!(report.signed_at))
+        );
+        assert!(reported["signer"].is_null(), "{reported}");
+        assert_eq!(
+            reported["payload"],
+            json!({ "place_id": place, "signed_at": report.message.signed_at }),
+            "{reported}"
+        );
+        let text = page.to_string();
+        assert!(
+            !text.contains(&reporter_wallet[2..]),
+            "the reporter is not published: {reported}"
+        );
+        assert!(
+            !text.contains("spam"),
+            "the reason is not published: {reported}"
+        );
         let (_, snap) = call(&app, "GET", "/federation/places/snapshot", None).await;
-        assert_eq!(snap["latest_seq"], page["latest_seq"]);
+        assert!(snap["latest_seq"].as_i64() >= page["latest_seq"].as_i64());
         assert!(snap["log_hash"].as_str().unwrap().len() == 64);
 
         // events: a schedule needs a moderator, settings are the signer's own
@@ -948,6 +1030,30 @@ mod tests {
                 .contains("DATA_WRITES_ENABLED"),
             "{body}"
         );
+    }
+
+    #[test]
+    fn the_feed_publishes_allowed_fields_per_action_kind() {
+        let signer = "0x00000000000000000000000000000000000000a1".to_owned();
+        let report = json!({ "place_id": "p", "reason": "harassment", "signed_at": 7 });
+        assert_eq!(
+            published("report", signer.clone(), &report),
+            (None, json!({ "place_id": "p", "signed_at": 7 }))
+        );
+        let favorite = json!({ "place_id": "p", "action": "add", "signed_at": 7 });
+        assert_eq!(
+            published("favorite", signer.clone(), &favorite),
+            (Some(signer.clone()), favorite)
+        );
+        let vote = json!({ "place_id": "p", "score": -1, "signed_at": 7, "extra": true });
+        assert_eq!(
+            published("vote_down", signer.clone(), &vote),
+            (
+                Some(signer.clone()),
+                json!({ "place_id": "p", "score": -1, "signed_at": 7 })
+            )
+        );
+        assert_eq!(published("unknown", signer, &report), (None, json!({})));
     }
 
     #[test]

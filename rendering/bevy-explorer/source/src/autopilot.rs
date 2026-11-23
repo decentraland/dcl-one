@@ -39,12 +39,12 @@ impl Plugin for AutopilotPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(RunControlPlugin)
             .add_console_command::<AutopilotFailCommand, _>(autopilot_fail);
-        walk::register(app);
+        app.add_plugins(walk::AutopilotWalkPlugin);
     }
 }
 
 /// The phase machine, apart from the console command so a test can build it alone.
-struct RunControlPlugin;
+pub(crate) struct RunControlPlugin;
 
 impl Plugin for RunControlPlugin {
     fn build(&self, app: &mut App) {
@@ -65,7 +65,6 @@ struct Run {
     exit_requested: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn drive_phase(
     autopilot: Res<Autopilot>,
     mut phase: ResMut<AutopilotPhase>,

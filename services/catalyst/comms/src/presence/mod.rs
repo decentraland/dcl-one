@@ -2,10 +2,10 @@
 //! and source time; verified webhooks only invalidate admission authority.
 //! Source bracketing describes an observation interval, not a transactional snapshot.
 
+use crate::shared::routing::get;
 use crate::shared::{cors, nul_guard};
 use crate::worlds_envelope::ApiError;
 use axum::extract::{Path, State};
-use axum::routing::get;
 use axum::{Json, Router};
 use chrono::SecondsFormat;
 use parking_lot::Mutex;
@@ -49,23 +49,23 @@ impl Scope {
         }
     }
 
-    /// Whether a room this node refused could hold participants this scope
-    /// counts: the exact room, or a world room or upstream-format room name
-    /// that names the scope's world. Any other refused room cannot hold them,
+    /// Whether a room name could hold participants this scope counts: the
+    /// exact room, or a world room or upstream-format room name that names the
+    /// scope's world. Any other room, refused or canonical, cannot hold them,
     /// since every room this node admits to a world is canonical.
-    fn may_hold(&self, refused: &str) -> bool {
+    fn may_hold(&self, room: &str) -> bool {
         let world = match self {
-            Self::Room(name) => return refused == name,
+            Self::Room(name) => return room == name,
             Self::Lobby(world) | Self::Scenes(world) => world.as_str(),
         };
-        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(refused) {
+        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(room) {
             return owner.key() == world;
         }
-        let refused = refused.to_lowercase();
+        let room = room.to_lowercase();
         ["world-scene-room-", "world-", "scene-"]
             .iter()
             .any(|prefix| {
-                refused.strip_prefix(prefix).is_some_and(|rest| {
+                room.strip_prefix(prefix).is_some_and(|rest| {
                     rest.strip_prefix(world)
                         .is_some_and(|tail| tail.is_empty() || tail.starts_with('-'))
                 })
@@ -164,12 +164,16 @@ impl Presence {
 
     /// Bounded invalidation: unseen rooms bump one epoch rather than allocating
     /// attacker-controlled event keys. Known rooms retain independent generations.
+    /// A name that can never classify as relevant (island, voice chat) is never
+    /// counted, so its events leave every occupancy read valid.
     pub fn invalidate_room(&self, room: &str) {
         let mut state = self.state.lock();
         if let Some(generation) = state.generations.get_mut(room) {
             *generation = generation.wrapping_add(1);
-        } else {
+        } else if crate::rooms::may_classify_relevant(room) {
             state.unknown_generation = state.unknown_generation.wrapping_add(1);
+        } else {
+            return;
         }
         drop(state);
         self.dirty.notify_one();

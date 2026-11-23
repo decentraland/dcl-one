@@ -54,10 +54,118 @@ describe('engineServiceOptions', () => {
     for (const s of SERVICES) expect(options[s.name], s.name).toBe(m.serviceUrl(s.name))
     expect(options.realmProvider).toBe(`${window.location.origin}/realm-provider-ea`)
     expect(options.reels).toBe(`${window.location.origin}/reels`)
+    // not through the gateway yet (#631): Decentraland's public host, never one built from the
+    // page's own host and port
+    expect(options.abgenCdn).toBe('https://abgen-cdn.decentraland.org')
+    // each player's engine asks the flags service itself, for its own A/B group
+    expect(options.featureFlags).toBe('https://feature-flags.decentraland.org')
+    // the node's own imposter store, not the engine's built-in default
+    expect(options.imposterSource).toBe(`${window.location.origin}/bvimposters`)
+  })
+
+  it('behind the gateway: an entry ?imposterSource= is left to the url', async () => {
+    window.history.replaceState(null, '', '/?imposterSource=https://imposters.example.test')
+    try {
+      const m = await load(true)
+      expect(m.engineServiceOptions().imposterSource).toBeUndefined()
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
   })
 
   it('upstream: only the base domain, which the engine composes every service from', async () => {
     const m = await load(false)
     expect(m.engineServiceOptions()).toEqual({ baseDomain: 'decentraland.org' })
+  })
+})
+
+describe('the Pulse host behind the gateway', () => {
+  const load = async (pulseServer: string | undefined, search = '/') => {
+    vi.resetModules()
+    window.__DCL_PUBLIC__ = pulseServer == null ? {} : { pulseServer }
+    window.history.replaceState(null, '', search)
+    return import('../lib/baseDomain')
+  }
+  afterEach(() => {
+    delete window.__DCL_PUBLIC__
+    window.history.replaceState(null, '', '/')
+    vi.restoreAllMocks()
+  })
+
+  it('is the host the deployment names', async () => {
+    const m = await load('Pulse.example.test:7743')
+    expect(m.engineServiceOptions().pulseServer).toBe('pulse.example.test:7743')
+  })
+
+  it.each([undefined, ''])('is the page host, silently, when the deployment names none (%j)', async (pulseServer) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const m = await load(pulseServer)
+    expect(m.engineServiceOptions().pulseServer).toBe(window.location.host)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('is the page host, with a warning, when the deployment names an invalid one', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const m = await load('https://pulse.example.test')
+    expect(m.engineServiceOptions().pulseServer).toBe(window.location.host)
+    expect(warn).toHaveBeenCalledOnce()
+  })
+
+  it('yields to an entry-url override', async () => {
+    const m = await load('pulse.example.test', '/?pulseServer=other.example.test')
+    expect(m.engineServiceOptions().pulseServer).toBe('other.example.test')
+  })
+
+  it('ignores a page-host value the engine wrote back into the address bar', async () => {
+    const m = await load('pulse.example.test', `/?pulseServer=${window.location.host}`)
+    expect(m.engineServiceOptions().pulseServer).toBe('pulse.example.test')
+  })
+
+  it('reaches the engine launch in place of a page-host value in the address bar', async () => {
+    await load('pulse.example.test', `/?pulseServer=${window.location.host}`)
+    const { engineLaunch } = await import('../lib/engineLaunch')
+    expect(engineLaunch(new URLSearchParams(window.location.search)).options.pulseServer).toBe('pulse.example.test')
+  })
+
+  it('plays no part under ?baseDomain=, where Pulse composes from the base domain', async () => {
+    const m = await load('pulse.example.test', '/?baseDomain=decentraland.org')
+    expect(m.serviceUrl('pulseServer')).toBe('pulse-server.decentraland.org')
+  })
+
+  it('keeps a page-host override under ?baseDomain=', async () => {
+    const m = await load('pulse.example.test', `/?baseDomain=decentraland.org&pulseServer=${window.location.host}`)
+    expect(m.serviceUrl('pulseServer')).toBe(window.location.host)
+  })
+})
+
+describe('the site a link opens', () => {
+  const load = async (onSites: boolean, search: string) => {
+    vi.resetModules()
+    if (onSites) window.__DCL_PUBLIC__ = {}
+    else delete window.__DCL_PUBLIC__
+    window.history.replaceState(null, '', search)
+    return import('../lib/baseDomain')
+  }
+  afterEach(() => {
+    delete window.__DCL_PUBLIC__
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('on Sites, under another deployment the Explorer selected: help follows it, funding the checkout stays on this site', async () => {
+    const m = await load(true, '/?baseDomain=decentraland.org')
+    expect(m.siteUrl('/help')).toBe('https://decentraland.org/help')
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe(`${window.location.origin}/shop/credits`)
+  })
+
+  it('on Sites, with no deployment selected: both on this site', async () => {
+    const m = await load(true, '/')
+    expect(m.siteUrl('/help')).toBe(`${window.location.origin}/help`)
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe(`${window.location.origin}/shop/credits`)
+  })
+
+  it('off Sites (the upstream page): funding follows the Explorer’s site, as before', async () => {
+    const m = await load(false, '/?baseDomain=decentraland.zone')
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe('https://decentraland.zone/shop/credits')
+    expect(m.checkoutSiteUrl('/shop/credits')).toBe(m.siteUrl('/shop/credits'))
   })
 })

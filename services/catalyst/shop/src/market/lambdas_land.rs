@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, Row};
 
-use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
+use crate::land_authz::{LandNetwork, land_network};
 use crate::shared::http_util::{fetcher_error, lambdas_internal_error};
 use crate::shared::query_params::{
     JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination,
@@ -105,11 +105,15 @@ LIMIT $2 OFFSET $3";
 
 const USER_LANDS_COUNT_SQL: &str = "SELECT count(*) FROM land_authz.token_right tr WHERE tr.token_address IN ($2, $3) AND tr.owner = $1";
 
-async fn user_lands_count(conn: &mut PgConnection, owner: &str) -> Result<i64, sqlx::Error> {
+async fn user_lands_count(
+    conn: &mut PgConnection,
+    net: LandNetwork,
+    owner: &str,
+) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(USER_LANDS_COUNT_SQL)
         .bind(owner)
-        .bind(LAND_REGISTRY_MAINNET)
-        .bind(ESTATE_REGISTRY_MAINNET)
+        .bind(net.land_registry)
+        .bind(net.estate_registry)
         .fetch_one(conn)
         .await
 }
@@ -204,7 +208,11 @@ pub async fn user_lands(
     let owner = addr.to_lowercase();
     // The nft index check, the count and the page all read the land
     // snapshot: one connection, one state.
-    let mut land = land_snapshot(&state.pool).await;
+    let net = land_network(&state.settings.eth_network);
+    let mut land = match net {
+        Some(net) => land_snapshot(&state.pool, net).await,
+        None => None,
+    };
     let land_ready = land.is_some();
     let nft_ready = match land.as_mut() {
         Some(snapshot) => match nft_index_ready_on(&mut snapshot.tx).await {
@@ -217,7 +225,7 @@ pub async fn user_lands(
         None => false,
     };
     // A snapshot that will not be read is released before any fallback.
-    let Some(mut land) = land.filter(|_| nft_ready) else {
+    let (Some(mut land), Some(net)) = (land.filter(|_| nft_ready), net) else {
         if state.settings.marketplace_subgraph_url.is_some() {
             return user_lands_from_reader(&state, &addr, &owner, page).await;
         }
@@ -232,7 +240,7 @@ pub async fn user_lands(
     // A negative bound counts from the end of the list: its length first.
     let (offset, limit, counted) = match page.sql_window() {
         Some((offset, limit)) => (offset, limit, None),
-        None => match user_lands_count(&mut land.tx, &owner).await {
+        None => match user_lands_count(&mut land.tx, net, &owner).await {
             Ok(total) => {
                 let r = page.range(total.max(0) as usize);
                 (r.start as i64, r.len() as i64, Some(total))
@@ -247,8 +255,8 @@ pub async fn user_lands(
         .bind(&owner)
         .bind(limit)
         .bind(offset)
-        .bind(LAND_REGISTRY_MAINNET)
-        .bind(ESTATE_REGISTRY_MAINNET)
+        .bind(net.land_registry)
+        .bind(net.estate_registry)
         .fetch_all(&mut *land.tx)
         .await
     {
@@ -261,7 +269,9 @@ pub async fn user_lands(
     let total: i64 = match (counted, rows.first()) {
         (Some(total), _) => total,
         (None, Some(r)) => r.get("total"),
-        (None, None) => user_lands_count(&mut land.tx, &owner).await.unwrap_or(0),
+        (None, None) => user_lands_count(&mut land.tx, net, &owner)
+            .await
+            .unwrap_or(0),
     };
     let base = &state.settings.land_image_base_url;
     let elements: Vec<Value> = rows
@@ -320,14 +330,15 @@ SELECT (SELECT count(*) FROM land_authz.token_right tr WHERE tr.token_address = 
 /// registry's links.
 pub(crate) async fn genesis_parcels_page(
     conn: &mut PgConnection,
+    net: LandNetwork,
     owner: &str,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<PgRow>, i64), sqlx::Error> {
     let rows = sqlx::query(GENESIS_PARCELS_SQL)
         .bind(owner)
-        .bind(LAND_REGISTRY_MAINNET)
-        .bind(ESTATE_REGISTRY_MAINNET)
+        .bind(net.land_registry)
+        .bind(net.estate_registry)
         .bind(limit)
         .bind(offset)
         .fetch_all(&mut *conn)
@@ -337,8 +348,8 @@ pub(crate) async fn genesis_parcels_page(
         None => {
             sqlx::query_scalar(GENESIS_PARCELS_COUNT_SQL)
                 .bind(owner)
-                .bind(LAND_REGISTRY_MAINNET)
-                .bind(ESTATE_REGISTRY_MAINNET)
+                .bind(net.land_registry)
+                .bind(net.estate_registry)
                 .fetch_one(&mut *conn)
                 .await?
         }
@@ -357,12 +368,16 @@ pub async fn user_genesis_parcels(
     if !super::is_valid_eth_address(&owner) {
         return bad_request("Address must be a valid Ethereum address");
     }
-    let Some(mut land) = land_snapshot(&state.pool).await else {
+    let Some(net) = land_network(&state.settings.eth_network) else {
+        return land_index_unavailable();
+    };
+    let Some(mut land) = land_snapshot(&state.pool, net).await else {
         return land_index_unavailable();
     };
     let (page_size, page_num) = parse_pagination(&req, MAX_PAGE_SIZE as i64);
     let (rows, total) = match genesis_parcels_page(
         &mut land.tx,
+        net,
         &owner,
         page_size,
         page_offset(page_num, page_size),
@@ -460,9 +475,10 @@ async fn read_name_owner(
     }
 }
 
-#[async_trait::async_trait]
-impl crate::comms::interfaces::NameOwnerReader for super::MarketplaceState {
-    async fn name_owner(
+impl super::MarketplaceState {
+    /// The owner of `name` as the gatekeeper's Admin Toolkit asks it (`serve`
+    /// hands it to comms as its `NameOwnerReader`).
+    pub async fn name_owner(
         &self,
         name: &str,
     ) -> Result<Option<crate::shared::identity::Address>, String> {
@@ -490,7 +506,6 @@ mod tests {
 
     #[tokio::test]
     async fn moderation_name_owner_store_fault_is_unavailable_even_with_a_fallback() {
-        use crate::comms::interfaces::NameOwnerReader;
         let pool = sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
         pool.close().await;
         let state = super::super::MarketplaceState::new(
@@ -501,7 +516,7 @@ mod tests {
                 ..super::super::Settings::for_tests()
             },
         );
-        assert!(NameOwnerReader::name_owner(&state, "Alice").await.is_err());
+        assert!(state.name_owner("Alice").await.is_err());
     }
 
     #[test]

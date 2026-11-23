@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy::{platform::collections::HashSet, prelude::*};
 
 use common::{
-    structs::SpawnPoint,
+    structs::{PortableExperiencesToggle, SpawnPoint},
     util::{dcl_assert, RingBuffer},
 };
 use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
@@ -30,7 +30,8 @@ use crate::{
 // Bevy entities are only created on a PUT of a component we care about in the renderer,
 // or if they are required for hierarchy parenting
 // TODO - consider Vec<Option<page>>
-type LiveEntityTable = Vec<(u16, Option<Entity>)>;
+// one slot per u16 id, so indexing with an id is always in bounds
+type LiveEntityTable = Box<[(u16, Option<Entity>); SceneEntityId::LIVE_TABLE_LEN]>;
 
 // scene worker lifecycle. `Broken` consumes the thread handle, so marking a scene broken
 // structurally drops the renderer channel, which signals the scene host to terminate the
@@ -67,6 +68,9 @@ pub struct RendererSceneContext {
     pub scene_bounds: SceneBounds,
     pub spawn_points: Vec<SpawnPoint>,
     pub priority: f32,
+    /// This scene's `featureToggles.portableExperiences`, applied to portables while the
+    /// player stands in it.
+    pub portable_experiences: PortableExperiencesToggle,
 
     // entities waiting to be born in bevy
     pub nascent: HashSet<SceneEntityId>,
@@ -155,9 +159,16 @@ pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
 
 // A scene tick that has been in-flight (sent to the scene, no response yet) for longer than this
 // is treated as "not responding": update_scene_priority marks the scene broken and frees its
-// thread slot, handle_out_of_world stops holding the player behind the loading screen, and the
-// loading UI surfaces a countdown to this timeout.
+// thread slot (a super-user scene has the longer limit below), handle_out_of_world stops
+// holding the player behind the loading screen, and the loading UI surfaces a countdown to this
+// timeout.
 pub const SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+// The not-responding limit for a super-user scene (the HUD's bridge scene). Its first tick on a
+// cold, busy page can take longer than the ordinary timeout, but a wedged one is still marked
+// broken, which terminates its worker and frees its thread slot.
+pub const SUPER_USER_SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(120);
 
 // Don't surface the "not responding" message until a tick has been in-flight at least this long,
 // so a normal slow frame doesn't flicker the warning.
@@ -167,6 +178,15 @@ pub const SCENE_NOT_RESPONDING_DISPLAY_AFTER: std::time::Duration =
 impl RendererSceneContext {
     pub fn broken(&self) -> bool {
         matches!(self.state, SceneState::Broken)
+    }
+
+    /// The scene's content is on screen: it has run past its first ticks with nothing blocking
+    /// it (its glTFs loaded), or it is broken or frozen and never will. Its stand-ins (an
+    /// imposter tile, a near LOD) go when this holds.
+    pub fn content_shown(&self) -> bool {
+        self.broken()
+            || self.blocked.contains(FROZEN_BLOCK)
+            || (self.tick_number > 5 && self.blocked.is_empty())
     }
 
     pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
@@ -193,7 +213,6 @@ impl RendererSceneContext {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scene_id: SceneId,
         hash: String,
@@ -225,11 +244,16 @@ impl RendererSceneContext {
             bounds,
             scene_bounds,
             spawn_points,
+            portable_experiences: PortableExperiencesToggle::default(),
             nascent: Default::default(),
             death_row: Default::default(),
             outbound_born: Default::default(),
             outbound_died: Default::default(),
-            live_entities: vec![(0, None); SceneEntityId::LIVE_TABLE_LEN],
+            // through a Vec: the 1 MiB array is never built on the stack
+            live_entities: vec![(0, None); SceneEntityId::LIVE_TABLE_LEN]
+                .into_boxed_slice()
+                .try_into()
+                .unwrap(),
             unparented_entities: HashSet::new(),
             hierarchy_changed: false,
             last_sent: 0.0,
@@ -262,13 +286,11 @@ impl RendererSceneContext {
     }
 
     fn entity_entry(&self, id: u16) -> &(u16, Option<Entity>) {
-        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
-        unsafe { self.live_entities.get_unchecked(id as usize) }
+        &self.live_entities[id as usize]
     }
 
     fn entity_entry_mut(&mut self, id: u16) -> &mut (u16, Option<Entity>) {
-        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
-        unsafe { self.live_entities.get_unchecked_mut(id as usize) }
+        &mut self.live_entities[id as usize]
     }
 
     pub fn associate_bevy_entity(&mut self, scene_entity: SceneEntityId, bevy_entity: Entity) {

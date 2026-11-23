@@ -37,11 +37,13 @@
 }
 
 .scroller {
-  /* Takes its content's height, shrinking to the space left above the chat banner and scrolling there; a short
-     window still shows a few questions. Its width ends at the questions, so the scrollbar sits beside them. */
+  /* Takes its content's height, shrinking to the space left above the chat banner and scrolling there. It counts as
+     240px towards the page's height, so a short window grows the page instead of hiding the list under the banner.
+     Its width ends at the questions, so the scrollbar sits beside them. */
   max-width: 680px;
   min-height: 240px;
-  flex: 0 1 auto;
+  max-height: max-content;
+  flex: 1 1 240px;
   margin-top: var(--dcl-space-16);
   padding-right: var(--dcl-space-8);
   overflow-y: auto;
@@ -64,6 +66,8 @@
 
   .scroller {
     min-height: 0;
-    max-height: 340px;
+    max-height: none;
+    padding-right: 0;
+    overflow: visible;
   }
 }

@@ -8,7 +8,7 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 17] = [
+const PREPARED_PENDING_STEPS: [&str; 34] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -26,6 +26,23 @@ const PREPARED_PENDING_STEPS: [&str; 17] = [
     "0036_credits_authorization_request_digest",
     "0037_social_badges_catalog_parity",
     "0038_social_badge_processor",
+    "0039_worlds_set_here",
+    "0040_shop_nft_event_tx_hash",
+    "0041_social_federation_entry_privacy",
+    "0042_economy_relay_free_calls",
+    "0043_credits_captcha_generated_at",
+    "0044_camera_reel_image_content_type",
+    "0045_camera_reel_original_filename",
+    "0046_player_report_evidence_source_key",
+    "0047_shop_sale_notification_producers",
+    "0048_broker_purchases_write_ahead",
+    "0049_land_authz_cursor_block_hash",
+    "0050_explore_poster_avif",
+    "0051_explore_auth_identity_request_id",
+    "0052_shop_committee_index",
+    "0053_shop_bid_received_producer",
+    "0054_shop_chain_cursor_ownership",
+    "0055_shop_chain_cursor_divergence",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -81,8 +98,9 @@ impl Database {
             .await
             .unwrap();
         let name = format!(
-            "catalyst_test_social_voice_{}",
-            uuid::Uuid::new_v4().simple()
+            "catalyst_test_lib_{}_social_voice_{}",
+            std::process::id(),
+            &uuid::Uuid::new_v4().simple().to_string()[..12]
         );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
             .execute(&admin)
@@ -120,6 +138,30 @@ impl Database {
             name,
             options,
         })
+    }
+    /// Waits until this database has exactly `expected` client sessions.
+    /// `PgPool::close` returns once it has sent each connection's Terminate;
+    /// the server process leaves `pg_stat_activity` when it exits, after that.
+    async fn await_client_sessions(&self, expected: i64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let sessions: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND {}",
+                schema_migrate::CLIENT_SESSION
+            )))
+            .bind(&self.name)
+            .fetch_one(&self.admin)
+            .await
+            .unwrap();
+            if sessions == expected {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{sessions} client sessions remain, expected {expected}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
     async fn close(self) {
         self.pool.close().await;
@@ -570,6 +612,7 @@ async fn migrate_with_release_takes_both_v2_origins_to_v3_once_every_other_sessi
         }
         drop(writer);
         db.pool.close().await;
+        db.await_client_sessions(1).await;
 
         // A failure after every statement of the release, stamp included,
         // rolls the whole run back.
@@ -684,6 +727,8 @@ async fn the_release_guard_counts_sessions_of_roles_it_cannot_inspect() {
         "the writer's session type is hidden from the migrator"
     );
     db.pool.close().await;
+    // Only the writer's and the migrator's sessions remain.
+    db.await_client_sessions(2).await;
     match schema_migrate::migrate_with_release(
         &migrating,
         SCHEMA_SQL,

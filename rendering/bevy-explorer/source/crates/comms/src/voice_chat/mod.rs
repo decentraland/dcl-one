@@ -22,7 +22,7 @@ use common::structs::AudioSettings;
 use common::{
     rpc::RpcStreamSender,
     sets::SceneSets,
-    structs::SystemAudio,
+    structs::{ClientWindowFocus, SystemAudio},
     util::{redact_access_token, AsH160},
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
@@ -49,10 +49,11 @@ use crate::{
             ActiveSpeaker, HostedBy, LivekitParticipant, ParticipantIndex,
             ParticipantMetadataChanged,
         },
-        room::{ConnectFailed, Connected, Connecting, Disconnected, Reconnecting},
+        room::{Connected, Connecting, Disconnected, Reconnecting},
         standalone_room_components,
         track::{Audio, Microphone, PublishedBy, SubscribeToTrack},
     },
+    room_connection::RoomRecovery,
     DisableRealmComms, DisableSceneRoomGatekeeper, NetworkMessage,
 };
 
@@ -163,7 +164,7 @@ const CALL_TUNE_SECS: f32 = 3.056;
 pub const VOICE_CHAT_CHANNEL: &str = "voice-chat";
 
 /// The call microphone: whether it publishes into the voice room (the mic plugin reads it), and
-/// whether a call is connected (the mic key toggles it instead of the nearby mic then).
+/// whether a call is connected (the mic key drives it instead of the nearby mic then).
 #[derive(Resource, Default)]
 pub struct CallMic {
     pub enabled: bool,
@@ -421,8 +422,13 @@ pub struct VoiceChat {
 }
 
 impl VoiceChat {
-    /// The state as the HUD sees it.
-    pub fn snapshot(&self, mic: &CallMic, participants: &CallParticipants) -> VoiceChatStateData {
+    /// The state as the HUD sees it; the mic shows off while the client window lacks focus.
+    pub fn snapshot(
+        &self,
+        mic: &CallMic,
+        focus: ClientWindowFocus,
+        participants: &CallParticipants,
+    ) -> VoiceChatStateData {
         let state = &self.state;
         VoiceChatStateData {
             status: state.status,
@@ -432,7 +438,7 @@ impl VoiceChat {
             peer: state.peer.map(|a| format!("{a:#x}")),
             connection: self.connection,
             participants: participants.list(),
-            mic_enabled: mic.enabled,
+            mic_enabled: mic.enabled && focus == ClientWindowFocus::Focused,
             local_speaker: state.local_speaker,
             local_role: state.local_role,
             local_requesting_to_speak: state.local_requesting_to_speak,
@@ -535,7 +541,8 @@ fn sound_clip(sound: Sound) -> Option<&'static str> {
         Sound::RingStart => "embedded://sounds/ui/voice_chat_call_tune.mp3",
         Sound::Join => "embedded://sounds/ui/voice_chat_join.wav",
         Sound::Leave | Sound::EndStream => "embedded://sounds/ui/voice_chat_leave.wav",
-        Sound::RaiseHand | Sound::StartStream => "embedded://sounds/ui/generic_button_press.wav",
+        Sound::RaiseHand => "embedded://sounds/ui/voice_chat_raise_hand.wav",
+        Sound::StartStream => "embedded://sounds/ui/generic_button_press.wav",
         Sound::RingStop => return None,
     })
 }
@@ -550,9 +557,9 @@ type VoiceRoomQuery<'w, 's> = Query<
             Has<Connected>,
             Has<Connecting>,
             Has<Reconnecting>,
-            Has<ConnectFailed>,
             Has<Disconnected>,
         ),
+        &'static mut RoomRecovery,
         Option<&'static VoiceRoomDisconnected>,
     ),
 >;
@@ -571,11 +578,11 @@ fn user_refusal(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn drive_voice_chat(
     mut commands: Commands,
     mut voice: ResMut<VoiceChat>,
     mut call_mic: ResMut<CallMic>,
+    focus: Res<ClientWindowFocus>,
     mut inputs: ResMut<VoiceInputs>,
     mut system_api: EventReader<SystemApi>,
     mut social_events: EventReader<VoiceEventReceived>,
@@ -677,7 +684,8 @@ fn drive_voice_chat(
     for (
         entity,
         mut room,
-        (connected, connecting, reconnecting, failed, disconnected),
+        (connected, connecting, reconnecting, disconnected),
+        mut recovery,
         disconnected_reason,
     ) in rooms.iter_mut()
     {
@@ -695,14 +703,19 @@ fn drive_voice_chat(
         if !disconnected && room.unexplained_drop_at.is_some() {
             room.unexplained_drop_at = None;
         }
-        // a refused dial keeps its `Connecting` marker beside `ConnectFailed`
         let dropped = match disconnected_reason {
             Some(d) => Some((d.terminal, d.ending, d.reason.clone())),
-            None if failed && room.redial_at.is_none() => Some((
-                false,
-                CallEnding::Refused,
-                "the connection was refused".to_owned(),
-            )),
+            None if recovery.failure.is_some()
+                && !connecting
+                && !disconnected
+                && room.redial_at.is_none() =>
+            {
+                Some((
+                    false,
+                    CallEnding::Refused,
+                    "the connection was refused".to_owned(),
+                ))
+            }
             // the reason may trail the drop, or never come (one the web mirror cannot parse)
             None if disconnected && room.redial_at.is_none() => {
                 let since = *room.unexplained_drop_at.get_or_insert(now);
@@ -718,9 +731,7 @@ fn drive_voice_chat(
         };
         if let Some((terminal, ending, reason)) = dropped {
             room.unexplained_drop_at = None;
-            commands
-                .entity(entity)
-                .remove::<(VoiceRoomDisconnected, ConnectFailed)>();
+            commands.entity(entity).remove::<VoiceRoomDisconnected>();
             if terminal || room.reconnects >= MAX_RECONNECTION_ATTEMPTS {
                 warn!(
                     target: "comms::voice_chat",
@@ -747,7 +758,8 @@ fn drive_voice_chat(
             }
         } else if room.redial_at.is_some_and(|due| now >= due) {
             room.redial_at = None;
-            // only an added marker dials: a refused room still carries the last one
+            recovery.failure = None;
+            // Only an added marker starts a new dial.
             if connecting {
                 commands.entity(entity).remove::<Connecting>();
             }
@@ -777,6 +789,8 @@ fn drive_voice_chat(
         }
     }
     let changed = had_inputs || !effects.is_empty();
+    // the query cannot see a room spawned by an earlier effect of this drive
+    let mut spawned: Option<Entity> = None;
     for effect in effects {
         debug!(target: "comms::voice_chat", "effect {}", redact_access_token(&format!("{effect:?}")));
         match effect {
@@ -792,7 +806,11 @@ fn drive_voice_chat(
                 }
             }
             Effect::SpawnRoom(url) => {
-                for (entity, ..) in rooms.iter() {
+                for entity in rooms
+                    .iter()
+                    .map(|(entity, ..)| entity)
+                    .chain(spawned.take())
+                {
                     commands.entity(entity).despawn();
                 }
                 let Some(("livekit", address)) = url.split_once(':') else {
@@ -804,15 +822,23 @@ fn drive_voice_chat(
                     continue;
                 };
                 let (components, sender, control) = standalone_room_components(address.to_owned());
-                commands.spawn((
-                    components,
-                    VoiceRoom::new(voice.state.kind, sender, control),
-                ));
+                spawned = Some(
+                    commands
+                        .spawn((
+                            components,
+                            VoiceRoom::new(voice.state.kind, sender, control),
+                        ))
+                        .id(),
+                );
                 connection = VoiceChatConnection::Connecting;
                 info!(target: "comms::voice_chat", "joining the voice room");
             }
             Effect::DespawnRoom => {
-                for (entity, ..) in rooms.iter() {
+                for entity in rooms
+                    .iter()
+                    .map(|(entity, ..)| entity)
+                    .chain(spawned.take())
+                {
                     commands.entity(entity).despawn();
                 }
                 connection = VoiceChatConnection::None;
@@ -865,11 +891,15 @@ fn drive_voice_chat(
     if voice.state_streams.iter().any(|s| s.is_closed()) {
         voice.state_streams.retain(|s| !s.is_closed());
     }
-    let dirty = force_snapshot || changed || connection_changed || call_mic.is_changed();
+    let dirty = force_snapshot
+        || changed
+        || connection_changed
+        || call_mic.is_changed()
+        || focus.is_changed();
     if voice.state_streams.is_empty() || !dirty {
         return;
     }
-    let snapshot = voice.snapshot(&call_mic, &participants);
+    let snapshot = voice.snapshot(&call_mic, *focus, &participants);
     for sender in &voice.state_streams {
         let _ = sender.send(snapshot.clone());
     }
@@ -877,7 +907,6 @@ fn drive_voice_chat(
 
 /// Every microphone track published in the voice room is subscribed (the room is no transport,
 /// so nothing else would) and played flat.
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn subscribe_voice_room_tracks(
     mut commands: Commands,
     tracks: Query<(Entity, &PublishedBy), (With<Microphone>, With<Audio>, Without<VoiceRoomTrack>)>,
@@ -1080,13 +1109,14 @@ mod tests {
 
     use super::*;
 
-    fn in_call() -> (App, Entity) {
+    fn app() -> App {
         let mut app = App::new();
         app.add_event::<SystemApi>()
             .add_event::<VoiceEventReceived>()
             .add_event::<SystemAudio>()
             .init_resource::<VoiceChat>()
             .init_resource::<CallMic>()
+            .insert_resource(ClientWindowFocus::Focused)
             .init_resource::<VoiceInputs>()
             .init_resource::<SocialClient>()
             .init_resource::<Wallet>()
@@ -1097,6 +1127,11 @@ mod tests {
                 dials.0 += 1;
             })
             .add_systems(Update, drive_voice_chat);
+        app
+    }
+
+    fn in_call() -> (App, Entity) {
+        let mut app = app();
         {
             let mut voice = app.world_mut().resource_mut::<VoiceChat>();
             voice
@@ -1129,8 +1164,76 @@ mod tests {
     #[derive(Resource, Default)]
     struct Dials(u32);
 
+    fn voice_rooms(app: &mut App) -> usize {
+        app.world_mut()
+            .query_filtered::<(), With<VoiceRoom>>()
+            .iter(app.world())
+            .count()
+    }
+
+    /// Joins a community; the reply, and `then`, arrive in one drive.
+    fn joined_in_one_drive(then: Option<Input>) -> App {
+        let mut app = app();
+        let mut voice = app.world_mut().resource_mut::<VoiceChat>();
+        voice
+            .state
+            .apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        let mut inputs = app.world_mut().resource_mut::<VoiceInputs>();
+        inputs.0.push_back(Input::Reply(Reply::JoinCommunity(
+            "c1".to_owned(),
+            1,
+            Ok("livekit:ws://x".to_owned()),
+        )));
+        inputs.0.extend(then);
+        app.update();
+        app
+    }
+
+    #[test]
+    fn a_hang_up_in_the_joining_drive_leaves_no_voice_room() {
+        let mut app = joined_in_one_drive(None);
+        assert_eq!(voice_rooms(&mut app), 1);
+
+        let mut app = joined_in_one_drive(Some(Input::EndCall));
+        assert!(!app.world().resource::<VoiceChat>().state.is_in_call());
+        assert_eq!(voice_rooms(&mut app), 0);
+    }
+
+    #[test]
+    fn a_rejoin_in_the_joining_drive_leaves_one_voice_room() {
+        let mut app = app();
+        let mut inputs = app.world_mut().resource_mut::<VoiceInputs>();
+        inputs.0.extend([
+            Input::JoinCommunity("c1".to_owned()),
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                1,
+                Ok("livekit:ws://x".to_owned()),
+            )),
+            Input::EndCall,
+            Input::JoinCommunity("c2".to_owned()),
+            Input::Reply(Reply::JoinCommunity(
+                "c2".to_owned(),
+                2,
+                Ok("livekit:ws://y".to_owned()),
+            )),
+        ]);
+        app.update();
+        let voice = app.world().resource::<VoiceChat>();
+        assert_eq!(voice.state.community_id.as_deref(), Some("c2"));
+        assert!(voice.state.is_in_call());
+        assert_eq!(voice_rooms(&mut app), 1);
+    }
+
     fn refuse(app: &mut App, room: Entity) {
-        app.world_mut().entity_mut(room).insert(ConnectFailed);
+        app.world_mut().entity_mut(room).remove::<Connecting>();
+        let now = app.world().resource::<Time>().elapsed_secs_f64();
+        app.world_mut().get_mut::<RoomRecovery>(room).unwrap().fail(
+            now,
+            crate::room_connection::AdmissionError::new(
+                crate::room_connection::FailureKind::Transient,
+            ),
+        );
         app.update();
     }
 
@@ -1148,7 +1251,7 @@ mod tests {
         for attempt in 1..=MAX_RECONNECTION_ATTEMPTS {
             refuse(&mut app, room);
             let entity = app.world().entity(room);
-            assert!(!entity.contains::<ConnectFailed>());
+            assert!(entity.get::<RoomRecovery>().unwrap().failure.is_some());
             assert_eq!(entity.get::<VoiceRoom>().unwrap().reconnects, attempt);
             assert_eq!(
                 app.world().resource::<VoiceChat>().connection,
@@ -1158,6 +1261,9 @@ mod tests {
             assert_eq!(app.world().resource::<Dials>().0, attempt);
             wait(&mut app, RECONNECTION_DELAY_SECS);
             assert_eq!(app.world().resource::<Dials>().0, attempt + 1);
+            let recovery = app.world().get::<RoomRecovery>(room).unwrap();
+            assert!(recovery.failure.is_none());
+            assert_eq!(recovery.retry.attempts, attempt);
             assert!(app.world().resource::<VoiceChat>().state.is_in_call());
         }
         refuse(&mut app, room);

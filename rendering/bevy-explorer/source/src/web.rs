@@ -5,10 +5,11 @@ use bevy::{
     render::{render_resource::PipelineCompilationHandler, renderer::RenderDevice},
     tasks::BoxedFuture,
     web_worker::{WebWorkerConfig, WorkerSpec},
-    winit::{UpdateMode, WinitSettings, WinitWindows},
+    winit::{UpdateMode, WinitSettings},
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
+    perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums},
     rpc::RpcResultSender,
     structs::{
         AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
@@ -22,12 +23,14 @@ use input_manager::InputPriorities;
 use once_cell::sync::OnceCell;
 use perf_output::{layer::PerfLogLayer, stream::Stream};
 use scene_runner::vec3_to_parcel;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use system_bridge::{SystemApi, SystemBridge};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 use web_sys::{HtmlCanvasElement, OffscreenCanvas};
-use winit::platform::web::WindowExtWebSys;
 
 use system_api_types::launch_options::{ClientOptions, EngineRunOptions, LaunchOptions};
 
@@ -47,6 +50,53 @@ static PERF_STREAM: OnceCell<(String, bool)> = OnceCell::new();
 #[wasm_bindgen]
 pub fn engine_set_viewport_active(active: bool) {
     VIEWPORT_ACTIVE.store(active, Ordering::Relaxed);
+}
+
+static PAGE_HAS_FOCUS: AtomicBool = AtomicBool::new(true);
+
+/// Stores the page's `document.hasFocus()`.
+#[wasm_bindgen]
+pub fn engine_set_page_focus(has_focus: bool) {
+    PAGE_HAS_FOCUS.store(has_focus, Ordering::Relaxed);
+}
+
+/// The HUD cost windows the page stored and the engine has not taken, summed into one.
+static HUD_MAIN_THREAD_COST_WINDOW: Mutex<Option<HudMainThreadCostDataPoint>> = Mutex::new(None);
+
+/// Adds the page's HUD cost window to the stored one and returns true; returns false, storing
+/// nothing, while the engine holds the lock (the page thread must not block). With
+/// `react_commits_reported` false, the window holds no React commits.
+#[wasm_bindgen]
+pub fn engine_set_hud_main_thread_cost(
+    covered_seconds: f32,
+    react_commits_reported: bool,
+    react_commit_count: u32,
+    react_commit_time_sum_ms: f32,
+    long_animation_frames_supported: bool,
+    long_animation_frame_count: u32,
+    hud_script_time_sum_ms: f32,
+    style_and_layout_time_sum_ms: f32,
+) -> bool {
+    let window = HudMainThreadCostDataPoint {
+        covered_seconds,
+        react_commits: react_commits_reported.then_some(ReactCommitSums {
+            commit_count: react_commit_count,
+            commit_time_sum_ms: react_commit_time_sum_ms,
+        }),
+        long_animation_frames: long_animation_frames_supported.then_some(LongAnimationFrameSums {
+            frame_count: long_animation_frame_count,
+            hud_script_time_sum_ms,
+            style_and_layout_time_sum_ms,
+        }),
+    };
+    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+        return false;
+    };
+    match stored.as_mut() {
+        Some(stored) => stored.add(&window),
+        None => *stored = Some(window),
+    }
+    true
 }
 
 /// The harness's browser leg: `perfStream`, the same-origin path the benchmark log (and, with
@@ -104,13 +154,6 @@ extern "C" {
     /// leave keys alone while the user types into scene UI.
     #[wasm_bindgen(js_name = "__setEngineTextFocus")]
     fn set_engine_text_focus(focused: bool);
-
-    /// Shows or hides the page's `#shader-compiling` indicator (the HUD's `renderBusy` probe)
-    /// while gpu_cache.js compiles pipelines asynchronously on the render worker; boot.js
-    /// defines it, gpu_cache.js calls the relay directly.
-    #[allow(dead_code)]
-    #[wasm_bindgen(js_name = "__setShaderCompiling")]
-    fn set_shader_compiling(on: bool);
 
     /// The render worker's gpu cache is warm (`engine_render_setup` done): boot.js completes
     /// the loading bar's gpu step.
@@ -339,19 +382,24 @@ async fn read_config_file() -> Option<String> {
     None
 }
 
-/// The persisted home scene — the pinned realm (null = none pinned: the HUD substitutes its own
-/// default realm, since this runs before `engine_run` latches the base domain the engine would
-/// compose one from) + "x,y" parcel — as a JSON string. Valid after [`engine_init`] (it reads the
+/// The home that applies at startup (the stored sign-in's account's, else the last account's) —
+/// the pinned realm (null = none pinned: the HUD substitutes its own default realm, since this
+/// runs before `engine_run` latches the base domain the engine would compose one from), the
+/// "x,y" parcel and whether a home is pinned — as a JSON string. Valid after [`engine_init`] (it reads the
 /// loaded config); exposed so the HUD's places picker can target home from "Skip" BEFORE the
 /// engine is launched.
 #[wasm_bindgen]
 pub fn engine_home_scene() -> String {
-    let (realm, parcel) = INIT_DATA
-        .get()
-        .map(|config| (config.home_realm.clone(), config.home_location()))
-        .unwrap_or_else(|| (None, AppConfig::default().home_location()));
-    serde_json::json!({ "realm": realm, "parcel": format!("{},{}", parcel.x, parcel.y) })
-        .to_string()
+    let home = INIT_DATA.get().and_then(|config| config.startup_home());
+    let parcel = home
+        .as_ref()
+        .map_or(bevy::math::IVec2::ZERO, |home| home.location);
+    serde_json::json!({
+        "realm": home.as_ref().map(|home| &home.realm),
+        "parcel": format!("{},{}", parcel.x, parcel.y),
+        "pinned": home.is_some(),
+    })
+    .to_string()
 }
 
 /// Whether the terms are accepted on this install (the loaded config), so the HUD can launch a
@@ -546,8 +594,21 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         level: Level::INFO,
         filter,
         custom_layer: |_| {
-            perf_output::stream::log_sink()
-                .map(|sink| Box::new(PerfLogLayer::new(sink)) as BoxedLayer)
+            // the benchmark log when the page streams it
+            let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
+            // and in a `performance-profiler` build the scope profiler's layer
+            #[cfg(feature = "performance-profiler")]
+            {
+                use bevy::log::tracing_subscriber::{Layer, Registry};
+                Some(
+                    Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
+                        benchmark_log,
+                        crate::perf::profiled_scopes::profiled_scopes_layer(),
+                    )) as BoxedLayer,
+                )
+            }
+            #[cfg(not(feature = "performance-profiler"))]
+            benchmark_log.map(|layer| Box::new(layer) as BoxedLayer)
         },
     });
 
@@ -576,7 +637,7 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     // The systems that call the page hooks take `JsThread` so the multi-threaded
     // executor keeps them on this thread, off the compute workers (see `JsThread`).
     app.insert_non_send_resource(());
-    app.add_systems(Update, (update_winit_fps, update_render_scale))
+    app.add_systems(Update, update_winit_fps)
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
         .add_systems(Last, engine_heartbeat_system);
@@ -605,28 +666,18 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
 }
 
 /// Send a console command to the engine from JavaScript.
-/// `command_line` is the full command string, e.g. `"/teleport 10 20"`.
+/// `command_line` is the full command string, e.g. `"/teleport 10 20"`, split as
+/// `console::line` says (`"two words"` is one argument).
 /// Returns a Promise that resolves with the command output or rejects with an error message.
 #[wasm_bindgen]
 pub async fn engine_console_command(command_line: String) -> Result<JsValue, JsValue> {
-    let mut parts = command_line.split_whitespace();
-    let Some(cmd) = parts.next() else {
-        return Err(JsValue::from_str("empty command"));
-    };
-    let cmd = if cmd.starts_with('/') {
-        cmd.to_string()
-    } else {
-        format!("/{cmd}")
-    };
-    let args: Vec<String> = parts.map(String::from).collect();
-
     let Some(sender) = CONSOLE_BRIDGE_SENDER.get() else {
         return Err(JsValue::from_str("engine not initialized"));
     };
 
     let (sx, rx) = RpcResultSender::channel();
     sender
-        .send(SystemApi::ConsoleCommand(cmd, args, sx))
+        .send(SystemApi::ConsoleLine(command_line, sx))
         .map_err(|_| JsValue::from_str("engine channel closed"))?;
 
     rx.await
@@ -641,17 +692,18 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
         .commands
         .iter()
         .map(|(name, cmd)| {
-            let trailing = cmd.is_trailing_var_arg_set();
+            // the predicate the engine splits the line by: the page sends such a command's words
+            // unquoted
+            let rest = console::line::takes_rest(cmd);
             let positional: Vec<_> = cmd
                 .get_arguments()
                 .filter(|a| a.get_long().is_none() && a.get_short().is_none())
                 .collect();
-            let last_id = positional.last().map(|a| a.get_id().as_str());
             let args: Vec<serde_json::Value> = positional
                 .iter()
                 .map(|arg| {
                     let id = arg.get_id().as_str();
-                    let kind = if (trailing && Some(id) == last_id) || id == "json" {
+                    let kind = if id == "json" {
                         "json"
                     } else if id == "entity" {
                         "entity"
@@ -669,7 +721,7 @@ fn extract_js_api(config: Res<ConsoleConfiguration>, _js: JsThread) {
                     arg_json
                 })
                 .collect();
-            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args });
+            let mut cmd_json = serde_json::json!({ "cmd": name, "args": args, "rest": rest });
             if let Some(about) = cmd.get_about() {
                 cmd_json["help"] = serde_json::Value::String(about.to_string());
             }
@@ -761,6 +813,25 @@ fn engine_heartbeat_system(_js: JsThread) {
     engine_heartbeat();
 }
 
+/// The value `engine_set_page_focus` last stored.
+pub(crate) fn page_has_focus() -> bool {
+    PAGE_HAS_FOCUS.load(Ordering::Relaxed)
+}
+
+/// The value `engine_set_viewport_active` last stored.
+pub(crate) fn viewport_active() -> bool {
+    VIEWPORT_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
+/// arrived.
+pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
+    HUD_MAIN_THREAD_COST_WINDOW
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .take()
+}
+
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {
     let focused = priorities.keyboard_claimed();
     if focused != *prev {
@@ -791,26 +862,6 @@ pub fn update_winit_fps(
             react_to_window_events: false,
         };
         winit.unfocused_mode = winit.focused_mode;
-    }
-}
-
-// winit's page-side window draws the canvas at this share of its device pixels, reported  to the
-// app as a scale factor change, so the logical size, UI and cursor keep their places.
-pub fn update_render_scale(
-    config: Res<AppConfig>,
-    session: Res<SessionGraphics>,
-    winit_windows: NonSend<WinitWindows>,
-    mut last_scale: Local<Option<f32>>,
-) {
-    let scale = session
-        .render_scale(&config)
-        .clamp(SessionGraphics::MIN_RENDER_SCALE, 1.0);
-    if *last_scale == Some(scale) || winit_windows.windows.is_empty() {
-        return;
-    }
-    *last_scale = Some(scale);
-    for window in winit_windows.windows.values() {
-        window.set_render_scale(scale as f64);
     }
 }
 
@@ -866,12 +917,12 @@ fn update_url_params(
             realm: Some(server.to_owned()),
             position,
             preview: preview.is_preview,
+            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
+            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
             ..launched.launch
         },
         client: ClientOptions {
             system_scene,
-            // the default set is omitted so the canonical url stays clean (the page doesn't know it)
-            portables: portables.filter(|p| p != system_api_types::web_params::DEFAULT_PORTABLES),
             editor: editor.0,
             // the host's calls for this load, never a link's
             hold_world: false,

@@ -1,0 +1,43 @@
+name: Tests
+on: [ workflow_call ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: creator-hub-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: 'bash'
+    working-directory: apps/creator-hub
+
+jobs:
+  unit:
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/creator-hub-setup
+        id: setup
+        with:
+          cache-protoc: 'true'
+
+      - name: install
+        if: steps.setup.outputs.node-modules-cache-hit != 'true'
+        run: make install
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+      # Reuse the shared build instead of regenerating protoc / rebuilding asset-packs.
+      - uses: ./.github/actions/creator-hub-download-build
+
+      # The invisible smart items' collider models are Git LFS, which the checkout leaves as
+      # pointer files. Their test reads the models, so fetch those few small files.
+      - name: fetch the collider models
+        run: git lfs pull --include 'apps/creator-hub/packages/asset-packs/packs/smart_items/assets/invisible_*/*_collider.glb'
+
+      - name: test
+        run: make test
+        env:
+          REQUIRE_COLLIDER_MODELS: '1'

@@ -1,6 +1,6 @@
-// IconButton — square nav/control button used by the HUD sidebar. Idle / hover /
-// active states + an optional notification badge, wrapped in the design-system
-// Tooltip (label + optional keyboard-shortcut hint, e.g. "Chat [T]").
+// IconButton — the round navigation button of the HUD's bar: a 42px circle with rest and
+// selected states and an optional notification badge, wrapped in the design-system Tooltip
+// (label + optional keyboard-shortcut hint, e.g. "Friends [L]").
 
 import { Avatar } from './Avatar'
 import { Icon, type IconName } from './icons'
@@ -19,10 +19,14 @@ interface IconButtonProps
   badgeMax?: number
   /** Badge tone — Ruby (default) or Lavender (e.g. Hangouts). */
   badgeTone?: 'ruby' | 'lavender'
-  /** Tooltip label shown on hover. */
+  /** The button's accessible name, and the tooltip unless `tooltip` is given. */
   label: string
-  /** Single-key shortcut shown dimmed in the tooltip, e.g. 'T' → "Chat [T]". */
+  /** Tooltip text in place of `label`, for a button whose hover hint is a status (e.g. counts). */
+  tooltip?: string
+  /** Single-key shortcut shown dimmed in the tooltip, e.g. 'L' → "Friends [L]". */
   shortcut?: string
+  /** No hover label: the button's own panel is open beside it and takes the label's place. */
+  quiet?: boolean
   /** Green status dot (e.g. connected voice). */
   indicator?: boolean
   /** Full-colour art in the top-right corner, announced as `label`. */
@@ -32,8 +36,6 @@ interface IconButtonProps
   /** Art drawn at `size` in place of the icon: white-on-transparent takes the icon colour, `color`
    *  art is drawn as-is. */
   art?: { src: string; size: number; color?: boolean }
-  /** 34 for the voice button; 32 otherwise. */
-  size?: 32 | 34
 }
 
 export function IconButton({
@@ -43,10 +45,11 @@ export function IconButton({
   badgeMax,
   badgeTone = 'ruby',
   label,
+  tooltip,
   shortcut,
+  quiet = false,
   avatar,
   art,
-  size = 32,
   indicator = false,
   cornerArt,
   className = '',
@@ -55,36 +58,36 @@ export function IconButton({
   ...rest
 }: IconButtonProps): React.JSX.Element {
   return (
-    <Tooltip label={label} shortcut={shortcut} side="right" variant="rail">
-      <button
-        type={type}
-        className={`${styles.btn} ${size === 34 ? styles.large : ''} ${active ? styles.active : ''} ${className}`.trim()}
-        aria-label={label}
-        aria-pressed={active}
-        {...rest}
-      >
-        {avatar ? (
-          <Avatar src={avatar.src} name={avatar.name} color={avatar.color} size={30} framed />
-        ) : art?.color === true ? (
-          <img src={art.src} alt="" width={art.size} height={art.size} draggable={false} />
-        ) : art ? (
-          <MaskIcon src={art.src} size={art.size} />
-        ) : (
-          <Icon name={icon} size={24} />
-        )}
-        {children}
-        {indicator && <span className={styles.indicator} data-indicator />}
-        {cornerArt != null && (
-          <img className={styles.cornerArt} src={cornerArt.src} alt={cornerArt.label} width={14} height={14} draggable={false} />
-        )}
-        {badge != null && badge > 0 && (
-          <span
-            className={`${styles.badge} ${badgeTone === 'lavender' ? styles.badgeLavender : ''}`.trim()}
-          >
-            {badgeMax != null ? (badge > badgeMax ? `+${badgeMax}` : badge) : badge > 99 ? '99+' : badge}
-          </span>
-        )}
-      </button>
+    <Tooltip label={tooltip ?? label} shortcut={shortcut} side="right" variant="rail" quiet={quiet}>
+    <button
+      type={type}
+      className={`${styles.btn} ${avatar ? styles.portrait : ''} ${active ? styles.active : ''} ${className}`.replace(/\s+/g, ' ').trim()}
+      aria-label={label}
+      aria-pressed={active}
+      {...rest}
+    >
+      {avatar ? (
+        <Avatar src={avatar.src} name={avatar.name} color={avatar.color} size={42} framed />
+      ) : art?.color === true ? (
+        <img src={art.src} alt="" width={art.size} height={art.size} draggable={false} />
+      ) : art ? (
+        <MaskIcon src={art.src} size={art.size} />
+      ) : (
+        <Icon name={icon} size={24} />
+      )}
+      {children}
+      {indicator && <span className={styles.indicator} data-indicator />}
+      {cornerArt != null && (
+        <img className={styles.cornerArt} src={cornerArt.src} alt={cornerArt.label} width={14} height={14} draggable={false} />
+      )}
+      {badge != null && badge > 0 && (
+        <span
+          className={`${styles.badge} ${badgeTone === 'lavender' ? styles.badgeLavender : ''}`.trim()}
+        >
+          {badgeMax != null ? (badge > badgeMax ? `+${badgeMax}` : badge) : badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </button>
     </Tooltip>
   )
 }

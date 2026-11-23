@@ -48,7 +48,7 @@ The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes
   or a sign-out replaces it); `/play` renders its in-world Shop, with the app-wide
   `QueryClientProvider` it uses, until that Shop moves to `react-web`.
 - Tests of the shared HUD live once, in `library/ui/apps/hud` and `library/explorer-core`, and
-  `react-web`'s `npm test` runs them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
+  `react-web`'s `pnpm test` runs them; `/play` keeps the tests of its own files, run with `pnpm test` in `apps/ui3` under
   `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried. The shared session only knows that a host may
   have an unattended run (`@hud-host`'s `bootMode` and `unattendedRun`); react-web's `host.ts`
@@ -73,13 +73,27 @@ serve; guest sessions work.
 
 ## Forks and drift
 
-`tooling/upstream-forks.py` writes `forks.toml` (git sources, locked revisions, crates; ahead/behind
-with `--check-upstream`) and `cargo-patches.toml` (`[patch.crates-io]` pins for
-`cargo --config rendering/bevy-explorer/cargo-patches.toml …`) from `source/Cargo.lock`;
-`--check` fails on drift, `--verify` resolves a lock copy. The daily
-`bevy-explorer-upstream.yml` runs it, opens the `upstream/forks` PR and uploads the drift page
-(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`). Bevy is not among these forks:
-it is vendored at `bevy/` and changed in place ([the bevy fork](docs/guidelines/bevy-fork.md)).
+Bevy and 18 forked sources are tracked as an upstream commit and a patch series under
+`patches/<name>/` ([ADR](../../docs/adr/2026-11-14-explorer-sources-as-patches.md)). Cargo takes
+each one as a commit of this repository, pinned by `rev`
+([ADR](../../docs/adr/2026-11-15-explorer-patched-sources-as-git-commits.md)): no step runs
+before `cargo`. [The bevy fork](docs/guidelines/bevy-fork.md#changing-bevy) has `edit`, `export`,
+`publish` and the checks. `bevy_dui` and `rpc-rust` (package `dcl-rpc`) are exact upstream
+bytes under `vendor/`.
+
+Licences: each `patches/<name>/source.toml` records the licence of its source in `license`, and
+each crate under `vendor/` records its own in its `Cargo.toml`.
+
+The Nix build (`infra/packages/bevy-explorer.nix`, `nix build .#bevy-explorer`) makes one
+derivation per source: it fetches `commit` with the `nix_hash` of `source.toml`, then runs the
+same tool offline. `nix_hash` is the hash of a checkout of `commit` without submodules, and each
+`[[submodule]]` has its own. CI does not build the Nix package, so nothing there proves
+`nix_hash`: after a change of `commit`, run `nix build .#bevy-explorer.sources`, which fails with
+the hash to record.
+
+`python3 tooling/upstream-drift.py check` compares each source's pinned commit with its upstream
+ref. The daily `bevy-explorer-upstream.yml` runs it and uploads the drift page
+(`tooling/upstream-drift.py collect`, `tooling/upstream-drift-site.py`).
 
 ## Native builds and HUD updates
 
@@ -89,8 +103,8 @@ or `python3 tooling/fetch-play.py` (main CI artifact); see the
 [container build contract](../../infra/containers/README.md#sites-explorer-build-input).
 
 When the HUD changes: regenerate the bindings and the shared inputs
-(`npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs`), then run both hosts'
-tests and typechecks (`npm test` in react-web, `pnpm test` in `apps/ui3`, whose `play-shared`
+(`pnpm --dir rendering/bevy-explorer/source/react-web run gen:shared-inputs`), then run both hosts'
+tests and typechecks (`pnpm test` in react-web and in `apps/ui3`, whose `play-shared`
 project runs the shared HUD against `/play`'s host). Record browser and multiplayer acceptance evidence for the target
 revision in the task report; a matching fingerprint alone does not establish acceptance.
 

@@ -2073,6 +2073,8 @@ export interface operations {
                 names?: string[];
                 categories?: string[];
                 only_highlighted?: string;
+                /** @description True to show only entries the automated ranking is not allowed to touch */
+                only_excluded_from_ranking?: string;
                 only_favorites?: string;
                 search?: string;
                 creator_address?: string;
@@ -3256,6 +3258,31 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description The named entity_id / place_id is not a known place */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description The request body is over 16 KiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The reporter or its network filed too many reports this hour */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -3315,6 +3342,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
+            };
+            /** @description The report document is over 64 KiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             500: {
                 headers: {

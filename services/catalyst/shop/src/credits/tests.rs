@@ -56,6 +56,8 @@ pub(crate) struct FakeMarket {
     pub orders: Vec<ListingRow>,
     pub trades: HashMap<String, TradeLookup>,
     pub mana_usd: Option<String>,
+    /// The creator coupon every trade is priced with, when set.
+    pub coupon: Option<crate::types::TradeCoupon>,
     pub item_reads: AtomicUsize,
     pub order_reads: AtomicUsize,
     pub oracle_reads: AtomicUsize,
@@ -94,6 +96,8 @@ impl FakeMarket {
             token_id: Some(ITEM_TOKEN_ID.to_string()),
             trade_id: None,
             price_wei: price_wei.to_string(),
+            seller: "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e".to_string(),
+            payee: None,
         });
         self
     }
@@ -105,6 +109,15 @@ impl FakeMarket {
 
     fn with_trade(mut self, id: &str, trade: Value) -> Self {
         self.trades.insert(id.to_string(), TradeLookup::Open(trade));
+        self
+    }
+
+    fn with_coupon(mut self, discount_ppm: u32) -> Self {
+        self.coupon = Some(crate::types::TradeCoupon {
+            contract: crate::types::EvmAddress::parse("0xc914507fe297b2dddd1232ac3a8903f1c125e794")
+                .unwrap(),
+            discount_ppm,
+        });
         self
     }
 }
@@ -149,7 +162,7 @@ impl Market for FakeMarket {
         _trade: &crate::types::SignedTrade,
         _trade_type: &str,
     ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
-        Ok(None)
+        Ok(self.coupon)
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
@@ -166,6 +179,14 @@ pub(crate) struct MockBroker {
     pub configured: bool,
     pub buys: Arc<parking_lot::Mutex<Vec<BuyRequest>>>,
     pub buy_answer: parking_lot::Mutex<Result<(), BrokerError>>,
+    /// When set, a buy leaves its key's `shop.broker_purchases` claim in
+    /// this status before answering (`sent`: it broadcast; `pending`: it
+    /// re-armed a claim that failed before broadcast).
+    pub claims: Option<(PgPool, &'static str)>,
+    pub resumes: Arc<parking_lot::Mutex<Vec<String>>>,
+    pub resume_answer: Arc<parking_lot::Mutex<Result<(), BrokerError>>>,
+    /// What [`Broker::released_buy_mined`] answers.
+    pub released_mined: Arc<parking_lot::Mutex<Result<bool, String>>>,
     pub verifications: HashMap<String, ManaPaymentVerification>,
 }
 
@@ -175,6 +196,10 @@ impl MockBroker {
             configured: true,
             buys: Arc::new(parking_lot::Mutex::new(Vec::new())),
             buy_answer: parking_lot::Mutex::new(Ok(())),
+            claims: None,
+            resumes: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            resume_answer: Arc::new(parking_lot::Mutex::new(Ok(()))),
+            released_mined: Arc::new(parking_lot::Mutex::new(Ok(false))),
             verifications: HashMap::new(),
         }
     }
@@ -200,10 +225,28 @@ impl Broker for MockBroker {
 
     async fn buy(&self, req: &BuyRequest) -> Result<String, BrokerError> {
         self.buys.lock().push(req.clone());
+        if let Some((pool, status)) = &self.claims {
+            claim_broker_buy(pool, &req.idempotency_key, status, None).await;
+        }
         self.buy_answer
             .lock()
             .clone()
             .map(|_| format!("0x{}", req.idempotency_key.replace(':', "")))
+    }
+
+    async fn resume(&self, idempotency_key: &str) -> Result<String, BrokerError> {
+        self.resumes.lock().push(idempotency_key.to_string());
+        self.resume_answer
+            .lock()
+            .clone()
+            .map(|_| format!("0x{}", idempotency_key.replace(':', "")))
+    }
+
+    async fn released_buy_mined(&self, _idempotency_key: &str) -> Result<bool, ApiError> {
+        self.released_mined
+            .lock()
+            .clone()
+            .map_err(ApiError::BadGateway)
     }
 
     async fn reclaim(
@@ -236,6 +279,27 @@ impl Broker for MockBroker {
     }
 }
 
+/// Records a broker buy claimed under `key` in `status`, as the broker's
+/// claim and broadcast leave it (`write_ahead`, as every claim it makes is).
+async fn claim_broker_buy(pool: &PgPool, key: &str, status: &str, forward_tx_hash: Option<&str>) {
+    sqlx::query(
+        "INSERT INTO shop.broker_purchases \
+         (idempotency_key, tx_hash, forward_tx_hash, collection, buyer_address, escrow_address, \
+          price_wei, chain_id, mode, status, write_ahead) \
+         VALUES ($1, '0xbuy', $2, $3, $3, '0x0000000000000000000000000000000000000001', 1, 137, \
+                 'primary', $4, true) \
+         ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL \
+         DO UPDATE SET status = EXCLUDED.status, forward_tx_hash = EXCLUDED.forward_tx_hash",
+    )
+    .bind(key)
+    .bind(forward_tx_hash)
+    .bind(COLLECTION)
+    .bind(status)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 fn lazy_pool() -> PgPool {
     sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgres://nobody:nowhere@127.0.0.1:1/never")
@@ -252,6 +316,7 @@ struct StateCfg {
     mock_card: bool,
     fulfillment_mode: &'static str,
     stripe_webhook_secret: Option<&'static str>,
+    stripe_secret_key: Option<&'static str>,
     onchain_authorize_enabled: bool,
     require_purchase_intent: bool,
     admin_token: Option<&'static str>,
@@ -264,6 +329,7 @@ impl Default for StateCfg {
             mock_card: false,
             fulfillment_mode: "secondary",
             stripe_webhook_secret: None,
+            stripe_secret_key: None,
             onchain_authorize_enabled: false,
             require_purchase_intent: false,
             admin_token: None,
@@ -284,6 +350,7 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
         },
         checkout_fulfillment_mode: cfg.fulfillment_mode.to_string(),
         stripe_webhook_secret: cfg.stripe_webhook_secret.map(str::to_string),
+        stripe_secret_key: cfg.stripe_secret_key.map(str::to_string),
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
         require_purchase_intent: cfg.require_purchase_intent,
         admin_token: cfg.admin_token.map(str::to_string),
@@ -318,8 +385,18 @@ pub(super) fn scratch_wallet() -> Wallet {
 }
 
 pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> HeaderMap {
+    signed_headers_with(w, method, path, "{}").await
+}
+
+/// [`signed_headers`] with `metadata` signed into the payload.
+pub(super) async fn signed_headers_with(
+    w: &Wallet,
+    method: &str,
+    path: &str,
+    metadata: &'static str,
+) -> HeaderMap {
     let timestamp = chrono::Utc::now().timestamp_millis().to_string();
-    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let payload = build_payload_v6(method, path, &timestamp, metadata);
     let signature = w
         .signer
         .sign_message(payload.as_bytes())
@@ -343,7 +420,7 @@ pub(super) async fn signed_headers(w: &Wallet, method: &str, path: &str) -> Head
         AUTH_TIMESTAMP_HEADER,
         HeaderValue::from_str(&timestamp).unwrap(),
     );
-    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static("{}"));
+    headers.insert(AUTH_METADATA_HEADER, HeaderValue::from_static(metadata));
     for (i, link) in chain.iter().enumerate() {
         headers.insert(
             axum::http::HeaderName::from_bytes(format!("{AUTH_CHAIN_HEADER_PREFIX}{i}").as_bytes())
@@ -383,6 +460,22 @@ pub(super) async fn send(
     let body = serde_json::from_slice(&bytes)
         .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
     (status, headers, body)
+}
+
+/// A signed web3 session's metadata, as the web Shop signs it (`walletKind`).
+const WEB3: &str = r#"{"walletKind":"web3"}"#;
+
+/// [`call`] with `metadata` signed into the request.
+async fn call_signed(
+    app: &Router,
+    w: &Wallet,
+    path: &str,
+    metadata: &'static str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let headers = signed_headers_with(w, "post", path, metadata).await;
+    let (status, _, body) = send(app, "POST", path, headers, Some(body)).await;
+    (status, body)
 }
 
 /// A signed call over the PUBLIC path (`/credits/...`), the way the explorer signs it.
@@ -521,12 +614,11 @@ async fn ledger(pool: &PgPool, addr: &str, kind: &str) -> Vec<(String, String)> 
 }
 
 /// The settlement pass writes money (it retires stale pack orders and sends
-/// revocations): held by the restore stamps it writes nothing, and resumes
-/// once they vouch for the node.
+/// revocations): with the switch off it writes nothing, and resumes once
+/// the switch is on.
 #[tokio::test]
-async fn the_settlement_pass_skips_while_the_restore_stamps_hold() {
+async fn the_settlement_pass_skips_while_the_switch_is_off() {
     use crate::shared::writes::PassGate;
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(own) = OwnDatabase::create("settle_hold").await else {
         return;
     };
@@ -548,23 +640,15 @@ async fn the_settlement_pass_skips_while_the_restore_stamps_hold() {
         .unwrap()
     };
     let credits = Credits::new(own.pool.clone());
-    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
-    let held = StampLab::new();
-    let ran = scoped(
-        held.stamps.clone(),
-        super::settlement::settlement_pass(&credits, None, &gate, true, None),
-    )
-    .await
-    .unwrap();
+    let gate = PassGate::new("credits-settlement");
+    let ran = super::settlement::settlement_pass(&credits, None, &gate, false, None)
+        .await
+        .unwrap();
     assert!(!ran);
-    assert_eq!(status().await, "pending", "held: nothing retired");
-    let fresh = StampLab::fresh();
-    let ran = scoped(
-        fresh.stamps.clone(),
-        super::settlement::settlement_pass(&credits, None, &gate, true, None),
-    )
-    .await
-    .unwrap();
+    assert_eq!(status().await, "pending", "off: nothing retired");
+    let ran = super::settlement::settlement_pass(&credits, None, &gate, true, None)
+        .await
+        .unwrap();
     assert!(ran);
     assert_eq!(status().await, "abandoned");
     own.drop().await;
@@ -596,6 +680,9 @@ async fn purchase_revoked(pool: &PgPool, pi: &str) -> String {
 
 async fn cleanup(pool: &PgPool, addr: &str) {
     for sql in [
+        "DELETE FROM shop.broker_purchases WHERE idempotency_key IN ( \
+             SELECT 'checkout:' || o.checkout_id || ':' || o.id FROM credits.fulfillment_outbox o \
+             JOIN credits.checkouts c ON c.id = o.checkout_id WHERE c.address = $1)",
         "DELETE FROM credits.fulfillment_outbox WHERE checkout_id IN (SELECT id FROM credits.checkouts WHERE address = $1)",
         "DELETE FROM credits.checkouts WHERE address = $1",
         "DELETE FROM credits.cart_items WHERE cart_id IN (SELECT id FROM credits.carts WHERE address = $1)",
@@ -994,6 +1081,7 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
             actor: Some("stripe"),
             idempotency_key: None,
             detail: &json!({}),
+            studio_name: None,
         })
         .await
         .unwrap();
@@ -1016,6 +1104,16 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
         }
         other => panic!("expected a reversal, got {other:?}"),
     }
+    assert!(
+        !wallet_blocked(&pool, &addr).await,
+        "a fully covered reversal leaves the wallet usable"
+    );
+    let detail: Value = sqlx::query_scalar("SELECT detail FROM ops.admin_audit WHERE domain = 'credits' AND action = 'revoke' AND target = $1")
+        .bind(&addr)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(detail["blocked"], json!(false));
 
     assert_eq!(
         available(&pool, &addr).await.parse::<f64>().unwrap(),
@@ -1050,6 +1148,16 @@ async fn dispute_revokes_granted_credits_instead_of_paying_the_buyer_twice() {
     cleanup(&pool, &addr).await;
 }
 
+async fn wallet_blocked(pool: &PgPool, addr: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT COALESCE((SELECT is_blocked_for_claiming FROM credits.wallets WHERE address = $1), false)",
+    )
+    .bind(addr)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
 #[tokio::test]
 async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
     let Some(pool) = pool().await else { return };
@@ -1067,6 +1175,7 @@ async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
             actor: Some("stripe"),
             idempotency_key: None,
             detail: &json!({}),
+            studio_name: None,
         })
         .await
         .unwrap();
@@ -1097,6 +1206,28 @@ async fn charge_refund_revokes_and_reports_the_unrecoverable_shortfall() {
     }
     assert_eq!(available(&pool, &addr).await.parse::<f64>().unwrap(), 0.0);
     assert_reconciles(&pool, &addr, "after partial-clawback reversal").await;
+    assert!(
+        wallet_blocked(&pool, &addr).await,
+        "an uncovered reversal blocks the wallet"
+    );
+    credits
+        .admin_grant_credits(GrantRequest {
+            address: &addr,
+            amount: "5",
+            kind: "grant",
+            reason: None,
+            actor: Some("test"),
+            idempotency_key: None,
+            detail: &json!({}),
+            studio_name: None,
+        })
+        .await
+        .unwrap();
+    let err = credits
+        .spend(&addr, "1", "checkout:after-shortfall", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ApiError::Forbidden(_)), "got {err:?}");
 
     cleanup(&pool, &addr).await;
 }
@@ -1196,6 +1327,10 @@ async fn revoke_without_a_wallet_row_is_still_audited_as_a_total_loss() {
 
     assert!(ledger_kinds(&pool, &addr).await.is_empty());
     assert_reconciles(&pool, &addr, "after a no-wallet chargeback").await;
+    assert!(
+        wallet_blocked(&pool, &addr).await,
+        "a chargeback with no wallet row blocks the address"
+    );
 
     cleanup(&pool, &addr).await;
 }
@@ -1239,6 +1374,7 @@ async fn pack_reversal_is_bounded_by_the_purchase_across_replays() {
             actor: Some("stripe"),
             idempotency_key: None,
             detail: &json!({}),
+            studio_name: None,
         })
         .await
         .unwrap();
@@ -1356,7 +1492,8 @@ async fn spend_rejects_non_positive_amounts_and_never_mints() {
                     reason: None,
                     actor: Some("t"),
                     idempotency_key: None,
-                    detail: &json!({})
+                    detail: &json!({}),
+                    studio_name: None,
                 })
                 .await
                 .expect_err("admin grant must reject")
@@ -1762,6 +1899,7 @@ async fn double_post_grants_once_and_replays_original_amounts() {
         actor: Some("mana-topup"),
         idempotency_key: Some(&idem),
         detail: &detail,
+        studio_name: None,
     };
 
     let first = credits.admin_grant_credits(grant("250")).await.unwrap();
@@ -1805,7 +1943,9 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
     let Some(pool) = pool().await else { return };
     let addr = scratch_wallet().address;
     let idem = unique("grant");
-    let credits = Credits::new(pool.clone()).with_shop_base_url("https://example.org/shop/");
+    let credits = Credits::new(pool.clone())
+        .with_shop_base_url("https://example.org/shop/")
+        .with_notifications_cdn_url("https://cdn.example.org/");
     let detail = json!({});
     let grant = |amount: &'static str, kind: &'static str, keyed: bool| GrantRequest {
         address: &addr,
@@ -1815,6 +1955,7 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
         actor: Some("ops"),
         idempotency_key: keyed.then_some(idem.as_str()),
         detail: &detail,
+        studio_name: None,
     };
     assert!(
         !credits
@@ -1838,6 +1979,13 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
         .admin_grant_credits(grant("9", "purchase", false))
         .await
         .unwrap();
+    credits
+        .admin_grant_credits(GrantRequest {
+            studio_name: Some(" Acme Studio "),
+            ..grant("30", "grant", false)
+        })
+        .await
+        .unwrap();
 
     let metadata: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT metadata FROM social.notifications WHERE address = $1 AND type = 'credits_on_demand_granted' ORDER BY (metadata->>'usdCents')::int DESC",
@@ -1851,14 +1999,22 @@ async fn an_operator_grant_notifies_once_and_a_purchase_never() {
         vec![
             json!({
                 "creditsGranted": 1250, "denomination": "USD", "usdCents": 12500,
-                "image": "https://assets-cdn.decentraland.org/credits/notification-icon.png",
+                "image": "https://cdn.example.org/credits/notification-icon.png",
                 "title": "Credits added to your account",
                 "description": "You received 1,250 Credits. They never expire: spend them in the Shop.",
                 "link": "https://example.org/shop",
             }),
             json!({
+                "creditsGranted": 30, "denomination": "USD", "usdCents": 300,
+                "studioName": "Acme Studio",
+                "image": "https://cdn.example.org/credits/notification-icon.png",
+                "title": "A gift from Acme Studio",
+                "description": "Acme Studio gifted you 30 Credits. They never expire: spend them in the Shop.",
+                "link": "https://example.org/shop",
+            }),
+            json!({
                 "creditsGranted": 2.5, "denomination": "USD", "usdCents": 25,
-                "image": "https://assets-cdn.decentraland.org/credits/notification-icon.png",
+                "image": "https://cdn.example.org/credits/notification-icon.png",
                 "title": "Credits added to your account",
                 "description": "You received 2.5 Credits. They never expire: spend them in the Shop.",
                 "link": "https://example.org/shop",
@@ -1880,15 +2036,41 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     let wallet = scratch_wallet();
     let tx_hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
     let pending = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let shallow = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let cheaper_then = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let unpriced = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    // Rates recorded at fixed past instants no other test writes near; each
+    // test transfer is mined 10 s after one of them.
+    let snapshot_at = |ts: i64| chrono::DateTime::from_timestamp(ts, 0).unwrap().naive_utc();
+    let (at_quarter, at_fifth, at_nothing) = (978_307_200_i64, 978_393_600_i64, 1_009_843_200_i64);
+    for (ts, rate) in [(at_quarter, "0.25"), (at_fifth, "0.20")] {
+        sqlx::query("INSERT INTO economy.price_snapshots (source, mana_usd, taken_at) VALUES ('coingecko', $1::numeric, $2)")
+            .bind(rate)
+            .bind(snapshot_at(ts))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let block = |ts: i64, confirmations: u64| super::escrow::TransferBlock {
+        number: 1_000,
+        timestamp: ts + 10,
+        confirmations,
+    };
+    let payment = |block: super::escrow::TransferBlock| ManaPaymentVerification::Confirmed {
+        from: wallet.address.clone(),
+        to: "0x1111111111111111111111111111111111111111".into(),
+        value_wei: "100000000000000000000".into(),
+        block,
+    };
     let mut broker = MockBroker::configured();
-    broker.verifications.insert(
-        tx_hash.clone(),
-        ManaPaymentVerification::Confirmed {
-            from: wallet.address.clone(),
-            to: "0x1111111111111111111111111111111111111111".into(),
-            value_wei: "100000000000000000000".into(),
-        },
-    );
+    for (hash, b) in [
+        (&tx_hash, block(at_quarter, 64)),
+        (&shallow, block(at_quarter, 3)),
+        (&cheaper_then, block(at_fifth, 64)),
+        (&unpriced, block(at_nothing, 64)),
+    ] {
+        broker.verifications.insert(hash.clone(), payment(b));
+    }
     broker
         .verifications
         .insert(pending.clone(), ManaPaymentVerification::Pending);
@@ -1911,6 +2093,52 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(body["status"], "pending");
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": shallow })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "too few confirmations: {body}"
+    );
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": unpriced })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an old transfer with no recorded rate: {body}"
+    );
+
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": cheaper_then })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["creditsGranted"], "200",
+        "priced at the rate when it was mined, below today's"
+    );
+    cleanup(&pool, &wallet.address).await;
 
     let (status, body) = call(
         &app,
@@ -1972,6 +2200,11 @@ async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     assert_eq!(body["manaUsd"], "0.25");
 
     cleanup(&pool, &wallet.address).await;
+    sqlx::query("DELETE FROM economy.price_snapshots WHERE taken_at = ANY($1)")
+        .bind(vec![snapshot_at(at_quarter), snapshot_at(at_fifth)])
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 trait Pipe: Sized {
@@ -3556,28 +3789,43 @@ async fn signer_mismatch_is_a_403_and_a_signed_wallet_reads_its_credits() {
     assert!(v["usd"].get("held").is_none(), "nothing pledged");
     assert!(v["credits"].as_array().unwrap().is_empty());
 
-    // The old service behind nginx saw the route-local path: a signature over it verifies too.
-    let route_signed = signed_headers(
-        &wallet,
-        "get",
-        &format!("/users/{}/progress", wallet.address),
-    )
-    .await;
+    // A signature over the route-local path verifies only when the proxy says
+    // the client asked for it (a prefix-stripping host).
+    let local = format!("/users/{}/progress", wallet.address);
+    let route_signed = signed_headers(&wallet, "get", &local).await;
     let (status, _, v) = send(
         &app,
         "GET",
         &format!("/credits/users/{}/progress", wallet.address),
-        route_signed,
+        route_signed.clone(),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    let mut proxied = route_signed;
+    proxied.insert("x-original-path", local.parse().unwrap());
+    let (status, _, v) = send(
+        &app,
+        "GET",
+        &format!("/credits/users/{}/progress", wallet.address),
+        proxied,
         None,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{v}");
-    // Whole credits held, floored like upstream's Math.floor(cents / 10).
-    assert_eq!(v["credits"]["available"], 7);
-    assert_eq!(v["credits"]["earned"], 2);
-    assert_eq!(v["credits"]["paid"], 5);
+    // Progress reports seasonal MANA; paid USD remains in /users/:address/credits.usd.
+    assert_eq!(v["credits"]["available"], 0.0);
+    assert!(v["credits"].get("earned").is_none());
+    assert!(v["credits"].get("paid").is_none());
     assert_eq!(v["user"]["hasStartedProgram"], false);
 
+    let (status, _) = call(&app, &wallet, "post", "/credits/users", &[], None).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "enrollment requires a confirmed notification email"
+    );
+    sqlx::query("INSERT INTO social.subscriptions(address,email) VALUES($1,'test@example.org') ON CONFLICT(address) DO UPDATE SET email=excluded.email").bind(&wallet.address).execute(&pool).await.unwrap();
     let (status, v) = call(&app, &wallet, "post", "/credits/users", &[], None).await;
     assert_eq!(status, StatusCode::OK, "{v}");
     let (_, v) = call(
@@ -4944,6 +5192,7 @@ async fn an_event_in_flight_holds_the_other_until_it_commits() {
                 actor: Some("stripe"),
                 idempotency_key: Some("evt_inflight-grant"),
                 detail: &json!({}),
+                studio_name: None,
             },
         )
         .await
@@ -5163,6 +5412,244 @@ fn market_for_checkout() -> FakeMarket {
 }
 
 #[tokio::test]
+async fn checkout_refuses_an_item_created_by_the_buyer() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let creator = scratch_wallet();
+    let buyer = scratch_wallet();
+    let mut market = market_for_checkout();
+    market
+        .items
+        .get_mut(&(COLLECTION.to_string(), "1".to_string()))
+        .unwrap()
+        .creator = creator.address.to_uppercase().replace("0X", "0x");
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market,
+        MockBroker::configured(),
+    );
+    let urn = format!("urn:decentraland:matic:collections-v2:{COLLECTION}:1");
+    let app = app(state.clone());
+    for w in [&creator, &buyer] {
+        seed_paid_credits(&pool, &w.address, "100").await;
+        state
+            .credits
+            .add_item(cart_line(&w.address, "1", &urn, 1), "3")
+            .await
+            .unwrap();
+    }
+
+    let (status, v) = call(
+        &app,
+        &creator,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &unique("own-item"))],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{v}");
+    assert_eq!(available(&pool, &creator.address).await, "100");
+
+    let (status, v) = call(
+        &app,
+        &buyer,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &unique("their-item"))],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_ne!(available(&pool, &buyer.address).await, "100");
+
+    for w in [&creator, &buyer] {
+        cleanup(&pool, &w.address).await;
+    }
+}
+
+/// A cart line priced from a trade that pays the buyer is refused, whoever signed it.
+#[tokio::test]
+async fn a_cart_trade_paying_the_buyer_is_refused() {
+    let Some(pool) = pool().await else { return };
+    let buyer = scratch_wallet();
+    let mut pays_buyer = trade_book_row("a1-be5e", 4, "1");
+    pays_buyer["received"][0]["beneficiary"] =
+        json!(buyer.address.to_ascii_uppercase().replace("0X", "0x"));
+    let state = state_with(
+        pool.clone(),
+        StateCfg::default(),
+        market_for_checkout()
+            .with_trade("a1-be5e", pays_buyer)
+            .with_trade("a2-0e5e", trade_book_row("a2-0e5e", 4, "1")),
+        MockBroker::configured(),
+    );
+    let info = state.pricing.fetch_item(COLLECTION, "1").await.unwrap();
+    let basis = |trade_id: &str| super::pricing::ChargeBasis {
+        info: info.clone(),
+        basis_wei: "5000000000000000000".into(),
+        kind: super::pricing::BasisKind::Trade {
+            trade_id: trade_id.into(),
+        },
+    };
+    let session = crate::types::Session::Web3 {
+        wallet: crate::types::EvmAddress::parse(&buyer.address.to_ascii_lowercase()).unwrap(),
+    };
+    let refused = super::handlers::cart::rule_line(&state, session, &basis("a1-be5e")).await;
+    assert!(
+        matches!(refused, Err(ApiError::Forbidden(ref m)) if m.contains("own wallet")),
+        "a trade paying the buyer is refused"
+    );
+    let other = super::handlers::cart::rule_line(&state, session, &basis("a2-0e5e")).await;
+    assert!(
+        !matches!(other, Err(ApiError::Forbidden(ref m)) if m.contains("own wallet")),
+        "a trade paying someone else is not refused as self-dealing"
+    );
+}
+
+/// A cart line never fills from the buyer's own listing: the selection falls
+/// back to the next one, and refuses when only the buyer's own is open.
+#[tokio::test]
+async fn checkout_skips_the_buyers_own_listing() {
+    let Some(pool) = pool().await else { return };
+    let seller = scratch_wallet();
+    let basis = |market: FakeMarket, buyer: String| {
+        let state = state_with(
+            pool.clone(),
+            StateCfg::default(),
+            market,
+            MockBroker::configured(),
+        );
+        async move {
+            state
+                .pricing
+                .fetch_charge_bases_batch(
+                    &[(COLLECTION.to_string(), "4".to_string())],
+                    "secondary",
+                    1,
+                    Some(&buyer),
+                )
+                .await
+                .unwrap()
+                .pop()
+                .unwrap()
+        }
+    };
+    let own_first = || {
+        let mut m = market_for_checkout()
+            .with_listing(COLLECTION, "1000000000000000000")
+            .with_listing(COLLECTION, "2000000000000000000");
+        m.orders[0].seller = seller.address.to_uppercase().replace("0X", "0x");
+        m
+    };
+    let picked = basis(own_first(), seller.address.clone()).await.unwrap();
+    assert_eq!(
+        picked.basis_wei, "2000000000000000000",
+        "the buyer's own cheaper listing is skipped for the next one"
+    );
+    let picked = basis(own_first(), scratch_wallet().address).await.unwrap();
+    assert_eq!(picked.basis_wei, "1000000000000000000");
+    let mut only_own = market_for_checkout().with_listing(COLLECTION, "1000000000000000000");
+    only_own.orders[0].seller = seller.address.clone();
+    assert!(
+        matches!(
+            basis(only_own, seller.address.clone()).await,
+            Err(ApiError::Conflict(_))
+        ),
+        "no listing but the buyer's own: refused"
+    );
+
+    // A cheaper listing that pays the buyer (its beneficiary) is skipped too.
+    let mut pays_buyer = market_for_checkout()
+        .with_listing(COLLECTION, "1000000000000000000")
+        .with_listing(COLLECTION, "2000000000000000000");
+    pays_buyer.orders[0].payee = Some(seller.address.to_uppercase().replace("0X", "0x"));
+    let picked = basis(pays_buyer, seller.address.clone()).await.unwrap();
+    assert_eq!(picked.basis_wei, "2000000000000000000");
+
+    // The fill-time pick of an unpinned secondary row skips them as well.
+    let state = state_with(
+        pool.clone(),
+        StateCfg::default(),
+        own_first(),
+        MockBroker::configured(),
+    );
+    let order = state
+        .pricing
+        .fetch_open_order(COLLECTION, "4", &seller.address)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(order.price_wei, "2000000000000000000");
+}
+
+/// An operator's recovery of a top-up (any case in the key) is booked as a
+/// purchase under the claim's own key, so the claim replays it.
+#[tokio::test]
+async fn a_recovered_top_up_is_a_purchase_the_claim_replays() {
+    let Some(pool) = pool().await else { return };
+    let wallet = scratch_wallet();
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            admin_token: Some("s3cret"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state);
+    let mut bearer = HeaderMap::new();
+    bearer.insert(header::AUTHORIZATION, "Bearer s3cret".parse().unwrap());
+    let hash = format!("0x{}", uuid::Uuid::new_v4().simple().to_string().repeat(2));
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer.clone(),
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": format!("MANA-TOPUP:{}", hash.to_uppercase().replace("0X", "0x")) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let kinds = ledger_kinds(&pool, &wallet.address).await;
+    assert!(
+        kinds.iter().any(|(kind, _, _)| kind == "purchase"),
+        "booked as a purchase: {kinds:?}"
+    );
+    let (status, _, v) = send(
+        &app,
+        "POST",
+        "/credits/admin/credits/grant",
+        bearer,
+        Some(json!({ "address": wallet.address, "amount": "40", "idempotencyKey": "mana-topup:0x12" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed hash is refused: {v}"
+    );
+    let (status, body) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/topup/mana",
+        &[],
+        Some(json!({ "txHash": hash })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["creditsGranted"], "40",
+        "the claim replays the recovery"
+    );
+    assert_eq!(available(&pool, &wallet.address).await, "40");
+    cleanup(&pool, &wallet.address).await;
+}
+
+#[tokio::test]
 async fn replay_after_commit_returns_original_checkout_without_a_new_debit() {
     let _serial = OUTBOX_SERIAL.lock().await;
     let Some(pool) = pool().await else { return };
@@ -5238,21 +5725,51 @@ async fn replay_after_commit_returns_original_checkout_without_a_new_debit() {
     assert_eq!(spends, 1, "replay must not debit again");
     assert_eq!(available(&pool, &addr).await, "7");
 
-    let intruder = scratch_wallet();
+    // Keys are per wallet: another wallet's same key neither replays this
+    // checkout nor is blocked by it.
+    let other = scratch_wallet();
+    seed_paid_credits(&pool, &other.address, "100").await;
+    state
+        .credits
+        .add_item(cart_line(&other.address, "1", &urn, 1), "3")
+        .await
+        .unwrap();
     let (status, v) = call(
         &app,
-        &intruder,
+        &other,
         "post",
         "/credits/checkout",
         &[("idempotency-key", &idem)],
         Some(json!({})),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::CONFLICT,
-        "someone else's key must not replay: {v}"
-    );
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["replayed"], false, "someone else's key must not replay");
+    assert_ne!(v["id"].as_i64(), Some(first.id));
+    cleanup(&pool, &other.address).await;
+
+    // A checkout stored under an unscoped key still replays for its own wallet.
+    let legacy = unique("legacy-key");
+    let legacy_id: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, status) VALUES ($1, $2, 'fulfilled') RETURNING id",
+    )
+    .bind(&legacy)
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let (status, v) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/checkout",
+        &[("idempotency-key", &legacy)],
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["id"].as_i64(), Some(legacy_id));
+    assert_eq!(v["replayed"], true);
 
     let (status, v) = call(
         &app,
@@ -5380,7 +5897,11 @@ async fn signed_checkout_binds_price_and_owner_debits_once_and_fulfils_through_t
         Some(signed),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "the buyer's key never replays for another wallet, and its intent names the buyer"
+    );
 
     let path = format!("/credits/checkout/{}", first["id"]);
     let (status, order) = call(&app, &buyer, "get", &path, &[], None).await;
@@ -5576,6 +6097,554 @@ async fn a_terminal_broker_failure_freezes_the_checkout_and_refunds_the_line() {
         .unwrap();
     assert_eq!(status, "reversed");
     assert_eq!(available(&pool, &addr).await, "10");
+
+    cleanup(&pool, &addr).await;
+}
+
+async fn outbox_lines(pool: &PgPool, checkout_id: i64) -> Vec<(i64, String, i32)> {
+    sqlx::query_as(
+        "SELECT id, status, attempts FROM credits.fulfillment_outbox \
+         WHERE checkout_id = $1 ORDER BY id",
+    )
+    .bind(checkout_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn checkout_status(pool: &PgPool, checkout_id: i64) -> String {
+    sqlx::query_scalar("SELECT status FROM credits.checkouts WHERE id = $1")
+        .bind(checkout_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// One debited checkout of `items` (3 Credits each) for `addr`, nothing fulfilled.
+async fn debited_checkout(state: &SharedState, addr: &str, items: &[&str]) -> i64 {
+    let mut lines = Vec::new();
+    for item in items {
+        let urn = format!("urn:decentraland:matic:collections-v2:{COLLECTION}:{item}");
+        state
+            .credits
+            .add_item(cart_line(addr, item, &urn, 1), "3")
+            .await
+            .unwrap();
+        lines.push(RepricedLine {
+            basis_wei: Some("2500000000000000000".into()),
+            ..line(item, "3")
+        });
+    }
+    state
+        .credits
+        .run_checkout(addr, &unique("broker-claim"), &lines)
+        .await
+        .unwrap()
+        .id
+}
+
+#[tokio::test]
+async fn a_buy_that_mined_after_its_attempt_timed_out_is_resumed_not_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    let cfg = || StateCfg {
+        fulfillment_mode: "auto",
+        ..StateCfg::default()
+    };
+    seed_wallet(&pool, &addr, "0", "10").await;
+
+    // The first attempt broadcasts the buy, then gives up waiting for its receipt.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "sent"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: broker buy tx not yet mined".into(),
+    ));
+    let state = state_with(pool.clone(), cfg(), market_for_checkout(), broker);
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    assert_eq!(state.outbox_worker().run_once().await.unwrap(), 1);
+    let [(line_id, status, attempts)] = &outbox_lines(&pool, checkout).await[..] else {
+        panic!("one line")
+    };
+    assert_eq!(
+        (status.as_str(), *attempts),
+        ("pending", 0),
+        "a broadcast buy's timeout does not count toward the attempt cap"
+    );
+
+    // It mined late, minting the item's last unit: the store no longer sells
+    // it, and a fresh mintability check would refund a buy that spent MANA.
+    let sold_out = FakeMarket::default()
+        .with_item(COLLECTION, "1", "2500000000000000000", false)
+        .with_mana_usd("0.5");
+    let broker = MockBroker::configured();
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let resume_answer = broker.resume_answer.clone();
+    *resume_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: escrow forward tx not yet mined".into(),
+    ));
+    let state = state_with(pool.clone(), cfg(), sold_out, broker);
+    let worker = state.outbox_worker();
+    for _ in 0..6 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+    }
+    assert_eq!(
+        outbox_lines(&pool, checkout).await[0].1,
+        "pending",
+        "an unsettled buy waits past the attempt cap"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "fulfilling");
+    assert_eq!(available(&pool, &addr).await, "7");
+
+    *resume_answer.lock() = Ok(());
+    assert_eq!(worker.run_once().await.unwrap(), 1);
+    assert!(buys.lock().is_empty(), "nothing is bought twice");
+    assert_eq!(resumes.lock().len(), 7);
+    assert!(
+        resumes
+            .lock()
+            .iter()
+            .all(|k| *k == format!("checkout:{checkout}:{line_id}"))
+    );
+    assert_eq!(outbox_lines(&pool, checkout).await[0].1, "confirmed");
+    assert_eq!(checkout_status(&pool, checkout).await, "fulfilled");
+    assert_eq!(available(&pool, &addr).await, "7", "no refund");
+    assert_reconciles(&pool, &addr, "after the resumed buy").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_buy_that_failed_before_broadcast_counts_its_attempts_and_is_refunded() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    // The claim failed before broadcast; each buy re-arms it to `pending`
+    // and answers 409 without broadcasting, so no transaction is recorded.
+    let mut broker = MockBroker::configured();
+    broker.claims = Some((pool.clone(), "pending"));
+    *broker.buy_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 409: previously failed before broadcast and was re-armed".into(),
+    ));
+    let (buys, resumes) = (broker.buys.clone(), broker.resumes.clone());
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(&pool, &format!("checkout:{checkout}:{line}"), "error", None).await;
+
+    let worker = state.outbox_worker();
+    for expected_attempts in 1..5 {
+        assert_eq!(worker.run_once().await.unwrap(), 1);
+        assert_eq!(outbox_lines(&pool, checkout).await[0].2, expected_attempts);
+    }
+    assert_eq!(
+        worker.run_once().await.unwrap(),
+        1,
+        "the fifth attempt freezes"
+    );
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "10",
+        "nothing was sent: refunded"
+    );
+    assert_eq!(buys.lock().len(), 5, "every attempt is a checked buy");
+    assert!(
+        resumes.lock().is_empty(),
+        "a claim without a transaction is never resumed"
+    );
+    assert_reconciles(&pool, &addr, "after refunding the unsent claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn compensation_refunds_only_lines_whose_buy_spent_no_mana() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let broker = MockBroker::configured();
+    let resumes = broker.resumes.clone();
+    let released_mined = broker.released_mined.clone();
+    *broker.resume_answer.lock() = Err(BrokerError::Retryable(
+        "broker status 504: broker buy tx not yet mined".into(),
+    ));
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        broker,
+    );
+    let worker = state.outbox_worker();
+    let freeze = |checkout: i64, failed_line: i64| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+                .bind(failed_line)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+                .bind(checkout)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    // One line failed before any broadcast; its sibling's buy is in flight.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (unsent, sent) = (lines[0].0, lines[1].0);
+    let sent_key = format!("checkout:{checkout}:{sent}");
+    claim_broker_buy(&pool, &sent_key, "sent", None).await;
+    freeze(checkout, unsent).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "compensation waits for the in-flight buy"
+    );
+    assert_eq!(available(&pool, &addr).await, "4", "nothing refunded yet");
+    assert_eq!(
+        *resumes.lock(),
+        vec![sent_key.clone()],
+        "the frozen checkout's in-flight line is resumed"
+    );
+
+    // The buy mined but the escrow forward reverted: MANA is spent, the
+    // token sits with the relayer. Only the unsent line is refunded.
+    claim_broker_buy(&pool, &sent_key, "reverted", Some("0xforward")).await;
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(available(&pool, &addr).await, "7");
+    assert_reconciles(&pool, &addr, "after holding the forward-reverted line").await;
+
+    // A buy that reverted on its own leg spent nothing and is refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    claim_broker_buy(
+        &pool,
+        &format!("checkout:{checkout}:{line}"),
+        "reverted",
+        None,
+    )
+    .await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "7");
+    assert_reconciles(&pool, &addr, "after refunding the buy-leg revert").await;
+
+    // A claim that failed under a binary sending before it recorded may have
+    // broadcast: it is held out of the refund, not refunded.
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, checkout).await[0].0;
+    let legacy_key = format!("checkout:{checkout}:{line}");
+    claim_broker_buy(&pool, &legacy_key, "error", None).await;
+    sqlx::query("UPDATE shop.broker_purchases SET write_ahead = false WHERE idempotency_key = $1")
+        .bind(&legacy_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "4");
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "the legacy claim is held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the legacy claim").await;
+
+    // A claim that released a buy as dead is refunded only once a later look
+    // finds none of its released buys mined; a failed look waits.
+    let released_line = |checkout: i64| {
+        let pool = pool.clone();
+        async move {
+            let line = outbox_lines(&pool, checkout).await[0].0;
+            let key = format!("checkout:{checkout}:{line}");
+            claim_broker_buy(&pool, &key, "error", None).await;
+            sqlx::query(
+                "UPDATE shop.broker_purchases SET tx_hash = NULL, \
+                 released_tx_hashes = ARRAY['0xdead'] WHERE idempotency_key = $1",
+            )
+            .bind(&key)
+            .execute(&pool)
+            .await
+            .unwrap();
+            line
+        }
+    };
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Err("rpc down".into());
+    worker.run_once().await.unwrap();
+    assert_eq!(
+        checkout_status(&pool, checkout).await,
+        "reversing",
+        "a failed look waits"
+    );
+    assert_eq!(available(&pool, &addr).await, "1");
+    *released_mined.lock() = Ok(false);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "4",
+        "no released buy mined: refunded"
+    );
+
+    let checkout = debited_checkout(&state, &addr, &["1"]).await;
+    let line = released_line(checkout).await;
+    freeze(checkout, line).await;
+    *released_mined.lock() = Ok(true);
+    worker.run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    assert_eq!(
+        available(&pool, &addr).await,
+        "1",
+        "a released buy mined: held"
+    );
+    assert_reconciles(&pool, &addr, "after holding the mined released buy").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+/// Claims `key` through the broker's own claim statement.
+async fn claim_through_broker(pool: &PgPool, key: &str) -> crate::checkout::claims::Claim {
+    claim_through_broker_at(pool, key, crate::evm::now()).await
+}
+
+async fn claim_through_broker_at(
+    pool: &PgPool,
+    key: &str,
+    now: chrono::NaiveDateTime,
+) -> crate::checkout::claims::Claim {
+    crate::checkout::claims::claim_broker_purchase(
+        pool,
+        &crate::checkout::claims::BrokerPurchaseClaim {
+            key,
+            collection: COLLECTION,
+            item_id: Some("1"),
+            token_id: None,
+            buyer_address: COLLECTION,
+            escrow_address: "0x0000000000000000000000000000000000000001",
+            price_wei: "1",
+            chain_id: 137,
+            mode: "primary",
+            trade_hashed_signature: None,
+            usd_amount_wei: None,
+            mana_usd_rate_wei: None,
+        },
+        now,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn compensation_fences_unrecorded_claims_and_the_claim_refuses_a_frozen_checkout() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line failed unclaimed; its sibling's claim is still being signed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (failed, signing) = (lines[0].0, lines[1].0);
+    let (failed_key, signing_key) = (
+        format!("checkout:{checkout}:{failed}"),
+        format!("checkout:{checkout}:{signing}"),
+    );
+    // A fresh claim: its caller may still record and broadcast it.
+    let claimed_at = crate::evm::now();
+    assert!(
+        claim_through_broker_at(&pool, &signing_key, claimed_at)
+            .await
+            .claimed
+    );
+    sqlx::query("UPDATE credits.fulfillment_outbox SET status = 'failed' WHERE id = $1")
+        .bind(failed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    state.outbox_worker().run_once().await.unwrap();
+    assert_eq!(checkout_status(&pool, checkout).await, "reversed");
+    assert_eq!(available(&pool, &addr).await, "10", "both lines refunded");
+    let (status, updated_at): (String, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT status, updated_at FROM shop.broker_purchases WHERE idempotency_key = $1",
+    )
+    .bind(&signing_key)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(status, "error", "the unrecorded claim is fenced");
+    assert_ne!(
+        updated_at, claimed_at,
+        "a late record (fenced on 'pending' and the claim's clock) matches no row"
+    );
+
+    // The frozen checkout's lines are neither re-armed nor claimed afresh.
+    let rearm = claim_through_broker(&pool, &signing_key).await;
+    assert!(!rearm.claimed && !rearm.rearmed);
+    assert_eq!(rearm.status.as_deref(), Some("error"));
+    let fresh = claim_through_broker(&pool, &failed_key).await;
+    assert!(!fresh.claimed && !fresh.rearmed);
+    assert_eq!(fresh.status, None);
+
+    // A checkout still fulfilling claims as before.
+    let live = debited_checkout(&state, &addr, &["1"]).await;
+    let line = outbox_lines(&pool, live).await[0].0;
+    assert!(
+        claim_through_broker(&pool, &format!("checkout:{live}:{line}"))
+            .await
+            .claimed
+    );
+    assert_reconciles(&pool, &addr, "after fencing the unrecorded claim").await;
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_refuses_a_checkout_compensation_is_reversing() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "20", "15").await;
+    let credits = Credits::new(pool.clone());
+    let checkout_id: i64 = sqlx::query_scalar(
+        "INSERT INTO credits.checkouts (idempotency_key, address, total_credits, status) VALUES ($1, $2, 25, 'fulfilling') RETURNING id",
+    )
+    .bind(unique("test-reversing"))
+    .bind(&addr)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    credits
+        .spend(&addr, "25", &format!("checkout:{checkout_id}"), None)
+        .await
+        .unwrap();
+    // the worker froze it after the handler read 'fulfilling'
+    sqlx::query("UPDATE credits.checkouts SET status = 'reversing' WHERE id = $1")
+        .bind(checkout_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = balances(&pool, &addr).await;
+
+    let plain = credits
+        .refund_checkout_manual(checkout_id, &addr, "25")
+        .await;
+    assert_eq!(plain.unwrap_err().status().as_u16(), 409);
+    let audited = credits
+        .refund_checkout_manual_audited(checkout_id, &addr, "25", "token:qc-admin", |_| json!({}))
+        .await;
+    assert_eq!(audited.unwrap_err().status().as_u16(), 409);
+
+    assert_eq!(checkout_status(&pool, checkout_id).await, "reversing");
+    assert_eq!(balances(&pool, &addr).await, before, "nothing refunded");
+    let entries: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.idempotency WHERE scope = 'refund' AND idempotency_key = $1",
+    )
+    .bind(format!("admin:refund:{checkout_id}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(entries, 0, "no admin:refund entry");
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM ops.admin_audit WHERE domain = 'credits' AND action = 'checkout.refund' AND target = $1",
+    )
+    .bind(checkout_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audits, 0);
+
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
+async fn a_manual_refund_fences_its_checkout_lines_unrecorded_claims() {
+    let _serial = OUTBOX_SERIAL.lock().await;
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    seed_wallet(&pool, &addr, "0", "10").await;
+    let state = state_with(
+        pool.clone(),
+        StateCfg {
+            fulfillment_mode: "auto",
+            ..StateCfg::default()
+        },
+        market_for_checkout(),
+        MockBroker::configured(),
+    );
+
+    // One line's claim is still being signed; its sibling is unclaimed.
+    let checkout = debited_checkout(&state, &addr, &["1", "4"]).await;
+    let lines = outbox_lines(&pool, checkout).await;
+    let (signing_key, unclaimed_key) = (
+        format!("checkout:{checkout}:{}", lines[0].0),
+        format!("checkout:{checkout}:{}", lines[1].0),
+    );
+    assert!(claim_through_broker(&pool, &signing_key).await.claimed);
+
+    let (_, closed) = state
+        .credits
+        .refund_checkout_manual(checkout, &addr, "6")
+        .await
+        .unwrap();
+    assert!(closed);
+    assert_eq!(checkout_status(&pool, checkout).await, "failed");
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM shop.broker_purchases WHERE idempotency_key = $1")
+            .bind(&signing_key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        status, "error",
+        "the record fenced on 'pending' matches no row"
+    );
+    for key in [&signing_key, &unclaimed_key] {
+        let claim = claim_through_broker(&pool, key).await;
+        assert!(!claim.claimed && !claim.rearmed, "{key}");
+    }
 
     cleanup(&pool, &addr).await;
 }
@@ -5812,7 +6881,7 @@ async fn cart_reads_and_writes_keep_their_totals_and_the_checkout_records_its_le
     assert_eq!(err.status().as_u16(), 402);
     let status: String =
         sqlx::query_scalar("SELECT status FROM credits.checkouts WHERE idempotency_key = $1")
-            .bind(&idem)
+            .bind(super::checkout::scoped_checkout_key(&broke, &idem))
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -6226,16 +7295,16 @@ async fn packs_are_served_from_a_memo_until_an_admin_write() {
         .unwrap();
 }
 
-/// `GET /captcha` writes a challenge: off or held it answers the credits
-/// 503 and writes nothing.
+/// `GET /captcha` writes a challenge: off it answers the credits 503 and
+/// writes nothing.
 #[tokio::test]
-async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() {
-    use crate::shared::writes::restore::{
-        lab::{HOUR, StampLab},
-        scoped,
+async fn captcha_generate_waits_for_the_credits_switch() {
+    let Some(db) = OwnDatabase::create("captcha_write_guards").await else {
+        return;
     };
-    let Some(pool) = pool().await else { return };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
+    super::goals::tests::seed_http_claim(&pool, &wallet.address).await;
     let (w, p) = (&wallet, &pool);
     let challenges = move || async move {
         sqlx::query_scalar::<_, i64>(
@@ -6268,31 +7337,27 @@ async fn captcha_generate_waits_for_the_credits_switch_and_the_restore_stamps() 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let v: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["message"], crate::shared::writes::WRITES_DISABLED_MESSAGE);
-    let on = app(test_state(pool.clone(), StateCfg::default()));
-    let lab = StampLab::fresh();
-    lab.advance(30 * HOUR);
-    let (status, body) = scoped(lab.stamps.clone(), get(on.clone())).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    let v: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(
-        v["message"],
-        "operator-plane writes are held on this node: the last complete backup (backup.json) is 31 h old, past WRITES_BACKUP_MAX_AGE_HOURS=26"
-    );
     assert_eq!(challenges().await, 0);
+    let on = app(test_state(pool.clone(), StateCfg::default()));
     let (status, _) = get(on).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(challenges().await, 1);
+    db.drop().await;
 }
 
 #[tokio::test]
-async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block_flag() {
-    let Some(pool) = pool().await else { return };
+async fn captcha_generate_reuses_the_prior_challenge_and_claim_reads_the_block_flag() {
+    let Some(db) = OwnDatabase::create("captcha_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
+    super::goals::tests::seed_http_claim(&pool, &addr).await;
     let state = test_state(pool.clone(), StateCfg::default());
     let app = app(state.clone());
 
-    let seed_id: i64 = sqlx::query_scalar("INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2) RETURNING id")
+    let seed_id: i64 = sqlx::query_scalar("INSERT INTO credits.captcha_challenges (address, answer_x, generated_at, expires_at) VALUES ($1, 10, timezone('UTC',now())-interval '2 seconds', $2) RETURNING id")
         .bind(&addr)
         .bind(future())
         .fetch_one(&pool)
@@ -6324,12 +7389,15 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(seeded_consumed, "the prior open challenge must be consumed");
+    assert!(
+        !seeded_consumed,
+        "the source refreshes the prior open challenge"
+    );
     let open_count: i64 = sqlx::query_scalar("SELECT count(*) FROM credits.captcha_challenges WHERE address = $1 AND consumed_at IS NULL").bind(&addr).fetch_one(&pool).await.unwrap();
     assert_eq!(open_count, 1);
 
     let seed_challenge = |pool: PgPool, addr: String| async move {
-        sqlx::query("INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2)").bind(&addr).bind(future()).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO credits.captcha_challenges (address, answer_x, generated_at, expires_at) VALUES ($1, 10, timezone('UTC',now())-interval '2 seconds', $2)").bind(&addr).bind(future()).execute(&pool).await.unwrap();
     };
     sqlx::query("UPDATE credits.captcha_challenges SET consumed_at = $2 WHERE address = $1")
         .bind(&addr)
@@ -6338,20 +7406,6 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
         .await
         .unwrap();
     seed_challenge(pool.clone(), addr.clone()).await;
-    let (status, v) = call(
-        &app,
-        &wallet,
-        "post",
-        "/credits/captcha",
-        &[],
-        Some(json!({ "x": 10.0 })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{v}");
-    assert_eq!(
-        v,
-        json!({ "ok": true, "credits_granted": 0.0, "isBlockedForClaiming": false })
-    );
 
     state
         .credits
@@ -6370,6 +7424,11 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
     .await;
     assert_eq!(v["ok"], false);
     assert_eq!(v["isBlockedForClaiming"], true);
+    state
+        .credits
+        .admin_set_blocked(&addr, false, Some("qc"), Some("token:qc"), &json!({}))
+        .await
+        .unwrap();
 
     seed_challenge(pool.clone(), addr.clone()).await;
     let (_, v) = call(
@@ -6383,6 +7442,7 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
     .await;
     assert_eq!(v["ok"], false, "a wrong slider answer is rejected");
 
+    seed_challenge(pool.clone(), addr.clone()).await;
     let (status, v) = call(
         &app,
         &wallet,
@@ -6392,13 +7452,24 @@ async fn captcha_generate_consumes_the_prior_challenge_and_claim_reads_the_block
         Some(json!({ "x": 10.0 })),
     )
     .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["credits_granted"], 1.0);
+    let (status, _) = call(
+        &app,
+        &wallet,
+        "post",
+        "/credits/captcha",
+        &[],
+        Some(json!({"x":10.0})),
+    )
+    .await;
     assert_eq!(
         status,
         StatusCode::BAD_REQUEST,
-        "no open challenge left: {v}"
+        "claimed rewards cannot be claimed again"
     );
 
-    cleanup(&pool, &addr).await;
+    db.drop().await;
 }
 
 #[tokio::test]
@@ -6868,6 +7939,7 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
         contract_address: None,
         item_id: None,
         registered_name: None,
+        credits_cents: None,
     };
     let derived =
         super::batch::derive_line(&state, ChainId::POLYGON, session, rate, 0, &line(offered))
@@ -6989,7 +8061,7 @@ async fn pricing_memoizes_the_spot_but_never_the_marketplace_feed() {
 
 async fn open_challenge(pool: &PgPool, addr: &str) {
     sqlx::query(
-        "INSERT INTO credits.captcha_challenges (address, answer_x, expires_at) VALUES ($1, 10, $2)",
+        "INSERT INTO credits.captcha_challenges (address, answer_x, generated_at, expires_at) VALUES ($1, 10, timezone('UTC',now())-interval '2 seconds', $2)",
     )
     .bind(addr)
     .bind(future())
@@ -7008,10 +8080,14 @@ async fn flag_count(pool: &PgPool, addr: &str) -> i64 {
 
 #[tokio::test]
 async fn a_multi_accounting_flag_blocks_the_claim_but_not_the_spend_or_the_reservation() {
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("flag_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
     seed_wallet(&pool, &addr, "20", "15").await;
+    super::goals::tests::seed_http_claim(&pool, &addr).await;
     sqlx::query(
         "INSERT INTO credits.wallet_flags (address, source, ip) \
          VALUES ($1, 'explorer_anon_multi_accounting', '1.2.3.4')",
@@ -7057,13 +8133,18 @@ async fn a_multi_accounting_flag_blocks_the_claim_but_not_the_spend_or_the_reser
     .await;
     assert_eq!(v["ok"], false, "{v}");
     assert_eq!(v["isBlockedForClaiming"], true);
+    db.drop().await;
 }
 
 #[tokio::test]
 async fn the_admin_flag_blocks_the_claim_until_the_unblock_or_the_unflag() {
-    let Some(pool) = pool().await else { return };
+    let Some(db) = OwnDatabase::create("admin_flag_goals").await else {
+        return;
+    };
+    let pool = db.pool.clone();
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
+    super::goals::tests::seed_http_claim(&pool, &addr).await;
     let state = test_state(
         pool.clone(),
         StateCfg {
@@ -7205,6 +8286,7 @@ async fn the_admin_flag_blocks_the_claim_until_the_unblock_or_the_unflag() {
         v["deleted"], false,
         "an unflag of an unflagged wallet is idempotent"
     );
+    db.drop().await;
 }
 
 async fn wait_until<F, Fut>(what: &str, mut probe: F)
@@ -7350,6 +8432,25 @@ async fn opid_lane_with(
     market: FakeMarket,
     trial: Option<super::trial::TrialBuyers>,
 ) -> Router {
+    opid_lane_flagged(pool, contract, market, trial, split_on()).await
+}
+
+/// The market's flags with the Credits + MANA split on: a node that takes a Credits part.
+fn split_on() -> Arc<crate::market::features::DappsFlags> {
+    crate::market::features::DappsFlags::for_tests(&[(
+        crate::market::features::CREDITS_MANA_SPLIT,
+        true,
+    )])
+}
+
+/// [`opid_lane_with`] over the given `dapps` flags.
+async fn opid_lane_flagged(
+    pool: &PgPool,
+    contract: &str,
+    market: FakeMarket,
+    trial: Option<super::trial::TrialBuyers>,
+    flags: Arc<crate::market::features::DappsFlags>,
+) -> Router {
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
@@ -7380,7 +8481,8 @@ async fn opid_lane_with(
             Arc::new(MockBroker::configured()),
             None,
         )
-        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_dapps_flags(flags),
     );
     app(state)
 }
@@ -7505,6 +8607,572 @@ async fn an_operation_id_replays_its_credit_across_signatures_and_refuses_other_
     let (status, _) = authorize(opid_item(200, "200", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(authorized_count(&pool, &wallet.address).await, 4);
+
+    db.drop().await;
+}
+
+/// A request of one line of one unit may pay part of the price with credits
+/// (`creditsCents`) and the rest with MANA, on either route. The price check
+/// stays on the whole quote; the Credits part alone is reserved, recorded and
+/// echoed; the credit is that part's share of the whole price's cap; an
+/// operation binds the part. Every refusal comes before a reservation.
+#[tokio::test]
+async fn a_credits_part_of_one_line_reserves_the_part_and_signs_its_share() {
+    let Some((db, lane, wallet)) = opid_setup("credits-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let post = |w: &'static str, body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, w, WEB3, body).await }
+    };
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = |cents: i64, item: &str, leg: Value| {
+        let mut body = opid_item(cents, item, None);
+        body["creditsCents"] = leg;
+        body
+    };
+    // Item 200 is 4 MANA at 0.5 USD/MANA, a 200-cent quote: a part's credit is
+    // its share of those 4 MANA, with no buffer and no headroom.
+    let share = |leg: u64| {
+        (alloy_primitives::U256::from(4_000_000_000_000_000_000u64)
+            * alloy_primitives::U256::from(leg)
+            / alloy_primitives::U256::from(200u64))
+        .to_string()
+    };
+
+    let mut two_units = part(200, "200", json!(120));
+    two_units["quantity"] = json!(2);
+    for (body, why) in [
+        (part(200, "200", json!(200)), "the whole price"),
+        (part(200, "200", json!(210)), "above the price"),
+        (part(200, "200", json!(125)), "not whole credits"),
+        (part(200, "200", json!(0)), "nothing"),
+        (part(200, "200", json!(-10)), "negative"),
+        (part(200, "200", json!("120")), "not a number"),
+        (two_units, "two units"),
+        (
+            json!({ "usdPriceCents": 500, "name": "mauri", "creditsCents": 100 }),
+            "a NAME registration",
+        ),
+    ] {
+        let (status, v) = post(SINGLE, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("\"creditsCents\""),
+            "{why}: the message names the field: {v}"
+        );
+    }
+    for (items, index) in [
+        (
+            json!([part(200, "200", json!(120)), opid_item(95, "95", None)]),
+            0,
+        ),
+        (
+            json!([opid_item(95, "95", None), part(200, "200", json!(120))]),
+            1,
+        ),
+    ] {
+        let (status, v) = post(BATCH, json!({ "items": items })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(
+            v["error"],
+            format!("items[{index}]: {}", super::batch::CREDITS_CENTS_ALONE),
+            "a Credits part beside another line"
+        );
+    }
+    let (status, v) = post(SINGLE, part(210, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{v}");
+    assert_eq!(
+        v["error"], "Price changed",
+        "the whole price is still checked"
+    );
+    let poor = scratch_wallet();
+    seed_paid_credits(&pool, &poor.address, "5").await;
+    let (status, v) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
+    assert_eq!(
+        (v["balanceCents"].as_i64(), v["requiredCents"].as_i64()),
+        (Some(50), Some(120)),
+        "the balance is checked against the part"
+    );
+    let (status, _) = call_signed(&lane, &poor, SINGLE, WEB3, part(200, "200", json!(50))).await;
+    assert_eq!(status, StatusCode::OK, "a part the balance covers");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused request reserved anything"
+    );
+
+    // The single route: the part is reserved and echoed, the credit is its share.
+    let (status, v) = post(SINGLE, part(200, "200", json!(120))).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["usdCents"], 120);
+    assert_eq!(
+        v["credit"]["amount"],
+        share(120),
+        "floor(4 MANA * 120 / 200): 2.4 MANA, the buyer's MANA the other 1.6"
+    );
+    assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 120);
+    let salt = v["credit"]["id"].as_str().unwrap().to_string();
+    let (quoted, charged): (Option<i64>, i64) =
+        sqlx::query_as("SELECT quoted_cents, usd_cents FROM credits.authorizations WHERE id = $1")
+            .bind(&salt)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (quoted, charged),
+        (Some(200), 120),
+        "the quote checked, the part charged"
+    );
+    let line: (i64, i64) = sqlx::query_as(
+        "SELECT quoted_cents, charged_cents FROM credits.authorization_lines WHERE authorization_id = $1",
+    )
+    .bind(&salt)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        line,
+        (120, 120),
+        "the line is its Credits part, quoted and charged"
+    );
+
+    // The batch route with one line, as the in-world Shop authorizes: the
+    // operation binds the part; a retry replays one credit, another part is
+    // refused without a reservation.
+    let op = "2b9e5c3a-7f1d-4c2b-9a8e-1d2c3b4a5f60";
+    let body = json!({ "operationId": op, "items": [part(200, "200", json!(80))] });
+    let (status, first) = post(BATCH, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        (
+            first["usdCents"].as_i64(),
+            first["lines"][0]["usdCents"].as_i64()
+        ),
+        (Some(80), Some(80))
+    );
+    assert_eq!(first["credit"]["amount"], share(80));
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (status, again) = post(BATCH, body).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        again["credit"], first["credit"],
+        "a retry replays the operation's credit"
+    );
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    for other in [
+        json!({ "operationId": op, "items": [part(200, "200", json!(90))] }),
+        json!({ "operationId": op, "items": [opid_item(200, "200", None)] }),
+    ] {
+        let (status, v) = post(BATCH, other).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{v}");
+        assert_eq!(v["code"], "operation_reused", "{v}");
+    }
+    assert_eq!(
+        (
+            authorized_count(&pool, &wallet.address).await,
+            authorized_sum_cents(&pool, &wallet.address).await
+        ),
+        (2, 200),
+        "the refused operations reserved nothing"
+    );
+
+    db.drop().await;
+}
+
+/// A Credits part is judged on the session the signed metadata states, as
+/// the quote that offered it was: a signed web2 session, or none stated, is
+/// refused on both routes with nothing reserved; a signed web3 wallet is
+/// authorized. A whole-price credit needs no metadata, as before.
+#[tokio::test]
+async fn a_credits_part_needs_a_signed_web3_session_on_both_routes() {
+    let Some((db, lane, wallet)) = opid_setup("part-session").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let part = json!({ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "200", "creditsCents": 120 });
+    let bodies = [
+        (SINGLE, part.clone()),
+        (BATCH, json!({ "items": [part.clone()] })),
+    ];
+    for (metadata, why) in [
+        (r#"{"walletKind":"web2"}"#, "a signed web2 session"),
+        ("{}", "no stated session"),
+    ] {
+        for (route, body) in bodies.clone() {
+            let (status, v) = call_signed(&lane, &wallet, route, metadata, body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why} on {route}: {v}");
+            assert_eq!(
+                v["refusal"], "mana_remainder_not_allowed",
+                "{why} on {route}: {v}"
+            );
+        }
+    }
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "no refused session reserved anything"
+    );
+    for (route, body) in bodies {
+        let (status, v) = call_signed(&lane, &wallet, route, WEB3, body).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a signed web3 wallet on {route}: {v}"
+        );
+        assert_eq!(v["usdCents"], 120);
+    }
+    assert_eq!(authorized_count(&pool, &wallet.address).await, 2);
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        SINGLE,
+        &[],
+        Some(opid_item(200, "200", None)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price needs no metadata: {v}"
+    );
+
+    db.drop().await;
+}
+
+/// The Credits + MANA split's rollout (`dapps-shop-credits-mana-split`) is read
+/// on the shared authorization path. Off, a request with `creditsCents` is a
+/// 400 on either route before anything else, a replay of an operation it
+/// authorized while on included, and nothing new is reserved; a whole price
+/// authorizes, and a credit issued while it was on is still cancelled. On, a
+/// Credits part authorizes on both routes.
+#[tokio::test]
+async fn a_credits_part_follows_its_rollout_on_both_routes_and_a_whole_price_never_does() {
+    let Some(db) = OwnDatabase::create("split-rollout").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "200", "4000000000000000000", true)
+        .with_mana_usd("0.5");
+    let flags = crate::market::features::DappsFlags::for_tests(&[]);
+    let lane = opid_lane_flagged(&pool, OPID_MANAGER, market, None, flags.clone()).await;
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "200").await;
+    const SINGLE: &str = "/credits/credits/authorize";
+    const BATCH: &str = "/credits/credits/authorize/batch";
+    let split = crate::market::features::CREDITS_MANA_SPLIT;
+    const OP_A: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a01";
+    const OP_B: &str = "5a1e0d2c-7b44-4c1e-9a43-0e6f1c2b3a02";
+    let part = |op: &str| {
+        let mut body = opid_item(200, "200", Some(op));
+        body["creditsCents"] = json!(120);
+        body
+    };
+    let refused = |status: StatusCode, v: &Value, why: &str| {
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {v}");
+        assert_eq!(v["code"], "credits_mana_split_off", "{why}: {v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("dapps-shop-credits-mana-split"),
+            "{why}: {v}"
+        );
+    };
+
+    // Off from the start (absent reads off): no Credits part on either route, nothing reserved.
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "single, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "batch, off");
+    assert_eq!(v["index"], 0);
+    assert_eq!(rows_of(&pool, &wallet.address).await, 0);
+
+    // On: both routes authorize the part.
+    flags.set_for_tests(split, true);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    assert_eq!(status, StatusCode::OK, "single, on: {v}");
+    assert_eq!(v["usdCents"], 120);
+    let issued = v["credit"]["id"].as_str().unwrap().to_string();
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch, on: {v}");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+
+    // Off again: a replay of the operation it authorized is refused before it is recovered, and nothing new is
+    // reserved; a whole price authorizes on both routes.
+    flags.set_for_tests(split, false);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, part(OP_A)).await;
+    refused(status, &v, "a replay, off");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        WEB3,
+        json!({ "items": [part(OP_B)] }),
+    )
+    .await;
+    refused(status, &v, "a batch replay, off");
+    assert_eq!(rows_of(&pool, &wallet.address).await, 2);
+    let (status, v) = call_signed(&lane, &wallet, SINGLE, WEB3, opid_item(200, "200", None)).await;
+    assert_eq!(status, StatusCode::OK, "a whole price, off: {v}");
+    let (status, v) = call_signed(
+        &lane,
+        &wallet,
+        BATCH,
+        "{}",
+        json!({ "items": [opid_item(200, "200", None)] }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a whole price on the batch route, off: {v}"
+    );
+    assert_eq!(rows_of(&pool, &wallet.address).await, 4);
+
+    // A credit issued while it was on is still cancelled.
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/credits/authorize/cancel",
+        &[],
+        Some(json!({ "salts": [issued] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["released"].as_i64(), Some(1), "{v}");
+
+    db.drop().await;
+}
+
+/// A USD-pegged trade has no Credits part: its MANA is only fixed when the
+/// marketplace reads its feed at settlement. Refused with the rule's reason,
+/// before the feed is read and before anything is reserved; its whole price
+/// still authorizes.
+#[tokio::test]
+async fn a_credits_part_of_a_usd_pegged_trade_is_refused_before_the_feed_or_a_reservation() {
+    let Some(db) = OwnDatabase::create("feed-part").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    // $2.00 pegged (USD wei) on Polygon's V3 marketplace.
+    let trade = json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+        "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+        "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+        "received": [{ "assetType": 2, "contractAddress": MANA_POLYGON, "amount": "2000000000000000000", "beneficiary": CREATOR }] });
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "4", "4000000000000000000", true)
+        .with_trade("be6e", trade)
+        .with_mana_usd("0.5");
+    let feed = Arc::new(FakeFeed::default());
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some(OPID_MANAGER.to_string()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(OPID_MANAGER.to_string()),
+        ..super::usage::Settings::default()
+    };
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone())
+        .with_dapps_flags(split_on()),
+    );
+    let lane = app(state);
+    let wallet = scratch_wallet();
+    seed_paid_credits(&pool, &wallet.address, "50").await;
+    feed.answer(Address::from_str(LISTED).unwrap(), Ok("0.55"));
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move { call_signed(lane, wallet, "/credits/credits/authorize", WEB3, body).await }
+    };
+
+    let (status, v) =
+        authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e", "creditsCents": 80 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+    assert!(feed.asked().is_empty(), "the feed was not read");
+    assert_eq!(
+        authorized_count(&pool, &wallet.address).await,
+        0,
+        "nothing reserved"
+    );
+    let (status, whole) = authorize(json!({ "usdPriceCents": 200, "tradeId": "be6e" })).await;
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    assert_eq!(authorized_sum_cents(&pool, &wallet.address).await, 200);
+
+    db.drop().await;
+}
+
+/// The split vector through the route: a listing of 101 MANA wei with a 10%
+/// coupon moves 91; quoted 30 cents, a 10-cent part. The credit signs 30 wei
+/// (floor(91 * 10 / 30)), the buyer's MANA is the other 61, the 10 cents are
+/// what is reserved, and none of it moves with the node's buffer or headroom.
+/// A listing paid in another ERC-20 than the chain's MANA is refused before
+/// anything is reserved.
+#[tokio::test]
+async fn the_split_vector_reserves_its_part_and_signs_the_same_credit_at_any_sizing() {
+    let Some(db) = OwnDatabase::create("split-vector").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(OPID_MANAGER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let trade = |token: &str| {
+        json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": LISTED,
+            "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+            "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }],
+            "received": [{ "assetType": 1, "contractAddress": token, "amount": "101", "beneficiary": CREATOR }] })
+    };
+    let lane = |buffer_bps: u32, headroom_pct: u32| {
+        // 3.2e15 USD a MANA: 101 wei is 33 cents rounded up, 30 after the coupon.
+        let market = FakeMarket::default()
+            .with_item(COLLECTION, "4", "4000000000000000000", true)
+            .with_trade("5b1a", trade(MANA_POLYGON))
+            .with_trade("0e20", trade("0x00000000000000000000000000000000000000e2"))
+            .with_coupon(100_000)
+            .with_mana_usd("3200000000000000");
+        let mut settings = Settings::parse(RawSettings {
+            writes_enabled: true,
+            mock_card: true,
+            usage_chain_id: super::usage::CHAIN_AMOY,
+            credits_onchain_authorize_enabled: true,
+            credits_signer_key: Some(
+                "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+            ),
+            credits_manager_contract: Some(OPID_MANAGER.to_string()),
+            mana_price_max_staleness_secs: 3600,
+            ..RawSettings::default()
+        })
+        .unwrap();
+        settings.usage = super::usage::Settings {
+            enabled: true,
+            rpc_url: Some("http://127.0.0.1:9/".into()),
+            chain_id: 137,
+            contract: Some(OPID_MANAGER.to_string()),
+            ..super::usage::Settings::default()
+        };
+        settings.credit_buffer_bps = buffer_bps;
+        settings.credit_cap_headroom_pct = headroom_pct;
+        app(Arc::new(
+            State::with_sources(
+                pool.clone(),
+                Outbound::for_tests(),
+                settings,
+                Arc::new(market),
+                Arc::new(MockBroker::configured()),
+                None,
+            )
+            .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+            .with_dapps_flags(split_on()),
+        ))
+    };
+    let part = json!({ "usdPriceCents": 30, "tradeId": "5b1a", "creditsCents": 10 });
+
+    for (buffer, headroom) in [(200, 100), (1_000, 150)] {
+        let lane = lane(buffer, headroom);
+        let wallet = scratch_wallet();
+        seed_paid_credits(&pool, &wallet.address, "50").await;
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            json!({ "usdPriceCents": 30, "tradeId": "0e20", "creditsCents": 10 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+        assert_eq!(v["refusal"], "partial_credit_unavailable", "{v}");
+        assert_eq!(
+            authorized_count(&pool, &wallet.address).await,
+            0,
+            "nothing reserved for another ERC-20"
+        );
+
+        let (status, v) = call_signed(
+            &lane,
+            &wallet,
+            "/credits/credits/authorize",
+            WEB3,
+            part.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{buffer} bps, {headroom}%: {v}");
+        assert_eq!(
+            v["credit"]["amount"], "30",
+            "floor(91 * 10 / 30), with no buffer or headroom"
+        );
+        assert_eq!(v["maxCreditedValue"], "30");
+        assert_eq!(v["usdCents"], 10, "the part is what is charged");
+        assert_eq!(
+            authorized_sum_cents(&pool, &wallet.address).await,
+            10,
+            "and what is reserved"
+        );
+    }
 
     db.drop().await;
 }
@@ -7713,7 +9381,7 @@ async fn a_reservation_under_one_operation_key_takes_one_set_of_lines() {
     );
     assert_eq!(rows_of(&pool, &addr).await, 1);
     // Whichever won, its own lines replay it and the other lines are refused.
-    let won_a = matches!(outcomes[0], Ok(_));
+    let won_a = outcomes[0].is_ok();
     let (won, won_digest, lost, lost_digest) = if won_a {
         (&ga, &digest_a, &gb, &digest_b)
     } else {
@@ -8210,6 +9878,7 @@ async fn a_settled_session_naming_no_payment_intent_applies_the_reversals_of_the
                 actor: Some("stripe"),
                 idempotency_key: Some("evt_stored_pi-grant"),
                 detail: &json!({}),
+                studio_name: None,
             },
         )
         .await
@@ -8340,14 +10009,13 @@ async fn a_processing_order_nothing_moves_is_reported_daily_and_left_as_it_is() 
 }
 
 /// The daily report only reads: a settlement pass that fails still runs it,
-/// and one the restore stamps hold skips it, as it skips every write.
+/// and one with the switch off skips it, as it skips every write.
 #[tokio::test]
-async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_stamps() {
+async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_switch() {
     use super::settlement::{
         REPORT_STALE_PROCESSING_EVERY, StaleProcessingReport, settlement_job_pass,
     };
     use crate::shared::writes::PassGate;
-    use crate::shared::writes::restore::{lab::StampLab, scoped};
     let Some(own) = OwnDatabase::create("stale_report_pass").await else {
         return;
     };
@@ -8361,22 +10029,18 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
     .await
     .unwrap();
     let credits = Credits::new(own.pool.clone());
-    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
+    let gate = PassGate::new("credits-settlement");
     let every = REPORT_STALE_PROCESSING_EVERY;
 
-    // Held by the restore stamps: no pass, and no report yet.
-    let held = StampLab::new();
+    // The switch off: no pass, and no report yet.
     let report = StaleProcessingReport::default();
-    let ran = scoped(
-        held.stamps.clone(),
-        settlement_job_pass(&credits, None, &gate, true, None, &report),
-    )
-    .await
-    .unwrap();
+    let ran = settlement_job_pass(&credits, None, &gate, false, None, &report)
+        .await
+        .unwrap();
     assert!(!ran);
     assert!(
         report.run(&credits, every).await.is_some(),
-        "the held pass reported"
+        "the skipped pass did not report"
     );
 
     // A pass whose sweep fails has still reported.
@@ -8387,13 +10051,8 @@ async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_st
     .execute(&own.pool)
     .await
     .unwrap();
-    let fresh = StampLab::fresh();
     let report = StaleProcessingReport::default();
-    let failed = scoped(
-        fresh.stamps.clone(),
-        settlement_job_pass(&credits, None, &gate, true, None, &report),
-    )
-    .await;
+    let failed = settlement_job_pass(&credits, None, &gate, true, None, &report).await;
     assert!(failed.is_err(), "{failed:?}");
     assert_eq!(
         report.run(&credits, every).await,
@@ -8771,4 +10430,385 @@ async fn a_trial_refuses_mana_top_ups_and_the_broker_checkout_before_any_work() 
     )
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+}
+
+#[test]
+fn only_a_live_secret_key_serves_live_events() {
+    use super::handlers::stripe::is_live_key;
+    assert!(is_live_key("sk_live_x"));
+    assert!(is_live_key("rk_live_x"));
+    for key in ["sk_test_x", "rk_test_x", "sk", ""] {
+        assert!(!is_live_key(key), "{key:?}");
+    }
+}
+
+/// Delivers a `payment_intent.succeeded` in the given mode for a fresh 50-credit purchase, then answers the
+/// status, whether its id was claimed, and the buyer's balance.
+async fn deliver_in_mode(
+    pool: &PgPool,
+    secret_key: Option<&'static str>,
+    livemode: bool,
+) -> (StatusCode, i64, String) {
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            stripe_secret_key: secret_key,
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "mode-pack".into(),
+        title: "Mode".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_mode");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let evt = unique("evt_mode");
+    let body = json!({ "id": evt, "type": "payment_intent.succeeded", "livemode": livemode, "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    let (status, _) = deliver(&app, &body).await;
+    let claimed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM credits.stripe_events WHERE event_id = $1")
+            .bind(&evt)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (status, claimed, available(pool, &addr).await)
+}
+
+/// A live key serves live events only and a test key test events only; the other mode is refused before
+/// its id is claimed, so it grants nothing.
+#[tokio::test]
+async fn a_webhook_event_from_the_other_stripe_mode_is_refused_unclaimed() {
+    let Some(pool) = pool().await else { return };
+    let refused = (StatusCode::BAD_REQUEST, 0, "0".to_string());
+    let processed = (StatusCode::OK, 1, "50".to_string());
+    for (key, livemode, expected) in [
+        (Some("sk_live_x"), true, &processed),
+        (Some("sk_live_x"), false, &refused),
+        (Some("sk_test_x"), false, &processed),
+        (Some("sk_test_x"), true, &refused),
+    ] {
+        assert_eq!(
+            &deliver_in_mode(&pool, key, livemode).await,
+            expected,
+            "key {key:?}, livemode {livemode}"
+        );
+    }
+}
+
+/// A node with the webhook secret and no secret key (settling payments already started) has no mode to
+/// compare: the signed event of either mode is processed, so refunds and disputes still revoke.
+#[tokio::test]
+async fn a_webhook_without_a_secret_key_processes_events_of_either_mode() {
+    let Some(pool) = pool().await else { return };
+    for livemode in [true, false] {
+        assert_eq!(
+            deliver_in_mode(&pool, None, livemode).await,
+            (StatusCode::OK, 1, "50".to_string()),
+            "livemode {livemode}"
+        );
+    }
+}
+
+/// A refused event leaves its id unclaimed, so the same id redelivered to a correctly configured node
+/// still processes.
+#[tokio::test]
+async fn a_refused_mode_leaves_the_event_id_for_a_redelivery() {
+    let Some(pool) = pool().await else { return };
+    let state = test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            stripe_secret_key: Some("sk_test_x"),
+            ..StateCfg::default()
+        },
+    );
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "mode-pack".into(),
+        title: "Mode".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_mode");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let evt = unique("evt_mode");
+    let paid = |livemode: bool| {
+        json!({ "id": evt, "type": "payment_intent.succeeded", "livemode": livemode, "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string()
+    };
+
+    let (status, out) = deliver(&app, &paid(true)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+    let (status, out) = deliver(&app, &paid(false)).await;
+    assert_eq!(
+        (status, out["detail"].as_str()),
+        (StatusCode::OK, Some("processed"))
+    );
+    assert_eq!(available(&pool, &addr).await, "50");
+}
+
+/// A dispute opened as an inquiry withdraws no funds and revokes nothing; once it escalates
+/// (`charge.dispute.funds_withdrawn`) the pack is revoked.
+#[tokio::test]
+async fn a_dispute_inquiry_revokes_nothing_until_funds_are_withdrawn() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "inquiry-pack".into(),
+        title: "Inquiry".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_inquiry");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let paid = json!({ "id": unique("evt_inq_paid"), "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd" } } }).to_string();
+    let (status, out) = deliver(&app, &paid).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    let dispute = |kind: &str, status: &str| {
+        json!({ "id": unique("evt_inq"), "type": kind, "data": { "object": { "id": "dp_1", "payment_intent": pi, "status": status, "amount": 500 } } }).to_string()
+    };
+    let (status, out) = deliver(
+        &app,
+        &dispute("charge.dispute.created", "warning_needs_response"),
+    )
+    .await;
+    assert_eq!(
+        (status, out["detail"].as_str()),
+        (StatusCode::OK, Some("processed"))
+    );
+    assert_eq!(
+        available(&pool, &addr).await,
+        "50",
+        "an inquiry revokes nothing"
+    );
+    let recorded: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credits.payment_reversals WHERE payment_intent = $1",
+    )
+    .bind(&pi)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded, 0, "nothing for a later grant to replay");
+
+    let (status, _) = deliver(
+        &app,
+        &dispute("charge.dispute.funds_withdrawn", "needs_response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(available(&pool, &addr).await, "0");
+}
+
+/// A stub of Stripe's checkout session endpoints. `expire` answers `expire_status`, with an expired unpaid
+/// session on 200; a read answers `session`. Both are counted.
+async fn stub_stripe(
+    expire_status: StatusCode,
+    session: Value,
+) -> (String, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    let expired = Arc::new(AtomicUsize::new(0));
+    let read = Arc::new(AtomicUsize::new(0));
+    let (expire_count, read_count) = (expired.clone(), read.clone());
+    let app = Router::new()
+        .route(
+            "/v1/checkout/sessions/{id}/expire",
+            axum::routing::post(
+                move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let count = expire_count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        (
+                            expire_status,
+                            axum::Json(
+                                json!({ "id": id, "status": "expired", "payment_status": "unpaid" }),
+                            ),
+                        )
+                    }
+                },
+            ),
+        )
+        .route(
+            "/v1/checkout/sessions/{id}",
+            axum::routing::get(
+                move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let count = read_count.clone();
+                    let mut session = session.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        session["id"] = json!(id);
+                        axum::Json(session)
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (url, expired, read)
+}
+
+/// Lands on `cancel-return` for a session order (pending, or retired first) against a stubbed Stripe, and
+/// answers the order's status and the expire and read counts.
+async fn cancel_return_with(
+    pool: &PgPool,
+    expire_status: StatusCode,
+    session_at_stripe: Value,
+    retire_first: bool,
+) -> (String, usize, usize) {
+    let (stripe_url, expired, read) = stub_stripe(expire_status, session_at_stripe).await;
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        usage_chain_id: super::usage::CHAIN_POLYGON,
+        checkout_fulfillment_mode: "secondary".into(),
+        marketplace_markup_bps: 0,
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.stripe_secret_key = Some("sk_test_stub".into());
+    settings.stripe_api_base = stripe_url;
+    let state: SharedState = Arc::new(State::with_sources(
+        pool.clone(),
+        Outbound::for_tests(),
+        settings,
+        Arc::new(FakeMarket::default()),
+        Arc::new(MockBroker::configured()),
+        None,
+    ));
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (order_id, session) = session_order_fixture(&state, &addr).await;
+    if retire_first {
+        state
+            .credits
+            .mark_order_status_by_session(&session, "abandoned", Some("cancelled by the buyer"))
+            .await
+            .unwrap();
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/credits/credits/orders/{order_id}/cancel-return"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success() || resp.status().is_redirection(),
+        "{}",
+        resp.status()
+    );
+    (
+        session_order_row(pool, &session).await.0,
+        expired.load(Ordering::SeqCst),
+        read.load(Ordering::SeqCst),
+    )
+}
+
+/// Stripe's cancel landing expires the open session before the order is retired, so the hosted page the buyer
+/// left can no longer be paid.
+#[tokio::test]
+async fn the_cancel_return_expires_the_checkout_session() {
+    let Some(pool) = pool().await else { return };
+    let open = json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" });
+    assert_eq!(
+        cancel_return_with(&pool, StatusCode::OK, open, false).await,
+        ("abandoned".to_string(), 1, 0)
+    );
+}
+
+/// A session Stripe will not expire (400: already closed) is read back: a paid or complete one leaves the
+/// order to the webhook, an expired unpaid one retires it.
+#[tokio::test]
+async fn the_cancel_return_reads_back_a_session_stripe_did_not_expire() {
+    let Some(pool) = pool().await else { return };
+    for (session, status) in [
+        (
+            json!({ "status": "complete", "payment_status": "paid" }),
+            "pending",
+        ),
+        (
+            json!({ "status": "complete", "payment_status": "unpaid" }),
+            "pending",
+        ),
+        (
+            json!({ "status": "expired", "payment_status": "unpaid" }),
+            "abandoned",
+        ),
+    ] {
+        assert_eq!(
+            cancel_return_with(&pool, StatusCode::BAD_REQUEST, session.clone(), false).await,
+            (status.to_string(), 1, 1),
+            "{session}"
+        );
+    }
+}
+
+/// A failed expire (a 5xx, or one replayed under the same idempotency key) still reads the session back, so
+/// a closed unpaid session retires the order and an open one keeps it.
+#[tokio::test]
+async fn the_cancel_return_reads_back_after_a_failed_expire() {
+    let Some(pool) = pool().await else { return };
+    for (session, status) in [
+        (
+            json!({ "status": "expired", "payment_status": "unpaid" }),
+            "abandoned",
+        ),
+        (
+            json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" }),
+            "pending",
+        ),
+    ] {
+        assert_eq!(
+            cancel_return_with(
+                &pool,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                session.clone(),
+                false
+            )
+            .await,
+            (status.to_string(), 1, 1),
+            "{session}"
+        );
+    }
+}
+
+/// An order that is no longer pending costs no Stripe call.
+#[tokio::test]
+async fn the_cancel_return_calls_stripe_only_for_a_pending_order() {
+    let Some(pool) = pool().await else { return };
+    let open = json!({ "status": "open", "payment_status": "unpaid", "url": "https://checkout.example/x" });
+    assert_eq!(
+        cancel_return_with(&pool, StatusCode::OK, open, true).await,
+        ("abandoned".to_string(), 0, 0)
+    );
 }

@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000
+Subject: fix(bevy_core_pipeline): the shadows grading section fades into the midtones
+Date: 2026-11-16T10:10:36+00:00
+
+---
+diff --git a/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl b/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
+index a56acebb3a6ef0619115638a2b02809105ee5bac..2727ca91cb4223e84eb4624ecaf61ad243321f73 100644
+--- a/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
++++ b/crates/bevy_core_pipeline/src/tonemapping/tonemapping_shared.wgsl
+@@ -300,7 +300,9 @@ fn sectional_color_grading(
+         levels.x = 1.0;
+     } else if (level < midtone_range.x + LEVEL_MARGIN) {
+         levels.y = ((level - midtone_range.x) * LEVEL_MARGIN_DIV) + 0.5;
+-        levels.z = 1.0 - levels.y;
++        // the rest is shadows, as in Blender. With it given to the highlights the shadows
++        // section ended at a hard step, and a gain there darkened the brighter side of it
++        levels.x = 1.0 - levels.y;
+     } else if (level < midtone_range.y - LEVEL_MARGIN) {
+         levels.y = 1.0;
+     } else if (level < midtone_range.y + LEVEL_MARGIN) {

@@ -5,10 +5,12 @@
 //! gates and wire answers:
 //!
 //! - [`extract_auth_chain`] reads the chain and checks its shape;
-//! - [`check_symmetric_skew`] bounds the timestamp to a window around now;
+//! - [`check_timestamp_window`] bounds the timestamp to a window around now
+//!   (the future side capped at [`MAX_FUTURE_SKEW_SECS`]),
+//!   [`check_past_window`] how old it may be, with the same future cap;
 //! - [`parse_metadata`] reads the metadata object, over which
 //!   [`field_is_canonical`] and [`is_refused_signer`] are upstream's `signer`
-//!   gates;
+//!   gates and [`names_scene_signer`] the scene check alone;
 //! - [`candidate_paths`] is the path rule ([`SignedPath`]);
 //! - [`verify_signature`] tries the payloads: the crypto-middleware 6.x one
 //!   (method and path folded, the metadata bytes bound to the signature) over
@@ -22,15 +24,19 @@ use serde_json::{Map, Value};
 use crate::auth_chain::{AuthChain, AuthLink, AuthLinkType, MAX_AUTH_CHAIN_LINKS};
 use crate::eip1654::Eip1654Validator;
 use crate::error::AuthError;
-use crate::verify::verify_auth_chain_async;
+use crate::verify::verify_login_chain_async;
 
 pub const AUTH_CHAIN_HEADER_PREFIX: &str = "x-identity-auth-chain-";
 pub const AUTH_TIMESTAMP_HEADER: &str = "x-identity-timestamp";
 pub const AUTH_METADATA_HEADER: &str = "x-identity-metadata";
 pub const ORIGINAL_PATH_HEADER: &str = "x-original-path";
 
-/// Upstream's freshness window.
-pub const FIVE_MINUTES: i64 = 5 * 60;
+/// How old a signed-fetch timestamp may be, in seconds: `@dcl/crypto-middleware`'s
+/// default expiration, one window for every signed route.
+pub const SIGNED_FETCH_WINDOW_SECS: i64 = 60;
+
+/// How far ahead of now a signed timestamp may be, whatever the window.
+pub const MAX_FUTURE_SKEW_SECS: i64 = 60;
 
 /// The `signer` an explorer sets on an auth chain it signed on a scene's behalf.
 pub const SCENE_SIGNER: &str = "decentraland-kernel-scene";
@@ -131,19 +137,46 @@ pub enum SkewError {
     },
 }
 
-/// A millisecond `timestamp` is fresh when `(now - signed_at).abs() <=
-/// window_secs`, both in seconds; a non-numeric one is refused rather than
-/// skipping the window.
-pub fn check_symmetric_skew(timestamp: &str, now: i64, window_secs: i64) -> Result<(), SkewError> {
+/// A millisecond `timestamp` is fresh when it is at most `window_secs` old and
+/// at most `min(window_secs, MAX_FUTURE_SKEW_SECS)` ahead, both in seconds; a
+/// non-numeric one is refused rather than skipping the window.
+pub fn check_timestamp_window(
+    timestamp: &str,
+    now: i64,
+    window_secs: i64,
+) -> Result<(), SkewError> {
     let signed_at = timestamp
         .parse::<i64>()
         .map_err(|_| SkewError::InvalidTimestamp(timestamp.to_string()))?
         / 1000;
-    if (now - signed_at).abs() > window_secs {
+    let age = now.saturating_sub(signed_at);
+    if age > window_secs || -age > window_secs.min(MAX_FUTURE_SKEW_SECS) {
         return Err(SkewError::Expired {
             signed_at,
             now,
             window_secs,
+        });
+    }
+    Ok(())
+}
+
+/// dcl-crypto-middleware-rs's expiration: `timestamp` is an unsigned
+/// integer count of milliseconds, stale once more than `max_age_ms` before
+/// `now_ms`. Unlike the middleware, which never refuses a future timestamp,
+/// one more than [`MAX_FUTURE_SKEW_SECS`] ahead of `now_ms` is refused too.
+pub fn check_past_window(timestamp: &str, now_ms: u128, max_age_ms: u128) -> Result<(), SkewError> {
+    let signed_at = timestamp
+        .parse::<u128>()
+        .map_err(|_| SkewError::InvalidTimestamp(timestamp.to_string()))?;
+    let max_ahead_ms = MAX_FUTURE_SKEW_SECS as u128 * 1000;
+    if signed_at.saturating_add(max_age_ms) < now_ms
+        || signed_at > now_ms.saturating_add(max_ahead_ms)
+    {
+        let secs = |ms: u128| i64::try_from(ms / 1000).unwrap_or(i64::MAX);
+        return Err(SkewError::Expired {
+            signed_at: secs(signed_at),
+            now: secs(now_ms),
+            window_secs: secs(max_age_ms),
         });
     }
     Ok(())
@@ -159,12 +192,7 @@ pub fn parse_metadata(raw: &str) -> Option<Value> {
     }
 }
 
-/// Upstream folds with `String.prototype.trim`, whose WhiteSpace set includes
-/// ZWNBSP (U+FEFF); Rust's `str::trim` follows the Unicode `White_Space`
-/// property, which does not.
-fn js_trim(value: &str) -> &str {
-    value.trim_matches(|c: char| c.is_whitespace() || c == '\u{FEFF}')
-}
+use crate::js_date::js_trim;
 
 fn is_canonical(value: &str) -> bool {
     value == js_trim(value).to_lowercase().as_str()
@@ -205,6 +233,20 @@ pub fn is_refused_signer(metadata: &Value) -> bool {
         return true;
     }
     matches!(metadata.get("signer"), Some(Value::String(value)) if value == SCENE_SIGNER)
+}
+
+/// Whether `metadata` names the scene signer under any spelling of the
+/// `signer` key or its value (case folded, trimmed as upstream trims). Only
+/// the scene signer is looked for: other keys and values, canonical or not,
+/// pass, so a surface that reads nothing else from the metadata refuses a
+/// scene's request without refusing an ordinary one.
+pub fn names_scene_signer(metadata: &Value) -> bool {
+    metadata.as_object().is_some_and(|object| {
+        object.iter().any(|(key, value)| {
+            key.to_lowercase() == "signer"
+                && matches!(value, Value::String(v) if js_trim(v).to_lowercase() == SCENE_SIGNER)
+        })
+    })
 }
 
 /// The crypto-middleware < 6.0.0 payload: everything, metadata included, lowercased.
@@ -272,9 +314,14 @@ impl SignedPath {
 /// so a chain signed over `/v1/x` does not open `/social-api/v1/x` unless the
 /// proxy says that is what the client asked.
 pub fn candidate_paths<'a>(headers: &'a HeaderMap, path: &'a SignedPath) -> Vec<&'a str> {
+    candidates(header_str(headers, ORIGINAL_PATH_HEADER), path)
+}
+
+/// [`candidate_paths`] over an `x-original-path` value already read.
+pub(crate) fn candidates<'a>(original: Option<&'a str>, path: &'a SignedPath) -> Vec<&'a str> {
     let mut paths = Vec::with_capacity(2);
     paths.push(path.request.as_str());
-    if let Some(original) = header_str(headers, ORIGINAL_PATH_HEADER)
+    if let Some(original) = original
         .map(|raw| raw.split('?').next().unwrap_or(raw))
         .filter(|stripped| stripped.ends_with(path.local.as_str()) && *stripped != path.request)
     {
@@ -344,7 +391,7 @@ async fn first_verifying(
 ) -> Result<(), SignatureRefusal> {
     let mut last = None;
     for payload in payloads {
-        match verify_auth_chain_async(chain, payload, Some(now_secs * 1000), validator).await {
+        match verify_login_chain_async(chain, payload, Some(now_secs * 1000), validator).await {
             Ok(()) => return Ok(()),
             Err(e) if is_invalid_signature(&e) => last = Some(e),
             Err(e) => return Err(SignatureRefusal::Settled(e)),
@@ -468,22 +515,74 @@ mod tests {
     }
 
     #[test]
-    fn skew_is_symmetric_and_refuses_garbage() {
-        assert_eq!(check_symmetric_skew("1000000", 1000, 0), Ok(()));
-        assert_eq!(check_symmetric_skew("1300000", 1000, 300), Ok(()));
+    fn the_window_caps_the_future_side_and_refuses_garbage() {
+        assert_eq!(check_timestamp_window("1000000", 1000, 0), Ok(()));
+        assert_eq!(check_timestamp_window("700000", 1000, 300), Ok(()));
+        assert!(check_timestamp_window("699000", 1000, 300).is_err());
+        assert_eq!(check_timestamp_window("1060000", 1000, 300), Ok(()));
+        assert!(check_timestamp_window("1061000", 1000, 300).is_err());
+        assert_eq!(check_timestamp_window("1030000", 1000, 30), Ok(()));
+        assert!(check_timestamp_window("1031000", 1000, 30).is_err());
         assert!(matches!(
-            check_symmetric_skew("1301000", 1000, 300),
+            check_timestamp_window("1301000", 1000, 300),
             Err(SkewError::Expired {
                 signed_at: 1301,
                 ..
             })
         ));
         assert_eq!(
-            check_symmetric_skew("soon", 1000, 300),
+            check_timestamp_window("soon", 1000, 300),
             Err(SkewError::InvalidTimestamp("soon".into()))
         );
         assert_eq!(timestamp_or_zero(Some("")), "0");
         assert_eq!(timestamp_or_zero(None), "0");
+    }
+
+    #[test]
+    fn the_past_window_bounds_the_age_and_caps_the_future() {
+        assert_eq!(check_past_window("100000", 160_000, 60_000), Ok(()));
+        assert!(matches!(
+            check_past_window("100000", 160_001, 60_000),
+            Err(SkewError::Expired {
+                signed_at: 100,
+                now: 160,
+                window_secs: 60
+            })
+        ));
+        assert_eq!(check_past_window("160000", 100_000, 60_000), Ok(()));
+        assert!(matches!(
+            check_past_window("160001", 100_000, 60_000),
+            Err(SkewError::Expired {
+                signed_at: 160,
+                now: 100,
+                window_secs: 60
+            })
+        ));
+        assert!(matches!(
+            check_past_window("999999999999999", 1, 60_000),
+            Err(SkewError::Expired { .. })
+        ));
+        assert!(matches!(
+            check_past_window(&u128::MAX.to_string(), u128::MAX - 1, 60_000),
+            Ok(())
+        ));
+        for garbage in ["", "-1", "1.5", "soon"] {
+            assert_eq!(
+                check_past_window(garbage, 1, 60_000),
+                Err(SkewError::InvalidTimestamp(garbage.into()))
+            );
+        }
+    }
+
+    #[test]
+    fn the_scene_signer_is_found_under_any_spelling() {
+        let scene = |raw: &str| names_scene_signer(&serde_json::from_str(raw).unwrap());
+        assert!(scene(r#"{"signer":"decentraland-kernel-scene"}"#));
+        assert!(scene(r#"{"Signer":" Decentraland-Kernel-Scene\ufeff"}"#));
+        assert!(!scene("{}"));
+        assert!(!scene(r#"{"Signer":"dcl:explorer"}"#));
+        assert!(!scene(r#"{"signer":1}"#));
+        assert!(!scene(r#""decentraland-kernel-scene""#));
     }
 
     #[test]
@@ -622,6 +721,56 @@ mod tests {
             .await,
             Err(SignatureRefusal::Settled(
                 AuthError::EphemeralExpired { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_delegation_signed_for_another_purpose_settles_as_refused() {
+        let ephemeral = Wallet::random().unwrap();
+        let signed = build_payload_v6("POST", "/a", "1000", "{}");
+        let chain_delegating = |first_line: &str| -> AuthChain {
+            let delegation = format!(
+                "{first_line}\nEphemeral address: {}\nExpiration: 2099-01-01T00:00:00.000Z",
+                ephemeral.address()
+            );
+            let link = |link_type, payload: &str, signature: String| AuthLink {
+                link_type,
+                payload: payload.to_string(),
+                signature: Some(signature),
+            };
+            vec![
+                link(AuthLinkType::SIGNER, &wallet().address(), String::new()),
+                link(
+                    AuthLinkType::EcdsaEphemeral,
+                    &delegation,
+                    wallet().sign_message(delegation.as_bytes()).unwrap(),
+                ),
+                link(
+                    AuthLinkType::EcdsaSignedEntity,
+                    &signed,
+                    ephemeral.sign_message(signed.as_bytes()).unwrap(),
+                ),
+            ]
+        };
+        let request = SignedRequest {
+            method: "POST",
+            paths: &["/a"],
+            timestamp: "1000",
+            metadata: "{}",
+        };
+        let verdict = async |chain: &AuthChain| {
+            verify_signature(chain, &request, 1, LegacyPayload::Accepted, None).await
+        };
+        assert!(
+            verdict(&chain_delegating("Decentraland Login"))
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            verdict(&chain_delegating("Another Purpose")).await,
+            Err(SignatureRefusal::Settled(
+                AuthError::InvalidEphemeralPayload(_)
             ))
         ));
     }

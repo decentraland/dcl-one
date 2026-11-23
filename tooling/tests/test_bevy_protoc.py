@@ -89,15 +89,29 @@ class ProtocTest(unittest.TestCase):
     def test_server_errors_are_retried_and_client_errors_are_not(self):
         url = 'https://example.invalid/pinned.zip'
         unavailable = urllib.error.HTTPError(url, 503, 'unavailable', {}, None)
+        self.addCleanup(unavailable.close)
         with patch.object(protoc.urllib.request, 'urlopen', side_effect=[unavailable, io.BytesIO(b'ok')]), \
                 patch.object(protoc.time, 'sleep'):
             self.assertEqual(protoc.download(url), b'ok')
+        self.assertTrue(unavailable.closed)
         missing = urllib.error.HTTPError(url, 404, 'missing', {}, None)
+        self.addCleanup(missing.close)
         with patch.object(protoc.urllib.request, 'urlopen', side_effect=missing) as fetch, \
                 patch.object(protoc.time, 'sleep') as sleep, self.assertRaises(urllib.error.HTTPError):
             protoc.download(url)
         fetch.assert_called_once()
         sleep.assert_not_called()
+        self.assertTrue(missing.closed)
+
+    def test_an_http_error_is_closed_when_the_retry_budget_is_exhausted(self):
+        error = urllib.error.HTTPError('https://example.invalid/pinned.zip', 503, 'unavailable', {}, None)
+        self.addCleanup(error.close)
+        with patch.object(protoc.urllib.request, 'urlopen', side_effect=error), \
+                patch.object(protoc.time, 'monotonic', side_effect=[0, protoc.RETRY_BUDGET]), \
+                patch.object(protoc.time, 'sleep') as sleep, self.assertRaises(urllib.error.HTTPError):
+            protoc.download('https://example.invalid/pinned.zip')
+        sleep.assert_not_called()
+        self.assertTrue(error.closed)
 
     def test_verified_cached_archive_installs_without_the_network(self):
         data = self.archive('protoc.exe')

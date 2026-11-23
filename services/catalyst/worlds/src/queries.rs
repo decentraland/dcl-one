@@ -73,7 +73,8 @@ fn world_scene_from_row(r: &PgRow) -> WorldScene {
     }
 }
 
-/// The world row (if any) and its scenes newest-first in one statement;
+/// The world row (if any) and its scenes newest-first in one statement (a
+/// tie goes to the greater entity id, the last row `/scenes` pages);
 /// either side may be absent independently.
 pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbout> {
     let rows = sqlx::query(concat!(
@@ -89,7 +90,7 @@ pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbou
              SELECT entity_id, entity, parcels, deployer, mirror_source, created_at
              FROM worlds.world_scenes WHERE world_name = lower($1)
            ) s ON true
-           ORDER BY s.created_at DESC NULLS LAST"#,
+           ORDER BY s.created_at DESC NULLS LAST, s.entity_id DESC"#,
     ))
     .bind(world_name)
     .fetch_all(pool)
@@ -112,6 +113,49 @@ pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbou
         .map(world_scene_from_row)
         .collect();
     Ok(WorldAbout { world, scenes })
+}
+
+/// The world a realm name override stands for when a client signs it: a
+/// world name as it is, a bare label as its `.dcl.eth` world on the worlds
+/// host ([`crate::comms::world_identity::bare_world`]). `None` for a name no
+/// world can be read from (the shared realms, `node_realm`).
+pub fn override_world(
+    name: &str,
+    node_realm: &str,
+) -> Option<crate::comms::world_identity::WorldName> {
+    use crate::comms::world_identity::{WorldName, bare_world, is_world_realm_name};
+    let name = name.trim();
+    match is_world_realm_name(name) {
+        true => WorldName::parse(name).ok(),
+        false => bare_world(name, node_realm),
+    }
+}
+
+/// Whether `name`, as the realm name override of `world`, would send that
+/// world's visitors to another world's room on this node: it names another
+/// world ([`override_world`]) that has a scene here. A name no world here
+/// holds is free, and so is the world's own name in any case. Checked when
+/// the override is saved and each time `/about` hands it out, so a world
+/// deployed here later wins its name back.
+pub async fn override_names_another_world(
+    pool: &PgPool,
+    world: &str,
+    name: &str,
+    node_realm: &str,
+) -> AppResult<bool> {
+    let Some(other) = override_world(name, node_realm) else {
+        return Ok(false);
+    };
+    if other.key() == world.trim().to_lowercase() {
+        return Ok(false);
+    }
+    let held: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1)",
+    )
+    .bind(other.key())
+    .fetch_one(pool)
+    .await?;
+    Ok(held)
 }
 
 /// The filters of `GET`/`POST /world/{name}/scenes` (the old `GetWorldScenesFilters`).
@@ -217,30 +261,34 @@ pub async fn list_scenes_full(
 }
 
 /// The scenes of one page of unblocked worlds (name order), projected to
-/// what the index summary reads: timestamp, display, runtimeVersion and the
-/// one content entry the thumbnail names. No name deny-list filter: upstream's
-/// compares full world names with suffix-stripped entries, so it leaves out no
-/// world (WR-17).
+/// what the index summary reads: timestamp, display, runtimeVersion (only
+/// when the metadata has the key) and the one content entry the thumbnail
+/// names. `banned` is upstream's `getBannedNames` (the `BLOCKED_WORLD_NAMES`
+/// full names and the suffix-stripped deny list), compared exactly with the
+/// stored name before paging, as `getRawWorldRecords` does (WR-17).
 pub async fn list_index_scenes(
     pool: &PgPool,
     limit: i64,
     offset: i64,
+    banned: &[String],
 ) -> AppResult<Vec<(String, WorldScene)>> {
     let rows = sqlx::query(
         r#"WITH paged_worlds AS (
              SELECT DISTINCT ws.world_name
              FROM worlds.world_scenes ws
              JOIN worlds.worlds w ON lower(w.name) = lower(ws.world_name)
-             WHERE w.blocked_since IS NULL
+             WHERE w.blocked_since IS NULL AND w.name <> ALL($3::text[])
              ORDER BY ws.world_name
              LIMIT $1 OFFSET $2
            )
            SELECT ws.world_name, ws.entity_id, ws.parcels, ws.deployer, ws.mirror_source,
                   jsonb_build_object(
                     'timestamp', ws.entity->'timestamp',
-                    'metadata', jsonb_build_object(
-                      'display', ws.entity->'metadata'->'display',
-                      'runtimeVersion', ws.entity->'metadata'->'runtimeVersion'),
+                    'metadata', jsonb_build_object('display', ws.entity->'metadata'->'display')
+                      || CASE WHEN jsonb_typeof(ws.entity->'metadata') = 'object'
+                                   AND ws.entity->'metadata' ? 'runtimeVersion'
+                              THEN jsonb_build_object('runtimeVersion', ws.entity->'metadata'->'runtimeVersion')
+                              ELSE '{}'::jsonb END,
                     'content', (SELECT jsonb_agg(c) FROM jsonb_array_elements(
                                   CASE WHEN jsonb_typeof(ws.entity->'content') = 'array'
                                        THEN ws.entity->'content' ELSE '[]'::jsonb END) c
@@ -252,6 +300,7 @@ pub async fn list_index_scenes(
     )
     .bind(limit)
     .bind(offset)
+    .bind(banned)
     .fetch_all(pool)
     .await?;
     Ok(rows

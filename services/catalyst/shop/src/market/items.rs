@@ -12,7 +12,7 @@
 //! subgraphs (a reader, 10 min, at most 1,000 sales per network) and
 //! hydrates the winners through the items query.
 
-use crate::types::ManaUsdRate;
+use crate::types::{ASSET_TYPE_USD_PEGGED_MANA, ManaUsdRate};
 use std::collections::HashMap;
 
 use axum::Json;
@@ -34,14 +34,13 @@ use super::readers::{self, Ttl, cached, int_of, str_of};
 use super::shop::{MAX_USD_WEI, SHOP_SORT_VALUES, ShopSortBy};
 use super::wire::{
     ApiError, ChainId, DataTotal, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network, NftCategory,
-    Params, clamp_first, clamp_skip, fix_urn,
+    Params, body_shapes_for_genders, clamp_first, clamp_skip, emote_play_mode_clause, fix_urn,
 };
 use super::{MarketplaceState, SharedState};
 
 pub const DEFAULT_LIMIT: i64 = 100;
 pub const USD_WEI_PER_CREDIT: u128 = 100_000_000_000_000_000;
 const USD_WEI_PER_CREDIT_SQL: &str = "100000000000000000::numeric";
-const ASSET_TYPE_USD_PEGGED_MANA: i32 = 2;
 
 pub fn item_types_for(category: NftCategory) -> Vec<&'static str> {
     match category {
@@ -423,27 +422,6 @@ pub struct CreditCatalogItem {
 
 pub fn is_address_zero(addr: &str) -> bool {
     addr.is_empty() || addr.eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
-}
-
-fn body_shapes_for_genders(genders: &[String]) -> Option<Vec<String>> {
-    let has_unisex = genders.iter().any(|g| g == "unisex");
-    let has_male = has_unisex || genders.iter().any(|g| g == "male");
-    let has_female = has_unisex || genders.iter().any(|g| g == "female");
-    let mut out = Vec::new();
-    if has_male {
-        out.push("BaseMale".to_string());
-    }
-    if has_female {
-        out.push("BaseFemale".to_string());
-    }
-    if out.is_empty() { None } else { Some(out) }
-}
-
-pub(crate) fn emote_play_mode_clause(modes: &[String]) -> Option<bool> {
-    if modes.is_empty() || modes.len() == 2 {
-        return None;
-    }
-    Some(modes.iter().any(|m| m == "loop"))
 }
 
 /// The credit price, a bare expression the WHERE and ORDER BY reuse so the
@@ -830,8 +808,16 @@ fn row_to_item(r: &sqlx::postgres::PgRow) -> Item {
     }
 }
 
-/// The page, then its total: the rows themselves when the first page came
-/// back short, one key-only count otherwise.
+/// The most rows a filter that names one contract and one item id can
+/// match: `shop.items` keys on (network, contract_address, item_id) and holds
+/// two networks.
+fn key_fixed_rows(f: &ItemFilters) -> Option<i64> {
+    (f.contract_addresses.len() == 1 && f.item_id.is_some()).then_some(2)
+}
+
+/// The page, then its total: a key-fixed filter reads all its rows in one
+/// statement and pages them here; otherwise the rows themselves when the
+/// first page came back short, one key-only count when it is full.
 async fn run_items(
     state: &MarketplaceState,
     f: &ItemFilters,
@@ -840,12 +826,32 @@ async fn run_items(
 ) -> Result<(Vec<sqlx::postgres::PgRow>, i64), ApiError> {
     let now = Utc::now().naive_utc();
     let since = super::trades::mirrored_since(&state.settings, now);
-    let (sql, args) = build_items_query(f, rate, catalog, now, since, false);
-    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+    let whole = key_fixed_rows(f).map(|rows| ItemFilters {
+        first: Some(rows),
+        skip: None,
+        ..f.clone()
+    });
+    let (sql, args) = build_items_query(
+        whole.as_ref().unwrap_or(f),
+        rate,
+        catalog,
+        now,
+        since,
+        false,
+    );
+    let mut rows = sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
         .fetch_all(&state.pool)
         .await?;
     let (limit, offset) = (clamp_first(f.first, DEFAULT_LIMIT), clamp_skip(f.skip));
-    let total = if offset == 0 && (rows.len() as i64) < limit {
+    let total = if whole.is_some() {
+        let total = rows.len() as i64;
+        rows = rows
+            .into_iter()
+            .skip(offset as usize)
+            .take(limit as usize)
+            .collect();
+        total
+    } else if offset == 0 && (rows.len() as i64) < limit {
         rows.len() as i64
     } else {
         let (sql, args) = build_items_query(f, rate, catalog, now, since, true);
@@ -890,12 +896,11 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         });
     }
     let v = cached(state, Ttl::S60, "economy:mana_usd".into(), || async {
-        let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
-            .fetch_optional(&state.pool)
+        let row = crate::mana::quote::newest_spot(&state.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(match row {
-            Some((rate, taken_at)) => json!({ "rate": rate.trim(), "taken_at": taken_at.and_utc().timestamp() }),
+            Some((rate, taken_at)) => json!({ "rate": rate, "taken_at": taken_at }),
             None => json!({}),
         })
     })
@@ -909,7 +914,11 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Resp
         v["rate"].as_str().and_then(ManaUsdRate::parse_usd_per_mana),
         v["taken_at"].as_i64(),
     ) {
-        (Some(rate), Some(taken_at)) if Utc::now().timestamp() - taken_at <= budget => Ok(rate),
+        (Some(rate), Some(taken_at))
+            if crate::mana::quote::spot_is_fresh(taken_at, Utc::now().timestamp()) =>
+        {
+            Ok(rate)
+        }
         (Some(_), Some(taken_at)) => Err(crate::price::unavailable(&format!(
             "the newest MANA spot on this node is {} s old, past the {budget} s freshness budget (the mana-price-poll job is off or failing); credit prices need a live spot",
             Utc::now().timestamp() - taken_at
@@ -1364,6 +1373,28 @@ mod tests {
         raw.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn only_one_contract_and_one_item_id_read_without_a_count() {
+        const C: &str = "0x0768847951fddd4e73e670800da26d953a77059b";
+        const D: &str = "0x1111111111111111111111111111111111111111";
+        let rows = |raw: &[(&str, &str)]| key_fixed_rows(&parse_filters(&pairs(raw)).unwrap());
+        assert_eq!(
+            rows(&[("contractAddress", C), ("itemId", "0"), ("first", "1")]),
+            Some(2),
+            "the item page's read: one row per network"
+        );
+        assert_eq!(rows(&[("contractAddress", C), ("first", "1")]), None);
+        assert_eq!(rows(&[("itemId", "0"), ("first", "1")]), None);
+        assert_eq!(
+            rows(&[
+                ("contractAddress", C),
+                ("contractAddress", D),
+                ("itemId", "0")
+            ]),
+            None
+        );
     }
 
     #[test]

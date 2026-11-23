@@ -1,7 +1,8 @@
 //! The default outbound HTTP handle: a hardened [`reqwest::Client`] built through
 //! [`HttpClientCfg`] and wrapped in the shared [`Outbound`] `serve` hands to
-//! readers (peer sync and the RPC validator take its `raw` client; mirrors and
-//! upstream readers send through the guard). Provider adapters that construct
+//! readers (the RPC validator takes its `raw` client; mirrors and upstream
+//! readers send through the guard; peer sync builds its own client over
+//! [`PublicAddressResolver`]). Provider adapters that construct
 //! an Outbound with distinct transport settings own separate HTTP pools. The SSRF guard
 //! ([`is_safe_http_url`] on the string, [`resolve_and_pin`] on the socket),
 //! the retry ladder ([`retry_with_backoff`]) and the capped body reader.
@@ -202,6 +203,150 @@ impl reqwest::dns::Resolve for ReservedNamesResolver {
     }
 }
 
+/// A resolver that answers only public addresses, except for the `trusted`
+/// names (operator-configured hosts, which may be private): a name with any
+/// non-public address fails, so a connection is only opened to addresses
+/// this check accepted, on the same lookup. reqwest dials an IP-literal host
+/// without asking the resolver, so a caller that must refuse private literals
+/// checks the URL itself ([`is_safe_http_url`]).
+#[derive(Clone)]
+pub struct PublicAddressResolver {
+    inner: ReservedNamesResolver,
+    trusted: Arc<std::collections::HashSet<String>>,
+}
+
+impl PublicAddressResolver {
+    pub fn trusting(hosts: impl IntoIterator<Item = String>) -> Self {
+        Self::over(ReservedNamesResolver::default(), hosts)
+    }
+
+    pub fn over(inner: ReservedNamesResolver, hosts: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            inner,
+            trusted: Arc::new(
+                hosts
+                    .into_iter()
+                    .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl reqwest::dns::Resolve for PublicAddressResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().trim_end_matches('.').to_ascii_lowercase();
+        let lookup = self.inner.resolve(name);
+        if self.trusted.contains(&host) {
+            return lookup;
+        }
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = lookup.await?.collect();
+            if addrs.is_empty() || addrs.iter().any(|a| is_blocked_ip(a.ip())) {
+                return Err(format!("{host} does not resolve to a public address only").into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// A client built without redirects, paired with the client its file
+/// downloads dial a hop to another origin with: one that trusts no name,
+/// follows no redirect and uses no proxy. Built per caller, so its pool lives
+/// on that caller's runtime and takes its idle setting.
+#[derive(Clone)]
+pub struct CheckedRedirectClient {
+    client: reqwest::Client,
+    other_origins: reqwest::Client,
+}
+
+impl CheckedRedirectClient {
+    /// `resolver` answers the other-origin client; production passes
+    /// `PublicAddressResolver::trusting([])`.
+    pub fn new(
+        client: reqwest::Client,
+        resolver: PublicAddressResolver,
+        connections_max_idle: usize,
+    ) -> reqwest::Result<Self> {
+        let other_origins = HttpClientCfg {
+            max_redirects: None,
+            ..HttpClientCfg::serve(connections_max_idle)
+        }
+        .builder()
+        .dns_resolver(resolver)
+        .no_proxy()
+        .build()?;
+        Ok(Self {
+            client,
+            other_origins,
+        })
+    }
+}
+
+impl std::ops::Deref for CheckedRedirectClient {
+    type Target = reqwest::Client;
+
+    fn deref(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
+/// `GET url`, following at most `max` 301/302/303/307/308 redirects by hand.
+/// A hop on the first URL's origin (scheme, host and port) is dialled with
+/// the main client; a hop to any other origin must be a public http(s) URL
+/// and is dialled by the other-origin client, so its address check and its
+/// connection share one lookup.
+pub async fn get_following_checked_redirects(
+    client: &CheckedRedirectClient,
+    url: &str,
+    max: usize,
+) -> Result<reqwest::Response, SendError> {
+    follow_checked_redirects(&client.client, &client.other_origins, url, max).await
+}
+
+async fn follow_checked_redirects(
+    client: &reqwest::Client,
+    other_origins: &reqwest::Client,
+    url: &str,
+    max: usize,
+) -> Result<reqwest::Response, SendError> {
+    let mut url = reqwest::Url::parse(url)
+        .map_err(|e| SendError::Refused(format!("{url:?} is not a URL: {e}")))?;
+    let first = url.origin();
+    for hop in 0..=max {
+        let dial = if url.origin() == first {
+            client
+        } else {
+            other_origins
+        };
+        let resp = dial.get(url.clone()).send().await?;
+        if !matches!(resp.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(resp);
+        }
+        let Some(location) = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Ok(resp);
+        };
+        if hop == max {
+            return Err(SendError::Refused(format!("more than {max} redirects")));
+        }
+        let next = url.join(location).map_err(|e| {
+            SendError::Refused(format!("redirect target {location:?} is not a URL: {e}"))
+        })?;
+        if next.origin() != first && !is_safe_http_url(next.as_str()) {
+            let host = next.host_str().unwrap_or("?").to_string();
+            return Err(SendError::Refused(format!(
+                "redirect to {host} refused: not a public http(s) host"
+            )));
+        }
+        url = next;
+    }
+    unreachable!("the loop returns on its last hop")
+}
+
 /// Follows at most `max` hops, and only to a public http(s) host once the
 /// chain started at one: a public upstream (or a MITM on a plaintext one)
 /// cannot steer a fetch onto the loopback or the metadata address with a
@@ -336,7 +481,21 @@ pub async fn resolve_and_pin(url: &reqwest::Url) -> Option<SocketAddr> {
     Some(addrs[0])
 }
 
-fn is_blocked_ip(ip: IpAddr) -> bool {
+/// Whether `ip` is outside the public internet: loopback, RFC 1918, link-local,
+/// unspecified, broadcast, multicast, documentation, shared (`100.64.0.0/10`),
+/// `0.0.0.0/8`, IETF protocol assignments (`192.0.0.0/24`), the 6to4 relay
+/// anycast (`192.88.99.0/24`), benchmarking and reserved IPv4; loopback,
+/// unspecified, multicast, unique-local, link-local, site-local, discard-only
+/// (`100::/64`), the dummy prefix (`100:0:0:1::/64`), IETF protocol
+/// assignments (`2001::/23`, which holds Teredo, benchmarking and ORCHID,
+/// apart from its globally reachable assignments),
+/// documentation (`2001:db8::/32`, `3fff::/20`), SRv6 SIDs (`5f00::/16`) and
+/// local-use NAT64 IPv6. An IPv6 address that embeds an IPv4 one (IPv4-mapped,
+/// IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4) is judged by the embedded
+/// address. The IPv4 checks are deliberately stricter than `std`'s unstable
+/// `is_global`, which exempts `192.0.0.9` and `192.0.0.10` and allows most of
+/// `192.88.99.0/24`.
+pub fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()
@@ -349,19 +508,71 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
                 || v4.octets()[0] == 0
                 || {
                     let o = v4.octets();
-                    o[0] == 100 && (o[1] & 0xc0) == 0x40
+                    (o[0] == 100 && (o[1] & 0xc0) == 0x40)
+                        // Benchmarking 198.18.0.0/15 and reserved 240.0.0.0/4.
+                        || (o[0] == 198 && (o[1] & 0xfe) == 18)
+                        || o[0] >= 240
+                        // IETF protocol assignments 192.0.0.0/24 and the
+                        // deprecated 6to4 relay anycast 192.88.99.0/24. Both
+                        // are refused whole on purpose, more strictly than
+                        // `std`'s `is_global`, although IANA lists the PCP and
+                        // TURN anycast 192.0.0.9 and 192.0.0.10 and the 6a44
+                        // relay 192.88.99.2 as globally reachable.
+                        || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                        || (o[0] == 192 && o[1] == 88 && o[2] == 99)
                 }
         }
         IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_blocked_ip(IpAddr::V4(mapped));
+            if let Some(embedded) = embedded_ipv4(v6) {
+                return is_blocked_ip(IpAddr::V4(embedded));
             }
+            let s = v6.segments();
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
+                || (s[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xffc0) == 0xfe80
+                // Deprecated site-local fec0::/10.
+                || (s[0] & 0xffc0) == 0xfec0
+                // Local-use NAT64 64:ff9b:1::/48, whose embedding is operator-chosen.
+                || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1)
+                // IETF protocol assignments 2001::/23, which hold Teredo
+                // 2001::/32 (the relay decides where the tunnel lands),
+                // benchmarking 2001:2::/48 and ORCHID 2001:10::/28. IANA lists
+                // 2001:1::1-3, AMT 2001:3::/32, AS112 2001:4:112::/48 and
+                // ORCHIDv2 and drone remote ID 2001:20::/27 as globally reachable.
+                || (s[0] == 0x2001
+                    && s[1] < 0x200
+                    && !((s[1] == 1 && s[2..7] == [0; 5] && (1..=3).contains(&s[7]))
+                        || s[1] == 3
+                        || (s[1] == 4 && s[2] == 0x112)
+                        || (0x20..=0x3f).contains(&s[1])))
+                // Documentation 2001:db8::/32 and 3fff::/20.
+                || (s[0] == 0x2001 && s[1] == 0xdb8)
+                || (s[0] == 0x3fff && s[1] < 0x1000)
+                // SRv6 segment identifiers 5f00::/16.
+                || s[0] == 0x5f00
+                // Discard-only 100::/64 and the dummy prefix 100:0:0:1::/64.
+                || (s[0] == 0x100 && s[1] == 0 && s[2] == 0 && s[3] <= 1)
         }
+    }
+}
+
+/// The IPv4 address an IPv6 one reaches: IPv4-mapped `::ffff:a.b.c.d`,
+/// IPv4-compatible `::a.b.c.d`, NAT64 `64:ff9b::a.b.c.d` and 6to4 `2002:aabb:ccdd::/48`.
+fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    if let Some(mapped) = v6.to_ipv4_mapped() {
+        return Some(mapped);
+    }
+    let s = v6.segments();
+    let low = || std::net::Ipv4Addr::from((u32::from(s[6]) << 16) | u32::from(s[7]));
+    match s {
+        [0, 0, 0, 0, 0, 0, _, _] if !v6.is_loopback() && !v6.is_unspecified() => Some(low()),
+        [0x64, 0xff9b, 0, 0, 0, 0, _, _] => Some(low()),
+        [0x2002, hi, lo, ..] => Some(std::net::Ipv4Addr::from(
+            (u32::from(hi) << 16) | u32::from(lo),
+        )),
+        _ => None,
     }
 }
 
@@ -690,9 +901,8 @@ impl Outbound {
         self.allow_private
     }
 
-    /// The shared pooled client, unguarded: for peer sync, whose sources are
-    /// operator-configured content servers (a development peer may be on the
-    /// loopback), and the RPC validator.
+    /// The shared pooled client, unguarded: for operator-configured endpoints
+    /// such as the RPC validator.
     pub fn raw(&self) -> &reqwest::Client {
         &self.shared
     }
@@ -1052,6 +1262,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_trusted_names_may_resolve_to_private_addresses_on_any_hop() {
+        use axum::http::StatusCode;
+        use axum::response::Redirect;
+        use axum::routing::get;
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counting = |hits: &Arc<AtomicUsize>| {
+            let hits = hits.clone();
+            get(move || async move {
+                hits.fetch_add(1, SeqCst);
+                "ok"
+            })
+        };
+        let other_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let other_port = other_listener.local_addr().unwrap().port();
+        let other_hits = Arc::new(AtomicUsize::new(0));
+        let other_app = axum::Router::new().route("/ok", counting(&other_hits));
+        tokio::spawn(async move { axum::serve(other_listener, other_app).await.unwrap() });
+        // Redirects plain http to https on its own host and port, so only the
+        // scheme changes; it counts TLS handshakes (first byte 0x16) and drops
+        // them. A dialled https hop would fail its handshake either way, so
+        // only the count shows the hop was refused before any dial.
+        let scheme_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let scheme_port = scheme_listener.local_addr().unwrap().port();
+        let tls_dials = Arc::new(AtomicUsize::new(0));
+        let dials = tls_dials.clone();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            while let Ok((mut socket, _)) = scheme_listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let Ok(n) = socket.read(&mut buf).await else {
+                    continue;
+                };
+                if buf[..n].first() == Some(&0x16) {
+                    dials.fetch_add(1, SeqCst);
+                    continue;
+                }
+                let reply = format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nlocation: https://peer.example:{scheme_port}/ok\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let to = |target: String| get(move || async move { Redirect::temporary(&target) });
+        let app = axum::Router::new()
+            .route("/ok", counting(&hits))
+            .route("/to-name", to(format!("http://public.example:{port}/ok")))
+            .route("/to-ip", to(format!("http://127.0.0.1:{port}/ok")))
+            .route("/to-trusted", to(format!("http://other.example:{port}/ok")))
+            .route(
+                "/to-port",
+                to(format!("http://peer.example:{other_port}/ok")),
+            )
+            .route("/same", to("/ok".to_string()))
+            .route("/loop", to("/loop".to_string()))
+            .route(
+                "/choices",
+                get(|| async { (StatusCode::MULTIPLE_CHOICES, [("location", "/ok")]) }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Every name answers the loopback, as a public-looking name can.
+        // `lookups` counts those of other.example.
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let counted = lookups.clone();
+        let inner = ReservedNamesResolver::over(move |host| {
+            if host == "other.example" {
+                counted.fetch_add(1, SeqCst);
+            }
+            Box::pin(async {
+                let addrs = [SocketAddr::from(([127, 0, 0, 1], 0))];
+                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+            })
+        });
+        let client = HttpClientCfg::default()
+            .builder()
+            .dns_resolver(PublicAddressResolver::over(
+                inner.clone(),
+                ["peer.example".to_string(), "other.example".to_string()],
+            ))
+            .build()
+            .unwrap();
+        let redirecting =
+            CheckedRedirectClient::new(client.clone(), PublicAddressResolver::over(inner, []), 4)
+                .unwrap();
+        let peer = |path: &str| format!("http://peer.example:{port}{path}");
+        let follow =
+            async |path: &str| get_following_checked_redirects(&redirecting, &peer(path), 2).await;
+
+        assert!(
+            client
+                .get(format!("http://public.example:{port}/ok"))
+                .send()
+                .await
+                .is_err()
+        );
+        let ok = follow("/ok").await.unwrap();
+        assert_eq!(ok.text().await.unwrap(), "ok");
+        let same = follow("/same").await.unwrap();
+        assert_eq!(same.status(), 200);
+        // A 300 is an answer, not a hop.
+        assert_eq!(follow("/choices").await.unwrap().status(), 300);
+        assert_eq!(hits.load(SeqCst), 2);
+        // A trusted name is trusted only as the origin first asked for.
+        assert_eq!(
+            client
+                .get(format!("http://other.example:{port}/ok"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        hits.store(0, SeqCst);
+        for path in ["/to-name", "/to-ip", "/to-trusted", "/to-port", "/loop"] {
+            assert!(follow(path).await.is_err(), "{path}");
+        }
+        let to_https = format!("http://peer.example:{scheme_port}/to-https");
+        let refused = get_following_checked_redirects(&redirecting, &to_https, 2).await;
+        assert!(refused.is_err());
+        // The hop to the trusted name was refused on the one lookup its dial made.
+        assert_eq!(lookups.load(SeqCst), 2);
+        assert_eq!(hits.load(SeqCst), 0);
+        assert_eq!(other_hits.load(SeqCst), 0);
+        assert_eq!(tls_dials.load(SeqCst), 0);
+        let not_followed = client.get(peer("/to-name")).send().await.unwrap();
+        assert!(not_followed.status().is_redirection());
+        // An IP literal is dialled without asking the resolver.
+        let literal = client
+            .get(format!("http://127.0.0.1:{port}/ok"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(literal.status(), 200);
+    }
+
+    #[tokio::test]
     async fn the_guard_pins_no_reserved_name() {
         for url in [
             "http://catalyst-test.invalid/",
@@ -1134,6 +1482,47 @@ mod tests {
             "fc00::1",
             "[::1]",
             "[::ffff:127.0.0.1]",
+            "64:ff9b::a9fe:a9fe",
+            "[64:ff9b::7f00:1]",
+            "64:ff9b:1::808:808",
+            "2002:a9fe:a9fe::1",
+            "2002:7f00:1::",
+            "::a9fe:a9fe",
+            "::10.0.0.1",
+            "fec0::1",
+            "feff::1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "240.0.0.1",
+            "250.1.2.3",
+            "192.0.0.8",
+            "192.88.99.1",
+            "64:ff9b::c000:8",
+            "2002:c058:6301::",
+            "2001:0:4136:e378:8000:63bf:f5ff:fffe",
+            "[2001::1]",
+            "100::1",
+            "2001:db8::1",
+            "2001:0:ffff:ffff::1",
+            "100::ffff:ffff:ffff:ffff",
+            "100:0:0:1::1",
+            "192.0.0.255",
+            "192.0.0.0",
+            "192.88.99.255",
+            "2001:1::",
+            "2001:1::4",
+            "2001:2::1",
+            "2001:4::1",
+            "2001:4:113::1",
+            "2001:10::1",
+            "2001:1f:ffff::1",
+            "2001:40::1",
+            "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "2001:db8:ffff:ffff::1",
+            "3fff::1",
+            "3fff:fff:ffff::1",
+            "5f00::1",
+            "5f00:ffff::1",
             "localhost",
             "router",
             "svc.internal",
@@ -1169,6 +1558,32 @@ mod tests {
             "events.decentraland.org",
             "2600::1",
             "[2600::1]",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "::8.8.8.8",
+            "198.17.0.1",
+            "198.20.0.1",
+            "223.1.1.1",
+            "192.0.1.1",
+            "192.88.100.1",
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+            "2001:1::1",
+            "2001:1::3",
+            "2001:3::1",
+            "2001:4:112::1",
+            "2001:20::1",
+            "2001:3f:ffff::1",
+            "2001:200::1",
+            "2001:db7:ffff::1",
+            "2001:db9::1",
+            "100:0:0:2::1",
+            "192.0.1.0",
+            "192.88.98.255",
+            "3ffe:ffff::1",
+            "3fff:1000::1",
+            "5eff:ffff::1",
+            "5f01::1",
         ] {
             assert!(
                 !is_private_or_internal_host(host),

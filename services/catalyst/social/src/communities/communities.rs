@@ -25,13 +25,31 @@ use super::http::{
     get_pagination_params, handler_error as err_json,
 };
 use super::profiles::ProfileInfo;
-use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
+use super::thumbnail::{
+    StoreThumbnailError, detect_image_mime_type, store_thumbnail, validate_thumbnail,
+};
 use super::write_support::{
     ClientCommunityWriteAuthority, Refusal, acquire_membership, load_client_standing, map_db,
     parse_community_id, parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
 use crate::notifications::community::{Audience, CommunityEvent, notify};
+
+/// A thumbnail that could not be stored: 503 while the store lock is busy,
+/// otherwise 500.
+fn thumbnail_failed(e: &StoreThumbnailError) -> Response {
+    if e.busy() {
+        return err_json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the content store is being collected; retry shortly",
+        );
+    }
+    tracing::error!(error = %e, "failed to store community thumbnail");
+    err_json(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "failed to store thumbnail",
+    )
+}
 
 const MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE: usize = 3;
 const MAX_LIMIT_FOR_MINIMAL_RESPONSE: i64 = 50;
@@ -614,7 +632,7 @@ pub async fn create_community(
         Some(v) => try_resp!(parse_visibility(v)),
         None => "all".to_string(),
     };
-    let place_ids = fields.place_ids.unwrap_or_default();
+    let place_ids = super::places::canonical_place_ids(&fields.place_ids.unwrap_or_default());
     if !match state.has_owned_name(&signer).await {
         Ok(owns) => owns,
         Err(error) => return error.into_response(),
@@ -670,19 +688,17 @@ pub async fn create_community(
         .await
     ));
     if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&mut *tx, &state.storage, id, bytes).await
+        && let Err(e) = store_thumbnail(&mut tx, &state.storage, id, bytes).await
     {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
+        return thumbnail_failed(&e);
     }
     if !place_ids.is_empty() {
         try_resp!(map_db(
             sqlx::query(
                 "INSERT INTO social.community_places (place_id, community_id, added_by) \
                  SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
+                 WHERE NOT EXISTS (SELECT 1 FROM social.community_places e \
+                   WHERE e.community_id = $2 AND lower(e.place_id) = p) \
                  ON CONFLICT (place_id, community_id) DO NOTHING",
             )
             .bind(&place_ids)
@@ -827,15 +843,11 @@ pub async fn update_community(
     // owner/moderator tiers as the edit check above.
     let place_ids: Option<Vec<String>> = match fields.place_ids {
         Some(ids) => {
-            let mut unique: Vec<String> = Vec::new();
-            for id in ids {
-                if !unique.contains(&id) {
-                    unique.push(id);
-                }
-            }
+            let unique = super::places::canonical_place_ids(&ids);
+            // lower(): rows written before ids were canonicalized keep their standing
             let held: Vec<String> = try_resp!(map_db(
                 sqlx::query_scalar(
-                    "SELECT place_id FROM social.community_places WHERE community_id = $1"
+                    "SELECT lower(place_id) FROM social.community_places WHERE community_id = $1"
                 )
                 .bind(uuid)
                 .fetch_all(&state.pool)
@@ -909,7 +921,7 @@ pub async fn update_community(
         && new_name.trim() != old_name.trim()
     {
         let (state, old_name, new_name) = (state.clone(), old_name.clone(), new_name.to_owned());
-        tokio::spawn(async move {
+        crate::shared::task::spawn(async move {
             let Ok(has_thumbnail) = sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM social.community_thumbnails WHERE community_id=$1)",
             )
@@ -930,26 +942,42 @@ pub async fn update_community(
             notify(&state.pool, event, Audience::Members).await;
         });
     }
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
-    {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
+    if let Some(bytes) = thumbnail.as_deref() {
+        let stored = async {
+            let mut tx = state.pool.begin().await?;
+            store_thumbnail(&mut tx, &state.storage, uuid, bytes).await?;
+            tx.commit().await?;
+            Ok::<_, StoreThumbnailError>(())
+        }
+        .await;
+        if let Err(e) = stored {
+            return thumbnail_failed(&e);
+        }
     }
     if let Some(ids) = &place_ids {
-        try_resp!(map_db(
+        let replaced: sqlx::Result<()> = async {
+            let mut tx = state.pool.begin().await?;
+            // drops the unlisted places and all but one spelling of a listed one
             sqlx::query(
-                "DELETE FROM social.community_places WHERE community_id = $1 AND place_id <> ALL($2)"
+                "DELETE FROM social.community_places t USING ( \
+                   SELECT place_id, row_number() OVER (PARTITION BY lower(place_id) \
+                     ORDER BY place_id <> lower(place_id), added_at, place_id) AS rank \
+                   FROM social.community_places WHERE community_id = $1) r \
+                 WHERE t.community_id = $1 AND t.place_id = r.place_id \
+                   AND (r.rank > 1 OR lower(t.place_id) <> ALL($2))",
             )
             .bind(uuid)
             .bind(ids)
-            .execute(&state.pool)
-            .await
-        ));
-        try_resp!(map_db(
+            .execute(&mut *tx)
+            .await?;
+            // a kept row keeps its adder and time
+            sqlx::query(
+                "UPDATE social.community_places SET place_id = lower(place_id) \
+                 WHERE community_id = $1 AND place_id <> lower(place_id)",
+            )
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query(
                 "INSERT INTO social.community_places (place_id, community_id, added_by) \
                  SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
@@ -958,9 +986,12 @@ pub async fn update_community(
             .bind(ids)
             .bind(uuid)
             .bind(&signer)
-            .execute(&state.pool)
-            .await
-        ));
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        }
+        .await;
+        try_resp!(map_db(replaced));
     }
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
         // The source bulk acceptance owns its transaction. Failure rolls back
@@ -1178,7 +1209,7 @@ pub async fn delete_community(
         metadata,
     };
     let updates = state.clone();
-    tokio::spawn(async move {
+    crate::shared::task::spawn(async move {
         updates.community_deleted_update(uuid).await;
     });
     if let Some(event) = violation {

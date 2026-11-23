@@ -33,13 +33,13 @@ describe("internal.page-not-found action", () => {
     process.env.SEGMENT_WRITE_KEY = "key-1";
     try {
       const res = await call(
-        post(JSON.stringify({ path: "/landings/cast-stream?token=k&q=1", referrer: "https://ref.example/?code=c" })),
+        post(JSON.stringify({ path: "/report?token=k&q=1", referrer: "https://ref.example/?code=c" })),
       );
       expect(res.status).toBe(202);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
       const sent = JSON.parse(init.body as string).properties;
-      expect(sent.path).toBe("/landings/cast-stream?q=1");
+      expect(sent.path).toBe("/report?q=1");
       expect(sent.referrer).toBe("https://ref.example/");
       expect(sent.spa).toBe(true);
     } finally {

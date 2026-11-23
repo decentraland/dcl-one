@@ -4,7 +4,7 @@
 //! are `timestamp without time zone` holding UTC and come back as `DateTime<Utc>`.
 
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use sqlx::Row;
@@ -33,10 +33,13 @@ pub struct PriceSnapshot {
 }
 
 impl PriceSnapshot {
-    /// Since the poller took it (`taken_at`: this node's own liveness, not
-    /// the provider's quote time).
+    /// Since the provider quoted it (`source_updated_at`), or since the
+    /// poller took it when that is earlier or unknown.
     pub fn age_at(&self, now: DateTime<Utc>) -> Duration {
-        (now - self.taken_at).to_std().unwrap_or_default()
+        let quoted = self
+            .source_updated_at
+            .map_or(self.taken_at, |q| q.min(self.taken_at));
+        (now - quoted).to_std().unwrap_or_default()
     }
 
     pub fn is_fresh_at(&self, now: DateTime<Utc>) -> bool {
@@ -79,22 +82,33 @@ pub fn snapshot_from_row(r: &PgRow) -> PriceSnapshot {
     }
 }
 
-/// The newest row (CoinGecko or a fallback exchange), served from memory once the in-process poller
-/// published one: `serve_live` is the poller switch, so a node without the
-/// poller (an external ingester writing the table) reads the row every time.
+/// The newest row (CoinGecko or a fallback exchange), served from memory
+/// on a polling node. `refresh` is the poll interval there and `None` on a
+/// node without the poller (an external ingester writing the table), which
+/// reads the row every time. Only the `mana-price-poll` lease holder
+/// publishes, so every other polling node (an API replica, a former leader)
+/// re-reads the row once its copy is a poll interval old or past the
+/// freshness budget: what the holder persisted reaches each replica within
+/// one interval.
 #[derive(Clone)]
 pub struct Prices {
     pool: PgPool,
-    live: Arc<RwLock<Option<Arc<PriceSnapshot>>>>,
-    serve_live: bool,
+    live: Arc<RwLock<Option<Live>>>,
+    refresh: Option<Duration>,
+}
+
+#[derive(Clone)]
+struct Live {
+    snapshot: Arc<PriceSnapshot>,
+    checked: Instant,
 }
 
 impl Prices {
-    pub fn new(pool: PgPool, serve_live: bool) -> Self {
+    pub fn new(pool: PgPool, refresh: Option<Duration>) -> Self {
         Self {
             pool,
             live: Arc::new(RwLock::new(None)),
-            serve_live,
+            refresh,
         }
     }
 
@@ -103,29 +117,47 @@ impl Prices {
     }
 
     pub fn publish(&self, snapshot: PriceSnapshot) {
-        *self.live.write().unwrap() = Some(Arc::new(snapshot));
+        self.keep_newer(Arc::new(snapshot));
     }
 
     pub fn live(&self) -> Option<Arc<PriceSnapshot>> {
-        self.live.read().unwrap().clone()
+        self.live
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|l| l.snapshot.clone())
     }
 
     pub async fn latest(&self) -> Result<Option<Arc<PriceSnapshot>>, sqlx::Error> {
-        if self.serve_live
-            && let Some(snapshot) = self.live()
+        let Some(refresh) = self.refresh else {
+            return Ok(self.latest_snapshot().await?.map(Arc::new));
+        };
+        if let Some(live) = self.live.read().unwrap().clone()
+            && live.checked.elapsed() < refresh
+            && live.snapshot.is_fresh_at(Utc::now())
         {
-            return Ok(Some(snapshot));
+            return Ok(Some(live.snapshot));
         }
-        let row = self.latest_snapshot().await?.map(Arc::new);
-        if self.serve_live
-            && let Some(snapshot) = &row
-        {
-            let mut live = self.live.write().unwrap();
-            if live.is_none() {
-                *live = Some(snapshot.clone());
-            }
+        match self.latest_snapshot().await? {
+            Some(row) => Ok(Some(self.keep_newer(Arc::new(row)))),
+            None => Ok(self.live()),
         }
-        Ok(row)
+    }
+
+    /// Stores `snapshot` unless the cell already holds a later one (a
+    /// publish racing a re-read), restarts the refresh clock, and returns
+    /// what the cell holds.
+    fn keep_newer(&self, snapshot: Arc<PriceSnapshot>) -> Arc<PriceSnapshot> {
+        let mut live = self.live.write().unwrap();
+        let snapshot = match live.as_ref() {
+            Some(held) if held.snapshot.taken_at > snapshot.taken_at => held.snapshot.clone(),
+            _ => snapshot,
+        };
+        *live = Some(Live {
+            snapshot: snapshot.clone(),
+            checked: Instant::now(),
+        });
+        snapshot
     }
 
     /// `price_snapshots_newest_idx`: the newest row of any source.

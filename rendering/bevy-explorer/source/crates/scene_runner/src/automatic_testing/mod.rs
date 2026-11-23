@@ -30,6 +30,7 @@ use wallet::Wallet;
 
 use crate::{
     initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
+    parcel_to_vec3,
     renderer_context::RendererSceneContext,
     ContainingScene, OutOfWorld, Toaster,
 };
@@ -78,7 +79,6 @@ struct SnapshotResult {
     camera: Entity,
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn automatic_testing(
     mut commands: Commands,
     mut testing_data: ResMut<TestingData>,
@@ -388,6 +388,10 @@ fn automatic_testing(
         return;
     }
 
+    #[allow(
+        clippy::unwrap_used,
+        reason = "PrimaryUser is a mandatory singleton; a missing player is an engine bug"
+    )]
     let (player_ent, oow) = player.single().unwrap();
 
     if oow.is_some() {
@@ -410,6 +414,22 @@ fn automatic_testing(
         }
     };
 
+    // A scene that failed to load never sends a plan. Its allow_failures list can include "scene load".
+    let location = next_test_scene.location;
+    if test_scene_load_failed(location, &containing_scene, &loading) {
+        warn!("test scene @ {location:?} failed to load");
+        fails.push((
+            format!("[({},{}) : scene load]", location.x, location.y),
+            "the scene failed to load".to_owned(),
+            next_test_scene
+                .allow_failures
+                .iter()
+                .any(|f| f == "scene load"),
+        ));
+        testing_data.test_scenes.as_mut().unwrap().0.pop_front();
+        return;
+    }
+
     let Some(current_scene) = containing_scene.get(player_ent).into_iter().find(|scene| {
         scenes
             .get(*scene)
@@ -429,22 +449,6 @@ fn automatic_testing(
     };
     let context = scenes.get(current_scene).unwrap();
 
-    // A scene that failed to load never sends a plan: it fails by name (`scene load`, which its
-    // `allow_failures` may list, as a step's name) and the run goes on.
-    if matches!(loading.get(current_scene), Ok(SceneLoading::Failed)) {
-        warn!("test scene @ {:?} failed to load", context.base);
-        fails.push((
-            format!("[({},{}) : scene load]", context.base.x, context.base.y),
-            "the scene failed to load".to_owned(),
-            next_test_scene
-                .allow_failures
-                .iter()
-                .any(|f| f == "scene load"),
-        ));
-        testing_data.test_scenes.as_mut().unwrap().0.pop_front();
-        return;
-    }
-
     let Some(plan) = plans.get(&current_scene) else {
         warn!("waiting for plan for scene @ {:?}", context.base);
         return;
@@ -454,6 +458,17 @@ fn automatic_testing(
         info!("plan completed for scene @ {:?}", context.base);
         testing_data.test_scenes.as_mut().unwrap().0.pop_front();
     }
+}
+
+fn test_scene_load_failed(
+    location: IVec2,
+    containing_scene: &ContainingScene,
+    loading: &Query<&SceneLoading>,
+) -> bool {
+    // A parcel can resolve to a failed scene before its renderer context exists.
+    containing_scene
+        .get_parcel_position(parcel_to_vec3(location))
+        .is_some_and(|scene| matches!(loading.get(scene), Ok(SceneLoading::Failed)))
 }
 
 fn snapshot_rgb(image: &Image) -> Result<image::RgbImage, String> {
@@ -517,8 +532,47 @@ mod tests {
     use super::*;
     use bevy::{
         asset::RenderAssetUsages,
+        ecs::system::SystemState,
         render::render_resource::{Extent3d, TextureDimension},
     };
+
+    use crate::initialize_scene::{LiveScenes, PointerResult, PortableScenes, ScenePointers};
+
+    #[test]
+    fn detects_failure_only_at_the_target_parcel_without_a_renderer_context() {
+        let mut world = World::new();
+        let neighbor = IVec2::new(2, -3);
+        let target = IVec2::new(3, -3);
+        let failed_neighbor = world.spawn(SceneLoading::Failed).id();
+        let target_scene = world.spawn(SceneLoading::SceneEntity).id();
+        let mut pointers = ScenePointers::default();
+        pointers.set_realm(neighbor, target);
+        let mut live_scenes = LiveScenes::default();
+        for (location, hash, entity) in [
+            (neighbor, "neighbor", failed_neighbor),
+            (target, "target", target_scene),
+        ] {
+            pointers.insert(
+                location,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+            live_scenes.scenes.insert(hash.to_owned(), entity);
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live_scenes);
+        world.init_resource::<PortableScenes>();
+        let mut state = SystemState::<(ContainingScene, Query<&SceneLoading>)>::new(&mut world);
+
+        let (containing_scene, loading) = state.get(&world);
+        assert!(!test_scene_load_failed(target, &containing_scene, &loading));
+
+        world.entity_mut(target_scene).insert(SceneLoading::Failed);
+        let (containing_scene, loading) = state.get(&world);
+        assert!(test_scene_load_failed(target, &containing_scene, &loading));
+    }
 
     fn rgba(pixels: &[u8]) -> Image {
         Image::new(

@@ -371,8 +371,12 @@ impl Context {
             .get_or_init(|| Arc::new(crate::comms::topology::Topology::default()))
     }
 
-    /// Attaches the communities state (once).
+    /// Attaches the communities state (once), and the topology to it when
+    /// that is already attached ([`super::State::start_topology`] does it otherwise).
     pub fn set_communities(&self, communities: crate::communities::SharedState) {
+        if let Some(topology) = self.0.topology.get() {
+            communities.set_topology(topology.clone());
+        }
         let _ = self.0.communities.set(communities);
     }
 
@@ -807,11 +811,7 @@ mod tests {
     async fn presence_counts_sockets_per_address() {
         let ctx = Context::new(
             VoiceSettings::default(),
-            Db::new(
-                sqlx::postgres::PgPoolOptions::new()
-                    .connect_lazy("postgres://localhost/unused")
-                    .unwrap(),
-            ),
+            Db::new(crate::rpc::tests::closed_pool()),
             Profiles::new(None),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );
@@ -852,11 +852,7 @@ mod tests {
         let _recording = metrics::set_default_local_recorder(&recorder);
         let ctx = Context::new(
             VoiceSettings::default(),
-            Db::new(
-                sqlx::postgres::PgPoolOptions::new()
-                    .connect_lazy("postgres://localhost/unused")
-                    .unwrap(),
-            ),
+            Db::new(crate::rpc::tests::closed_pool()),
             Profiles::new(None),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );
@@ -936,11 +932,7 @@ mod tests {
         let _recording = metrics::set_default_local_recorder(&recorder);
         let ctx = Context::new(
             VoiceSettings::default(),
-            Db::new(
-                sqlx::postgres::PgPoolOptions::new()
-                    .connect_lazy("postgres://localhost/unused")
-                    .unwrap(),
-            ),
+            Db::new(crate::rpc::tests::closed_pool()),
             Profiles::new(None),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );

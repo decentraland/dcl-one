@@ -54,13 +54,16 @@ jobs:
           caches = [cache for page in pages for cache in page['actions_caches']
                     if type(cache.get('id')) is int]
           cache_ids, closed, snapshots, images = set(), {}, {}, {}
-          # The smoke snapshots and every rust-cache key, whose prefix ends with the platform.
+          # The smoke snapshots, every rust-cache key and the Explorer's native build caches,
+          # whose prefixes end with the platform, and the web target of an unoptimised build.
           # A flake hash inside a prefix folds away, so a flake update supersedes the entry.
           namespace = re.compile(r'^foundation-dev-v2-smoke-' + re.escape(repository)
                                  + r'-(Linux|macOS)-(X64|ARM64)-'
-                                 r'|^v0-rust-.+?-(Linux|Darwin|Windows_NT)-(x64|arm64)-')
+                                 r'|^v0-rust-.+?-(Linux|Darwin|Windows_NT)-(x64|arm64)-'
+                                 r'|^bevy-native-v1-[a-z]+-(Linux|macOS|Windows)-(X64|ARM64)-'
+                                 r'|^bevy-web-unopt-v1-(main|pr)-')
           image_namespace = re.compile(
-              r'images-v2-(main|pr-[1-9][0-9]*)-(catalyst|sites|apis)-(amd64|arm64)-[0-9a-f]{64}')
+              r'images-v2-(main|pr-[1-9][0-9]*)-(catalyst|sites|apis|sites-app|ui-gallery)-(amd64|arm64)-[0-9a-f]{64}')
           for cache in caches:
               cache_ref = cache.get('ref', '')
               if targeted:

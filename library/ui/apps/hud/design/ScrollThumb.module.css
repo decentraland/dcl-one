@@ -4,6 +4,11 @@
   bottom: 0;
   width: 14px;
   pointer-events: none;
+  touch-action: none;
+}
+/* Only while there is something to scroll: a track with a hidden pill takes no press. */
+.track[data-scrolls] {
+  pointer-events: auto;
 }
 .thumb {
   position: absolute;
@@ -29,4 +34,7 @@
 .x .thumb {
   width: auto;
   height: 14px;
+}
+.dark .thumb {
+  background: var(--scroll-thumb-dark);
 }

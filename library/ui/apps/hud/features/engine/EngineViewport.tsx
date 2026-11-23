@@ -6,17 +6,22 @@
 import { useLayoutEffect, useRef } from 'react'
 import { subscribeHudScale } from '@explorer-core/lib/hudScale'
 import styles from './EngineViewport.module.css'
+import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
 export function EngineViewport({
   region,
-  report
+  report,
+  focus
 }: {
-  region: 'map' | 'avatarPreview' | 'lobby'
+  region: EngineViewportRegion
   /** Stable callback (useCallback) — reports the rect (in CSS pixels) and the current
    *  `devicePixelRatio`, or null to clear. */
-  report: (region: 'map' | 'avatarPreview' | 'lobby', rect: Rect | null, dpr?: number) => void
+  report: (region: EngineViewportRegion, rect: Rect | null, dpr?: number, focus?: Rect) => void
+  /** An element whose box, inside the region, is where the engine frames its subject (the avatar
+   *  preview's avatar): reported with the rect. */
+  focus?: React.RefObject<HTMLElement | null>
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -25,9 +30,12 @@ export function EngineViewport({
     if (!el) return
     const push = (): void => {
       const r = el.getBoundingClientRect()
+      const rect = { x: r.left, y: r.top, width: r.width, height: r.height }
+      const f = focus?.current?.getBoundingClientRect()
       // Re-read the ratio on every push rather than once: dragging the window to a display with
       // a different density changes it.
-      report(region, { x: r.left, y: r.top, width: r.width, height: r.height }, window.devicePixelRatio)
+      if (f != null && f.height > 0) report(region, rect, window.devicePixelRatio, { x: f.left, y: f.top, width: f.width, height: f.height })
+      else report(region, rect, window.devicePixelRatio)
     }
     push()
     // The rect moves for two independent reasons, and each needs its own signal:
@@ -52,7 +60,7 @@ export function EngineViewport({
       window.removeEventListener('scroll', onScroll, true)
       report(region, null)
     }
-  }, [region, report])
+  }, [region, report, focus])
 
   return <div ref={ref} className={styles.viewport} aria-hidden="true" />
 }

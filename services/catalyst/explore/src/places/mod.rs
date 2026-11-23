@@ -42,7 +42,7 @@ use query::{
 pub use rows::{
     ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
 };
-use rows::{place_columns, row_to_place, viewer_columns};
+use rows::{WORLD_THUMBNAIL_JOIN, place_columns, place_image_url, row_to_place, viewer_columns};
 
 type CategoryCounts = Vec<(String, i64)>;
 type ParcelAliases = Arc<HashMap<String, String>>;
@@ -81,6 +81,7 @@ impl ListSource {
 pub struct PlacesComponent {
     pool: PgPool,
     content_origin: Option<ContentOrigin>,
+    asset_base: Option<String>,
     content_public_url: String,
     worlds_mirror_configured: bool,
     category_cache: TtlCache<CategoryCounts>,
@@ -90,10 +91,11 @@ pub struct PlacesComponent {
 
 impl PlacesComponent {
     /// Thumbnails from `content_public_url` are exempt from the internal-host image filter.
-    pub fn new(pool: PgPool, content_public_url: &str) -> Self {
+    pub fn new(pool: PgPool, content_public_url: &str, asset_base: Option<String>) -> Self {
         Self {
             pool,
             content_origin: ContentOrigin::parse(content_public_url),
+            asset_base,
             content_public_url: content_public_url.to_string(),
             worlds_mirror_configured: false,
             category_cache: Default::default(),
@@ -109,6 +111,10 @@ impl PlacesComponent {
 
     pub fn content_origin(&self) -> Option<&ContentOrigin> {
         self.content_origin.as_ref()
+    }
+
+    pub fn asset_base(&self) -> Option<&str> {
+        self.asset_base.as_deref()
     }
 
     /// Binds the signer to a page query; false means the page is known empty
@@ -256,7 +262,7 @@ impl PlacesComponent {
                 if r.try_get::<bool, _>("canonical_scene").unwrap_or(false) {
                     world_scenes::scene_row(r, self)
                 } else {
-                    Some(row_to_place(r, self.content_origin()))
+                    Some(row_to_place(r, self.content_origin(), self.asset_base()))
                 }
             })
             .collect();
@@ -374,7 +380,7 @@ impl PlacesComponent {
         viewer: Option<&str>,
     ) -> Result<Option<PlaceRow>, ApiError> {
         let sql = format!(
-            "SELECT {}{} FROM explore.place_indexed WHERE id = $1",
+            "SELECT {}, world_thumbnail_hash{} FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} WHERE id = $1",
             place_columns(),
             viewer.map(|_| viewer_columns(2)).unwrap_or_default()
         );
@@ -384,7 +390,7 @@ impl PlacesComponent {
         }
         Ok(q.fetch_optional(&self.pool)
             .await?
-            .map(|r| row_to_place(r, self.content_origin())))
+            .map(|r| row_to_place(r, self.content_origin(), self.asset_base())))
     }
 
     /// The places-table rows an id set names, as `POST /api/places` lists them
@@ -582,7 +588,7 @@ impl PlacesComponent {
         viewer: Option<&str>,
     ) -> Result<Option<PlaceRow>, ApiError> {
         let sql = format!(
-            "SELECT {}{} FROM explore.place_indexed \
+            "SELECT {}, world_thumbnail_hash{} FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} \
              WHERE world IS TRUE AND (id = $1 OR lower(world_name) = lower($1)) \
              ORDER BY (id = $1) DESC, {} DESC LIMIT 1",
             place_columns(),
@@ -596,7 +602,7 @@ impl PlacesComponent {
         let mut row = q
             .fetch_optional(&self.pool)
             .await?
-            .map(|r| row_to_place(r, self.content_origin()));
+            .map(|r| row_to_place(r, self.content_origin(), self.asset_base()));
         if let Some(row) = row.as_mut() {
             self.fill_world_place_fields(std::slice::from_mut(row))
                 .await?;
@@ -629,9 +635,10 @@ impl PlacesComponent {
         }
         let latest = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT ON (lower(world_name)) lower(world_name) AS name, \
-             raw->>'image' AS image, raw->>'contact_name' AS contact_name, \
+             raw->>'image' AS image, world_thumbnail_hash, \
+             raw->>'contact_name' AS contact_name, \
              raw->>'contact_email' AS contact_email, creator_address, raw->>'sdk' AS sdk, deployed_at \
-             FROM explore.place_indexed \
+             FROM explore.place_indexed {WORLD_THUMBNAIL_JOIN} \
              WHERE world IS TRUE AND id <> lower(world_name) AND lower(world_name) = ANY($1) \
              AND disabled IS FALSE{} \
              ORDER BY lower(world_name), deployed_at DESC NULLS LAST",
@@ -657,13 +664,15 @@ impl PlacesComponent {
             };
             let text = |col: &str| lp.try_get::<Option<String>, _>(col).unwrap_or(None);
             if row.image.is_none() {
-                row.image = crate::sanitize::sanitize_image_url(
+                row.image = place_image_url(
                     text("image").as_deref(),
                     self.content_origin(),
+                    self.asset_base(),
+                    text("world_thumbnail_hash").as_deref(),
                 );
             }
             if row.contact_name.is_none() {
-                row.contact_name = text("contact_name");
+                row.contact_name = crate::sanitize::strip_all_markup_opt(text("contact_name"));
             }
             if row.contact_email.is_none() {
                 row.contact_email = text("contact_email");
@@ -833,9 +842,10 @@ fn list_sql_from(
                 ORDER BY {order_clause}
                 LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {cols}{rank_col}{viewer_cols}{total}
+            SELECT {cols}, world_thumbnail_hash{rank_col}{viewer_cols}{total}
             FROM explore.place_indexed{indexed_join}
             JOIN page USING (id)
+            {WORLD_THUMBNAIL_JOIN}
             ORDER BY {order_clause}
             "#,
             cols = place_columns(),
@@ -866,9 +876,10 @@ fn list_sql_from(
                 ORDER BY {order_clause}
                 LIMIT ${limit} OFFSET ${offset}
             )
-            SELECT {projection}{cols}{rank_col}{viewer_cols}{total}
+            SELECT {projection}{cols}, world_thumbnail_hash{rank_col}{viewer_cols}{total}
             FROM {relation}{recount_join}
             JOIN page USING (id)
+            {WORLD_THUMBNAIL_JOIN}
             ORDER BY {order_clause}
             "#,
             cols = place_columns(),
@@ -1137,4 +1148,49 @@ mod list_sql_tests {
     }
 }
 
-pub mod removed;
+#[cfg(test)]
+mod world_fallback_tests {
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn the_world_contact_fallback_carries_no_rich_text_tags() {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+            return;
+        };
+        let world = format!(
+            "fb{}.dcl.eth",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
+        sqlx::query("INSERT INTO explore.place (id, base_position, title, raw) VALUES ($1, '0,0', 'Scene', $2)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(json!({ "world": true, "world_name": world, "contact_name": "<size=200>Builder</size>", "image": "https://worlds-content-server.decentraland.org/contents/fallback" }))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = crate::ExploreState::new(
+            pool,
+            crate::Settings {
+                asset_rewrite_base: Some("https://node.example".into()),
+                ..crate::Settings::for_tests()
+            },
+            None,
+        );
+        let mut row = super::rows::sample_row();
+        row.id = world.clone();
+        row.world = true;
+        row.scene_place = false;
+        row.world_name = Some(world.clone());
+        row.contact_name = None;
+        assert!(row.is_world_catalogue_row());
+        state
+            .places
+            .fill_world_place_fields(std::slice::from_mut(&mut row))
+            .await
+            .unwrap();
+        assert_eq!(row.contact_name.as_deref(), Some("Builder"));
+        assert_eq!(
+            row.image.as_deref(),
+            Some("https://node.example/worlds-content-server/contents/fallback")
+        );
+    }
+}

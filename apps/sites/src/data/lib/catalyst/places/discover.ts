@@ -1,5 +1,6 @@
 import { infiniteQueryOptions, queryOptions, type DehydratedState } from "@tanstack/react-query";
 import { z } from "zod";
+import { REMOTE_FLAG, type RemoteFlag } from "@shop/discovery/lib/rolloutFlags";
 
 import type { AuthIdentity } from "../../auth/types";
 import { profileFaceUrl } from "../../auth/profile-face-url";
@@ -87,7 +88,7 @@ export const browsePlacesQuery = (filters: BrowseFilters) =>
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) =>
       fetchDestinations(
-        { limit: BROWSE_LIMIT, offset: pageParam || undefined, search: filters.search || undefined, ...categoryParams(filters.category) },
+        { limit: BROWSE_LIMIT, offset: pageParam, search: filters.search || undefined, ...categoryParams(filters.category) },
         { signal },
       ),
     getNextPageParam: (last, _pages, offset) => nextBrowseOffset(last, offset),
@@ -98,7 +99,7 @@ export const liveFeedQuery = () =>
   queryOptions({
     queryKey: placesKeys.live(),
     staleTime: PLACES_STALE_MS,
-    queryFn: ({ signal }) => fetchDestinations({ limit: LIVE_FEED_LIMIT }, { signal }),
+    queryFn: ({ signal }) => fetchDestinations({ limit: LIVE_FEED_LIMIT, offset: 0 }, { signal }),
   });
 
 /** The member's saved places, signed as them; the key names only their account. */
@@ -118,8 +119,24 @@ export const myPlacesQuery = (identity: AuthIdentity) =>
       fetchDestinations({ owner: identity.signer.toLowerCase(), limit: MEMBER_LIMIT, order_by: undefined }, { identity, signal }),
   });
 
+/**
+ * Live Now's head count from the `dapps-places-live-min-user` variant, as production reads it (sites discover.flags.ts
+ * useLiveMinUsers): the payload trimmed, and only a plain non-negative integer counts. Anything else is 0, so the rail
+ * always shows the most active scenes (Genesis Plaza first on a quiet node) instead of an empty section.
+ */
+export function liveMinUsers(variant: string | null | undefined): number {
+  const raw = variant?.trim();
+  return raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : 0;
+}
+
+/** Live Now's head count from a flags reading: the variant counts only while its flag is on. */
+export function liveMinUsersFrom(on: (flag: RemoteFlag) => boolean, variant: (flag: RemoteFlag) => string | null): number {
+  const flag = REMOTE_FLAG.placesLiveMinUsers;
+  return on(flag) ? liveMinUsers(variant(flag)) : 0;
+}
+
 /** The four busiest scenes with at least `minUsers` people, from the live feed. */
-export function selectLiveRail(rows: readonly Destination[], minUsers = 1): Destination[] {
+export function selectLiveRail(rows: readonly Destination[], minUsers = 0): Destination[] {
   return rows
     .filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) >= minUsers)
     .sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0))
@@ -149,7 +166,8 @@ export function placeCreatorAddress(place: Pick<Destination, "creator_address" |
   return undefined;
 }
 
-export type PlaceCreatorProfile = { name: string; avatarUrl?: string };
+/** `claimed` tells the display name (`name#1234` otherwise), which decides the avatar's background colour (ADR-292). */
+export type PlaceCreatorProfile = { name: string; avatarUrl?: string; claimed?: boolean };
 
 const ProfilesEnvelope = z.array(
   z
@@ -159,6 +177,7 @@ const ProfilesEnvelope = z.array(
           .object({
             ethAddress: z.string(),
             name: z.string().optional(),
+            hasClaimedName: z.boolean().optional(),
             avatar: z
               .object({ snapshots: z.object({ face256: z.string().optional() }).passthrough().optional() })
               .passthrough()
@@ -189,7 +208,11 @@ export async function fetchPlaceCreators(addresses: readonly string[], signal?: 
     const avatar = entry.avatars[0];
     if (!avatar) continue;
     const face = profileFaceUrl(avatar.avatar?.snapshots?.face256);
-    out[avatar.ethAddress.toLowerCase()] = { name: avatar.name ?? "", ...(face ? { avatarUrl: face } : {}) };
+    out[avatar.ethAddress.toLowerCase()] = {
+      name: avatar.name ?? "",
+      ...(face ? { avatarUrl: face } : {}),
+      ...(avatar.hasClaimedName ? { claimed: true } : {}),
+    };
   }
   return out;
 }

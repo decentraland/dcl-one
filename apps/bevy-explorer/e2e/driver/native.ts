@@ -4,6 +4,7 @@
 // 15702 by default). Both methods need that token.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:net'
 import { type Console, ConsoleError, normalizeLine, redactLine } from './console.ts'
 import { sleep, until } from './wait.ts'
 
@@ -129,12 +130,28 @@ export interface SpawnNativeOptions {
   startTimeoutMs?: number
 }
 
+/** A loopback port nothing listens on right now. */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  const port = await new Promise<number>((resolve, reject) => {
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      resolve(typeof address === 'object' && address ? address.port : 0)
+    })
+  })
+  await new Promise<void>((resolve) => probe.close(() => resolve()))
+  return port
+}
+
 /** Start the standalone with its loopback console on (`--automation-token`, `--automation-port`)
- *  and return a console on it. The client's stdout and stderr are inherited; pass `--log-file` in
- *  `args` for the run's log. A client that cannot start, exits, or never answers within
- *  `startTimeoutMs` is an error, and the child is gone by then. */
+ *  and return a console on it. Without `port`, the client gets a free one: a run opens one client
+ *  per session (realm, position, sign-in), and clients on one port would answer for each other.
+ *  The client's stdout and stderr are inherited; pass `--log-file` in `args` for the run's log. A
+ *  client that cannot start, exits, or never answers within `startTimeoutMs` is an error, and the
+ *  child is gone by then. */
 export async function spawnNative(options: SpawnNativeOptions): Promise<NativeConsole> {
-  const port = options.port ?? DEFAULT_AUTOMATION_PORT
+  const port = options.port ?? (await freePort())
   const token = options.token ?? randomBytes(16).toString('hex')
   const child = spawn(options.bin, [...options.args, '--automation-token', token, '--automation-port', String(port)], {
     cwd: options.cwd,

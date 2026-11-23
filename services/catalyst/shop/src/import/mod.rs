@@ -26,12 +26,12 @@
 //! whole-credit rounding up (`types::UsdCents::credits_ceil`); the rate is
 //! the `economy.price_snapshots` decimal text read exactly, no float.
 
+use crate::shared::routing::post;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::{PgPool, Row};
@@ -443,11 +443,9 @@ pub async fn current_rate(pool: &PgPool) -> Result<Option<(ManaUsdRate, i64)>, A
             .ok()
             .map(|shop| (shop.rate, shop.updated_at.timestamp())));
     }
-    let row: Option<(String, chrono::NaiveDateTime)> =
-        sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1").fetch_optional(pool).await?;
+    let row = crate::mana::quote::newest_spot(pool).await?;
     Ok(row.and_then(|(text, taken_at)| {
-        ManaUsdRate::parse_usd_per_mana(text.trim())
-            .map(|rate| (rate, taken_at.and_utc().timestamp()))
+        ManaUsdRate::parse_usd_per_mana(&text).map(|rate| (rate, taken_at))
     }))
 }
 

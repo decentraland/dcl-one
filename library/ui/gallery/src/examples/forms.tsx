@@ -1,0 +1,346 @@
+import { useState, type ReactNode } from 'react'
+import {
+  Checkbox,
+  CheckboxLabel,
+  Dropdown,
+  GeneralSearch,
+  InputExplorerNames,
+  InputWebCreatorTools,
+  SearchBar,
+  Switch,
+  WebSelect,
+  WebTextarea,
+  type InputWebCreatorToolsProps
+} from '@dcl/one-ui'
+import type { GalleryEntry } from '../registry'
+import layout from './layout.module.css'
+
+function SearchBarDemo({ initial }: { initial: string }) {
+  const [value, setValue] = useState(initial)
+  return (
+    <div className={layout.field}>
+      <SearchBar
+        label="Search places"
+        placeholder="Search places"
+        value={value}
+        onValueChange={setValue}
+        onClear={() => setValue('')}
+        clearLabel="Clear search"
+      />
+    </div>
+  )
+}
+
+const networks = [
+  { value: 'ethereum', label: 'Ethereum' },
+  { value: 'polygon', label: 'Polygon' },
+  { value: 'testnet', label: 'Testnet', disabled: true }
+] as const
+type Network = (typeof networks)[number]['value']
+
+function SingleDropdownDemo({ initial }: { initial: Network | null }) {
+  const [value, setValue] = useState<Network | null>(initial)
+  return (
+    <div className={layout.field}>
+      <Dropdown
+        label="Network"
+        placeholder="Choose a network"
+        options={networks}
+        value={value}
+        onChange={setValue}
+        help="Where the purchase is paid."
+      />
+    </div>
+  )
+}
+
+function MultipleDropdownDemo() {
+  const [value, setValue] = useState<Network[]>(['polygon'])
+  return (
+    <div className={layout.field}>
+      <Dropdown
+        label="Networks"
+        multiple
+        options={networks}
+        value={value}
+        onChange={setValue}
+        valueText={(chosen) => `${chosen.length} selected`}
+      />
+    </div>
+  )
+}
+
+type InputComponent = (props: InputWebCreatorToolsProps) => ReactNode
+
+// Both input surfaces take the same props; only their look differs.
+function inputExamples(Input: InputComponent): GalleryEntry['examples'] {
+  return [
+    {
+      id: 'states',
+      title: 'Empty, filled and disabled',
+      render: () => (
+        <div className={layout.stack}>
+          <div className={layout.field}>
+            <Input label="Scene name" placeholder="My scene" />
+          </div>
+          <div className={layout.field}>
+            <Input label="Scene name" defaultValue="Genesis Plaza" />
+          </div>
+          <div className={layout.field}>
+            <Input label="Scene name" defaultValue="Read only" disabled />
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'details',
+      title: 'Hint, description, counter and suffix',
+      render: () => (
+        <div className={layout.stack}>
+          <div className={layout.field}>
+            <Input
+              label="Display name"
+              defaultValue="Ada"
+              hint="Optional"
+              description="Shown to other players."
+              counter="3/15"
+            />
+          </div>
+          <div className={layout.field}>
+            <Input label="Price" defaultValue="12" suffix="MANA" />
+          </div>
+        </div>
+      )
+    },
+    {
+      id: 'error',
+      title: 'Error, icons and password reveal',
+      render: () => (
+        <div className={layout.stack}>
+          <div className={layout.field}>
+            <Input label="Email" defaultValue="ada@" error="Enter a valid email address." />
+          </div>
+          <div className={layout.field}>
+            <Input
+              label="Search"
+              placeholder="Search"
+              leadingIcon={<GeneralSearch size={20} aria-hidden="true" />}
+            />
+          </div>
+          <div className={layout.field}>
+            <Input
+              label="Password"
+              type="password"
+              defaultValue="not-a-secret"
+              allowPasswordReveal
+            />
+          </div>
+        </div>
+      )
+    }
+  ]
+}
+
+export const formEntries: GalleryEntry[] = [
+  {
+    name: 'Checkbox',
+    group: 'Forms',
+    summary: 'The bare checkbox control; it needs an accessible name.',
+    components: ['Checkbox'],
+    examples: [
+      {
+        id: 'sizes',
+        title: 'Sizes and variants',
+        render: () => (
+          <div className={layout.stack}>
+            {(['outline', 'filled'] as const).map((variant) => (
+              <div key={variant} className={layout.row}>
+                {(['sm', 'md', 'lg'] as const).map((size) => (
+                  <Checkbox
+                    key={size}
+                    aria-label={`${variant} ${size}`}
+                    variant={variant}
+                    size={size}
+                    defaultChecked={size !== 'sm'}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        )
+      },
+      {
+        id: 'states',
+        title: 'Unchecked, checked, mixed and disabled',
+        render: () => (
+          <div className={layout.row}>
+            <Checkbox aria-label="Unchecked" />
+            <Checkbox aria-label="Checked" defaultChecked />
+            <Checkbox aria-label="Mixed" indeterminate />
+            <Checkbox aria-label="Disabled" disabled />
+            <Checkbox aria-label="Disabled checked" disabled defaultChecked />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'CheckboxLabel',
+    group: 'Forms',
+    summary: 'A checkbox with its visible label and optional help.',
+    components: ['CheckboxLabel'],
+    examples: [
+      {
+        id: 'positions',
+        title: 'Label after and before the box',
+        render: () => (
+          <div className={layout.stack}>
+            <CheckboxLabel label="Remember me" defaultChecked />
+            <CheckboxLabel label="Label first" labelPosition="start" />
+            <CheckboxLabel label="Disabled" disabled />
+          </div>
+        )
+      },
+      {
+        id: 'help',
+        title: 'With help text',
+        render: () => (
+          <CheckboxLabel
+            label="Share my location"
+            help="Friends see the parcel you are in."
+            helpLabel="About location sharing"
+          />
+        )
+      }
+    ]
+  },
+  {
+    name: 'Switch',
+    group: 'Forms',
+    summary: 'An on/off switch with its label.',
+    components: ['Switch'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Off, on, disabled and hidden label',
+        render: () => (
+          <div className={layout.stack}>
+            <Switch label="Notifications" />
+            <Switch label="Background music" defaultChecked />
+            <Switch label="Unavailable" disabled />
+            <Switch label="Voice chat" labelHidden defaultChecked />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'InputExplorerNames',
+    group: 'Forms',
+    summary: 'The text field on the Explorer surface.',
+    components: ['InputExplorerNames'],
+    examples: inputExamples(InputExplorerNames)
+  },
+  {
+    name: 'InputWebCreatorTools',
+    group: 'Forms',
+    summary: 'The text field on the web surface.',
+    components: ['InputWebCreatorTools'],
+    examples: inputExamples(InputWebCreatorTools)
+  },
+  {
+    name: 'WebSelect',
+    group: 'Forms',
+    summary: 'The native select styled for the web surface.',
+    components: ['WebSelect'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Enabled and disabled',
+        render: () => (
+          <div className={layout.stack}>
+            <WebSelect aria-label="Network" defaultValue="polygon">
+              <option value="ethereum">Ethereum</option>
+              <option value="polygon">Polygon</option>
+            </WebSelect>
+            <WebSelect aria-label="Network (disabled)" disabled defaultValue="ethereum">
+              <option value="ethereum">Ethereum</option>
+            </WebSelect>
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'WebTextarea',
+    group: 'Forms',
+    summary: 'The native textarea styled for the web surface.',
+    components: ['WebTextarea'],
+    examples: [
+      {
+        id: 'states',
+        title: 'Empty, filled and disabled',
+        render: () => (
+          <div className={layout.stack}>
+            <WebTextarea aria-label="Description" placeholder="Describe your scene" rows={3} />
+            <WebTextarea
+              aria-label="Description (filled)"
+              defaultValue="A plaza with a stage and a gallery."
+              rows={3}
+            />
+            <WebTextarea aria-label="Description (disabled)" disabled rows={2} />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'Dropdown',
+    group: 'Forms',
+    summary: 'A single or multiple choice list with its label and optional help.',
+    components: ['Dropdown'],
+    minHeight: 420,
+    examples: [
+      {
+        id: 'empty',
+        title: 'Single, nothing chosen',
+        render: () => <SingleDropdownDemo initial={null} />
+      },
+      {
+        id: 'chosen',
+        title: 'Single, chosen',
+        render: () => <SingleDropdownDemo initial="ethereum" />
+      },
+      { id: 'multiple', title: 'Multiple', render: () => <MultipleDropdownDemo /> },
+      {
+        id: 'disabled',
+        title: 'Disabled',
+        render: () => (
+          <div className={layout.field}>
+            <Dropdown
+              label="Network"
+              options={networks}
+              value={null}
+              onChange={() => {}}
+              disabled
+            />
+          </div>
+        )
+      }
+    ]
+  },
+  {
+    name: 'SearchBar',
+    group: 'Forms',
+    summary: 'A controlled search field with an optional clear button.',
+    components: ['SearchBar'],
+    examples: [
+      { id: 'empty', title: 'Empty', render: () => <SearchBarDemo initial="" /> },
+      {
+        id: 'value',
+        title: 'With a value and the clear button',
+        render: () => <SearchBarDemo initial="Genesis" />
+      }
+    ]
+  }
+]

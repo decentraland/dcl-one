@@ -3,17 +3,13 @@ use std::{
     time::Duration,
 };
 
+use crate::{default_color_grading, scatter_bloom};
 use anyhow::anyhow;
-use bevy::log::warn;
+use bevy::log::{error, warn};
 use bevy::{
-    core_pipeline::{
-        bloom::Bloom,
-        prepass::{DepthPrepass, NormalPrepass},
-        tonemapping::{DebandDither, Tonemapping},
-    },
+    core_pipeline::tonemapping::{DebandDither, Tonemapping},
     ecs::bundle::Bundle,
     pbr::ShadowFilteringMethod,
-    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
 };
 
 use futures_util::{
@@ -156,9 +152,15 @@ pub fn compat<F>(f: F) -> F {
 pub fn project_directories() -> Option<directories::ProjectDirs> {
     None
 }
-pub fn write_config_file<T: Serialize + Clone + 'static>(config: &T) {
+pub fn write_config_file<T: Serialize>(config: &T) {
     use futures_lite::io::AsyncWriteExt;
-    let config = config.clone();
+    let json = match serde_json::to_string(config) {
+        Ok(json) => json,
+        Err(e) => {
+            error!("couldn't serialize config file: {e:?}");
+            return;
+        }
+    };
 
     // Systems may run on a compute worker; the io pool drives this on the engine worker's event loop.
     bevy::tasks::IoTaskPool::get()
@@ -171,10 +173,7 @@ pub fn write_config_file<T: Serialize + Clone + 'static>(config: &T) {
                 }
             };
 
-            if let Err(e) = f
-                .write_all(serde_json::to_string(&config).unwrap().as_bytes())
-                .await
-            {
+            if let Err(e) = f.write_all(json.as_bytes()).await {
                 warn!("couldn't write config file: {e:?}");
             }
         })
@@ -255,34 +254,9 @@ pub fn default_camera_components() -> impl Bundle {
     (
         Tonemapping::AcesFitted,
         DebandDither::Enabled,
-        ColorGrading {
-            // ACES tonemapping with slightly deepened midtones; tune live with
-            // /tonemap /exposure /gamma /saturation
-            global: ColorGradingGlobal {
-                exposure: 0.0,
-                ..Default::default()
-            },
-            shadows: ColorGradingSection {
-                gamma: 0.9,
-                ..Default::default()
-            },
-            midtones: ColorGradingSection {
-                gamma: 0.9,
-                ..Default::default()
-            },
-            highlights: ColorGradingSection {
-                gamma: 0.9,
-                ..Default::default()
-            },
-        },
-        Bloom {
-            // tune live with /bloom
-            intensity: 0.15,
-            ..Bloom::OLD_SCHOOL
-        },
+        default_color_grading(),
+        scatter_bloom(),
         ShadowFilteringMethod::Gaussian,
-        DepthPrepass,
-        NormalPrepass,
     )
 }
 

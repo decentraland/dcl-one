@@ -3,12 +3,16 @@ use bevy::{
     prelude::*,
     render::render_resource::Extent3d,
 };
+#[cfg(target_arch = "wasm32")]
+use common::structs::AudioSettings;
 use common::{debug_panic, util::AsH160};
 use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
     AudioTransmitterVolume, TransmissionImageResized, TransmitterKind,
 };
+#[cfg(target_arch = "wasm32")]
+use media::VideoData;
 #[cfg(not(target_arch = "wasm32"))]
 use {
     bevy::ecs::world::OnDespawn,
@@ -19,8 +23,6 @@ use {
     },
     tokio::sync::{mpsc, oneshot},
 };
-#[cfg(target_arch = "wasm32")]
-use {common::structs::AudioSettings, media::VideoData};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::livekit::{
@@ -36,6 +38,8 @@ use crate::livekit::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::voice_chat::VoiceRoom;
+#[cfg(target_arch = "wasm32")]
+use crate::voice_chat::VoiceRoomTrack;
 use crate::{
     global_crdt::{PlayerMessage, PlayerUpdate},
     livekit::{
@@ -76,6 +80,8 @@ impl Plugin for LivekitTrackPlugin {
         }
         #[cfg(not(target_arch = "wasm32"))]
         app.add_observer(audio_track_unpublished);
+        #[cfg(not(target_arch = "wasm32"))]
+        app.add_observer(audio_track_unsubscribed);
         app.add_observer(video_track_is_now_subscribed);
         #[cfg(target_arch = "wasm32")]
         app.add_observer(video_track_is_now_unsubscribed);
@@ -199,6 +205,10 @@ fn track_published(
         let Some(sender) = transport_senders.get(room_entity) else {
             return;
         };
+        #[cfg(target_arch = "wasm32")]
+        if track.source() == TrackSource::Microphone {
+            entity_cmd.try_insert(ProximityMicrophone);
+        }
         let task = livekit_runtime.spawn(async move {
             sender
                 .send(
@@ -351,7 +361,9 @@ fn track_unsubscribed(
 fn subscribe_to_audio_track(
     mut trigger: Trigger<SubscribeToAudioTrack>,
     mut commands: Commands,
-    tracks: Query<&LivekitTrack, With<Audio>>,
+    tracks: Query<(&LivekitTrack, &PublishedBy), With<Audio>>,
+    participants: Query<&HostedBy>,
+    data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -366,13 +378,19 @@ fn subscribe_to_audio_track(
         );
         return;
     }
-    let Ok(track) = tracks.get(entity) else {
+    let Ok((track, publisher)) = tracks.get(entity) else {
         error!(
             "Can't subscribe to audio track {} because it is not a track.",
             entity
         );
         return;
     };
+    if participants
+        .get(publisher.get())
+        .is_ok_and(|room| data_only_rooms.contains(room.get()))
+    {
+        return;
+    }
 
     debug!("Subscribing to audio track {}", track.sid());
     let track = track.clone();
@@ -398,7 +416,9 @@ fn subscribe_to_audio_track(
 fn subscribe_to_track(
     trigger: Trigger<SubscribeToTrack>,
     mut commands: Commands,
-    tracks: Query<(&LivekitTrack, AnyOf<(&Audio, &Video)>)>,
+    tracks: Query<(&LivekitTrack, &PublishedBy, AnyOf<(&Audio, &Video)>)>,
+    participants: Query<&HostedBy>,
+    data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -407,10 +427,16 @@ fn subscribe_to_track(
         error!("SubscribeToTrack is an entity event. Call it with 'Commands::trigger_targets'.");
         return;
     }
-    let Ok((track, audio_or_video)) = tracks.get(entity) else {
+    let Ok((track, publisher, audio_or_video)) = tracks.get(entity) else {
         error!("Can't subscribe to {} because it is not a track.", entity);
         return;
     };
+    if participants
+        .get(publisher.get())
+        .is_ok_and(|room| data_only_rooms.contains(room.get()))
+    {
+        return;
+    }
 
     let track = track.clone();
 
@@ -454,7 +480,6 @@ fn unsubscribe_to_track(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn subscribed_audio_track_with_open_sender(
     mut commands: Commands,
     mut tracks: Populated<
@@ -483,7 +508,6 @@ fn subscribed_audio_track_with_open_sender(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(clippy::type_complexity, reason = "Queries are complex")]
 fn audio_track_is_now_subscribed(
     trigger: Trigger<OnAdd, Subscribed>,
     mut commands: Commands,
@@ -493,6 +517,7 @@ fn audio_track_is_now_subscribed(
             Has<Audio>,
             Has<AudioStreamingHandle>,
             Has<OpenAudioSender>,
+            Option<&AudioTransmitterVolume>,
         ),
         With<Subscribed>,
     >,
@@ -502,7 +527,7 @@ fn audio_track_is_now_subscribed(
     mut livekit_audio_manager: ResMut<LivekitAudioManager>,
 ) {
     let entity = trigger.target();
-    let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender)) =
+    let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender, multiplier)) =
         tracks.get(entity)
     else {
         debug_panic!("Subscribed track did not have LivekitTrack.");
@@ -538,7 +563,9 @@ fn audio_track_is_now_subscribed(
     } else {
         (&livekit_audio_manager.scene_track).into()
     };
-    let sound = StreamingSoundData::from_decoder(decoder).output_destination(destination);
+    let sound = StreamingSoundData::from_decoder(decoder)
+        .output_destination(destination)
+        .volume(super::transmitter_volume(multiplier.map(|volume| **volume)) as f64);
     let Ok(handle) = livekit_audio_manager.play(sound) else {
         error!("Failed to play track audio in LivekitAudioManager.");
         return;
@@ -547,6 +574,20 @@ fn audio_track_is_now_subscribed(
     commands
         .entity(entity)
         .try_insert(AudioStreamingHandle { handle });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn audio_track_unsubscribed(
+    trigger: Trigger<OnRemove, Subscribed>,
+    mut commands: Commands,
+    mut tracks: Query<&mut AudioStreamingHandle>,
+) {
+    if let Ok(mut handle) = tracks.get_mut(trigger.target()) {
+        handle.stop(Default::default());
+        commands
+            .entity(trigger.target())
+            .try_remove::<AudioStreamingHandle>();
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -606,7 +647,6 @@ fn video_track_is_now_subscribed(
 }
 
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::type_complexity)]
 fn video_track_is_now_subscribed(
     trigger: Trigger<OnAdd, Subscribed>,
     mut commands: Commands,
@@ -808,25 +848,108 @@ fn on_active_audio_transmitter_remove(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn update_track_volume(tracks: Populated<(&mut AudioStreamingHandle, &AudioTransmitterVolume)>) {
+fn update_track_volume(
+    tracks: Populated<(
+        &mut AudioStreamingHandle,
+        Option<&AudioTransmitterVolume>,
+        Has<Subscribed>,
+    )>,
+) {
     use kira::tween::Tween;
-    for (mut audio_streaming_handle, audio_transmitter_volume) in tracks.into_inner() {
+    for (mut audio_streaming_handle, multiplier, subscribed) in tracks.into_inner() {
+        let volume = if subscribed {
+            super::transmitter_volume(multiplier.map(|volume| **volume))
+        } else {
+            0.0
+        };
         audio_streaming_handle
             .handle
-            .set_volume(**audio_transmitter_volume as f64, Tween::default());
+            .set_volume(volume as f64, Tween::default());
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-#[expect(clippy::type_complexity)]
+#[derive(Component)]
+pub(in crate::livekit) struct ProximityMicrophone;
+
+#[cfg(target_arch = "wasm32")]
 fn update_track_volume(
-    tracks: Populated<(&LivekitTrack, &AudioTransmitterVolume), (With<Audio>, With<Subscribed>)>,
+    tracks: Populated<
+        (
+            &LivekitTrack,
+            Option<&AudioTransmitterVolume>,
+            Has<ProximityMicrophone>,
+            Has<VoiceRoomTrack>,
+        ),
+        (With<Audio>, With<Subscribed>),
+    >,
     audio_settings: Res<AudioSettings>,
 ) {
-    for (livekit_track, audio_transmitter_volume) in tracks.into_inner() {
+    for (livekit_track, multiplier, proximity_microphone, voice_room) in tracks.into_inner() {
+        let Some(volume) = scene_track_volume(
+            proximity_microphone,
+            voice_room,
+            multiplier.map(|volume| **volume),
+            audio_settings.scene(),
+        ) else {
+            continue;
+        };
         let Some(RemoteTrack::Audio(audio)) = livekit_track.track() else {
             debug_panic!("A subscribed audio track did not have an audio RemoteTrack.");
         };
-        audio.set_volume(**audio_transmitter_volume * audio_settings.scene());
+        audio.set_volume(volume);
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn scene_track_volume(
+    proximity_microphone: bool,
+    voice_room: bool,
+    multiplier: Option<f32>,
+    scene_volume: f32,
+) -> Option<f32> {
+    // Nearby and call microphone gains are owned by their respective panning systems.
+    if proximity_microphone || voice_room {
+        return None;
+    }
+    Some(super::finite_gain(
+        super::transmitter_volume(multiplier) * scene_volume,
+    ))
+}
+
+#[cfg(test)]
+mod browser_volume_tests {
+    use super::*;
+
+    #[test]
+    fn proximity_microphone_gain_is_never_written_by_the_scene_volume_system() {
+        assert_eq!(scene_track_volume(true, false, None, 0.5), None);
+        assert_eq!(scene_track_volume(true, false, Some(0.25), 0.5), None);
+        assert_eq!(
+            scene_track_volume(false, false, Some(0.25), 0.5),
+            Some(0.125)
+        );
+    }
+
+    #[test]
+    fn scene_volume_is_finite_and_within_unit_range() {
+        assert_eq!(scene_track_volume(false, false, Some(4.0), 0.5), Some(0.5));
+        assert_eq!(scene_track_volume(false, false, Some(-1.0), 0.5), Some(0.0));
+        assert_eq!(
+            scene_track_volume(false, false, Some(f32::NAN), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(
+            scene_track_volume(false, false, Some(f32::INFINITY), 0.5),
+            Some(0.0)
+        );
+        assert_eq!(scene_track_volume(false, false, None, f32::NAN), Some(0.0));
+        assert_eq!(scene_track_volume(false, false, None, 2.0), Some(1.0));
+    }
+
+    #[test]
+    fn call_microphone_gain_is_never_written_by_the_scene_volume_system() {
+        assert_eq!(scene_track_volume(false, true, None, 0.5), None);
+        assert_eq!(scene_track_volume(false, true, Some(0.25), 0.0), None);
     }
 }

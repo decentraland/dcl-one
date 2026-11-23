@@ -1,47 +1,78 @@
-import { spawn } from 'node:child_process'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { createReadStream, existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { extname, join, normalize } from 'node:path'
+import { extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
+import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_SOURCES, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
-// default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
+// default systemScene in dev, with scene hot-reload) alongside vite, so `pnpm run dev` is the ONE
 // command. If :8100 is already serving (your own terminal, or Playwright's webServer), leave it
-// alone. The child is killed with the dev server (detached group so sdk-commands' own children
-// don't survive as orphans). BRIDGE_SCENE_PREVIEW=0 disables the auto-start entirely — Playwright
+// alone. The child outlives vite's restarts and is stopped when the dev server's process ends, with
+// sdk-commands' own children (a detached group on POSIX, taskkill's tree on Windows), so none
+// survive as orphans. BRIDGE_SCENE_PREVIEW=0 disables the auto-start entirely — Playwright
 // sets it because it runs :8100 as its own webServer, and a child spawned from here would outlive
 // its SIGKILL of the vite process group (own group, inherited stdio) and hang the test run's exit.
 function bridgeScenePreview(): Plugin {
   return {
     name: 'bridge-scene-preview',
     apply: 'serve',
-    configureServer(server) {
+    configureServer() {
       if (process.env.BRIDGE_SCENE_PREVIEW === '0') return
       const probe = createConnection({ port: 8100, host: '127.0.0.1' })
       probe.once('connect', () => probe.destroy()) // already running — reuse it
       probe.once('error', () => {
         console.log('[bridge-scene] starting live preview on :8100')
-        // --no-install: only run the locally-installed @dcl/sdk-commands bin. Without it, a stale
-        // bridge-scene/node_modules makes npx fetch the UNRELATED registry package "sdk-commands".
-        const child = spawn('npx', ['--no-install', 'sdk-commands', 'start', '--no-client', '--port', '8100'], {
-          cwd: fileURLToPath(new URL('./bridge-scene', import.meta.url)),
+        // Run the locally-installed @dcl/sdk-commands bin with this node, not through npx: npx would
+        // fetch the UNRELATED registry package "sdk-commands" when bridge-scene/node_modules is stale,
+        // and on Windows npx is npx.cmd, which Node starts only through a shell.
+        const cwd = fileURLToPath(new URL('./bridge-scene', import.meta.url))
+        // A throw here would stop vite: this runs in the probe's error handler.
+        const pkgDir = join(cwd, 'node_modules/@dcl/sdk-commands')
+        let script: string
+        try {
+          const { bin } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as {
+            bin?: string | Record<string, string>
+          }
+          const path = typeof bin === 'string' ? bin : bin?.['sdk-commands']
+          if (!path) throw new Error('package.json names no sdk-commands bin')
+          script = join(pkgDir, path)
+        } catch (error) {
+          console.warn(`[bridge-scene] cannot start @dcl/sdk-commands (run pnpm install in react-web/bridge-scene): ${error}`)
+          return
+        }
+        // Windows has no process group to signal, so the tree is stopped with taskkill.
+        const windows = process.platform === 'win32'
+        const child = spawn(process.execPath, [script, 'start', '--no-client', '--port', '8100'], {
+          cwd,
           stdio: ['ignore', 'inherit', 'inherit'],
-          detached: true
+          detached: !windows
         })
+        // Runs at process exit, not at the server's close: a restart (an edit to this file, `r`)
+        // builds the new server before it closes this one, so the new server's probe finds this
+        // preview on :8100 and reuses it, and stopping it at close would leave the dev loop without
+        // one. On Windows, once the child is gone its pid may belong to another process, which
+        // taskkill /T /F would kill with its tree. A POSIX process group is not reused while a
+        // member lives, so its survivors are still stopped.
+        let stopped = false
         const stop = (): void => {
-          if (child.pid != null) {
-            try {
-              process.kill(-child.pid, 'SIGTERM')
-            } catch {
-              /* already gone */
-            }
+          if (stopped || child.pid == null) return
+          if (windows && (child.exitCode !== null || child.signalCode !== null)) return
+          stopped = true
+          try {
+            if (windows) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+            else process.kill(-child.pid, 'SIGTERM')
+          } catch {
+            /* already gone */
           }
         }
-        server.httpServer?.once('close', stop)
         process.once('exit', stop)
+        // Node runs no exit listener when SIGINT or SIGHUP ends it, and vite handles only SIGTERM.
+        // Ctrl+C would then leave the POSIX child running: its own group is out of the terminal's reach.
+        process.once('SIGINT', () => process.exit(130))
+        process.once('SIGHUP', () => process.exit(129))
       })
     }
   }
@@ -79,7 +110,8 @@ const MIME: Record<string, string> = {
 // bundle (../deploy/web) and the built bridge scene in a same-origin iframe —
 // no npm download needed.
 export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
-  const root = fileURLToPath(new URL(dirFromConfig, import.meta.url))
+  // an absolute directory as is: `new URL` reads a Windows drive letter as a URL scheme
+  const root = isAbsolute(dirFromConfig) ? dirFromConfig : fileURLToPath(new URL(dirFromConfig, import.meta.url))
   return {
     name: `serve-static:${prefix}`,
     configureServer(server) {
@@ -87,7 +119,9 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
         if (!req.url || !req.url.startsWith(prefix)) return next()
         const rel = decodeURIComponent(req.url.slice(prefix.length).split('?')[0])
         let file = normalize(join(root, rel))
-        if (file !== root && !file.startsWith(root + '/')) {
+        // relative(), not a '/' prefix check: on Windows the joined path uses '\'
+        const inside = relative(root, file)
+        if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
           res.statusCode = 403
           return res.end('forbidden')
         }
@@ -152,12 +186,165 @@ function coiHeadersExceptAuth(): Plugin {
   }
 }
 
+/** `HUD_REACT_PROFILING=1` at build time: the HUD is built on React's profiling build, the
+ *  production build in which <Profiler> reports commits, slower on every commit. Off by
+ *  default, and never in the native bundle. */
+const HUD_REACT_PROFILING = process.env.HUD_REACT_PROFILING === '1'
+
+/** Resolves react-dom/client to React's profiling build, the production build in which
+ *  <Profiler> reports commits. */
+function reactProfilingBuild(): Plugin {
+  return {
+    name: 'react-profiling-build',
+    config: () => ({ resolve: { alias: [{ find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }] } })
+  }
+}
+
+// The design folders the HUD is built from: the shared HUD's (library/ui/apps/hud/design). Absolute and resolved, so
+// a dependency's own design/ folder (node_modules/<pkg>/src/design) is never one of them, and a folder that does not
+// exist fails the config instead of matching nothing.
+function sharedSource(alias: string): string {
+  const root = SHARED_SOURCES[alias]
+  if (root == null) throw new Error(`vite.shared.ts has no ${alias} source`)
+  return root
+}
+export const DESIGN_ROOTS = [join(sharedSource('@hud'), 'design')].map(
+  (folder) => `${realpathSync(folder).replaceAll('\\', '/')}/`
+)
+const designPath = (id: string): string | null => {
+  const root = DESIGN_ROOTS.find((folder) => id.startsWith(folder))
+  return root == null ? null : id.slice(root.length)
+}
+const isDesign = (id: string): boolean => designPath(id) != null
+const isDesignEntry = (id: string): boolean => designPath(id) === 'index.ts'
+// The heavy full-screen menu pages, in the shared HUD and the Explorer page core: one chunk, out of the core HUD
+// chunk. Resolved like the design folder, so a dependency's own features/ folder is never one of them.
+const MENU_ROOTS = [sharedSource('@hud'), sharedSource('@explorer-core')].map(
+  (root) => `${realpathSync(join(root, 'features')).replaceAll('\\', '/')}/`
+)
+const MENUS = /^(map|backpack|communities|gallery|places)\//
+export const isMenu = (id: string): boolean =>
+  MENU_ROOTS.some((root) => id.startsWith(root) && MENUS.test(id.slice(root.length)))
+/** The dev-only Showcase (?showcase=1) and the index of its sections: design modules whose name starts Showcase. */
+export const isShowcase = (id: string): boolean => designPath(id)?.startsWith('Showcase') ?? false
+
+/** The part of the module graph a chunk group's `name` reads. */
+interface ModuleGraph {
+  getModuleInfo(id: string): { importers: string[]; exports: string[]; code: string | null } | null
+}
+
+/** Design modules only the Showcase uses: imported by nothing but a design entry, the Showcase or other such
+ *  modules, with none of their exports named by another module that imports that entry. A module whose use
+ *  cannot be read (an importer without code, an import cycle) counts as used elsewhere. */
+export function showcaseOnly(graph: ModuleGraph): (id: string) => boolean {
+  const decided = new Map<string, boolean>()
+  // The words in the code of every module that imports a design entry, the Showcase aside; null if one has no code.
+  const words = new Map<string, Set<string> | null>()
+  const namedBeside = (entry: string): Set<string> | null => {
+    if (!words.has(entry)) {
+      let found: Set<string> | null = new Set()
+      for (const importer of graph.getModuleInfo(entry)?.importers ?? []) {
+        if (isShowcase(importer)) continue
+        const code = graph.getModuleInfo(importer)?.code
+        if (code == null) {
+          found = null
+          break
+        }
+        for (const word of code.match(/[\w$]+/g) ?? []) found.add(word)
+      }
+      words.set(entry, found)
+    }
+    return words.get(entry) ?? null
+  }
+  const only = (id: string): boolean => {
+    const known = decided.get(id)
+    if (known !== undefined) return known
+    decided.set(id, false)
+    const info = graph.getModuleInfo(id)
+    const result =
+      info != null &&
+      info.importers.length > 0 &&
+      info.importers.every((importer) => {
+        if (isShowcase(importer)) return true
+        if (isDesignEntry(importer)) {
+          const named = namedBeside(importer)
+          return named != null && !info.exports.some((name) => named.has(name))
+        }
+        return isDesign(importer) && only(importer)
+      })
+    decided.set(id, result)
+    return result
+  }
+  return (id) => isDesign(id) && !isDesignEntry(id) && !isShowcase(id) && only(id)
+}
+const showcaseOnlyByGraph = new WeakMap<ModuleGraph, (id: string) => boolean>()
+
+/** `false` for the design modules (no effect when imported), the Showcase aside; the default for the rest. */
+export const designSideEffects = (id: string): false | undefined =>
+  isDesign(id) && /\.tsx?$/.test(id) && !isShowcase(id) ? false : undefined
+
+/** The part of a written bundle the Showcase check reads. */
+type BundleFile =
+  | { type: 'chunk'; fileName: string; name: string; isEntry: boolean; facadeModuleId: string | null; imports: string[]; moduleIds: string[] }
+  | { type: 'asset'; fileName: string; source: string | Uint8Array }
+
+/** Why `page` would load the Showcase eagerly: a chunk its entry reaches by static imports, or one its HTML
+ *  references (script, modulepreload), that holds the Showcase. Empty when the Showcase stays behind its lazy
+ *  import. A bundle with no entry for `page` is a problem too, so the check cannot pass by reading nothing. */
+export function showcaseInEagerGraph(bundle: Record<string, BundleFile>, page: string): string[] {
+  const chunks = Object.values(bundle).flatMap((file) => (file.type === 'chunk' ? [file] : []))
+  const entry = chunks.find((chunk) => chunk.isEntry && chunk.facadeModuleId?.replaceAll('\\', '/').endsWith(`/${page}`))
+  if (entry == null) return [`the bundle has no entry chunk for ${page}, so its imports cannot be checked`]
+  const holdsShowcase = (chunk: BundleFile & { type: 'chunk' }) =>
+    chunk.name === 'Showcase' || chunk.moduleIds.some((id) => isShowcase(id))
+  const problems: string[] = []
+  const reached = new Set<string>()
+  const walk = (fileName: string): void => {
+    if (reached.has(fileName)) return
+    reached.add(fileName)
+    const chunk = bundle[fileName]
+    if (chunk?.type !== 'chunk') return
+    if (holdsShowcase(chunk)) problems.push(`${page} statically imports ${fileName}, which holds the Showcase`)
+    chunk.imports.forEach(walk)
+  }
+  walk(entry.fileName)
+  const html = bundle[page]
+  const source =
+    html?.type !== 'asset' ? '' : typeof html.source === 'string' ? html.source : new TextDecoder().decode(html.source)
+  for (const chunk of chunks)
+    if (holdsShowcase(chunk) && source.includes(chunk.fileName)) problems.push(`${page} references ${chunk.fileName}, which holds the Showcase`)
+  return problems
+}
+
+/** Fails the build when app.html would load the dev-only Showcase (?showcase=1) eagerly: its split depends on the
+ *  rules above and on the bundler dropping unused side-effect-free modules, so a change to either shows here. */
+function showcaseStaysLazy(): Plugin {
+  return {
+    name: 'showcase-stays-lazy',
+    apply: 'build',
+    writeBundle(_, bundle) {
+      const problems = showcaseInEagerGraph(bundle as Record<string, BundleFile>, 'app.html')
+      if (problems.length) this.error(problems.join('\n'))
+    }
+  }
+}
+
+// The short commit this HUD is built from, '' without a git checkout (the sign-in screens' corner).
+function hudBuild(): string {
+  const out = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
+  return out.status === 0 ? out.stdout.trim() : ''
+}
+
 export default defineConfig(({ command, mode }) => ({
   // ?native=1 (CEF HUD mode) is honoured only where it's legitimate: the bundle:native build
   // (--mode native) that CEF loads from disk, and the dev server (react_hud_cef.rs supports
   // REACT_HUD_URL at a vite dev server). Deployed web builds compile it FALSE so a crafted
   // link can't switch them into native mode and skip the launch gates (see src/App.tsx MODE).
-  define: { __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native') },
+  define: {
+    __NATIVE_HUD__: JSON.stringify(command === 'serve' || mode === 'native'),
+    __HUD_REACT_PROFILING__: JSON.stringify(HUD_REACT_PROFILING && mode !== 'native'),
+    __HUD_BUILD__: JSON.stringify(hudBuild())
+  },
   // Production is served from a VERSIONED CDN subpath (cdn.decentraland.org/<pkg>/<version>/ —
   // see deploy/web/scripts/prebuild.js), so built asset URLs can't be origin-absolute. CI passes
   // PUBLIC_URL for an absolute CDN base; otherwise './' (relative → works from any path, e.g. a
@@ -169,13 +356,14 @@ export default defineConfig(({ command, mode }) => ({
   resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   plugins: [
     react(),
+    ...(HUD_REACT_PROFILING && mode !== 'native' ? [reactProfilingBuild()] : []),
     bridgeScenePreview(),
+    showcaseStaysLazy(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),
-    // The IPFS-cache service worker, at the ROOT so its scope covers the page (like prod). The
-    // engine tags cacheable asset fetches with an X-IPFS header for it; without a SW to strip
-    // that header the requests need a CORS preflight, which the peer catalysts reject — no
-    // scenes, no avatars. (serveStatic handles a single file fine: rel resolves to the root.)
+    // The service worker, at the ROOT so its scope covers the page (like prod): page isolation
+    // headers and the editor's preview realm. (serveStatic handles a single file fine: rel
+    // resolves to the root.)
     serveStatic('/service_worker.js', '../deploy/web/service_worker.js'),
     // importScripts'd by the service worker (the editor's preview realm), so it sits beside it.
     serveStatic('/preview_realm.js', '../deploy/web/preview_realm.js'),
@@ -194,6 +382,11 @@ export default defineConfig(({ command, mode }) => ({
     // approaches it.
     chunkSizeWarningLimit: 600,
     rollupOptions: {
+      // The design modules declare components, helpers and module state, with no effect when imported (the
+      // Showcase seeds the profile store, so it is left out). Saying so lets a chunk that holds the design
+      // entry skip a module none of whose exports it uses; without it, the React import at the top of each
+      // module counts as an effect, and the entry's chunk would load the Showcase's chunk below to run it.
+      treeshake: { moduleSideEffects: designSideEffects },
       // index.html is the web shell that embeds app.html; native (CEF) loads app.html directly.
       input: {
         app: fileURLToPath(new URL('./app.html', import.meta.url)),
@@ -213,6 +406,19 @@ export default defineConfig(({ command, mode }) => ({
             // signer the shell and the editor share: the shell page needs them, so they go with it rather
             // than with the first HUD chunk that imports them.
             { name: 'shell', test: /\/src\/(host|lib\/(baseDomain|bootMode|entryParams|loopbackHost|publicUrl))\.ts|\/(apps\/hud|explorer-core)\/(engine\/generated\/(serviceTable|webParamTable)|shell\/sign)\.ts/, priority: 1 },
+            // A design module only the dev-only Showcase uses goes with it, out of the prod HUD path. The design
+            // entry (design/index.ts) re-exports every primitive and the groups below take their modules'
+            // imports along, so such a primitive would otherwise ship in an eager chunk. Only those modules:
+            // what they import stays where it is.
+            {
+              name(id, ctx) {
+                let test = showcaseOnlyByGraph.get(ctx)
+                if (test == null) showcaseOnlyByGraph.set(ctx, (test = showcaseOnly(ctx)))
+                return test(id) ? 'Showcase' : null
+              },
+              priority: 1,
+              includeDependenciesRecursively: false
+            },
             {
               name(id) {
                 if (id.includes('node_modules')) return 'vendor'
@@ -222,9 +428,8 @@ export default defineConfig(({ command, mode }) => ({
                 if (id.includes('emojis_complete.json') || id.includes('/chat/emojiData')) return 'emoji'
                 // Showcase is dev-only (?showcase=1) and lazy-loaded — leave it out of the design
                 // chunk so its lazy boundary survives and it never ships in the prod HUD path.
-                // The shared HUD (library/ui/apps/hud, library/explorer-core) is split the same way as this app's own sources.
-                if (/\/(src|apps\/hud|explorer-core)\/design\//.test(id) && !id.includes('Showcase')) return 'design'
-                if (/\/(src|apps\/hud|explorer-core)\/features\/(map|backpack|communities|gallery|places)\//.test(id)) return 'menus'
+                if (isDesign(id) && !isShowcase(id)) return 'design'
+                if (isMenu(id)) return 'menus'
                 return null
               }
             }

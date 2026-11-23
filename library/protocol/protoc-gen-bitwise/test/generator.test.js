@@ -205,7 +205,7 @@ for (const { proto, golden } of cases) {
 }
 
 if (update) {
-  console.log('\nGolden files updated. Re-run `npm run gen:test` to verify.')
+  console.log('\nGolden files updated. Re-run `pnpm run gen:test` to verify.')
   process.exit(0)
 }
 

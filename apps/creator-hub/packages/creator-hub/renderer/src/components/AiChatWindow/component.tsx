@@ -1,0 +1,182 @@
+import { useCallback, useEffect, useState } from 'react';
+import Spinner from '@ui/atoms/Spinner';
+
+import type { AiAssetMention, AiAttachment, AiMirrorState, AiProvider } from '/shared/types/ai';
+
+import { ai as aiPreload } from '#preload';
+import { useDispatch } from '#store';
+import { actions as translationActions } from '/@/modules/store/translation';
+import { locales } from '/@/modules/store/translation/utils';
+import type { Locale } from '/shared/types/translation';
+
+import type { AiMessage } from '/@/modules/store/ai/types';
+import { ChatView } from '../AiChatPanel/ChatView';
+
+import styles from './component.module.css';
+
+// The detached chat window (#1504). It keeps no chat store of its own: it renders the
+// state the main window mirrors here and sends the user's actions back as remote commands
+// (both relayed through main). The surrounding StoreProvider exists only for i18n/theme —
+// the `ai` slice is never read here.
+export function AiChatWindow() {
+  const dispatch = useDispatch();
+  const [mirror, setMirror] = useState<AiMirrorState | null>(null);
+
+  // Match the app's locale (passed on the window URL) so the chrome isn't stuck on English.
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('locale');
+    // Runtime-checked against the actual locale list, so a new locale needs no change here.
+    if (raw !== null && (locales as string[]).includes(raw)) {
+      dispatch(translationActions.changeLocale(raw as Locale));
+    }
+  }, [dispatch]);
+
+  // Receive mirrored state, and ask the main window to push the current state on mount.
+  useEffect(() => {
+    const { cleanup } = aiPreload.onAiMirrorState(setMirror);
+    aiPreload.sendAiRemoteCommand({ type: 'sync' });
+    return cleanup;
+  }, []);
+
+  const onSend = useCallback(
+    (text: string, attachments?: AiAttachment[]) =>
+      aiPreload.sendAiRemoteCommand({ type: 'send', text, attachments }),
+    [],
+  );
+  const onStop = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'stop' }), []);
+  const onNewChat = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'newChat' }), []);
+  const onProviderChange = useCallback(
+    (provider: AiProvider) => aiPreload.sendAiRemoteCommand({ type: 'setProvider', provider }),
+    [],
+  );
+  const onAnswerPrompt = useCallback(
+    (id: string, answer: string) =>
+      aiPreload.sendAiRemoteCommand({ type: 'answerPrompt', id, answer }),
+    [],
+  );
+  const onRevertTurn = useCallback(
+    (id: string, count: number) => aiPreload.sendAiRemoteCommand({ type: 'revertTurn', id, count }),
+    [],
+  );
+  const onRecheck = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'fetchProviders' }),
+    [],
+  );
+  const onDismissBilling = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'dismissBilling' }),
+    [],
+  );
+  const onSwitchSession = useCallback(
+    (id: string) => aiPreload.sendAiRemoteCommand({ type: 'switchSession', id }),
+    [],
+  );
+  const onDeleteSession = useCallback(
+    (id: string) => aiPreload.sendAiRemoteCommand({ type: 'deleteSession', id }),
+    [],
+  );
+  const onClearSelection = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'clearSelection' }),
+    [],
+  );
+  const onRemoveAssetMention = useCallback(
+    (mention: AiAssetMention) =>
+      aiPreload.sendAiRemoteCommand({ type: 'removeAssetMention', mention }),
+    [],
+  );
+  const onRemoveRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'removeRecording' }),
+    [],
+  );
+  const onSendRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'sendRecording' }),
+    [],
+  );
+  const onDraftConsumed = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'consumeDraftPrompt' }),
+    [],
+  );
+  // The close button shuts the assistant entirely (window + inline panel), consistent with the
+  // inline close — not a dock-back. The main window handles it (it owns the inline open flag).
+  const onClose = useCallback(() => aiPreload.sendAiRemoteCommand({ type: 'closeAssistant' }), []);
+  const onToggleRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'toggleRecording' }),
+    [],
+  );
+  const onCancelRecording = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'cancelRecording' }),
+    [],
+  );
+  const onShareDecision = useCallback(
+    (granted: boolean) => aiPreload.sendAiRemoteCommand({ type: 'shareDecision', granted }),
+    [],
+  );
+  const onShareNotNow = useCallback(
+    () => aiPreload.sendAiRemoteCommand({ type: 'shareNotNow' }),
+    [],
+  );
+  const onSetConversationShared = useCallback(
+    (shared: boolean) => aiPreload.sendAiRemoteCommand({ type: 'setConversationShared', shared }),
+    [],
+  );
+  const onRateTurn = useCallback(
+    (id: string, rating: 'up' | 'down' | null) =>
+      aiPreload.sendAiRemoteCommand({ type: 'rateTurn', id, rating }),
+    [],
+  );
+
+  if (mirror === null) {
+    return (
+      <div className={styles.loading}>
+        <Spinner
+          ring="wide"
+          role="progressbar"
+          size={40}
+          color="primary"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <ChatView
+      detached
+      providers={mirror.providers}
+      provider={mirror.provider}
+      messages={mirror.messages as AiMessage[]}
+      busy={mirror.busy}
+      detecting={mirror.detecting}
+      selection={mirror.selection}
+      assetMentions={mirror.assetMentions}
+      recording={mirror.recording ?? null}
+      recorder={mirror.recorder}
+      onToggleRecording={onToggleRecording}
+      onCancelRecording={onCancelRecording}
+      onSendRecording={onSendRecording}
+      draftPrompt={mirror.draftPrompt}
+      onDraftConsumed={onDraftConsumed}
+      billingDismissed={mirror.billingDismissed}
+      sessions={mirror.sessions}
+      currentSessionId={mirror.currentSessionId}
+      title={mirror.projectTitle}
+      onSend={onSend}
+      onStop={onStop}
+      onNewChat={onNewChat}
+      onProviderChange={onProviderChange}
+      onRevertTurn={onRevertTurn}
+      onAnswerPrompt={onAnswerPrompt}
+      onRecheck={onRecheck}
+      onDismissBilling={onDismissBilling}
+      onSwitchSession={onSwitchSession}
+      onDeleteSession={onDeleteSession}
+      onClearSelection={onClearSelection}
+      onRemoveAssetMention={onRemoveAssetMention}
+      onRemoveRecording={onRemoveRecording}
+      onClose={onClose}
+      sharing={mirror.sharing}
+      onShareDecision={onShareDecision}
+      onShareNotNow={onShareNotNow}
+      onSetConversationShared={onSetConversationShared}
+      onRateTurn={onRateTurn}
+    />
+  );
+}

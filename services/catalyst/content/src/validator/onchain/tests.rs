@@ -10,6 +10,7 @@ use alloy_primitives::{Address, U256, keccak256};
 use alloy_sol_types::SolCall;
 
 use super::*;
+use crate::http::jsonrpc::{block_info, parse_envelope};
 use crate::validator::fake_chain::{self, Query, Reply, at_deployment, five_min_before};
 
 const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
@@ -144,6 +145,79 @@ async fn land_is_granted_per_parcel_at_the_deploy_block_or_five_minutes_before()
         a.land("not-an-address", &[(1, 1)], TS).await.unwrap(),
         vec![false]
     );
+}
+
+/// A large parcel list goes out as several Checker multicalls of at most
+/// `CALLS_PER_BATCH` parcels, answered in order.
+#[tokio::test]
+async fn land_parcels_are_asked_in_bounded_multicalls() {
+    let at = at_deployment(TS);
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::Land { sender, .. } => Reply::Yes(*sender == addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    a.l1().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    let parcels: Vec<(i32, i32)> = (0..250).map(|x| (x, 0)).collect();
+    let granted = a.land(OWNER, &parcels, TS).await.unwrap();
+    assert_eq!(granted, vec![true; 250], "every parcel answered");
+    assert_eq!(
+        chain.calls(),
+        vec![format!("eth_call@{at}"); 3],
+        "250 parcels in three multicalls"
+    );
+}
+
+/// Repeated names are asked once; more distinct names than the cap refuse the
+/// check without asking, and a synced check past its own cap is undecided.
+#[tokio::test]
+async fn names_are_deduplicated_and_capped() {
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::Name { .. } => Reply::Yes(true),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    a.l1().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    let repeated = vec!["alice".to_string(); 500];
+    assert_eq!(
+        a.names(OWNER, &repeated, TS).await.unwrap(),
+        vec![true; 500]
+    );
+    assert_eq!(chain.calls().len(), 1, "one distinct name, one multicall");
+
+    chain.clear();
+    let many: Vec<String> = (0..=MAX_NAMES_ASKED).map(|i| format!("n{i}")).collect();
+    let err = a.names(OWNER, &many, TS).await.unwrap_err();
+    assert!(matches!(err, ValidatorError::TooManyItems(_)), "{err}");
+    let err = a
+        .names_capped(
+            OWNER,
+            &many,
+            TS,
+            ItemCaps {
+                names: 10,
+                ..SYNCED_ITEM_CAPS
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ValidatorError::BlockchainQuery(_)), "{err}");
+    assert!(chain.calls().is_empty(), "nothing asked past a cap");
+
+    let long = "x".repeat(MAX_NAME_BYTES + 1);
+    assert_eq!(
+        a.names(OWNER, &[long.clone(), long], TS).await.unwrap(),
+        vec![false, false]
+    );
+    assert!(chain.calls().is_empty(), "an overlong name is not asked");
+
+    let mixed = vec!["alice".to_string(), "y".repeat(MAX_NAME_BYTES + 1)];
+    assert_eq!(a.names(OWNER, &mixed, TS).await.unwrap(), vec![true, false]);
+    assert_eq!(chain.calls().len(), 1, "only the short name is asked");
 }
 
 #[tokio::test]
@@ -730,37 +804,6 @@ async fn the_rpcs_must_answer_for_the_configured_network() {
     );
 }
 
-#[test]
-fn reverts_are_told_from_other_provider_errors() {
-    let response = |code, message: &str| RpcError::Response {
-        code,
-        message: message.to_string(),
-    };
-    for revert in [
-        response(3, "execution reverted"),
-        response(-32000, "execution reverted"),
-        response(-32000, "Execution reverted: ERC721: invalid token ID"),
-        response(-32603, "VM Exception while processing transaction: revert"),
-        response(-32015, "VM execution error."),
-    ] {
-        assert!(is_revert(&revert), "{revert}");
-    }
-    for failure in [
-        response(-32000, "header not found"),
-        response(
-            -32000,
-            "missing trie node 1a2b (path ) state is not available",
-        ),
-        response(-32005, "limit exceeded"),
-        response(-32603, "request timed out"),
-        response(429, "Too Many Requests"),
-        RpcError::Status(502),
-        RpcError::Transport("connection reset".into()),
-    ] {
-        assert!(!is_revert(&failure), "{failure}");
-    }
-}
-
 #[tokio::test]
 async fn a_check_the_rpc_cannot_answer_is_an_error_never_a_grant() {
     let at = at_deployment(TS);
@@ -846,6 +889,210 @@ async fn the_deploy_blocks_come_from_a_search_that_remembers() {
 }
 
 const GENESIS_MS_BEFORE: i64 = (fake_chain::GENESIS - 3600) * 1000;
+
+fn block_reads(chain: &fake_chain::FakeChain) -> usize {
+    chain
+        .calls()
+        .iter()
+        .filter(|c| *c == "eth_getBlockByNumber")
+        .count()
+}
+
+#[tokio::test]
+async fn a_block_read_is_asked_again_after_an_error_or_an_empty_answer() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    let last = ((TS / 1000 - fake_chain::GENESIS) / fake_chain::INTERVAL) as u64;
+    type Fault = fn(&fake_chain::FakeChain, usize);
+    let faults: [(&str, Fault); 2] = [
+        ("an error", fake_chain::FakeChain::fail_block_reads),
+        ("an empty answer", fake_chain::FakeChain::miss_block_reads),
+    ];
+    for (what, fault) in faults {
+        // Before the first block the search reads only the head and block 0.
+        chain.clear();
+        fault(&chain, 2);
+        assert_eq!(
+            access(Some(&chain.url), None)
+                .l1_block_at(GENESIS_MS_BEFORE)
+                .await
+                .unwrap(),
+            None,
+            "{what}"
+        );
+        assert_eq!(block_reads(&chain), 2 + 2, "{what}: the head read thrice");
+        fault(&chain, 2);
+        assert_eq!(
+            access(Some(&chain.url), None)
+                .l1_block_at(TS)
+                .await
+                .unwrap(),
+            Some(last),
+            "{what}"
+        );
+        fault(&chain, 2);
+        assert_eq!(
+            access(Some(&chain.url), None)
+                .land(OWNER, &[(1, 1)], TS)
+                .await
+                .unwrap(),
+            vec![true],
+            "{what}: the check passes"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_block_the_rpc_never_answers_is_undecided_after_three_reads() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    type Fault = fn(&fake_chain::FakeChain, usize);
+    let faults: [(&str, Fault, &str); 2] = [
+        (
+            "an error",
+            fake_chain::FakeChain::fail_block_reads,
+            "upstream request timed out",
+        ),
+        (
+            "an empty answer",
+            fake_chain::FakeChain::miss_block_reads,
+            "no block latest",
+        ),
+    ];
+    for (what, fault, needle) in faults {
+        chain.clear();
+        fault(&chain, usize::MAX);
+        let err = access(Some(&chain.url), None)
+            .l1_block_at(TS)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains("block lookup") && m.contains(needle)),
+            "{what}: {err}"
+        );
+        assert_eq!(block_reads(&chain), 3, "{what}");
+        let err = access(Some(&chain.url), None)
+            .land(OWNER, &[(1, 1)], TS)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ValidatorError::BlockchainQuery(_)),
+            "{what}: {err}"
+        );
+        fault(&chain, 0);
+    }
+}
+
+#[tokio::test]
+async fn only_a_block_read_that_may_succeed_is_asked_again() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    let limit = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"limit exceeded"}}"#;
+    let internal = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal error"}}"#;
+    // 401: a bad key; 429 or -32005: rate limited, not asked again within the check.
+    for (status, body, said, reads) in [
+        (401, "", "401", 1),
+        (429, "", "429", 1),
+        (429, limit, "-32005", 1),
+        (200, limit, "-32005", 1),
+        (404, "", "404", 1),
+        (408, "", "408", 3),
+        (503, "", "503", 3),
+        (200, internal, "-32603", 3),
+        (200, r#"{"jsonrpc":"2.0","id":1,"res"#, "malformed", 3),
+        (
+            200,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"number":"0x1"}}"#,
+            "block without a hex",
+            1,
+        ),
+    ] {
+        chain.clear();
+        chain.set_block_reply(status, body);
+        let err = access(Some(&chain.url), None)
+            .l1_block_at(TS)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains(said)),
+            "{status} {body}: {err}"
+        );
+        assert_eq!(block_reads(&chain), reads, "{status} {body}");
+    }
+}
+
+#[test]
+fn transient_block_read_errors() {
+    let response = |code| {
+        BlockError::Rpc(RpcError::Response {
+            code,
+            message: String::new(),
+        })
+    };
+    let block = |result| block_info(&result, BlockTag::Latest).unwrap_err();
+    let body = |bytes: &[u8]| BlockError::Rpc(parse_envelope(200, bytes).unwrap_err());
+    for (e, retried) in [
+        (RpcError::Transport("timeout".into()).into(), true),
+        (RpcError::Status(502).into(), true),
+        (block(Value::Null), true),
+        (body(b"<html>"), true),
+        (body(br#"{"jsonrpc":"2.0","res"#), true),
+        (response(-32000), true),
+        (response(-32099), true),
+        (response(-32603), true),
+        (RpcError::Refused("private address".into()).into(), false),
+        (RpcError::Status(403).into(), false),
+        (block(json!({ "number": "0x1" })), false),
+        (
+            block(json!({ "number": "0x1", "timestamp": "0xffffffffffffffff" })),
+            false,
+        ),
+        (response(-32001), false),
+        (response(-32003), false),
+        (response(-32004), false),
+        (response(-32005), false),
+        (response(-32006), false),
+        (response(-32602), false),
+        (response(-32100), false),
+        (response(3), false),
+    ] {
+        assert_eq!(transient(&e), retried, "{e}");
+    }
+}
+
+#[tokio::test]
+async fn a_refused_endpoint_is_not_asked_again() {
+    let a = OnChainAccess::new(
+        Outbound::new(Default::default()).unwrap(),
+        "mainnet",
+        Some("http://127.0.0.1:9/".into()),
+        None,
+    );
+    let started = Instant::now();
+    let err = a.l1_block_at(TS).await.unwrap_err().to_string();
+    assert!(err.contains("refused"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_millis(BLOCK_READ_BASE_MS),
+        "no backoff: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_dropped_check_stops_reading_blocks() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    chain.fail_block_reads(usize::MAX);
+    let a = access(Some(&chain.url), None).with_deadline(Duration::from_millis(50));
+    let err = a.l1_block_at(TS).await.unwrap_err();
+    assert!(
+        matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains("did not finish")),
+        "{err}"
+    );
+    let asked = block_reads(&chain);
+    assert!(
+        asked <= 1,
+        "the deadline falls in the first backoff: {asked}"
+    );
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(block_reads(&chain), asked, "no read after the drop");
+}
 
 /// Read-only calls to a public archive RPC (`CHECKER_LIVE_L1_RPC` and
 /// `CHECKER_LIVE_L2_RPC` override the defaults), at fixed past timestamps so

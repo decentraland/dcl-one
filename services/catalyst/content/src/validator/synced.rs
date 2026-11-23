@@ -167,9 +167,24 @@ impl BlockchainChecker for Synced<'_> {
         names: &[String],
         timestamp: Timestamp,
     ) -> Result<PermissionResult, ValidatorError> {
-        self.sources
-            .check_names_ownership(eth_address, names, timestamp)
-            .await
+        let owned = self
+            .sources
+            .access()
+            .names_capped(
+                eth_address,
+                names,
+                timestamp,
+                super::onchain::SYNCED_ITEM_CAPS,
+            )
+            .await?;
+        Ok(PermissionResult::from_failing(
+            names
+                .iter()
+                .zip(owned)
+                .filter(|(_, o)| !o)
+                .map(|(n, _)| n.clone())
+                .collect(),
+        ))
     }
 
     async fn check_items_ownership(
@@ -297,7 +312,7 @@ async fn validate_synced_within(
     }
     let files = HashMap::from([(
         entity_id.to_string(),
-        bytes::Bytes::copy_from_slice(entity_bytes),
+        bytes::Bytes::copy_from_slice(entity_bytes).into(),
     )]);
     let synced = Synced {
         sources,
@@ -424,7 +439,7 @@ mod tests {
             .expect("no thumbnail check on a synced item");
 
         let entity = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes))]);
+        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes).into())]);
         let local = super::super::validate(
             &entity,
             &files,
@@ -459,6 +474,44 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(tmp);
         let _ = std::fs::remove_dir_all(tmp2);
+    }
+
+    /// A scoped login (ADR-162) signs no deployment, local or synced.
+    #[tokio::test]
+    async fn a_scoped_login_signs_no_deployment() {
+        let (bytes, id, _, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
+        let (root, ephemeral) = (
+            crate::auth::Wallet::random().unwrap(),
+            crate::auth::Wallet::random().unwrap(),
+        );
+        let grants = [crate::auth::scoped_login::ScopedLoginGrant {
+            service: "content".into(),
+            operation: "*".into(),
+            resource: None,
+        }];
+        let chain: AuthChain = serde_json::from_value(
+            crate::auth::create_scoped_auth_chain(
+                &root,
+                &ephemeral,
+                4_000_000_000_000,
+                &grants,
+                &id,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let local = ExternalCalls::validate_signature(&sources, &id, &chain, 1_700_000_000_000)
+            .await
+            .unwrap_err();
+        assert!(matches!(local, AuthError::MalformedChain(_)), "{local}");
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{errors:?}").contains("without a service identifier"),
+            "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     /// Records the block each historical ask names.
@@ -774,13 +827,11 @@ mod tests {
             files: &files,
             auth_chain: &chain,
         };
-        // The local check reads the escrow overlay.
-        let Some(pool) = crate::sync_test_support::test_pool(1).await else {
-            return;
-        };
+        // Neither check reads the database: without the escrow-lease opt-in
+        // the local check reads no lease either.
         let (storage, tmp) = crate::sync_test_support::temp_storage("malformed-urn").await;
         let sources = Sources::new(
-            pool,
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             storage,
             crate::http::Outbound::for_tests(),
             None,

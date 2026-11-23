@@ -45,6 +45,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use sqlx::{PgConnection, PgPool};
 
@@ -268,15 +269,39 @@ fn snapshot_url(
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
     })?;
-    if value.contains("://") {
-        return Some(value.to_owned());
-    }
     // `events_asset_base` is `<PUBLIC_URL>/events` (`Settings::events_asset_base_for`).
     let own = events_asset_base
         .trim_end_matches('/')
         .strip_suffix("/events")
         .unwrap_or(events_asset_base);
+    if value.contains("://") && trusted_snapshot_host(value, own) {
+        return Some(value.to_owned());
+    }
+    // Any other host renders from this node instead of being redirected to.
     Some(format!("{own}/profile-images/entities/{entity_id}/{file}"))
+}
+
+/// An absolute snapshot is redirected to only on this node or a Decentraland
+/// host, so the route never forwards to an arbitrary site.
+fn trusted_snapshot_host(value: &str, own: &str) -> bool {
+    let Ok(url) = url::Url::parse(value) else {
+        return false;
+    };
+    let Some(host) = url.host_str().map(str::to_ascii_lowercase) else {
+        return false;
+    };
+    let own_host = url::Url::parse(own)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    matches!(url.scheme(), "http" | "https")
+        && (own_host.as_deref() == Some(host.as_str())
+            || [
+                "decentraland.org",
+                "decentraland.zone",
+                "decentraland.today",
+            ]
+            .iter()
+            .any(|d| host == *d || host.ends_with(&format!(".{d}"))))
 }
 
 /// gatsby `redirectTo`: a non-URL falls back to the default avatar; the
@@ -736,7 +761,7 @@ pub async fn update_my_profile_settings(
         let signer = state.signer(&headers, "patch", uri.path()).await?;
         let patch = own_settings_patch(&body)?;
         let mut tx = state.pool.begin().await?;
-        record_signed_request(
+        super::audit::record_signed_request(
             &mut tx,
             &headers,
             &signer,
@@ -744,7 +769,7 @@ pub async fn update_my_profile_settings(
             "patch",
             uri.path(),
             &raw_body,
-            "ProfileSettingsUpdate",
+            super::audit::SignedWrite::Profile,
         )
         .await?;
         let (settings, _) = save_settings(&mut tx, &signer, &patch).await?;
@@ -773,89 +798,6 @@ pub async fn update_my_profile_settings(
         return Err(invalid_data());
     }
     Ok(ok(apply_profile_settings(&state, &signed, &signer).await?))
-}
-
-/// The audit row of a plain signed-fetch write, bound to its exact bytes
-/// when the client signed `body_sha256` and replay-protected when it signed
-/// a `nonce` (neither is required). The hash of a request
-/// without a nonce is its signer, timestamp and body, so an identical resend
-/// is logged once and never refused.
-#[allow(clippy::too_many_arguments)]
-async fn record_signed_request(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    headers: &HeaderMap,
-    signer: &str,
-    subject: &str,
-    method: &str,
-    path: &str,
-    body: &[u8],
-    action_type: &str,
-) -> Result<(), ApiError> {
-    let noun = if action_type == "ScheduleUpsert" {
-        "Schedule"
-    } else {
-        "Profile"
-    };
-    let metadata: Value = headers
-        .get("x-identity-metadata")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| serde_json::from_str(h).ok())
-        .unwrap_or_else(|| json!({}));
-    let digest = hex::encode(Sha256::digest(body));
-    if let Some(expected) = metadata.get("body_sha256").and_then(Value::as_str)
-        && expected != digest
-    {
-        return Err(ApiError::bad_request(format!(
-            "{noun} body must match signed body_sha256"
-        )));
-    }
-    let nonce = match metadata.get("nonce") {
-        None | Some(Value::Null) => None,
-        Some(nonce) => Some(
-            nonce
-                .as_str()
-                .filter(|nonce| {
-                    uuid::Uuid::parse_str(nonce).is_ok_and(|id| id.to_string() == *nonce)
-                })
-                .ok_or_else(|| {
-                    ApiError::bad_request(format!(
-                        "Signed {} nonce must be a canonical UUID",
-                        noun.to_ascii_lowercase()
-                    ))
-                })?,
-        ),
-    };
-    let timestamp = headers
-        .get("x-identity-timestamp")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.parse::<i64>().ok())
-        .ok_or_else(|| ApiError::bad_request("Invalid timestamp"))?;
-    let tag = format!("legacy-{}", noun.to_ascii_lowercase());
-    let hash = hex::encode(Sha256::digest(match nonce {
-        Some(nonce) => format!("{tag}:{signer}:{nonce}"),
-        None => format!("{tag}:{signer}:{timestamp}:{method}:{path}:{digest}"),
-    }));
-    let payload = json!({"method":method,"path":path,"body_sha256":digest,"nonce":nonce,"body":serde_json::from_slice::<Value>(body).unwrap_or(Value::Null)});
-    let fresh = fed::record_action(
-        tx,
-        &fed::Action {
-            scope: fed::Scope::Events,
-            signature_hash: &hash,
-            signer,
-            subject_id: Some(subject),
-            action_type,
-            payload: &payload,
-            signed_at: timestamp / 1000,
-        },
-    )
-    .await?;
-    if !fresh && nonce.is_some() {
-        return Err(ApiError::http(
-            409,
-            format!("{noun} request already applied"),
-        ));
-    }
-    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -927,7 +869,7 @@ pub async fn update_profile_settings(
         let target = profile_address(&profile_id)?;
         let patch = permissions_patch(&body)?;
         let mut tx = state.pool.begin().await?;
-        record_signed_request(
+        super::audit::record_signed_request(
             &mut tx,
             &headers,
             &signer,
@@ -935,7 +877,7 @@ pub async fn update_profile_settings(
             "patch",
             uri.path(),
             &raw_body,
-            "ProfileSettingsUpdate",
+            super::audit::SignedWrite::Profile,
         )
         .await?;
         let (settings, changed) = save_settings(&mut tx, &target, &patch).await?;
@@ -1338,7 +1280,7 @@ async fn apply_legacy_schedule(
         }
         None => (uuid::Uuid::new_v4().to_string(), None),
     };
-    record_signed_request(
+    super::audit::record_signed_request(
         &mut tx,
         headers,
         &signer,
@@ -1346,7 +1288,7 @@ async fn apply_legacy_schedule(
         method,
         path,
         raw_body,
-        "ScheduleUpsert",
+        super::audit::SignedWrite::Schedule,
     )
     .await?;
     let answer = match existing {
@@ -1947,6 +1889,48 @@ mod tests {
         assert_eq!(answer["error"], "Schedule request already applied");
     }
 
+    /// A write signed over the events host's `/api/...` path passes the nest;
+    /// without the forwarded path it is refused.
+    #[tokio::test]
+    async fn a_write_signed_on_the_events_host_passes_the_rewrite() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let moderator = moderator(&pool).await;
+        let app = axum::Router::new().nest("/events", app(&pool));
+        let schedule = json!({"name":"Host","active_since":"2031-01-01T00:00:00.000Z","active_until":"2031-02-01T00:00:00.000Z"});
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &moderator,
+            "post",
+            "/api/schedules",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        for (original, expected) in [
+            (Some("/api/schedules"), StatusCode::CREATED),
+            (None, StatusCode::UNAUTHORIZED),
+        ] {
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/events/api/schedules")
+                .header("content-type", "application/json");
+            for (key, value) in headers.iter() {
+                request = request.header(key, value);
+            }
+            if let Some(original) = original {
+                request = request.header("x-original-path", original);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::from(schedule.to_string())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "{original:?}");
+        }
+    }
+
     /// `Schedule/routes.ts:48-97`, `schema.ts:86-147`: the required triple,
     /// the `theme` enum, `image` as a URI, ignored unknown keys, `theme: null`
     /// on create, the merged eight keys on PATCH, the 404 text, and
@@ -2342,7 +2326,11 @@ mod tests {
             format!("http://localhost/profile-images/entities/{entity_id}/face.png")
         );
         let (_, headers, _) = get(&app, &format!("/api/profile/{known}/body.png")).await;
-        assert_eq!(headers["location"], "https://cdn.example/body.png");
+        assert_eq!(
+            headers["location"],
+            format!("http://localhost/profile-images/entities/{entity_id}/body.png"),
+            "a foreign snapshot host is rendered here, not redirected to"
+        );
         assert!(
             avatar_redirect(Some("javascript:alert(1)")).headers()["location"] == DEFAULT_AVATAR
         );
@@ -2423,8 +2411,41 @@ mod tests {
                 Snapshot::Body,
                 "https://node.example/events"
             ),
-            Some("https://cdn.example/body.png".into())
+            Some("https://node.example/profile-images/entities/bafyid/body.png".into()),
+            "a foreign host is not redirected to"
         );
+        for held in [
+            "https://profile-images.decentraland.org/entities/bafyid/body.png",
+            "https://node.example/content/contents/bafbody",
+        ] {
+            let metadata = json!({"avatars":[{"avatar":{"snapshots":{"body":held}}}]});
+            assert_eq!(
+                snapshot_url(
+                    &metadata,
+                    "bafyid",
+                    Snapshot::Body,
+                    "https://node.example/events"
+                ),
+                Some(held.into())
+            );
+        }
+        for foreign in [
+            "https://decentraland.org.evil.example/x.png",
+            "https://evil.example/?decentraland.org",
+            "ftp://decentraland.org/x.png",
+        ] {
+            let metadata = json!({"avatars":[{"avatar":{"snapshots":{"body":foreign}}}]});
+            assert_eq!(
+                snapshot_url(
+                    &metadata,
+                    "bafyid",
+                    Snapshot::Body,
+                    "https://node.example/events"
+                ),
+                Some("https://node.example/profile-images/entities/bafyid/body.png".into()),
+                "{foreign}"
+            );
+        }
         assert_eq!(
             snapshot_url(
                 &json!({"avatars":[]}),

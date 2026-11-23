@@ -17,13 +17,15 @@ let
     inherit root;
     fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
       /rendering/bevy-explorer/source
-      /rendering/bevy-explorer/bevy
+      /rendering/bevy-explorer/vendor
       /library/protocol/proto
+      /library/hashing
+      /apps/creator-hub/packages/zip-extract
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
       /flake.lock /infra/packages/default.nix /infra/packages/tools.nix
-      /tooling/play-artifact.py /tooling/hud_shared_inputs.py
+      /tooling/play-artifact.py /tooling/hud_shared_inputs.py /tooling/check-local-hashing.mjs
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
       /library/explorer-core/engine/generated
@@ -32,6 +34,10 @@ let
 in runCommand "foundation-built-play-web" {
   src = artifact;
   nativeBuildInputs = [ python3 ];
+  # Static files only. A WASM compiled inside a Nix shell embeds its toolchain's store
+  # paths; imported from the store, those become references and Sites would ship the
+  # 4 GiB Rust closure. Refuse that here instead of in a production image.
+  allowedReferences = [ ];
 } ''
   if [ -z "''${src:-}" ]; then
     echo 'Sites requires our Bevy artifact. Run tooling/fetch-play.py, then build with PLAY_WEB_DIR and --impure; see infra/containers/README.md.' >&2

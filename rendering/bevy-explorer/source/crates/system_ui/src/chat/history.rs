@@ -4,20 +4,17 @@ use bevy::prelude::*;
 use bevy_dui::{DuiCommandsExt, DuiProps, DuiRegistry};
 use common::{structs::SystemAudio, util::AsH160};
 use comms::{chat_marker_things, global_crdt::ChatEvent, profile::UserProfile};
-use social::{DirectChatEvent, DirectChatMessage, FriendshipEvent, FriendshipEventBody};
+use social::{DirectChatMessage, FriendshipEvent, FriendshipEventBody};
 use ui_core::{
     bound_node::{BoundedNode, NodeBounds},
     button::TabManager,
     focus::Focus,
-    ui_actions::{Click, EventCloneExt, On},
+    ui_actions::{Click, On},
 };
 
 use crate::SystemUiRoot;
 
-use super::{
-    conversation_manager::ConversationManager, friends::ShowConversationEvent, ChatInput, ChatTab,
-    ChatboxContainer,
-};
+use super::{conversation_manager::ConversationManager, ChatInput, ChatTab, ChatboxContainer};
 
 pub struct ChatHistoryPlugin;
 
@@ -46,24 +43,21 @@ fn setup_chat_history(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<
         .try_insert(ChatHistory::default());
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_chat_history(
     mut commands: Commands,
     mut q: Query<(Entity, &mut ChatHistory)>,
     time: Res<Time>,
     mut friends: EventReader<FriendshipEvent>,
-    mut private_chats: EventReader<DirectChatEvent>,
     mut nearby_chats: EventReader<ChatEvent>,
     users: Query<&UserProfile>,
     #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] primary_player: Res<common::structs::PrimaryPlayerRes>,
     mut pending_friends: Local<Vec<FriendshipEventBody>>,
-    mut pending_private_chats: Local<Vec<DirectChatMessage>>,
     mut pending_nearby_chats: Local<Vec<DirectChatMessage>>,
     mut convo: ConversationManager,
     mut node: Query<(&mut NodeBounds, &mut BoundedNode)>,
 ) {
     pending_friends.extend(friends.read().filter_map(|f| f.0.clone()));
-    pending_private_chats.extend(private_chats.read().map(|ev| ev.0.clone()));
     pending_nearby_chats.extend(nearby_chats.read().filter_map(|ev| {
         if ev.channel != "Nearby" {
             return None;
@@ -87,7 +81,9 @@ fn update_chat_history(
         };
 
         #[cfg(feature = "livekit")]
-        if ban_block.is_blocked_either_way(partner) {
+        if ban_block.is_blocked_either_way(partner)
+            || (ev.sender != primary_player.0 && ban_block.is_addr_banned_in_scene(partner))
+        {
             return None;
         }
 
@@ -189,27 +185,6 @@ fn update_chat_history(
 
         let (bubble, message) =
             convo.add_message(entity, Some(h160), color.with_alpha(0.3), message, false);
-        history
-            .current
-            .push_back((bubble, message, time.elapsed_secs_f64()));
-    }
-
-    for chat in pending_private_chats.drain(..) {
-        if chat.me_speaking {
-            continue;
-        }
-
-        let (bubble, message) = convo.add_message(
-            entity,
-            Some(chat.partner),
-            Color::srgb(0.8, 1.0, 0.8).with_alpha(0.3),
-            chat.message,
-            false,
-        );
-        commands.entity(bubble).try_insert((
-            Interaction::default(),
-            ShowConversationEvent(chat.partner).send_value_on::<Click>(),
-        ));
         history
             .current
             .push_back((bubble, message, time.elapsed_secs_f64()));

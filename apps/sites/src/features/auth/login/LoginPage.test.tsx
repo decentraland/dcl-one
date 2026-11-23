@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getIdentity, setIdentity } from "@/data/lib/auth/session";
+import { beginShellBrowserSignIn } from "@/data/lib/auth/native-shell";
 
 import LoginPage from "./LoginPage";
 import { signInKindFor } from "@/data/lib/auth/signin-kind";
+import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
 
 vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
@@ -20,6 +23,10 @@ const auth = vi.hoisted(() => ({
   connectWalletConnect: vi.fn(),
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
+vi.mock("@/data/lib/auth/native-shell", async (original) => ({
+  ...(await original<typeof import("@/data/lib/auth/native-shell")>()),
+  beginShellBrowserSignIn: vi.fn(),
+}));
 const magic = vi.hoisted(() => ({ start: vi.fn(async (_key: string, _option: string, _returnTo: string) => {}) }));
 vi.mock("./magic", async (original) => ({
   ...(await original<typeof import("./magic")>()),
@@ -71,6 +78,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   delete (window as { ethereum?: unknown }).ethereum;
+  delete (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__;
 });
 
 async function openCodeModal() {
@@ -81,6 +89,13 @@ async function openCodeModal() {
 }
 
 describe("the sign-in page", () => {
+  it("shows the Decentraland logo, named, at 48px", () => {
+    page();
+    const logo = screen.getByRole("img", { name: "Decentraland" });
+    expect([logo.getAttribute("width"), logo.getAttribute("height")]).toEqual(["48", "48"]);
+    expect(logo.getAttribute("src")).toBe(sitesLogo);
+  });
+
   it("sends a reader who is already signed in straight on", async () => {
     setIdentity({
       signer: SIGNER,
@@ -136,6 +151,21 @@ describe("the sign-in page", () => {
       fireEvent.change(screen.getByTestId("otp-input-2"), { target: { value: "17" } });
     });
     expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "117111", { expirationMs: 30 * 86_400_000, rethrow: true });
+  });
+
+  it("shows the decorative 48px Decentraland logo in the wallet connection modal", async () => {
+    installWallet((req) => {
+      if (req.method === "eth_accounts") return [];
+      throw new Error("window.ethereum.enable is not a function");
+    });
+    page();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Continue with MetaMask" }));
+    });
+    const logo = screen.getByTestId("connection-modal").querySelector("img");
+    expect(logo!.getAttribute("alt")).toBe("");
+    expect([logo!.getAttribute("width"), logo!.getAttribute("height")]).toEqual(["48", "48"]);
+    expect(logo!.getAttribute("src")).toBe(sitesLogo);
   });
 
   it("moves focus into the wallet modal and keeps Tab inside it", async () => {
@@ -280,6 +310,51 @@ describe("the sign-in page", () => {
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
   });
 
+  it("keeps NEXT busy and disabled while the code is being sent, on a form submit too", async () => {
+    let sent!: () => void;
+    auth.startEmailSignIn.mockImplementationOnce(() => new Promise<void>((resolve) => { sent = resolve; }));
+    page();
+    const input = screen.getByPlaceholderText("Enter Your Email");
+    fireEvent.change(input, { target: { value: "jane.doe@example.com" } });
+    await act(async () => {
+      fireEvent.submit(input.closest("form")!);
+    });
+    const next = screen.getByRole("button", { name: "NEXT" }) as HTMLButtonElement;
+    expect(next.type).toBe("submit");
+    expect(next.disabled).toBe(true);
+    expect(next.getAttribute("aria-busy")).toBe("true");
+    await act(async () => {
+      sent();
+    });
+  });
+
+  it("sends the code once when NEXT is clicked, and a second click while it sends does nothing", async () => {
+    let sent!: () => void;
+    auth.startEmailSignIn.mockImplementationOnce(() => new Promise<void>((resolve) => { sent = resolve; }));
+    const user = userEvent.setup();
+    page();
+    await user.type(screen.getByPlaceholderText("Enter Your Email"), "jane.doe@example.com");
+
+    await user.click(screen.getByRole("button", { name: "NEXT" }));
+    await user.click(screen.getByRole("button", { name: "NEXT" }));
+
+    expect(auth.startEmailSignIn).toHaveBeenCalledTimes(1);
+    expect(auth.startEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com");
+    await act(async () => {
+      sent();
+    });
+  });
+
+  it("sends the code when Enter is pressed in the email input", async () => {
+    const user = userEvent.setup();
+    page();
+
+    await user.type(screen.getByPlaceholderText("Enter Your Email"), "jane.doe@example.com{Enter}");
+
+    expect(auth.startEmailSignIn).toHaveBeenCalledTimes(1);
+    expect(auth.startEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com");
+  });
+
   it("keeps the code modal open with upstream's message when the code does not verify", async () => {
     auth.verifyEmailSignIn.mockResolvedValueOnce(null);
     page();
@@ -314,6 +389,22 @@ describe("the sign-in page", () => {
     });
     expect(magic.start).toHaveBeenCalledWith(MAGIC_KEY, "google", "/");
     expect(screen.getByTestId("connection-status").textContent).toBe("Redirecting...");
+  });
+
+  it("starts the method the player picked in the Explorer, once, as its button would", async () => {
+    await act(async () => {
+      render(<LoginPage redirectTo="/play" layoutVariant="two-options" magicApiKey={MAGIC_KEY} loginMethod="discord" />);
+    });
+    expect(magic.start).toHaveBeenCalledTimes(1);
+    expect(magic.start).toHaveBeenCalledWith(MAGIC_KEY, "discord", "/play");
+  });
+
+  it("leaves a requested method the page does not offer to the page's own options", async () => {
+    await act(async () => {
+      render(<LoginPage redirectTo="/play" layoutVariant="two-options" magicApiKey={MAGIC_KEY} loginMethod="email" />);
+    });
+    expect(magic.start).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("connection-status")).toBeNull();
   });
 
   it("offers every social option through Magic from the grid", async () => {
@@ -423,5 +514,41 @@ describe("the sign-in page", () => {
     });
     expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "193456", { expirationMs: 30 * 86_400_000, rethrow: true });
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
+  });
+});
+
+describe("when the desktop shell opens the sign-in page", () => {
+  beforeEach(() => {
+    (window as { __DCL_SHELL__?: unknown }).__DCL_SHELL__ = { shell: "tauri" };
+  });
+
+  it("should offer browser approval and return to the original page", async () => {
+    const identity = { signer: SIGNER } as NonNullable<ReturnType<typeof getIdentity>>;
+    vi.mocked(beginShellBrowserSignIn).mockReturnValueOnce({ identity: Promise.resolve(identity), cancel: vi.fn() });
+    const target = "/create/storage?step=edit#panel";
+    page(target);
+
+    expect(screen.queryByPlaceholderText("Enter Your Email")).toBeNull();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Continue in your browser" })));
+    expect(assign).toHaveBeenCalledExactlyOnceWith(target);
+  });
+
+  it("should ignore a cancelled approval and accept a retry", async () => {
+    let approve: (identity: ReturnType<typeof getIdentity>) => void = () => {};
+    const cancel = vi.fn();
+    vi.mocked(beginShellBrowserSignIn).mockReturnValueOnce({
+      identity: new Promise((resolve) => { approve = resolve; }),
+      cancel,
+    }).mockReturnValueOnce({ identity: Promise.resolve(null), cancel: vi.fn() });
+    page();
+    fireEvent.click(screen.getByRole("button", { name: "Continue in your browser" }));
+    expect(screen.getByRole("status").textContent).toContain("Approve the sign-in request");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancel).toHaveBeenCalledOnce();
+
+    await act(async () => approve({ signer: SIGNER } as NonNullable<ReturnType<typeof getIdentity>>));
+    expect(assign).not.toHaveBeenCalled();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Continue in your browser" })));
+    expect(screen.getByRole("alert").textContent).toContain("Try again");
   });
 });

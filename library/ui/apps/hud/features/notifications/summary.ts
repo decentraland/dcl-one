@@ -5,12 +5,14 @@ import { openCommunityModal } from '../communities/CommunityModal'
 import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
 import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { ChatState, FriendsState, VoiceChatSession } from '../session/useEngineSession'
-import { nativeProfileImage } from '@hud-host'
+import { nativeProfileImage, siteUrl } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { relationshipOf } from '@explorer-core/lib/relationship'
 import { openPassport } from '../profile/Passport'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
+import { peekProfile } from '../session/profileStore'
 import { showToast } from '../../design'
+import { GIFT_ON_ITS_WAY, giftOf, openGiftReceived } from '../gifting/GiftReceivedPopup'
 import { inCommunityStream, streamAct, streamLive } from '../voiceChat/callGate'
 
 function humanize(s: string): string {
@@ -42,6 +44,8 @@ export function ago(ts: string): string {
   if (h < 24) return `${h}h`
   const d = Math.floor(h / 24)
   if (d < 7) return `${d}d`
+  // an old one reads in whole months
+  if (d >= 30) return Math.floor(d / 30) === 1 ? '1 month ago' : `${Math.floor(d / 30)} months ago`
   return new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
@@ -59,10 +63,26 @@ const FRIENDSHIP_BODY: Record<string, string> = {
 
 const cname = (m: Record<string, unknown>): string => str(m, 'communityName') ?? 'a community'
 
+/** A tip's amount ("a 166 MANA"), with at most two decimals; "a MANA" when the notification carries none. */
+function tipAmount(m: Record<string, unknown>): string {
+  const n = Number(m.amount)
+  return Number.isFinite(n) && n > 0 ? `a ${Math.round(n * 100) / 100} MANA` : 'a MANA'
+}
+
+/** The tipper (or a gift's sender) as the HUD knows them: their profile name when already loaded, else their short address. The
+ *  notification carries the address only. */
+function tipSender(m: Record<string, unknown>): string {
+  const address = str(m, 'senderAddress')
+  if (!address) return 'Someone'
+  return peekProfile(address)?.name || `${address.slice(0, 6)}…${address.slice(-4)}`
+}
+
 // Notification types whose metadata has NO server-rendered title (community_*, credit reminders, …):
 // the generic path would show the raw humanized type ("Community Post Added"), so build the same
 // readable copy unity-explorer uses (a header + a line composed from the metadata fields).
 const TEMPLATES: Record<string, (m: Record<string, unknown>) => { title: string; body?: string }> = {
+  tip_received: (m) => ({ title: 'New Tip received!', body: `${tipSender(m)} sent you ${tipAmount(m)} tip for one of your scenes!` }),
+  transfer_received: (m) => ({ title: 'Gift received', body: `${tipSender(m)} sent you something! ${GIFT_ON_ITS_WAY}` }),
   community_post_added: (m) => ({ title: 'New Community Announcement', body: `A new announcement was posted in ${cname(m)}.` }),
   community_invite_received: (m) => ({ title: 'Community Invite Received', body: `You've been invited to join ${cname(m)}.` }),
   community_voice_chat_started: (m) => ({ title: 'Community Voice Stream Started', body: `${cname(m)} is streaming — click to join.` }),
@@ -113,6 +133,36 @@ export function friendshipTarget(n: AppNotification, friends?: FriendsState): ((
     }
   }
   return () => openPassport(address)
+}
+
+/** A tip's notification opens the tipper's passport. */
+export function tipTarget(n: AppNotification): (() => void) | undefined {
+  if (n.type !== 'tip_received') return undefined
+  const address = str(n.metadata, 'senderAddress')
+  return address == null ? undefined : () => openPassport(address)
+}
+
+/** A referral notification: a player who accepted the invite opens that player's passport, and a new
+ *  reward tier opens the referrer's Referral Rewards page on the site. */
+export function referralTarget(n: AppNotification): (() => void) | undefined {
+  if (n.type === 'referral_invited_users_accepted') {
+    const invited = str(n.metadata, 'invitedUserAddress')
+    return invited == null ? undefined : () => openPassport(invited)
+  }
+  if (n.type === 'referral_new_tier_reached') {
+    const referrer = str(n.metadata, 'address')
+    if (referrer == null) return undefined
+    return () => {
+      window.open(siteUrl(`/profile/${encodeURIComponent(referrer.toLowerCase())}/referral-rewards`), '_blank', 'noopener')
+    }
+  }
+  return undefined
+}
+
+/** A gift's notification opens the gift-received popup. */
+export function giftTarget(n: AppNotification): (() => void) | undefined {
+  const gift = giftOf(n)
+  return gift == null ? undefined : () => openGiftReceived(gift)
 }
 
 /** A community stream notification joins the stream if it is still live (an old one would hang up the

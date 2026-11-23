@@ -62,6 +62,38 @@ it('opens only the fixed support URL through the scene permission boundary', asy
   expect(openExternalUrl).toHaveBeenCalledWith({ url: 'https://decentraland.org/help/' })
 })
 
+describe('openExternalUrl', () => {
+  beforeEach(() => {
+    openExternalUrl.mockReset()
+  })
+
+  it('opens an https url and answers under the request id', async () => {
+    const { ctx, sent, req } = fakeCtx()
+    registerSession(ctx)
+    await req({ kind: 'openExternalUrl', requestId: 7, url: 'https://x.com/intent/post?text=hi' })
+    expect(openExternalUrl).toHaveBeenCalledWith({ url: 'https://x.com/intent/post?text=hi' })
+    expect(sent).toContainEqual({ kind: 'externalUrlOpened', requestId: 7, ok: true })
+  })
+
+  it.each(['file:///etc/passwd', 'http://example.org/', 'javascript:alert(1)', 'steam://run/1', ''])('refuses %s', async (url) => {
+    const { ctx, sent, req } = fakeCtx()
+    registerSession(ctx)
+    expectConsoleOutput('error', [['[session] refused to open', url]])
+    await req({ kind: 'openExternalUrl', requestId: 8, url })
+    expect(openExternalUrl).not.toHaveBeenCalled()
+    expect(sent).toContainEqual({ kind: 'externalUrlOpened', requestId: 8, ok: false })
+  })
+
+  it('answers a failed open instead of leaving the page waiting', async () => {
+    openExternalUrl.mockRejectedValueOnce(new Error('denied'))
+    const { ctx, sent, req } = fakeCtx()
+    registerSession(ctx)
+    expectConsoleOutput('error', [['[session] open', 'https://example.org/', new Error('denied')]])
+    await req({ kind: 'openExternalUrl', requestId: 9, url: 'https://example.org/' })
+    expect(sent).toContainEqual({ kind: 'externalUrlOpened', requestId: 9, ok: false })
+  })
+})
+
 const readies = (sent: SceneToPage[]): number => sent.filter((m) => m.kind === 'event' && m.name === 'playerReady').length
 
 beforeEach(() => {
@@ -114,7 +146,8 @@ describe('bridge service URLs', () => {
       'https://gateway.example.org/notifications/notifications?limit=50&from=0',
       'https://example.org/mounted/events/api/events?community_id=some%2Fid&list=upcoming',
       'https://custom.example/social/v2/communities/some%2Fid/members?limit=100',
-      'https://example.org/mounted/camera-reel-service/api/communities/some%2Fid/images?limit=30'
+      // the photos are read for the community's places only, so this card (none) reads none
+      'https://custom.example/social/v1/communities/some%2Fid/places'
     ]) {
       expect(BevyApi.kernelFetch).toHaveBeenCalledWith(expect.objectContaining({
         url, init: expect.objectContaining({ method: 'GET' })

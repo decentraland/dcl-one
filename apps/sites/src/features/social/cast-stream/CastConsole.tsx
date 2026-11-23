@@ -1,13 +1,37 @@
-import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useMachine } from "@xstate/react";
 import { useSearchParams } from "react-router";
 
-import StCastStreamer from "@ui/web/pages/StCastStreamer";
-import StCastNotFound from "@ui/web/pages/StCastNotFound";
+import CastStreamerView from "@dcl/one-ui/apps/sites/cast/StCastStreamer";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
-import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type TrackFn } from "./machine";
+import SitesLayout from "../../components/chrome/SitesLayout";
+import { CastNotFoundScreen } from "../cast-not-found/CastNotFound";
+import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type GoLiveFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type StopShareFn, type TrackFn } from "./machine";
+
+/** What a real session adds to the console; the story pages leave it out. */
+export type LiveBindings = {
+  goLive: GoLiveFn;
+  stopShare: StopShareFn;
+  /** Calls `onEnded` when the browser ends the screen capture; answers the unsubscribe. */
+  bindShareEnded: (onEnded: () => void) => () => void;
+  /** Calls `onLost` when the room goes away while live; answers the unsubscribe. */
+  bindConnectionLost: (onLost: () => void) => () => void;
+  /** The published media and the room's audio, shown in the live view; `muted` mutes the audio. */
+  stage?: (muted: boolean) => ReactNode;
+  /** The microphone and camera as published, and their toggles. */
+  micOn: boolean;
+  cameraOn: boolean;
+  toggleMicrophone: () => void;
+  toggleCamera: () => void;
+  /** A toggle is under way. */
+  devicesBusy: boolean;
+  /** The browser blocked playback until a click; `enableAudio` is that click. */
+  audioBlocked: boolean;
+  enableAudio: () => void;
+  participants?: number;
+};
 
 type CastConsoleProps = {
   trackCtx: TrackContext;
@@ -19,6 +43,7 @@ type CastConsoleProps = {
   endCast?: EndCastFn;
   shareScreen?: ShareScreenFn;
   track?: TrackFn;
+  live?: LiveBindings;
 };
 
 export default function CastConsole({
@@ -31,11 +56,13 @@ export default function CastConsole({
   endCast,
   shareScreen,
   track,
+  live,
 }: CastConsoleProps) {
   const [searchParams] = useSearchParams();
 
   const urlStep = (searchParams.get("step")?.trim() || initialStep) ?? undefined;
-  const stateId = slugToState(urlStep);
+  // A live session runs the whole flow once; only the story pages jump between steps.
+  const stateId = live ? slugToState(undefined) : slugToState(urlStep);
 
   return (
     <CastConsoleInner
@@ -49,6 +76,7 @@ export default function CastConsole({
       endCast={endCast}
       shareScreen={shareScreen}
       track={track}
+      live={live}
     />
   );
 }
@@ -63,6 +91,7 @@ type InnerProps = {
   endCast?: EndCastFn;
   shareScreen?: ShareScreenFn;
   track?: TrackFn;
+  live?: LiveBindings;
 };
 
 function CastConsoleInner({
@@ -75,8 +104,10 @@ function CastConsoleInner({
   endCast,
   shareScreen,
   track,
+  live,
 }: InnerProps) {
   const [, setSearchParams] = useSearchParams();
+  const [name, setName] = useState(identity ?? "");
 
   const snapshot = useRef(
     resolveCastSnapshot({
@@ -88,6 +119,8 @@ function CastConsoleInner({
       requestPermissions,
       endCast,
       shareScreen,
+      goLive: live?.goLive,
+      stopShare: live?.stopShare,
       track,
     }),
   ).current;
@@ -101,16 +134,27 @@ function CastConsoleInner({
       requestPermissions,
       endCast,
       shareScreen,
+      goLive: live?.goLive,
+      stopShare: live?.stopShare,
       track,
     },
     snapshot,
   });
+
+  const bindShareEnded = live?.bindShareEnded;
+  useEffect(() => bindShareEnded?.(() => send({ type: "SHARE_ENDED" })), [bindShareEnded, send]);
+  const bindConnectionLost = live?.bindConnectionLost;
+  useEffect(
+    () => bindConnectionLost?.(() => send({ type: "CONNECTION_LOST" })),
+    [bindConnectionLost, send],
+  );
 
   const value = state.matches("live") ? "live" : (state.value as string);
   const step = stateToSlug(value);
 
   const lastStep = useRef<string | null>(null);
   useEffect(() => {
+    if (live) return;
     if (lastStep.current === step) return;
     lastStep.current = step;
     setSearchParams(
@@ -122,10 +166,15 @@ function CastConsoleInner({
       },
       { replace: true, preventScrollReset: true },
     );
-  }, [step, setSearchParams]);
+  }, [step, setSearchParams, live]);
 
   const placeName = state.context.info?.placeName ?? "Genesis Plaza";
   const displayName = state.context.identity || identity || "";
+
+  // The story pages have no session: their microphone and camera switch only on screen.
+  const [simMic, setSimMic] = useState(true);
+  const [simCamera, setSimCamera] = useState(true);
+  const [tabMuted, setTabMuted] = useState(false);
 
   return (
     <div className="cast-console" data-step={step}>
@@ -134,150 +183,107 @@ function CastConsoleInner({
       )}
 
       {value === "deviceSelect" && (
-        <>
-          <StCastStreamer
-            state="onboarding"
-            streamName={placeName}
-            displayName={displayName}
-            toasts={[]}
-          />
-          <ConsoleControls label="Devices">
-            <button
-              type="button"
-              className="cast-console__btn cast-console__btn--primary"
-              onClick={() => send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES })}
-            >
-              Continue with these devices
-            </button>
-          </ConsoleControls>
-        </>
+        <StCastStreamer
+          state="onboarding"
+          streamName={placeName}
+          displayName={name}
+          onNameChange={setName}
+          devices={state.context.devices}
+          // One click runs the whole join: devices, then access, then the room.
+          onJoin={() => send({ type: "SELECT_DEVICES", devices: DEFAULT_DEVICES, name, join: true })}
+          toasts={[]}
+        />
       )}
 
       {value === "permissions" && (
-        <>
-          <StCastStreamer
-            state="joining"
-            streamName={placeName}
-            toasts={
-              state.context.permissionsDenied
-                ? [
-                    {
-                      id: "perm",
-                      title: "Camera & microphone blocked",
-                      message:
-                        "Allow access to your camera and microphone, then retry to continue.",
-                      action: { label: "Retry", onClick: () => {} },
-                    },
-                  ]
-                : []
-            }
-          />
-          <ConsoleControls label="Permissions">
-            {state.context.permissionsDenied ? (
-              <>
-                <button
-                  type="button"
-                  className="cast-console__btn"
-                  onClick={() => send({ type: "BACK" })}
-                >
-                  Change devices
-                </button>
-                <button
-                  type="button"
-                  className="cast-console__btn cast-console__btn--primary"
-                  onClick={() => send({ type: "RETRY_PERMISSIONS" })}
-                >
-                  Allow access
-                </button>
-              </>
-            ) : (
-              <span className="cast-console__hint">Requesting camera & microphone&#x2026;</span>
-            )}
-          </ConsoleControls>
-        </>
+        <StCastStreamer
+          state="joining"
+          streamName={placeName}
+          toasts={
+            state.context.permissionsDenied
+              ? [
+                  {
+                    id: "perm",
+                    title: "Camera & microphone blocked",
+                    message: "Allow access to your camera and microphone, then retry to continue.",
+                    action: { label: "Retry", onClick: () => send({ type: "RETRY_PERMISSIONS" }) },
+                    onDismiss: () => send({ type: "BACK" }),
+                  },
+                ]
+              : []
+          }
+        />
       )}
 
       {value === "preview" && (
-        <>
-          <StCastStreamer
-            state="onboarding"
-            streamName={placeName}
-            displayName={displayName}
-            toasts={[]}
-          />
-          <ConsoleControls label="Preview">
-            <button
-              type="button"
-              className="cast-console__btn"
-              onClick={() => send({ type: "BACK" })}
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              className="cast-console__btn cast-console__btn--primary"
-              onClick={() => send({ type: "JOIN" })}
-            >
-              Join now
-            </button>
-          </ConsoleControls>
-        </>
+        <StCastStreamer
+          state="onboarding"
+          streamName={placeName}
+          displayName={name}
+          onNameChange={setName}
+          devices={state.context.devices}
+          onJoin={() => send({ type: "JOIN", name })}
+          toasts={
+            state.context.joinError
+              ? [
+                  {
+                    id: "join",
+                    title: "Could not join the cast",
+                    message: state.context.joinError,
+                    action: { label: "Retry", onClick: () => send({ type: "JOIN", name }) },
+                  },
+                ]
+              : []
+          }
+        />
       )}
 
-      {value === "live" &&
-        (() => {
-          const sharing = state.matches({ live: "sharing" });
-          const publishing = state.matches({ live: "publishingShare" });
-          return (
-            <>
-              <StCastStreamer
-                state="live"
-                streamName={placeName}
-                displayName={displayName || "Streamer"}
-                participants={1}
-                toasts={
-                  state.context.screenShareFailed
-                    ? [
-                        {
-                          id: "ss",
-                          title: "Screen sharing failed",
-                          message:
-                            "Your screen share stopped. Click retry to share again.",
-                          action: {
-                            label: "Retry",
-                            onClick: () => send({ type: "TOGGLE_SCREENSHARE" }),
-                          },
-                        },
-                      ]
-                    : []
-                }
-              />
-              <ConsoleControls label="Live">
-                <button
-                  type="button"
-                  className={
-                    "cast-console__btn" + (sharing ? " cast-console__btn--active" : "")
-                  }
-                  disabled={publishing}
-                  onClick={() => send({ type: "TOGGLE_SCREENSHARE" })}
-                >
-                  {sharing
-                    ? "Stop sharing"
-                    : publishing
-                      ? "Starting share\u{2026}"
-                      : "Share screen"}
-                </button>
-                <button
-                  type="button"
-                  className="cast-console__btn cast-console__btn--primary"
-                  onClick={() => send({ type: "LEAVE" })}
-                >
-                  Leave stream
-                </button>
-              </ConsoleControls>
-            </>
-          );
-        })()}
+      {value === "joining" && (
+        <StCastStreamer state="joining" streamName={placeName} toasts={[]} />
+      )}
+
+      {value === "live" && (
+        <StCastStreamer
+          state="live"
+          streamName={placeName}
+          displayName={displayName || "Streamer"}
+          participants={live?.participants ?? 1}
+          stage={live?.stage?.(tabMuted)}
+          micOn={live ? live.micOn : simMic}
+          cameraOn={live ? live.cameraOn : simCamera}
+          onToggleMic={live ? live.toggleMicrophone : () => setSimMic((on) => !on)}
+          onToggleCamera={live ? live.toggleCamera : () => setSimCamera((on) => !on)}
+          devicesBusy={live?.devicesBusy}
+          sharing={state.matches({ live: "sharing" })}
+          shareBusy={state.matches({ live: "publishingShare" })}
+          onToggleShare={() => send({ type: "TOGGLE_SCREENSHARE" })}
+          onLeaveStream={() => send({ type: "LEAVE" })}
+          tabMuted={tabMuted}
+          onToggleTabMute={() => setTabMuted((muted) => !muted)}
+          toasts={[
+            ...(state.context.screenShareFailed
+              ? [
+                  {
+                    id: "ss",
+                    title: "Screen sharing failed",
+                    message: "Your screen share stopped. Click retry to share again.",
+                    action: { label: "Retry", onClick: () => send({ type: "TOGGLE_SCREENSHARE" }) },
+                  },
+                ]
+              : []),
+            ...(live?.audioBlocked && live.enableAudio
+              ? [
+                  {
+                    id: "audio",
+                    title: "Audio is paused",
+                    message: "Your browser needs a click before the Cast can play sound.",
+                    action: { label: "Enable audio", onClick: live.enableAudio },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      )}
 
       {value === "ending" && (
         <StCastStreamer
@@ -288,7 +294,6 @@ function CastConsoleInner({
               id: "ending",
               title: "Ending your cast\u{2026}",
               message: "Closing the room and releasing your devices.",
-              action: { label: "OK", onClick: () => {} },
             },
           ]}
         />
@@ -298,46 +303,39 @@ function CastConsoleInner({
         <StCastStreamer
           state="error"
           streamName={placeName}
-          errorTitle="Your cast has ended"
-          errorMessage="Thanks for casting. Start a new cast from the Admin Smart Item in your scene."
+          errorTitle={
+            state.context.connectionLost ? "Your cast was disconnected" : "Your cast has ended"
+          }
+          errorMessage={
+            state.context.connectionLost
+              ? "The connection to the scene was lost. Open the stream link again to rejoin."
+              : "Thanks for casting. Start a new cast from the Admin Smart Item in your scene."
+          }
+          // Opening the stream link again is a reload of this page.
+          onRetry={
+            live && state.context.connectionLost ? () => window.location.reload() : undefined
+          }
+          retryLabel="Rejoin"
           toasts={[]}
         />
       )}
 
       {value === "invalid" && (
-        <>
-          <StCastNotFound
-            description={
-              (state.context.invalidReason ?? "Invalid streaming key") +
-              ". Stream links are generated on-demand by the Admin Smart Item in Decentraland scenes."
-            }
-          />
-          <ConsoleControls label="Invalid link">
-            <button
-              type="button"
-              className="cast-console__btn cast-console__btn--primary"
-              onClick={() => send({ type: "RETRY" })}
-            >
-              Try again
-            </button>
-          </ConsoleControls>
-        </>
+        <CastNotFoundScreen
+          description={
+            (state.context.invalidReason ?? "Invalid streaming key") +
+            ". Stream links are generated on-demand by the Admin Smart Item in Decentraland scenes."
+          }
+        />
       )}
     </div>
   );
 }
 
-function ConsoleControls({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function StCastStreamer(props: ComponentProps<typeof CastStreamerView>) {
   return (
-    <div className="cast-console__controls" role="group" aria-label={label}>
-      {children}
-    </div>
+    <SitesLayout active="legal">
+      <CastStreamerView {...props} />
+    </SitesLayout>
   );
 }
-

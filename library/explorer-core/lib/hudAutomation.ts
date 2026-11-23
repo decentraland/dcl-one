@@ -4,18 +4,20 @@
 //
 // On the web the engine cannot reach this DOM, so the page answers the commands itself:
 // installHudAutomation registers /hud_list, /hud_read, /hud_wait, /hud_click, /hud_fill,
-// /hud_login, /press_key and /click_at with engine.js, which runs them here instead of sending
-// them to the engine. Clicks and keys are real input when a test runner drives the browser and
-// has added window.__dclTrustedInput (local-harness/web-driver, over the DevTools Protocol): the
-// page finds the control, asks the runner to click or type, and waits for its answer. Without one
-// they are DOM events, which a page can tell from a user's (isTrusted is false). Natively the
-// engine asks over window.cef (cefNativeBridge.ts, answerHudRequest, answerHudWait) and then
-// clicks and types with real input through CEF. Waiting happens here on both: the page polls, the
-// engine just relays. /hud_login signs the HUD in through its own flow: the session provides the
-// sign-in while it is mounted (features/session/useEngineSession.ts calls provideHudLogin), so
-// the HUD leaves its start page as it does for a user, which the engine's /login_identity alone
-// never makes it do. It is registered only while a test runner drives the browser (the hook is
-// present at install), so a page script in a browser nobody drives has no such command.
+// /hud_login, /hud_logout, /press_key and /click_at with engine.js, which runs them here instead
+// of sending them to the engine. Clicks and keys are real input when a test runner drives the
+// browser and has added window.__dclTrustedInput (local-harness/web-driver, over the DevTools
+// Protocol): the page finds the control, asks the runner to click or type, and waits for its
+// answer. Without one they are DOM events, which a page can tell from a user's (isTrusted is
+// false). Natively the engine asks over window.cef (cefNativeBridge.ts, answerHudRequest,
+// answerHudWait) and then clicks and types with real input through CEF. Waiting happens here on
+// both: the page polls, the engine just relays. /hud_login signs the HUD in through its own flow,
+// and /hud_logout signs it out: the session provides both while it is mounted
+// (features/session/useEngineSession.ts calls provideHudLogin and provideHudLogout), so the HUD
+// leaves its start page, and returns to it, as it does for a user, which the engine's
+// /login_identity and /logout alone never make it do. They are registered only while a test
+// runner drives the browser (the hook is present at install), so a page script in a browser
+// nobody drives has no such command.
 
 import type { NewAccountPick } from '../engine/driver'
 import type { AuthIdentity } from '../features/auth/sso'
@@ -144,13 +146,20 @@ export function roleOf(el: Element): string | null {
 }
 
 // The text an element's content names it with: text, and the names of the images and labelled
-// elements inside it, skipping what is hidden from assistive technology.
+// elements inside it, skipping what is hidden from assistive technology. Adjacent text nodes are
+// one run of text, as a browser reads them: JSX's `{rating}%` is "97%", not "97 %".
 function contentText(el: Element): string {
   const parts: string[] = []
+  let lastWasText = false
   for (const node of Array.from(el.childNodes)) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      parts.push(node.textContent ?? '')
-    } else if (node instanceof Element) {
+    const isText = node.nodeType === Node.TEXT_NODE
+    if (isText) {
+      const text = node.textContent ?? ''
+      if (lastWasText) parts[parts.length - 1] += text
+      else parts.push(text)
+    }
+    lastWasText = isText
+    if (!isText && node instanceof Element) {
       if (node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('hidden')) continue
       const label = node.getAttribute('aria-label')
       if (label) parts.push(label)
@@ -174,9 +183,13 @@ export function nameOf(el: Element, role: string): string {
   }
   const label = normalize(el.getAttribute('aria-label') ?? '')
   if (label) return label
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+  // A <label> names every labelable element, a button as well as a field: the Skybox panel's
+  // `<label>Auto <Toggle/></label>` names its switch "Auto".
+  if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
     const labels = normalize(Array.from(el.labels ?? []).map((l) => l.textContent ?? '').join(' '))
     if (labels) return labels
+  }
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
     if (el instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(el.type)) {
       return normalize(el.value) || (el.type === 'submit' ? 'Submit' : el.type === 'reset' ? 'Reset' : '')
     }
@@ -668,9 +681,10 @@ export async function clickAt(x: number, y: number, button: MouseButtonName = 'l
 /**
  * What `/hud_login` asks of the session: sign in with this identity as the page's stored sign-in,
  * the way Jump In reuses one, with a first login's pick, and go where a link's destination would
- * from the lobby. The sign-in stands for the terms the welcome page asks for, as ACCEPT AND PLAY
- * does; a first login (an account with no profile yet) needs the pick, which names the profile
- * it deploys. The session provides the sign-in with `provideHudLogin` while it is mounted.
+ * from the lobby. The sign-in stands for the terms a new account ticks on its name screen; a first
+ * login (an account with no profile yet) needs the pick, which names the profile it deploys, in
+ * place of its look and name screens. The identity stays in the session: nothing is written to the
+ * browser's storage. The session provides the sign-in with `provideHudLogin` while it is mounted.
  */
 export interface HudLoginRequest {
   identity: AuthIdentity
@@ -702,6 +716,13 @@ export function provideHudLogin(login: HudLogin | null): void {
   hudLogin = login
 }
 
+let hudLogout: (() => void) | null = null
+
+/** The session's sign-out, for `/hud_logout`; null once the session unmounts. */
+export function provideHudLogout(logout: (() => void) | null): void {
+  hudLogout = logout
+}
+
 const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/
 
 // The identity as `/login_identity` takes it: base64 of the AuthIdentity's JSON. An error never
@@ -729,7 +750,7 @@ function decodeIdentity(encoded: string): AuthIdentity {
 }
 
 const LOGIN_USAGE = '/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>] [--position <x,y>]'
-/** The curated default looks a new account can wear, `default1` to `default<n>` (lib/guestName.ts). */
+/** The curated default looks a new account can wear, `default1` to `default<n>`. */
 const CURATED_LOOKS = 160
 
 /** The text after `/hud_login`: the encoded identity, then its flags. */
@@ -793,6 +814,18 @@ export function loginThroughHud(request: HudLoginRequest): Promise<HudLoginReply
   if (!trustedInputAvailable()) return Promise.reject(new Error('/hud_login takes a test runner driving the browser (window.__dclTrustedInput)'))
   if (hudLogin == null) return Promise.reject(new Error('no HUD session takes a sign-in here: the HUD is not mounted'))
   return hudLogin(request)
+}
+
+/** Sign out as the start lobby's sign-out does after its question, the engine included, back to
+ *  the start page (the Me panel's Sign Out in world asks too and loads the page again; this does
+ *  neither); a
+ *  pending `/hud_login` fails with that. Only for a test runner driving the browser, as
+ *  `/hud_login` is. */
+export function logoutThroughHud(): string {
+  if (!trustedInputAvailable()) throw new Error('/hud_logout takes a test runner driving the browser (window.__dclTrustedInput)')
+  if (hudLogout == null) throw new Error('no HUD session to sign out of here: the HUD is not mounted')
+  hudLogout()
+  return 'signed out'
 }
 
 // --- the commands ---
@@ -864,8 +897,9 @@ export interface PageCommand {
 const SELECTOR_ARG: PageCommandArg = { name: 'json', kind: 'json', optional: false, help: 'the accessible name, or a JSON selector' }
 
 // The same commands and help as the engine registers natively (src/automation.rs,
-// src/react_hud_cef/automation.rs), but /hud_login, which only the web has: natively the engine
-// signs in. It is kept apart (LOGIN_COMMANDS), registered only under a test runner.
+// src/react_hud_cef/automation.rs), but /hud_login and /hud_logout, which only the web has:
+// natively the engine signs in and out. They are kept apart (LOGIN_COMMANDS), registered only
+// under a test runner.
 export const PAGE_COMMANDS: Record<string, PageCommand> = {
   '/hud_list': {
     args: [{ name: 'role', kind: 'string', optional: true, help: 'only controls with this role' }],
@@ -912,19 +946,54 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
       { name: 'x', kind: 'string', optional: false },
       { name: 'y', kind: 'string', optional: false }
     ],
-    help: 'Click at a page position, in CSS pixels from the top left, as the mouse would: the HUD gets it where it is, the world elsewhere. --button is left (the default), right or middle. The web page asks the test runner driving the browser for a real click, and dispatches DOM events without one',
+    help: 'Click at a page position, in CSS pixels from the top left (or, with --normalized, 0 to 1 of the page from the top left), as the mouse would: the HUD gets it where it is, the world elsewhere. --button is left (the default), right or middle. Replies JSON {"x", "y"} in pixels, "normalized" {"x", "y"}, "button", the page\'s "screen" {"width", "height", "scale"} and "input": "trusted" when the test runner driving the browser clicked, "synthetic" for DOM events',
     run: async (rest) => {
-      const [xText, yText, flag, value] = rest.trim().split(/\s+/)
-      const x = Number(xText)
-      const y = Number(yText)
-      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('expected /click_at <x> <y>')
-      const button = flag === '--button' ? value : undefined
+      const words = rest.trim().split(/\s+/)
+      const [xText, yText] = words
+      let button: string | undefined
+      let normalized = false
+      for (let i = 2; i < words.length; i++) {
+        if (words[i] === '--button') {
+          button = words[++i]
+          if (button === undefined) throw new Error('--button needs a value: left, right or middle')
+        } else if (words[i] === '--normalized') normalized = true
+        else throw new Error(`unexpected \`${words[i]}\`: /click_at <x> <y> [--button b] [--normalized]`)
+      }
+      const given = { x: Number(xText), y: Number(yText) }
+      if (!Number.isFinite(given.x) || !Number.isFinite(given.y)) throw new Error('expected /click_at <x> <y>')
       if (button != null && button !== 'left' && button !== 'right' && button !== 'middle') {
         throw new Error(`unknown button \`${button}\`: use left, right or middle`)
       }
-      await clickAt(x, y, button)
-      return `clicked at (${x}, ${y})`
+      const screen = { width: window.innerWidth, height: window.innerHeight, scale: window.devicePixelRatio }
+      if (normalized && !(given.x >= 0 && given.x <= 1 && given.y >= 0 && given.y <= 1)) {
+        throw new Error(`normalized coordinates run from 0 to 1 from the top left; got (${given.x}, ${given.y})`)
+      }
+      // 1 is the page's last pixel, not the one past it, where no element is
+      const x = normalized ? Math.max(0, Math.min(given.x * screen.width, screen.width - 1)) : given.x
+      const y = normalized ? Math.max(0, Math.min(given.y * screen.height, screen.height - 1)) : given.y
+      const input = await clickAt(x, y, button)
+      return JSON.stringify(clickAtReply(x, y, button ?? 'left', screen, input))
     }
+  }
+}
+
+/** /click_at's reply, as the engine words it natively (src/automation.rs, click_at_reply): where
+ *  it clicked, in pixels and normalized, and on what page; and how. */
+function clickAtReply(
+  x: number,
+  y: number,
+  button: MouseButtonName,
+  screen: { width: number; height: number; scale: number },
+  input: InputKind
+) {
+  const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places
+  return {
+    x: round(x, 2),
+    y: round(y, 2),
+    normalized: { x: round(x / screen.width, 4), y: round(y / screen.height, 4) },
+    button,
+    screen: { width: round(screen.width, 2), height: round(screen.height, 2), scale: round(screen.scale, 2) },
+    input
   }
 }
 
@@ -936,12 +1005,20 @@ export const LOGIN_COMMANDS: Record<string, PageCommand> = {
     args: [{ name: 'identity', kind: 'string', optional: false, help: 'base64(JSON) of an AuthIdentity, as /login_identity takes it' }],
     help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In. The sign-in accepts the terms the welcome page asks for; --name <name> and --look <n> pick a first login's profile (needed for an account with no profile yet; an existing one keeps its own), --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed and the page is done (phase lobby, entering on the way to the destination, picking or world), and fails with the sign-in's error. Web only, under a test runner driving the browser: natively the engine signs in",
     run: async (rest) => JSON.stringify(await loginThroughHud(parseLoginArgs(rest)))
+  },
+  '/hud_logout': {
+    args: [],
+    help: "Sign out through the HUD's own flow, the engine included, back to the HUD's start page, as the start lobby's sign-out does after its question (the Me panel's Sign Out in world asks too and loads the page again; this does neither); a /hud_login still waiting for its answer fails with \"signed out\". /hud_login then takes a sign-in again, once the engine has answered any it still held. The engine's /logout never reaches the HUD, which stays signed in. Web only, under a test runner driving the browser",
+    run: (rest) => {
+      if (rest.trim() !== '') throw new Error('/hud_logout takes no arguments')
+      return logoutThroughHud()
+    }
   }
 }
 
 /** Web: hand engine.js the commands it runs in the page instead of sending them to the engine, and
- *  the hook a test runner answers its trusted input requests through; the sign-in command only
- *  when such a runner is driving the browser. */
+ *  the hook a test runner answers its trusted input requests through; the sign-in and sign-out
+ *  commands only when such a runner is driving the browser. */
 export function installHudAutomation(): void {
   const w = window as Window & { __dclPageCommands?: Record<string, PageCommand> } & TrustedInputWindow
   w.__dclPageCommands = { ...(w.__dclPageCommands ?? {}), ...PAGE_COMMANDS, ...(trustedInputAvailable() ? LOGIN_COMMANDS : {}) }

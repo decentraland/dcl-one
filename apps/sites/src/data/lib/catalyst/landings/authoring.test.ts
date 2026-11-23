@@ -4,7 +4,6 @@ vi.mock("../../auth/signer", () => ({ signedFetch: vi.fn() }));
 import { postJSON } from "../client";
 import { signedFetch } from "../../auth/signer";
 import { buildHangoutSubmit, deleteHangout, emptyDraft as emptyHangout, eventToDraft, uploadHangoutPoster, type EditableHangout, type HangoutDraft } from "./submit-hangout";
-import { buildScheduleSubmit, emptyDraft as emptySchedule, scheduleToDraft, type Schedule, type ScheduleDraft } from "./schedules";
 import type { AuthIdentity } from "../../auth/types";
 
 describe("when submitting a hangout", () => {
@@ -83,6 +82,43 @@ describe("when submitting a hangout", () => {
       await submit({ draft });
       expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
       expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+    });
+
+    describe("and the owner saves it after a rejection", () => {
+      beforeEach(() => {
+        original.approved = false;
+        original.rejected = true;
+        original.rejection_reason = "Invalid image";
+        submit = buildHangoutSubmit(() => identity, original);
+      });
+
+      it("should ask to send it back to review", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ rejected: false });
+      });
+
+      it("should report the event back in review when the server cleared the rejection", async () => {
+        vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: false, rejection_reason: null } });
+        await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: false });
+      });
+
+      it("should report the event still rejected when the server answers that it is", async () => {
+        vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { ...original, approved: false, rejected: true, rejected_by: "0x4444444444444444444444444444444444444444" } });
+        await expect(submit({ draft })).resolves.toEqual({ id: "existing-event", approved: false, rejected: true });
+      });
+    });
+
+    describe("and an authorized editor saves another creator's rejected event", () => {
+      beforeEach(() => {
+        original.user = "0x3333333333333333333333333333333333333333";
+        original.rejected = true;
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+
+      it("should leave the review state to the moderation tools", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("rejected");
+      });
     });
 
     describe("and an authorized editor manages another creator's event", () => {
@@ -269,56 +305,6 @@ describe("when submitting a hangout", () => {
   });
 });
 
-describe("when saving a moderator schedule", () => {
-  let identity: AuthIdentity;
-  let draft: ScheduleDraft;
-  let submit: ReturnType<typeof buildScheduleSubmit>;
-
-  beforeEach(() => {
-    identity = { signer: "0x1111111111111111111111111111111111111111", ephemeral: { address: "0x2222222222222222222222222222222222222222", privateKey: "0x01" }, expiration: "2099-01-01T00:00:00Z", authChain: [] };
-    draft = { ...emptySchedule(), name: "Festival", activeSinceDate: "2099-06-01", activeUntilDate: "2099-06-03" };
-    submit = buildScheduleSubmit(() => identity);
-    vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { id: "saved-schedule", active: true } });
-  });
-
-  afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); });
-
-  it("should use RFC3339 boundaries with the signed legacy schedule endpoint", async () => {
-    await submit({ draft });
-    expect(postJSON).toHaveBeenCalledWith("/events/api/schedules", expect.objectContaining({ active_since: "2099-06-01T00:00:00.000Z", active_until: "2099-06-03T23:59:59.000Z" }), expect.objectContaining({ identity, method: "POST" }));
-  });
-
-  it("should patch the selected schedule instead of creating another", async () => {
-    await submit({ draft, scheduleId: "saved-schedule" });
-    expect(postJSON).toHaveBeenCalledWith("/events/api/schedules/saved-schedule", expect.any(Object), expect.objectContaining({ method: "PATCH" }));
-  });
-
-  it("should surface permission failures from the server", async () => {
-    vi.mocked(postJSON).mockRejectedValueOnce(new Error("Moderator access required"));
-    await expect(submit({ draft })).rejects.toThrow("Moderator access required");
-  });
-
-  describe("and editing a schedule with precise times", () => {
-    let original: Schedule;
-    beforeEach(() => {
-      original = { id: "saved-schedule", name: "Festival", description: null, image: null, theme: null, background: [], active: true, active_since: "2099-06-01T12:34:56.789Z", active_until: "2099-06-03T16:45:12.345Z" , created_at: null, updated_at: null };
-      draft = scheduleToDraft(original);
-      submit = buildScheduleSubmit(() => identity, original);
-    });
-    it("should retain both times while editing an unrelated field", async () => {
-      await submit({ draft, scheduleId: original.id });
-      expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: original.active_until }), expect.any(Object));
-    });
-    describe("and only the last day changes", () => {
-      beforeEach(() => { draft.activeUntilDate = "2099-06-04"; });
-      it("should retain the start time and use the new end day", async () => {
-        await submit({ draft, scheduleId: original.id });
-        expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: "2099-06-04T23:59:59.000Z" }), expect.any(Object));
-      });
-    });
-  });
-});
-
 describe("when uploading event covers", () => {
   let identity: AuthIdentity;
   let file: File;
@@ -361,6 +347,17 @@ describe("when uploading event covers", () => {
     it("should forward the caller's abort signal", async () => {
       await expect(uploadHangoutPoster(identity, file, false, controller.signal)).rejects.toThrow();
       expect(signedFetch).toHaveBeenCalledWith(identity, expect.any(String), expect.objectContaining({ signal: controller.signal }));
+    });
+  });
+
+  describe("and the server returns a mounted poster URL", () => {
+    it.each([
+      "/events-assets-099ac00/poster-vertical/cover.png",
+      "https://events.decentraland.org:8443/prefix/events-assets-099ac00/poster-vertical/cover.png",
+    ])("should preserve %s for the next write", async (url) => {
+      vi.mocked(signedFetch).mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { url } })));
+
+      await expect(uploadHangoutPoster(identity, file, true)).resolves.toBe(url);
     });
   });
 
