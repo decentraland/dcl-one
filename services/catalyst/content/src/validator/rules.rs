@@ -1,6 +1,7 @@
 //! The rules, in the old order: structure, IPFS hashing, metadata schema, ADR-45, signature,
-//! size, item representations, profile content, item and face thumbnails,
-//! profile images, scene content, the content cross-check, outfits, the
+//! size, item representations, item thumbnails, profile (upstream
+//! `createProfileValidateFn` order: snapshots rejected, face thumbnail, images,
+//! content rules), scene content, the content cross-check, outfits, the
 //! third-party merkle proof content, access. The first failing step answers; its strings are
 //! the old ones byte for byte, except the reasons after the metadata schema
 //! sentence (see [`super::metadata_schema`]).
@@ -654,7 +655,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     fn validate_profile_images(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
         if entity.entity_type != EntityType::Profile
-            || !should_validate_face_thumbnail(entity, deployment.files)
+            || !validates_up_to_adr290_optionality(entity, deployment.files, adr_timestamps::ADR_45)
         {
             return ValidationResponse::Ok;
         }
@@ -2065,6 +2066,59 @@ mod tests {
                      Please, include only valid snapshot files."
                         .to_string()
                 ]
+            );
+        }
+
+        #[tokio::test]
+        async fn the_profile_step_answers_before_the_content_cross_check() {
+            use serde_json::json;
+            let calls = Calls::new(Duration::ZERO);
+            let checker = SlowChecker(Duration::ZERO, false);
+            let validator = ContentValidator {
+                external_calls: &calls,
+                blockchain_checker: &checker,
+                ignore_blockchain_access: true,
+                synced: false,
+                access_passed: false,
+            };
+            let (face, body, other, extra) = (
+                "bafkreialsvt77jvpy673cnugp5ggnxfaalfncufweayuk3jbxskh3pelkm",
+                "bafkreigreflbn4w3a36rgg2ywlhf2asebqlsd4skg5q5djpklcdcjkbjvi",
+                "bafkreigxzm4duawatfhiylmawwdr4yezskltd3ygkup6nsl4yyif5t57i4",
+                "bafkreicxp2hlkzqvax4dwm2bqic6owqv4qipd4a3zs5zjsfs2l2kas5fhm",
+            );
+            let mut d = profile();
+            d.entity.timestamp = adr_timestamps::ADR_290_OPTIONAL - 1;
+            avatar_mut(&mut d)["snapshots"] = json!({ "face256": face, "body": body });
+            for hash in [face, body, other, extra] {
+                d.files.insert(hash.into(), png(256, 256).into());
+            }
+            d.entity.content = [
+                ("face256.png", face),
+                ("body.png", body),
+                ("other.png", other),
+            ]
+            .into_iter()
+            .map(|(file, hash)| ContentMapping {
+                file: file.into(),
+                hash: hash.into(),
+            })
+            .collect();
+            // `extra` would fail the later cross-check; the profile step answers first.
+            assert_eq!(
+                errors(validator.validate(&d.view()).await),
+                vec![format!(
+                    "This file is not expected: 'other.png' or its hash is invalid: '{other}'. \
+                     Please, include only valid snapshot files."
+                )]
+            );
+            d.entity.content.pop();
+            d.files.remove(other);
+            assert_eq!(
+                errors(validator.validate(&d.view()).await),
+                vec![format!(
+                    "This hash was uploaded but is not referenced in the entity: {extra}"
+                )]
             );
         }
 
