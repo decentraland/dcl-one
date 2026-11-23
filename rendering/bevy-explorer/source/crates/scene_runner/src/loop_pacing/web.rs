@@ -18,7 +18,7 @@ use bevy::{
     render::pipelined_rendering::diagnostics::{WAIT_HANDOFF, WAIT_RENDER},
 };
 
-use super::LOOP_FLOOR;
+use super::loop_bounds;
 
 /// Frames the tail estimate covers. It is used once they are all measured, so its 90th
 /// percentile always leaves out the 3 largest: with fewer frames the nearest-rank 90th percentile
@@ -37,8 +37,7 @@ pub fn frame_deadline(
     frame: Duration,
     tail: Duration,
 ) -> Instant {
-    let earliest_end = loop_start + LOOP_FLOOR;
-    let latest_end = loop_start + frame.max(LOOP_FLOOR);
+    let (earliest_end, latest_end) = loop_bounds(loop_start, frame);
     (frame_start + frame)
         .checked_sub(tail)
         .unwrap_or(earliest_end)
@@ -303,6 +302,7 @@ mod tests {
     use crate::loop_pacing::{
         grid_deadline,
         tests::{close, ms, T},
+        LOOP_FLOOR,
     };
 
     /// After a frame twice the target, the grid budget sits on the floor; the deadline mode

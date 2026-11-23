@@ -27,10 +27,15 @@ pub fn grid_deadline(
     loop_start: Instant,
     frame: Duration,
 ) -> (Instant, Instant) {
-    let earliest_end = loop_start + LOOP_FLOOR;
-    let latest_end = loop_start + frame.max(LOOP_FLOOR);
+    let (earliest_end, latest_end) = loop_bounds(loop_start, frame);
     let target_end_time = next_frame_end.clamp(earliest_end, latest_end);
     (target_end_time, target_end_time + frame)
+}
+
+/// Where a loop that starts at `loop_start` may end: no sooner than the floor after its start, and
+/// no later than a frame target after it.
+fn loop_bounds(loop_start: Instant, frame: Duration) -> (Instant, Instant) {
+    (loop_start + LOOP_FLOOR, loop_start + frame.max(LOOP_FLOOR))
 }
 
 #[cfg(test)]
