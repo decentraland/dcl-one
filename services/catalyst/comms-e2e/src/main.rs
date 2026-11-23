@@ -139,12 +139,7 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
     match arguments.command {
         Command::List { tag } => {
             for scenario in scenarios::select(None, tag.as_deref(), tag.is_none()) {
-                println!("{}", scenario.name);
-                println!("    {}", scenario.summary);
-                println!("    tags: {}", scenario.tags.join(", "));
-                if !scenario.guards.is_empty() {
-                    println!("    guards: {}", scenario.guards.join(", "));
-                }
+                print!("{}", listing(scenario));
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -187,7 +182,8 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 transport,
                 one_source_address,
                 crowd: crowd_from_environment(&selection)?,
-                visit: visit_from_environment(&selection)?,
+                visit: visit_from_environment(scenario.as_deref())?,
+                named: scenario,
                 ..RunOptions::default()
             };
             options.work_dir = match work_dir {
@@ -324,6 +320,24 @@ fn new_run_dir(parent: &Path, prefix: &str) -> Result<PathBuf> {
     bail!("no new directory could be made in {}", parent.display())
 }
 
+/// What `list` prints of `scenario`, one line each: its name, its summary, its tags, what it
+/// guards and, for a scenario that runs only by name, that it does.
+fn listing(scenario: &Scenario) -> String {
+    let mut lines = format!(
+        "{}\n    {}\n    tags: {}\n",
+        scenario.name,
+        scenario.summary,
+        scenario.tags.join(", ")
+    );
+    if !scenario.guards.is_empty() {
+        lines.push_str(&format!("    guards: {}\n", scenario.guards.join(", ")));
+    }
+    if let Some(by_name) = scenario.by_name_only() {
+        lines.push_str(&format!("    {by_name}\n"));
+    }
+    lines
+}
+
 /// The crowd size the environment asks for: `CE2E_CROWD_PLAYERS` and `CE2E_CROWD_ROOM_PLAYERS`.
 fn crowd_from_environment(selection: &[&Scenario]) -> Result<CrowdSize> {
     crowd_for(
@@ -364,12 +378,12 @@ fn crowd_from(players: Option<String>, room_players: Option<String>) -> Result<C
 /// The visit plan the environment names: `CE2E_VISIT_REALM`, `CE2E_VISIT_PARCEL`,
 /// `CE2E_VISIT_SECONDS`, `CE2E_VISIT_EXPECT` and `CE2E_VISIT_LABEL`.
 fn visit_from_environment(
-    selection: &[&Scenario],
+    named: Option<&str>,
 ) -> Result<Option<catalyst_comms_e2e::engine::VisitPlan>> {
     use scenarios::visit;
     let read = |name: &str| std::env::var(name).ok();
     visit_for(
-        selection,
+        named,
         [
             read(visit::REALM_VARIABLE),
             read(visit::PARCEL_VARIABLE),
@@ -380,16 +394,14 @@ fn visit_from_environment(
     )
 }
 
-/// The visit plan the texts of its variables name, for a run of `selection`. They are read only
-/// when it holds `crowd-visit`: a variable the run does not use cannot stop it.
+/// The visit plan the texts of its variables name, for a run that names the scenario `named`.
+/// They are read only when it names `crowd-visit`, which runs only by name: a variable the run
+/// does not use cannot stop it.
 fn visit_for(
-    selection: &[&Scenario],
+    named: Option<&str>,
     [realm, parcel, seconds, expect, label]: [Option<String>; 5],
 ) -> Result<Option<catalyst_comms_e2e::engine::VisitPlan>> {
-    if !selection
-        .iter()
-        .any(|scenario| scenario.name == scenarios::visit::CROWD_VISIT.name)
-    {
+    if named != Some(scenarios::visit::CROWD_VISIT.name) {
         return Ok(None);
     }
     scenarios::visit::plan_from(
@@ -458,18 +470,22 @@ mod tests {
             ]
         };
         for other in ["pulse-smoke", "pulse-crowd", "crowd-discovery"] {
-            let selection = scenarios::select(Some(other), None, false);
-            assert_eq!(visit_for(&selection, malformed()).unwrap(), None, "{other}");
+            assert_eq!(
+                visit_for(Some(other), malformed()).unwrap(),
+                None,
+                "{other}"
+            );
         }
-        let visit = scenarios::select(Some("crowd-visit"), None, false);
-        assert_eq!(visit.len(), 1);
-        assert!(visit_for(&visit, malformed()).is_err());
+        // a run by --tag or --all names no scenario, and leaves crowd-visit out
+        assert_eq!(visit_for(None, malformed()).unwrap(), None);
+        let visit = Some("crowd-visit");
+        assert!(visit_for(visit, malformed()).is_err());
         assert_eq!(
-            visit_for(&visit, [None, None, None, None, None]).unwrap(),
+            visit_for(visit, [None, None, None, None, None]).unwrap(),
             None
         );
         let plan = visit_for(
-            &visit,
+            visit,
             [
                 Some("r".into()),
                 Some("1,2".into()),
@@ -482,6 +498,21 @@ mod tests {
         .unwrap();
         assert_eq!(plan.parcel, (1, 2));
         assert_eq!(plan.label, "crowd-b");
+    }
+
+    #[test]
+    fn list_says_which_scenarios_run_only_by_name() {
+        let visit = listing(&scenarios::visit::CROWD_VISIT);
+        assert!(
+            visit.contains("runs only when the run names it (`comms-e2e run crowd-visit`)"),
+            "{visit}"
+        );
+        let by_name: Vec<&str> = scenarios::registry()
+            .into_iter()
+            .filter(|scenario| listing(scenario).contains("runs only when the run names it"))
+            .map(|scenario| scenario.name)
+            .collect();
+        assert_eq!(by_name, vec!["crowd-visit"]);
     }
 
     #[test]

@@ -23,10 +23,11 @@
 //! takes it from. A player's wallet comes from the plan's crowd label and its index, not from the
 //! run, so every visit under one label deploys the same profiles once.
 //!
-//! It is the one scenario that meets real people and the one that writes to a server: it is
-//! skipped unless the run names a place, a host that is not loopback needs `--allow-host` as for
-//! every scenario, and the content server and lambdas the realm names pass the same check before
-//! anything is sent to them.
+//! It is the one scenario that meets real people and the one that writes to a server: it runs
+//! only when the run names it (`--all` and `--tag` leave it out) and is skipped unless the run
+//! names a place, a host that is not loopback needs `--allow-host` as for every scenario, and the
+//! content server and lambdas the realm names pass the same check before anything is sent to
+//! them.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -90,10 +91,11 @@ pub static CROWD_VISIT: Scenario = Scenario {
     name: "crowd-visit",
     tags: &["pulse", "crowd", "visit"],
     guards: &["claim: real clients and a crowd in one place see each other"],
-    summary: "A crowd (20, or CE2E_CROWD_PLAYERS, at most 30) goes to the realm and parcel the run's visit plan names (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL), where other clients stand: each player first makes sure the realm's content server holds a minimal profile for its wallet (the wallet from CE2E_VISIT_LABEL and its index; deployed only when the lambdas do not serve it) and announces its version; the crowd walks there for CE2E_VISIT_SECONDS (120 unless given) and leaves as a client does: every player must catch a Pulse join event for each wallet in CE2E_VISIT_EXPECT and for each other player, each announcing the profile; notes give the profiles deployed and already there, every join each player caught, visitors included, and samples of what each held. Skipped without a plan",
+    summary: "A crowd (20, or CE2E_CROWD_PLAYERS, at most 30) goes to the realm and parcel the run's visit plan names (CE2E_VISIT_REALM, CE2E_VISIT_PARCEL), where other clients stand: each player first makes sure the realm's content server holds a minimal profile for its wallet (the wallet from CE2E_VISIT_LABEL and its index; deployed only when the lambdas do not serve it) and announces its version; the crowd walks there for CE2E_VISIT_SECONDS (120 unless given) and leaves as a client does: every player must catch a Pulse join event for each wallet in CE2E_VISIT_EXPECT and for each other player, each announcing the profile; notes give the profiles deployed and already there, every join each player caught, visitors included, and samples of what each held. Runs only when the run names it; skipped without a plan",
     needs: Needs {
         api: true,
         visit: true,
+        by_name: true,
         ..Needs::NONE
     },
     hostile: false,

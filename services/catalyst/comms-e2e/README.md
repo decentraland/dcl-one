@@ -171,8 +171,9 @@ list only when the connector sends one, and its report says whether it did
 
 **Visits.** `crowd-visit` is the one scenario that goes where real clients are, so a person can
 watch a crowd arrive in a client and the report shows which clients the crowd met. It runs only
-when the run names a place, and is skipped otherwise. Its variables are read only when it is
-selected; its crowd is the crowd scenarios' (`CE2E_CROWD_PLAYERS`, at most 30 here):
+when the run names it (`comms-e2e run crowd-visit`) and a place: `--all` and `--tag` leave it out
+and the run says so as a skip, as it does without a place. Its variables are read only when the
+run names it; its crowd is the crowd scenarios' (`CE2E_CROWD_PLAYERS`, at most 30 here):
 
 | Variable | What it says |
 |---|---|

@@ -2,7 +2,8 @@
 //! crowd makes sure of its profiles before it enters, goes where another client already stands,
 //! every player catches that client's join, the client catches every player's, each announcing
 //! the profile, and the crowd leaves the way clients do. A wallet the crowd never meets fails the
-//! run by name; a refused deployment fails it before anyone enters.
+//! run by name; a refused deployment fails it before anyone enters; a run that does not name
+//! it leaves it out.
 
 mod support;
 
@@ -43,6 +44,7 @@ fn options(plan: Option<VisitPlan>) -> RunOptions {
             room_players: None,
         },
         visit: plan,
+        named: Some(CROWD_VISIT.name.to_owned()),
         ..Default::default()
     }
 }
@@ -172,6 +174,34 @@ async fn without_a_plan_the_visit_is_skipped() {
         panic!("not skipped: {:?}", result.outcome);
     };
     assert!(reason.contains("CE2E_VISIT_REALM"), "{reason}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_that_does_not_name_the_visit_leaves_it_out() {
+    let pulse = support::in_process_pulse().await;
+    let stand_in = content::start(None).await;
+    // as `--all` or `--tag` select it, or a run that names another scenario
+    for named in [None, Some("pulse-smoke".to_owned())] {
+        let mut unnamed = options(Some(plan("unnamed", Vec::new())));
+        unnamed.named = named.clone();
+        let mut report = run_scenarios(stack(pulse, &stand_in), &[&CROWD_VISIT], &unnamed).await;
+        let result = report.results.remove(0);
+        let Outcome::Skipped { reason } = &result.outcome else {
+            panic!("not left out with {named:?}: {:?}", result.outcome);
+        };
+        assert!(reason.contains("comms-e2e run crowd-visit"), "{reason}");
+        assert!(reason.contains("--all"), "{reason}");
+        assert!(reason.contains("--tag"), "{reason}");
+        // the run's output says so the way it says any skip
+        report.results.push(result);
+        let rendered = report.render(0);
+        assert!(
+            rendered.starts_with("SKIPPED  crowd-visit  (runs only when"),
+            "{rendered}"
+        );
+    }
+    assert_eq!(stand_in.posts(), 0);
+    assert_eq!(stand_in.recorded.lock().reads, 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

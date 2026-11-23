@@ -50,6 +50,18 @@ pub struct Scenario {
     pub run: fn(Ctx) -> ScenarioFuture,
 }
 
+impl Scenario {
+    /// For a scenario that runs only when the run names it, what a run or a listing says of it.
+    pub fn by_name_only(&self) -> Option<String> {
+        self.needs.by_name.then(|| {
+            format!(
+                "runs only when the run names it (`comms-e2e run {}`): --all and --tag leave it out",
+                self.name
+            )
+        })
+    }
+}
+
 /// How large the crowd of the crowd scenarios is. `None` keeps each scenario's own default. The
 /// command line fills it from `CE2E_CROWD_PLAYERS` and `CE2E_CROWD_ROOM_PLAYERS`; a scenario
 /// never reads the environment.
@@ -96,6 +108,8 @@ pub struct Needs {
     pub restart: bool,
     /// The run names a visit plan ([`VisitPlan`]): a realm and a place other clients are in.
     pub visit: bool,
+    /// The run names this scenario (`comms-e2e run <name>`): `--all` and `--tag` leave it out.
+    pub by_name: bool,
 }
 
 impl Needs {
@@ -111,6 +125,7 @@ impl Needs {
         scene_listener: false,
         restart: false,
         visit: false,
+        by_name: false,
     };
 
     /// What `stack` lacks for this scenario, if anything.
@@ -414,6 +429,9 @@ pub struct RunOptions {
     pub crowd: CrowdSize,
     /// Where `crowd-visit` goes; `None` skips it.
     pub visit: Option<VisitPlan>,
+    /// The scenario the run names (`comms-e2e run <name>`), if any: a scenario that runs only by
+    /// name ([`Needs::by_name`]) is skipped unless it is this one.
+    pub named: Option<String>,
 }
 
 impl Default for RunOptions {
@@ -431,6 +449,7 @@ impl Default for RunOptions {
             one_source_address: false,
             crowd: CrowdSize::default(),
             visit: None,
+            named: None,
         }
     }
 }
@@ -475,7 +494,12 @@ pub async fn run_scenarios(
             notes: Vec::new(),
         };
 
-        if let Some(reason) = scenario.needs.missing(&stack) {
+        if let Some(reason) = scenario
+            .by_name_only()
+            .filter(|_| options.named.as_deref() != Some(scenario.name))
+        {
+            result.outcome = Outcome::Skipped { reason };
+        } else if let Some(reason) = scenario.needs.missing(&stack) {
             result.outcome = Outcome::Skipped { reason };
         } else if scenario.needs.visit && options.visit.is_none() {
             result.outcome = Outcome::Skipped {
