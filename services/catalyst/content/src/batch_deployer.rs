@@ -687,7 +687,8 @@ mod tests {
             block: u64,
         ) -> Result<bool, crate::auth::AuthError> {
             use crate::validator::fake_chain::{GENESIS, INTERVAL};
-            assert_eq!(block, ((1_700_000_000 - GENESIS) / INTERVAL) as u64);
+            // The last block strictly before the entity's exact second.
+            assert_eq!(block, ((1_700_000_000 - 1 - GENESIS) / INTERVAL) as u64);
             if self.answers_at_block {
                 Ok(true)
             } else {
