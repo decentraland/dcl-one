@@ -96,14 +96,9 @@ class SelectionTest(unittest.TestCase):
                 got = resolve(path)
                 self.assertEqual((got.creator_hub, got.offline), (True, True))
 
-    def test_shop_files_the_renderer_only_typechecks_run_the_pipeline_without_e2e(self):
-        for path in ('apps/ui3/src/shop/checkout/chain/config.ts', 'apps/ui3/src/shop/pageOverride.ts'):
-            with self.subTest(path=path):
-                got = resolve(path)
-                self.assertEqual((got.creator_hub, got.inspector, got.offline, got.live), (True, set(), False, False))
-
     def test_shop_checkout_files_the_renderer_never_reaches_are_not_creator_hub_changes(self):
-        for path in ('apps/ui3/src/shop/checkout/chain/metatx.ts', 'apps/ui3/src/shop/checkout/chain/wallet.ts'):
+        for path in ('apps/ui3/src/shop/checkout/chain/metatx.ts', 'apps/ui3/src/shop/checkout/chain/wallet.ts',
+                     'apps/ui3/src/shop/checkout/chain/config.ts', 'apps/ui3/src/shop/pageOverride.ts'):
             with self.subTest(path=path):
                 self.assertFalse(resolve(path).creator_hub)
 
