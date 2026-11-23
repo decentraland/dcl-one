@@ -244,7 +244,7 @@ describe("the sign-in page", () => {
     expect(getIdentity()?.signer).toBe(SIGNER);
     // Recorded as a web3 sign-in: the Shop's Marketplace follows how the account signed in.
     expect(signInKindFor(SIGNER)).toBe("web3");
-    expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest"));
   });
 
   describe("when a wallet switch needs a new signature", () => {

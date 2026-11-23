@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { setIdentity } from "@/data/lib/auth/session";
+import { confirmSignIn } from "@/data/lib/auth/session-change";
 
 import type { ConnectionState } from "./flow";
 import { ConnectionModal } from "./LoginModals";
@@ -46,7 +47,10 @@ export default function MagicCallback({ magicApiKey }: { magicApiKey: string | n
     }
     void (async () => {
       try {
-        setIdentity(await finishMagicSignIn(magicApiKey));
+        const identity = await finishMagicSignIn(magicApiKey);
+        setIdentity(identity);
+        // Sets the verified-wallet cookie before leaving, so the next page's views name the account.
+        await confirmSignIn(identity);
         setState("redirecting");
         window.location.assign(returnTo.current);
       } catch (err) {

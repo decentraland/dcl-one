@@ -8,6 +8,7 @@ import {
 import { useAuth } from "@/data/lib/auth/context";
 import { postAuthCallback } from "@/data/lib/auth/session-change";
 import { getWalletForToken } from "@/data/lib/auth/thirdweb/index";
+import { verifyAuthChainRequest } from "@/data/lib/auth/verify-request.server";
 import MagicCallback from "@/features/auth/login/MagicCallback";
 import { safeRedirectTarget } from "@/features/auth/login/redirect";
 
@@ -43,7 +44,9 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  const address = token ? await getWalletForToken(token, request.signal) : null;
+  // An in-app sign-in (e-mail, the in-app wallet) proves its wallet with its token; any other (Magic, a
+  // browser wallet, WalletConnect) with a request its session signed (confirmSignIn).
+  const address = token ? await getWalletForToken(token, request.signal) : await signedWallet(request);
   if (!address) {
     return Response.json(
       { ok: false },
@@ -58,6 +61,11 @@ export async function action({ request }: Route.ActionArgs) {
       headers: { "Set-Cookie": serializeVerifiedWalletCookie(address) },
     },
   );
+}
+
+async function signedWallet(request: Request): Promise<string | null> {
+  const verified = await verifyAuthChainRequest(request);
+  return verified.ok ? verified.wallet : null;
 }
 
 function extractToken(authResultRaw: string): string | null {

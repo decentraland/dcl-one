@@ -16,6 +16,7 @@ import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
 import { beginShellBrowserSignIn, isDesktopShell } from "@/data/lib/auth/native-shell";
 import { getIdentity, getSuspendedWalletSigner, setBrowserWalletIdentity } from "@/data/lib/auth/session";
+import { confirmSignIn } from "@/data/lib/auth/session-change";
 import { browserWalletRdnsFor } from "@/data/lib/auth/signin-kind";
 import { browserWalletProvider, getConnectedAddress, selectWallet } from "@/data/lib/auth/wallet";
 
@@ -325,6 +326,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
             if (active && !isIdentityExpired(active) && browserWalletProvider(browserWallet)) {
               selectWallet(browserWallet);
               if ((await getConnectedAddress()) === active.signer) {
+                await confirmSignIn(active);
                 if (live()) finish();
                 return;
               }
@@ -337,7 +339,8 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
             if (!live()) return;
             setBrowserWalletIdentity(identity, browserWallet);
             rememberEmail(null);
-            finish();
+            await confirmSignIn(identity);
+            if (live()) finish();
           };
           // Tabs on this origin wait for the signing tab to publish its session before asking the wallet again.
           if (walletRdns && navigator.locks) {
@@ -368,7 +371,8 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
         if (request.signal.aborted) return;
         if (identity) {
           rememberEmail(null);
-          finish();
+          await confirmSignIn(identity);
+          if (!request.signal.aborted) finish();
         } else setModal({ state: "error-connection-failed", detail: null, pairing: null });
       } catch (err) {
         if (!request.signal.aborted) setModal({ ...failureState(err, false), pairing: null });

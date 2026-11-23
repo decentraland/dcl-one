@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getIdentity, setIdentity } from "@/data/lib/auth/session";
@@ -30,9 +30,13 @@ const IDENTITY: AuthIdentity = {
   authChain: [{ type: "SIGNER", payload: SIGNER, signature: "" }],
 };
 
+const callback = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ ok: true }));
+
 beforeEach(() => {
   localStorage.clear();
   setIdentity(null);
+  // /auth/callback, which the sign-in posts to before leaving (routes/sign-in-user-id.test.tsx).
+  vi.stubGlobal("fetch", callback);
   // The sign-in this tab started (startMagicSignIn).
   sessionStorage.setItem(PENDING, NONCE);
 });
@@ -52,7 +56,8 @@ describe("returning from Magic", () => {
     expect(finish).toHaveBeenCalledWith("pk_example123");
     expect(getIdentity()?.signer).toBe(SIGNER);
     expect(localStorage.getItem(`single-sign-on-${SIGNER}`)).not.toBeNull();
-    expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest"));
+    expect(callback).toHaveBeenCalledWith("/auth/callback", expect.objectContaining({ method: "POST" }));
   });
 
   it("never goes off-site, whatever the state carries", async () => {
@@ -61,7 +66,7 @@ describe("returning from Magic", () => {
     await act(async () => {
       render(<MagicCallback magicApiKey="pk_example123" />);
     });
-    expect(assign).toHaveBeenCalledWith("/");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
   });
 
   it("goes back to sign-in when the reader cancelled at the provider or the OAuth session was already used", async () => {

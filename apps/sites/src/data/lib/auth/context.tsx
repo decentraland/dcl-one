@@ -179,6 +179,8 @@ export function useAuth(): UseAuth {
         const result = await completeEmailLogin(email, code);
         const next = await identityFromInApp(result, opts);
         setIdentity(next);
+        // Sets the verified-wallet cookie, as the in-app wallet's return does (routes/auth.callback.tsx).
+        await postAuthCallback({ token: result.token });
         return next;
       } catch (err) {
         setError((err as Error)?.message ?? "That code didn't work.");

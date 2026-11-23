@@ -3,6 +3,8 @@ import { useRevalidator, useRouteLoaderData } from "react-router";
 
 import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracked-user";
 
+import type { AuthIdentity } from "./types";
+
 /**
  * The verified-wallet cookie (`dcl_wallet_verified`) changes only through `POST /auth/callback`, a
  * plain fetch the router never sees, so root's data (the session's verified wallet, which page views
@@ -99,11 +101,36 @@ export async function postAuthCallback(
   body: { token: string } | { signout: true },
   opts: { keepalive?: boolean; revalidate?: boolean } = {},
 ): Promise<AuthCallbackAnswer | null> {
+  return post(body, {}, opts);
+}
+
+/**
+ * Sets the verified-wallet cookie for a sign-in that holds no in-app token (Magic, a browser wallet,
+ * WalletConnect): the session signs the post, and `/auth/callback` verifies its auth chain and keeps
+ * the wallet that signed it. Resolves as `postAuthCallback` does; null as well when the session could
+ * not sign (expired), which posts nothing.
+ */
+export async function confirmSignIn(identity: AuthIdentity): Promise<AuthCallbackAnswer | null> {
+  let headers: Record<string, string>;
+  try {
+    const { signRequest } = await import("./signer");
+    headers = (await signRequest(identity, "POST", AUTH_CALLBACK_PATH)).headers;
+  } catch {
+    return null;
+  }
+  return post({}, headers, {});
+}
+
+async function post(
+  body: { token: string } | { signout: true } | Record<string, never>,
+  signed: Record<string, string>,
+  opts: { keepalive?: boolean; revalidate?: boolean },
+): Promise<AuthCallbackAnswer | null> {
   let response: Response;
   try {
     response = await fetch(AUTH_CALLBACK_PATH, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...signed, "Content-Type": "application/json" },
       body: JSON.stringify(body),
       ...(opts.keepalive ? { keepalive: true } : {}),
     });
