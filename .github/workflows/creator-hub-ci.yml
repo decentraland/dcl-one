@@ -33,7 +33,7 @@ on:
       - 'apps/ui3/tsconfig.json'
       - 'apps/ui3/src/atoms/**'
       - 'apps/ui3/src/shop/land/**'
-      - 'apps/ui3/src/shop/checkout/chain/**'
+      - 'apps/ui3/src/shop/checkout/chain/config.ts'
       - 'apps/ui3/src/shop/pageOverride.ts'
       - 'apps/ui3/src/explorer/components/MapSurface.tsx'
       - 'apps/ui3/src/explorer/components/mapsurface.css'
