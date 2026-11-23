@@ -1722,10 +1722,10 @@ impl PulseServer {
         self.cleanup_peer(transports, peer).await
     }
 
-    fn remove_peer_state(&mut self, peer: u32) -> bool {
+    fn remove_peer_state(&mut self, peer: u32) -> Vec<u32> {
         self.held_handshakes.retain(|held| held.peer != peer);
         let Some(state) = self.peers.remove(&peer) else {
-            return false;
+            return Vec::new();
         };
         self.pre_auth_for(peer).release_on_disconnect(peer);
         self.corrupted_limiter.release(peer);
@@ -1733,14 +1733,11 @@ impl PulseServer {
         self.grids.remove(peer);
         self.identity.remove(peer);
         self.profiles.remove(peer);
-        self.simulation.cleanup_observer_views(peer);
         self.gameplay_limiter.release(peer);
         if state.is_listener() {
             crate::pulse::metrics::scene_listener_connected_dec();
-            false
-        } else {
-            true
         }
+        self.simulation.cleanup_observer_views(peer)
     }
 
     async fn cleanup_peer(&mut self, transports: &mut Transports, peer: u32) -> anyhow::Result<()> {
@@ -1749,37 +1746,39 @@ impl PulseServer {
             .as_mut()
             .map(|relay| relay.disconnect(peer))
             .unwrap_or_default();
-        let notify = self.remove_peer_state(peer);
-        self.deliver_application(transports, relay_left, vec![])
-            .await?;
-        if notify {
-            self.notify_player_left(transports, peer).await?;
-        }
-        Ok(())
+        let observers = self.remove_peer_state(peer);
+        let relay = self
+            .deliver_application(transports, relay_left, vec![])
+            .await;
+        let departure = self.notify_player_left(transports, peer, observers).await;
+        relay.and(departure)
     }
 
     async fn notify_player_left(
         &self,
         transports: &mut Transports,
         peer: u32,
+        observers: Vec<u32>,
     ) -> anyhow::Result<()> {
+        if observers.is_empty() {
+            return Ok(());
+        }
         let left = ServerMessage {
             message: Some(server_message::Message::PlayerLeft(
                 crate::protocol::pulse::decentraland::pulse::PlayerLeft { subject_id: peer },
             )),
         };
-        let targets: Vec<u32> = self
-            .peers
-            .iter()
-            .filter(|(_, s)| s.connection_state == PeerConnectionState::Authenticated)
-            .map(|(id, _)| *id)
-            .collect();
-        for target in targets {
-            self.send(transports, target, channel::RELIABLE, &left)
-                .await?;
+        let mut result = Ok(());
+        for observer in observers {
+            if self.is_authenticated(observer) {
+                let sent = self
+                    .send(transports, observer, channel::RELIABLE, &left)
+                    .await;
+                result = result.and(sent);
+            }
         }
         transports.flush();
-        Ok(())
+        result
     }
 
     async fn send(

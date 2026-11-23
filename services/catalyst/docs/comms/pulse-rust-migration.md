@@ -247,15 +247,21 @@ In C#, `PeerIndex` equality/hashing uses only the slot; its transport is a routi
 
 Use an explicit registration generation or immutable registration identity for read fences. Keep counter exhaustion a checked invariant, and check the expected registration again before applying delayed results. Pre-auth events also need an allocation/connection fence if they can outlive their slot; an auth registration does not exist yet at that point.
 
-Preserve two-phase disconnect:
+The C# reference separates loss of visibility from slot cleanup.
 
 1. A requested disconnect stops further gameplay handling and travels through the owning transport's ordered output.
 2. The transport's disconnect event reaches the owner behind previously queued input. The owner marks disconnecting, clears active visibility and removes grid membership.
 3. After cleanup grace, the owner clears snapshot/identity/profile state and releases the allocator slot. Wallet removal is conditional on the expected binding so old cleanup cannot erase its replacement.
 
-Observer retirement is counted in simulation ticks; recycling and transport timeouts use elapsed time. The source's nominal stale-view bound is about four seconds at its defaults and cleanup grace is five seconds. Overruns can invert that order. Registration fences remain necessary even with those defaults.
+In C# Pulse the stale-view sweep sends `PlayerLeft` 3.05–4.0 seconds after the last observation at the default tick rate. Slot cleanup uses a separate five-second wall-clock grace. Tick overruns can invert that order. [C# disconnect tests](https://github.com/decentraland/Pulse/blob/91e44f89dd5a857e4ebe08259bec5fc808ae797b/src/DCLPulseTests/PeerSimulationTests.TwoPhaseDisconnect.cs#L32-L53)
 
 Use RAII (`Drop`) to release owned buffers and handles, but do not use object destruction as a substitute for the protocol-visible disconnect state machine. A dropped `Arc` does not tell the client that a player left.
+
+#### PlayerLeft on disconnect
+
+Rust Pulse sends one reliable `PlayerLeft` during disconnect cleanup to each authenticated player or scene listener whose view still contains the departing subject. A connection that never authenticated, a listener disconnecting, and a player that never became visible produce no avatar departure. An observer whose view has already expired receives no second leave. A connected player moving out of range still ages out through the normal stale-view sweep. [Server wire regression](../../comms/src/pulse/server/application.rs) · [Disconnect audit #1552](https://github.com/decentraland/dcl-one/issues/1552)
+
+On same-wallet takeover, observers receive the old subject's leave before the replacement becomes visible. Sending during cleanup preserves that order and retires the old subject ID before its slot can be reused. Bevy ignores a leave for an unknown subject. Unity Explorer also leaves other avatars alone. For two subject IDs of the same wallet in the same realm, Unity keeps the replacement if the old leave arrives late. A replacement join cancels a pending wallet removal. If Unity has already consumed the removal, the replacement can restore the avatar from its fresh profile and movement. [Takeover review](https://github.com/decentraland/dcl-one/pull/201#pullrequestreview-5783854290) · [Unity takeover tests](https://github.com/decentraland/unity-explorer/blob/4c85b8603e969aad463b5779db73272242c17505/Explorer/Assets/DCL/Multiplayer/Movement/Tests/PulseMultiplayerBusRealmFilteringShould.cs#L372-L434) · [Unity post-removal test](https://github.com/decentraland/unity-explorer/blob/4c85b8603e969aad463b5779db73272242c17505/Explorer/Assets/DCL/Multiplayer/Movement/Tests/PulseMultiplayerBusRealmFilteringShould.cs#L765-L792)
 
 ## Preserve behavior through complete flows
 
@@ -279,7 +285,7 @@ Preserve the default full-state resync and the optional delta mode. A delta base
 
 Validate unique realms and inclusive parcel rectangles, including the cumulative realm/rectangle budget. A valid update replaces the complete subscription on the next tick; invalid input cannot partially apply it. Re-evaluate the live whitelist, preserving structural and authentication checks even when budget exemptions apply. After listener authentication, only resync and listener-update messages are accepted.
 
-Listeners receive positional/emote output without player profile announcements and contribute no visible snapshot or cluster member. Removed subjects follow stale-view grace. Apply dcl-one's accepted listener authorization requirement separately from this shared behavior; verify scoped authority separately from baseline behavior.
+Listeners receive positional/emote output without player profile announcements and contribute no visible snapshot or cluster member. Subjects leaving the listener’s parcel set follow stale-view grace. A subject disconnecting follows the [disconnect delivery rule](#playerleft-on-disconnect). Apply dcl-one's accepted listener authorization requirement separately from this shared behavior; verify scoped authority separately from baseline behavior.
 
 ### Clusters and assignments
 
@@ -305,6 +311,7 @@ These are constraints from the destination's [ownership guide](comms-crate.md) a
 | Durable admission safety | Pinned infrastructure retains Pulse recovery; shared SQL hazards and replica island-refresh are destination extensions | Keep Pulse nonpersistent. Gatekeeper persists wallet-wide admission fences, immutable attempts and logical receipts; only primary removes, all serves verify for refresh. Confirmed fenced cleanup can recover; unknown never retries/expires and requires controlled maintenance. Every queued credential keeps its original stamp and exact committed fence. |
 | Authentication | Baseline client authentication | Keep public Pulse V4 and native/negotiated Archipelago V4 authentication deferred. Ordinary signed `/ws` and shared ownership/fencing remain active. |
 | Profile and emote handling | Every authenticated profile announcement; no separate emote-ID length cap | Keep nonnegative, strictly increasing profile versions outside the teleport/emote budget. Keep emote-ID validation bounded by the packet, without the extra 512-character cap. |
+| Disconnect notification | The observer's stale-view sweep retires a disconnected subject. | Send one reliable leave during cleanup to each observer still holding that subject. Preserve leave-before-replacement ordering on same-wallet takeover. [Disconnect delivery](#playerleft-on-disconnect) |
 | Shared ENet | Native ENet channel 1 is sequenced unreliable with per-packet throttle bypass | Use the shared pinned source in `library/vendor/rusty_enet` for Pulse and native Bevy. Keep independent drivers and apply bypass explicitly to channel 1; do not disable throttling globally. |
 | Native receive limits | No pinned upstream 64 KiB/256 receive-allocation policy | Pulse-only 8192 payload/65536 charged queued bytes/256 commands, typed terminal early reason 16 for valid oversized declarations, exact accounting release and unchanged client/outgoing defaults. Aggregate refusal is nonterminal. This is approved destination resource policy; deterministic/source evidence does not establish full client/runtime, final-head CI or measured capacity. |
 | Presence authority | Iteration-2 plans propose a separate parcel presence feed | Social online derives from complete Pulse wallet topology; room occupancy/capacity has a distinct LiveKit authority. Do not merge these data sources merely to match a newer plan. |
@@ -414,7 +421,9 @@ Follow the [implementation pipeline](implementation-pipeline.md). The stages bel
 | 7. Complete operational mapping | Verify flags, bans, health/about/metrics ownership, limits, task supervision and shutdown. Document translated environment/config keys. | Linux/Windows start/stop and effective configuration checks pass; output shapes/auth follow the chosen contract. |
 | 8. Measure and release | Run equivalent workload and client/broker tests; follow the repository's separate rollout gates. | Protocol parity/accepted exceptions, concurrency correctness, performance budget and operator readiness are evidenced at the final revision. |
 
-Do not combine stage 2's file decomposition with an overload-policy change, a quantization change, a new batching format or a new transport. When comparing traces, control the clock, event order, peer allocation and cluster boot seed. Compare per-peer behavior and defined subjects; neither protobuf map ordering nor cross-peer thread scheduling is a global deterministic wire order.
+Do not combine stage 2's file decomposition with an overload-policy change, a quantization change, a new batching format or a new transport.
+
+When comparing traces, control the clock, event order and peer allocation. Replace each boot UUID with a consistent placeholder throughout the trace and use distinct placeholders for different UUIDs. Align placeholders for corresponding boots across traces and preserve the cluster counters. Compare per-peer behavior and defined subjects. Protobuf map ordering and cross-peer thread scheduling can vary.
 
 ### Behavior coverage
 

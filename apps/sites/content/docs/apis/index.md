@@ -34,7 +34,7 @@ Service discovery and real-time peer-to-peer communications:
 | ------------------- | ------------------------- | --------------------------------------------------------------------- |
 | Realm Provider      | Service discovery         | Find available Catalyst servers and communication endpoints           |
 | Comms Gatekeeper    | Access control            | Time-limited tokens for LiveKit media server access                   |
-| Archipelago Workers | Communications clustering | WebSocket connections, island formation, and message routing via NATS |
+| [Comms statistics and WebSocket API](/docs/apis/apis/archipelago-workers/) | Room signaling and statistics | Catalyst WebSocket sessions, peer and island reads, and hot scenes |
 
 ### Feature Services
 

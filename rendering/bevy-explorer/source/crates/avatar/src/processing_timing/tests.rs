@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use bevy::{ecs::system::RunSystemOnce, prelude::*};
 use collectibles::base_wearables;
+use common::perf::AVATAR_PROCESSING;
 use dcl_component::proto_components::sdk::components::PbAvatarShape;
 
 use super::AvatarProcessingRun;
@@ -93,15 +94,12 @@ fn avatars_whose_parts_are_not_written_are_not_processed() {
     assert_eq!(processed(&mut app, &owners), [false, false]);
 }
 
-#[cfg(feature = "explorer")]
 #[test]
-fn the_explorers_plugin_registers_the_diagnostic_and_measures_every_frame() {
+fn the_timing_plugin_registers_the_diagnostic_and_measures_every_frame() {
     use bevy::diagnostic::DiagnosticsStore;
-    use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
-        .init_resource::<AvatarProcessingRun>()
         .add_plugins(super::AvatarProcessingTimingPlugin);
 
     app.update();
@@ -114,11 +112,9 @@ fn the_explorers_plugin_registers_the_diagnostic_and_measures_every_frame() {
     assert_eq!(diagnostic.history_len(), 2);
 }
 
-#[cfg(feature = "explorer")]
 #[test]
-fn the_explorer_measures_the_run_into_the_diagnostic() {
+fn records_the_run_duration_in_milliseconds() {
     use bevy::diagnostic::{Diagnostic, DiagnosticsStore};
-    use scene_runner::scene_spawn_slice::spawn_timing::AVATAR_PROCESSING;
 
     let mut world = World::new();
     let mut store = DiagnosticsStore::default();
@@ -130,7 +126,7 @@ fn the_explorer_measures_the_run_into_the_diagnostic() {
     });
 
     world
-        .run_system_once(super::explorer::measure_avatar_processing)
+        .run_system_once(super::measure_avatar_processing)
         .unwrap();
 
     let store = world.resource::<DiagnosticsStore>();

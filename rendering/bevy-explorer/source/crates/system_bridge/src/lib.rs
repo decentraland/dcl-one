@@ -16,6 +16,7 @@ use bevy::{
 use bevy_console::{ConsoleCommandEntered, ConsoleConfiguration, ConsoleResponder};
 use common::{
     inputs::{BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
+    profile::SerializedProfile,
     rpc::{RpcResultSender, RpcStreamSender},
     structs::{CurrentRealm, MicState, PermissionUsed},
 };
@@ -65,6 +66,17 @@ pub struct NewAccountPick {
     pub name: Option<String>,
     pub look: Option<u32>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SetAvatarError {
+    pub message: String,
+    #[serde(default, rename = "accountChanged")]
+    pub account_changed: bool,
+    /// Last confirmed profile for the account that submitted the edit.
+    pub profile: Option<Box<SerializedProfile>>,
+}
+
+pub type SetAvatarResult = Result<u32, SetAvatarError>;
 
 #[derive(Event, Clone, Debug, Serialize, Deserialize)]
 pub enum SystemApi {
@@ -118,7 +130,13 @@ pub enum SystemApi {
         meta: Option<String>,
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
-    SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Full system-scene view. The local player is read at the last confirmed version.
+    GetUserProfile {
+        address: String,
+        response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// The address belongs to the player the system scene observed when it submitted the edit.
+    SetAvatar(String, SetAvatarData, RpcResultSender<SetAvatarResult>),
     /// Signs and deploys the local player's `outfits` entity. The address is the account the
     /// caller expects; the engine refuses when another one is signed in.
     DeployOutfits(String, OutfitsData, RpcResultSender<Result<(), String>>),

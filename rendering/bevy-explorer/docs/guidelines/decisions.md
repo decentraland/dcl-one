@@ -258,6 +258,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   go to that deployment's asset-bundle registry instead. This path is to be removed once those
   catalysts serve the route. See the
   [ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md).
+- **Overlapping profile saves (#1453).** The engine applies editor patches in arrival order.
+  Each upload carries the edits accepted before it starts, and those callers share its result.
+  Later edits build on the last confirmed profile. The local avatar previews them immediately,
+  while peers and the player's Passport read the confirmed version. [Profile ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md)
 - **Own profile versions never repeat.** unity-explorer's `SelfProfile` numbers an edit one above
   the profile it holds, so after a failed publish puts the old profile back, the next edit reuses
   the failed version. A failed deploy may still have reached the server, and a peer that read it
