@@ -270,11 +270,15 @@ async fn handshakes_on_one_day_count_one_login_day() {
     let referrer = invite(&referral, &wallet).await;
 
     log_in(port, &wallet).await;
-    log_in(port, &wallet).await;
-    eventually_progress(&scratch.pool, &wallet, 2).await;
+    eventually_progress(&scratch.pool, &wallet, 1).await;
+    // Reconnects on a counted date add no day and take no quota slot.
+    for _ in 0..3 {
+        log_in(port, &wallet).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         progress(&scratch.pool, &wallet).await,
-        ("pending".into(), 1, 2)
+        ("pending".into(), 1, 1)
     );
     assert_eq!(accepted_notices(&scratch.pool, &referrer).await, 0);
     scratch.teardown().await;

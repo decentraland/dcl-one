@@ -397,6 +397,14 @@ impl Referral {
             tx.commit().await.map_err(login_database_error)?;
             return Ok(());
         }
+        let today = match today {
+            Some(day) => day,
+            None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(login_database_error)?,
+        };
+        let below_threshold = (days.len() as f64) < self.settings.min_login_days;
         if let Some((login_id, occurred_at)) = event {
             let now: chrono::NaiveDateTime =
                 sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
@@ -414,6 +422,10 @@ impl Referral {
             let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.referral_login_receipts WHERE invited_user=$1 AND login_id=$2)")
                 .bind(&invited).bind(login_id).fetch_one(&mut *tx).await.map_err(login_database_error)?;
             if duplicate {
+                return Ok(());
+            }
+            // A date already counted changes nothing: no receipt, no quota slot.
+            if below_threshold && days.contains(&today) {
                 return Ok(());
             }
             // Legacy receipts retain their old expiry after migration; their
@@ -441,14 +453,7 @@ impl Referral {
             sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) VALUES($1,$2,$3,$4)")
                 .bind(&invited).bind(login_id).bind(expires_at).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
         }
-        if (days.len() as f64) < self.settings.min_login_days {
-            let today = match today {
-                Some(day) => day,
-                None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(login_database_error)?,
-            };
+        if below_threshold {
             if !days.contains(&today) {
                 days.push(today);
             }

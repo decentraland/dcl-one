@@ -16,9 +16,9 @@ mod archipelago_proto_wire;
 mod archipelago_upstream_parity;
 #[path = "archipelago_ws_island_dedup.rs"]
 mod archipelago_ws_island_dedup;
-// Builds only with test-support, as its own target did.
 #[path = "pulse_application_transport.rs"]
 mod pulse_application_transport;
+// Builds only with test-support, as its own target did.
 #[cfg(feature = "test-support")]
 #[path = "pulse_generation.rs"]
 mod pulse_generation;

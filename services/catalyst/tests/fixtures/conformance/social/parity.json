@@ -7951,7 +7951,7 @@
         "api_http:POST:/v1/referral-email"
       ],
       "status": "unverified",
-      "description": "Native signed client-login ingress replaces the AWS queue, with per-event receipts and local transactional progress. The owned Explorer reports identity completion; unchanged third-party clients require an explicit compatible login producer. Existing upstream progress/login-days/reward/email import and live client cutover remain unverified. Uncertain historical reward claims still require provider reconciliation; removing AWS does not prove previous issuance outcomes."
+      "description": "Native signed client-login ingress replaces the AWS queue, with per-event receipts and local transactional progress. The owned Explorer reports identity completion; unchanged clients are credited from the challenge-signed /ws handshake (not from world-only sessions). Existing upstream progress/login-days/reward/email import and live client cutover remain unverified. Uncertain historical reward claims still require provider reconciliation; removing AWS does not prove previous issuance outcomes."
     },
     {
       "id": "api-body-size-boundary",

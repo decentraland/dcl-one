@@ -539,6 +539,12 @@ async fn native_login_http_bounds_receipts_and_obeys_the_write_gate() {
             .0,
         StatusCode::NO_CONTENT
     );
+    // A date already counted takes no quota slot: uncount today to reach the cap.
+    sqlx::query("UPDATE social.referral_progress SET login_days='{}' WHERE invited_user=$1")
+        .bind(&invited.address)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at) SELECT $1,gen_random_uuid(),timezone('UTC',now())+interval '1 day' FROM generate_series(1,119)")
         .bind(&invited.address).execute(&rig.pool).await.unwrap();
     assert_eq!(

@@ -1298,7 +1298,9 @@ progress shares its deletion/restore lifecycle and cascades on deletion.
 
 Under the invited-user row lock, admission caps distinct new IDs at 120 per
 wallet in a rolling 24-hour window of server `received_at` values. A duplicate
-does not consume another slot. Finished or rejected referrals return success
+does not consume another slot, and neither does a login on a UTC date already
+in `login_days` while the threshold is not reached: it stores no receipt, so
+reconnects cannot block the next day's first login. Finished or rejected referrals return success
 without adding receipts; banned referrers are a no-op on this native ingress,
 without exposing their identity or stored IP. Those acknowledged login
 observations are not retained or replayed if the ban is later lifted; a new

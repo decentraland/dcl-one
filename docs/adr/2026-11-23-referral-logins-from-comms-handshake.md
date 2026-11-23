@@ -30,7 +30,7 @@ When a wallet completes the `/ws` handshake, comms credits one login of that wal
   - A transient failure is retried with the same login ID. A refused login is logged.
 - `serve` builds one `Referral` and hands it to both comms and social. Comms depends only on the interface.
 - Only the primary `serve` runs `/ws`, so only the primary credits.
-- Reconnects count as logins here. This changes the earlier rule that room admissions are not logins, but only for referral days: several handshakes on one date are still one day.
+- Reconnects count as logins here, but a login on a date already counted stores no receipt and takes no slot of the 120-per-day quota. This changes the earlier rule that room admissions are not logins, but only for referral days: several handshakes on one date are still one day.
 - `POST /v1/client-login` is unchanged.
 
 ## Consequences
