@@ -275,6 +275,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                 candidate = deps / ('catalyst-' + 'a' * 16)
                 lib = deps / ('libcrate-' + 'a' * 16 + '.rlib')
                 lib.touch()
+                stale = deps / ('libcrate-' + 'b' * 16 + '.rlib')
+                stale.write_bytes(b'old')
                 filenames = [str(lib)]
                 if reported:
                     filenames.append(str(app))
@@ -282,11 +284,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                 else:
                     os.link(app, candidate)
                 receipt = json.dumps({'reason': 'compiler-artifact', 'filenames': filenames})
+                # Keeping the binaries does not stop the superseded library from being pruned.
                 with patch('builtins.print') as diagnostic:
-                    self.assertEqual(prune(deps, receipt), 0)
+                    self.assertEqual(prune(deps, receipt), 3)
                     diagnostic.assert_called_once()
                     self.assertIn('Kept all 1 hashed Catalyst', diagnostic.call_args.args[0])
                 self.assertTrue(candidate.exists())
+                self.assertTrue(lib.exists())
+                self.assertFalse(stale.exists())
 
     def test_smoke_prunes_a_dangling_library_symlink(self):
         prune = runpy.run_path(str(WORKFLOW.parents[2] / "tooling/catalyst-smoke-cache.py"))["prune"]
