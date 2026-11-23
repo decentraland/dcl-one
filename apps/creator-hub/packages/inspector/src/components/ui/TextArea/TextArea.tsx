@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import { InfoTooltip } from '../InfoTooltip';
 import { Message, MessageType } from '../Message';
@@ -9,8 +9,20 @@ import type { Props } from './types';
 import './TextArea.css';
 
 const TextArea = React.forwardRef<HTMLTextAreaElement, Props>((props, ref) => {
-  const { className, disabled, error, label, moreInfo, value, onChange, onFocus, onBlur, ...rest } =
-    props;
+  const {
+    className,
+    disabled,
+    error,
+    label,
+    moreInfo,
+    value,
+    onChange,
+    onFocus,
+    onBlur,
+    masked,
+    showValue,
+    ...rest
+  } = props;
   const [inputValue, setInputValue] = useState(value);
   const [isHovered, setHovered] = useState(false);
   const [isFocused, setFocused] = useState(false);
@@ -98,7 +110,9 @@ const TextArea = React.forwardRef<HTMLTextAreaElement, Props>((props, ref) => {
         disabled={disabled}
         value={inputValue}
         {...rest}
-        className={props.masked && !props.showValue ? 'masked' : ''}
+        className={masked && !showValue ? 'masked' : ''}
+        // Stays while the value is shown: the session recorder must never log it.
+        data-sensitive={masked ? 'true' : undefined}
       ></textarea>
       <Message
         text={error}

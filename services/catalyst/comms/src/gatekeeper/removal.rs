@@ -240,10 +240,11 @@ fn sfu(error: RoomServiceError) -> anyhow::Error {
     anyhow!("LiveKit request failed: {error:?}")
 }
 
-/// The `<world>:<base>` key of a world scene intent queued before the
-/// `schemas/releases/world-scene-ban-keys.sql` release,
-/// which names the scene's entity id (bans moved, queued intents did not).
-async fn legacy_world_ban_key(
+/// The stable key of a scene intent queued before the release that moved its
+/// bans, which names the scene's entity id (bans moved, queued intents did
+/// not): `<world>:<base>` after `schemas/releases/world-scene-ban-keys.sql`,
+/// a Genesis scene's place after `schemas/releases/genesis-scene-ban-keys.sql`.
+async fn legacy_ban_key(
     state: &CommsState,
     row: &Intent,
 ) -> Result<Option<crate::access::SceneBanKey>> {
@@ -255,6 +256,29 @@ async fn legacy_world_ban_key(
         return Ok(None);
     };
     let rooms = row.scope.as_array().map(Vec::as_slice).unwrap_or_default();
+    let genesis = rooms
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(crate::rooms::parse_room)
+        .find_map(|room| match room {
+            crate::rooms::ParsedRoom::Local(local) if local.scene_id.as_ref() == Some(&scene) => {
+                Some(local)
+            }
+            _ => None,
+        });
+    if let Some(local) = genesis {
+        return match local
+            .resolve_ban_key(state.scenes.as_ref(), state.settings.allow_local_preview)
+            .await
+        {
+            Ok(key) => Ok(key),
+            Err(crate::rooms::ResolveError::Db(error)) => {
+                Err(anyhow!("scene identity unavailable: {error:?}"))
+            }
+            // An overwritten scene: no ban is read for it.
+            Err(_) => Ok(None),
+        };
+    }
     let Some(world) = rooms
         .iter()
         .filter_map(Value::as_str)
@@ -308,7 +332,7 @@ async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result
             {
                 return Ok(true);
             }
-            Ok(match legacy_world_ban_key(state, row).await? {
+            Ok(match legacy_ban_key(state, row).await? {
                 Some(key) => {
                     state
                         .moderation
@@ -437,10 +461,19 @@ async fn discover(state: &CommsState, row: &Intent) -> Result<()> {
         if !current(&state.pool, row).await? {
             return Ok(());
         }
-        let Some(wallet) = address_from_identity(&participant.identity) else {
-            continue;
+        // A Cast watcher's identity is synthetic; its token carries the wallet.
+        let actor = match address_from_identity(&participant.identity) {
+            Some(wallet) => {
+                Address::parse(&wallet).map_err(|_| anyhow!("invalid participant wallet"))?
+            }
+            None => match super::streaming::cast::watcher_wallet(
+                &participant.identity,
+                &participant.attributes,
+            ) {
+                Some(wallet) => wallet,
+                None => continue,
+            },
         };
-        let actor = Address::parse(&wallet).map_err(|_| anyhow!("invalid participant wallet"))?;
         if authorized(state, row, &actor).await? {
             add_target(state, row, room, sid, &participant.identity, &actor).await?;
         }
@@ -1101,17 +1134,29 @@ mod tests {
         tx.commit().await.unwrap();
         let direct = format!("{}-browser", actor.as_str().to_uppercase());
         let same_device = format!("{}-desktop", device_actor.as_str());
+        // Cast watchers: a synthetic identity, the wallet in a signed attribute.
+        let watcher = format!("watch:device-room:{}", Uuid::new_v4());
+        let other_watcher = format!("watch:device-room:{}", Uuid::new_v4());
+        let anonymous_watcher = format!("watch:device-room:{}", Uuid::new_v4());
         {
             let mut f = fixture.lock().unwrap();
             f.rooms = serde_json::json!({"rooms":[{"name":"device-room","sid":"D"}]});
-            f.rosters.insert("device-room".into(),serde_json::json!({"participants":[{"identity":direct},{"identity":same_device},{"identity":unrelated.as_str()}]}));
+            f.rosters.insert(
+                "device-room".into(),
+                serde_json::json!({"participants":[
+                    {"identity":direct},{"identity":same_device},{"identity":unrelated.as_str()},
+                    {"identity":watcher,"attributes":{"dcl.castWatcher":actor.as_str()}},
+                    {"identity":other_watcher,"attributes":{"dcl.castWatcher":unrelated.as_str()}},
+                    {"identity":anonymous_watcher},
+                ]}),
+            );
         }
         for _ in 0..4 {
             assert_eq!(step(&state, &root_key).await, 0);
         }
         let mut removed = fixture.lock().unwrap().removed.clone();
         removed.sort();
-        let mut expected = vec![direct, same_device];
+        let mut expected = vec![direct, same_device, watcher];
         expected.sort();
         assert_eq!(removed, expected);
         sqlx::query("DELETE FROM social.user_bans WHERE id=$1")
@@ -1618,16 +1663,12 @@ mod tests {
             .unwrap();
         let name = format!("dcl_island_job_{}", Uuid::new_v4().simple());
         assert!(name.bytes().all(|v| v.is_ascii_alphanumeric() || v == b'_'));
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         let (state, fixture, server) = sfu_fixture(pool.clone()).await;
         let actor = wallet();
         let island = format!("island-{}", Uuid::new_v4());
@@ -2028,16 +2069,12 @@ mod tests {
             .await
             .unwrap();
         let name = format!("dcl_liveness_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-            .execute(&admin)
-            .await
-            .unwrap();
+        crate::db::scratch::create_database_with_schema(&admin, &name).await;
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(8)
             .connect_with(base.connect_options().as_ref().clone().database(&name))
             .await
             .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
         (pool, admin, name)
     }
     async fn liveness_drop_pool(pool: &sqlx::PgPool, admin: &sqlx::PgPool, name: &str) {

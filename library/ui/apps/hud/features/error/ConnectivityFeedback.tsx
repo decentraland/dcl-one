@@ -11,6 +11,8 @@ const STATES: Record<string, string> = {
   invalid: 'connection settings are invalid', credentials_required: 'new credentials are required',
   reconnecting: 'reconnecting', failed: 'connection failed', disconnected: 'disconnected', paused: 'paused'
 }
+/** The engine retries the scene room by itself and play goes on without it, so its drops sit in a corner. */
+const QUIET_SCENE = new Set(['reconnecting', 'failed', 'disconnected'])
 
 function RetryButton({ retry }: { retry: () => void | Promise<void> }) {
   const [pending, setPending] = useState(false)
@@ -54,5 +56,6 @@ export function ConnectivityFeedback({ state, retry, exit }: { state: Connectivi
     return scope && reason ? [`${scope}: ${reason}`] : []
   }) ?? [])]
   if (lost || messages.length === 0) return null
-  return <Panel role="status" aria-label="Multiplayer status" className={styles.status}>{messages.map(message => <div key={message}>{message}</div>)}</Panel>
+  const quiet = state!.rooms.every(room => !STATES[room.state] || (room.scope === 'scene' && QUIET_SCENE.has(room.state)))
+  return <Panel role="status" aria-label="Multiplayer status" className={quiet ? styles.quiet : styles.status}>{messages.map(message => <div key={message}>{message}</div>)}</Panel>
 }

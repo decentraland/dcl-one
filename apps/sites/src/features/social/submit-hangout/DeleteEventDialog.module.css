@@ -1,0 +1,36 @@
+/* Source DeleteEventModal: centered title and copy, Cancel and the destructive action side by side. */
+.body {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-32);
+  max-width: 540px;
+  margin: 0 auto;
+  padding: var(--dcl-space-32);
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.334;
+}
+
+.copy {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  gap: var(--dcl-space-24);
+}
+
+.actions > * { flex: 1; }
+
+@media (max-width: 599px) {
+  .body { padding: var(--dcl-space-24) var(--dcl-space-16); }
+  .actions { flex-direction: column-reverse; gap: var(--dcl-space-12); }
+}

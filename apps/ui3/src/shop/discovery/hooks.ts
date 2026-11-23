@@ -90,7 +90,7 @@ const noSubscription = () => () => {};
  * False on the server and during hydration, true after: the profile cache lives in localStorage, which the server
  * cannot read, so reading it any earlier would render different markup on each side.
  */
-function useAfterHydration(): boolean {
+export function useAfterHydration(): boolean {
   return useSyncExternalStore(noSubscription, () => true, () => false);
 }
 

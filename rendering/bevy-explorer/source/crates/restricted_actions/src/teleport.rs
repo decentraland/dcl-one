@@ -130,7 +130,6 @@ pub fn teleport_player(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_out_of_world(
     mut commands: Commands,
     mut scenes: Query<
@@ -146,6 +145,7 @@ pub fn handle_out_of_world(
     live_scenes: Res<LiveScenes>,
     foreign_players: Query<&GlobalTransform, With<ForeignPlayer>>,
     wallet: Res<Wallet>,
+    bans: comms::SceneBanGate,
     mut returned: EventWriter<ReturnedToWorld>,
 ) {
     let Ok((player, mut t)) = player.single_mut() else {
@@ -164,7 +164,13 @@ pub fn handle_out_of_world(
         .as_ivec2();
 
     let hash = match pointers.get(parcel) {
-        Some(PointerResult::Exists { hash, .. }) => hash,
+        Some(PointerResult::Exists { hash, .. }) if !bans.is_banned(hash) => hash,
+        Some(PointerResult::Exists { .. }) => {
+            // A refused scene deliberately has no live root. Arrival must not wait for it.
+            commands.entity(player).remove::<OutOfWorld>();
+            returned.write(ReturnedToWorld::SceneReady);
+            return;
+        }
         Some(PointerResult::Nothing) => {
             debug!("scene {parcel} doesn't exist, returning to world");
             debug!("everything: {:?}", pointers);
@@ -306,6 +312,101 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn arrival_on_a_refused_parcel_does_not_wait_for_a_live_scene() {
+        for scenario in [
+            "banned",
+            "unknown",
+            "other_wallet",
+            "other_realm",
+            "preview",
+            "local",
+        ] {
+            let mut world = World::new();
+            let mut wallet = Wallet::default();
+            wallet.finalize_as_guest_with_seed([1; 32]);
+            let address = wallet.address().unwrap();
+            world.insert_resource(wallet);
+            let mut realm = common::structs::CurrentRealm {
+                about_url: "realm".into(),
+                ..default()
+            };
+            if scenario == "local" {
+                realm.config.local_scene_parcels = Some(vec!["0,0".into()]);
+            }
+            world.insert_resource(realm);
+            let preview = common::structs::PreviewMode {
+                is_preview: scenario == "preview",
+                ..default()
+            };
+            world.insert_resource(preview);
+            world.insert_resource(if scenario == "unknown" {
+                comms::SceneAdmission::unknown()
+            } else {
+                comms::SceneAdmission::from_refusal(
+                    403,
+                    Some("User is banned from this scene"),
+                    false,
+                    "scene",
+                )
+                .for_session(
+                    if scenario == "other_realm" {
+                        "elsewhere"
+                    } else {
+                        "realm"
+                    },
+                    if scenario == "other_wallet" {
+                        alloy_core::primitives::Address::ZERO
+                    } else {
+                        address
+                    },
+                )
+            });
+            let mut pointers = ScenePointers::default();
+            pointers.insert(
+                IVec2::ZERO,
+                PointerResult::Exists {
+                    hash: "scene".into(),
+                    urn: None,
+                },
+            );
+            world.insert_resource(pointers);
+            world.init_resource::<LiveScenes>();
+            world.init_resource::<Events<ReturnedToWorld>>();
+            let player = world
+                .spawn((
+                    PrimaryUser::default(),
+                    OutOfWorld,
+                    Transform::from_xyz(8.0, 0.0, -8.0),
+                ))
+                .id();
+
+            world.run_system_once(handle_out_of_world).unwrap();
+
+            let released = scenario == "banned";
+            assert_eq!(
+                !world.entity(player).contains::<OutOfWorld>(),
+                released,
+                "{scenario}"
+            );
+            assert_eq!(
+                world.get::<Transform>(player).unwrap().translation,
+                Vec3::new(8.0, 0.0, -8.0)
+            );
+            let events = world.resource::<Events<ReturnedToWorld>>();
+            let returned: Vec<_> = events.iter_current_update_events().copied().collect();
+            assert_eq!(
+                returned,
+                if released {
+                    vec![ReturnedToWorld::SceneReady]
+                } else {
+                    vec![]
+                },
+                "{scenario}"
+            );
+        }
+    }
+
     // A scene whose main js could not be fetched fails after it has a context, still at its first
     // tick: the player waiting outside it goes in, as for a scene that failed before it had one.
     #[test]
@@ -352,6 +453,9 @@ mod tests {
         let mut wallet = Wallet::default();
         wallet.finalize_as_guest();
         world.insert_resource(wallet);
+        world.init_resource::<comms::SceneAdmission>();
+        world.init_resource::<common::structs::CurrentRealm>();
+        world.init_resource::<common::structs::PreviewMode>();
         world.init_resource::<Events<ReturnedToWorld>>();
         let player = world
             .spawn((

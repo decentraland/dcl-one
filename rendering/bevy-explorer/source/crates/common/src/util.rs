@@ -546,7 +546,6 @@ impl TaskCompat for IoTaskPool {
     }
 }
 
-#[allow(clippy::type_complexity)]
 #[derive(SystemParam)]
 pub struct SceneSpawnerPlus<'w, 's> {
     scene_spawner: ResMut<'w, SceneSpawner>,

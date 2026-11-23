@@ -19,9 +19,16 @@ input[type="number"] {
   appearance: none;
 }
 
-.ui.popup,
-.ui.inverted.popup {
-  height: auto;
+input::selection,
+textarea::selection {
+  color: var(--ui-designer-text);
+  background: var(--palette-system-blueDark2);
+}
+
+@keyframes u-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Make context menu submenus scrollable when they have many items */

@@ -45,6 +45,19 @@ def server_error(stderr):
     return re.search(r'\bHTTP (?:500|502|503|504)\b', stderr)
 
 
+def dropped_connection(stderr):
+    # A connection lost mid-request has no HTTP status, e.g. "stream error: stream ID 1; CANCEL; received from peer".
+    # Auth, usage and offline (DNS, refused) errors match none of these and stay final.
+    return not re.search(r'\bHTTP \d{3}\b', stderr) and re.search(
+        r'stream error: stream ID \d+|unexpected EOF|": EOF$|connection reset by peer|server sent GOAWAY|'
+        r'http2: client connection lost|TLS handshake timeout',
+        stderr)
+
+
+def transient_read(stderr):
+    return server_error(stderr) or dropped_connection(stderr)
+
+
 def rate_limited(stderr):
     # gh reports "API rate limit exceeded ... (HTTP 403)" and "... secondary rate limit ... (HTTP 403)".
     # A 403 without those words is a permission error and stays final.
@@ -52,11 +65,13 @@ def rate_limited(stderr):
         re.search(r'\bHTTP 403\b', stderr) and re.search(r'rate limit', stderr, re.IGNORECASE))
 
 
-def read(request, deadline=None, limit=60, attempts=None, transient=server_error):
+def read(request, deadline=None, limit=60, attempts=None, transient=transient_read):
     # Retry reads within the caller's existing wait budget. Non-waiting imports
     # and final publication checks get only four retries; `attempts` caps the
     # tries in either mode. No writes are repeated. A rate limit backs off from
     # one minute, a server error from two seconds; both double up to a cap.
+    # A rate limit gets four retries even inside a wait: the wait is for a Bevy
+    # build, and the repository's token budget can stay spent for the rest of the hour.
     attempt = 0
     while True:
         timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
@@ -68,9 +83,12 @@ def read(request, deadline=None, limit=60, attempts=None, transient=server_error
             stderr = exc.stderr.decode(errors='replace') if isinstance(exc.stderr, bytes) else (exc.stderr or '')
             if isinstance(exc, subprocess.CalledProcessError) and stderr:
                 print(stderr, file=sys.stderr, end='')
-            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
-                attempt >= 4 if deadline is None else time.monotonic() >= deadline)
             limited = isinstance(exc, subprocess.CalledProcessError) and rate_limited(stderr)
+            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
+                attempt >= 4 if deadline is None or limited else time.monotonic() >= deadline)
+            if exhausted and limited:
+                print('GitHub kept rate limiting this repository token; rerun this job once its API budget resets.',
+                      file=sys.stderr, flush=True)
             if exhausted or not (isinstance(exc, subprocess.TimeoutExpired) or limited or transient(stderr)):
                 raise
             delay = min(240, 60 * 2 ** min(attempt, 2)) if limited else min(30, 2 ** min(attempt + 1, 5))

@@ -5,6 +5,7 @@ import { Passport, openPassport } from '../../features/profile/Passport'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { fakeProfileState, fakeSession, renderSettled } from '../harness'
 import { receiveProfile, seedProfiles, setProfileRequester } from '../../features/session/profileStore'
+import { setPublicReelFetcher } from '../../features/gallery/publicReels'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import type { EngineSession } from '../../features/session/useEngineSession'
 import type { Profile } from '@explorer-core/engine/protocol'
@@ -40,7 +41,7 @@ describe('Passport container', () => {
   it('fetches the rich profile on open and renders it', async () => {
     receiveProfile('0xabc', RICH)
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
-    expect(request).toHaveBeenCalledWith('0xabc', true)
+    expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
     expect(screen.getByText('gm from the plaza')).toBeTruthy() // rich field from the fetched profile
     expect(screen.getByText('5 Mutual')).toBeTruthy()
   })
@@ -48,7 +49,7 @@ describe('Passport container', () => {
   it('renders identity-only from a roster seed while the fetch is in flight', async () => {
     seedProfiles([{ address: '0xabc', name: 'Alice', picture: 'a.png' }]) // no engine profile yet
     await renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
-    expect(request).toHaveBeenCalledWith('0xabc', true)
+    expect(request).toHaveBeenCalledWith('0xabc', true, expect.any(Number))
     expect(screen.getByText('Alice')).toBeTruthy() // resolved from the roster
   })
 
@@ -59,6 +60,40 @@ describe('Passport container', () => {
       openPassport('0xabc')
     })
     expect(screen.getByText('gm from the plaza')).toBeTruthy()
+  })
+
+  it('openPassport opens on the tab it is given', async () => {
+    receiveProfile('0xabc', RICH)
+    await renderWithSession(<PopupHost />)
+    act(() => {
+      openPassport('0xabc', 'badges')
+    })
+    expect(screen.getByRole('tab', { name: 'BADGES' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tab', { name: 'OVERVIEW' }).getAttribute('aria-selected')).toBe('false')
+  })
+})
+
+describe('Jump In from a passport photo', () => {
+  afterEach(() => setPublicReelFetcher(null))
+
+  it.each([
+    ['closes the photo and the passport when the travel is sent', 'sent', 1],
+    ['leaves the photo and the passport open when the travel is refused', 'refused', 0]
+  ] as const)('%s', async (_name, outcome, closes) => {
+    receiveProfile('0xabc', RICH)
+    setPublicReelFetcher(async () => ({ ok: true, photos: [{ id: 'p0', url: 'https://img/0.jpg', thumbnailUrl: 'https://img/0_t.jpg', dateTime: '1707000000', isPublic: true }], total: 1, max: 500 }))
+    const onClose = vi.fn()
+    const s = await renderWithSession(<Passport userId="0xabc" initialTab="photos" onClose={onClose} />, (session) => {
+      session.gallery.metas = { p0: { sceneName: 'Genesis Plaza', x: -9, y: 14 } }
+      session.map.teleport = vi.fn(() => outcome)
+    })
+    const tile = await screen.findByRole('button', { name: 'Open photo' })
+    fireEvent.load(tile.querySelector('img') as HTMLImageElement)
+    await userEvent.click(tile)
+    await userEvent.click(screen.getByRole('button', { name: 'Jump In' }))
+    expect(s.map.teleport).toHaveBeenCalledWith(-9, 14)
+    expect(onClose).toHaveBeenCalledTimes(closes)
+    expect(screen.queryAllByRole('dialog', { name: 'Photo' })).toHaveLength(1 - closes)
   })
 })
 

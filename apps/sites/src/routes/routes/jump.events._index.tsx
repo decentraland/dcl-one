@@ -1,10 +1,9 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
 import { JumpEventActions } from "@dcl/one-ui/apps/sites/jump/JumpEventActions";
 import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
 import { useState } from "react";
 import { redirect } from "react-router";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import { useAuth } from "@/data/lib/auth/context";
 import { siteUrl } from "@/data/lib/catalyst/bases";
@@ -17,10 +16,14 @@ import { detectPlatform } from "@/features/download/options";
 import { jumpInFor, mobileLaunch } from "@/features/jump/mobileLaunch";
 import { cardProps, eventActionState } from "@/features/jump/view";
 
+import { EVENTS_SECTION, destinationMeta, eventCard, jumpCanonicalPath, sectionCard } from "../lib/destination-meta";
+import { absoluteUrl, publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/jump.events._index";
 
-export function meta() {
-  return [{ title: "Jump into Decentraland" }];
+/** The card of the event the link opens; an unknown one redirects to the invalid page before this renders. */
+export function meta({ loaderData, location, matches }: Route.MetaArgs) {
+  const url = absoluteUrl(publicBase(matches), jumpCanonicalPath(location.pathname, new URLSearchParams(location.search), "event"));
+  return destinationMeta(loaderData ? eventCard(loaderData.shareEvent) : sectionCard(EVENTS_SECTION), { url });
 }
 
 const INVALID = "/jump/events/invalid";
@@ -51,6 +54,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const shareUrl = eventShareUrl(/^https?:\/\//.test(configured) ? configured : new URL(request.url).origin, event.id, card);
   return {
     eventId: event.id,
+    shareEvent: { name: event.name, scene_name: event.scene_name ?? null, description: event.description, image: event.image },
     card: cardProps(card, creator),
     state: eventActionState(card),
     shareUrl,
@@ -73,7 +77,7 @@ export function headers() {
 export default function JumpEvents({ loaderData }: Route.ComponentProps) {
   const { eventId, card, state, shareUrl, calendarHref, shareText, launch } = loaderData;
   const { identity } = useAuth();
-  const remind = useRemindMe(identity, eventId, () => openSignIn({ inPlace: true }), state === "upcoming");
+  const remind = useRemindMe(identity, eventId, () => openSignIn(), state === "upcoming");
   const [shareNotice, setShareNotice] = useState<string>();
 
   async function share() {
@@ -109,10 +113,10 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
     );
 
   return (
-    <SitesChrome active="play">
+    <SitesLayout active="play" overlayNav>
       <JumpPage>
         <JumpCard {...card} {...jumpInFor(card.jumpInHref, launch)} when={when} actions={actions} />
       </JumpPage>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

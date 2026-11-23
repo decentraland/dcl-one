@@ -1,12 +1,13 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { misc } from '#preload';
 import type { TxFlow } from '/@/hooks/useLandTxFlow';
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
+
+import { TestProviders } from '../../../../tests/utils/TestProviders';
 
 import { DefaultModal } from '../DefaultModal';
 import { getExplorerTxUrl, TxState } from '.';
@@ -16,14 +17,14 @@ const HASH = `0x${'ab'.repeat(32)}` as const;
 function renderState(flow: TxFlow, stepLabels?: string[]) {
   const handlers = { onRetry: vi.fn(), onClose: vi.fn() };
   render(
-    <ThemeProvider theme={dark}>
+    <TestProviders>
       <TxState
         flow={flow}
         doneText="LAND transferred."
         stepLabels={stepLabels}
         {...handlers}
       />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return handlers;
 }
@@ -133,7 +134,7 @@ describe('TxState', () => {
     it("should draw them as its DefaultModal's own pair", () => {
       renderState({ phase: 'rejected' });
       render(
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <DefaultModal
             open
             title="Host"
@@ -142,7 +143,7 @@ describe('TxState', () => {
             secondary={{ label: 'Back', onClick: vi.fn() }}
             primary={{ label: 'Go', state: 'idle', onClick: vi.fn() }}
           />
-        </ThemeProvider>,
+        </TestProviders>,
       );
 
       expect(screen.getByRole('button', { name: 'Cancel', hidden: true }).className).toBe(

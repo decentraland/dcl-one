@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { useDrag, DragPreviewImage } from 'react-dnd';
 import { BsFillLightningChargeFill as SmartItemIcon } from 'react-icons/bs';
-import cx from 'classnames';
+import { cx } from '../../../lib/utils/cx';
 
 import {
   getAnimatedPreviewUrl,

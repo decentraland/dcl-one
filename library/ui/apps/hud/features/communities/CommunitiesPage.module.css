@@ -1,26 +1,45 @@
-/* Communities page body (shared top bar lives in MainMenuShell). */
+/* Communities, on the menu's 1920x1080 canvas: the 68px header band the menu pages share,
+   a 400px left column, and a five-column grid of 280px cards. */
+.page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-family);
+  pointer-events: auto;
+}
 .head {
+  position: relative;
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 14px;
+  height: 68px;
+  padding: 0 20px 0 24px;
+  background: var(--scrim-head);
 }
 .title {
   margin: 0;
-  font-size: 30px;
-  font-weight: 800;
+  font-size: var(--type-36);
+  font-weight: 600;
+  line-height: 44px;
   color: var(--text);
 }
-.search {
-  width: 240px;
+.streaming {
   margin-left: auto;
+}
+.search {
+  width: 396px;
 }
 
 .layout {
+  position: relative;
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: 28px;
-  align-items: start;
+  grid-template-columns: 400px 1fr;
 }
 
 /* Left column — Create / Invites / My Communities. */
@@ -28,28 +47,36 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
+  padding: 18px 30px 24px;
+  overflow-y: auto;
+  background: rgba(22, 0, 44, 0.22);
 }
 .createBtn {
+  flex: none;
   width: 100%;
-  height: 44px;
-  margin-bottom: 16px;
-  border: 1px solid var(--white-20, rgba(255, 255, 255, 0.3));
-  border-radius: var(--r-pill);
-  background: transparent;
+  height: 46px;
+  margin-bottom: 14px;
+  border: 2px solid var(--text);
+  border-radius: 12px;
+  background: rgba(22, 0, 44, 0.55);
   color: var(--text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.03em;
   cursor: pointer;
 }
 .createBtn:hover {
   background: var(--white-10);
 }
 .sideSection {
-  padding: 10px 0;
+  flex: none;
+  width: calc(100% + 60px);
+  height: 61px;
+  margin: 0 -30px 12px;
+  padding: 0 30px;
+  border-top: 1px solid var(--white-10);
   border-bottom: 1px solid var(--white-10);
-  margin-bottom: 12px;
 }
 .myHead {
   display: flex;
@@ -106,18 +133,27 @@
 /* Browse grid. */
 .main {
   min-width: 0;
+  min-height: 0;
+  padding: 0 28px 0 32px;
+  overflow-y: auto;
+  /* No platform scrollbar: a classic one (Windows, Linux) takes 15px off the grid, an overlay one
+     (macOS) none, so the cards would differ in width per OS. */
+  scrollbar-width: none;
+}
+.main::-webkit-scrollbar {
+  display: none;
 }
 .browseHead {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 14px;
-  font-size: 15px;
+  gap: 10px;
+  height: 80px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text);
 }
 .count {
-  color: var(--ink-45);
+  color: var(--text);
 }
 .back {
   display: flex;
@@ -140,8 +176,8 @@
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px 15px;
   padding-bottom: 24px;
 }
 
@@ -149,23 +185,23 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--white-10);
-  border-radius: var(--r-card);
-  background: rgba(0, 0, 0, 0.4); /* translucent body, like PlaceCard — reads as a card on the purple page */
+  border: none;
+  border-radius: 14px;
+  background: rgba(22, 0, 44, 0.42);
   cursor: pointer;
   transition: transform var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .card:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: var(--shadow-panel);
-  transform: translateY(-3px);
+  background: rgba(22, 0, 44, 0.62);
 }
 .cover {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 16 / 10;
+  flex: none;
+  height: 260px;
+  border-radius: 14px;
   overflow: hidden;
 }
 /* Sheen at the top + shade at the bottom so a flat colour reads as a banner (like dcl-react-ui). */
@@ -190,12 +226,13 @@
 .cardBody {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 12px 14px 14px;
+  gap: 0;
+  padding: 12px 16px 20px;
 }
 .cardName {
   overflow: hidden;
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 20px;
   font-weight: 700;
   color: var(--text);
   text-overflow: ellipsis;
@@ -206,12 +243,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  min-height: 20px;
+  height: 18px;
 }
 .cardOwner {
   overflow: hidden;
   font-size: 12px;
-  color: var(--ink-6);
+  font-weight: 600;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -219,9 +257,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  color: var(--ink-45);
+  height: 20px;
+  margin-bottom: 9px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.62);
   white-space: nowrap;
 }
 /* The user's friends in the community: overlapping faces, each named on hover. */
@@ -252,8 +291,20 @@
   margin: 4px 0 2px;
   opacity: 1;
 }
-.cardBtn {
+.cardBtn.cardBtn {
   width: 100%;
+  height: 38px;
+  padding: 0 8px;
+  border: 2px solid var(--text);
+  border-radius: 9px;
+  background: rgba(22, 0, 44, 0.55);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.cardBtn.cardBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .empty {
@@ -300,7 +351,16 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  color: var(--ink-6);
+  color: var(--text);
+}
+.invitesChevron {
+  margin-left: 12px;
+  color: var(--brand);
+  font-size: 22px;
+  line-height: 1;
+}
+.invitesBtn > :nth-child(2) {
+  margin-left: auto;
 }
 .invitesBtn:hover,
 .invitesBtn[aria-pressed='true'] {
@@ -308,10 +368,8 @@
 }
 /* the column's heading style, its colour the button's */
 .invitesLabel {
-  font-size: var(--type-13);
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 /* An invited card's Accept and Reject. */
@@ -360,4 +418,14 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
   gap: 8px;
+}
+
+/* Clear of the section modal's close button, on its 68 px header line. */
+.compact .head {
+  height: 68px;
+  margin-bottom: 0;
+  padding-right: 82px;
+}
+.compact .grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }

@@ -1,8 +1,8 @@
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { TestProviders } from '../../../../../../tests/utils/TestProviders';
 
 import type { Info } from '/@/lib/deploy';
 import { en } from '/@/modules/store/translation/locales';
@@ -15,7 +15,7 @@ const info = { isWorld: true } as Info;
 function renderSuccess(worldName: string | undefined, onClose = vi.fn()) {
   render(
     <MemoryRouter initialEntries={['/scenes']}>
-      <ThemeProvider theme={dark}>
+      <TestProviders>
         <Routes>
           <Route
             path="/scenes"
@@ -34,7 +34,7 @@ function renderSuccess(worldName: string | undefined, onClose = vi.fn()) {
             element={<p>World page</p>}
           />
         </Routes>
-      </ThemeProvider>
+      </TestProviders>
     </MemoryRouter>,
   );
   return onClose;

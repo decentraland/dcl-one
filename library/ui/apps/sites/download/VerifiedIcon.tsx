@@ -1,11 +1,12 @@
 import { useId } from 'react'
 
-export function VerifiedIcon() {
+/** `size` 24 scales the 18-unit glyph to source's SvgIcon box. */
+export function VerifiedIcon({ size = 18 }: { size?: 18 | 24 }) {
   const clipId = `sites-verified-${useId().replace(/[^\w-]/g, '')}`
   return (
     <svg
-      width="18"
-      height="18"
+      width={size}
+      height={size}
       viewBox="0 0 18 18"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"

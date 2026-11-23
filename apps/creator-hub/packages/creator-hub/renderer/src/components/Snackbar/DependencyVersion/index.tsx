@@ -1,11 +1,13 @@
 import { useCallback } from 'react';
-import NotificationImportantIcon from '@mui/icons-material/NotificationImportant';
-import CloseIcon from '@mui/icons-material/Close';
-import { Alert, Button, IconButton } from 'decentraland-ui2';
+import { NotificationImportantIcon, CloseIcon } from '@ui/atoms/icons-material';
+import Button from '@ui/atoms/Button';
+import IconButton from '@ui/atoms/IconButton';
 
 import { t } from '/@/modules/store/translation/utils';
 import { useEditor } from '/@/hooks/useEditor';
 import { useWorkspace } from '/@/hooks/useWorkspace';
+
+import { SnackbarAlert } from '../Alert';
 
 export function NewDependencyVersion({ onClose }: { onClose: () => void }) {
   const { project, isInstallingProject } = useEditor();
@@ -29,8 +31,11 @@ export function NewDependencyVersion({ onClose }: { onClose: () => void }) {
         >
           {t('snackbar.new_dependency_version.actions.update')}
         </Button>
-        <IconButton onClick={onClose}>
-          <CloseIcon color="secondary" />
+        <IconButton
+          aria-label={t('modal.close')}
+          onClick={onClose}
+        >
+          <CloseIcon tone="secondary" />
         </IconButton>
       </>
     ),
@@ -38,13 +43,12 @@ export function NewDependencyVersion({ onClose }: { onClose: () => void }) {
   );
 
   return (
-    <Alert
-      icon={<NotificationImportantIcon color="secondary" />}
+    <SnackbarAlert
+      icon={<NotificationImportantIcon tone="secondary" />}
       severity="info"
       action={renderActions()}
-      sx={{ alignItems: 'center' }}
     >
       {t('snackbar.new_dependency_version.title')}
-    </Alert>
+    </SnackbarAlert>
   );
 }

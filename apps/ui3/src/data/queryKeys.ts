@@ -11,6 +11,8 @@ export const qk = {
 
   places: (params?: QueryKeyParams) => ["places", params ?? {}],
   place: (id?: string | null) => ["place", id],
+  placeCreatorProfile: (addr?: string | null) => ["place-creator-profile", addr],
+  sceneChatProfiles: (addrs: readonly string[]) => ["scene-chat-profiles", ...addrs],
   categories: () => ["categories"],
   worlds: (params?: QueryKeyParams) => ["worlds", params ?? {}],
 

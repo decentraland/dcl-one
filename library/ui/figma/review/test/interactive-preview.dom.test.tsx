@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentType } from 'react'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { InteractivePreview } from '../src/review/InteractivePreview'
 import { SearchBar } from '../src/generated/components/search-bar/SearchBar'
 import { InputWebCreatorTools } from '../src/generated/components/text-input/InputWebCreatorTools'
@@ -18,7 +18,7 @@ const preview = (name: string, component: unknown) =>
     />
   )
 
-beforeAll(() => {
+beforeEach(() => {
   // jsdom has no layout; the playground only measures overflow with it.
   globalThis.ResizeObserver ??= class {
     observe() {}
@@ -73,10 +73,14 @@ describe('restoreCaret', () => {
     return element
   }
 
-  describe('when the remounted field is an email input', () => {
-    it('should leave the selection alone, since email inputs reject setSelectionRange', () => {
-      const element = input('email', 'a@b.co')
+  let element: HTMLInputElement
 
+  describe('when the remounted field is an email input', () => {
+    beforeEach(() => {
+      element = input('email', 'a@b.co')
+    })
+
+    it('should rely on email inputs rejecting setSelectionRange', () => {
       let rejected: unknown
       try {
         element.setSelectionRange(6, 6)
@@ -84,15 +88,20 @@ describe('restoreCaret', () => {
         rejected = error
       }
       expect(rejected).toMatchObject({ name: 'InvalidStateError' })
+    })
+
+    it('should leave the selection alone without throwing', () => {
       expect(() => restoreCaret(element, 6)).not.toThrow()
     })
   })
 
   describe('when the remounted field is a search input', () => {
-    it('should put the caret at the given position', () => {
-      const element = input('search', 'plaza')
+    beforeEach(() => {
+      element = input('search', 'plaza')
       element.setSelectionRange(0, 0)
+    })
 
+    it('should put the caret at the given position', () => {
       restoreCaret(element, 5)
 
       expect([element.selectionStart, element.selectionEnd]).toEqual([5, 5])

@@ -5,16 +5,8 @@ import { buildView, graftAddedLayers, stateRules, type ViewEnv } from './views.j
 
 describe('buildView', () => {
   describe('when an auto-layout list clips HUG rows', () => {
-    const testEnv: ViewEnv = {
-      colors: { resolve: () => ({ css: '#000000' }) } as unknown as ColorResolver,
-      textStyles: new Map(),
-      textStyleAliases: {},
-      numbers: { space: new Map(), radius: new Map() },
-      icons: new Map(),
-      iconAliases: {},
-      refsById: new Map(),
-      report: { notes: new Set(), manual: new Set() }
-    }
+    let testEnv: ViewEnv
+    let row: ReturnType<typeof buildView>
     const buildList = (verticalSizing: 'HUG' | 'FILL' = 'HUG') =>
       buildView(
         {
@@ -49,18 +41,42 @@ describe('buildView', () => {
         testEnv
       )
 
-    it('should prevent captured HUG rows from shrinking in the clipped list', () => {
-      const list = buildList().children![0]!
-      const row = list.children![0]!
-
-      expect(row.css.decls).toContainEqual(['flex-shrink', '0'])
+    beforeEach(() => {
+      testEnv = {
+        colors: { resolve: () => ({ css: '#000000' }) } as unknown as ColorResolver,
+        textStyles: new Map(),
+        textStyleAliases: {},
+        numbers: { space: new Map(), radius: new Map() },
+        icons: new Map(),
+        iconAliases: {},
+        refsById: new Map(),
+        report: { notes: new Set(), manual: new Set() }
+      }
     })
 
-    it('should keep FILL rows flexible within the available space', () => {
-      const row = buildList('FILL').children![0]!.children![0]!
+    describe('and the rows hug their content', () => {
+      beforeEach(() => {
+        const list = buildList().children![0]!
+        row = list.children![0]!
+      })
 
-      expect(row.css.decls).toContainEqual(['flex', '1 1 0'])
-      expect(row.css.decls).not.toContainEqual(['flex-shrink', '0'])
+      it('should prevent captured HUG rows from shrinking in the clipped list', () => {
+        expect(row.css.decls).toContainEqual(['flex-shrink', '0'])
+      })
+    })
+
+    describe('and the rows fill the list', () => {
+      beforeEach(() => {
+        row = buildList('FILL').children![0]!.children![0]!
+      })
+
+      it('should keep FILL rows flexible within the available space', () => {
+        expect(row.css.decls).toContainEqual(['flex', '1 1 0'])
+      })
+
+      it('should not stop FILL rows from shrinking', () => {
+        expect(row.css.decls).not.toContainEqual(['flex-shrink', '0'])
+      })
     })
   })
 
@@ -118,7 +134,7 @@ describe('buildView', () => {
     })
 
     afterEach(() => {
-      vi.clearAllMocks()
+      vi.resetAllMocks()
     })
 
     describe('and a frame paints a captured photo', () => {
@@ -126,26 +142,38 @@ describe('buildView', () => {
         root.fills = [{ type: 'IMAGE', imageRef: 'photo', scaleMode: 'FILL' }]
       })
 
-      it('should draw the photo covering the frame instead of a placeholder colour', () => {
-        env.images = { photo: 'data:image/png;base64,AAAA' }
-        const background = new Map(buildView(root, env).css.decls).get('background')!
-        const svg = decodeURIComponent(
-          background.match(/^url\("data:image\/svg\+xml,([^"]*)"\)/)![1]!
-        )
+      describe('and the photo was captured', () => {
+        let svg: string
 
-        expect(svg).toContain('viewBox="0 0 560 680"')
-        expect(svg).toContain(
-          'preserveAspectRatio="xMidYMid slice" href="data:image/png;base64,AAAA"'
-        )
-        expect(env.report.manual).toEqual(new Set())
+        beforeEach(() => {
+          env.images = { photo: 'data:image/png;base64,AAAA' }
+          const background = new Map(buildView(root, env).css.decls).get('background')!
+          svg = decodeURIComponent(background.match(/^url\("data:image\/svg\+xml,([^"]*)"\)/)![1]!)
+        })
+
+        it('should size the photo to the frame', () => {
+          expect(svg).toContain('viewBox="0 0 560 680"')
+        })
+
+        it('should draw the photo covering the frame instead of a placeholder colour', () => {
+          expect(svg).toContain(
+            'preserveAspectRatio="xMidYMid slice" href="data:image/png;base64,AAAA"'
+          )
+        })
+
+        it('should report no manual work', () => {
+          expect(env.report.manual).toEqual(new Set())
+        })
       })
 
-      it('should keep the placeholder and flag the missing image when the photo was not captured', () => {
-        buildView(root, env)
+      describe('and the photo was not captured', () => {
+        it('should keep the placeholder and flag the missing image', () => {
+          buildView(root, env)
 
-        expect([...env.report.manual]).toContainEqual(
-          'missing-image-asset: the source image was not captured'
-        )
+          expect([...env.report.manual]).toContainEqual(
+            'missing-image-asset: the source image was not captured'
+          )
+        })
       })
     })
 
@@ -511,15 +539,25 @@ describe('buildView', () => {
       )
     })
 
-    it('should replace a state layer whose name contains a slash', () => {
-      root.children = [{ type: 'FRAME', name: 'general/down-arrow', w: 12, h: 12 }]
-      const rest = buildView(root, env)
-      root.children[0]!.name = 'general/up-arrow'
-      const result = graftAddedLayers(rest, buildView(root, env))
-      expect(result.grafted).toEqual(['/general%2Fup-arrow'])
-      expect(stateRules(result.rest, result.other, env.report, 'hover')).toContainEqual({
-        path: [0],
-        decls: [['display', 'none']]
+    describe('and a state replaces a layer whose name contains a slash', () => {
+      let result: ReturnType<typeof graftAddedLayers>
+
+      beforeEach(() => {
+        root.children = [{ type: 'FRAME', name: 'general/down-arrow', w: 12, h: 12 }]
+        const rest = buildView(root, env)
+        root.children[0]!.name = 'general/up-arrow'
+        result = graftAddedLayers(rest, buildView(root, env))
+      })
+
+      it('should graft the replacement layer', () => {
+        expect(result.grafted).toEqual(['/general%2Fup-arrow'])
+      })
+
+      it('should hide the replaced layer in the state', () => {
+        expect(stateRules(result.rest, result.other, env.report, 'hover')).toContainEqual({
+          path: [0],
+          decls: [['display', 'none']]
+        })
       })
     })
 
@@ -605,111 +643,168 @@ describe('buildView', () => {
       })
     })
 
-    it('should preserve effective font metrics when the named style is absent', () => {
-      root = {
-        type: 'TEXT',
-        w: 59,
-        h: 24,
-        text: 'Sign In',
-        textStyle: 'button/large',
-        font: 'Inter Semi Bold',
-        fontSize: 15,
-        textCase: 'UPPER',
-        letterSpacing: { unit: 'PIXELS', value: 0.46 }
-      }
-      expect(buildView(root, env).css.decls).toEqual(
-        expect.arrayContaining([
-          ['font-size', '15px'],
-          ['font-weight', '600'],
-          ['letter-spacing', '0.46px'],
-          ['line-height', '24px'],
-          ['text-transform', 'uppercase']
-        ])
-      )
-    })
-
-    it('should keep an absolute scrim drawn before the content underneath it', () => {
-      root.layout = { mode: 'VERTICAL', pad: [0, 0, 0, 0], gap: 0, main: 'MIN', cross: 'MIN' }
-      root.children = [
-        { type: 'RECTANGLE', name: 'Scrim', w: 560, h: 200, x: 0, y: 0, absolute: true },
-        { type: 'FRAME', name: 'Content', w: 560, h: 40, children: [] }
-      ] as RawNode[]
-
-      const [scrim, content] = buildView(root, env).children!
-
-      expect(scrim!.css.decls).toContainEqual(['position', 'absolute'])
-      expect(content!.css.decls).toContainEqual(['position', 'relative'])
-    })
-
-    it('should retain the measured height of an empty hugging feedback frame', () => {
-      root.children = [
-        {
-          type: 'FRAME',
-          name: 'Feedback',
-          w: 29,
-          h: 17,
-          sizing: ['HUG', 'HUG'],
-          layout: { mode: 'HORIZONTAL', pad: [0, 0, 0, 0], gap: 4, main: 'MIN', cross: 'CENTER' },
-          children: []
+    describe('and the named text style is absent', () => {
+      beforeEach(() => {
+        root = {
+          type: 'TEXT',
+          w: 59,
+          h: 24,
+          text: 'Sign In',
+          textStyle: 'button/large',
+          font: 'Inter Semi Bold',
+          fontSize: 15,
+          textCase: 'UPPER',
+          letterSpacing: { unit: 'PIXELS', value: 0.46 }
         }
-      ]
-      expect(buildView(root, env).children![0]!.css.decls).toContainEqual(['height', '17px'])
-    })
+      })
 
-    it('should preserve changed state text in a separately revealed layer', () => {
-      root.children = [{ type: 'TEXT', name: 'Label', w: 90, h: 24, text: 'Wearables' }]
-      const rest = buildView(root, env)
-      root.children[0]!.text = 'Whats On'
-      const result = graftAddedLayers(rest, buildView(root, env))
-      expect(result.rest.children).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ kind: 'text', text: 'Whats On', slot: 'label' })
-        ])
-      )
-      expect(stateRules(result.rest, result.other, env.report, 'hover')).toContainEqual({
-        path: [0],
-        decls: [['display', 'none']]
+      it('should preserve effective font metrics', () => {
+        expect(buildView(root, env).css.decls).toEqual(
+          expect.arrayContaining([
+            ['font-size', '15px'],
+            ['font-weight', '600'],
+            ['letter-spacing', '0.46px'],
+            ['line-height', '24px'],
+            ['text-transform', 'uppercase']
+          ])
+        )
       })
     })
 
-    it('should retain an effective font override on a named style', () => {
-      env.textStyles.set('body/md', {
-        name: 'body/md',
-        fontFamily: 'Inter',
-        fontStyle: 'Regular',
-        fontSize: 16,
-        lineHeightPercent: 150,
-        letterSpacingPx: 0,
-        textCase: 'ORIGINAL'
+    describe('and an absolute scrim is drawn before the content', () => {
+      let scrim: ReturnType<typeof buildView>
+      let content: ReturnType<typeof buildView>
+
+      beforeEach(() => {
+        root.layout = { mode: 'VERTICAL', pad: [0, 0, 0, 0], gap: 0, main: 'MIN', cross: 'MIN' }
+        root.children = [
+          { type: 'RECTANGLE', name: 'Scrim', w: 560, h: 200, x: 0, y: 0, absolute: true },
+          { type: 'FRAME', name: 'Content', w: 560, h: 40, children: [] }
+        ] as RawNode[]
+        ;[scrim, content] = buildView(root, env).children! as [
+          ReturnType<typeof buildView>,
+          ReturnType<typeof buildView>
+        ]
       })
-      root = {
-        type: 'TEXT',
-        w: 90,
-        h: 24,
-        text: 'Discover',
-        textStyle: 'body/md',
-        font: 'Inter Semi Bold',
-        fontSize: 16
-      }
-      expect(buildView(root, env).css.decls).toContainEqual(['font-weight', '600'])
+
+      it('should keep the scrim absolute', () => {
+        expect(scrim.css.decls).toContainEqual(['position', 'absolute'])
+      })
+
+      it('should keep the content underneath it in flow', () => {
+        expect(content.css.decls).toContainEqual(['position', 'relative'])
+      })
     })
 
-    it('should flag a missing image asset instead of treating the placeholder as verified', () => {
-      root.fills = [{ type: 'IMAGE' }]
-      buildView(root, env)
-      expect(env.report.manual).toContain('missing-image-asset: the source image was not captured')
+    describe('and an empty hugging feedback frame is captured', () => {
+      beforeEach(() => {
+        root.children = [
+          {
+            type: 'FRAME',
+            name: 'Feedback',
+            w: 29,
+            h: 17,
+            sizing: ['HUG', 'HUG'],
+            layout: {
+              mode: 'HORIZONTAL',
+              pad: [0, 0, 0, 0],
+              gap: 4,
+              main: 'MIN',
+              cross: 'CENTER'
+            },
+            children: []
+          }
+        ]
+      })
+
+      it('should retain its measured height', () => {
+        expect(buildView(root, env).children![0]!.css.decls).toContainEqual(['height', '17px'])
+      })
     })
 
-    it('should reveal a layer reused by both hover and pressed states', () => {
-      root.children = []
-      const rest = buildView(root, env)
-      root.children = [{ type: 'FRAME', name: 'general/up-arrow', w: 10, h: 6 }]
-      const target = buildView(root, env)
-      const hover = graftAddedLayers(rest, target)
-      const pressed = graftAddedLayers(hover.rest, target)
-      expect(stateRules(pressed.rest, pressed.other, env.report, 'pressed')).toContainEqual({
-        path: [1000],
-        decls: [['display', 'block']]
+    describe('and a state changes the text of a layer', () => {
+      let result: ReturnType<typeof graftAddedLayers>
+
+      beforeEach(() => {
+        root.children = [{ type: 'TEXT', name: 'Label', w: 90, h: 24, text: 'Wearables' }]
+        const rest = buildView(root, env)
+        root.children[0]!.text = 'Whats On'
+        result = graftAddedLayers(rest, buildView(root, env))
+      })
+
+      it('should preserve changed state text in a separately revealed layer', () => {
+        expect(result.rest.children).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: 'text', text: 'Whats On', slot: 'label' })
+          ])
+        )
+      })
+
+      it('should hide the rest text in the state', () => {
+        expect(stateRules(result.rest, result.other, env.report, 'hover')).toContainEqual({
+          path: [0],
+          decls: [['display', 'none']]
+        })
+      })
+    })
+
+    describe('and text overrides the font of a named style', () => {
+      beforeEach(() => {
+        env.textStyles.set('body/md', {
+          name: 'body/md',
+          fontFamily: 'Inter',
+          fontStyle: 'Regular',
+          fontSize: 16,
+          lineHeightPercent: 150,
+          letterSpacingPx: 0,
+          textCase: 'ORIGINAL'
+        })
+        root = {
+          type: 'TEXT',
+          w: 90,
+          h: 24,
+          text: 'Discover',
+          textStyle: 'body/md',
+          font: 'Inter Semi Bold',
+          fontSize: 16
+        }
+      })
+
+      it('should retain the effective font override', () => {
+        expect(buildView(root, env).css.decls).toContainEqual(['font-weight', '600'])
+      })
+    })
+
+    describe('and an image fill names no source image', () => {
+      beforeEach(() => {
+        root.fills = [{ type: 'IMAGE' }]
+      })
+
+      it('should flag a missing image asset instead of treating the placeholder as verified', () => {
+        buildView(root, env)
+        expect(env.report.manual).toContain(
+          'missing-image-asset: the source image was not captured'
+        )
+      })
+    })
+
+    describe('and hover and pressed states reuse an added layer', () => {
+      let pressed: ReturnType<typeof graftAddedLayers>
+
+      beforeEach(() => {
+        root.children = []
+        const rest = buildView(root, env)
+        root.children = [{ type: 'FRAME', name: 'general/up-arrow', w: 10, h: 6 }]
+        const target = buildView(root, env)
+        const hover = graftAddedLayers(rest, target)
+        pressed = graftAddedLayers(hover.rest, target)
+      })
+
+      it('should reveal the layer in the pressed state', () => {
+        expect(stateRules(pressed.rest, pressed.other, env.report, 'pressed')).toContainEqual({
+          path: [1000],
+          decls: [['display', 'block']]
+        })
       })
     })
   })
@@ -717,6 +812,7 @@ describe('buildView', () => {
 
 describe('when rendering reflected nodes', () => {
   let env: ViewEnv
+
   beforeEach(() => {
     env = {
       colors: { resolve: vi.fn(() => ({ css: '#ffffff' })) } as unknown as ColorResolver,
@@ -729,48 +825,74 @@ describe('when rendering reflected nodes', () => {
       report: { notes: new Set(), manual: new Set() }
     }
   })
-  it('should retain nested reflections on the container and text separately', () => {
-    const view = buildView(
-      {
-        type: 'FRAME',
-        w: 85,
-        h: 64,
-        flip: [true, false],
-        children: [
-          { type: 'TEXT', w: 85, h: 19, x: 0, y: 22.5, text: 'Overview', flip: [true, false] }
-        ]
-      },
-      env
-    )
-    expect(view.css.decls).toContainEqual(['transform', 'scale(-1, 1)'])
-    expect(view.children?.[0]?.css.decls).toEqual(
-      expect.arrayContaining([
-        ['left', '0px'],
-        ['top', '22.5px'],
-        ['transform', 'scale(-1, 1)'],
-        ['transform-origin', 'center']
-      ])
-    )
+
+  afterEach(() => {
+    vi.resetAllMocks()
   })
-  it('should compose reflection with fallback centering instead of replacing translation', () => {
-    const view = buildView(
-      {
-        type: 'FRAME',
-        w: 100,
-        h: 100,
-        children: [{ type: 'RECTANGLE', w: 20, h: 20, flip: [false, true] }]
-      },
-      env
-    )
-    expect(view.children?.[0]?.css.decls).toEqual(
-      expect.arrayContaining([['transform', 'translate(-50%, -50%) scale(1, -1)']])
-    )
-  })
-  it('should leave unreflected nodes without a scale declaration', () => {
-    expect(
-      buildView({ type: 'FRAME', w: 100, h: 100 }, env).css.decls.some(
-        ([key]) => key === 'transform'
+
+  describe('and a reflected container holds a reflected text', () => {
+    let view: ReturnType<typeof buildView>
+
+    beforeEach(() => {
+      view = buildView(
+        {
+          type: 'FRAME',
+          w: 85,
+          h: 64,
+          flip: [true, false],
+          children: [
+            { type: 'TEXT', w: 85, h: 19, x: 0, y: 22.5, text: 'Overview', flip: [true, false] }
+          ]
+        },
+        env
       )
-    ).toBe(false)
+    })
+
+    it('should retain the reflection on the container', () => {
+      expect(view.css.decls).toContainEqual(['transform', 'scale(-1, 1)'])
+    })
+
+    it('should retain the reflection on the text separately', () => {
+      expect(view.children?.[0]?.css.decls).toEqual(
+        expect.arrayContaining([
+          ['left', '0px'],
+          ['top', '22.5px'],
+          ['transform', 'scale(-1, 1)'],
+          ['transform-origin', 'center']
+        ])
+      )
+    })
+  })
+
+  describe('and a reflected child falls back to centering', () => {
+    let view: ReturnType<typeof buildView>
+
+    beforeEach(() => {
+      view = buildView(
+        {
+          type: 'FRAME',
+          w: 100,
+          h: 100,
+          children: [{ type: 'RECTANGLE', w: 20, h: 20, flip: [false, true] }]
+        },
+        env
+      )
+    })
+
+    it('should compose reflection with fallback centering instead of replacing translation', () => {
+      expect(view.children?.[0]?.css.decls).toEqual(
+        expect.arrayContaining([['transform', 'translate(-50%, -50%) scale(1, -1)']])
+      )
+    })
+  })
+
+  describe('and a node is not reflected', () => {
+    it('should leave it without a scale declaration', () => {
+      expect(
+        buildView({ type: 'FRAME', w: 100, h: 100 }, env).css.decls.some(
+          ([key]) => key === 'transform'
+        )
+      ).toBe(false)
+    })
   })
 })

@@ -9,7 +9,6 @@
 
 import { attributionParams, sessionId } from '../../lib/analytics'
 import { inShell, postToShell, shellRequest } from '../../lib/shell'
-import { GUEST_SESSION_KEY } from './thirdweb'
 import { AUTH_RETURN_PARAM } from './authReturn'
 
 export { AUTH_RETURN_PARAM }
@@ -43,6 +42,9 @@ const SSO_PREFIX = 'single-sign-on-'
 // The guest account. It is kept apart from the `single-sign-on-*` entries so the other sites on
 // this origin don't treat it as a sign-in.
 const GUEST_IDENTITY_KEY = 'dcl-guest-identity'
+// Set when the guest signs out, as unity-explorer's guest session stops being active: the guest is
+// kept but not signed in again on its own, and PLAY AS GUEST brings it back (resumeGuestLogin).
+const GUEST_SIGNED_OUT_KEY = 'dcl-guest-signed-out'
 
 /** A stored sign-in with this long or less to run is not started with: it could expire while the player
  *  is in-world, where its signed requests would start failing. */
@@ -86,7 +88,9 @@ function parseIdentity(raw: string | null): AuthIdentity | null {
 // identity (the most recently created session), mirroring sites' getStoredAddress().
 // One within RELOGIN_MARGIN_MS of expiring is forgotten instead: the player signs in again, and the
 // auth site, which sends a reader with an unexpired sign-in straight back, then asks for a new one. A
-// guest keeps its wallet session, so PLAY AS GUEST signs the same wallet in again.
+// thirdweb guest keeps its wallet session, so PLAY AS GUEST signs the same wallet in again; a guest
+// whose key this browser made (features/auth/guest.ts localGuestBackend) gets a new wallet. A guest
+// that signed out is left for PLAY AS GUEST.
 export function getStoredLogin(): StoredLogin | null {
   const logins: StoredLogin[] = []
   for (let i = 0; i < localStorage.length; i++) {
@@ -96,7 +100,7 @@ export function getStoredLogin(): StoredLogin | null {
     const identity = readIdentity(address)
     if (identity) logins.push({ address, identity })
   }
-  const guest = getStoredGuestLogin()
+  const guest = localStorage.getItem(GUEST_SIGNED_OUT_KEY) == null ? getStoredGuestLogin() : null
   if (guest) logins.push(guest)
   let best: StoredLogin | null = null
   for (const login of logins) {
@@ -131,12 +135,22 @@ export function storeAccountLogin(identity: AuthIdentity): void {
 
 export function storeGuestLogin(identity: AuthIdentity): void {
   localStorage.setItem(GUEST_IDENTITY_KEY, JSON.stringify(identity))
+  localStorage.removeItem(GUEST_SIGNED_OUT_KEY)
 }
 
-// Forget the guest account. Without its session id the wallet cannot be reached again.
-export function clearGuestLogin(): void {
-  localStorage.removeItem(GUEST_IDENTITY_KEY)
-  localStorage.removeItem(GUEST_SESSION_KEY)
+/** PLAY AS GUEST: the kept guest, signed out or not, signed in again; null when there is none or it
+ *  expires within RELOGIN_MARGIN_MS. */
+export function resumeGuestLogin(): StoredLogin | null {
+  const guest = getStoredGuestLogin()
+  if (guest == null || loginExpiresSoon(guest)) return null
+  localStorage.removeItem(GUEST_SIGNED_OUT_KEY)
+  return guest
+}
+
+/** Keep the guest for PLAY AS GUEST without signing it in on its own, as unity-explorer does after a
+ *  sign-out and when an account signs in. */
+export function signOutGuest(): void {
+  if (localStorage.getItem(GUEST_IDENTITY_KEY) != null) localStorage.setItem(GUEST_SIGNED_OUT_KEY, '1')
 }
 
 export function loginExpired(login: StoredLogin): boolean {
@@ -212,7 +226,8 @@ export function redirectToAuth(redirectTo: string = entryUrl, loginMethod?: Logi
 }
 
 // Sign out: drop every SSO identity for this origin (matches sites' disconnect for the
-// single-sign-on-* keys). The engine logout is handled separately by the driver.
+// single-sign-on-* keys), and keep the guest but signed out. The engine logout is handled
+// separately by the driver.
 export function clearStoredLogins(): void {
   const keys: string[] = []
   for (let i = 0; i < localStorage.length; i++) {
@@ -220,4 +235,5 @@ export function clearStoredLogins(): void {
     if (key && key.startsWith(SSO_PREFIX)) keys.push(key)
   }
   keys.forEach((k) => localStorage.removeItem(k))
+  signOutGuest()
 }

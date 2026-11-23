@@ -59,7 +59,6 @@ pub const SECTION: DebugSection = DebugSection {
 #[command(name = "/nametag_state")]
 pub struct NametagStateCommand;
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn nametag_state(
     mut cmd: ConsoleCommand<NametagStateCommand>,
     visible: Res<NametagsVisible>,
@@ -140,7 +139,7 @@ pub fn nametag_state(
                     BubbleKind::Dm { .. } => "dm",
                 },
                 "mention": bubble.mention,
-                "length": bubble.message.chars().count(),
+                "length": bubble.message.text.chars().count(),
             })),
         }));
     }

@@ -9,6 +9,10 @@
 //! envelope (`worlds_envelope`), the switch a side write asks (`writes`) and
 //! the worlds signed-fetch verifier (`signed_fetch`).
 
+// Production routes go through `shared::routing` (comms/clippy.toml); test routers may use axum's.
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_content as content;
@@ -20,6 +24,7 @@ pub(crate) use dcl_http as http;
 
 pub mod access;
 pub mod archipelago;
+pub mod cast_presenter;
 pub mod deny_list;
 pub mod gatekeeper;
 pub mod interfaces;
@@ -41,3 +46,27 @@ pub mod writes;
 pub use shared::identity::{
     Address, AuthorityNotEstablished, CommunityId, PermissionDecision, ZERO_ADDRESS,
 };
+
+/// Production routes stay on `shared::routing` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_routes_use_shared_routing() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_axum_routes(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::routing instead of axum's method routers at {found:?}"
+    );
+}
+
+/// Production spawns stay on `shared::task` (see `shared::routing::guard`).
+#[cfg(test)]
+#[test]
+fn production_spawns_use_shared_task() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let found = crate::shared::routing::guard::direct_tokio_spawns(&src);
+    assert!(
+        found.is_empty(),
+        "use crate::shared::task instead of tokio::spawn at {found:?}"
+    );
+}

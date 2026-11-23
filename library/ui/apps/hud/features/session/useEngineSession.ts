@@ -7,9 +7,10 @@ import { hoverKey, proximityKey } from '@explorer-core/engine/pointerKeys'
 import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { recordVisit } from '@explorer-core/features/lobby/lobbyApi'
-import type { PortableInfo, PortableState, SatelliteView } from '@explorer-core/engine/generated'
+import { answerItemPurchase, type PurchaseSceneItem } from '../itemPurchase/answer'
+import type { PlatformBanNotice, PortableInfo, PortableState, SatelliteView, WorldAccessVerdict } from '@explorer-core/engine/generated'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import type { EngineViewportRegion, PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '@explorer-core/engine/protocol'
+import { PLATFORM_BANNED_REFUSAL, type UiSound, type EngineViewportRegion, type GiftingPageMessage, type GiftingQueryRequest, type PhotoModeSnapshot, type PhotoModeSource, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '@explorer-core/lib/analytics'
 import { useStoredProfile } from '../login/useStoredProfile'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
@@ -17,6 +18,7 @@ import { storedLoginType, type LoginType } from '@explorer-core/features/session
 import type { InteractableArea } from '../../lib/hudInset'
 import type { FatalError } from '@explorer-core/features/error/fatalError'
 import { createLoadingProgress } from '@explorer-core/features/session/loadingProgress'
+import { MOCK_HOLD_LOADING_PROGRESS, mockHold } from '@explorer-core/engine/mockBridge'
 import { useConnectivity } from './useConnectivity'
 import { DEFAULT_REALM, serviceUrl } from '@hud-host'
 import { provideHudLogin, provideHudLogout, type HudLoginReply, type HudLoginRequest } from '@explorer-core/lib/hudAutomation'
@@ -30,6 +32,7 @@ import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
 import { portableKey, toastPortableChanges } from '../portables/portableToasts'
+import { showTextureOptimization } from '../preview/textureOptimizationToast'
 import { bootMode, IN_WORLD_SHOP, unattendedRun } from '@hud-host'
 import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -37,24 +40,29 @@ import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
 import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
-import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
+import { nextRequestId } from '@explorer-core/engine/requestIds'
+import { beginProfileSave, finishProfileSave, profileChanged, profileReadFailed, receiveOwnProfile, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '@explorer-core/features/chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '@explorer-core/features/chat/translation'
-import { clearPingMode, shouldPing } from '../chat/ping'
+import { clearPingMode, sendSoundEnabled, shouldPing } from '../chat/ping'
+import { useAskBeforeLeaving } from '../settings/askBeforeLeaving'
 import { risingIds, rowKeys } from '@explorer-core/features/chat/lineIds'
 import { communityChannel, communityIdOf } from '@explorer-core/engine/communityChannel'
 import { mentionName, mentionsName } from '@explorer-core/engine/mention'
 import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
+import { lobbyStagePreset } from '@explorer-core/engine/lobbyStage'
 import { PARCEL_METERS, isGenesisSatelliteView } from '@explorer-core/features/map/atlas'
 import { EDITOR_BUILD } from '@explorer-core/features/editorHost/config'
 import { editorEntry } from '@explorer-core/features/editorHost/source'
 import { hudActsOn, type EditorHudMode } from '@explorer-core/features/editorHost/hudMode'
 import { streamHere } from '../voiceChat/streamHere'
 import { receiveMapReply, setMapTransport } from '@explorer-core/features/map/mapApi'
+import { setNativeQuit } from '../gate/exitApplication'
 import { nearbyPlayers, travelCount } from '@explorer-core/features/map/mapPeople'
+import { mapPins } from '@explorer-core/features/map/mapPins'
 import { eventAnalytics } from '../events/eventFormat'
 import { useEventsData, type EventsData } from '../events/useEventsData'
 import { donatePlaceOf, donateSceneKey } from '@explorer-core/features/donate/place'
@@ -93,6 +101,10 @@ import type {
   GalleryPhotoMeta,
   GalleryWriteMessage,
   ExternalUrlOpenedMessage,
+  SatelliteTileMessage,
+  PlaceMessage,
+  WorldAccessMessage,
+  SignedPlace,
   HoverAction,
   MinimapRotation,
   MinimapStyle,
@@ -111,6 +123,7 @@ import type {
   ProximityTip,
   Profile,
   ProfileEdit,
+  ProfileSavedMessage,
   CommunitySaveResultMessage,
   CommunityPlaceOptionsMessage,
   UpdateCommunityRequest,
@@ -126,6 +139,10 @@ import type {
 type EngineFocusWindow = Window & { __engineTextFocus?: boolean }
 
 // Unity's wording (CommunityCardController *_ERROR_MESSAGE); the raw HTTP error only goes to the log.
+// The screen the mock holds (`?mock=1&mockhold=…`): a property of the entry link, read once as the
+// module loads, not on every render.
+const MOCK_HOLD = mockHold()
+
 const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   join: 'There was an error joining the community. Please try again.',
   requestToJoin: 'There was an error requesting to join community. Please try again.',
@@ -189,6 +206,16 @@ function parseTimeReply(reply: string): { hours: number; speed: number } | null 
 // Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
 export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
 
+export const OUTFIT_FAILED_MESSAGE = {
+  save: "Couldn't save this outfit. Try again.",
+  delete: "Couldn't delete this outfit. Try again.",
+  deleteExtraWithoutName: "Couldn't clear the second row. Check your connection and try deleting from that row again.",
+  extraSlotWithoutName: 'Outfits in the second row need a NAME you own. Delete them before changing your other outfits.'
+} as const
+
+/** A gift picker page request, without the id the session adds. */
+export type GiftingQuery = Omit<GiftingQueryRequest, 'kind' | 'requestId'>
+
 /** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
 export interface CatalogQuery {
   page: number
@@ -249,12 +276,16 @@ export interface BackpackState {
   outfits: OutfitSlot[]
   /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
   outfitSlots: number
+  warnAboutClearingExtraOutfits: boolean
   /** The saved outfits have arrived: until then every slot reads empty, saved or not. */
   outfitsLoaded: boolean
   /** Save the current look into a slot. */
   saveOutfit: (slot: number) => void
   /** Delete a saved outfit slot. */
   deleteOutfit: (slot: number) => void
+  /** Why the last outfit save or delete was refused, or null (until the outfits next arrive). */
+  outfitError: string | null
+  dismissOutfitError: () => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
   /** The randomize bar's state for this Backpack session. */
@@ -430,23 +461,33 @@ export interface CommunitiesState {
   likePost: (id: string, postId: string, like: boolean) => void
 }
 
+/** What a travel asked from a menu page came to. `sent`: an ordinary travel, and the page that asked
+ *  closes itself. `lobby`: the startup lobby's pick, which already closed every page. `refused`: the
+ *  lobby is not taking picks yet (sign-in still running); nothing happened, the page stays, and a
+ *  toast says why. */
+export type TravelOutcome = 'sent' | 'lobby' | 'refused'
+
 export interface MapState {
   /** Local player's current parcel. */
   x: number
   y: number
   open: boolean
   toggle: () => void
-  teleport: (x: number, y: number) => void
+  teleport: (x: number, y: number) => TravelOutcome
   /** Teleport to a Genesis City place: from outside Genesis the parcel carries the Genesis realm,
    *  so the engine changes realm first. In Genesis already it is a plain teleport — a realm-carrying
    *  teleport is a full realm reconnect, like changeRealm, even to the realm the player is in. */
-  teleportToPlace: (x: number, y: number) => void
+  teleportToPlace: (x: number, y: number) => TravelOutcome
   /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
-  changeRealm: (realm: string) => void
-  /** The home the engine holds: its realm (null for the default one) and parcel; null until it answers. */
-  home: { realm: string | null; parcel: string } | null
+  changeRealm: (realm: string) => TravelOutcome
+  /** The account's home: its realm (null for the default one) and parcel, or with `pinned` false where an
+   *  account with no home starts; the engine's answer, else the boot copy. */
+  home: { realm: string | null; parcel: string; pinned: boolean } | null
+  /** False for a guest with no account: the engine keeps no home for it. */
+  canPinHome: boolean
   /** Make a parcel of `realm` home; shown at once, then confirmed by the engine. */
   setHome: (realm: string, parcel: { x: number; y: number }) => void
+  clearHome: () => void
 }
 
 /** Live player pose for the minimap: position in world metres, yaws in degrees. */
@@ -477,15 +518,26 @@ export interface MinimapState {
   /** The place the player stands in, as Donate names it (a Genesis City parcel or a World); null in a preview,
    *  a local realm or between scenes. */
   donatePlace: DonatePlace | null
+  /** The realm the player is in, as the place's link names it: a World's name, `DEFAULT_REALM` in Genesis City;
+   *  null in a preview or a local realm. Unlike `donatePlace`, a parcel with no scene has one. */
+  linkRealm: string | null
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
+  /** Reload the scene the player stands in, as the `/reload` chat command does. */
+  reloadScene: () => void
 }
 
 // Places browses the places API over HTTP (no bridge data) — it only needs open/close.
 export interface PlacesState {
   open: boolean
   toggle: () => void
+  close: () => void
+  /** One place read signed, with the player's own votes; null when the read failed. */
+  readSigned: (id: string) => Promise<SignedPlace | null>
+  /** Whether the player may enter a world, by the engine's entry check; `failed` when it could
+   *  not tell in time, and the world decides on arrival. */
+  worldAccess: (world: string) => Promise<WorldAccessVerdict>
 }
 
 /** What opened the Events page: its key, the menu's top bar, or the sidebar. */
@@ -502,6 +554,7 @@ export interface EventCommunity {
 export interface EventsState {
   open: boolean
   toggle: (source?: EventsOpenSource) => void
+  close: () => void
   data: EventsData
   memberOf: EventCommunity[]
 }
@@ -536,6 +589,16 @@ export interface PhotoModeState {
   set: (enable: boolean, source: PhotoModeSource) => void
   /** Take a photo (`/take_photo`). */
   take: () => void
+}
+
+export interface LobbyDataState {
+  /** Prefetches the events and communities the lobby's widgets list; the events land in
+   *  `events.data`'s lobby query. */
+  warm: () => void
+  /** True once this account's list answered; false again after sign-out. */
+  communitiesLoaded: boolean
+  /** A page or panel is open over the lobby. */
+  covered: boolean
 }
 
 /** One page of a camera reel, newest first. `total` is how many photos the reel holds in all, `max`
@@ -593,6 +656,8 @@ export interface SettingsState {
   set: (name: string, value: number) => void
   /** Fetch the settings without opening the page (once per session). */
   load: () => void
+  /** Re-read the settings without opening the page. */
+  refresh: () => void
 }
 
 export interface BindingsState {
@@ -719,6 +784,13 @@ export interface WorldPasswordState {
   resolve: (password: string | null) => void
 }
 
+/** What a host gives the session that its `@hud-host` module cannot (it would load HUD code with it). */
+export interface SessionHost {
+  /** Opens the host's purchase confirmation for an item a scene asked to sell. Absent where the
+   *  host cannot buy: such a request is answered `unavailable`. */
+  purchaseSceneItem?: PurchaseSceneItem
+}
+
 export interface PortablesState {
   /** The portables the engine lists, tagged by kind: never the HUD's own scene or a startup portable. */
   list: PortableInfo[]
@@ -829,6 +901,8 @@ export interface ChatState {
   messages: ChatLine[]
   /** Sends to the channel shown: Nearby, or the open DM. */
   send: (text: string) => void
+  /** Plays one of the chat's interface sounds (typing, emoji, buttons). */
+  playSound: (sound: UiSound) => void
   /** Adds or removes the local user's reaction to a message on the channel shown. */
   react: (messageId: string, emoji: string, remove: boolean) => void
   /** The Nearby lines, whichever channel is shown. */
@@ -885,9 +959,18 @@ export interface ChatState {
 const MAX_CHAT_LINES = 200
 /** The notifications list keeps at most this many, the size of the bridge's full fetch. */
 export const NOTIFICATIONS_KEPT = 50
-// The least time between two notification pings of one conversation and kind: a flood of lines
-// is one sound, not one per line.
-const PING_INTERVAL_MS = 400
+// The least time between two plays of one repeating sound, an incoming line's or the chat input's:
+// lines of a conversation and typed characters each sound, and a flood of lines or a held key does
+// not restart the clip faster than it can be heard.
+const SOUND_FLOOR_MS = 100
+
+/** Whether `sound` is past the floor since its last play in `playedAt`; a play that is due is noted. */
+function soundDue(playedAt: Map<UiSound, number>, sound: UiSound): boolean {
+  const now = Date.now()
+  if (now - (playedAt.get(sound) ?? -Infinity) < SOUND_FLOOR_MS) return false
+  playedAt.set(sound, now)
+  return true
+}
 
 // Render-settle: after a scene first reports loaded, hold the loader at least this long for the
 // engine to render the first frame (so the world isn't revealed as black models), and at most this
@@ -903,16 +986,23 @@ const REVEAL_DEBOUNCE_MS = 600
 // how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
 // How long Verifying waits for a sign-in before giving up.
 const VERIFY_TIMEOUT_MS = 15_000
+// The longest Verifying waits for the bridge scene to answer before its own clock starts anyway:
+// the bridge's ready timeout (30 s) plus VERIFY_TIMEOUT_MS. A bridge that never answers and is never
+// reported unreachable (an engine run that ended on its own) still ends the wait.
+const VERIFY_BRIDGE_WAIT_MS = 45_000
 // how long a checked email code's Success shows before its sign-in starts
 const EMAIL_SUCCESS_MS = 600
 /** The sign-in error a Verifying that gave up leaves: no reason to show the player. */
 export const VERIFY_TIMED_OUT = 'verifying timed out'
 const AUTH_PROFILE_WAIT_MS = 30_000
 export const BRIDGE_CALL_TIMEOUT_MS = 30_000
+/** A slower world access check is `failed`: Jump in shows and the world decides on arrival. */
+export const WORLD_ACCESS_TIMEOUT_MS = 8_000
+export const SIGNING_IN_PICK = 'Still signing in. Try again in a moment.'
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
 
-type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage
+type BridgeReply = GalleryMessage | GalleryWriteMessage | ExternalUrlOpenedMessage | SatelliteTileMessage | PlaceMessage | WorldAccessMessage | GiftingPageMessage
 
 export type LoginStatus =
   | 'loading'
@@ -936,6 +1026,10 @@ export interface LoginFlow {
   status: LoginStatus
   /** Root wallet address of the stored SSO identity (shown on the "welcome back" screen). */
   account: string | null
+  /** The kind of the sign-in that landed, for the player to end with Sign Out: null before one,
+   *  after a sign-out, for a sign-in the scene owns, and for one the boot made (?guest=1, an
+   *  unattended run), which a reload would only make again. */
+  signedInAs: LoginType | null
   busy: boolean
   error: string | null
   /** Engine has booted and can accept the login command. The engine-driven CTAs (Jump in / Explore)
@@ -953,6 +1047,8 @@ export interface LoginFlow {
   startWithAccount: (method?: LoginMethod) => void
   /** Native fresh sign-in in flight (the browser is open): the methods screen waits with Cancel. */
   authPending: boolean
+  /** The mock holds the returning-account screen (`mockhold=returning`): no splash, no entering on its own. */
+  held?: boolean
   /** That sign-in's code, once the engine has it: the browser shows the same one, so the player can
    *  tell the request they approve there is this one. */
   authCode: string | null
@@ -1039,12 +1135,16 @@ export interface EngineSession {
   /** The engine has drawn the sign-in stage (a new account's avatar on the sign-in background), so the
    *  page's own background can fade out. */
   signinStageReady: boolean
+  /** Turn the lobby stage's avatar by `degrees` about its vertical axis (a drag over it). */
+  turnLobbyAvatar: (degrees: number) => void
   /** The lobby reopened in-world from the menu. */
-  lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
+  lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => boolean }
+  /** Read signed through the bridge. */
+  lobbyData: LobbyDataState
   /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
   avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
   /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
-  homeScene: () => { realm: string | null; parcel: string } | null
+  homeScene: () => { realm: string | null; parcel: string; pinned: boolean } | null
   /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). False
    *  when nothing was done: no driver, or the lobby still signing in. */
   pickDestination: (dest: Destination) => boolean
@@ -1060,6 +1160,9 @@ export interface EngineSession {
   /** Why the last in-world travel failed (the engine kept the player where they were), shown as a notice. */
   travelError: string | null
   dismissTravelError: () => void
+  /** The signed-in wallet's known platform ban (null when not banned, unknown or failed), and
+   *  whether the last travel was refused for it. */
+  platformBan: { notice: PlatformBanNotice | null; travelRefused: boolean; dismissTravelRefused: () => void }
   /** The realm a HUD-requested travel is heading to, until the engine reports the outcome. The
    *  loader shows meanwhile. */
   travellingTo: string | null
@@ -1086,6 +1189,9 @@ export interface EngineSession {
   skybox: SkyboxState
   emotes: EmotesState
   backpack: BackpackState
+  /** One page of the player's owned on-chain wearables or emotes for the gift picker; answers a failed page when
+   *  the engine is gone. */
+  queryGifting: (q: GiftingQuery) => Promise<GiftingPageMessage>
   communities: CommunitiesState
   map: MapState
   minimap: MinimapState
@@ -1110,13 +1216,19 @@ export interface EngineSession {
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
+  /** `preset` is a LOBBY_STAGE_PRESETS id; `idleEmotes` applies to the lobby page alone. */
+  lobbyStage: { preset: string; set: (options: { preset?: string; idleEmotes?: boolean }) => void }
   /** Open an `https:` url in the user's browser through the engine; resolves whether it opened. */
   openExternalUrl: (url: string) => Promise<boolean>
+  /** One deep-zoom satellite detail tile for the map, as base64 JPEG bytes; null when the engine
+   *  cannot decode it or the request fails. `path` is relative to the tile source. */
+  fetchSatelliteTile: (path: string) => Promise<string | null>
   /** Report (or clear) the screen rect where the scene should render an engine view. */
   setEngineViewport: (
     region: EngineViewportRegion,
     rect: { x: number; y: number; width: number; height: number } | null,
-    dpr?: number
+    dpr?: number,
+    focus?: { x: number; y: number; width: number; height: number }
   ) => void
   /** Report the screen area the persistent HUD occupies (see lib/hudInset.ts). */
   setInteractableArea: (area: InteractableArea) => void
@@ -1151,8 +1263,11 @@ function initialMessages(): ChatLine[] {
   return [{ sender: '', message: 'Type /help for available commands.', channel: 'Nearby', messageId: '', id: -1, ts: Date.now() }]
 }
 
-export function useEngineSession(createDriver: () => LoginDriver): EngineSession {
+export function useEngineSession(createDriver: () => LoginDriver, host: SessionHost = {}): EngineSession {
   const driverRef = useRef<LoginDriver | null>(null)
+  const hostRef = useRef(host)
+  hostRef.current = host
+  const lastItemPurchase = useRef<number | null>(null)
   const [status, setStatus] = useState<LoginStatus>('loading')
   // Same-domain SSO identity read from localStorage (null = no stored account).
   const [stored, setStored] = useState<StoredLogin | null>(null)
@@ -1160,6 +1275,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // then (it loads alongside the status), null is a scene-owned login the page never ran.
   const pendingLoginType = useRef<LoginType | 'stored' | null>(null)
   const lastLoginType = useRef<LoginType | null>(null)
+  const [signedInAs, setSignedInAs] = useState<LoginType | null>(null)
   // the terms accepted on this install, as the welcome flow reported it (the engine knows otherwise)
   const termsOk = useRef(false)
   // The Google Ads conversion, once per page load (shell/googleTag.ts dedupes per tab session).
@@ -1192,6 +1308,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [error, setError] = useState<string | null>(null)
   // Engine boots (autostart) while the login screen is up; this flips true once it can take commands.
   const [engineReady, setEngineReady] = useState(false)
+  // The bridge scene has answered the page (or was reported unreachable): Verifying's clock waits
+  // for it, since the welcome answer comes from that scene and a busy cold boot can start it well
+  // after the sign-in is submitted.
+  const [bridgeAnswered, setBridgeAnswered] = useState(false)
   const [avatarLoaded, setAvatarLoaded] = useState(false)
   // Real WASM-download/boot progress surfaced from the engine (0–100) + the active step id,
   // for the login footer bar. The engine's own loader is hidden (hideLoader=1).
@@ -1226,6 +1346,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobby, setLobby] = useState(false)
   const lobbyRef = useRef(false)
   const [lobbyStageReady, setLobbyStageReady] = useState(false)
+  const [communitiesLoaded, setCommunitiesLoaded] = useState(false)
   const [signinStageReady, setSigninStageReady] = useState(false)
   lobbyRef.current = lobby
   // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
@@ -1300,6 +1421,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const travelSeq = useRef(0)
   const [travellingTo, setTravellingTo] = useState<string | null>(null)
   const [travelError, setTravelError] = useState<string | null>(null)
+  const [platformBan, setPlatformBan] = useState<PlatformBanNotice | null>(null)
+  const [banRefusedTravel, setBanRefusedTravel] = useState(false)
   const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
   const [playerReady, setPlayerReady] = useState(false)
   // Ref twin of playerReady: the destination pick runs in a callback that would close over a
@@ -1414,18 +1537,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [profileOpen, setProfileOpen] = useState(false)
   // Own-profile edit: the claimed names the picker offers, and the state of the save in flight.
   const [ownedNames, setOwnedNames] = useState<string[]>([])
+  const [ownedNamesKnown, setOwnedNamesKnown] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
-  // What the profile looked like before the in-flight save, to put back if the engine rejects it.
-  // `quiet` marks a save the player didn't press SAVE for (the name colour, saved as the passport
-  // closes): its failure reverts without an error, as unity-explorer drops a failed colour deploy.
-  const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined; quiet: boolean } | null>(null)
-  // One profile save at a time: the engine cancels an in-flight deploy when another arrives, which
-  // would report the first as failed although the second carries it. A save asked for meanwhile
-  // waits here, merged with any other waiting one, until the engine answers.
-  const profileInFlightRef = useRef(false)
+  // One submit per Passport form. A second form or color edit can be coalesced while the first
+  // waits for its engine reply. Backpack and Welcome send their own updates independently.
+  const profileSubmit = useRef<{ address: string; quiet: boolean; requestId: number } | null>(null)
+  const confirmedProfile = useRef<Profile | null>(null)
   const queuedProfileEditRef = useRef<{ edit: ProfileEdit; quiet: boolean } | null>(null)
-  const startProfileSaveRef = useRef<(edit: ProfileEdit, quiet: boolean) => void>(() => undefined)
+  const startProfileSaveRef = useRef<(edit: ProfileEdit, quiet: boolean, address?: string) => void>(() => undefined)
   // The latest profile and claimed names, for a save started from the message handler.
   const profileRef = useRef(profile)
   profileRef.current = profile
@@ -1461,6 +1581,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
   const [outfitsLoaded, setOutfitsLoaded] = useState(false)
+  const [outfitFailure, setOutfitFailure] = useState<{ action: 'save' | 'delete'; slot: number } | null>(null)
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
@@ -1537,12 +1658,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [sceneTitle, setSceneTitle] = useState('')
   // Kept as its key, so a scene report for the same place leaves the minimap's state as it was.
   const [donatePlaceKey, setDonatePlaceKey] = useState<string | null>(null)
+  const [linkRealm, setLinkRealm] = useState<string | null>(null)
   /** The scene (realm and hash) Donate's place was last taken from. */
   const donateSceneRef = useRef<string | null>(null)
   const [placesOpen, setPlacesOpen] = useState(false)
   // The lobby reopened in-world: over the running world, under the panels it opens.
   const [lobbyOpen, setLobbyOpen] = useState(false)
-  const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
+  const [home, setHome] = useState<{ realm: string | null; parcel: string; pinned: boolean } | null>(null)
+  const [canPinHome, setCanPinHome] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
@@ -1585,8 +1708,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // list's toast says what happened); a typed /stop_portable or /smart_wearable command still is.
   const ownConsoleCommands = useRef<string[]>([])
   const chatId = useRef(0)
-  // when each conversation last pinged, per kind of ping
-  const pingAtRef = useRef<Map<string, number>>(new Map())
+  // when each floored sound last played
+  const soundAtRef = useRef<Map<UiSound, number>>(new Map())
   // the lines appended to a shown tab since its history was last read, by conversation: a read
   // queued before such a line was stored answers without it
   const appendedRef = useRef<Map<string, Set<string>>>(new Map())
@@ -1607,35 +1730,50 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => {
     const driver = createDriver()
     driverRef.current = driver
+    // a new engine numbers its item purchase requests from the start again
+    lastItemPurchase.current = null
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
-    setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+    setProfileRequester((address, extras, requestId) => driver.send({ kind: 'getUserProfile', address, extras, requestId }))
     setMapTransport((msg) => driver.send(msg))
+    setNativeQuit(() => driver.send({ kind: 'quit' }))
     nearbyPlayers.setTransport((on) => driver.send({ kind: 'watchMapPlayers', on }))
+
+    const discardSessionEdits = (): void => {
+      const formSave = profileSubmit.current?.quiet === false || queuedProfileEditRef.current?.quiet === false
+      profileSubmit.current = null
+      queuedProfileEditRef.current = null
+      setProfileSaving(false)
+      setProfileSaveError(formSave ? 'Your session changed before the save was confirmed.' : null)
+    }
 
     // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
     // answer ever comes, so it counts as a failure rather than leaving every later save queued).
-    const settleProfileSave = (ok: boolean, error?: string): void => {
-      profileInFlightRef.current = false
-      // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
-      // pre-save profile goes back — see saveProfile. When the failed edit is the one the engine
-      // shows, it puts the profile from before it back too and announces it; the store re-reads
-      // that, and drops a read of the edit still on its way instead of showing the edit again.
-      const revert = profileRevertRef.current
-      profileRevertRef.current = null
-      if (!ok) {
-        if (revert?.quiet !== true) setProfileSaveError(error ?? 'Could not save your profile.')
-        if (revert != null) {
-          // Also the base a queued save starts from below, before any render catches up.
-          profileRef.current = revert.profile
-          setProfile(revert.profile)
-          updateProfile(revert.address, () => revert.stored)
-        }
+    const settleProfileSave = ({ ok, error, profile: committed, requestId, accountChanged }: Omit<ProfileSavedMessage, 'kind'>): void => {
+      const submit = profileSubmit.current
+      if (!submit || (requestId !== undefined && requestId !== submit.requestId) || (committed && committed.address.toLowerCase() !== submit.address)) return
+      if (accountChanged) {
+        discardSessionEdits()
+        confirmedProfile.current = null
+        profileRef.current = null
+        setOwnProfile(null)
+        setProfile(null)
+        driver.send({ kind: 'getProfile' })
+        return
       }
+      profileSubmit.current = null
+      // Older bridges can omit the snapshot. Keep their confirmed edit on success and use the
+      // last engine profile on transport failure until the next read arrives.
+      const next = committed !== undefined ? committed : (ok ? profileRef.current : confirmedProfile.current)
+      confirmedProfile.current = next
+      profileRef.current = next
+      setProfile(next)
+      finishProfileSave(submit.address, next)
+      if (!ok && !submit.quiet) setProfileSaveError(error ?? 'Could not save your profile.')
       const queued = queuedProfileEditRef.current
       queuedProfileEditRef.current = null
       // A quiet save left waiting runs on its own; the form's SAVE is done once its deploy is.
       if (queued == null || queued.quiet) setProfileSaving(false)
-      if (queued != null) startProfileSaveRef.current(queued.edit, queued.quiet)
+      if (queued != null) startProfileSaveRef.current(queued.edit, queued.quiet, submit.address)
     }
 
     // A community the user is no longer in (left, removed, or the community deleted): its tab
@@ -1706,6 +1844,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'sceneLoading':
           setSceneLoading(msg.state)
           break
+        case 'textureOptimization':
+          // a scene preview's texture import; Reload drops the scene as a preview file save does
+          showTextureOptimization(msg, (scene) => driver.send({ kind: 'reloadScene', scene }))
+          break
         case 'hover': {
           const next = msg.actions
           setHover((prev) => (hoverKey(prev) === hoverKey(next) ? prev : next))
@@ -1753,11 +1895,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const mentioned = !own && !system && me != null && mentionsName(msg.chat.message, mentionName(me.name, me.address, me.hasClaimedName))
           const ping = (channel: string): void => {
             if (own || system || !shouldPing(channel, mentioned)) return
-            const slot = `${channel}|${mentioned ? 'mention' : 'message'}`
-            const now = Date.now()
-            if (now - (pingAtRef.current.get(slot) ?? -Infinity) < PING_INTERVAL_MS) return
-            pingAtRef.current.set(slot, now)
-            driver.send({ kind: 'playUiSound', sound: mentioned ? 'chatMention' : 'chatMessage' })
+            // the conversation selected, whether or not the chat is open, has its own two clips;
+            // a line anywhere else sounds the same with or without a mention
+            const selected = channelRef.current === channel
+            const sound: UiSound = !selected ? 'chatUnfocused' : mentioned ? 'chatMention' : 'chatMessage'
+            if (soundDue(soundAtRef.current, sound)) driver.send({ kind: 'playUiSound', sound })
           }
           const communityId = communityIdOf(msg.chat.channel)
           if (communityId != null) {
@@ -1965,7 +2107,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'systemAction':
           systemActionRef.current(msg.action, msg.pressed)
           break
+        case 'bridgeReady':
+          setBridgeAnswered(true)
+          break
         case 'bridgeUnavailable':
+          // no answer is coming: Verifying's clock runs, so a sign-in waiting on it gives up
+          setBridgeAnswered(true)
           // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
           // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
           // With the HUD hidden (?hud=0, or a substituted ui scene) there are no panels to explain.
@@ -1975,24 +2122,31 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             source: 'bridge'
           })
           break
-        case 'profile':
-          setProfile(msg.profile)
+        case 'profile': {
+          if (profileSubmit.current && (!msg.profile || msg.profile.address.toLowerCase() === profileSubmit.current.address)) break
+          if (profileSubmit.current) discardSessionEdits()
           setOwnProfile(msg.profile?.address ?? null)
-          // The passport reads the store, so an authoritative own profile has to reach it too or a
-          // just-saved name would keep its stale claimed-name seal until reopened.
-          if (msg.profile != null) receiveProfile(msg.profile.address, msg.profile)
+          const stale = msg.profile != null && !receiveOwnProfile(msg.profile)
+          if (stale && profileRef.current?.address.toLowerCase() === msg.profile?.address.toLowerCase()) break
+          confirmedProfile.current = msg.profile
+          profileRef.current = msg.profile
+          setProfile(msg.profile)
+          // The first reply identifies this login even if its version trails a chat announcement.
+          if (stale) driver.send({ kind: 'getProfile' })
           break
+        }
         case 'userProfile':
-          receiveProfile(msg.address, msg.profile)
+          receiveProfile(msg.address, msg.profile, msg.requestId)
           break
         case 'profileChanged':
           profileChanged(msg.address, msg.version)
           break
         case 'ownedNames':
           setOwnedNames(msg.names)
+          setOwnedNamesKnown(msg.failed !== true)
           break
         case 'profileSaved':
-          settleProfileSave(msg.ok, msg.error)
+          settleProfileSave(msg)
           break
         case 'notifications':
           setNotifications(msg.notifications)
@@ -2048,9 +2202,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
-          if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
+          if (msg.request === 'saveProfile' && profileSubmit.current) settleProfileSave({ ok: false, requestId: msg.profileSaveId })
+          if (msg.request === 'getUserProfile' && msg.profileRead != null) {
+            profileReadFailed(msg.profileRead.address, msg.profileRead.requestId)
+          }
           // the map showed the change before the engine took it: read back the home it holds
-          if (msg.request === 'setHomeScene') driver.send({ kind: 'getHomeScene' })
+          if (msg.request === 'setHomeScene' || msg.request === 'clearHomeScene') driver.send({ kind: 'getHomeScene' })
           break
         case 'avatarSaveFailed':
           setSaveError(SAVE_FAILED_MESSAGE)
@@ -2090,12 +2247,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'outfits':
           setOutfits(msg.metadata)
           setOutfitsLoaded(true)
+          setOutfitFailure(null)
+          break
+        case 'outfitSaveFailed':
+          setOutfitFailure({ action: msg.action, slot: msg.slot })
+          console.error(`[outfits] ${msg.action} of slot ${msg.slot} failed:`, msg.message)
           break
         case 'outfitHistory':
           setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
           break
         case 'communities':
           setCommunities(msg.communities.map(withSavedPicture))
+          setCommunitiesLoaded(true)
           break
         case 'community': {
           // one community for a card, kept apart from the browse list (replaced if already there);
@@ -2347,14 +2510,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSatelliteView(msg.satelliteView)
           break
         case 'homeScene':
-          setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
+          setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}`, pinned: msg.pinned })
+          setCanPinHome(msg.pinnable)
           break
         case 'travelResult':
           if (msg.ok) travelCount.traveled()
           if (msg.travelId !== travelSeq.current) break
           setTravellingTo(null)
           if (!msg.ok) {
-            setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
+            if (msg.message === PLATFORM_BANNED_REFUSAL) setBanRefusedTravel(true)
+            else setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
           }
           if (lobbyRef.current) {
             if (msg.ok) setLobby(false)
@@ -2385,7 +2550,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           }
           // An existing account has no terms step: it accepted them where it was made, so they are
           // answered for it here; only a new account is asked.
-          const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null || !msg.newProfile ? {} : null)
+          const chosen: { name?: string } | null =
+            MOCK_HOLD === 'welcome' ? null : (guestPick.current ?? (hudLoginPending.current != null || !msg.newProfile ? {} : null))
           guestPick.current = null
           if (chosen == null || (!msg.terms && !msg.newProfile)) setWelcomePending(false)
           // native, which launches itself, holds a link's world for the terms (src/lib.rs)
@@ -2429,6 +2595,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           releaseLinkRef.current()
           termsOk.current = true
           setWelcome(null)
+          // the profile read for the page (a new account's) still holds the name it offered: the accept
+          // deployed the one the player chose, so read it again, or the Me panel keeps the offered one.
+          // The bridge answers profile reads one at a time, in order (bridge-scene domains/profile.ts),
+          // so a first read still in flight can't land after this one.
+          if (fetchedRef.current.has('getProfile')) driverRef.current?.send({ kind: 'getProfile' })
           if (welcomeRef.current?.newProfile) {
             screenViewed('AUTH_DEPLOY_SUCCESS')
             // A new account made here goes straight in, to its home (Genesis Plaza), not to the lobby. A
@@ -2442,6 +2613,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSceneTitle(msg.title)
           setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           {
+            const here = donatePlaceOf(msg)
+            setLinkRealm(here == null ? null : 'world' in here ? here.world : DEFAULT_REALM)
             // Donate's place changes with the scene, not with each parcel crossed inside it (the bridge reports
             // every parcel), so the host is asked once per scene; a parcel with no scene names none.
             const sceneKey = donateSceneKey(msg)
@@ -2487,9 +2660,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'mapPlayers':
           nearbyPlayers.receive(msg.players)
           break
+        case 'mapPins':
+          mapPins.receive(msg.pins)
+          break
         case 'gallery':
         case 'galleryWrite':
-        case 'externalUrlOpened': {
+        case 'externalUrlOpened':
+        case 'satelliteTile':
+        case 'place':
+        case 'worldAccess':
+        case 'giftingPage': {
           const resolve = bridgePendingRef.current.get(msg.requestId)
           bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
@@ -2533,6 +2713,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'worldPasswordWithdrawn':
           setWorldPassword(null)
           break
+        case 'itemPurchaseRequest':
+          // answered here, on receipt: the engine holds the scene's call until it is. The bridge
+          // sends an unanswered request again to a page that says hello; each is answered once.
+          if (lastItemPurchase.current === msg.id) break
+          lastItemPurchase.current = msg.id
+          answerItemPurchase(msg, (id, state) => driverRef.current?.send({ kind: 'itemPurchaseState', id, state }), hostRef.current.purchaseSceneItem)
+          break
+        case 'platformBan':
+          setPlatformBan(msg.ban.banned ? msg.ban : null)
+          break
         case 'portables': {
           const before = portableStates.current
           portableStates.current = new Map(msg.portables.map((p) => [portableKey(p), p.state]))
@@ -2545,6 +2735,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
       }
     })
+    // a bridge that answered before this subscription (or a driver with no bridge to wait for)
+    if (typeof driver.bridgeReady !== 'function' || driver.bridgeReady()) setBridgeAnswered(true)
 
     // Same-domain SSO: an identity in this origin's localStorage (written by the auth site)
     // means the user is already signed in — no engine query, no polling. Returning from the
@@ -2586,7 +2778,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     return () => {
       off()
       setMapTransport(null)
+      setNativeQuit(null)
       nearbyPlayers.setTransport(null)
+      mapPins.clear()
       driver.dispose()
       driverRef.current = null
     }
@@ -2713,6 +2907,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
   const dismissTravelError = useCallback(() => setTravelError(null), [])
+  const dismissBanRefusedTravel = useCallback(() => setBanRefusedTravel(false), [])
+
+  // Reload the scene under the player: the `/reload` chat command and the minimap menu's Reload Scene.
+  const reloadScene = useCallback(() => {
+    driverRef.current?.send({ kind: 'reloadScene' })
+    // the reloaded scene starts afresh, so this visit's answers and uses go too
+    answeredPermissions.current.clear()
+    setVisitAnswers([])
+    setTriggeredPermissions([])
+    setRefusedTypes([])
+    setSeenDenied([])
+    skipRefusal.current.clear()
+  }, [])
+
+  const playUiSound = useCallback((sound: UiSound) => {
+    // a held key repeats faster than the input's clip can be heard
+    if (sound === 'chatInput' && !soundDue(soundAtRef.current, sound)) return
+    driverRef.current?.send({ kind: 'playUiSound', sound })
+  }, [])
 
   // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
   // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
@@ -2722,26 +2935,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       const cmd = parseChatCommand(text)
       switch (cmd.kind) {
         case 'send':
-          if (cmd.text) driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
+          if (cmd.text) {
+            driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
+            if (sendSoundEnabled()) playUiSound('chatSend')
+          }
           break
         case 'goto':
           driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
           break
         case 'genesis':
-          changeRealm(DEFAULT_REALM)
+          travel({ kind: 'teleport', realm: DEFAULT_REALM, x: 0, y: 0 })
           break
         case 'world':
           changeRealm(cmd.realm)
           break
         case 'reload':
-          driverRef.current?.send({ kind: 'reloadScene' })
-          // the reloaded scene starts afresh, so this visit's answers and uses go too
-          answeredPermissions.current.clear()
-          setVisitAnswers([])
-          setTriggeredPermissions([])
-          setRefusedTypes([])
-          setSeenDenied([])
-          skipRefusal.current.clear()
+          reloadScene()
           break
         case 'debug':
           requestDebugPanel(cmd.target, pushSystemMessage)
@@ -2749,15 +2958,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'commands':
           driverRef.current?.send({ kind: 'consoleCommand', command: 'help' })
           break
-        case 'console':
-          driverRef.current?.send({ kind: 'consoleCommand', command: cmd.command, args: cmd.args })
+        case 'console': {
+          // The typed line goes to the engine whole, so the engine splits it by its one rule
+          // (quotes, escapes, a rest-of-line argument). Both HUD hosts install the function.
+          const run = (window as Window & { engine_console_command?: (line: string) => Promise<string> }).engine_console_command
+          if (run == null) {
+            pushSystemMessage('The engine console is not available.')
+            break
+          }
+          const reply = (output: unknown) =>
+            pushSystemMessage(formatConsoleReply(cmd.command, cmd.hasArgs ? [cmd.line] : [], output instanceof Error ? output.message : String(output)))
+          run(cmd.line).then(reply, reply)
           break
+        }
         case 'system':
           pushSystemMessage(cmd.message)
           break
       }
     },
-    [pushSystemMessage, changeRealm]
+    [pushSystemMessage, changeRealm, travel, reloadScene, playUiSound]
   )
 
   // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
@@ -2795,6 +3014,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
+  const loadLobbyEvents = eventsData.loadLobby
+  const warmLobby = useCallback(() => {
+    ensure('getCommunities')
+    loadLobbyEvents()
+  }, [ensure, loadLobbyEvents])
   const closeAllPanels = useCallback(() => {
     setChatOpen(false)
     setLobbyOpen(false)
@@ -2917,6 +3141,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const deleteHistory = useCallback((address: string) => {
     const key = channelKey(address)
+    // Nearby is the HUD's own log: nothing is stored for it, so the clear is local
+    if (key === 'Nearby') {
+      setMessages([])
+      setNearbyUnread(0)
+      return
+    }
     driverRef.current?.send({ kind: 'dmDelete', address: key })
     setDmLines((prev) => ({ ...prev, [key]: [] }))
     // a read queued before the delete would answer with the old rows: this one answers after it
@@ -2965,6 +3195,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     friendsOpen || profileOpen || notificationsOpen || emotesOpen || skyboxOpen
   const toggleFriends = useCallback(() => exclusive(setFriendsOpen), [exclusive])
   const loadSettings = useCallback(() => ensure('getSettings'), [ensure])
+  const refreshSettings = useCallback(() => send('getSettings'), [send])
   // Re-read on every open: the engine changes settings itself (the DM privacy slot follows the
   // social service), and settings are local, so there is nothing to spare by caching.
   const toggleSettings = useCallback(() => exclusive(setSettingsOpen, () => send('getSettings')), [exclusive, send])
@@ -3007,6 +3238,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
+  const closePlaces = useCallback(() => setPlacesOpen(false), [])
   const toggleEvents = useCallback(
     (source?: EventsOpenSource) => {
       // a click handler may pass its event here
@@ -3015,7 +3247,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     [exclusive]
   )
+  const closeEvents = useCallback(() => setEventsOpen(false), [])
   const clearEvents = eventsData.clear
+  const resetEvents = eventsData.resetAll
   useEffect(() => {
     if (!eventsOpen) {
       // nothing is kept between visits: the page reads again each time it opens
@@ -3155,8 +3389,24 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     [bridgeCall]
   )
+  const readSignedPlace = useCallback(
+    async (id: string): Promise<SignedPlace | null> => (await bridgeCall('place', (requestId) => ({ kind: 'getPlace', requestId, id })))?.place ?? null,
+    [bridgeCall]
+  )
+  const worldAccess = useCallback(
+    async (world: string): Promise<WorldAccessVerdict> =>
+      (await bridgeCall('worldAccess', (requestId) => ({ kind: 'getWorldAccess', requestId, world }), WORLD_ACCESS_TIMEOUT_MS))?.access ?? 'failed',
+    [bridgeCall]
+  )
   const openExternalUrl = useCallback(
     async (url: string): Promise<boolean> => (await bridgeCall('externalUrlOpened', (requestId) => ({ kind: 'openExternalUrl', requestId, url })))?.ok === true,
+    [bridgeCall]
+  )
+  const fetchSatelliteTile = useCallback(
+    async (path: string): Promise<string | null> => {
+      const msg = await bridgeCall('satelliteTile', (requestId) => ({ kind: 'getSatelliteTile', requestId, path }))
+      return msg?.ok === true && typeof msg.data === 'string' ? msg.data : null
+    },
     [bridgeCall]
   )
   const setGalleryPhotoPublic = useCallback(
@@ -3195,25 +3445,33 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lobbyOpen, anyPanelOpenExceptLobby])
   // The engine's answer wins over the boot snapshot, so a home set in this session is the one used.
-  const homeScene = useCallback(() => home ?? driverRef.current?.homeScene?.() ?? null, [home])
+  // The boot snapshot keeps the saved realm URL, and is readable only once the engine is ready.
+  const homeScene = useCallback(() => {
+    if (home != null) return home
+    const boot = driverRef.current?.homeScene?.() ?? null
+    return boot != null && boot.realm === DEFAULT_REALM ? { ...boot, realm: null } : boot
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [home, engineReady])
   const setHomeScene = useCallback((realm: string, parcel: { x: number; y: number }) => {
-    setHome({ realm: realm === DEFAULT_REALM ? null : realm, parcel: `${parcel.x},${parcel.y}` })
+    setHome({ realm: realm === DEFAULT_REALM ? null : realm, parcel: `${parcel.x},${parcel.y}`, pinned: true })
     driverRef.current?.send({ kind: 'setHomeScene', realm, parcel })
   }, [])
+  const clearHomeScene = useCallback(() => {
+    setHome({ realm: null, parcel: '0,0', pinned: false })
+    driverRef.current?.send({ kind: 'clearHomeScene' })
+  }, [])
+  // The home is the signed-in account's, which the boot snapshot, read before the sign-in, may not
+  // be: the lobby asks again, and shows the snapshot only until the answer.
   useEffect(() => {
-    if ((!lobby && !lobbyOpen) || driverRef.current?.homeScene != null) return
-    setHome(null)
+    if (!lobby && !lobbyOpen) return
+    if (driverRef.current?.homeScene == null) setHome(null)
     driverRef.current?.send({ kind: 'getHomeScene' })
   }, [lobby, lobbyOpen])
-  // Opening the Backpack or the lobby rebuilds the stage, so the page's stand-in shows again.
-  useEffect(() => {
-    if (backpackOpen) setLobbyStageReady(false)
-  }, [backpackOpen])
   const travelFromLobbyInWorld = useCallback(
-    (dest: Destination) => {
+    (dest: Destination): boolean => {
       if (dest == null) {
         const home = homeScene()
-        if (home == null) return
+        if (home == null) return false
         const [x, y] = home.parcel.split(',').map(Number)
         travel({ kind: 'teleport', realm: home.realm ?? DEFAULT_REALM, x, y })
       } else if (dest.kind === 'parcel') teleportToPlace(dest.x, dest.y)
@@ -3223,6 +3481,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         else travel({ kind: 'changeRealm', realm: dest.realm })
       }
       setLobbyOpen(false)
+      return true
     },
     [homeScene, teleportToPlace, travel]
   )
@@ -3348,8 +3607,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         if (type != null) {
           lastLoginType.current = type === 'stored' ? storedLoginType(storedRef.current) : type
+          if (boot.current.autoLogin == null) setSignedInAs(lastLoginType.current)
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
         }
+        // the lobby asked for the home before the engine knew the account: ask again for its own
+        if (login != null) driver.send({ kind: 'getHomeScene' })
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
         // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login, and
@@ -3508,8 +3770,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [travelFromLobby])
   const releaseLinkRef = useRef(releaseLink)
   releaseLinkRef.current = releaseLink
-  // the welcome page's answer (a new account's accept) picks before pickDestination is declared
-  const pickDestinationRef = useRef<(dest: Destination) => boolean>(() => false)
 
   // Post-jump-in Places picker (or the lobby): choose a destination (or null to skip → home),
   // then leave the picker. A world switches realm now; a parcel is teleported once the avatar spawns.
@@ -3571,6 +3831,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setTimeout(run, 60)
     return true
   }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace, settleHudLogin, restoreHudSignIn])
+  const pickDestinationRef = useRef<(dest: Destination) => boolean>(() => false)
   pickDestinationRef.current = pickDestination
   // Boot-mode flags (?hud=0 / ?guest=1 / ?systemScene= — see lib/bootMode.ts), captured once
   // per session mount so tests can vary location.search between mounts.
@@ -3736,6 +3997,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const rotatePreview = useCallback((degrees: number) => {
     driverRef.current?.send({ kind: 'previewRotate', degrees })
   }, [])
+  const turnLobbyAvatar = useCallback((degrees: number) => {
+    driverRef.current?.send({ kind: 'previewRotate', degrees, stage: 'lobby' })
+  }, [])
   const zoomPreview = useCallback((zoom: number, anchor: number) => {
     driverRef.current?.send({ kind: 'previewZoom', zoom, anchor })
   }, [])
@@ -3748,12 +4012,45 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCatalogLoading(true)
     driverRef.current?.send({ kind: 'catalogQuery', catalog: 'wearables', requestId: catalogReqId.current, ...q })
   }, [])
+  // A page the bridge never answers (or no engine) reads as a failed one.
+  const queryGifting = useCallback(
+    async (q: GiftingQuery): Promise<GiftingPageMessage> =>
+      (await bridgeCall('giftingPage', (requestId) => ({ kind: 'giftingQuery', requestId, ...q }))) ?? {
+        kind: 'giftingPage',
+        catalog: q.catalog,
+        items: [],
+        total: 0,
+        equipped: [],
+        failed: true,
+        requestId: 0
+      },
+    [bridgeCall]
+  )
   const saveOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'saveOutfit', slot })
   }, [])
   const deleteOutfit = useCallback((slot: number) => {
     driverRef.current?.send({ kind: 'deleteOutfit', slot })
   }, [])
+  const dismissOutfitError = useCallback(() => setOutfitFailure(null), [])
+  // The live names lookup decides; until it answers, the outfits read does. An occupied extra slot
+  // stays visible so the player can still delete it.
+  const extraSlotCount = outfits.outfits.filter((o) => o.slot >= 5).length
+  const extraOutfitSlots =
+    extraSlotCount > 0 || (ownedNamesKnown ? ownedNames.length > 0 : outfits.namesForExtraSlots.length > 0)
+  const extraSlotsWithoutName = ownedNamesKnown && ownedNames.length === 0 && extraSlotCount > 0
+  const warnAboutClearingExtraOutfits = extraSlotsWithoutName && extraSlotCount > 1
+  let outfitError: string | null = null
+  if (outfitFailure != null) {
+    outfitError = OUTFIT_FAILED_MESSAGE[outfitFailure.action]
+    if (extraSlotsWithoutName) {
+      if (outfitFailure.action !== 'delete' || outfitFailure.slot < 5) {
+        outfitError = OUTFIT_FAILED_MESSAGE.extraSlotWithoutName
+      } else if (warnAboutClearingExtraOutfits) {
+        outfitError = OUTFIT_FAILED_MESSAGE.deleteExtraWithoutName
+      }
+    }
+  }
   const equipOutfit = useCallback((slot: number) => {
     // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
@@ -3945,29 +4242,33 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // has deployed the new version, and the catalyst reindexes later still, so waiting for the round
   // trip would leave the passport showing the old profile for seconds after a save. `profileSaved`
   // either confirms it or hands back the pre-save state (see the message handler).
-  startProfileSaveRef.current = (edit: ProfileEdit, quiet: boolean): void => {
+  startProfileSaveRef.current = (edit: ProfileEdit, quiet: boolean, address = profileRef.current?.address.toLowerCase() ?? ''): void => {
     const current = profileRef.current
-    const address = current?.address.toLowerCase() ?? ''
-    profileRevertRef.current = { address, profile: current, stored: peekProfile(address), quiet }
-    profileInFlightRef.current = true
+    const requestId = nextRequestId()
+    profileSubmit.current = { address, quiet, requestId }
     if (!quiet) {
       setProfileSaveError(null)
       setProfileSaving(true)
     }
-    driverRef.current?.send({ kind: 'saveProfile', ...edit })
     const next = current != null ? applyProfileEdit(current, edit, ownedNamesRef.current) : current
     // A save chained straight after this one must snapshot the edited profile, not the stale render.
     profileRef.current = next
     setProfile(next)
-    updateProfile(address, (mine) => (mine != null ? applyProfileEdit(mine, edit, ownedNamesRef.current) : mine))
+    beginProfileSave(address, (mine) => applyProfileEdit(mine, edit, ownedNamesRef.current))
+    // Older bridges replace the entire about-me section. Derive that snapshot from the latest
+    // confirmed profile so a queued edit also carries changes that landed before its turn.
+    const info = edit.infoPatch !== undefined && next != null ? next.info ?? {} : undefined
+    driverRef.current?.send({ kind: 'saveProfile', requestId, address, ...edit, info })
   }
   const queueOrStartProfileSave = useCallback((edit: ProfileEdit, quiet: boolean) => {
-    if (!profileInFlightRef.current) {
+    if (!profileSubmit.current) {
       startProfileSaveRef.current(edit, quiet)
       return
     }
     const waiting = queuedProfileEditRef.current
-    queuedProfileEditRef.current = { edit: { ...waiting?.edit, ...edit }, quiet: (waiting?.quiet ?? true) && quiet }
+    const merged = { ...waiting?.edit, ...edit }
+    if (waiting?.edit.infoPatch && edit.infoPatch) merged.infoPatch = { ...waiting.edit.infoPatch, ...edit.infoPatch }
+    queuedProfileEditRef.current = { edit: merged, quiet: (waiting?.quiet ?? true) && quiet }
     if (!quiet) {
       setProfileSaveError(null)
       setProfileSaving(true)
@@ -4032,7 +4333,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // out); without it (Cancel on Verifying, a sign-in that failed) the next visit still finds it.
   const signOut = useCallback((forget: boolean) => {
     signOuts.current += 1
-    driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
+    driverRef.current?.logout(forget).catch((e: Error) => console.error('[session] logout failed', e))
     if (forget) {
       clearLogins() // drop the same-domain SSO identity for this origin
       setStored(null)
@@ -4041,6 +4342,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
     pendingLoginType.current = null
     lastLoginType.current = null
+    setSignedInAs(null)
+    setHome(null)
+    setCanPinHome(false)
     welcomeRef.current = null
     guestPick.current = null
     setQueuedGuest(false)
@@ -4073,13 +4377,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // Nothing of this account's may show under the next one, or be saved onto it: an unsaved
     // Backpack look is dropped rather than committed after the engine has let the account go.
     backpackWasOpen.current = false
-    profileRevertRef.current = null
-    profileInFlightRef.current = false
+    profileSubmit.current = null
+    confirmedProfile.current = null
     queuedProfileEditRef.current = null
     setOwnProfile(null)
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
+    setOwnedNamesKnown(false)
     setProfileSaving(false)
     setProfileSaveError(null)
     setSaveError(null)
@@ -4096,6 +4401,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setActiveVoiceChats([])
     setActiveVoiceChatsLoaded(false)
     setCommunities([])
+    setCommunitiesLoaded(false)
+    resetEvents()
     setCommunityCards({})
     setCommunityInvites(null)
     setPendingCount(null)
@@ -4123,7 +4430,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setPortables([])
     portableStates.current = null
     portableToasts.current = false
-  }, [closeAllPanels])
+    // clears the ban and the refused travel, and retires the travel id and loader in flight
+    setPlatformBan(null)
+    setBanRefusedTravel(false)
+    travelSeq.current++
+    setTravellingTo(null)
+  }, [closeAllPanels, resetEvents])
   const logout = useCallback(() => signOut(true), [signOut])
   // Cancel on Verifying, or a sign-in that took too long (`error`): the first screen, the stored
   // sign-in kept, and the error shown there.
@@ -4137,15 +4449,37 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
   const [avatarPreviewRect, setAvatarPreviewRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const [lobbyStagePresetState, setLobbyStagePresetState] = useState(() => lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string)
+  // Sent with every report of the lobby's region.
+  const lobbyStageOptions = useRef({ preset: lobbyStagePreset(getPref(PREF.lobbyStagePreset)).id as string, idleEmotes: false })
+  const lastLobbyReport = useRef<{ rect: { x: number; y: number; width: number; height: number } | null; dpr?: number } | null>(null)
   const setEngineViewport = useCallback(
-    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
+    (region: EngineViewportRegion, rect: { x: number; y: number; width: number; height: number } | null, dpr?: number, focus?: { x: number; y: number; width: number; height: number }) => {
       if (region === 'avatarPreview') setAvatarPreviewRect(rect)
       // a closed sign-in stage is drawn again from scratch: the page keeps its background until then
       if (region === 'signin' && rect == null) setSigninStageReady(false)
-      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr })
+      // likewise the lobby's, which the bridge announces again to the next report
+      if (region === 'lobby' && rect == null) setLobbyStageReady(false)
+      if (region === 'lobby') {
+        lastLobbyReport.current = { rect, dpr }
+        const { preset, idleEmotes } = lobbyStageOptions.current
+        driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, stagePreset: preset, idleEmotes })
+        return
+      }
+      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr, ...(focus != null && rect != null ? { focus } : {}) })
     },
     []
   )
+  const setLobbyStage = useCallback((options: { preset?: string; idleEmotes?: boolean }) => {
+    lobbyStageOptions.current = { ...lobbyStageOptions.current, ...options }
+    if (options.preset != null) setPref(PREF.lobbyStagePreset, options.preset)
+    const last = lastLobbyReport.current
+    if (last?.rect != null) {
+      const { preset, idleEmotes } = lobbyStageOptions.current
+      driverRef.current?.send({ kind: 'engineViewport', region: 'lobby', rect: last.rect, dpr: last.dpr, stagePreset: preset, idleEmotes })
+    }
+    setLobbyStagePresetState(lobbyStageOptions.current.preset)
+  }, [])
 
   const setInteractableArea = useCallback((area: InteractableArea) => {
     driverRef.current?.send({ kind: 'interactableArea', ...area })
@@ -4186,6 +4520,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         ran = true
         // signed out before the deferred run: the sign-in never runs
         if (signOuts.current !== signOut) return setBusy(false)
+        // a mock capture's hold: the sign-in stays ahead, its wait on screen
+        if (MOCK_HOLD === 'verifying') return
         if (driver.launch != null && !launchedRef.current) {
           const home = driver.homeScene?.()
           if (!launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })) {
@@ -4345,10 +4681,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const autoEntered = useRef(false)
   useEffect(() => {
     if (status !== 'reuse-login-or-new' || submitted || !engineReady || autoEntered.current) return
+    if (MOCK_HOLD === 'returning') return
     if (accountChecking) return
     autoEntered.current = true
     enterStored()
   }, [status, submitted, engineReady, enterStored, accountChecking])
+
+  // Set once the web sign-in navigates away. The page comes back from the browser's back/forward
+  // cache as it was left (Back from the auth site), so showing it again clears the flag.
+  const leavingForAuth = useRef(false)
+  useEffect(() => {
+    const shown = (): void => {
+      leavingForAuth.current = false
+    }
+    window.addEventListener('pageshow', shown)
+    return () => window.removeEventListener('pageshow', shown)
+  }, [])
 
   // Fresh sign-in (or signing in with a different account). Web: bounce to the same-domain
   // auth site, which writes the identity back to this origin's localStorage and redirects
@@ -4359,11 +4707,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // approval means the engine is already logged in, so the destination pick has no deferred
   // login left to run.
   const startWithAccount = useCallback((method?: LoginMethod) => {
-    if (busy) return
+    if (busy || leavingForAuth.current) return
     clickButton('SIGN_IN', 'ACCOUNT_HOME')
     guestPick.current = null
     const driver = driverRef.current
     if (driver?.loginNew == null) {
+      // the navigation is under way: a second click or another choice must not start a second one
+      leavingForAuth.current = true
       screenViewed('AUTH_BROWSER_OPEN', { method: method ?? 'sso' })
       redirectToAuth(undefined, method)
       return
@@ -4482,7 +4832,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadingTracker = useRef(createLoadingProgress())
   if (!loaderActive) loadingTracker.current.reset()
   const loadingProgress = loaderActive
-    ? loadingTracker.current.next({ scene: sceneLoading, playerReady, revealing, travelling: travellingTo != null })
+    ? MOCK_HOLD === 'loading'
+      ? MOCK_HOLD_LOADING_PROGRESS
+      : loadingTracker.current.next({ scene: sceneLoading, playerReady, revealing, travelling: travellingTo != null })
     : 100
 
   const phase: SessionPhase = !submitted
@@ -4501,13 +4853,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // Verifying your account: signed in to the lobby's held world, waiting for the sign-in and the
   // account's welcome answer (and an existing account's terms, answered for it). It gives up after
-  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept.
+  // VERIFY_TIMEOUT_MS, back to the first screen with Connection Error, the stored sign-in kept. The
+  // welcome answer is the bridge scene's, so the clock starts once that scene has answered the page
+  // (or is reported unreachable): on a cold, busy boot it can start long after the sign-in. A bridge
+  // that does neither still gives up after VERIFY_BRIDGE_WAIT_MS.
   const verifying = phase === 'welcome' && welcome == null
   useEffect(() => {
     if (!verifying) return
-    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), VERIFY_TIMEOUT_MS)
+    const wait = bridgeAnswered ? VERIFY_TIMEOUT_MS : VERIFY_BRIDGE_WAIT_MS
+    const id = setTimeout(() => cancelSignIn(VERIFY_TIMED_OUT), wait)
     return () => clearTimeout(id)
-  }, [verifying, cancelSignIn])
+  }, [verifying, bridgeAnswered, cancelSignIn])
 
   const connectivity = useConnectivity(driverRef.current, phase === 'world' || phase === 'entering')
   // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page
@@ -4537,6 +4893,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if (fatalError.source === 'launch') restoreHudSignIn()
     settleHudLogin(new Error(fatalError.message))
   }, [fatalError, settleHudLogin, restoreHudSignIn])
+
+  // The shell's question before the page goes (apps/ui3 shell/mount.ts) is for a session (the
+  // start screen has none to lose), and only for a player who turned it on in Settings.
+  const askBeforeLeaving = useAskBeforeLeaving()
+  const sessionLive = phase !== 'login' && askBeforeLeaving
+  useEffect(() => {
+    if (inShell) postToShell({ type: 'bevy-shell:session', live: sessionLive })
+  }, [sessionLive])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).
@@ -4788,17 +5152,42 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'ChatPanel': toggleChat(); break
       case 'Emote': toggleEmotes(); break
       // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
-      // itself still toggles the mic on that action (the mic relay updates the HUD icon).
+      // itself opens the mic on press and closes it on release (the mic relay updates the
+      // HUD icon).
       // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
       // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
     }
   }
 
   // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
-  const mapSlice = useMemo(
-    () => ({ x: mapParcel.x, y: mapParcel.y, open: mapOpen, toggle: toggleMap, teleport, changeRealm, teleportToPlace, home, setHome: setHomeScene }),
-    [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, home, setHomeScene]
-  )
+  // Travel asked from a menu page over the startup lobby is the lobby's pick: it releases the held
+  // world and leaves the lobby, and closes the page here, once, so it is not there on arrival (the
+  // page must not toggle itself after: that would open it again). A pick the lobby refuses leaves
+  // the page as it is and says why.
+  const mapSlice = useMemo(() => {
+    const pick = (dest: Destination): TravelOutcome | null => {
+      if (!lobbyRef.current) return null
+      if (!pickDestination(dest)) {
+        showToast(SIGNING_IN_PICK)
+        return 'refused'
+      }
+      closeAllPanels()
+      return 'lobby'
+    }
+    return {
+      x: mapParcel.x,
+      y: mapParcel.y,
+      open: mapOpen,
+      toggle: toggleMap,
+      teleport: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleport(x, y), 'sent'),
+      changeRealm: (realm: string): TravelOutcome => pick({ kind: 'world', realm }) ?? (changeRealm(realm), 'sent'),
+      teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent'),
+      home: homeScene(),
+      canPinHome,
+      setHome: setHomeScene,
+      clearHome: clearHomeScene
+    }
+  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, canPinHome, setHomeScene, clearHomeScene, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,
@@ -4806,9 +5195,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       sceneTitle,
       restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
       donatePlace: donatePlaceKey ? (JSON.parse(donatePlaceKey) as DonatePlace) : null,
-      setConfig: setMinimapConfig
+      linkRealm,
+      setConfig: setMinimapConfig,
+      reloadScene
     }),
-    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, setMinimapConfig]
+    [satelliteView, sceneTitle, mic.sceneBlocked, donatePlaceKey, linkRealm, setMinimapConfig, reloadScene]
   )
 
   return {
@@ -4816,7 +5207,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     playerReady,
     lobbyStageReady,
     signinStageReady,
+    turnLobbyAvatar,
     lobbyPage: { open: lobbyOpen, toggle: toggleLobby, travel: travelFromLobbyInWorld },
+    lobbyData: { warm: warmLobby, communitiesLoaded, covered: anyPanelOpenExceptLobby },
     homeScene,
     avatarPreviewRect,
     pickDestination,
@@ -4836,6 +5229,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     loadingProgress,
     travelError,
     dismissTravelError,
+    platformBan: { notice: platformBan, travelRefused: banRefusedTravel, dismissTravelRefused: dismissBanRefusedTravel },
     travellingTo,
     fatalError,
     reload: () => location.reload(),
@@ -4852,6 +5246,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     chat: {
       messages: channelMessages,
       send: sendChat,
+      playSound: playUiSound,
       react: reactInChat,
       nearby: messages,
       bubbleText,
@@ -4893,7 +5288,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       mutuals: mutualFriends,
       loadMutuals: loadMutualFriends
     },
-    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings },
+    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings, refresh: refreshSettings },
     bindings: { list: bindings, set: bindingsSet, reset: bindingsReset, capture: captureBinding },
     profile: {
       data: profile,
@@ -4924,18 +5319,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       markAllRead: markNotificationsRead
     },
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
+    queryGifting,
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
-      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5, outfitsLoaded,
-      saveOutfit, deleteOutfit, equipOutfit,
+      outfits: outfits.outfits, outfitSlots: extraOutfitSlots ? 10 : 5, outfitsLoaded, warnAboutClearingExtraOutfits,
+      saveOutfit, deleteOutfit, outfitError, dismissOutfitError, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },
     map: mapSlice,
     minimap: minimapSlice,
-    places: { open: placesOpen, toggle: togglePlaces },
-    events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
+    places: { open: placesOpen, toggle: togglePlaces, close: closePlaces, readSigned: readSignedPlace, worldAccess },
+    events: { open: eventsOpen, toggle: toggleEvents, close: closeEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {
@@ -4975,7 +5371,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     openExternalUrl,
+    fetchSatelliteTile,
     setEngineViewport,
+    lobbyStage: { preset: lobbyStagePresetState, set: setLobbyStage },
     setInteractableArea,
     logout,
     menuOpen,
@@ -4983,6 +5381,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     login: {
       status,
       account,
+      signedInAs,
       busy,
       error,
       engineReady,
@@ -4991,6 +5390,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       loadStep,
       startWithAccount,
       authPending: auth != null,
+      held: MOCK_HOLD === 'returning',
       authCode: auth?.code ?? null,
       cancelLogin,
       cancelSignIn: () => cancelSignIn(),

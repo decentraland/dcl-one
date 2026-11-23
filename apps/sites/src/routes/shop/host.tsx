@@ -8,26 +8,19 @@
 import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useLocation } from "react-router";
 
-import { createShopClient, hostApiOptions, identitySigner, setShopClient } from "@ui/shop/api";
+import { identitySigner } from "@ui/shop/api";
 import { ShopServicesProvider, type ShopServices } from "@ui/shop/checkout/services";
 import ShopChrome from "@ui/shop/discovery/frames/ShopChrome";
-import { ShopWalletProvider } from "@ui/shop/wallet/context";
+import ShopCreditsChip from "@ui/shop/discovery/frames/ShopCreditsChip";
+import { ShopWalletProvider, useShopWallet } from "@ui/shop/wallet/context";
 import type { ShopWalletHost } from "@ui/shop/wallet/session";
-import type { AuthIdentity } from "@ui/data/auth/identity";
+import type { AuthIdentity } from "@web-core/auth/identity";
 
 import { useAuth } from "@/data/lib/auth/index";
-import { getIdentity } from "@/data/lib/auth/session";
 import { browserProvider, currentWalletKind, inAppSessionFor, managedShopProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
+import { installSitesShopClient } from "@/data/lib/auth/shop-client";
 import { openSignIn } from "@/features/components/auth/signin-store";
-
-let installed = false;
-
-/** The document's Shop client signs with sites' current identity, read per request. */
-export function installSitesShopClient(): void {
-  if (installed || typeof window === "undefined") return;
-  installed = true;
-  setShopClient(createShopClient(hostApiOptions({ signer: () => identitySigner(getIdentity() as AuthIdentity | null) })));
-}
+import SitesTopBar from "@/features/components/chrome/SitesTopBar";
 
 const noSubscription = () => () => {};
 
@@ -79,13 +72,27 @@ export function ShopProviders({ host, services, children }: { host: ShopWalletHo
   );
 }
 
+function ShopTopBar() {
+  const wallet = useShopWallet();
+  return (
+    <SitesTopBar
+      variant="sites"
+      active="shop"
+      signedIn={wallet.session.kind !== "signedOut"}
+      account={wallet.account ?? undefined}
+      onSignIn={wallet.host?.onSignIn}
+      balances={<ShopCreditsChip />}
+    />
+  );
+}
+
 /** The /shop layout: sites' session around ui3's Shop frame. */
 export default function SitesShopFrame({ children }: { children: ReactNode }) {
   useState(installSitesShopClient);
   const host = useSitesShopHost();
   return (
     <ShopProviders host={host}>
-      <ShopChrome>{children}</ShopChrome>
+      <ShopChrome topbar={<ShopTopBar />}>{children}</ShopChrome>
     </ShopProviders>
   );
 }

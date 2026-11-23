@@ -65,6 +65,8 @@ export type PlaceOverviewMetrics = {
   day7Retention: number | null;
   /** Minutes. */
   medianPlaytime: number | null;
+  /** Minutes over the whole window, AFK included: average playtime per visit × visits. */
+  totalPlaytime: number | null;
   /** Minutes. */
   afkTime: number | null;
   desktopUsers: number | null;

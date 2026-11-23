@@ -35,6 +35,12 @@ export type PurchaseOffer = {
   quotedAt: number;
   /** The creator coupon the quotes are discounted by: settlement must use this one, or the line is stale. */
   coupon?: OfferCoupon | null;
+  /**
+   * The credits node authorizes a Credits part for this line, the rest paid in MANA in the same call (`policy::split_price`):
+   * a store mint or a listing paid in the chain's MANA, which this session may pay both ways. Absent: no split. A MANA quote
+   * alone says nothing about it (a USD-pegged listing is quoted in MANA too).
+   */
+  splittable?: boolean;
 };
 
 /** The identity and economics of the coupon an offer was priced with. */
@@ -104,6 +110,15 @@ export type GroupFailure = {
   /** rejected: the wallet declined; refused: the server refused; reverted: the chain reverted; error: anything else before a broadcast. */
   kind: "rejected" | "refused" | "reverted" | "error";
   message: string;
+  /**
+   * The network the buyer's own wallet must be on to send the purchase: set when the wallet's own
+   * transaction found the wallet on another network.
+   */
+  switchTo?: number;
+  /** With `switchTo`: the fee-free (relayed) way was tried first and couldn't run, so the wallet's own was its fallback. */
+  feeFreeUnavailable?: boolean;
+  /** With `feeFreeUnavailable`: why the fee-free way couldn't run, as the buyer reads it, when the relay said why (its daily limits). */
+  feeFreeNote?: string;
 };
 
 /** One confirmation group's progress inside a checkout. */

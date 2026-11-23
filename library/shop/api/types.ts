@@ -1,9 +1,15 @@
 export type CreditLineRequest = {
+  /** The line's whole quoted price: the node refuses a price that is not its own quote. */
   usdPriceCents: number;
   tradeId?: string;
   contractAddress?: string;
   itemId?: string;
   name?: string;
+  /**
+   * The part of the price paid with Credits (whole credits below `usdPriceCents`); the buyer's MANA pays the rest in the
+   * same call. Only on a request of one line of one unit, never on a NAME.
+   */
+  creditsCents?: number;
   source?: "website" | "client";
 };
 

@@ -1,12 +1,12 @@
 import { captureException } from '@sentry/electron/renderer';
-import type { AuthIdentity, AuthChain } from '@dcl/crypto';
 import { localStorageGetIdentity } from '@dcl/single-sign-on-client';
 import type { Entity, IPFSv2 } from '@dcl/schemas';
-import fetch from 'decentraland-crypto-fetch';
 
 import { config } from '/@/config';
 import type { ContributableDomain } from '/@/modules/store/ens/types';
 import { formatQueryParams, fromCamelToSnake, fromSnakeToCamel } from '../modules/api';
+import type { AuthChain, AuthIdentity } from './identity';
+import { signedFetch as fetch } from './signedFetch';
 
 export type WorldDeployment = {
   id: string;

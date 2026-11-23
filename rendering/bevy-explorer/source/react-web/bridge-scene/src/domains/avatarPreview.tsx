@@ -12,20 +12,25 @@
 // draw the sign-in background over the whole screen behind it, so the avatar and its podium stand
 // on that background; the page fades its own copy out once told (signinStageReady).
 import ReactEcs, { UiEntity } from '@dcl/react-ecs'
-import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MaterialTransparencyMode, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
+import { AssetLoadLoadingState, AvatarShape, CameraLayer, CameraLayers, Material, MeshRenderer, PrimaryPointerInfo, TextureCamera, Transform, engine } from '@dcl/sdk/ecs'
 import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@explorer-core/engine/protocol'
+import { PREVIEW_MAX_ZOOM, type EngineViewportRequest, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { currentLook } from './avatarDraft'
 import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
-import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '@explorer-core/engine/lobbyStage'
+import { LOBBY_STAGE_PRESETS } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
+// The lobby's camera layer, and the Backpack's: the Backpack opens over the lobby, whose avatar
+// and stage stay as they are on their own layer, out of its camera's sight.
 const LAYER = 10
+const BACKPACK_LAYER = 12
+// The Backpack's avatar is on this layer too, without its podium, for an outfit's picture.
+const CAPTURE_LAYER = 13
 // The Backpack background behind the avatar: the page's left-column purple, top to bottom.
 const BACKDROP_TOP = Color4.create(0.31, 0, 0.565, 1)
 const BACKDROP_BOTTOM = Color4.create(0.345, 0.078, 0.514, 1)
@@ -47,6 +52,8 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
   bottom: { range: 3.96, centerY: 1.15 },
   shoes: { range: 3.03, centerY: 0.35 }
 }
+// An outfit's picture: the whole body, centred.
+const THUMBNAIL_FRAMING = { range: 6.25, centerY: 1.85 }
 // The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
 // the stage's floor logo (~970px down the screen). The Shop frames nothing else.
 const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
@@ -63,15 +70,9 @@ const PITCH_DROP = CAMERA_DISTANCE * Math.tan((CAMERA_PITCH * Math.PI) / 180)
 const ROTATION_FACTOR = -0.5
 const FACING = Quaternion.fromEulerDegrees(0, 180, 0)
 const THUMBNAIL_SIZE = 480
+// Frames for the picture's camera to be built and to have drawn the avatar.
+const CAPTURE_FRAMES = 5
 
-// The lobby stage: the avatar full-screen over the stage backdrop, camera 1 m above a target
-// 0.8 m over the feet, 6 m back, 26.2° vertical field of view.
-const LOBBY_BASE = Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, 1)
-const LOBBY_BACKDROP = 'images/lobby-background.jpg'
-const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
-// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
-// says it draws it, so the avatar's window in the page shows no seam.
-const SHOP_STAGE = 'images/shop-stage.jpg'
 // The sign-in background, as the page draws it: the purple vignette, the logo pattern drifting over it
 // at 7% (650px tiles, one tile right every 5.65 s and up every 8.02 s), faded out towards the edges by
 // the vignette drawn again over it with the pattern's mask as its transparency.
@@ -87,13 +88,18 @@ const SIGNIN_TILES_X = 8
 const SIGNIN_TILES_Y = 5
 // frames for the background's images to arrive before the page drops its own
 const SIGNIN_SETTLE_FRAMES = 30
-const LOBBY_SHADE_FROM = FLOOR_SHADE_STOPS[0][0]
-const LOBBY_SHADE_BAND_PX = 4
 const LOBBY_TARGET_Y = 0.8
 const LOBBY_CAMERA_RISE = 1
 const LOBBY_CAMERA_DISTANCE = 6
 const LOBBY_FOV = (26.2 * Math.PI) / 180
-const LOBBY_SHADOW = Color4.create(0, 0, 0, 0.65)
+// How far down the frame the camera's target stands: the pitch puts it there.
+const LOBBY_TARGET_SCREEN_Y = 0.55
+const LOBBY_CAMERA_PITCH = Math.atan2(LOBBY_CAMERA_RISE, LOBBY_CAMERA_DISTANCE) - Math.atan((2 * LOBBY_TARGET_SCREEN_Y - 1) * Math.tan(LOBBY_FOV / 2))
+// The avatar's feet in this scene's coordinates, where the engine builds the stage around it.
+const LOBBY_FEET = { x: 8, y: 0, z: 8 }
+// The Shop's stage (library/ui/apps/shop/assets/stage.jpg, the same file): drawn behind the avatar where the page
+// says it draws it, so the avatar's window in the page shows no seam.
+const SHOP_STAGE = 'images/shop-stage.jpg'
 // Frames to let the stage and the avatar's first look settle before the page drops its stand-in,
 // and how long to wait for an avatar to load at all.
 const LOBBY_SETTLE_FRAMES = 45
@@ -111,31 +117,19 @@ const YAW_BACK = 0
 const LOADING_NOT_FOUND = 2
 const LOADING_FINISHED_WITH_ERROR = 3
 const LOADING_FINISHED = 4
-
-// The backdrop's bottom edge fading into the floor, as abutting bands offset from that edge.
-const EDGE_FADE = Array.from({ length: BACKDROP_EDGE_FADE / LOBBY_SHADE_BAND_PX }, (_, i) => ({
-  top: i * LOBBY_SHADE_BAND_PX,
-  height: LOBBY_SHADE_BAND_PX,
-  color: Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, (i + 0.5) / (BACKDROP_EDGE_FADE / LOBBY_SHADE_BAND_PX))
-}))
-
-// The floor shade as abutting whole-pixel bands, rebuilt only when the screen height changes.
-let shadeBands: { height: number; bands: Array<{ top: number; height: number; color: Color4 }> } = { height: -1, bands: [] }
-function floorShade(height: number): Array<{ top: number; height: number; color: Color4 }> {
-  if (shadeBands.height === height) return shadeBands.bands
-  const from = Math.floor(height * LOBBY_SHADE_FROM)
-  const bands = []
-  for (let top = from; top < height; top += LOBBY_SHADE_BAND_PX) {
-    const h = Math.min(LOBBY_SHADE_BAND_PX, height - top)
-    const alpha = floorShadeAt((top + h / 2) / height)
-    bands.push({ top, height: h, color: Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, alpha) })
-  }
-  shadeBands = { height, bands }
-  return bands
-}
+const INTRO_EMOTE = 'wave'
+const FLAVOUR_EMOTES = ['wave', 'fistpump', 'dab']
+const FLAVOUR_SECONDS: [number, number] = [8, 20]
+const LOOK_CHANGED_EMOTE = 'fistpump'
 
 type Stage = 'backpack' | 'lobby'
 let stage: Stage = 'backpack'
+let stagePreset: string = LOBBY_STAGE_PRESETS[0].id
+let stageUp = false
+// The lobby avatar's idle emotes are the lobby page's alone (not its stand-ins' pages).
+let idleEmotes = false
+let flavourIn = 0
+let greeted = false
 // The page's region on show: the sign-in screens' is the Backpack's stage on their own background.
 type Region = 'avatarPreview' | 'lobby' | 'signin'
 let region: Region = 'avatarPreview'
@@ -154,6 +148,7 @@ let shopStage: Rect | null = null
 // Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
 let emoteTrigger = 0
 let lastShapeKey = ''
+let cheerPending = false
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
 // the standby first, and the stage swaps once the engine reports it loaded.
@@ -201,6 +196,10 @@ function pollLoad(watch: LoadWatch): void {
   const ended = latest != null && latest.timestamp > watch.since && [LOADING_FINISHED, LOADING_FINISHED_WITH_ERROR, LOADING_NOT_FOUND].includes(latest.state)
   if (ended || ++watch.frames >= LOBBY_LOOK_FRAMES) watch.done = true
 }
+// The part of its rect the Backpack's camera frames the avatar in (the page's `focus`): how many times
+// the rect is taller than it, and how far down the rect its middle is.
+const WHOLE_RECT = { scale: 1, centre: 0.5 }
+let fit = WHOLE_RECT
 let framing = FRAMING.body
 let framingFrom = FRAMING.body
 let framingTo = FRAMING.body
@@ -275,9 +274,10 @@ function createPreview(): void {
   const c = engine.addEntity()
 
   const lobby = stage === 'lobby'
+  const layer = lobby ? LAYER : BACKPACK_LAYER
   // the shape is added by syncShape once the player's look is known: an empty one would render
   // the default body, which the engine keeps on show until the real look has loaded
-  CameraLayers.create(a, { layers: [LAYER] })
+  CameraLayers.create(a, { layers: lobby ? [layer] : [layer, CAPTURE_LAYER] })
   Transform.create(a, {
     position: Vector3.create(8, 0, 8),
     rotation: FACING,
@@ -289,21 +289,20 @@ function createPreview(): void {
     Transform.create(standby, { position: Vector3.create(8, 0, 8), rotation: FACING, scale: Vector3.One() })
     standbyEntity = standby
   }
-  // Podium under the avatar (preview layer only), the parity backpack's platform;
-  // the lobby stands it on a soft blob shadow instead.
-  const podium = lobby ? [lobbyShadow()] : PODIUM_LAYERS.map((layer) => {
+  // the lobby's podium is the engine stage's
+  const podium = lobby ? [] : PODIUM_LAYERS.map((layer) => {
     const e = engine.addEntity()
     MeshRenderer.setCylinder(e, 1, 1)
     Material.setPbrMaterial(e, { albedoColor: layer.color, metallic: 0, roughness: 0.6 })
-    CameraLayers.create(e, { layers: [LAYER] })
+    CameraLayers.create(e, { layers: [BACKPACK_LAYER] })
     Transform.create(e, { position: Vector3.create(8, layer.y, 8), scale: podiumLayerScale(layer) })
     return e
   })
 
   CameraLayer.create(c, {
-    layer: LAYER,
-    // the lobby stage has a key light; the Backpack is lit flat
-    directionalLight: lobby,
+    layer,
+    // the Backpack is lit flat; the lobby's engine stage brings its own key light
+    directionalLight: false,
     showAvatars: false,
     showSkybox: false,
     showFog: false,
@@ -312,7 +311,7 @@ function createPreview(): void {
   TextureCamera.create(c, {
     width: res.width,
     height: res.height,
-    layer: LAYER,
+    layer,
     clearColor: Color4.create(0, 0, 0, 0),
     mode: lobby
       ? { $case: 'perspective', perspective: { fieldOfView: LOBBY_FOV } }
@@ -324,7 +323,7 @@ function createPreview(): void {
     lobby
       ? {
           position: Vector3.create(8, LOBBY_TARGET_Y + LOBBY_CAMERA_RISE, 8 - LOBBY_CAMERA_DISTANCE),
-          rotation: Quaternion.fromEulerDegrees((Math.atan2(LOBBY_CAMERA_RISE, LOBBY_CAMERA_DISTANCE) * 180) / Math.PI, 0, 0)
+          rotation: Quaternion.fromEulerDegrees((LOBBY_CAMERA_PITCH * 180) / Math.PI, 0, 0)
         }
       : {
           position: Vector3.create(8, framing.centerY + PITCH_DROP, 8 - CAMERA_DISTANCE),
@@ -335,6 +334,7 @@ function createPreview(): void {
   avatarEntity = a
   cameraEntity = c
   podiumEntities = podium
+  if (lobby) showStage()
   if (shopStage != null) showPodium(false)
   lastShapeKey = ''
   shownKey = ''
@@ -366,26 +366,128 @@ async function announceLobbyStage(ctx: Ctx): Promise<void> {
   if (current()) ctx.send({ kind: 'lobbyStageReady' })
 }
 
+function showStage(): void {
+  stageUp = true
+  greeted = false
+  flavourIn = nextFlavour()
+  BevyApi.setLobbyStage?.({ preset: stagePreset, layer: LAYER, feet: LOBBY_FEET }).catch((e) => {
+    console.error('[avatarPreview] lobby stage', e)
+  })
+}
+
+function hideStage(): void {
+  if (!stageUp) return
+  stageUp = false
+  BevyApi.setLobbyStage?.(null).catch((e) => {
+    console.error('[avatarPreview] lobby stage', e)
+  })
+}
+
+function nextFlavour(): number {
+  return FLAVOUR_SECONDS[0] + Math.random() * (FLAVOUR_SECONDS[1] - FLAVOUR_SECONDS[0])
+}
+
+// A new timestamp replays the same emote.
+function playEmote(urn: string): void {
+  if (avatarEntity == null) return
+  const shape = AvatarShape.getMutableOrNull(avatarEntity)
+  if (shape == null) return
+  shape.expressionTriggerId = urn
+  shape.expressionTriggerTimestamp = ++emoteTrigger
+}
+
+function pollEmotes(dt: number): void {
+  if (!idleEmotes || !shownLoaded || turn != null) return
+  if (!greeted) {
+    greeted = true
+    playEmote(INTRO_EMOTE)
+    flavourIn = nextFlavour()
+    return
+  }
+  flavourIn -= dt
+  if (flavourIn > 0) return
+  flavourIn = nextFlavour()
+  playEmote(FLAVOUR_EMOTES[Math.floor(Math.random() * FLAVOUR_EMOTES.length)])
+}
+
 async function announceSigninStage(ctx: Ctx): Promise<void> {
   const generation = ++stageGeneration
   await waitFrames(SIGNIN_SETTLE_FRAMES)
   if (generation === stageGeneration && region === 'signin' && rect != null) ctx.send({ kind: 'signinStageReady' })
 }
 
-function lobbyShadow(): Entity {
-  const e = engine.addEntity()
-  MeshRenderer.setCylinder(e, 1, 1)
-  Material.setPbrMaterial(e, { albedoColor: LOBBY_SHADOW, metallic: 0, roughness: 1, transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND })
-  CameraLayers.create(e, { layers: [LAYER] })
-  Transform.create(e, { position: Vector3.create(8, -0.005, 8), scale: Vector3.create(0.7, 0.01, 0.7) })
-  return e
-}
-
 function disposePreview(): void {
+  hideStage()
   if (avatarEntity != null) engine.removeEntity(avatarEntity)
   if (standbyEntity != null) engine.removeEntity(standbyEntity)
   if (cameraEntity != null) engine.removeEntity(cameraEntity)
   podiumEntities.forEach((e) => engine.removeEntity(e))
+  clearPreview()
+}
+
+// A preview's own state: the lobby's is kept aside, its avatar and stage as they are, while the
+// Backpack opens over the lobby, and the lobby takes it back when the Backpack closes.
+type PreviewState = ReturnType<typeof takeState>
+let parkedLobby: PreviewState | null = null
+// Taken off while the Backpack covers the lobby, so the engine stops drawing its stage.
+type TextureCameraValue = NonNullable<Parameters<typeof TextureCamera.create>[1]>
+let parkedCamera: TextureCameraValue | null = null
+
+function takeState() {
+  return { rect, dpr, avatarEntity, standbyEntity, cameraEntity, podiumEntities, lastShapeKey, cheerPending, stageUp, idleEmotes, greeted, flavourIn, shownKey, standbyKey, turn, shownYaw, swapReady, wanted, standbyWanted, showLoad, standbyLoad, shownLoaded, zoom, zoomShift }
+}
+
+function putState(s: PreviewState): void {
+  ;({ rect, dpr, avatarEntity, standbyEntity, cameraEntity, podiumEntities, lastShapeKey, cheerPending, stageUp, idleEmotes, greeted, flavourIn, shownKey, standbyKey, turn, shownYaw, swapReady, wanted, standbyWanted, showLoad, standbyLoad, shownLoaded, zoom, zoomShift } = s)
+}
+
+function parkLobby(): void {
+  parkedLobby = takeState()
+  const camera = cameraEntity != null ? TextureCamera.getOrNull(cameraEntity) : null
+  if (cameraEntity != null && camera != null) {
+    parkedCamera = JSON.parse(JSON.stringify(camera)) as TextureCameraValue
+    TextureCamera.deleteFrom(cameraEntity)
+  }
+  clearPreview()
+  rect = null
+  stageUp = false
+  cheerPending = false
+  greeted = false
+}
+
+function unparkLobby(): void {
+  if (parkedLobby == null) return
+  putState(parkedLobby)
+  parkedLobby = null
+  if (cameraEntity != null && parkedCamera != null) TextureCamera.createOrReplace(cameraEntity, parkedCamera)
+  parkedCamera = null
+  // the Backpack's item preview is its own: the lobby wears the look
+  previewUrns = null
+}
+
+// The lobby never came back (it closed while the Backpack was open): its avatar and stage go too.
+function disposeParkedLobby(): void {
+  if (parkedLobby == null) return
+  const current = takeState()
+  putState(parkedLobby)
+  parkedLobby = null
+  parkedCamera = null
+  disposePreview()
+  putState(current)
+}
+
+// Window resized → re-size the render target to the hole, not just re-aspect it.
+function fitCamera(): void {
+  if (rect == null || cameraEntity == null) return
+  const res = camRes(rect)
+  const cam = TextureCamera.getMutableOrNull(cameraEntity)
+  if (cam != null && (cam.width !== res.width || cam.height !== res.height)) {
+    cam.width = res.width
+    cam.height = res.height
+  }
+}
+
+function clearPreview(): void {
   avatarEntity = null
   standbyEntity = null
   cameraEntity = null
@@ -462,6 +564,13 @@ function pollTurn(dt: number): void {
   const done = turn
   turn = null
   if (done.entity !== avatarEntity) return
+  if (done.to === YAW_FRONT && cheerPending) {
+    cheerPending = false
+    if (idleEmotes && greeted) {
+      playEmote(LOOK_CHANGED_EMOTE)
+      flavourIn = nextFlavour()
+    }
+  }
   if (done.to === YAW_AWAY && swapReady) swapToStandby()
   // a look loaded meanwhile (one asked for after the one just shown): turn away for it
   else if (done.to === YAW_FRONT && swapReady) startTurn(done.entity, YAW_FRONT, YAW_AWAY)
@@ -499,6 +608,7 @@ function swapToStandby(): void {
   shownLoaded = true
   shownYaw = YAW_BACK
   startTurn(standby, YAW_BACK, YAW_FRONT)
+  cheerPending = true
 }
 
 function pollStage(dt: number): void {
@@ -530,13 +640,46 @@ function pollStage(dt: number): void {
 }
 
 export function registerAvatarPreview(ctx: Ctx): void {
-  ctx.on('engineViewport', (msg) => {
+  // The lobby page under the Backpack keeps reporting its region: its latest report, for when the
+  // Backpack closes and the lobby had no stage to set aside (it opened under the Backpack).
+  let lobbyUnder: EngineViewportRequest | null = null
+  const onViewport = (msg: EngineViewportRequest): void => {
     if (msg.region !== 'avatarPreview' && msg.region !== 'lobby' && msg.region !== 'signin') return
     const nextStage: Stage = msg.region === 'lobby' ? 'lobby' : 'backpack'
+    if (stage === 'backpack' && avatarEntity != null && disposeIn === 0) {
+      // the lobby under the open Backpack: its stage, set aside, follows its region or goes with it
+      if (nextStage === 'lobby') {
+        lobbyUnder = msg.rect == null ? null : msg
+        if (msg.rect == null) disposeParkedLobby()
+        else if (parkedLobby != null) {
+          parkedLobby.rect = msg.rect
+          parkedLobby.dpr = msg.dpr ?? 1
+        }
+        return
+      }
+      if (msg.rect == null && (parkedLobby != null || lobbyUnder != null)) {
+        const under = lobbyUnder
+        lobbyUnder = null
+        disposePreview()
+        if (parkedLobby == null) {
+          if (under != null) onViewport(under)
+          return
+        }
+        stage = 'lobby'
+        region = 'lobby'
+        unparkLobby()
+        fitCamera()
+        announceLobbyStage(ctx).catch((e) => {
+          console.error('[avatarPreview] lobby stage', e)
+        })
+        return
+      }
+    }
     // a region closing after another took over (lobby → Backpack) must not dispose the new one
     if (msg.rect == null && msg.region !== region) return
     if (nextStage !== stage) {
-      disposePreview()
+      if (nextStage === 'backpack' && stage === 'lobby' && avatarEntity != null) parkLobby()
+      else disposePreview()
       stage = nextStage
       framing = framingFrom = framingTo = FRAMING.body
       framingT = 1
@@ -557,18 +700,26 @@ export function registerAvatarPreview(ctx: Ctx): void {
       return
     }
     disposeIn = 0
+    if (nextStage === 'lobby') {
+      idleEmotes = msg.idleEmotes === true
+      const preset = msg.stagePreset ?? stagePreset
+      if (preset !== stagePreset) {
+        stagePreset = preset
+        if (stageUp) showStage()
+      }
+    }
     // the same region again (a page re-reporting its viewport) leaves the stage as it is
     const same = rect != null && rect.x === msg.rect.x && rect.y === msg.rect.y && rect.width === msg.rect.width && rect.height === msg.rect.height && dpr === (msg.dpr ?? 1)
     rect = msg.rect
     dpr = msg.dpr ?? 1
     if (avatarEntity == null) createPreview()
-    else if (!same && cameraEntity != null) {
-      // Window resized → re-size the render target to the hole, not just re-aspect it.
-      const res = camRes(rect)
-      const cam = TextureCamera.getMutableOrNull(cameraEntity)
-      if (cam != null && (cam.width !== res.width || cam.height !== res.height)) {
-        cam.width = res.width
-        cam.height = res.height
+    else if (!same) fitCamera()
+    if (stage === 'backpack') {
+      const focus = msg.region === 'avatarPreview' ? msg.focus : undefined
+      const next = focus != null && focus.height > 0 && msg.rect.height > 0 ? { scale: msg.rect.height / focus.height, centre: (focus.y + focus.height / 2 - msg.rect.y) / msg.rect.height } : WHOLE_RECT
+      if (next.scale !== fit.scale || next.centre !== fit.centre || !same) {
+        fit = next
+        applyFraming(framing)
       }
     }
     // told again for a stage carried over (the Backpack's back to the lobby): the page taking it
@@ -583,7 +734,8 @@ export function registerAvatarPreview(ctx: Ctx): void {
         console.error('[avatarPreview] sign-in stage', e)
       })
     }
-  })
+  }
+  ctx.on('engineViewport', onViewport)
 
   // The Backpack's selected category: ease the camera to frame that part of the avatar.
   ctx.on('previewFocus', (msg) => {
@@ -597,6 +749,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
   ctx.push(() => {
     if (disposeIn > 0 && --disposeIn === 0) {
       disposePreview()
+      disposeParkedLobby()
       rect = null
     }
     const due = frameWaiters.filter((w) => --w.frames <= 0)
@@ -606,7 +759,10 @@ export function registerAvatarPreview(ctx: Ctx): void {
     })
   })
   ctx.push((dt) => {
-    if (stage === 'lobby' && avatarEntity != null) pollStage(dt)
+    if (stage === 'lobby' && avatarEntity != null) {
+      pollStage(dt)
+      pollEmotes(dt)
+    }
   })
   ctx.push((dt) => {
     if (framingT >= 1 || cameraEntity == null || stage !== 'backpack') return
@@ -630,18 +786,20 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 
   // The page's drag over the preview turns the avatar, and its wheel zooms the camera: the page drives both,
-  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Both are the preview's
-  // (the Backpack's, the Shop's) alone: a late one never turns or zooms the lobby's avatar.
+  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Each is for the stage
+  // its page names (the Backpack's and the Shop's preview unless it says the lobby): a late one never turns or
+  // zooms another stage's avatar. The lobby's avatar turns only; its camera stays.
   ctx.on('previewRotate', (msg) => {
-    if (stage !== 'backpack') return
-    turnAvatar(msg.degrees)
+    if ((msg.stage ?? 'backpack') !== stage) return
+    if (stage === 'lobby') turnLobbyAvatar(msg.degrees)
+    else turnAvatar(msg.degrees)
   })
   ctx.on('previewZoom', (msg) => {
     if (stage !== 'backpack') return
     const next = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
     const anchor = Number.isFinite(msg.anchor) ? Math.min(1, Math.max(0, msg.anchor)) : 0.5
-    // The height under the anchor stays where it is: the same share of the view above the centre, before and after.
-    const above = 0.5 - anchor
+    // The height under the anchor stays where it is: the same share of the view above the framing's centre, before and after.
+    const above = (fit.centre - anchor) * fit.scale
     const height = framing.centerY + shiftWithin(framing, zoom, zoomShift) + (framing.range / zoom) * above
     zoomShift = shiftWithin(framing, next, height - (framing.range / next) * above - framing.centerY)
     zoom = next
@@ -651,11 +809,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
   // The Shop's emote try-on: played once on the preview avatar, again for every ask; null stops it (an
   // empty trigger on a scene's avatar is the engine's stop).
   ctx.on('previewEmote', (msg) => {
-    if (avatarEntity == null) return
-    const shape = AvatarShape.getMutableOrNull(avatarEntity)
-    if (shape == null) return
-    shape.expressionTriggerId = msg.urn ?? ''
-    shape.expressionTriggerTimestamp = ++emoteTrigger
+    playEmote(msg.urn ?? '')
   })
 
   // Selecting an item in the Backpack previews it on the avatar without persisting (null reverts).
@@ -706,39 +860,66 @@ function shiftWithin(f: { range: number }, z: number, shift: number): number {
 
 // The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told
 // otherwise), the view kept inside the framing.
-function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift): void {
+function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift, within: { scale: number; centre: number } = fit): void {
   if (cameraEntity == null || stage !== 'backpack') return
   const cam = TextureCamera.getMutableOrNull(cameraEntity)
-  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range / z
-  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + shiftWithin(f, z, shift) + PITCH_DROP, 8 - CAMERA_DISTANCE)
+  const range = (f.range / z) * within.scale
+  if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = range
+  const centre = f.centerY + shiftWithin(f, z, shift) - range * (0.5 - within.centre)
+  Transform.getMutable(cameraEntity).position = Vector3.create(8, centre + PITCH_DROP, 8 - CAMERA_DISTANCE)
 }
 
-/** The preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or null
- *  when the preview isn't open or the engine can't capture. */
+// One picture at a time: the engine captures the first camera it finds on the capture layer.
+let capturing: Promise<unknown> = Promise.resolve()
+
+/** The Backpack's preview avatar, whole body, from its front, without the podium, as a PNG data URL — or
+ *  null when the Backpack's preview isn't open or the engine can't capture. The preview on show stays as
+ *  it is. The lobby's stage is never captured. */
 export async function captureAvatarThumbnail(): Promise<string | null> {
-  if (avatarEntity == null || cameraEntity == null || BevyApi.consoleCommand == null) return null
+  const capture = capturing.then(takeThumbnail)
+  capturing = capture.catch(() => null)
+  return await capture
+}
+
+async function takeThumbnail(): Promise<string | null> {
+  if (stage !== 'backpack' || avatarEntity == null || BevyApi.consoleCommand == null) return null
   const avatar = avatarEntity
-  const rotation = Transform.get(avatar).rotation
-  Transform.getMutable(avatar).rotation = FACING
-  framingT = 1
-  // The whole body, whatever the page has zoomed to.
-  applyFraming(FRAMING.body, 1, 0)
-  const podium = podiumEntities
-  podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
+  // The avatar only ever turns about its vertical axis.
+  const turned = Transform.get(avatar).rotation
+  const yaw = (2 * Math.atan2(turned.y, turned.w) * 180) / Math.PI - 180
+  const stand = Vector3.rotate(Vector3.create(0, THUMBNAIL_FRAMING.centerY + PITCH_DROP, -CAMERA_DISTANCE), Quaternion.fromEulerDegrees(0, yaw, 0))
+  const camera = engine.addEntity()
+  CameraLayer.create(camera, {
+    layer: CAPTURE_LAYER,
+    directionalLight: false,
+    showAvatars: false,
+    showSkybox: false,
+    showFog: false,
+    ambientBrightnessOverride: 5
+  })
+  TextureCamera.create(camera, {
+    width: THUMBNAIL_SIZE * 2,
+    height: THUMBNAIL_SIZE * 2,
+    layer: CAPTURE_LAYER,
+    clearColor: Color4.create(0, 0, 0, 0),
+    mode: { $case: 'orthographic', orthographic: { verticalRange: THUMBNAIL_FRAMING.range } },
+    volume: 0
+  })
+  Transform.create(camera, {
+    position: Vector3.create(8 + stand.x, stand.y, 8 + stand.z),
+    rotation: Quaternion.fromEulerDegrees(CAMERA_PITCH, yaw, 0)
+  })
   try {
-    await waitFrames(3)
-    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(LAYER), String(THUMBNAIL_SIZE)])
+    await waitFrames(CAPTURE_FRAMES)
+    // the Backpack closed meanwhile
+    if (stage !== 'backpack' || avatarEntity !== avatar) return null
+    const png = await BevyApi.consoleCommand('texture_camera_screenshot', [String(CAPTURE_LAYER), String(THUMBNAIL_SIZE)])
     return `data:image/png;base64,${png}`
   } catch (e) {
     console.error('[avatarPreview] thumbnail capture failed', e)
     return null
   } finally {
-    if (avatarEntity === avatar) {
-      Transform.getMutable(avatar).rotation = rotation
-      if (framingT >= 1) framing = framingTo
-      applyFraming(framing)
-      showPodium(shopStage == null)
-    }
+    engine.removeEntity(camera)
   }
 }
 
@@ -746,6 +927,14 @@ function rotateAvatar(): void {
   const pointer = PrimaryPointerInfo.getOrNull(engine.RootEntity)
   const deltaX = pointer?.screenDelta?.x ?? 0
   if (deltaX !== 0) turnAvatar(deltaX * ROTATION_FACTOR)
+}
+
+// The lobby avatar turns by the page's drag, unless a look is changing; its yaw is the one the
+// look changes turn from, so a drag is never undone.
+function turnLobbyAvatar(degrees: number): void {
+  if (avatarEntity == null || turn != null || !Number.isFinite(degrees) || degrees === 0) return
+  shownYaw = YAW_FRONT + ((((shownYaw - YAW_FRONT + degrees) % 360) + 540) % 360) - 180
+  Transform.getMutable(avatarEntity).rotation = Quaternion.fromEulerDegrees(0, shownYaw, 0)
 }
 
 // Turns the preview avatar `degrees` about its vertical axis.
@@ -760,39 +949,12 @@ function turnAvatar(degrees: number): void {
 }
 
 function renderLobbyStage(r: Rect, camera: Entity): ReactEcs.JSX.Element {
-  const backdrop = backdropRect(r.width, r.height)
+  // the engine's stage is opaque over the whole frame, so the camera's image is the lobby's
   return (
     <UiEntity
       uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height, overflow: 'hidden' }}
-      uiBackground={{ color: LOBBY_BASE }}
-    >
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', position: { left: backdrop.left, top: backdrop.top }, width: backdrop.width, height: backdrop.height }}
-        uiBackground={{ texture: { src: LOBBY_BACKDROP }, textureMode: 'stretch' }}
-      />
-      {EDGE_FADE.map((band) => (
-        <UiEntity
-          key={`edge${band.top}`}
-          uiTransform={{ positionType: 'absolute', position: { left: 0, top: backdrop.top + backdrop.height - BACKDROP_EDGE_FADE + band.top }, width: '100%', height: band.height }}
-          uiBackground={{ color: band.color }}
-        />
-      ))}
-      {floorShade(Math.round(r.height)).map((band) => (
-        <UiEntity
-          key={band.top}
-          uiTransform={{ positionType: 'absolute', position: { left: 0, top: band.top }, width: '100%', height: band.height }}
-          uiBackground={{ color: band.color }}
-        />
-      ))}
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
-        uiBackground={{ texture: { src: LOBBY_VIGNETTE }, textureMode: 'stretch' }}
-      />
-      <UiEntity
-        uiTransform={{ positionType: 'absolute', width: '100%', height: '100%' }}
-        uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
-      />
-    </UiEntity>
+      uiBackground={{ videoTexture: { videoPlayerEntity: camera }, textureMode: 'stretch' }}
+    />
   )
 }
 

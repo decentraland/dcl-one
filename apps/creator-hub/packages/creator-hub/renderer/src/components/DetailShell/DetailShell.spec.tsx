@@ -2,13 +2,13 @@ import { useState, type ButtonHTMLAttributes } from 'react';
 import { Provider } from 'react-redux';
 import { Link, MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { flatten } from 'flat';
+import { flatten } from '/@/modules/store/translation/flatten';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
+import { TestProviders } from '../../../tests/utils/TestProviders';
 import { createTestStore } from '../../../tests/utils/testStore';
 import { DetailShell, useDraft } from '.';
 
@@ -86,7 +86,7 @@ function renderShell() {
   render(
     <Provider store={createTestStore() as never}>
       <MemoryRouter initialEntries={['/manage/land/96%2C15/details']}>
-        <ThemeProvider theme={dark}>
+        <TestProviders>
           <Routes>
             <Route
               path="/manage/land/:id/:tab?"
@@ -98,7 +98,7 @@ function renderShell() {
             />
           </Routes>
           <Where />
-        </ThemeProvider>
+        </TestProviders>
       </MemoryRouter>
     </Provider>,
   );

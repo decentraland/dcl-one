@@ -658,6 +658,49 @@ async fn file_sets_sync_by_hash_with_a_base_version() {
 }
 
 #[tokio::test]
+async fn uploads_are_authorized_before_their_body_is_read() {
+    let Some((state, app)) = app().await else {
+        return;
+    };
+    let id = Uuid::new_v4();
+    let base = format!("/v1/projects/{id}");
+    assert_eq!(
+        send(
+            &app,
+            "PUT",
+            &base,
+            OWNER_KEY,
+            project_body(id, "Blob order")
+        )
+        .await
+        .status,
+        StatusCode::OK
+    );
+    let hash = hash_bytes_v1(b"never stored");
+    // Over the routes' body limit: a route that read the body first answers 413.
+    let oversized = || Some(Body::from(vec![0u8; 22 * 1024 * 1024]));
+    for route in [format!("blobs/{hash}"), "files".into(), "manifest".into()] {
+        let path = format!("{base}/{route}");
+        let json = !route.starts_with("blobs/");
+        let unsigned = call(&app, "PUT", &path, None, &[], oversized(), json).await;
+        assert_eq!(
+            unsigned.status,
+            StatusCode::BAD_REQUEST,
+            "{route}: {}",
+            unsigned.body
+        );
+        if route != "manifest" {
+            let foreign = call(&app, "PUT", &path, Some(OTHER_KEY), &[], oversized(), json).await;
+            assert_eq!(foreign.status, StatusCode::UNAUTHORIZED, "{route}");
+        }
+        let too_large = call(&app, "PUT", &path, Some(OWNER_KEY), &[], oversized(), json).await;
+        assert_eq!(too_large.status, StatusCode::PAYLOAD_TOO_LARGE, "{route}");
+    }
+
+    drop_projects(&state, &[id], &[]).await;
+}
+
+#[tokio::test]
 async fn project_asset_packs_follow_the_defaults() {
     let Some((state, app)) = app().await else {
         return;
@@ -1001,16 +1044,12 @@ async fn an_existing_database_gains_the_project_tables_in_place() {
         std::process::id(),
         &Uuid::new_v4().simple().to_string()[..8]
     );
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
+    crate::db::scratch::create_database_with_schema(&admin, &name).await;
     let mut own = url::Url::parse(&url).unwrap();
     own.set_path(&format!("/{name}"));
     let pool = crate::db::connect_pool(own.as_str(), &crate::db::PoolSettings::default())
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
     sqlx::raw_sql(
         "DROP TABLE builder.asset_contents, builder.assets, builder.asset_packs, \
          builder.project_files, builder.project_manifests, builder.projects; \
@@ -1069,4 +1108,117 @@ async fn an_existing_database_gains_the_project_tables_in_place() {
     .execute(&admin)
     .await
     .unwrap();
+}
+
+/// A blob found stored is not unlinked between `PUT .../blobs/{hash}`'s
+/// existence check and its row: the upload waits while an unlink batch holds
+/// the exclusive store lock, then stores again what the batch removed.
+#[tokio::test]
+async fn a_blob_upload_waits_for_an_unlink_batch_and_stores_what_it_removed() {
+    let Some(pool) = crate::db::scratch::pool(2).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let bytes = unique("staged project blob");
+    let hash = hash_bytes_v1(&bytes);
+    blobs.store(&hash, bytes.clone().into()).await.unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let owner = owner_address(OWNER_KEY);
+    let upload = crate::projects::accept_blob(&pool, &blobs, &owner, &hash, bytes.into());
+    tokio::pin!(upload);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut upload)
+            .await
+            .is_err(),
+        "the upload waits for the unlink batch"
+    );
+    blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+    assert!(upload.await.is_ok());
+    assert!(
+        blobs.exist(&hash).await.unwrap(),
+        "the row names a stored file"
+    );
+    sqlx::query("DELETE FROM builder.uploaded_contents WHERE hash = $1")
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// Behind an unlink batch that outlasts the store lock wait, the upload
+/// answers 503 instead of holding its connection.
+#[tokio::test]
+async fn a_blob_upload_behind_a_long_unlink_batch_answers_503() {
+    // A database of its own: the held lock would turn other tests' uploads away.
+    let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let bytes = unique("blocked project blob");
+    let hash = hash_bytes_v1(&bytes);
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let owner = owner_address(OWNER_KEY);
+    let upload = crate::projects::accept_blob(&pool, &blobs, &owner, &hash, bytes.into());
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(10), upload)
+        .await
+        .expect("bounded wait");
+    batch.commit().await.unwrap();
+    match answered {
+        Err(crate::projects::ProjectError::Api(e)) => assert_eq!(e.status(), 503),
+        other => panic!("expected a 503, got {:?}", other.map(|_| ())),
+    }
+    assert!(!blobs.exist(&hash).await.unwrap(), "nothing was stored");
+}
+
+/// The catalogue build's walk holds no lock, so an unlink batch may remove a
+/// file it found stored: the row write waits for the batch under the store
+/// lock's shared side, stores the file again and names it.
+#[tokio::test]
+async fn the_catalogue_build_stores_again_what_an_unlink_batch_removed() {
+    // A database of its own: the catalogue is one row.
+    let Some(pool) = crate::db::scratch::isolated_pool(3).await else {
+        return;
+    };
+    let blobs = temp_storage().await;
+    let packs = std::env::temp_dir().join(format!("catalog-race-{}", uuid::Uuid::new_v4()));
+    let asset = packs.join("p1/assets/a1");
+    std::fs::create_dir_all(&asset).unwrap();
+    std::fs::write(packs.join("p1/data.json"), r#"{"id":"p1","name":"Pack"}"#).unwrap();
+    std::fs::write(asset.join("data.json"), r#"{"id":"a1","name":"Asset"}"#).unwrap();
+    let model = unique("catalogue model");
+    std::fs::write(asset.join("model.glb"), &model).unwrap();
+    let hash = hash_bytes_v1(&model);
+    blobs.store(&hash, model.into()).await.unwrap();
+
+    let batch = crate::storage::gc::lock_store_exclusive(&pool)
+        .await
+        .unwrap();
+    let packs_dir = packs.to_string_lossy().into_owned();
+    let build = crate::catalog::build(&pool, &blobs, &packs_dir);
+    tokio::pin!(build);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut build)
+            .await
+            .is_err(),
+        "the row write waits for the unlink batch"
+    );
+    blobs.delete_strict(&hash).await.unwrap();
+    batch.commit().await.unwrap();
+    build.await.unwrap();
+    assert!(blobs.exist(&hash).await.unwrap(), "stored again");
+    let named: bool = sqlx::query_scalar(
+        "SELECT packs::text LIKE '%' || $1 || '%' FROM builder.asset_catalog WHERE id = 1",
+    )
+    .bind(&hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(named, "the row names it");
+    let _ = std::fs::remove_dir_all(&packs);
 }

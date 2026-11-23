@@ -105,7 +105,6 @@ pub fn start_ws_room(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn connect_websocket(
     mut commands: Commands,
     mut new_websockets: Query<

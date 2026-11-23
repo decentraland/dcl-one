@@ -13,7 +13,7 @@ import type { AuthIdentity } from '@explorer-core/features/auth/sso'
 import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '@explorer-core/features/map/atlas'
 import { emptyEventsStore } from '../features/events/eventsStore'
-import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
+import { useEngineSession, type EngineSession, type ProfileState, type SessionHost } from '../features/session/useEngineSession'
 
 export async function renderSettled(...args: Parameters<typeof render>): Promise<ReturnType<typeof render>> {
   let view!: ReturnType<typeof render>
@@ -36,6 +36,9 @@ export class FakeDriver implements LoginDriver {
   welcome: { terms: boolean; newProfile: boolean } | null = { terms: false, newProfile: false }
   /** What the autopilot reported when its sign-in failed. */
   readonly autopilotFailures: string[] = []
+  /** Whether the bridge scene has answered the page (`LoginDriver.bridgeReady`); unset, a driver
+   *  with no bridge to wait for. */
+  bridgeReady?: () => boolean
 
   private readonly listeners = new Set<(msg: SceneToPage) => void>()
 
@@ -56,8 +59,11 @@ export class FakeDriver implements LoginDriver {
   async autopilotFailed(reason: string): Promise<void> {
     this.autopilotFailures.push(reason)
   }
-  async logout(): Promise<void> {
+  /** Each `logout`: whether it dropped the stored sign-in (a Sign Out) or not (a Cancel). */
+  readonly logouts: boolean[] = []
+  async logout(forget?: boolean): Promise<void> {
     this.calls.push('logout')
+    this.logouts.push(forget === true)
   }
   /** What `loginWithIdentity` was handed, in order (a `/hud_login`'s identity and pick). */
   readonly identityLogins: { identity: AuthIdentity; defaultOnError?: boolean; guest?: boolean; pick?: NewAccountPick }[] = []
@@ -131,10 +137,11 @@ export interface Harness {
 /** Render the real session hook wired to a FakeDriver (pass a subclass to simulate boot panics). */
 export function renderSession(
   previousLogin?: { userId: string | null },
-  driver: FakeDriver = new FakeDriver()
+  driver: FakeDriver = new FakeDriver(),
+  host: SessionHost = {}
 ): Harness {
   if (previousLogin) driver.previousLogin = previousLogin
-  const { result, unmount } = renderHook(() => useEngineSession(() => driver))
+  const { result, unmount } = renderHook(() => useEngineSession(() => driver, host))
   return { driver, result, session: () => result.current, unmount }
 }
 
@@ -195,16 +202,20 @@ export function fakeSession(): EngineSession {
     playerReady: true,
     lobbyStageReady: false,
     signinStageReady: false,
-    lobbyPage: { open: false, toggle: vi.fn(), travel: vi.fn() },
+    turnLobbyAvatar: vi.fn(),
+    lobbyPage: { open: false, toggle: vi.fn(), travel: vi.fn(() => true) },
+    lobbyData: { warm: vi.fn(), communitiesLoaded: true, covered: false },
+    queryGifting: vi.fn(async (q) => ({ kind: 'giftingPage' as const, catalog: q.catalog, items: [], total: 0, equipped: [], failed: false, requestId: 0 })),
     homeScene: () => null,
     avatarPreviewRect: null,
-    pickDestination: vi.fn(),
+    pickDestination: vi.fn(() => true),
     welcome: { terms: false, newProfile: false, pending: false, saving: false, error: null, showLook: vi.fn(), accept: vi.fn(), openLegal: vi.fn(), email: null },
     sceneLoading: null,
     connectivity: { state: null, retry: vi.fn() },
     loadingProgress: 0,
     travelError: null,
     dismissTravelError: vi.fn(),
+    platformBan: { notice: null, travelRefused: false, dismissTravelRefused: vi.fn() },
     travellingTo: null,
     fatalError: null,
     reload: vi.fn(),
@@ -212,9 +223,9 @@ export function fakeSession(): EngineSession {
     hover: [],
     cursorLocked: false,
     proximity: [],
-    chat: { messages: [], send: vi.fn(), react: vi.fn(), nearby: [], bubbleText: vi.fn(), channel: 'Nearby', select: vi.fn(), conversations: [], openConversation: vi.fn(), closeConversation: vi.fn(), deleteHistory: vi.fn(), communities: [], openCommunity: vi.fn(), closeCommunity: vi.fn(), open: true, toggle: vi.fn(), members: [], speaking: new Set(), mention: vi.fn(), pendingMention: null, consumeMention: vi.fn(), unread: 0, setActive: vi.fn(), nearbyUnread: 0, focusTick: 0, requestFocus: vi.fn() },
+    chat: { messages: [], send: vi.fn(), playSound: vi.fn(), react: vi.fn(), nearby: [], bubbleText: vi.fn(), channel: 'Nearby', select: vi.fn(), conversations: [], openConversation: vi.fn(), closeConversation: vi.fn(), deleteHistory: vi.fn(), communities: [], openCommunity: vi.fn(), closeCommunity: vi.fn(), open: true, toggle: vi.fn(), members: [], speaking: new Set(), mention: vi.fn(), pendingMention: null, consumeMention: vi.fn(), unread: 0, setActive: vi.fn(), nearbyUnread: 0, focusTick: 0, requestFocus: vi.fn() },
     friends: { available: true, list: [], received: [], sent: [], blocked: [], blockedUsers: [], blockedBy: [], loading: false, open: false, toggle: vi.fn(), act: vi.fn(), pending: new Set(), mutuals: {}, loadMutuals: vi.fn() },
-    settings: { list: [], open: false, toggle: vi.fn(), set: vi.fn(), load: vi.fn() },
+    settings: { list: [], open: false, toggle: vi.fn(), set: vi.fn(), load: vi.fn(), refresh: vi.fn() },
     bindings: {
       list: [],
       set: vi.fn(),
@@ -226,12 +237,12 @@ export function fakeSession(): EngineSession {
     runDebugCommand: vi.fn(),
     skybox: { open: false, toggle: vi.fn(), hours: 10, progressing: true, setHours: vi.fn(), setProgressing: vi.fn() },
     emotes: { list: [], open: false, toggle: vi.fn(), play: vi.fn(), equip: vi.fn() },
-    backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), rotate: vi.fn(), zoom: vi.fn(), outfitsLoaded: true, forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
+    backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), rotate: vi.fn(), zoom: vi.fn(), outfitsLoaded: true, forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, warnAboutClearingExtraOutfits: false, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), outfitError: null, dismissOutfitError: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
     communities: { list: [], browse: { search: '', items: [], total: 0, loading: false, loadingMore: false }, loadBrowse: vi.fn(), loadMoreBrowse: vi.fn(), open: false, toggle: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), deleted: null, save: null, clearSave: vi.fn(), placeOptions: null, loadPlaceOptions: vi.fn(), clearPlaceOptions: vi.fn(), removePlace: vi.fn(), memberAction: vi.fn(), join: vi.fn(), requestToJoin: vi.fn(), cancelRequest: vi.fn(), leave: vi.fn(), error: null, detail: null, loadDetail: vi.fn(), cards: {}, fetch: vi.fn(), invites: null, loadInvites: vi.fn(), pendingCount: null, loadInvitesCount: vi.fn(), manageRequest: vi.fn(), memberSections: {}, cardOpen: vi.fn(), loadMemberSection: vi.fn(), invitable: null, loadInvitable: vi.fn(), invite: vi.fn(), unban: vi.fn(), posts: null, loadPosts: vi.fn(), loadMorePosts: vi.fn(), createPost: vi.fn(), deletePost: vi.fn(), likePost: vi.fn() },
-    map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(), changeRealm: vi.fn(), teleportToPlace: vi.fn(), home: null, setHome: vi.fn() },
-    minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', restrictions: [], donatePlace: null, setConfig: vi.fn() },
-    places: { open: false, toggle: vi.fn() },
-    events: { open: false, toggle: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), setAttending: vi.fn(), clear: vi.fn() }, memberOf: [] },
+    map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(() => 'sent' as const), changeRealm: vi.fn(() => 'sent' as const), teleportToPlace: vi.fn(() => 'sent' as const), home: null, canPinHome: true, setHome: vi.fn(), clearHome: vi.fn() },
+    minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', restrictions: [], donatePlace: null, linkRealm: null, setConfig: vi.fn(), reloadScene: vi.fn() },
+    places: { open: false, toggle: vi.fn(), close: vi.fn(), readSigned: vi.fn(async () => null), worldAccess: vi.fn(async () => 'allowed' as const) },
+    events: { open: false, toggle: vi.fn(), close: vi.fn(), data: { store: emptyEventsStore(), loadCalendar: vi.fn(), loadDay: vi.fn(), loadLobby: vi.fn(), setAttending: vi.fn(), clear: vi.fn(), resetAll: vi.fn() }, memberOf: [] },
     shop: { open: false, toggle: vi.fn() },
     gallery: { open: false, toggle: vi.fn(), fetchPage: vi.fn(async () => ({ ok: true, photos: [], total: 0, max: 0 })), metas: {}, loadPhoto: vi.fn(), setPublic: vi.fn(async () => ({ ok: true })), remove: vi.fn(async () => ({ ok: true })) },
     photoMode: { snapshot: null, active: false, capture: null, set: vi.fn(), take: vi.fn() },
@@ -253,7 +264,9 @@ export function fakeSession(): EngineSession {
     },
     nav: vi.fn(),
     openExternalUrl: vi.fn(async () => true),
+    fetchSatelliteTile: vi.fn(async () => null),
     setEngineViewport: vi.fn(),
+    lobbyStage: { preset: 'halloween-2026', set: vi.fn() },
     setInteractableArea: vi.fn(),
     logout: vi.fn(),
     menuOpen: false,
@@ -261,6 +274,7 @@ export function fakeSession(): EngineSession {
     login: {
       status: 'sign-in-or-guest',
       account: null,
+      signedInAs: null,
       busy: false,
       error: null,
       engineReady: true,

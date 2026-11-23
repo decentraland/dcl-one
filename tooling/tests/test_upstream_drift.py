@@ -1,8 +1,13 @@
 """The pinned source list, the upstream check, the drift collector's parsing and version logic,
 and the site's markdown rendering. Nothing here reaches the network."""
+import base64
 import importlib.util
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -648,6 +653,52 @@ class VersionLogicTests(unittest.TestCase):
         self.assertNotIn('issues: write', drift_job)
         self.assertIn('python3 tooling/upstream-drift.py v8-report --body "$body"', drift_job)
 
+    def test_advisory_files_reads_every_crate_of_the_tree(self):
+        tree = {'truncated': False, 'tree': [
+            {'path': 'crates', 'type': 'tree', 'sha': 't0'},
+            {'path': 'crates/zvariant_derive', 'type': 'tree', 'sha': 't1'},
+            {'path': 'crates/zvariant_derive/RUSTSEC-2026-0002.md', 'type': 'blob', 'sha': 'b1'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0004.md', 'type': 'blob', 'sha': 'b3'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0003.md', 'type': 'blob', 'sha': 'b2'},
+            {'path': 'crates/rustls/notes.txt', 'type': 'blob', 'sha': 'b4'},
+            {'path': 'rust/std/RUSTSEC-2026-0005.md', 'type': 'blob', 'sha': 'b5'},
+            {'path': 'README.md', 'type': 'blob', 'sha': 'b6'},
+        ]}
+        self.assertEqual(drift.advisory_files(tree), {
+            'zvariant_derive': ['b1'],
+            'rustls': ['b2', 'b3'],
+        })
+
+    def test_advisory_files_refuses_a_truncated_tree(self):
+        with self.assertRaises(RuntimeError):
+            drift.advisory_files({'truncated': True, 'tree': []})
+
+    def test_advisory_files_refuses_a_missing_tree(self):
+        with self.assertRaisesRegex(RuntimeError, 'could not be fetched'):
+            drift.advisory_files(None)
+
+    def test_collect_advisories_skips_withdrawn_and_reports_unreadable_entries(self):
+        def advisory(id_, extra=''):
+            text = f'```toml\n[advisory]\nid = "{id_}"\npackage = "ring"\ndate = "2025-01-01"\n{extra}\n[versions]\npatched = [">= 0.17.12"]\n```\n# {id_}\n'
+            return {'content': base64.b64encode(text.encode()).decode()}
+        tree = {'truncated': False, 'tree': [
+            {'path': f'crates/ring/RUSTSEC-2025-000{i}.md', 'type': 'blob', 'sha': f'b{i}'} for i in range(1, 5)]}
+        responses = {
+            'repos/rustsec/advisory-db/git/trees/main?recursive=1': tree,
+            'repos/rustsec/advisory-db/git/blobs/b1': advisory('RUSTSEC-2025-0001'),
+            'repos/rustsec/advisory-db/git/blobs/b2': advisory('RUSTSEC-2025-0002', 'withdrawn = "2025-02-22"'),
+            'repos/rustsec/advisory-db/git/blobs/b3': None,
+            'repos/rustsec/advisory-db/git/blobs/b4': {'content': base64.b64encode(b'no front matter').decode()},
+        }
+        with mock.patch.object(drift, 'gh', side_effect=responses.__getitem__):
+            result = drift.collect_advisories([{'name': 'ring', 'version': '0.17.8'}])
+        self.assertEqual([f['id'] for f in result['findings']], ['RUSTSEC-2025-0001'])
+        self.assertEqual(result['withdrawn'], ['RUSTSEC-2025-0002'])
+        self.assertEqual(result['unreadable'], [
+            {'crate': 'ring', 'sha': 'b3', 'reason': 'blob not found'},
+            {'crate': 'ring', 'sha': 'b4', 'reason': 'front matter does not parse'},
+        ])
+
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))
         self.assertGreater(drift.version_key('v1.46.3'), drift.version_key('v0.28.0'))
@@ -694,6 +745,59 @@ class SiteTests(unittest.TestCase):
 
     def test_slug(self):
         self.assertEqual(site.slug('https://github.com/robtfm/bevy_kira_audio'), 'robtfm-bevy-kira-audio')
+
+    # The advisories view is JavaScript inside the page, so these run its `esc`, `advisoryTable`
+    # and `advisories` under Node with a stand-in for the collected data.
+    def render_advisories(self, advisories, q=''):
+        node = shutil.which('node')
+        if not node:
+            if os.environ.get('CI'):
+                self.fail('node is needed to render the advisories view')
+            self.skipTest('node is not installed')
+        esc = re.search(r'^const esc = .*$', site.PAGE, re.M).group(0)
+        functions = [re.search(rf'^function {name}\(.*?^\}}$', site.PAGE, re.M | re.S).group(0)
+                     for name in ('advisoryTable', 'advisories')]
+        script = '\n'.join([f'const D = {{advisories: {json.dumps(advisories)}}};',
+                            f'const state = {{q: {json.dumps(q)}}};', esc, *functions,
+                            'process.stdout.write(advisories());'])
+        return subprocess.run([node, '-'], input=script, capture_output=True, text=True, check=True).stdout
+
+    FINDINGS = [
+        {'crate': 'ring', 'version': '0.17.8', 'id': 'RUSTSEC-2025-0009', 'title': 'AES panic',
+         'date': '2025-03-06', 'patched': ['>= 0.17.12'], 'affected': True, 'rustsec_url': 'https://rustsec.org/a'},
+        {'crate': 'paste', 'version': '1.0.15', 'id': 'RUSTSEC-2024-0436', 'title': 'unmaintained',
+         'date': '2024-10-07', 'patched': [], 'affected': False, 'rustsec_url': 'https://rustsec.org/b'},
+    ]
+
+    def test_advisories_view_reports_withdrawn_and_unreadable_entries(self):
+        html = self.render_advisories({
+            'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS,
+            'withdrawn': ['RUSTSEC-2025-0002', 'RUSTSEC-2025-0003'],
+            'unreadable': [{'crate': 'ring', 'sha': 'b3', 'reason': 'blob not found'},
+                           {'crate': '<img src=x>', 'sha': 'b4', 'reason': 'a & "b"'}],
+        })
+        self.assertIn(' 2 withdrawn entries skipped.', html)
+        self.assertIn('<span class="badge b-security">2 entries could not be read</span>: '
+                      'ring (blob not found), &lt;img src=x&gt; (a &amp; &quot;b&quot;).', html)
+        self.assertNotIn('<img', html)
+
+    def test_advisories_view_without_withdrawn_or_unreadable_entries(self):
+        # Data collected before these fields existed has neither key.
+        for extra in ({}, {'withdrawn': [], 'unreadable': []}):
+            with self.subTest(extra=extra):
+                html = self.render_advisories({'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS, **extra})
+                self.assertIn('2 crates in the lock have advisory-db entries; 1 entries affect the pinned versions', html)
+                self.assertNotIn('withdrawn', html)
+                self.assertNotIn('could not be read', html)
+                self.assertIn('<tr class="aff">', html)
+                self.assertLess(html.index('RUSTSEC-2025-0009'), html.index('RUSTSEC-2024-0436'))
+
+    def test_advisories_view_filters_the_table(self):
+        html = self.render_advisories({'crates_with_entries': ['ring', 'paste'], 'findings': self.FINDINGS,
+                                       'withdrawn': ['RUSTSEC-2025-0002']}, q='paste')
+        self.assertIn('RUSTSEC-2024-0436', html)
+        self.assertNotIn('RUSTSEC-2025-0009', html)
+        self.assertIn(' 1 withdrawn entries skipped.', html)
 
 
 if __name__ == '__main__':

@@ -22,7 +22,6 @@ use crate::{
     chat_marker_things,
     chat_reaction::chat_message_id,
     global_crdt::{process_transport_updates, ChatEvent, ForeignPlayer},
-    room_connection::RoomState,
 };
 #[cfg(feature = "livekit")]
 use crate::{
@@ -30,6 +29,7 @@ use crate::{
         participant::{ActiveSpeaker, LivekitParticipant},
         LivekitTransport,
     },
+    room_connection::RoomState,
     room_connection::RoomStatus,
     SceneRoom, Transport,
 };
@@ -226,7 +226,7 @@ fn chat_history_cmd(mut input: ConsoleCommand<ChatHistoryCommand>, log: Res<Chat
 
 // --- /voice_state ---
 
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 struct VoiceRoom {
     /// a scene's room rather than the realm's
     scene: bool,
@@ -234,14 +234,14 @@ struct VoiceRoom {
 }
 
 /// What the LiveKit rooms say about voice; known only in a `livekit` build.
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 struct LivekitVoice {
     rooms: Vec<VoiceRoom>,
     /// sorted, once each
     speakers: Vec<Address>,
 }
 
-#[cfg_attr(not(feature = "livekit"), allow(dead_code))]
+#[cfg(feature = "livekit")]
 impl LivekitVoice {
     fn new(
         rooms: impl IntoIterator<Item = VoiceRoom>,
@@ -265,27 +265,56 @@ impl LivekitVoice {
 
 struct VoiceState {
     mic: MicState,
+    #[cfg(feature = "livekit")]
     livekit: Option<LivekitVoice>,
     /// The private call or community stream (`VoiceChatState`); null without `livekit`.
     call: Option<Value>,
 }
 
+/// The call's fields that are null with no call, each with what the debug panel shows instead.
+const CALL_UNSET: [(&str, &str); 4] = [
+    ("callId", "No private call."),
+    ("communityId", "No community stream."),
+    ("peer", "No private call."),
+    ("error", "No call error."),
+];
+
 impl VoiceState {
     fn to_json(&self) -> Value {
-        let livekit = self.livekit.as_ref();
-        json!({
-            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked },
+        let mut report = json!({
+            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked() },
             "call": self.call,
-            "livekit": livekit.is_some(),
-            "connected": livekit.map(|livekit| livekit.connected()),
-            "rooms": livekit.map(|livekit| livekit.rooms.iter().map(|room| json!({
-                "scene": room.scene,
-                "state": room.state.name(),
-            })).collect::<Vec<_>>()),
-            "speakers": livekit.map(|livekit| livekit.speakers.iter()
+            "livekit": false,
+            "connected": null,
+            "rooms": null,
+            "speakers": null,
+        });
+        #[cfg(feature = "livekit")]
+        if let Some(livekit) = &self.livekit {
+            report["livekit"] = true.into();
+            report["connected"] = livekit.connected().into();
+            report["rooms"] = livekit
+                .rooms
+                .iter()
+                .map(|room| json!({ "scene": room.scene, "state": room.state.name() }))
+                .collect();
+            report["speakers"] = livekit
+                .speakers
+                .iter()
                 .map(|address| format!("{address:#x}"))
-                .collect::<Vec<_>>()),
-        })
+                .collect();
+        }
+        if let Some(call) = self.call.as_ref().and_then(Value::as_object) {
+            let unavailable: serde_json::Map<String, Value> = CALL_UNSET
+                .iter()
+                .filter(|(field, _)| call.get(*field).is_none_or(Value::is_null))
+                .map(|(field, reason)| (format!("call.{field}"), Value::from(*reason)))
+                .collect();
+            if !unavailable.is_empty() {
+                report["unavailable"] = Value::Object(unavailable);
+            }
+        }
+        report
     }
 }
 
@@ -317,14 +346,18 @@ fn voice_state_cmd(
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
     #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
     #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
+    #[cfg(feature = "livekit")] focus: Option<Res<common::structs::ClientWindowFocus>>,
     #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
         #[cfg(feature = "livekit")]
-        let call = call.zip(call_mic).map(|(call, call_mic)| {
-            serde_json::to_value(call.snapshot(&call_mic, &call_participants))
-                .unwrap_or(Value::Null)
-        });
+        let call = call
+            .zip(call_mic)
+            .zip(focus)
+            .map(|((call, call_mic), focus)| {
+                serde_json::to_value(call.snapshot(&call_mic, *focus, &call_participants))
+                    .unwrap_or(Value::Null)
+            });
         #[cfg(not(feature = "livekit"))]
         let call = None;
         #[cfg(feature = "livekit")]
@@ -337,11 +370,10 @@ fn voice_state_cmd(
                 .iter()
                 .filter_map(|participant| participant.identity().as_str().as_h160()),
         ));
-        #[cfg(not(feature = "livekit"))]
-        let livekit = None;
 
         let state = VoiceState {
             mic: mic.clone(),
+            #[cfg(feature = "livekit")]
             livekit,
             call,
         };
@@ -352,6 +384,13 @@ fn voice_state_cmd(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mic_state(available: bool, enabled: bool) -> MicState {
+        let mut mic = MicState::default();
+        mic.available = available;
+        mic.enabled = enabled;
+        mic
+    }
 
     fn address(last: u8) -> Address {
         Address::from([last; 20])
@@ -512,6 +551,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn voice_is_connected_when_a_voice_room_is() {
         let room = |scene, state| VoiceRoom { scene, state };
         let connected = |rooms| LivekitVoice::new(rooms, []).connected();
@@ -527,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn speakers_are_listed_once_in_order() {
         let voice = LivekitVoice::new([], [address(9), address(2), address(9)]);
         assert_eq!(voice.speakers, [address(2), address(9)]);
@@ -535,12 +576,8 @@ mod tests {
     #[test]
     fn voice_state_without_livekit_has_only_the_mic() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: false,
-                scene_blocked: false,
-                refusals: 0,
-            },
+            mic: mic_state(true, false),
+            #[cfg(feature = "livekit")]
             livekit: None,
             call: None,
         };
@@ -558,14 +595,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "livekit")]
     fn voice_state_with_livekit_reports_rooms_and_speakers() {
         let state = VoiceState {
-            mic: MicState {
-                available: true,
-                enabled: true,
-                scene_blocked: false,
-                refusals: 0,
-            },
+            mic: mic_state(true, true),
             livekit: Some(LivekitVoice::new(
                 [
                     VoiceRoom {
@@ -593,6 +626,32 @@ mod tests {
                     { "scene": true, "state": "connecting" },
                 ],
                 "speakers": [format!("{:#x}", address(0xab))],
+                "unavailable": {
+                    "call.callId": "No private call.",
+                    "call.communityId": "No community stream.",
+                    "call.peer": "No private call.",
+                    "call.error": "No call error.",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn a_call_reading_that_is_set_needs_no_explanation() {
+        let state = VoiceState {
+            mic: mic_state(true, false),
+            #[cfg(feature = "livekit")]
+            livekit: None,
+            call: Some(json!({
+                "status": "connected", "callId": "c1", "communityId": null,
+                "peer": "0x01", "error": null,
+            })),
+        };
+        assert_eq!(
+            state.to_json()["unavailable"],
+            json!({
+                "call.communityId": "No community stream.",
+                "call.error": "No call error.",
             })
         );
     }

@@ -24,7 +24,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -44,6 +44,11 @@ const MOUSE_BUTTONS = { left: 1, right: 2, middle: 4 };
 // The targets that hold frames of the page: the page itself and an out-of-process iframe. Others
 // (workers) are let go.
 const FRAME_TARGETS = new Set(['page', 'iframe']);
+// What a console command fails with when the document it runs in is replaced or closed before it
+// answers, as a click that loads the page again does.
+export const APP_GONE = 'the app frame went away before it answered: its document was replaced or closed';
+// How Chrome answers a call into a context that has just been destroyed.
+const CONTEXT_GONE = /context was destroyed|target navigated or closed|cannot find context/i;
 
 // Chrome as the benchmark runner finds it (local-harness/benchmark/src/chrome.rs `find`).
 function chromeCandidates(env) {
@@ -282,12 +287,15 @@ class Pipe {
 class Driver {
   #proc;
   #profile;
+  #keepProfile;
   #origin;
   #pipe;
   #exit;
   #stderr = [];
   #sessions = new Map();
   #contexts = new Map();
+  // what waits for a context to go away, by the context's key
+  #ends = new Map();
   #page = null;
   #app = null;
   #held = new Set();
@@ -301,9 +309,10 @@ class Driver {
   /** Chrome's own name and version, once launched, e.g. `Chrome/156.0.8078.48`. */
   product = '';
 
-  constructor(proc, profile, url) {
+  constructor(proc, profile, keepProfile, url) {
     this.#proc = proc;
     this.#profile = profile;
+    this.#keepProfile = keepProfile;
     this.#origin = new URL(url).origin;
     this.url = url;
     this.#pipe = new Pipe(proc.stdio[3], proc.stdio[4], (event) => this.#onEvent(event));
@@ -386,7 +395,7 @@ class Driver {
       case 'Target.detachedFromTarget':
         this.#sessions.delete(params.sessionId);
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === params.sessionId) this.#contexts.delete(key);
+          if (context.session.id === params.sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.executionContextCreated': {
@@ -404,11 +413,11 @@ class Driver {
         break;
       }
       case 'Runtime.executionContextDestroyed':
-        this.#contexts.delete(`${sessionId}:${params.executionContextId}`);
+        this.#forget(`${sessionId}:${params.executionContextId}`);
         break;
       case 'Runtime.executionContextsCleared':
         for (const [key, context] of this.#contexts) {
-          if (context.session.id === sessionId) this.#contexts.delete(key);
+          if (context.session.id === sessionId) this.#forget(key);
         }
         break;
       case 'Runtime.consoleAPICalled':
@@ -498,6 +507,31 @@ class Driver {
 
   // --- the app frame: ready and console commands ---
 
+  #forget(key) {
+    this.#contexts.delete(key);
+    const ends = this.#ends.get(key);
+    this.#ends.delete(key);
+    for (const end of ends ?? []) end();
+  }
+
+  // A rejection with APP_GONE once `context` goes away. Chrome may never answer a call into an
+  // out-of-process frame whose target detaches, so a command must not wait on that answer alone.
+  #gone(context) {
+    const key = `${context.session.id}:${context.id}`;
+    let end;
+    const promise = new Promise((_, reject) => {
+      end = () => reject(new Error(APP_GONE));
+    });
+    promise.catch(() => {});
+    if (!this.#contexts.has(key)) {
+      end();
+      return { promise, cancel: () => {} };
+    }
+    if (!this.#ends.has(key)) this.#ends.set(key, new Set());
+    this.#ends.get(key).add(end);
+    return { promise, cancel: () => this.#ends.get(key)?.delete(end) };
+  }
+
   // The context that has the console and the binding: the app frame's, not the shell's.
   async #findApp() {
     if (this.#app && this.#contexts.has(`${this.#app.session.id}:${this.#app.id}`)) return this.#app;
@@ -571,14 +605,24 @@ class Driver {
       throw new Error(this.#goneMessage(info));
     });
     exited.catch(() => {});
-    const answer = await within(
-      Promise.race([
-        this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session),
-        exited
-      ]),
-      Math.max(1, timeout - (Date.now() - started)),
-      () => `\`${line}\` did not finish within ${timeout} ms`
-    );
+    const gone = this.#gone(context);
+    const evaluated = this.#send('Runtime.evaluate', { expression, contextId: context.id, awaitPromise: true, returnByValue: true }, context.session)
+      .catch((error) => {
+        if (!CONTEXT_GONE.test(error.message)) throw error;
+        // the answer can come before the event that says so: no later command may go to it
+        this.#forget(`${context.session.id}:${context.id}`);
+        throw new Error(APP_GONE);
+      });
+    let answer;
+    try {
+      answer = await within(
+        Promise.race([evaluated, exited, gone.promise]),
+        Math.max(1, timeout - (Date.now() - started)),
+        () => `\`${line}\` did not finish within ${timeout} ms`
+      );
+    } finally {
+      gone.cancel();
+    }
     if (answer.exceptionDetails) {
       throw new Error(answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text);
     }
@@ -741,7 +785,8 @@ class Driver {
 
   // --- closing ---
 
-  /** `Browser.close`, a kill after 5 s, and the temporary profile removed. */
+  /** `Browser.close`, a kill after 5 s, and the temporary profile removed; a profile the caller
+   *  named stays. */
   close() {
     this.#closing ??= (async () => {
       this.#pipe.send('Browser.close').catch(() => {});
@@ -753,6 +798,7 @@ class Driver {
       }
       this.#pipe.fail(new Error('the driver is closed'));
       for (const stream of this.#proc.stdio) stream?.destroy();
+      if (this.#keepProfile) return;
       try {
         await rm(this.#profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch (error) {
@@ -773,12 +819,16 @@ class Driver {
   }
 }
 
-/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own. */
-export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900] } = {}) {
+/** Start Chrome on `url` and drive it. `args` are extra Chrome flags, after the driver's own.
+ *  `profile` names a directory for Chrome's profile that is kept when the driver closes, so the
+ *  page's storage and caches carry over to the next launch with it; without one, each launch
+ *  has a temporary profile of its own. One Chrome at a time uses a profile. */
+export async function launch({ url, chrome, headless = true, args = [], windowSize = [1600, 900], profile: kept } = {}) {
   if (typeof url !== 'string' || url === '') throw new TypeError('launch needs the url to open');
   const executable = chrome ?? findChrome();
   if (executable == null) throw new Error(noChromeMessage(process.env));
-  const profile = await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-'));
+  const profile = kept == null ? await mkdtemp(path.join(tmpdir(), 'dcl-web-driver-')) : path.resolve(kept);
+  if (kept != null) await mkdir(profile, { recursive: true });
   const flags = [
     '--remote-debugging-pipe',
     `--user-data-dir=${profile}`,
@@ -795,7 +845,7 @@ export async function launch({ url, chrome, headless = true, args = [], windowSi
     ...args
   ];
   const proc = spawn(executable, flags, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
-  const driver = new Driver(proc, profile, url);
+  const driver = new Driver(proc, profile, kept != null, url);
   try {
     await driver.open();
   } catch (error) {

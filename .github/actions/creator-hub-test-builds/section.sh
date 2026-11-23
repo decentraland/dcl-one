@@ -5,8 +5,10 @@
 #
 # Environment: SECTION (desktop | inspector | asset-packs), RUN_ID, RUN_URL, HEAD_SHA, PR_NUMBER,
 # BASE_URL (the bucket's base URL), VERSION, and
-#   desktop:      BRANCH, MACOS and WINDOWS (`uploaded` when that build is in the bucket;
-#                 anything else reads as a failed build), MACOS_SECONDS and WINDOWS_SECONDS
+#   desktop:      BRANCH, MACOS, WINDOWS and LINUX (`uploaded` when that build is in the bucket,
+#                 `skipped` when the run did not build it, which leaves its rows out; anything
+#                 else reads as a failed build), MACOS_SECONDS, WINDOWS_SECONDS and
+#                 LINUX_SECONDS
 #   inspector:    PACKAGE_KEY, PREVIEW_PATH
 #   asset-packs:  PACKAGE_KEY
 set -euo pipefail
@@ -37,7 +39,7 @@ installer_row() {
   if [ "$2" = uploaded ]; then
     printf '| %s | ✅ Built%s | [%s](%s/creator-hub/branch/%s/Decentraland%%20Creator%%20Hub-%s-%s) |\n' \
       "$1" "${3:+ in $3 seconds}" "$4" "$BASE_URL" "$BRANCH" "$BUILD" "$4"
-  else
+  elif [ "$2" != skipped ]; then
     printf '| %s | ❌ Failed | — |\n' "$1"
   fi
 }
@@ -46,12 +48,16 @@ case "$SECTION" in
   desktop)
     : "${BRANCH:?BRANCH is required}"
     state=passed
-    [ "${MACOS:-}" = uploaded ] && [ "${WINDOWS:-}" = uploaded ] || state=failed
+    for result in "${MACOS:-}" "${WINDOWS:-}" "${LINUX:-}"; do
+      [ "$result" = uploaded ] || [ "$result" = skipped ] || state=failed
+    done
     badge 'Desktop app' "$state" electron
     printf '| Platform | Result | Download |\n|---|---|---|\n'
     installer_row 'macOS (Apple silicon)' "${MACOS:-}" "${MACOS_SECONDS:-}" mac-arm64.zip
     installer_row 'macOS (Intel)' "${MACOS:-}" "${MACOS_SECONDS:-}" mac-x64.zip
     installer_row 'Windows' "${WINDOWS:-}" "${WINDOWS_SECONDS:-}" win-x64.exe
+    installer_row 'Linux (AppImage)' "${LINUX:-}" "${LINUX_SECONDS:-}" linux-x86_64.AppImage
+    installer_row 'Linux (deb)' "${LINUX:-}" "${LINUX_SECONDS:-}" linux-amd64.deb
     if [ "${MACOS:-}" = uploaded ]; then
       cat <<'MD'
 
@@ -65,6 +71,17 @@ The app is not signed.
 4. Double-click the app.
 
 To know which Mac you have, see [Mac computers with Apple silicon](https://support.apple.com/en-us/116943).
+
+</details>
+MD
+    fi
+    if [ "${LINUX:-}" = uploaded ]; then
+      cat <<MD
+
+<details><summary>How to open the Linux app</summary>
+
+- AppImage: run \`chmod +x "Decentraland Creator Hub-$BUILD-linux-x86_64.AppImage"\`, then start the file.
+- deb: run \`sudo apt install "./Decentraland Creator Hub-$BUILD-linux-amd64.deb"\`, then start Decentraland Creator Hub from the applications menu.
 
 </details>
 MD

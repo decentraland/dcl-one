@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from hud_manifest_fixture import seal, SHARED
@@ -28,6 +29,39 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+
+    def test_avatar_preview_boot_contract_is_selected_for_its_inputs(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        patterns = re.findall(r"^ +- '?([^'\n]+)'?$", workflow, re.M)
+        for path in (
+            'rendering/avatar-preview/web/preview.js',
+            'rendering/avatar-preview/build.sh',
+            'rendering/avatar-preview/tools/preview-packaging.test.mjs',
+            'rendering/avatar-preview/Cargo.toml',
+            'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/avatar-preview/tools/preview-boot.test.mjs',
+            'rendering/bevy-explorer/source/deploy/web/engine/content_cache.js',
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
+        source = workflow.split('\n  source:\n', 1)[1].split('\n  changes:\n', 1)[0]
+        self.assertIn(
+            'run: node --experimental-vm-modules --test rendering/avatar-preview/tools/preview-*.test.mjs',
+            source,
+        )
+
+    def test_preview_patches_match_the_explorer_pins(self):
+        preview = tomllib.loads((ci.ROOT / 'rendering/avatar-preview/Cargo.toml').read_text())
+        explorer = tomllib.loads((ci.ROOT / 'rendering/bevy-explorer/source/Cargo.toml').read_text())
+        for source, crates in preview['patch'].items():
+            for name, pin in crates.items():
+                with self.subTest(source=source, crate=name):
+                    expected = explorer['patch'][source][name]
+                    self.assertEqual(
+                        (pin.get('git'), pin.get('rev')),
+                        (expected.get('git'), expected.get('rev')),
+                    )
+
     @staticmethod
     def upstream_commit_cache(job):
         """The key command of a job that restores the upstream commits, and the directory, key and fallback of the restore."""
@@ -47,7 +81,7 @@ class WorkflowTest(unittest.TestCase):
         def watched(name, path):
             patterns = re.findall(r"^ +- '?([^'\n]+)'?$", (ci.ROOT / name).read_text(), re.M)
             return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
-        tool, crate = 'tooling/patched-sources.py', 'rendering/bevy-explorer/vendor/boimp/Cargo.toml'
+        tool, crate = 'tooling/patched-sources.py', 'rendering/bevy-explorer/vendor/bevy_dui/Cargo.toml'
         # The guards, the Changes job and the Test Suite of this workflow run the tool on the series.
         for path in (tool, crate, 'rendering/bevy-explorer/patches/bevy/source.toml',
                      'rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch'):
@@ -211,10 +245,22 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn('--remote', job)
         self.assertNotIn('--check', job)
 
-    def test_only_the_test_suite_rebuilds_a_tree_and_only_the_bevy_one(self):
+    def test_only_the_test_suite_and_clippy_rebuild_a_tree_and_only_the_bevy_one(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         jobs = dict(re.findall(r'(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
-        self.assertEqual([name for name, job in jobs.items() if 'materialise' in job], ['test'])
+        self.assertEqual([name for name, job in jobs.items() if 'materialise' in job], ['test', 'clippy'])
+        # Clippy compiles `common`'s tests, which include a shader of the Bevy tree.
+        clippy = jobs['clippy']
+        self.assertIn('        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
+        # Written before the file times are restored, so an unchanged tree keeps its cached times.
+        self.assertLess(clippy.index('patched-sources.py" materialise bevy'), clippy.index('bevy-mtimes.py" restore'))
+        # It reads the same cache as the Test Suite: the key from the root, restored before the rebuild.
+        self.assertIn('        id: bases\n        working-directory: .\n', clippy)
+        self.assertIn('        env:\n'
+                      '          DCL_PATCHED_SOURCES_CACHE: ${{ github.workspace }}/.cache/patched-sources\n'
+                      '        run: python3 "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n', clippy)
+        self.assertLess(clippy.index('actions/cache/restore@', clippy.index('- name: Restore the upstream commits\n')),
+                        clippy.index('patched-sources.py" materialise bevy'))
         job = jobs['test']
         python, rebuild, tests = (job.index(step) for step in (
             "python-version: '3.12'\n", 'run: python "$GITHUB_WORKSPACE/tooling/patched-sources.py" materialise bevy\n',
@@ -226,6 +272,7 @@ class WorkflowTest(unittest.TestCase):
         # and directory, read where the tool looks, on each system of the matrix.
         daily = (ci.ROOT / '.github/workflows/bevy-explorer-upstream.yml').read_text()
         self.assertEqual(self.upstream_commit_cache(job), self.upstream_commit_cache(daily))
+        self.assertEqual(self.upstream_commit_cache(jobs['clippy']), self.upstream_commit_cache(daily))
         restore = job.index('actions/cache/restore@', job.index('- name: Restore the upstream commits\n'))
         self.assertLess(restore, rebuild)
         step = job[job.rfind('- name:', 0, restore):job.rfind('- name:', 0, rebuild)]
@@ -238,7 +285,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn('        id: bases\n        working-directory: .\n', job)
         # Only the daily run saves the directory: each step of this workflow that names it restores it.
         self.assertEqual(re.findall(r'uses: (actions/cache\S*)@\S+ # v[\d.]+\n +with:\n +path: \.cache/patched-sources\n', workflow),
-                         ['actions/cache/restore'] * 2)
+                         ['actions/cache/restore'] * 3)
         # The rebuilt workspace has no lock file: it starts from the explorer's.
         self.assertIn('          cp Cargo.lock ../bevy/Cargo.lock\n          cargo test --manifest-path ../bevy/Cargo.toml ', job[tests:])
 
@@ -400,6 +447,91 @@ class WorkflowTest(unittest.TestCase):
                       "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
         self.assertIn('          path: .cache/bevy-engine\n'
                       '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
+
+    def test_pr_web_builds_restore_the_unoptimised_target_that_main_saves(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        jobs = dict(re.findall(r'(?ms)^  ([a-z-]+):\n(.*?)(?=^  [a-z-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
+        web, main = jobs['build-deploy-web'], jobs['web-pr-target']
+        unoptimised = "steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT == 'unoptimized'"
+
+        def step(job, name):
+            return job.split(f'      - name: {name}\n', 1)[1].split('\n      - ', 1)[0]
+
+        # Both jobs name the dependencies with one expression, or a PR never finds main's entry.
+        hashes = [re.search(r'echo "hash=(\$\{\{ hashFiles\(.*?\) \}\})"', step(job, 'Identify the wasm dependencies'),
+                            re.S).group(1) for job in (web, main)]
+        self.assertEqual(hashes[0], hashes[1])
+        optimised = re.search(r'key: bevy-explorer-web-(\$\{\{ hashFiles\(.*?\) \}\})',
+                              step(web, 'Restore wasm target cache'), re.S).group(1)
+        self.assertEqual(hashes[0], optimised)
+        # The new family must not start with the optimised cache's restore prefix.
+        self.assertTrue(step(web, 'Restore wasm target cache').endswith('          restore-keys: bevy-explorer-web-'))
+        self.assertNotIn('bevy-explorer-web-unopt', workflow)
+
+        main_key = ('bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-'
+                    '${{ steps.engine-inputs.outputs.key }}')
+        main_prefix = 'bevy-web-unopt-v1-main-${{ steps.wasm-deps.outputs.hash }}-'
+        restore = step(web, 'Restore the pull request wasm target cache')
+        self.assertIn(f'        if: {unoptimised}\n', restore)
+        # Main's entries in a step that names no PR entry: GitHub searches the PR's own scope with
+        # every key of a step before main's, so a PR entry named here would win over a newer entry
+        # of main for the same dependencies.
+        self.assertTrue((restore + '\n').endswith(f'          key: {main_key}\n          restore-keys: {main_prefix}\n'))
+        self.assertNotIn('bevy-web-unopt-v1-pr-', restore)
+        own = step(web, "Restore the pull request's own wasm target cache")
+        self.assertIn(f"        if: {unoptimised} && steps.wasm-pr-cache.outputs.cache-matched-key == ''\n", own)
+        self.assertTrue((own + '\n').endswith('          key: bevy-web-unopt-v1-pr-${{ steps.wasm-deps.outputs.hash }}\n'
+                                              '          restore-keys: bevy-web-unopt-v1-main-\n'))
+        save = step(web, 'Save the pull request wasm target cache')
+        # Once, when neither main nor the PR had an entry for these dependencies, and never from a fork.
+        self.assertIn(f"          {unoptimised} &&\n"
+                      "          steps.wasm-pr-cache.outputs.cache-matched-key == '' && "
+                      "steps.wasm-own-cache.outputs.cache-hit != 'true' &&\n"
+                      "          github.event.pull_request.head.repo.full_name == github.repository\n", save)
+        self.assertIn('          key: ${{ steps.wasm-own-cache.outputs.cache-primary-key }}', save)
+        # Cargo compares file times in both modes.
+        for name, verb in (("Restore the path dependencies' cached file times", 'restore'),
+                           ("Record the path dependencies' file times for the cache", 'record')):
+            self.assertEqual(step(web, name), "        if: steps.engine-cache.outputs.cache-matched-key == ''\n"
+                             f'        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" {verb} target')
+        order = [web.index(f'      - name: {name}\n') for name in (
+            'Identify the wasm dependencies', 'Restore the pull request wasm target cache',
+            "Restore the pull request's own wasm target cache",
+            "Restore the path dependencies' cached file times", 'Build and test the local web app',
+            "Record the path dependencies' file times for the cache", 'Save the pull request wasm target cache')]
+        self.assertEqual(order, sorted(order))
+
+        # Main fills the cache in a job that no job waits for, as the web job would compile it. Only a
+        # first attempt runs: the cleanup keeps the newest entry, and a later attempt of an older run
+        # would save a newer one.
+        self.assertIn("    if: >-\n      needs.changes.outputs.web == 'true' && github.event_name == 'push' && "
+                      "github.ref == 'refs/heads/main' &&\n      vars.BENCHMARK_ENABLED_RUNNERS == 'none' && "
+                      "github.run_attempt == '1'\n", main)
+        self.assertTrue(main.rstrip().endswith('    timeout-minutes: 45\n    needs:\n      - changes'))
+        self.assertFalse([name for name, body in jobs.items() if re.search(r'^\s+- web-pr-target$', body, re.M)])
+        for line in ('runs-on', 'BEVY_SEGMENT_WRITE_KEY', 'toolchain', 'targets', 'components', 'working-directory: rendering'):
+            mine = re.search(rf'^ +{line}.*$', main, re.M).group().strip()
+            self.assertIn(mine, [found.strip() for found in re.findall(rf'^ +{line}.*$', web, re.M)], line)
+        self.assertIn('    permissions:\n      contents: read\n', main)
+        # A push that changes no engine input finds its entry without a download, and every later step is skipped.
+        probe = step(main, 'Look for the pull request wasm target cache')
+        self.assertTrue((probe + '\n').endswith(f'          lookup-only: true\n          key: {main_key}\n'))
+        self.assertNotIn('restore-keys', probe)
+        after = main.split('      - name: Look for the pull request wasm target cache\n', 1)[1].split('\n    defaults:', 1)[0]
+        later_steps = after.split('\n      - ')[1:]
+        self.assertEqual(len(later_steps), 9)
+        for later in later_steps:
+            self.assertIn("        if: steps.wasm-pr-probe.outputs.cache-hit != 'true'", later, later.splitlines()[0])
+        # Entries of the same dependencies only: an entry of other dependencies would carry their artifacts
+        # into every later save.
+        key = step(main, 'Restore the pull request wasm target cache')
+        self.assertTrue((key + '\n').endswith(f'          restore-keys: {main_prefix}\n'))
+        self.assertIn(f'          key: {main_key}\n', key)
+        self.assertNotIn('bevy-web-unopt-v1-main-\n', key + '\n')
+        self.assertIn('run: python3 ../../../apps/bevy-explorer/build-web.py --no-opt --target-only',
+                      step(main, 'Compile the web engine as a pull request does'))
+        self.assertIn('          key: ${{ steps.wasm-pr-cache.outputs.cache-primary-key }}',
+                      step(main, 'Save the pull request wasm target cache'))
 
     def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
@@ -570,7 +702,8 @@ class SelectionTest(unittest.TestCase):
         # with the new fingerprint, or fetch-play.py finds no producer for it. Markdown is in
         # neither the fingerprint nor the selection.
         for name, lanes in (('library/hashing/src/cid.ts', {'web'}), ('library/hashing/package.json', {'web'}),
-                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set())):
+                            ('tooling/check-local-hashing.mjs', {'web'}), ('library/hashing/README.md', set()),
+                            ('apps/creator-hub/packages/zip-extract/index.js', {'web'}), ('apps/creator-hub/packages/zip-extract/README.md', set())):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -715,7 +848,8 @@ class SelectionTest(unittest.TestCase):
         jobs = dict(re.findall(r'(?ms)^  ([a-z-]+):\n(.*?)(?=^  [a-z-]+:\n|\Z)', workflow.split('\njobs:\n', 1)[1]))
         larger = {name for name, body in jobs.items() if re.search(r'runs-on: .*(16core|xlarge)', body)}
         conditions = {'test': 'test', 'headless-smoke': 'headless'}
-        self.assertEqual(larger, {*conditions, 'build-deploy-web'})
+        # web-pr-target runs only on main, where no pull request waits for it.
+        self.assertEqual(larger, {*conditions, 'build-deploy-web', 'web-pr-target'})
         self.assertEqual(set(conditions.values()), set(ci.HELD_ON_DRAFT))
         # The development smoke job and the images read the web job's output, so a draft still builds it.
         for name in ('build-deploy-web', 'images'):
@@ -847,7 +981,9 @@ class SelectionTest(unittest.TestCase):
                             ('services/catalyst/Cargo.lock', True), ('services/catalyst/new/Cargo.toml', True),
                             ('services/catalyst/rust-toolchain.toml', True), ('.cargo/config.toml', True),
                             ('library/new/Cargo.toml', True), ('apps/sites/pnpm-lock.yaml', True),
-                            ('apps/sites/package.json', True), ('apps/sites/.npmrc', True)):
+                            ('apps/sites/package.json', True), ('apps/sites/.npmrc', True),
+                            ('library/ui/pnpm-lock.yaml', True), ('library/ui/package.json', True),
+                            ('library/ui/pnpm-workspace.yaml', True), ('library/ui/gallery/src/new.tsx', False)):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -1010,11 +1146,12 @@ class SelectionTest(unittest.TestCase):
 
     def test_a_bevy_patch_and_the_patch_tool_select_the_test_suite_on_each_system(self):
         # The Test Suite rebuilds the Bevy tree from its series with the tool and tests its crates on
-        # each system. Every build takes a patched source by the revision that Cargo.lock names, so
-        # no other job and no image reads a series or the tool.
-        cases = (('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', {'test', 'native-matrix'}),
-                 ('rendering/bevy-explorer/patches/bevy/source.toml', {'test', 'native-matrix'}),
-                 ('tooling/patched-sources.py', {'test', 'native-matrix'}),
+        # each system; Clippy rebuilds it for a shader that `common`'s tests include. Every build takes
+        # a patched source by the revision that Cargo.lock names, so no other job and no image reads a
+        # series or the tool.
+        cases = (('rendering/bevy-explorer/patches/bevy/series/0001-scene-spawner.patch', {'test', 'clippy', 'native-matrix'}),
+                 ('rendering/bevy-explorer/patches/bevy/source.toml', {'test', 'clippy', 'native-matrix'}),
+                 ('tooling/patched-sources.py', {'test', 'clippy', 'native-matrix'}),
                  ('rendering/bevy-explorer/patches/winit/series/0001-one.patch', set()))
         for path, expected in cases:
             with self.subTest(path=path):
@@ -1028,7 +1165,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_in_tree_crates_select_every_lane_and_rebuild_the_images(self):
         # Cargo compiles the crates tracked as exact bytes from their paths.
-        self.write('rendering/bevy-explorer/vendor/boimp/src/lib.rs', 'changed')
+        self.write('rendering/bevy-explorer/vendor/bevy_dui/src/lib.rs', 'changed')
         head = self.commit()
         result = ci.select(self.base, head)
         self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
@@ -1039,15 +1176,15 @@ class SelectionTest(unittest.TestCase):
         for name in ('bevy', 'winit', 'old'):
             self.write(f'{pins}/{name}/source.toml', f'name = "{name}"\ncommit = "1"\n')
         self.write(f'{pins}/bevy/series/0001-one.patch', 'one')
-        self.write(f'{vendor}/boimp/src/lib.rs', 'one')
+        self.write(f'{vendor}/bevy_dui/src/lib.rs', 'one')
         before = self.commit()
         cases = [
             # A patch, a document and a file beside the pin change no pin.
             ({f'{pins}/bevy/series/0001-one.patch': 'two', f'{pins}/README.md': 'text', f'{pins}/winit/notes.toml': 'x'}, '', False),
             ({f'{pins}/winit/source.toml': 'name = "winit"\ncommit = "2"\n'}, 'winit', False),
             ({f'{pins}/bevy/source.toml': 'commit = "3"\n', f'{pins}/new/source.toml': 'commit = "1"\n'}, 'bevy new', False),
-            ({f'{vendor}/boimp/src/lib.rs': 'two'}, '', True),
-            ({f'{vendor}/boimp/upstream.lock.json': '{}'}, '', True),
+            ({f'{vendor}/bevy_dui/src/lib.rs': 'two'}, '', True),
+            ({f'{vendor}/bevy_dui/upstream.lock.json': '{}'}, '', True),
             ({'tooling/vendor-provenance.py': 'changed'}, '', True),
             ({'tooling/enet-provenance.py': 'changed'}, '', True),
             ({'tooling/upstream-drift.py': 'changed', 'rendering/bevy-explorer/source/vendor/basisu/x.c': 'x'}, '', False),

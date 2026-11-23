@@ -6,8 +6,10 @@ import {
   authApiUrlFor,
   completeDeepLinkSignIn,
   getAuthRequestId,
+  getDeepLinkTarget,
   getExplorerDeeplink,
   getSigninDeeplink,
+  identityBindingFor,
   isBridgeOnlyEnabled,
   isDeepLinkFlowEnabled,
   isValidUuidV4,
@@ -77,6 +79,44 @@ describe("client deep links", () => {
     expect(getExplorerDeeplink("dcl-creator-hub://", true, "req-1")).toBe(
       "dcl-creator-hub://?bridgeOnly=true&authRequestId=req-1",
     );
+  });
+});
+
+describe("getDeepLinkTarget", () => {
+  it("hands a Creator Hub sign-in back to Creator Hub", () => {
+    const params = new URLSearchParams("targetConfigId=creator-hub&flow=deeplink");
+    expect(getDeepLinkTarget(params)).toEqual({
+      appName: "Creator Hub",
+      deepLink: "dcl-creator-hub://",
+      holdsVerifier: true,
+    });
+  });
+
+  it("hands any other sign-in back to the Explorer", () => {
+    for (const query of ["", "targetConfigId=unknown", "targetConfigId=__proto__"]) {
+      expect(getDeepLinkTarget(new URLSearchParams(query)), query).toEqual({
+        appName: "Decentraland",
+        deepLink: "decentraland://",
+        holdsVerifier: false,
+      });
+    }
+  });
+});
+
+describe("identityBindingFor", () => {
+  it("binds the identity only for an app that holds a verifier", () => {
+    const loadedFor = (query: string, id = REQUEST_ID) => ({
+      id,
+      deepLinkIdValid: isValidUuidV4(id),
+      target: getDeepLinkTarget(new URLSearchParams(query)),
+    });
+    expect(identityBindingFor(loadedFor("targetConfigId=creator-hub"))).toBe(REQUEST_ID);
+    expect(identityBindingFor(loadedFor("targetConfigId=creator-hub", "not-a-uuid"))).toBe(
+      undefined,
+    );
+    for (const query of ["", "targetConfigId=alternative", "targetConfigId=unknown"]) {
+      expect(identityBindingFor(loadedFor(query)), query).toBe(undefined);
+    }
   });
 });
 

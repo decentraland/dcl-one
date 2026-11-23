@@ -218,7 +218,7 @@ impl ProfileImagesState {
                         state: self.clone(),
                         key,
                     };
-                    tokio::spawn(async move {
+                    crate::shared::task::spawn(async move {
                         let state = guard.state.clone();
                         let (entity, kind) = (guard.key.0.clone(), guard.key.1);
                         let deadline = Instant::now() + state.producer.budget;
@@ -413,7 +413,7 @@ impl ProfileImagesState {
         let rx = Arc::new(tokio::sync::Mutex::new(rx));
         for _ in 0..WARM_WORKERS {
             let (state, rx) = (self.clone(), rx.clone());
-            tokio::spawn(async move {
+            crate::shared::task::spawn(async move {
                 loop {
                     let next = rx.lock().await.recv().await;
                     let Some(entity) = next else { break };

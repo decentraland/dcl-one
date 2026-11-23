@@ -20,14 +20,16 @@ import {
   type Emote,
   type Envelope,
   type GalleryPhoto,
+  type GiftableItem,
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
   type PhotoModeSnapshot,
   type Profile,
-  type ProfileEdit,
+  type SaveProfileRequest,
   type SceneToPage,
   type Setting,
+  type TextureOptimizationMessage,
   type VoiceChatActionWire,
   type VoiceChatParticipant,
   type VoiceChatRole,
@@ -40,8 +42,41 @@ import { mockEventList, mockEventPlaces, setMockReminder } from './mockEvents'
 import type { Color3, PortableInfo, PortableState } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { fixMapPublicReads } from '../features/map/mapApi'
-import { MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
+import { MOCK_MAP_PINS, MOCK_NEARBY_PLAYERS, MOCK_PEERS, MOCK_POIS, mockMapReply } from './mockMap'
 import { DEFAULT_REALM } from '@hud-host'
+
+// The empty account's events are the reference client's calendar page: five days of seven cards,
+// none live, none highlighted (name, host, hour of the day). Mock-only.
+const REFERENCE_EVENTS: [string, string, number][][] = [
+  [['Tower Smash Arena', 'Razzor', 17], ['CELERES PROMO DAY', 'Gorillas', 17], ['RED LIGHT GREEN LIGHT', 'oldguy', 17], ['Voxel Art', 'MiguelAmargo', 18], ['TGIF - Social HangOut', 'DiyaoTheGod', 19], ['Cult Horror Club', 'Decentraland Foundation', 20], ['Hang with AudioHotLab', 'RowsliMobile', 21]],
+  [['The Meta Beast Roar', 'aKIDcalledMAKE', 2], ["DJ LosCat's Pink Oasis", 'LosCat', 5], ['Poker Night', 'OtoLam', 7], ['Daily Drop Party', 'Streetwear', 11 + 50 / 60], ['VIP Lounge', 'FabioDeGaetano', 12], ['SkeleFrenz Gamenight', 'Luvlee17', 15], ['Live DJ Music and Dance', 'CarlFravel', 16]],
+  [['Classic Royal', 'Shungite', 0], ['AFTER-HOURS', 'Crypt0M1notaur', 2], ['ESCORT THE VIP - Team Battle', 'FabioDeGaetano', 11], ['Sunday Rumble @ Knights', 'Villager', 13.5], ['Tournament Party 🏆', 'AdventureLand', 15], ['Skatable — All you can skate', 'HEAVENYEAH', 16 + 20 / 60], ['The First Portal Night', 'pablo', 17]],
+  [['Amargo Cosmic Adventure', 'MiguelAmargo', 0], ["Open Haus @ L'Impératrice", 'EmpressTrash', 3], ['Poker Night', 'OtoLam', 4], ['Movie Night With StoneyEye', 'StoneyEye', 6], ['Vinyl Tea Party', 'Billyjuice', 8], ['WEEK BUILDER KICKOFF', 'sebga', 12], ['Career Mondays for Builders', 'Decentraland Foundation', 14]],
+  [['Beyond The NFT', 'Mods', 1], ['Poker Night', 'OtoLam', 5], ['Introduction to Yoga Flow', 'ClydeRouge', 9], ['The Absolute Basics of Building', 'Canessa', 17], ['Unity Music Festival afterparty', 'CarlFravel', 17], ['Immersive Arts Community', 'fractilians', 18], ['Pixel Arcade Trivia Night', 'PixelArcade', 19]]
+]
+function referenceEvents(msg: Parameters<typeof mockEventList>[0]): ReturnType<typeof mockEventList> {
+  if (msg.list === 'live' || msg.list === 'highlight') return []
+  const midnight = new Date()
+  midnight.setHours(0, 0, 0, 0)
+  // a template with every field the protocol has, from the mock's own events
+  const template = mockEventList({ ...msg, from: undefined, to: undefined }).find((e) => !e.live && !e.highlighted && e.community_id == null)
+  if (template == null) return []
+  const from = msg.from != null ? Date.parse(msg.from) : -Infinity
+  const to = msg.to != null ? Date.parse(msg.to) : Infinity
+  return REFERENCE_EVENTS.flatMap((day, d) =>
+    day.map(([name, user_name, hour], i) => {
+      const start = midnight.getTime() + d * 86_400_000 + hour * 3_600_000
+      const at = new Date(start).toISOString()
+      const until = new Date(start + 2 * 3_600_000).toISOString()
+      // the first is the one the reference opens: two evenings, in its own scene
+      const first = d === 0 && i === 0
+      const detail = first
+        ? { description: 'See if you can get a high score! The scoreboard has fifty slots and is filling up fast, with scores and stars to earn.', duration: 6 * 3_600_000, finish_at: new Date(start + 6 * 3_600_000).toISOString(), next_finish_at: new Date(start + 6 * 3_600_000).toISOString(), recurrent: true, recurrent_dates: [at, new Date(start + 86_400_000).toISOString()], x: -67, y: -116 }
+        : {}
+      return { ...template, id: `ref-${d}-${i}`, name, user_name, image: `https://picsum.photos/seed/ref${d}${i}/680/368`, start_at: at, next_start_at: at, finish_at: until, next_finish_at: until, recurrent: false, recurrent_dates: [at], attending: false, world: false, server: null, scene_name: name, place_id: 'place-2', ...detail }
+    })
+  ).filter((e) => Date.parse(e.next_start_at ?? '') >= from && Date.parse(e.next_start_at ?? '') <= to)
+}
 
 const badgeImg = (seed: string): string => `https://picsum.photos/seed/${seed}/96/96`
 const tier = (badge: string, name: string, steps: string, unlockedAt?: number): BadgeTier => ({
@@ -51,41 +86,46 @@ const tier = (badge: string, name: string, steps: string, unlockedAt?: number): 
   image: badgeImg(`${badge}-${name}`),
   unlockedAt
 })
-// Newest first, then the locked ones — the order the bridge delivers.
-function mockBadges(): Badge[] {
+// The reference client's badge list, in its order: grouped by category, the unlocked one first.
+// `category` is mock-only: the passport groups by it when a badge carries one.
+type MockBadge = Badge & { category: string }
+const lockedBadge = (category: string, id: string, name: string, description: string): MockBadge => ({ id, name, description, image: badgeImg(id), locked: true, category })
+function mockBadges(): MockBadge[] {
   return [
-    { id: 'regally_rare', name: 'Regally Rare', description: 'Equipped at least 3 Rare Wearables at the same time', image: badgeImg('rare'), unlockedAt: Date.UTC(2026, 6, 15, 14, 16) },
-    { id: 'festive_trail_2025', name: 'Festive Trail 2025', description: 'Followed the Festive Trail', image: badgeImg('festive'), unlockedAt: Date.UTC(2026, 0, 6, 20, 24) },
-    { id: 'profile_pro', name: 'Profile Pro', description: 'Completed your profile', image: badgeImg('profile'), unlockedAt: Date.UTC(2025, 6, 1, 15, 27) },
+    { id: 'dclcitizen', name: 'Decentraland Citizen', description: 'Landed in Decentraland', image: badgeImg('citizen'), unlockedAt: Date.UTC(2026, 9, 4, 14, 16), category: 'Explorer' },
     {
       id: 'traveler',
       name: 'Traveler',
       description: 'Genesis City scenes explored',
-      tier: 'Starter',
       image: badgeImg('traveler-Starter'),
-      unlockedAt: Date.UTC(2024, 11, 4, 14, 17),
-      progress: { done: 5, target: 50 },
-      tiers: [tier('traveler', 'Starter', '1', Date.UTC(2024, 11, 4, 14, 17)), tier('traveler', 'Bronze', '50'), tier('traveler', 'Silver', '250'), tier('traveler', 'Gold', '1,000'), tier('traveler', 'Platinum', '2,500'), tier('traveler', 'Diamond', '10,000')]
+      locked: true,
+      progress: { done: 0, target: 1 },
+      tiers: [tier('traveler', 'Starter', '1'), tier('traveler', 'Bronze', '50'), tier('traveler', 'Silver', '250'), tier('traveler', 'Gold', '1,000'), tier('traveler', 'Platinum', '2,500'), tier('traveler', 'Diamond', '10,000')],
+      category: 'Explorer'
     },
-    { id: 'dclcitizen', name: 'Decentraland Citizen', description: 'Landed in Decentraland', image: badgeImg('citizen'), unlockedAt: Date.UTC(2024, 11, 4, 14, 16) },
-    {
-      id: 'social_butterfly',
-      name: 'Social Butterfly',
-      description: 'Friends made',
-      tier: 'Bronze',
-      image: badgeImg('butterfly-Bronze'),
-      unlockedAt: Date.UTC(2024, 2, 27, 15, 18),
-      progress: { done: 12, target: 50 },
-      tiers: [tier('butterfly', 'Starter', '1', Date.UTC(2024, 2, 20, 9, 0)), tier('butterfly', 'Bronze', '5', Date.UTC(2024, 2, 27, 15, 18)), tier('butterfly', 'Silver', '50'), tier('butterfly', 'Gold', '250')]
-    },
-    { id: 'moves_master', name: 'Moves Master', description: 'Emotes played', image: badgeImg('moves-Starter'), locked: true, progress: { done: 8, target: 100 }, tiers: [tier('moves', 'Starter', '100'), tier('moves', 'Bronze', '500'), tier('moves', 'Silver', '1,000')] },
-    { id: 'vertical_voyager', name: 'Vertical Voyager', description: 'Reached 500m above ground', image: badgeImg('voyager'), locked: true },
-    { id: 'open_for_business', name: 'Open for Business', description: 'Listed 2 items on the Marketplace', image: badgeImg('business'), locked: true, progress: { done: 0, target: 2 } }
+    { id: 'moves_master', name: 'Moves Master', description: 'Emotes played', image: badgeImg('moves-Starter'), locked: true, progress: { done: 0, target: 100 }, tiers: [tier('moves', 'Starter', '100'), tier('moves', 'Bronze', '500'), tier('moves', 'Silver', '1,000')], category: 'Explorer' },
+    lockedBadge('Explorer', 'vertical_voyager', 'Vertical Voyager', 'Reached 500m above ground'),
+    { ...lockedBadge('Explorer', 'walkabout_wanderer', 'Walkabout Wanderer', 'Steps walked in Decentraland'), progress: { done: 0, target: 10000 } },
+    lockedBadge('Collector', 'epic_ensemble', 'Epic Ensemble', 'Equipped at least 3 Epic Wearables at the same time'),
+    lockedBadge('Collector', 'regally_rare', 'Regally Rare', 'Equipped at least 3 Rare Wearables at the same time'),
+    lockedBadge('Collector', 'legendary_look', 'Legendary Look', 'Equipped at least 3 Legendary Wearables at the same time'),
+    lockedBadge('Collector', 'mythic_model', 'Mythic Model', 'Equipped at least 3 Mythic Wearables at the same time'),
+    lockedBadge('Collector', 'unique_unicorn', 'Unique Unicorn', 'Equipped at least 3 Unique Wearables at the same time'),
+    lockedBadge('Collector', 'exotic_elegance', 'Exotic Elegance', 'Equipped at least 3 Exotic Wearables at the same time'),
+    lockedBadge('Collector', 'emotionista', 'Emotionista', 'Emotes purchased'),
+    lockedBadge('Collector', 'fashionista', 'Fashionista', 'Wearables purchased'),
+    lockedBadge('Creator', 'emote_creator', 'Emote Creator', 'Emotes published'),
+    lockedBadge('Creator', 'wearable_designer', 'Wearable Designer', 'Wearables published'),
+    lockedBadge('Socializer', 'profile_pro', 'Profile Pro', 'Completed your profile'),
+    { ...lockedBadge('Socializer', 'social_butterfly', 'Social Butterfly', 'Friends made'), progress: { done: 0, target: 5 } },
+    { ...lockedBadge('Builder', 'open_for_business', 'Open for Business', 'Listed 2 items on the Marketplace'), progress: { done: 0, target: 2 } }
   ]
 }
 
 // A fully-populated passport for the mock, so the React passport shows every section.
 function richProfile(address: string, name: string, isGuest: boolean): Profile {
+  // the empty account's passport is the reference account's: one line about itself, no fields, no links
+  const bare = mockAccount() === 'empty'
   return {
     address,
     name,
@@ -93,16 +133,16 @@ function richProfile(address: string, name: string, isGuest: boolean): Profile {
     bodyImage: `https://picsum.photos/seed/${encodeURIComponent(address)}/360/760`,
     hasClaimedName: !name.includes('#'),
     isGuest,
-    description: 'Exploring Decentraland one plaza at a time. 🌅 DCL citizen since 2022.',
-    links: [
+    description: bare ? 'rig test avatar' : 'Exploring Decentraland one plaza at a time. 🌅 DCL citizen since 2022.',
+    links: bare ? [] : [
       { title: 'Twitter', url: 'https://twitter.com' },
       { title: 'Discord', url: 'https://discord.com' }
     ],
     mutuals: 30,
     badges: mockBadges(),
     equippedWearables: equippedNow(),
-    equippedEmotes: mockEquippedEmotes(),
-    info: {
+    equippedEmotes: mockEquippedEmotes().filter((e) => e.slot != null),
+    info: bare ? {} : {
       gender: 'Male',
       birthdate: '1991-11-26',
       pronouns: 'He / Him',
@@ -292,9 +332,9 @@ const mockWearables: Wearable[] = BASE.map((b, i) => {
 const BASE_MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const mockOutfit = (urns: string[]): Outfit => ({
   bodyShape: BASE_MALE,
-  eyes: { color: { r: 0.37, g: 0.22, b: 0.19 } },
-  hair: { color: { r: 0.6, g: 0.36, b: 0.2 } },
-  skin: { color: { r: 0.8, g: 0.6, b: 0.47 } },
+  eyes: { color: { r: 0.37, g: 0.22, b: 0.19, a: 1 } },
+  hair: { color: { r: 0.6, g: 0.36, b: 0.2, a: 1 } },
+  skin: { color: { r: 0.8, g: 0.6, b: 0.47, a: 1 } },
   wearables: urns,
   forceRender: []
 })
@@ -313,32 +353,96 @@ const MOCK_COLLECTIBLE_EQUIPPED: Wearable[] = [
   { urn: 'urn:decentraland:ethereum:collections-v1:mf_sammichgamer:mf_animehair', name: 'Anime warrior hair', rarity: 'legendary', category: 'hair', thumbnail: thumb('urn:decentraland:off-chain:base-avatars:hair_anime_01'), equipped: true, shopUrl: 'https://decentraland.org/shop/item/0x30d3387ff3de2a21bef7032f82d00ff7739e403c/3' }
 ]
 let mockForceRender: string[] = []
-const equippedNow = (): Wearable[] => [...mockWearables.filter((w) => w.equipped), ...MOCK_OFF_CATALOG_EQUIPPED, ...MOCK_COLLECTIBLE_EQUIPPED]
+// The empty account's wardrobe is a new account's: 72 base items (five pages of sixteen), none smart,
+// none restricted to a body shape, and the look it starts with (body, hair, eyebrows, eyes, mouth,
+// top, bottom, shoes), whose items lie past the first page. Mock-only.
+const REFERENCE_FIRST_PAGE = ['black_sun_glasses', 'sport_jacket', 'beard', 'f_sweater', 'f_brown_trousers', 'basketball_shorts', 'bun_shoes', 'granpa_beard', 'blue_tshirt', 'piratepatch', 'sport_jacket', 'black_sun_glasses', 'f_jeans', 'pink_gem_earring', 'Thunder_earring', 'blue_tshirt']
+const REFERENCE_LOOK = new Set(['casual_hair_01', 'eyebrows_00', 'mouth_00', 'blue_tshirt', 'basketball_shorts', 'sneakers'])
+const REFERENCE_LOOK_NAMES: Record<string, string> = { casual_hair_01: 'Short Hair', eyebrows_00: 'EyeBrows_00', mouth_00: 'Mouth_00' }
+// the order a look is listed in: the face first, then the clothes, the body last
+const LOOK_ORDER = ['eyebrows', 'eyes', 'mouth', 'hair', 'upper_body', 'lower_body', 'feet', 'body_shape']
+const referenceWardrobe: Wearable[] = [...REFERENCE_FIRST_PAGE, ...Array.from({ length: 56 }, (_, i) => BASE[i % BASE.length].name)].map((name, i) => {
+  const base = BASE.find((b) => b.name === name) ?? BASE[0]
+  const urn = `urn:decentraland:off-chain:base-avatars:${name}`
+  const first = i >= REFERENCE_FIRST_PAGE.length && i < REFERENCE_FIRST_PAGE.length + BASE.length
+  const worn = first && REFERENCE_LOOK.has(name)
+  return { urn: first ? urn : `${urn}_${i}`, name: worn ? (REFERENCE_LOOK_NAMES[name] ?? base.label) : base.label, rarity: 'base', category: base.category, thumbnail: thumb(urn), equipped: worn }
+})
+const REFERENCE_BODY: Wearable[] = [
+  { urn: 'urn:decentraland:off-chain:base-avatars:BaseMale', name: 'Man', rarity: 'base', category: 'body_shape', thumbnail: thumb('urn:decentraland:off-chain:base-avatars:BaseMale'), equipped: true },
+  { urn: 'urn:decentraland:off-chain:base-avatars:eyes_00', name: 'Eyes_00', rarity: 'base', category: 'eyes', thumbnail: thumb('urn:decentraland:off-chain:base-avatars:eyes_00'), equipped: true }
+]
+/** The catalogue of the account the mock plays. */
+const wardrobe = (): Wearable[] => (mockAccount() === 'empty' ? referenceWardrobe : mockWearables)
+const equippedNow = (): Wearable[] =>
+  mockAccount() === 'empty'
+    ? [...REFERENCE_BODY.filter((w) => w.equipped), ...referenceWardrobe.filter((w) => w.equipped)].sort((a, b) => LOOK_ORDER.indexOf(a.category) - LOOK_ORDER.indexOf(b.category))
+    : [...mockWearables.filter((w) => w.equipped), ...MOCK_OFF_CATALOG_EQUIPPED, ...MOCK_COLLECTIBLE_EQUIPPED]
 
 // The 10 wheel-slot base emotes — shared by getEmotes (the wheel) and the passport's Equipped
 // Emotes section, so both mocks agree.
 const MOCK_EMOTE_NAMES = ['Hands Air', 'Wave', 'Fist Pump', 'Dance', 'Raise Hand', 'Clap', 'Money', 'Kiss', 'Head Explode', 'Shrug']
+// The empty account's emotes are a new account's: the ten on the wheel (by slot) and ten more it
+// owns and has not placed, so the grid has a second page. Mock-only.
+const REFERENCE_EMOTES: [string, string][] = [['clap', 'Clap'], ['cry', 'Cry'], ['dab', 'Dab'], ['dance', 'Dance'], ['disco', 'Disco'], ['dontsee', "Don't see"], ['fistpump', 'Fist pump'], ['hammer', 'Hammer'], ['handsair', 'Hands air'], ['wave', 'Wave'], ['raiseHand', 'Raise hand'], ['shrug', 'Shrug'], ['headexplode', 'Head explode'], ['kiss', 'Kiss'], ['money', 'Money'], ['robot', 'Robot'], ['tik', 'Tik'], ['tektonik', 'Tektonik'], ['snowfall', 'Snowfall'], ['hohoho', 'Hohoho']]
 const mockEquippedEmotes = (): Emote[] =>
-  // No `thumbnail` field — mirrors the scene relay so we validate URN-derived thumbnails too.
-  MOCK_EMOTE_NAMES.map((name, slot) => ({
-    slot,
-    urn: `urn:decentraland:off-chain:base-emotes:${name.toLowerCase().replace(/ /g, '')}`,
-    name,
-    rarity: 'base'
-  }))
+  mockAccount() === 'empty'
+    ? REFERENCE_EMOTES.map(([id, name], i) => ({ ...(i < 10 ? { slot: i } : {}), urn: `urn:decentraland:off-chain:base-emotes:${id}`, name, rarity: 'base' }))
+    : // No `thumbnail` field — mirrors the scene relay so we validate URN-derived thumbnails too.
+      MOCK_EMOTE_NAMES.map((name, slot) => ({
+        slot,
+        urn: `urn:decentraland:off-chain:base-emotes:${name.toLowerCase().replace(/ /g, '')}`,
+        name,
+        rarity: 'base'
+      }))
 
 const v = (name: string): { name: string; description: string } => ({ name, description: '' })
 
-// Stateful so the mock's controls actually move when changed (setSetting → re-emit).
+const choice = (name: string, category: string, variants: string[], value: number): Setting => ({ name, category, description: '', minValue: 0, maxValue: variants.length - 1, namedVariants: variants.map(v), value, default: value, stepSize: 1 })
+const level = (name: string, category: string, value: number, max = 100, min = 0, stepSize = 1): Setting => ({ name, category, description: '', minValue: min, maxValue: max, namedVariants: [], value, default: value, stepSize })
+const ON_OFF = ['Off', 'On']
+// Stateful so the mock's controls actually move when changed (setSetting → re-emit). The rows, their
+// names, order and values are the reference client's settings pages (Graphics, Sounds, Controls,
+// Chat); 'Master Volume' and 'Voice Volume' keep the engine's names, which the rail's Volume
+// popover and the nearby-voice panel read.
 const mockSettings: Setting[] = [
-  { name: 'fullscreen', category: 'general', description: 'Run in fullscreen mode.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1 },
-  { name: 'resolution', category: 'general', description: '', minValue: 0, maxValue: 2, namedVariants: [v('1280 × 720'), v('1920 × 1080'), v('2560 × 1440')], value: 1, default: 1, stepSize: 1 },
-  { name: 'graphics_quality', category: 'graphics', description: 'Overall visual quality.', minValue: 0, maxValue: 3, namedVariants: [v('Low'), v('Medium'), v('High'), v('Ultra')], value: 2, default: 1, stepSize: 1 },
-  { name: 'fps_limit', category: 'graphics', description: 'Cap the frame rate.', minValue: 30, maxValue: 144, namedVariants: [], value: 60, default: 60, stepSize: 1 },
-  { name: 'Voice Volume', category: 'audio', description: "The volume of nearby players' voices.", minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1 },
-  { name: 'Voice Chat Volume', category: 'audio', description: 'The volume of private calls and community voice streams.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1 },
-  { name: 'master_volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 80, default: 100, stepSize: 1 },
-  { name: 'voice_chat', category: 'audio', description: 'Enable voice chat.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1 }
+  choice('Experimental Lobby (requires restart)', 'graphics', ON_OFF, 1),
+  choice('Graphics Preset', 'graphics', ['Low', 'Medium', 'High', 'Custom'], 3),
+  choice('Resolution', 'graphics', ['1280x720', '1440x900', '1920x1080'], 1),
+  level('Resolution Scale', 'graphics', 100, 120, 50),
+  choice('Fullscreen', 'graphics', ON_OFF, 0),
+  choice('FPS Limit', 'graphics', ['30', '60', '120', 'Max'], 3),
+  { ...choice('VSync', 'graphics', ON_OFF, 0), description: 'Sync frames to the monitor refresh.' },
+  choice('MSAA', 'graphics', ['Off', 'X2', 'X4', 'X8'], 3),
+  choice('HDR', 'graphics', ON_OFF, 1),
+  choice('Bloom', 'graphics', ON_OFF, 1),
+  choice('Avatar Outline', 'graphics', ON_OFF, 1),
+  level('Scene Distance', 'graphics', 100, 100, 20),
+  level('Landscape Distance', 'graphics', 7000, 7000, 1000, 0.5),
+  choice('Sun Shadows', 'graphics', ON_OFF, 1),
+  choice('Sun Lens Flare', 'graphics', ON_OFF, 1),
+  choice('Enable Scene Lights', 'graphics', ON_OFF, 1),
+  level('Max Lights in a Scene', 'graphics', 10, 10, 1),
+  choice('Quality', 'graphics', ['Low', 'Medium', 'High'], 2),
+  level('Shadows Distance', 'graphics', 100, 100, 10),
+  choice('Play current scene streams only', 'graphics', ON_OFF, 0),
+  choice('Jiggle Bones', 'graphics', ON_OFF, 1),
+  level('Master Volume', 'audio', 100),
+  level('In-World Music & SFX', 'audio', 100),
+  level('UI SFX', 'audio', 100),
+  level('Avatar & Emotes SFX', 'audio', 100),
+  { ...level('Streaming Volume', 'audio', 100), description: 'The volume of videos, audio streams and livestreams played by scenes in the world.' },
+  { ...level('Voice Volume', 'audio', 100), description: "The volume of nearby players' voices." },
+  choice('Microphone', 'audio', ['Default', 'Headset Microphone', 'Webcam Microphone'], 0),
+  choice('Mute Mic in Background', 'audio', ON_OFF, 1),
+  level('Vertical sensitivity', 'controls', 1, 2, 0.1, 0.01),
+  level('Horizontal sensitivity', 'controls', 1, 2, 0.1, 0.01),
+  choice('Head Sync', 'controls', ON_OFF, 1),
+  choice('Marker Visibility', 'controls', ['Everyone', 'Friends Only', 'No One'], 1),
+  choice('Exchange DMs & Calls with', 'chat', ['Everyone', 'Only Friends'], 0),
+  choice('In-World Chat Bubbles & Reactions', 'chat', ['All Chats', 'Nearby Only', 'None'], 0),
+  choice('Language', 'chat', ['English', 'Español', 'Français', 'Deutsch', 'Português', '中文', '日本語', '한국어'], 0),
+  choice('Chat Reactions', 'chat', ON_OFF, 0)
 ]
 
 // The engine's default binding table (mirrors InputMap::default() in crates/common/src/inputs.rs)
@@ -373,7 +477,7 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
   [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
-  [{ System: 'Microphone' }, ['KeyV']],
+  [{ System: 'Microphone' }, ['KeyT']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
   [{ System: 'Chat' }, ['Enter', 'NumpadEnter']],
   [{ System: 'CameraUp' }, ['ArrowUp']],
@@ -398,13 +502,13 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'Gallery' }, ['KeyG']],
   [{ System: 'Settings' }, ['KeyP']],
   [{ System: 'Friends' }, ['KeyL']],
-  [{ System: 'ChatPanel' }, ['KeyT']]
+  [{ System: 'ChatPanel' }, []]
 ]
 
 // Saved profile edits, in order. Applied over the mock's stock passport so an edit made in ?mock=1
 // sticks for the rest of the session — the real bridge gets the same effect by folding the save
 // into its catalyst cache.
-const ownEdits: ProfileEdit[] = []
+const ownEdits: SaveProfileRequest[] = []
 /** The returning mock user holds two NAMEs; a guest holds none. */
 const ownedNamesOf = (o: MockOptions): string[] => (o.hasPreviousLogin ? ['Mojito', 'MojitoDCL'] : [])
 const ownProfile = (o: MockOptions): Profile =>
@@ -432,6 +536,52 @@ const DEFAULTS: MockOptions = {
   welcome: new URLSearchParams(location.search).get('welcome') === '1'
 }
 
+export { MOCK_SWITCHES } from './mockSwitches'
+
+/** A screen the mock holds for a look at it (`?mock=1&mockhold=…`), where the real flow passes it by:
+ *  `returning` (with `previousLogin=1`) waits on the returning-account screen instead of entering,
+ *  `loading` keeps the scene loading screen up, at a fixed share, once a destination is picked, and
+ *  `welcome` (with `welcome=1`) shows the welcome page to the guest sign-in too, and `verifying`
+ *  keeps a new guest's sign-in ahead, so the wait for its account stays up. */
+export type MockHold = 'returning' | 'loading' | 'welcome' | 'verifying'
+export function mockHold(): MockHold | null {
+  const q = new URLSearchParams(location.search)
+  const hold = q.get('mockhold')
+  return q.get('mock') === '1' && (hold === 'returning' || hold === 'loading' || hold === 'welcome' || hold === 'verifying') ? hold : null
+}
+/** What the mock paints behind the HUD in place of the world (`?mock=1&mockworld=black|white`): one
+ *  flat colour over the page's own background, so the same state taken over black and over white
+ *  gives the HUD layer alone (its colour and its alpha), whatever a panel lets through. */
+export type MockWorld = 'black' | 'white'
+export function mockWorld(): MockWorld | null {
+  const q = new URLSearchParams(location.search)
+  const world = q.get('mockworld')
+  return q.get('mock') === '1' && (world === 'black' || world === 'white') ? world : null
+}
+function paintMockWorld(world: MockWorld): void {
+  const id = 'mock-world'
+  if (document.getElementById(id) != null) return
+  const style = document.createElement('style')
+  style.id = id
+  style.textContent = `html, body { background: ${world === 'black' ? '#000' : '#fff'} !important; }`
+  document.head.append(style)
+}
+/** The account the mock plays (`?mock=1&mockaccount=empty`): `empty` has no friends, no friend
+ *  requests, no private or community conversations, no camera reel and no passport photos, for the
+ *  empty states. Without it the account is the populated one. */
+export function mockAccount(): 'empty' | null {
+  const q = new URLSearchParams(location.search)
+  return q.get('mock') === '1' && q.get('mockaccount') === 'empty' ? 'empty' : null
+}
+/** `?mock=1&mockplayers=none`: a place with nobody else in it, as a private world is: an empty
+ *  nearby roster, nobody talking, and no chat lines but the system's. */
+export function mockAlone(): boolean {
+  const q = new URLSearchParams(location.search)
+  return q.get('mock') === '1' && q.get('mockplayers') === 'none'
+}
+/** The share the held loading screen shows. */
+export const MOCK_HOLD_LOADING_PROGRESS = 62
+
 let running: (() => void) | null = null
 
 let mockPublicReels: ((address: string) => GalleryPhoto[]) | null = null
@@ -450,16 +600,24 @@ export async function mockPublicReelPage(
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  const world = mockWorld()
+  if (world != null) paintMockWorld(world)
+  const emptyAccount = mockAccount() === 'empty'
+  const alone = mockAlone()
   fixMapPublicReads({ pois: MOCK_POIS, peers: MOCK_PEERS })
   // Stateful so a home set from the map is the home the lobby and the map then show.
-  let mockHome = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 } }
+  const NO_MOCK_HOME = { realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false, pinnable: true }
+  let mockHome = NO_MOCK_HOME
   const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
   // under metadata.sender (name + avatar), with no metadata.title.
   let mockPolled = false
-  const mockNotifications: AppNotification[] = [
+  // The empty account's list is the reference account's: two badge notifications, read weeks ago,
+  // and nothing new arriving (no toasts, no reward popup, no unread count on the bell).
+  const badgeNote = (id: string, badge: string, seed: string): AppNotification => ({ id, type: 'badge_granted', read: true, timestamp: new Date(Date.now() - 40 * 86_400_000).toISOString(), metadata: { title: 'New Badge Unlocked!', description: badge, image: badgeImg(seed) } })
+  const mockNotifications: AppNotification[] = emptyAccount ? [badgeNote('nb1', 'Decentraland Citizen', 'citizen'), badgeNote('nb2', 'Profile Pro', 'profile_pro')] : [
     { id: 'n1', type: 'social_service_friendship_accepted', read: false, timestamp: new Date(mockNow).toISOString(), metadata: { sender: { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' } } },
     { id: 'n2', type: 'social_service_friendship_request', read: false, timestamp: new Date(mockNow - 1800_000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } } },
     { id: 'n3', type: 'item_sold', read: false, timestamp: new Date(mockNow - 3600_000).toISOString(), metadata: { title: 'Item sold', description: 'Your “Sunset Hoodie” sold for 120 MANA.', image: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } },
@@ -472,7 +630,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   // 230 photos a day apart, so the grid pages across several month headers. dateTime is a
   // unix-seconds string, like the real compact endpoint.
   const DAY = 86_400_000
-  const mockGallery = Array.from({ length: 230 }, (_, i) => ({
+  const mockGallery = Array.from({ length: emptyAccount ? 0 : 230 }, (_, i) => ({
     id: `g${i}`,
     url: `https://picsum.photos/seed/reel${i}/1200/800`,
     thumbnailUrl: `https://picsum.photos/seed/reel${i}/400/300`,
@@ -504,19 +662,20 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   }
   // Stateful saved outfits so save/delete persist across reopens (mirrors the real store).
   const mockOutfits: OutfitsMetadata = {
-    outfits: [
-      { slot: 0, outfit: mockOutfit(mockWearables.slice(0, 5).map((w) => w.urn)) },
-      { slot: 2, outfit: mockOutfit(mockWearables.slice(5, 10).map((w) => w.urn)) }
+    // the empty account has saved none
+    outfits: emptyAccount ? [] : [
+      { slot: 0, outfit: mockOutfit(wardrobe().slice(0, 5).map((w) => w.urn)) },
+      { slot: 2, outfit: mockOutfit(wardrobe().slice(5, 10).map((w) => w.urn)) }
     ],
     namesForExtraSlots: []
   }
   // The randomize bar's looks, as equipped catalog urns.
   const mockUndo: string[][] = []
   const mockRedo: string[][] = []
-  const mockLook = (): string[] => mockWearables.filter((w) => w.equipped).map((w) => w.urn)
+  const mockLook = (): string[] => wardrobe().filter((w) => w.equipped).map((w) => w.urn)
   const wearMock = (urns: string[]): void => {
     const set = new Set(urns)
-    for (const w of mockWearables) w.equipped = set.has(w.urn)
+    for (const w of wardrobe()) w.equipped = set.has(w.urn)
   }
   // Message ids as the engine makes them: the sender and a timestamp.
   let mockClock = 46000
@@ -546,10 +705,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       ]
     ]
   ])
+  if (emptyAccount) dmStores.clear()
   // The communities the mock user is in, as chat channels; who is online in one.
   const memberNames = ['DCLOfficial', 'KazeNoKai', 'METAWOLF', 'laurenmae', 'Eax', 'Thund', 'aixa', 'Kimbo', 'BayBackner', 'Rochyou', 'Soultasium', 'franfranfran', 'olavra', 'Meshroom']
   const memberAddr = (i: number): string => `0x${(i + 1).toString(16).padStart(40, '0')}`
   const communityChannels = (): CommunityChannel[] =>
+    emptyAccount ? [] :
     mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator' || c.role === 'member').map((c) => ({ id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role }))
   const onlineMembers = (): CommunityMember[] => [
     // the mock user is in the server's list too: the HUD must not count them
@@ -668,7 +829,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             pendingAssets: pending > 0 ? pending : null
           }
         })
-        if (pending > 0) setTimeout(() => tick(i + 1), 250)
+        if (pending > 0 && mockHold() !== 'loading') setTimeout(() => tick(i + 1), 250)
       }
       tick(0)
     }, 500)
@@ -697,14 +858,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       () =>
         reply({
           kind: 'members',
-          members: MOCK_NEARBY
+          members: alone ? [] : MOCK_NEARBY
         }),
       1400
     )
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
-    setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
+    if (!alone) setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
     // One nearby player is already hushed, so both Hush and Hear show in ?mock=1.
-    setTimeout(() => reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] }), 1500)
+    setTimeout(() => reply({ kind: 'nearbyMutes', addresses: alone ? [] : [...mockNearbyMuted] }), 1500)
 
     // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
     const pushVoice = (next: Partial<VoiceChatState>): void => {
@@ -856,16 +1017,16 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({
           kind: 'friends',
           available: true,
-          friends: [
+          friends: emptyAccount ? [] : [
             { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', status: 'online', picture: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' },
             { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', status: 'online' },
             { address: '0x1e105bb213754519903788022b962fe2b9c4b263', name: 'Pravus', status: 'away' },
             { address: '0x3a1b2c4d5e6f7081920a3b4c5d6e7f8091a2b3c4', name: 'Clara#1l0u', status: 'offline' }
           ],
-          received: [
+          received: emptyAccount ? [] : [
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
-          sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
+          sent: emptyAccount ? [] : [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
           blocked: [],
           // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
           blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
@@ -883,7 +1044,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       ['0x1e105bb213754519903788022b962fe2b9c4b263', 'this plaza looks great'],
       ['0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', '@Mojito meet me at 10,10']
     ]
-    samples.forEach(([sender, message], i) => {
+    if (!alone) samples.forEach(([sender, message], i) => {
       const id = messageId(sender)
       setTimeout(() => reply({ kind: 'chat', chat: { sender, message, channel: 'Nearby', messageId: id } }), 2500 + i * 2200)
       // someone reacts to the first one
@@ -898,6 +1059,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
       setTimeout(() => reply({ kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }), 3000)
     }
+    // ?textures=1 → a scene preview's texture import: progress, then the Reload offer (the toast).
+    if (new URLSearchParams(location.search).get('textures') === '1') {
+      const total = 6
+      const at = (done: number, state: 'running' | 'ready'): TextureOptimizationMessage => ({
+        kind: 'textureOptimization',
+        sceneId: 'bafkreigenesisplazahash',
+        state,
+        done,
+        total,
+        failed: 0,
+        bytesBefore: 9_437_184,
+        bytesAfter: 2_202_009,
+        enabled: true,
+        replay: false
+      })
+      for (let done = 0; done <= total; done++) setTimeout(() => reply(at(done, 'running')), 3000 + done * 500)
+      setTimeout(() => reply(at(total, 'ready')), 3000 + (total + 1) * 500)
+    }
+    // ?mockpins=1 → two quest pins on both maps.
+    if (new URLSearchParams(location.search).get('mockpins') === '1') reply({ kind: 'mapPins', pins: MOCK_MAP_PINS })
     // ?mockportables=1 → the portables list, so the rail button and its popover are exercisable.
     if (new URLSearchParams(location.search).get('mockportables') === '1') sendPortables()
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
@@ -949,7 +1130,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'setHomeScene') {
-      mockHome = { realm: msg.realm, parcel: msg.parcel }
+      mockHome = { realm: msg.realm, parcel: msg.parcel, pinned: true, pinnable: true }
+      reply({ kind: 'homeScene', ...mockHome })
+      return
+    }
+    if (msg.kind === 'clearHomeScene') {
+      mockHome = NO_MOCK_HOME
       reply({ kind: 'homeScene', ...mockHome })
       return
     }
@@ -974,6 +1160,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     // no catalyst looks or browser to open in the mock
     if (msg.kind === 'showLook' || msg.kind === 'openLegal') return
+    // the mock has no engine to decode detail tiles: the map keeps its base imagery
+    if (msg.kind === 'getSatelliteTile') {
+      reply({ kind: 'satelliteTile', requestId: msg.requestId, ok: false, error: 'unsupported' })
+      return
+    }
     if (msg.kind === 'openExternalUrl') {
       reply({ kind: 'externalUrlOpened', requestId: msg.requestId, ok: true })
       return
@@ -1091,7 +1282,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'catalogPage', catalog: msg.catalog, items: [], total: 0, requestId: msg.requestId })
         return
       }
-      let items = mockWearables.slice()
+      let items = wardrobe().slice()
       if (msg.category != null && msg.category !== 'all') items = items.filter((w) => w.category === msg.category)
       if (msg.search != null && msg.search !== '') items = items.filter((w) => (w.name ?? '').toLowerCase().includes(msg.search!.toLowerCase()))
       if (msg.collectiblesOnly === true) items = items.filter((w) => (w.rarity ?? 'base') !== 'base')
@@ -1105,6 +1296,29 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'catalogPage', catalog: 'wearables', items: items.slice(start, start + msg.pageSize), total, requestId: msg.requestId })
       return
     }
+    if (msg.kind === 'giftingQuery') {
+      // The collectibles as owned matic tokens: every third one owns three copies, and the first equipped one
+      // only one, so the picker's count, equipped cover and spare-copy rules all show in ?mock=1.
+      const collectibles = mockWearables.filter((w) => (w.rarity ?? 'base') !== 'base')
+      const owned: GiftableItem[] = (msg.catalog === 'wearables' ? collectibles : collectibles.slice(0, 5)).map((w, i) => {
+        const item = `urn:decentraland:matic:collections-v2:0x${(i + 1).toString(16).padStart(40, '0')}:0`
+        const amount = i % 3 === 0 ? 3 : 1
+        return {
+          urn: item,
+          name: msg.catalog === 'wearables' ? w.name : `Mock Emote ${i + 1}`,
+          rarity: w.rarity,
+          category: msg.catalog === 'wearables' ? w.category : 'dance',
+          thumbnail: w.thumbnail,
+          amount,
+          tokens: Array.from({ length: amount }, (_, t) => ({ urn: `${item}:${100 + t}`, tokenId: String(100 + t), transferredAt: 1_700_000_000 + t }))
+        }
+      })
+      const items = msg.search ? owned.filter((o) => o.name.toLowerCase().includes(msg.search!.toLowerCase())) : owned
+      const start = msg.page * msg.pageSize
+      const equipped = owned[1] != null ? [owned[1].tokens[0]!.urn] : []
+      reply({ kind: 'giftingPage', catalog: msg.catalog, items: items.slice(start, start + msg.pageSize), total: items.length, equipped, failed: false, requestId: msg.requestId })
+      return
+    }
     if (msg.kind === 'setAvatarColor') {
       mockColors[msg.target] = msg.color
       reply({ kind: 'wearables', equipped: equippedNow(), colors: mockColors })
@@ -1112,7 +1326,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'equip') {
       const set = new Set(msg.urns)
-      for (const w of mockWearables) w.equipped = set.has(w.urn)
+      for (const w of wardrobe()) w.equipped = set.has(w.urn)
       reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
       return
     }
@@ -1125,7 +1339,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       const [from, to] = msg.kind === 'redoOutfit' ? [mockRedo, mockUndo] : [mockUndo, mockRedo]
       if (msg.kind === 'randomizeOutfit') {
         const byCategory = new Map<string, Wearable[]>()
-        for (const w of mockWearables) byCategory.set(w.category, [...(byCategory.get(w.category) ?? []), w])
+        for (const w of wardrobe()) byCategory.set(w.category, [...(byCategory.get(w.category) ?? []), w])
         mockUndo.push(mockLook())
         mockRedo.length = 0
         wearMock([...byCategory.values()].map((ws) => ws[Math.floor(Math.random() * ws.length)].urn))
@@ -1164,7 +1378,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       const found = mockOutfits.outfits.find((o) => o.slot === msg.slot)
       if (found) {
         const set = new Set(found.outfit.wearables)
-        for (const w of mockWearables) w.equipped = set.has(w.urn)
+        for (const w of wardrobe()) w.equipped = set.has(w.urn)
         reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
       }
       return
@@ -1223,7 +1437,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     // no engine to apply the decision in, and no editor in mock mode
-    if (msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
+    if (msg.kind === 'itemPurchaseState' || msg.kind === 'permissionResolve' || msg.kind === 'permissionRule' || msg.kind === 'resetPermissions' || msg.kind === 'editorScene') return
     if (msg.kind === 'getPermissionRules') {
       reply({
         kind: 'permissionRules',
@@ -1238,13 +1452,21 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       const failed = new URLSearchParams(location.search).get('mockEvents') === 'error'
       setTimeout(() => {
         if (failed) reply({ kind: 'events', request: msg.request, events: [], failed: true })
-        else reply({ kind: 'events', request: msg.request, events: mockEventList(msg) })
+        else reply({ kind: 'events', request: msg.request, events: emptyAccount ? referenceEvents(msg) : mockEventList(msg) })
       }, 600)
       return
     }
     if (msg.kind === 'setEventAttending') {
       setMockReminder(msg.eventId, msg.attending)
       setTimeout(() => reply({ kind: 'eventAttending', eventId: msg.eventId, attending: msg.attending }), 300)
+      return
+    }
+    if (msg.kind === 'getPlace') {
+      setTimeout(() => reply({ kind: 'place', requestId: msg.requestId, place: { id: msg.id, user_like: false, user_dislike: false, user_favorite: false, user_visits: 1234, updated_at: new Date().toISOString() } }), 300)
+      return
+    }
+    if (msg.kind === 'getWorldAccess') {
+      setTimeout(() => reply({ kind: 'worldAccess', requestId: msg.requestId, access: 'allowed' }), 300)
       return
     }
     if (msg.kind === 'getEventPlaces') {
@@ -1548,9 +1770,25 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
           })
           .filter((m) => m != null),
-        // the mock user owns this one, so an owner or moderator can delete it from the card
+        // the mock user owns the first, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+          {
+            id: 'pl1',
+            title: 'Music Festival Main Stage',
+            thumbnail: 'https://picsum.photos/seed/mfest/420/260',
+            positions: '-66,56',
+            likeRate: 1,
+            isMine: true,
+            detail: { id: 'pl1', title: 'Music Festival Main Stage', description: '', image: 'https://picsum.photos/seed/mfest/420/260', positions: ['-66,56'], base_position: '-66,56', owner: null, like_rate: 1, user_like: true }
+          },
+          {
+            id: 'pl2',
+            title: 'Art Week World',
+            thumbnail: 'https://picsum.photos/seed/artweek/420/260',
+            positions: 'artweek.dcl.eth',
+            likeRate: 0.5,
+            detail: { id: 'pl2', title: 'Art Week World', description: '', image: 'https://picsum.photos/seed/artweek/420/260', positions: ['0,0'], owner: null, world: true, world_name: 'artweek.dcl.eth', like_rate: 0.5 }
+          }
         ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
@@ -1570,7 +1808,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'notifications', notifications: mockNotifications })
       // Once per session, a poll result a few seconds later, so ?mock=1 shows the new-notification
       // toasts (one at a time) and the list growing.
-      if (!mockPolled) {
+      if (!mockPolled && !emptyAccount) {
         mockPolled = true
         setTimeout(() => {
           const fresh: AppNotification[] = [
@@ -1634,6 +1872,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       return
     }
+    if (msg.kind === 'quit') return
     if (msg.kind === 'deleteGalleryPhoto') {
       const i = mockGallery.findIndex((p) => p.id === msg.id)
       if (i >= 0) mockGallery.splice(i, 1)
@@ -1655,21 +1894,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'saveProfile') {
-      const { kind: _kind, ...edit } = msg
-      // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
-      // engine rejects a deploy the same way) without needing a broken catalyst.
-      if (edit.name === 'robtfmfail') {
-        reply({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+      const { requestId, address } = msg
+      if (address !== undefined && address.toLowerCase() !== o.userId.toLowerCase()) {
+        reply({ kind: 'profileSaved', requestId, ok: false, accountChanged: true, error: 'The active account changed.' })
         return
       }
-      ownEdits.push(edit)
-      reply({ kind: 'profileSaved', ok: true })
-      reply({ kind: 'profile', profile: ownProfile(o) })
+      // `robtfmfail` is the mock's failure switch: renaming to it exercises the error path (the
+      // engine rejects a deploy the same way) without needing a broken catalyst.
+      if (msg.name === 'robtfmfail') {
+        reply({ kind: 'profileSaved', requestId, ok: false, error: 'failed to deploy to server.', profile: ownProfile(o) })
+        return
+      }
+      ownEdits.push(msg)
+      reply({ kind: 'profileSaved', requestId, ok: true, profile: ownProfile(o) })
       return
     }
     if (msg.kind === 'getUserProfile') {
       if (msg.address.toLowerCase() === o.userId.toLowerCase()) {
-        reply({ kind: 'userProfile', address: msg.address, profile: ownProfile(o) })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: ownProfile(o) })
         return
       }
       // Resolve a real name from the nearby roster (real engine gets it from the catalyst).
@@ -1678,10 +1920,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.extras !== true) {
         // Like the engine, hold nothing for someone never seen: a friend's seeded name stays.
         const profile = member == null ? null : { address: msg.address, name, picture: member.picture, hasClaimedName: !name.includes('#'), isGuest: false }
-        reply({ kind: 'userProfile', address: msg.address, profile })
+        reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile })
         return
       }
-      reply({ kind: 'userProfile', address: msg.address, profile: richProfile(msg.address, name, false) })
+      reply({ kind: 'userProfile', address: msg.address, requestId: msg.requestId, profile: richProfile(msg.address, name, false) })
       return
     }
     // Slash-command effects (no engine in mock): echo a system chat line so the flow is testable in ?mock=1.

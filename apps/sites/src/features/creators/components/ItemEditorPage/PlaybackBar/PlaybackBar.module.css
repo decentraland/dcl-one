@@ -1,0 +1,165 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 48px;
+  padding: 0 4px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--editor-surface);
+  color: var(--dcl-neutrals-white);
+
+  & button[role="combobox"] {
+    min-width: 150px;
+    height: 40px;
+    border: 0;
+    font-size: 14px;
+    font-weight: 500;
+  }
+}
+
+.collectionBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dcl-neutrals-white);
+
+  & svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.stopButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+  font: inherit;
+  font-size: 14px;
+
+  &:hover {
+    background: var(--editor-surface-hover);
+  }
+}
+
+.control {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--radius-chip);
+  background: var(--editor-bg);
+  color: var(--dcl-neutrals-white);
+
+  &:hover {
+    background: var(--editor-surface-hover);
+  }
+}
+
+/* The emote controls lay themselves out absolutely against the nearest positioned ancestor, sized to it; anchoring
+   them here and resetting that placement keeps them inside this box, in the row with the other controls. */
+.emoteControlsWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 48px;
+  /* A floor, not a width: the overlay grows this box. Low enough that the row still fits a phone. */
+  min-width: 240px;
+  padding: 0 5px;
+  border: 1px solid var(--editor-line);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--editor-surface);
+
+  & > [data-preview-control="emote"] {
+    position: static;
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    gap: 5px;
+  }
+
+  /* Recolor the emote controls to the editor's controls. */
+  & [data-preview-control="button"] {
+    width: 50px;
+    height: 36px;
+    min-width: 50px;
+    margin: 0;
+    border: 1px solid var(--editor-line);
+    border-radius: var(--radius-chip);
+    background: var(--editor-bg) !important;
+    color: var(--dcl-neutrals-white);
+    opacity: 1;
+
+    &:hover {
+      background: var(--editor-surface-hover) !important;
+    }
+    & svg {
+      margin: 0;
+      fill: var(--dcl-neutrals-white);
+    }
+  }
+
+  & input[type="number"] {
+    width: 50px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--editor-line);
+    border-radius: var(--radius-chip);
+    background: var(--editor-bg);
+    color: var(--dcl-neutrals-white);
+    font: inherit;
+    font-size: 14px;
+    text-align: center;
+    appearance: textfield;
+
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      appearance: none;
+      margin: 0;
+    }
+    &:focus-visible {
+      outline: 0;
+      border-color: var(--editor-label);
+    }
+  }
+
+  & input[type="range"] {
+    &::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: var(--radius-chip);
+      background: var(--editor-surface-hover);
+    }
+    &::-moz-range-track {
+      height: 6px;
+      border-radius: var(--radius-chip);
+      background: var(--editor-surface-hover);
+    }
+    &::-webkit-slider-thumb {
+      width: 16px;
+      height: 16px;
+      margin-top: -5px;
+      padding: 0;
+      border-radius: 50%;
+      background-color: var(--editor-accent);
+    }
+    &::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background-color: var(--editor-accent);
+    }
+  }
+}

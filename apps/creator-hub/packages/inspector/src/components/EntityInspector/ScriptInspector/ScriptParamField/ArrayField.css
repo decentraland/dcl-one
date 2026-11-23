@@ -26,6 +26,8 @@
   min-width: 0;
 }
 
-.ArrayFieldRemove {
+.ArrayFieldRow .ArrayFieldRemove {
   flex-shrink: 0;
+  display: inline-block;
+  line-height: 18px;
 }

@@ -199,7 +199,6 @@ fn island_connected(
     health.get(island).is_ok_and(ConnectionHealth::is_connected)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn manage_islands(
     mut commands: Commands,
     mut manager: AdapterManager,
@@ -319,7 +318,6 @@ fn manage_islands(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn settle_island(
     mut commands: Commands,
     mut owners: Query<(Entity, &ArchipelagoTransport, &mut IslandAssignment)>,
@@ -436,7 +434,6 @@ fn refresh_island(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn connect_websocket(
     mut commands: Commands,
     mut new_websockets: Query<
@@ -500,6 +497,16 @@ fn reconnect_websocket(
     for (entity, mut transport, mut connection, mut recovery, health, refreshable) in
         &mut websockets
     {
+        if recovery.failure == Some(FailureKind::IdentityConflict) {
+            // Ended while open, for another device of this wallet (Pulse's `DuplicateSession`):
+            // dropping the task closes the socket, and the conflict keeps it from dialing again.
+            health.disconnected();
+            transport.generation = transport.generation.wrapping_add(1);
+            commands
+                .entity(entity)
+                .try_remove::<ArchipelagoConnection>();
+            continue;
+        }
         if health.is_connected() && !connection.authenticated {
             connection.authenticated = true;
             recovery.failure = None;
@@ -607,50 +614,16 @@ async fn archipelago_handler_inner(
             bail!("received empty packet")
         };
 
-        match message {
-            server_packet::Message::Welcome(_) => {
+        match handshake_reply(message, &wallet).await? {
+            Some(reply) => {
+                stream.send(reply.encode_to_vec().into()).await?;
+                debug!(">> auth chain sent");
+            }
+            None => {
                 debug!("archipelago welcome received");
                 health.connected();
                 break;
             }
-            server_packet::Message::ChallengeResponse(ChallengeResponseMessage {
-                challenge_to_sign,
-                already_connected,
-                ..
-            }) => {
-                if already_connected {
-                    return Err(AdmissionError::new(FailureKind::IdentityConflict).into());
-                }
-                // send challenge response
-                debug!("archipelago challenge received");
-
-                if !challenge_to_sign.starts_with("dcl-") {
-                    return Err(AdmissionError::new(FailureKind::Invalid).into());
-                }
-
-                // sign challenge
-                let chain = wallet.sign_message(challenge_to_sign).await?;
-                let auth_chain_json = serde_json::to_string(&chain)?;
-                debug!("archipelago auth chain created");
-
-                // send response
-                let message = ClientPacket {
-                    request_sequence: 0,
-                    message: Some(client_packet::Message::SignedChallenge(
-                        SignedChallengeMessage { auth_chain_json },
-                    )),
-                };
-                let message = message.encode_to_vec();
-                stream.send(message.into()).await?;
-                debug!(">> auth chain sent");
-            }
-            server_packet::Message::Kicked(kicked) => {
-                return Err(kick_error(kicked.reason).into());
-            }
-            server_packet::Message::Error(error) => {
-                return Err(control_error(&error).into());
-            }
-            _ => bail!("unexpected archipelago handshake packet"),
         }
     }
 
@@ -743,6 +716,45 @@ async fn archipelago_handler_inner(
     select! {
         read_res = f_read => read_res,
         write_res = f_write => write_res,
+    }
+}
+
+/// The signed reply to a handshake packet, or `None` once the server welcomes this peer.
+async fn handshake_reply(
+    message: server_packet::Message,
+    wallet: &Wallet,
+) -> Result<Option<ClientPacket>, anyhow::Error> {
+    match message {
+        server_packet::Message::Welcome(_) => Ok(None),
+        server_packet::Message::ChallengeResponse(ChallengeResponseMessage {
+            challenge_to_sign,
+            already_connected,
+            ..
+        }) => {
+            // Set for any open socket of this wallet. Sign-in replaces, and tells with
+            // Kicked(KrNewSession), only this device's own stale socket (same session key); the
+            // socket of another device stays open and hears nothing more, so Pulse's
+            // DuplicateSession is what ends that device's island.
+            if already_connected {
+                debug!("archipelago reports an existing session for this wallet");
+            }
+            debug!("archipelago challenge received");
+            if !challenge_to_sign.starts_with("dcl-") {
+                return Err(AdmissionError::new(FailureKind::Invalid).into());
+            }
+            let chain = wallet.sign_message(challenge_to_sign).await?;
+            let auth_chain_json = serde_json::to_string(&chain)?;
+            debug!("archipelago auth chain created");
+            Ok(Some(ClientPacket {
+                request_sequence: 0,
+                message: Some(client_packet::Message::SignedChallenge(
+                    SignedChallengeMessage { auth_chain_json },
+                )),
+            }))
+        }
+        server_packet::Message::Kicked(kicked) => Err(kick_error(kicked.reason).into()),
+        server_packet::Message::Error(error) => Err(control_error(&error).into()),
+        _ => bail!("unexpected archipelago handshake packet"),
     }
 }
 
@@ -1179,6 +1191,80 @@ mod tests {
             .get::<ConnectionHealth>(current)
             .unwrap()
             .is_connected());
+    }
+
+    #[test]
+    fn an_existing_session_for_the_wallet_still_signs_the_challenge() {
+        use dcl_component::proto_components::kernel::comms::v3::KickedMessage;
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([7; 32]);
+        let reply = |message| futures_lite::future::block_on(handshake_reply(message, &wallet));
+
+        let signed = reply(server_packet::Message::ChallengeResponse(
+            ChallengeResponseMessage {
+                challenge_to_sign: "dcl-challenge".to_owned(),
+                already_connected: true,
+            },
+        ))
+        .unwrap();
+        let Some(ClientPacket {
+            message: Some(client_packet::Message::SignedChallenge(signed)),
+            ..
+        }) = signed
+        else {
+            panic!("expected a signed challenge, got {signed:?}");
+        };
+        assert!(signed.auth_chain_json.contains("dcl-challenge"));
+
+        // the server's replacement notice remains the identity conflict
+        let kicked = reply(server_packet::Message::Kicked(KickedMessage {
+            reason: KickedReason::KrNewSession as i32,
+        }))
+        .unwrap_err();
+        assert_eq!(
+            kicked.downcast_ref::<AdmissionError>().unwrap().kind,
+            FailureKind::IdentityConflict
+        );
+    }
+
+    /// Pulse's `DuplicateSession` puts the open socket in identity conflict: it closes, and is not
+    /// dialed again.
+    #[test]
+    fn an_identity_conflict_closes_the_open_socket_for_good() {
+        let mut app = island_app();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([7; 32]);
+        app.insert_resource(wallet);
+        let owner = owner(app.world_mut(), 7);
+        let (_sender, receiver) = tokio::sync::mpsc::channel(1);
+        app.world_mut()
+            .get_mut::<ArchipelagoTransport>(owner)
+            .unwrap()
+            .receiver = Some(receiver);
+        let task = IoTaskPool::get_or_init(bevy::tasks::TaskPool::default)
+            .spawn(futures_lite::future::pending());
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ArchipelagoConnection {
+                task,
+                authenticated: true,
+            });
+        let health = app.world().get::<ConnectionHealth>(owner).unwrap().clone();
+        health.connected();
+        app.world_mut()
+            .get_mut::<RoomRecovery>(owner)
+            .unwrap()
+            .failure = Some(FailureKind::IdentityConflict);
+
+        app.update();
+        app.update();
+
+        assert!(app.world().get::<ArchipelagoConnection>(owner).is_none());
+        assert!(!health.is_connected());
+        assert_eq!(
+            app.world().get::<RoomRecovery>(owner).unwrap().failure,
+            Some(FailureKind::IdentityConflict)
+        );
     }
 
     #[test]

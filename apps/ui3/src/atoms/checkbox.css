@@ -20,3 +20,13 @@
 }
 .checkbox__box.is-checked { background: var(--brand); border-color: var(--brand); }
 .checkbox__label a, .checkbox__label b { color: var(--text); }
+.checkbox__box.is-indeterminate { background: var(--brand); border-color: var(--brand); }
+.checkbox.is-disabled { cursor: default; opacity: .5; }
+.checkbox[data-size="sm"] { gap: 8px; }
+.checkbox[data-size="sm"] .checkbox__box { width: 14px; height: 14px; border-radius: 4px; }
+.checkbox[data-size="sm"] .checkbox__label { line-height: 14px; }
+.checkbox__icon { display: inline-flex; flex: 0 0 auto; }
+.checkbox__input:focus-visible + .checkbox__icon {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}

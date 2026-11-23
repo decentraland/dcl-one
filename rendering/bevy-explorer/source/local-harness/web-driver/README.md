@@ -5,7 +5,10 @@ launches Chrome over the DevTools protocol and gives a test what the standalone'
 and CEF input give it:
 
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
-  app frame and returns what it resolves with, or rejects with the page's message.
+  app frame and returns what it resolves with, or rejects with the page's message. A command whose
+  document is replaced or closed before it answers (a click that loads the page again) rejects at
+  once with the exported `APP_GONE` message; the next command runs in the new document once it is
+  ready.
 - **Trusted input.** `/hud_click`, `/hud_fill`, `/press_key` and `/click_at` (page side:
   `library/explorer-core/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
   events, so the page sees `isTrusted` events.
@@ -42,7 +45,10 @@ await driver.close()
 ```
 
 `findChrome()` takes `CHROME_PATH`, else the places `local-harness/benchmark` looks. `launch`
-takes `headless` (default true), `args` (more Chrome flags) and `windowSize`. `ready()` waits for
+takes `headless` (default true), `args` (more Chrome flags), `windowSize` and `profile`: a
+directory for Chrome's profile that `close()` leaves in place, so the page's storage and caches
+carry over to the next launch with it (one Chrome at a time). Without it each launch has a
+temporary profile that `close()` removes. `ready()` waits for
 a frame of the page's origin with both `window.engine_console_command` and
 `window.__dclTrustedInput`, and for the page to draw it (see "Wire protocol"); it rejects when its
 `timeout` (default 120 s) passes first. A page that never draws, such as a minimised headed window,

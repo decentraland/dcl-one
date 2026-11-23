@@ -4,6 +4,9 @@ export type Coordinate = { x: number; y: number };
 
 export type DeploymentMetadata = {
   isMultiScene?: boolean;
+  /** The world being published to. The project prop can still hold the name from before the
+   * publish step chose it. */
+  worldName?: string;
 };
 
 export type Props = {

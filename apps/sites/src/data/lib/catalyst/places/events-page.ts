@@ -1,4 +1,4 @@
-import { queryOptions, type DehydratedState } from "@tanstack/react-query";
+import { queryOptions, type DehydratedState, type QueryClient } from "@tanstack/react-query";
 
 import { CatalystError, type GetOptions } from "../client";
 import { isEnsRealm, parsePosition, type JumpPlaceRecord } from "../jump/jump";
@@ -34,6 +34,23 @@ export const eventsPageKeys = {
   place: (target: PlaceTarget) =>
     ["events", "place", "world" in target ? `world:${target.world}` : `position:${target.position.join(",")}`] as const,
 };
+
+/** The account-scoped event reads a write can change: My Events and the admin pages' reads. */
+const PRIVATE_EVENT_DOMAINS: readonly unknown[] = ["events", "event-admin"];
+
+/**
+ * After any event write: the public page's reads and every account's private event reads
+ * (`["private", account, "events" | "event-admin", ...]`), which sign-out alone clears.
+ */
+export function invalidateEventsAfterWrite(client: QueryClient) {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: eventsPageKeys.all }),
+    client.invalidateQueries({
+      queryKey: ["private"],
+      predicate: ({ queryKey }) => PRIVATE_EVENT_DOMAINS.includes(queryKey[2]),
+    }),
+  ]).then(() => undefined);
+}
 
 export type LiveNowData = { events: Event[]; places: Place[] };
 
@@ -148,12 +165,15 @@ export const placeDetailQuery = (target: PlaceTarget) =>
 
 /** What the page's first document holds for agents: the live and upcoming events it dehydrated. */
 export function eventsAgentData(state: DehydratedState | null | undefined): { live: Event[]; upcoming: Event[] } {
-  const read = <T>(key: readonly unknown[]): T | undefined =>
-    state?.queries.find((query) => JSON.stringify(query.queryKey) === JSON.stringify(key))?.state.data as T | undefined;
   return {
-    live: read<LiveNowData>(eventsPageKeys.live())?.events ?? [],
-    upcoming: read<Event[]>(eventsPageKeys.upcoming()) ?? [],
+    live: dehydratedData<LiveNowData>(state, eventsPageKeys.live())?.events ?? [],
+    upcoming: dehydratedData<Event[]>(state, eventsPageKeys.upcoming()) ?? [],
   };
+}
+
+/** What one of the page's reads answered in its first document; undefined when that read failed or never ran. */
+export function dehydratedData<T>(state: DehydratedState | null | undefined, key: readonly unknown[]): T | undefined {
+  return state?.queries.find((query) => JSON.stringify(query.queryKey) === JSON.stringify(key))?.state.data as T | undefined;
 }
 
 /** The event a `?id=` link opened, when the page's first document dehydrated it, for its agent markdown. */

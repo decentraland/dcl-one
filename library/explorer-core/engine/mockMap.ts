@@ -5,6 +5,7 @@ import { serviceUrl } from '@hud-host'
 import type { Peer } from '../features/map/mapApi'
 import type { DiscoverPlace } from '../features/places/placesApi'
 import type { Vec2 } from '../features/map/mapCoords'
+import type { MapPinInfo } from './generated/index'
 import type { EventData, MapPlayer, PageToScene, SceneToPage, SearchPlacesRequest } from './protocol'
 
 const image = (x: number, y: number): string => `${serviceUrl('mapApi')}/v2/parcels/${x}/${y}/map.png?width=512&height=256&size=16`
@@ -115,6 +116,11 @@ export const MOCK_PEERS: Peer[] = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', x: 1600, z: 1600 }
 ]
 
+export const MOCK_MAP_PINS: MapPinInfo[] = [
+  { id: 'bafymockpx:512', x: 3, y: 2, title: 'Memory Grid' },
+  { id: 'bafymockpx:513', x: -4, y: 5, title: 'Tile Tally' }
+]
+
 /** Players the mock engine holds near the player, in world metres. */
 export const MOCK_NEARBY_PLAYERS: MapPlayer[] = [
   { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', x: 24, z: -30 },
@@ -150,6 +156,7 @@ const placeById = (id: string): DiscoverPlace | undefined => PLACES.find((x) => 
 export function mockMapReply(msg: PageToScene): SceneToPage | null {
   switch (msg.kind) {
     case 'getPlacesAt':
+      if (msg.world != null) return { kind: 'placesAt', request: msg.request, places: PLACES.filter((p) => p.world_name === msg.world) }
       return { kind: 'placesAt', request: msg.request, places: PLACES.filter((p) => (p.world_name ?? '') === '' && covers(p, msg.positions)) }
     case 'searchPlaces':
       return { kind: 'placeSearch', request: msg.request, ...search(msg) }

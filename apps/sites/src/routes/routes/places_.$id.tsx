@@ -1,71 +1,47 @@
+import { useLocation, useNavigate, useNavigation } from "react-router";
 import { useEffect, useState } from "react";
-import { redirect, useLocation, useNavigate, useNavigation } from "react-router";
 
-import type { PlaceViewer } from "@ui/data/catalyst/places";
-import PlaceDetail from "@ui/explorer/pages/PlaceDetail";
+import { PlaceDetail } from "@dcl/one-ui/apps/sites/places/PlaceDetail";
+import { isPlaceholderThumbnail, type PlaceViewer } from "@web-core/place-view";
+import SitesLayout from "@/features/components/chrome/SitesLayout";
 
 import UpstreamUnavailable from "@/features/components/UpstreamUnavailable";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { useAuth } from "@/data/lib/auth/context";
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { CatalystError } from "@/data/lib/catalyst/client";
-import { type Place } from "@/data/lib/catalyst/places/index";
 import { loadPlace } from "@/data/lib/catalyst/places/index.server";
 import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/catalyst/places/interactions";
+import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
+import { loadPlaceDetail } from "@/features/explorer/place-detail.server";
+import { usePlaceDetailChat, usePlaceDetailCreator } from "@/features/explorer/place-detail-profiles";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
-import { pageLoaderWith } from "@/core/lib/telemetry/page-loader";
-import WorldScenes from "@/features/explorer/WorldScenes";
-import { playUrl } from "@/data/lib/catalyst/bases";
-import { loadPlaceTravel } from "@/data/lib/catalyst/places/world-scenes";
 import { track } from "@/core/lib/telemetry/track";
+import { useSceneChat, type SceneChat } from "@/features/explorer/scene-chat/useSceneChat";
 
+import { PLACES_SECTION, placeDetailMeta, sectionCard } from "../lib/destination-meta";
+import { publicBase } from "../lib/social-meta";
 import type { Route } from "./+types/places_.$id";
 
 export const handle = { agentMarkdown: "placeDetail" } satisfies AgentMarkdownHandle;
 
-export async function loader({ request, context, params }: Route.LoaderArgs) {
+/**
+ * The place's card, canonical at its own row's page and with its schema.org Place. An unknown place
+ * answers 404 and gets no card; while the catalogue is unreachable the page keeps the section card.
+ */
+export function meta({ loaderData, matches, params }: Route.MetaArgs) {
+  return placeDetailMeta(loaderData, publicBase(matches), sectionCard(PLACES_SECTION), `/places/${encodeURIComponent(params.id)}`);
+}
+
+export function loader({ request, params, context }: Route.LoaderArgs) {
   const { id } = params;
+  return loadPlaceDetail(request, context, (signal) => loadPlace(id, { signal }), { path: `/places/${encodeURIComponent(id)}`, id });
+}
 
-  const { sid, wrap, data } = await pageLoaderWith(
-    request,
-    context,
-    { variant: "base" },
-    async () => {
-      let place: Place | null = null;
-      let unavailable = false;
-      try {
-        place = await loadPlace(id, { signal: request.signal });
-      } catch (err) {
-        if (!(err instanceof CatalystError && err.status === 404)) {
-          unavailable = true;
-        }
-      }
-      return { place, unavailable };
-    },
-  );
-  const { place, unavailable } = data;
-
-  // A derive-era parcel id (the places API resolves it to the row serving that parcel today)
-  // gets one canonical URL, so crawlers and bookmarks stop carrying the retired id forward.
-  if (place && place.id !== id) {
-    const { search } = new URL(request.url);
-    return redirect(`/places/${encodeURIComponent(place.id)}${search}`, 301);
-  }
-
-  const url = new URL(request.url);
-  const refreshRealm = url.searchParams.get("retry_travel") === "1";
-  const resolvedTravel = place ? await loadPlaceTravel(place, { signal: request.signal, refreshRealm }) : null;
-  if (refreshRealm) {
-    url.searchParams.delete("retry_travel");
-    url.searchParams.delete("_routes");
-    url.searchParams.delete("_data");
-    return redirect(`/places/${encodeURIComponent(id)}${url.search}`, 303);
-  }
-  const travel = resolvedTravel ?? (place ? { playBase: playUrl(), launchError: "Travel is temporarily unavailable. Please retry." } : null);
-  return wrap(
-    { id, place, sid, unavailable, travel },
-    { status: place ? 200 : unavailable ? 503 : 404 },
-  );
+export function headers({ loaderHeaders, parentHeaders }: Route.HeadersArgs) {
+  const headers = new Headers(parentHeaders);
+  const vary = loaderHeaders.get("Vary");
+  if (vary) headers.append("Vary", vary);
+  return headers;
 }
 
 // Likes and favorites are the visitor's own signed writes; signed out, they open sign-in and the button reverts.
@@ -73,6 +49,9 @@ function signInFirst(): Promise<never> {
   openSignIn();
   return Promise.reject(new Error("Sign in to rate or save places."));
 }
+
+// A world's pane, which never joins a room (see `fetchSceneRoom`).
+const WORLD_CHAT: SceneChat = { status: "unavailable", messages: [] };
 
 // The session lives only in the browser, so the visitor's own like and save are read once it is known.
 function usePlaceViewer(signer: AuthIdentity | null, placeId: string | undefined): PlaceViewer | null {
@@ -90,18 +69,29 @@ function usePlaceViewer(signer: AuthIdentity | null, placeId: string | undefined
 }
 
 export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
-  const { place, sid, unavailable, travel } = loaderData;
+  const { place, sid, unavailable, travel, livePlayers, scenes, mobile } = loaderData;
   const { identity, isConnected } = useAuth();
+  const signer = isConnected ? identity : null;
+  const viewer = usePlaceViewer(signer, place?.id);
+  const [sceneId, setSceneId] = useState<string | null>(null);
   const navigate = useNavigate();
   const navigation = useNavigation();
   const location = useLocation();
+  // A picked scene of a world is where Jump in lands; until one is picked it is the world's own entry.
+  const picked = sceneId === null ? undefined : scenes.find((s) => s.entityId === sceneId);
+  const jumpHref = picked && place?.world_name ? sceneTravelHref(place.world_name, picked.base, travel?.playBase) : travel?.jumpHref;
+  // The chat joins the scene's room only where the live view renders it: a desktop visitor with players in the scene.
+  // It reads as a guest: the visitor's signer is for the like and favorite writes only. A world place never joins:
+  // the node counts each participant of a world's scene rooms against the world's player limit.
+  const chat = useSceneChat(place && !place.world && place.base_position && !mobile && (livePlayers ?? 0) > 0 ? { location: place.base_position } : null);
+  const creator = usePlaceDetailCreator(place);
+  const chatView = usePlaceDetailChat(place?.world ? WORLD_CHAT : chat);
+
   function retryTravel() {
     const query = new URLSearchParams(location.search);
     query.set("retry_travel", "1");
     void navigate(`${location.pathname}?${query}`, { replace: true, preventScrollReset: true });
   }
-  const signer = isConnected ? identity : null;
-  const viewer = usePlaceViewer(signer, place?.id);
 
   function onTravel(placeId: string, launchUrl?: string, error?: string) {
     const context = { sid, story: "jump-in" as const };
@@ -112,62 +102,65 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
 
   if (!place && unavailable) {
     return (
-      <main className="place-detail-route">
-        <UpstreamUnavailable
-          title="Places are temporarily unavailable"
-          message="We couldn't reach the places service. Please try again in a moment."
-          backHref="/places"
-          backLabel="Back to Places"
-        />
-      </main>
+      <SitesLayout active="explore" overlayNav>
+        <main className="place-detail-route">
+          <UpstreamUnavailable
+            title="Places are temporarily unavailable"
+            message="We couldn't reach the places service. Please try again in a moment."
+            backHref="/places"
+            backLabel="Back to Places"
+          />
+        </main>
+      </SitesLayout>
     );
   }
 
+  const launchError = travel?.launchError;
   return (
-    <main className="place-detail-route">
-      <PlaceDetail
-        key={`${place?.id}:${signer?.signer ?? "guest"}`}
-        place={
-          place
-            ? {
-                id: place.id,
-                title: place.title ?? "",
-                image: place.image ?? undefined,
-                creator: place.contact_name ?? place.owner ?? "Decentraland",
-                views: place.user_count ?? null,
-                approval: Math.round((place.like_rate ?? 0) * 100),
-                description: place.description ?? "",
-                coords: place.base_position ?? "",
-                categories: place.categories ?? [],
-                world: place.world ?? false,
-                worldName: place.world_name ?? null,
-                parcels: (place.positions ?? []).length,
-                favorites: place.favorites ?? 0,
-                updated: place.updated_at
-                  ? new Date(place.updated_at).toLocaleDateString("en-GB")
-                  : "",
-                hue:
-                  [...(place.id ?? "")].reduce((a, c) => a + c.charCodeAt(0), 0) % 360,
-              }
-            : undefined
-        }
-        onClose={() => navigate("/places")}
-        jumpHref={travel?.jumpHref}
-        onJumpIn={() => {
-          if (!place) return;
-          onTravel(place.id, travel?.jumpHref, travel?.launchError);
-          if (!travel?.jumpHref) retryTravel();
-        }}
-        detailSlot={<>
-          {travel?.launchError && <div role="alert"><p>{travel.launchError}</p><button type="button" disabled={navigation.state !== "idle"} onClick={() => { retryTravel(); }}>Retry travel</button></div>}
-          {place?.world && place.world_name && <WorldScenes worldName={place.world_name} selectedId={place.id} playBase={travel?.playBase} onVisit={onTravel} />}
-        </>}
-        notFound={!place}
-        viewer={viewer}
-        onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}
-        onFavorite={(id, favorite) => (signer ? savePlaceFavorite(signer, id, favorite) : signInFirst())}
-      />
-
-    </main>
+    <SitesLayout active="explore" overlayNav>
+      <main className="place-detail-route">
+        <PlaceDetail
+          key={place?.id}
+          place={
+            place
+              ? {
+                  id: place.id,
+                  title: place.title ?? "",
+                  description: place.description ?? "",
+                  image: isPlaceholderThumbnail(place.image) ? undefined : place.image,
+                  coords: place.base_position ?? "",
+                  world: place.world ?? false,
+                  worldName: place.world_name,
+                  approval: place.like_rate == null ? null : Math.round(place.like_rate * 100),
+                  favorites: place.favorites ?? 0,
+                }
+              : undefined
+          }
+          creator={creator}
+          notFound={!place}
+          livePlayers={livePlayers ?? 0}
+          mobile={mobile}
+          onClose={() => navigate("/places")}
+          onCreator={(address) => navigate(`/profile/${address}`)}
+          jumpHref={jumpHref}
+          chat={chatView}
+          viewer={viewer}
+          account={signer?.signer ?? null}
+          onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}
+          onFavorite={(id, favorite) => (signer ? savePlaceFavorite(signer, id, favorite) : signInFirst())}
+          onJumpIn={() => {
+            if (!place) return;
+            onTravel(place.id, jumpHref, launchError);
+            if (!jumpHref) retryTravel();
+          }}
+          detailSlot={launchError ? <div role="alert"><p>{launchError}</p><button type="button" disabled={navigation.state !== "idle"} onClick={() => { retryTravel(); }}>Retry travel</button></div> : undefined}
+          scenePicker={{
+            options: scenes.map((s) => ({ value: s.entityId, label: `${s.title} (${s.base})` })),
+            value: sceneId ?? scenes[0]?.entityId ?? "",
+            onChange: setSceneId,
+          }}
+        />
+      </main>
+    </SitesLayout>
   );
 }

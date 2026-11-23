@@ -8,6 +8,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    // happy-dom 21 gives an iframe a window only when page loading is on. Specs read `contentWindow`.
+    environmentOptions: { happyDOM: { settings: { enableIframePageLoading: true } } },
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.spec.ts', 'src/**/*.spec.tsx'],
     exclude: ['e2e/**/*.spec.ts'],
@@ -16,7 +18,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
+      '@ui': resolve(__dirname, '../../../ui3/src'),
     },
+    // The ui3 sources sit outside this workspace and must use the React installed here.
+    dedupe: ['react', 'react-dom'],
   },
   optimizeDeps: {
     exclude: [

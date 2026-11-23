@@ -1,5 +1,5 @@
 import * as BABYLON from '@babylonjs/core';
-import type { Emitter } from 'mitt';
+import type { Emitter } from '../../utils/emitter';
 import type { Entity } from '@dcl/ecs';
 import type { Vector3 } from '@dcl/ecs-math';
 import { Vector3 as DclVector3 } from '@dcl/ecs-math';
@@ -14,6 +14,7 @@ import type { GizmoType } from '../../utils/gizmo';
 import type {
   GroundPlane,
   IRenderer,
+  RendererActivityTracking,
   RendererAnimation,
   RendererCamera,
   RendererDebug,
@@ -25,6 +26,7 @@ import type {
   SpawnPointTarget,
   Unsubscribe,
 } from '../types';
+import { createBabylonActivityTracking } from './activity';
 import { computeEntitiesOutsideLayout, computeSceneMetrics } from './metrics';
 
 const ZOOM_AXIS = new BABYLON.Vector3(0, 0, 1.1);
@@ -53,6 +55,7 @@ export class BabylonRenderer implements IRenderer {
   readonly viewport: RendererViewport;
   readonly spawnPoints: SpawnPointController;
   readonly debug: RendererDebug;
+  readonly activity: RendererActivityTracking;
 
   #axisHelper: AxisHelperHandle;
   #disposeSpeedBridge: () => void;
@@ -74,6 +77,7 @@ export class BabylonRenderer implements IRenderer {
     this.viewport = createViewportFacade(scene, context);
     this.spawnPoints = createSpawnPointsFacade(spawnPoints, babylonGizmos);
     this.debug = createDebugFacade(scene);
+    this.activity = createBabylonActivityTracking(scene, cameraManager.getCamera());
 
     // The axis indicator is a renderer editor-visual: it draws an orientation
     // gizmo into a secondary scene and follows the editor camera. The inspector
@@ -119,8 +123,8 @@ export class BabylonRenderer implements IRenderer {
     // ECS-driven path remains the source of truth during migration.
   }
 
-  async getPointerWorldPoint(): Promise<Vector3 | null> {
-    const point = await getPointerCoords(this.context.scene);
+  async getPointerWorldPoint(ndc?: { x: number; y: number }): Promise<Vector3 | null> {
+    const point = getPointerCoords(this.context.scene, ndc);
     return point ? DclVector3.create(point.x, point.y, point.z) : null;
   }
 

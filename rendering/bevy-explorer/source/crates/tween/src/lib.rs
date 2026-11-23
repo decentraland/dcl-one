@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[cfg(feature = "tween_debug")]
 mod tween_debug;
 
@@ -216,16 +218,11 @@ impl Tween {
 
                 match data.movement_type() {
                     TextureMovementType::TmtOffset => {
+                        // sdk-space offset, like TextureMove: the material build flips y
                         update_pb_material(
                             &mut material.0,
                             None,
-                            Some(
-                                direction
-                                    * data.speed
-                                    * ease_value
-                                    * tween_apply_update.delta
-                                    * Vec2::new(1.0, -1.0),
-                            ),
+                            Some(direction * data.speed * ease_value * tween_apply_update.delta),
                             true,
                         );
                     }
@@ -600,7 +597,6 @@ fn set_perspective_fov(projection: &mut Option<Mut<Projection>>, fov: Option<f32
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn update_system_tween(
     mut commands: Commands,
     mut q: Query<(

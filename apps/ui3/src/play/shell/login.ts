@@ -1,15 +1,15 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { webGuestBackendFor } from '@explorer-core/features/auth/guest'
+import { playAsGuest } from '@explorer-core/shell/guestLogin'
 import {
-  clearGuestLogin,
   clearStoredLogins,
   getStoredLogin,
   loginExpired,
   publicLogin,
   rootAddress,
+  signOutGuest,
   storeAccountLogin,
-  storeGuestLogin,
   type AuthIdentity,
   type StoredLogin
 } from '@explorer-core/features/auth/sso'
@@ -20,6 +20,9 @@ import { personalSign } from '@explorer-core/shell/sign'
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it
 // from under the running engine. Until then (the login screen), or once it expires, storage is
 // read again.
+// The page as it was opened: the engine's URL sync later rewrites the query, which may drop
+// `?guestWallet=` (features/auth/guest.ts) before PLAY AS GUEST.
+const entryLocation = { hostname: location.hostname, search: location.search }
 let held: StoredLogin | null = null
 let pinned = false
 /** The login the shell holds now, key included: the in-world Shop's buyer (shop/purchase). */
@@ -44,18 +47,17 @@ export async function request(method: unknown, params: unknown): Promise<unknown
         throw new Error(`not signed in as ${signer}`)
       }
       pinned = true
-      // Signing in with an account replaces the guest (an expired one included).
-      if (!login.guest) clearGuestLogin()
+      // An account signing in keeps the guest for PLAY AS GUEST, not signed in on its own (unity-explorer's).
+      if (!login.guest) signOutGuest()
       return personalSign(ephemeral.privateKey, message)
     }
-    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts),
-    // created and kept here like a sign-in. Any earlier guest is replaced.
+    // "Explore as guest": a guest account that persists across visits (features/auth/guest.ts), kept
+    // here like a sign-in. A guest that signed out comes back the same.
     case 'createGuest': {
-      const identity = await createGuestIdentity(webGuestBackendFor(location.hostname))
-      storeGuestLogin(identity)
-      held = { address: rootAddress(identity).toLowerCase(), identity, guest: true }
+      const { wallet, ...login } = await playAsGuest(webGuestBackendFor(entryLocation))
+      held = login
       pinned = true
-      return publicLogin(held)
+      return { ...publicLogin(held), wallet }
     }
     // Email sign-in (features/startup): the code is sent, then checked here, and the account's
     // identity kept like the sign-in page's, key included.

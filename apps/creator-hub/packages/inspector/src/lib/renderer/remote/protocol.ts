@@ -64,7 +64,7 @@ export type RendererCommand =
 // are user-initiated one-offs, not per-frame.
 
 export type RendererRequest =
-  | { kind: 'getPointerWorldPoint' }
+  | { kind: 'getPointerWorldPoint'; ndc?: { x: number; y: number } }
   | { kind: 'getEntityAnimations'; entity: Entity };
 
 export type RendererRequestResult = {

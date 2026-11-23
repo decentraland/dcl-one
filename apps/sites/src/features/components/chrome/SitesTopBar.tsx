@@ -1,50 +1,119 @@
 import {
-  sitesNavigationLinks,
-  sitesNavigationOrder,
-} from "@dcl/one-ui/apps/sites/chrome/navigation";
-import { useEffect, useMemo, useState } from "react";
+  type CSSProperties,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useLocation } from "react-router";
-import { NavBar, type NavBarLinkProps, type NavBarSection } from "@dcl/one-ui";
-import type { DclTopBarProps } from "@ui/web/frames/DclTopBar";
-import { useChromeAuth } from "@ui/web/frames/chrome-auth";
-import ChromeLink from "@ui/web/frames/ChromeLink";
-import { useSiteLayout } from "@ui/web/frames/SiteLayout";
-import { docsUrl } from "@ui/data/docs";
 import {
+  decentralandPublicNavSections,
+  NavBar,
+  GeneralMarketplace,
+  GeneralPlayers,
+  MenusLeave,
+  GeneralWallet,
+  GeneralSecondaryBarSettingsOutline,
+  GeneralSecondaryBarWearables,
+  type NavBarLinkProps,
+} from "@dcl/one-ui";
+import { chainLabel } from "@shop/model/chain";
+import { browserProvider, web3Usable } from "@/data/lib/auth/shop-wallet";
+import { selectEthereumChain, selectSettlementChain } from "@shop/checkout/chain/selection";
+import { shopChainEnvironment } from "@web-core/shop-chain-env";
+import { manaWeiToNumber } from "@ui/shop/checkout/lib/mana-format";
+import { useManaBalance } from "@ui/shop/credits/hooks";
+import { useWalletAccount } from "@dcl/one-ui/apps/shop/wallet-account";
+import { useWalletChain } from "@ui/shop/wallet/context";
+import type { Eip1193Provider } from "@web-core/auth/eip1193";
+import type { ChromeTopBarProps } from "@dcl/one-ui/components/AppChrome/chrome-nav";
+import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
+import ChromeLink from "@dcl/one-ui/components/AppChrome/ChromeLink";
+import { useSiteLayout } from "@dcl/one-ui/components/AppChrome/SiteLayout";
+import {
+  categoryForType,
   notificationBody,
+  notificationImage,
   notificationLink,
   notificationTitle,
   relativeTime,
-} from "@ui/data/catalyst/notificationsView";
-import SitesNotificationsDialog from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
+  unreadCount,
+} from "@web-core/notifications/notificationsView";
+import SitesNotificationsDialog, { notificationMedia } from "@dcl/one-ui/apps/sites/chrome/SitesNotificationsDialog";
+import logo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
+import wordmark from "@dcl/one-ui/apps/sites/assets/dcl_name.svg?url";
+import { SitesLocaleContext } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
+import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
+import { navProfileCopy } from "./nav-profile-copy";
 import { useChromeNotifications } from "./useChromeNotifications";
+import styles from "./SitesTopBar.module.css";
 
-export function sitesNavSections(
-  active: DclTopBarProps["active"],
-  pathname: string,
-): NavBarSection[] {
-  const playActive =
-    active === "whatson" || active === "events" || active === "explore";
-  const links = sitesNavigationLinks(docsUrl());
-  return sitesNavigationOrder.map((id) => {
-    const link = links[id];
-    const selected = id === "whatson" ? playActive : active === id;
-    if (!("menu" in link)) {
-      return { label: link.label, href: link.href, active: selected };
-    }
-    return {
-      label: link.label,
-      active: selected,
-      items: link.menu.map((item, index) => ({
-        ...item,
-        active:
-          id === "whatson"
-            ? pathname === item.href.replace(/\/$/, "") ||
-              pathname.startsWith(`${item.href.replace(/\/$/, "")}/`)
-            : selected && pathname.startsWith(index === 0 ? "/docs" : "/blog"),
-      })),
-    };
-  });
+/** decentraland.org's marks in the NavBar's slots. */
+const SITE_ICONS = {
+  logo: <img src={logo} width={40} height={40} alt="" />,
+  menu: (
+    <svg
+      className={styles.menuIcon}
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M3 6H21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M3 12H21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M3 18H21"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  ),
+  notifications: (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 21.75C13.1 21.75 14 20.85 14 19.75H10C10 20.85 10.89 21.75 12 21.75ZM18 15.75V10.75C18 7.68 16.36 5.11 13.5 4.43V3.75C13.5 2.92 12.83 2.25 12 2.25C11.17 2.25 10.5 2.92 10.5 3.75V4.43C7.63 5.11 6 7.67 6 10.75V15.75L4 17.75V18.75H20V17.75L18 15.75Z"
+        fill="currentColor"
+      />
+    </svg>
+  ),
+};
+
+function ProfileNetwork({ provider, label, ethereum, polygon }: { provider: Eip1193Provider; label: string; ethereum: number; polygon: number }) {
+  const { chainId, pendingChainId, switchTo } = useWalletChain(provider);
+  if (chainId === null) return null;
+  return (
+    <select
+      aria-label={label}
+      className={styles.profileNetwork}
+      value={pendingChainId ?? chainId}
+      disabled={pendingChainId !== null}
+      onChange={(event) => void switchTo(Number(event.currentTarget.value))}
+    >
+      {chainId !== ethereum && chainId !== polygon ? (
+        <option value={chainId} disabled>{chainLabel(chainId)}</option>
+      ) : null}
+      <option value={ethereum}>{chainLabel(ethereum)}</option>
+      <option value={polygon}>{chainLabel(polygon)}</option>
+    </select>
+  );
 }
 
 /** The Sites host adapts real chrome state; the shared component owns navigation UI. */
@@ -52,6 +121,7 @@ export default function SitesTopBar({
   active,
   signedIn,
   account,
+  transparent,
   onSignIn,
   onSignOut,
   signInHref = "/shop/my-items",
@@ -60,8 +130,7 @@ export default function SitesTopBar({
   accountControl,
   balances,
   onNavigate,
-  transparent = false,
-}: DclTopBarProps) {
+}: ChromeTopBarProps) {
   const NavigationLink = useMemo(
     () =>
       function NavigationLink(props: NavBarLinkProps) {
@@ -71,63 +140,171 @@ export default function SitesTopBar({
   );
   const auth = useChromeAuth();
   const layout = useSiteLayout();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const landing = pathname === "/";
+  const locale = useContext(SitesLocaleContext)?.locale ?? "en";
+  const { labels, actions: actionLabels, walletNetwork } = navProfileCopy[locale];
+  const [profileOpen, setProfileOpen] = useState(false);
   const isIn = signedIn ?? auth.signedIn;
   const address = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
   const signOut = onSignOut ?? auth.onSignOut;
-  const switchAccount =
-    auth.onSwitchAccount ??
-    (signOut && signIn
-      ? () => {
-          signOut();
-          signIn();
-        }
-      : undefined);
-  const [notificationAccount, setNotificationAccount] = useState<string | null>(
-    null,
-  );
+  const switchAccount = auth.onSwitchAccount;
+  const [notificationOwner, setNotificationOwner] = useState<{
+    account: string;
+    pathname: string;
+  } | null>(null);
   const identity = isIn && address ? address.toLowerCase() : null;
+  const marketplaceAvailable = useMarketplaceHere(identity);
+  const profileWalletAvailable = identity !== null && web3Usable({ signer: identity });
+  const provider = profileWalletAvailable ? browserProvider() : null;
+  const walletAccount = useWalletAccount(provider);
+  const matchingWallet = provider !== null && identity !== null && walletAccount === identity;
+  const marketplaceEligible = marketplaceAvailable && matchingWallet;
   const notificationsOpen =
-    identity !== null && notificationAccount === identity;
+    identity !== null &&
+    notificationOwner?.account === identity &&
+    notificationOwner.pathname === pathname;
   const load = fetchNotifications ?? auth.fetchNotifications;
   useEffect(() => {
-    setNotificationAccount(null);
-  }, [identity]);
+    setNotificationOwner(null);
+  }, [identity, pathname]);
+
   const notifications = useChromeNotifications(
     identity,
     notificationsOpen,
     load,
+    landing && auth.notificationsReady !== false,
   );
   const rows = notifications.data;
+  const profileManaEligible = profileWalletAvailable && matchingWallet;
+  const manaAccount = profileOpen && profileManaEligible ? identity : null;
+  const chainEnvironment = shopChainEnvironment();
+  const ethereum = selectEthereumChain(chainEnvironment);
+  const polygon = selectSettlementChain(chainEnvironment);
+  const { data: mana, isPending: manaPending } = useManaBalance(manaAccount, ethereum);
+  const { data: polygonMana, isPending: polygonManaPending } = useManaBalance(manaAccount, polygon);
+  const menuBalances = manaAccount
+    ? {
+        mana: mana === undefined ? undefined : manaWeiToNumber(mana),
+        polygonMana: polygonMana === undefined ? undefined : manaWeiToNumber(polygonMana),
+      }
+    : undefined;
   const actions = useMemo(
     () => [
       {
-        label: "My profile",
+        label: actionLabels.viewProfile,
+        icon: <GeneralPlayers size={20} aria-hidden="true" />,
         href: `/profile/${encodeURIComponent(address.toLowerCase())}`,
       },
-      { label: "My assets", href: "/shop/my-items" },
-      ...(switchAccount
-        ? [{ label: "Switch account", onSelect: switchAccount }]
-        : []),
-      ...(signOut ? [{ label: "Log out", onSelect: signOut }] : []),
+      {
+        label: actionLabels.myAssets,
+        href: "/shop/my-items",
+        icon: <GeneralSecondaryBarWearables size={20} aria-hidden="true" />,
+      },
+      {
+        label: actionLabels.accountSettings,
+        href: "/account",
+        icon: <GeneralSecondaryBarSettingsOutline size={20} aria-hidden="true" />,
+      },
+      {
+        label: actionLabels.shopAuthorizations,
+        href: "/shop/settings",
+        icon: <GeneralMarketplace size={20} aria-hidden="true" />,
+      },
+      ...(signOut
+        ? [
+            {
+              label: actionLabels.logout,
+              onSelect: signOut,
+              icon: <MenusLeave size={20} aria-hidden="true" />,
+              separated: true,
+            },
+          ]
+        : switchAccount
+          ? [
+              {
+              label: actionLabels.switchAccount,
+                onSelect: switchAccount,
+                icon: <GeneralWallet size={20} aria-hidden="true" />,
+                separated: true,
+              },
+            ]
+          : []),
     ],
-    [address, switchAccount, signOut],
+    [address, actionLabels, switchAccount, signOut],
   );
+  const panel = notificationsOpen ? (
+    <SitesNotificationsDialog
+      presentation={landing ? "popover" : "modal"}
+      onClose={() => setNotificationOwner(null)}
+      state={
+        notifications.isPending
+          ? "loading"
+          : notifications.isError
+            ? "error"
+            : "ready"
+      }
+      rows={(rows ?? []).slice(0, 10).map((row) => ({
+        id: row.id,
+        title: notificationTitle(row),
+        description: notificationBody(row),
+        category: categoryForType(row.type),
+        ...notificationMedia(row.type, row.metadata, notificationImage(row)),
+        href: notificationLink(row) ?? undefined,
+        time: relativeTime(row.timestamp, Date.now()),
+        unread: !row.read,
+      }))}
+      Link={NavigationLink}
+    />
+  ) : null;
   const sections = mobileNavigation ?? layout?.sections;
   const profileMatches =
     identity !== null && auth.account.toLowerCase() === identity;
+  // The landing page's nav, as decentraland.org's Layout derives it from the path: signed out it is
+  // bare (logo, wordmark, Sign in); signed out or in, the desktop bar floats transparent over the hero.
+  const bare = landing && !isIn;
+  const { desktop, mobile } = bare
+    ? { desktop: [], mobile: [] }
+    : decentralandPublicNavSections(active, pathname, { search, marketplaceEligible });
+  const avatarColor = profileMatches ? auth.avatarColor : undefined;
   return (
     <>
-      <header aria-label="Decentraland">
+      <header
+        aria-label="Decentraland"
+        className={styles.root}
+        data-landing={landing || undefined}
+        data-transparent={(transparent && !landing) || undefined}
+        data-bare={bare || undefined}
+        style={
+          avatarColor
+            ? ({
+                "--dcl-navbar-avatar-background": avatarColor,
+              } as CSSProperties)
+            : undefined
+        }
+      >
         <NavBar
-          sections={sitesNavSections(active, pathname)}
-          surface={transparent ? "overlay" : "solid"}
+          sections={desktop}
+          mobileSections={mobile}
+          brand={
+            bare ? (
+              <img
+                className={styles.wordmark}
+                src={wordmark}
+                width={160}
+                height={20}
+                alt="Decentraland"
+              />
+            ) : undefined
+          }
+          icons={SITE_ICONS}
           linkComponent={NavigationLink}
           {...(identity
             ? {
                 account: {
                   address,
+                  ...(profileMatches && auth.bodyUrl ? { bodyUrl: auth.bodyUrl } : {}),
                   ...(profileMatches && auth.name ? { name: auth.name } : {}),
                   ...(profileMatches && auth.avatarUrl
                     ? { avatarUrl: auth.avatarUrl }
@@ -138,42 +315,44 @@ export default function SitesTopBar({
           balanceAction={isIn ? balances : undefined}
           accountControl={accountControl}
           accountActions={actions}
+          accountMenuAppearance="profile"
+          accountMenuBalances={menuBalances}
+          accountMenuBalancesPending={profileManaEligible && (manaPending || polygonManaPending)}
+          accountMenuNetwork={manaAccount && provider ? (
+            <ProfileNetwork provider={provider} label={walletNetwork} ethereum={ethereum} polygon={polygon} />
+          ) : undefined}
+          onAccountMenuOpenChange={setProfileOpen}
+          labels={labels}
+          locale={locale}
           mobileSecondaryNavigation={
             sections ? ({ closeDrawer }) => sections(closeDrawer) : undefined
           }
           notifications={
             identity
               ? {
-                  ...(rows
-                    ? { count: rows.filter((row) => !row.read).length }
-                    : {}),
-                  onSelect: () => setNotificationAccount(identity),
+                  count: unreadCount(rows),
+                  ...(landing ? { expanded: notificationsOpen } : {}),
+                  panel: landing ? panel : null,
+                  onSelect: () => {
+                    if (notificationsOpen) {
+                      setNotificationOwner(null);
+                      return;
+                    }
+                    setNotificationOwner({ account: identity, pathname });
+                    if (
+                      landing &&
+                      notifications.isStale &&
+                      !notifications.isFetching
+                    ) {
+                      void notifications.refetch();
+                    }
+                  },
                 }
               : undefined
           }
         />
       </header>
-      {notificationsOpen ? (
-        <SitesNotificationsDialog
-          onClose={() => setNotificationAccount(null)}
-          state={
-            notifications.isPending
-              ? "loading"
-              : notifications.isError
-                ? "error"
-                : "ready"
-          }
-          rows={(rows ?? []).slice(0, 10).map((row) => ({
-            id: row.id,
-            title: notificationTitle(row),
-            description: notificationBody(row),
-            href: notificationLink(row) ?? undefined,
-            time: relativeTime(row.timestamp, Date.now()),
-            unread: !row.read,
-          }))}
-          Link={NavigationLink}
-        />
-      ) : null}
+      {landing ? null : panel}
     </>
   );
 }

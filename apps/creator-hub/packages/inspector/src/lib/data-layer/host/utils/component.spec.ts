@@ -2,7 +2,6 @@ import type { DeepReadonlyObject } from '@dcl/ecs';
 import type { Scene } from '@dcl/schemas';
 
 import type { EditorComponentsTypes, SceneSpawnPoint } from '../../../sdk/components';
-import type * as ConfigModule from '../../../logic/config';
 import {
   fromSceneComponent,
   fromSceneSpawnPoint,
@@ -10,16 +9,6 @@ import {
   toSceneComponent,
   toSceneSpawnPoint,
 } from './component';
-
-const mocks = vi.hoisted(() => ({ authServerSupported: false }));
-
-vi.mock('../../../logic/config', async orig => {
-  const actual = await orig<typeof ConfigModule>();
-  return {
-    ...actual,
-    getConfig: () => ({ ...actual.getConfig(), authServerSupported: mocks.authServerSupported }),
-  };
-});
 
 type SceneWithMultiplayer = Partial<Scene> & {
   authoritativeMultiplayer?: boolean;
@@ -51,10 +40,6 @@ function getScene(scene: Scene['scene'], extra: SceneWithMultiplayer = {}): Scen
     ...extra,
   } as Scene;
 }
-
-beforeEach(() => {
-  mocks.authServerSupported = false;
-});
 
 describe('fromSceneComponent', () => {
   describe('when the layout has parcels', () => {
@@ -88,11 +73,7 @@ describe('fromSceneComponent', () => {
     });
   });
 
-  describe('when the auth-server SDK is present', () => {
-    beforeEach(() => {
-      mocks.authServerSupported = true;
-    });
-
+  describe('when the component carries the multiplayer flag or an allowlist', () => {
     it('should write authoritativeMultiplayer true for a component with multiplayerServer on', () => {
       const result = fromSceneComponent(
         getSceneComponent(LAYOUT, { multiplayerServer: true }),
@@ -162,9 +143,8 @@ describe('fromSceneComponent', () => {
     });
   });
 
-  describe('when an existing multiplayer scene is opened with the flag false', () => {
+  describe('when an existing multiplayer scene is opened and saved', () => {
     it('should round-trip the allowlist instead of deleting it', () => {
-      mocks.authServerSupported = false;
       const address = '0x0000000000000000000000000000000000000001';
 
       const opened = toSceneComponent(
@@ -178,21 +158,6 @@ describe('fromSceneComponent', () => {
       expect(opened.multiplayerServer).toBe(true);
       expect(saved.authoritativeMultiplayer).toBe(true);
       expect(saved.logsPermissions).toEqual([address]);
-    });
-  });
-
-  describe('when the auth-server SDK is absent', () => {
-    it('should still persist authoritativeMultiplayer, because the host cannot see that flag', () => {
-      const result = fromSceneComponent(getSceneComponent(LAYOUT, { multiplayerServer: true }));
-      expect(result.authoritativeMultiplayer).toBe(true);
-    });
-
-    it('should still persist the allowlist', () => {
-      const address = '0x0000000000000000000000000000000000000001';
-      const result = fromSceneComponent(
-        getSceneComponent(LAYOUT, { multiplayerServer: true, logsPermissions: [address] }),
-      );
-      expect(result.logsPermissions).toEqual([address]);
     });
   });
 });
@@ -251,21 +216,14 @@ describe('toSceneComponent', () => {
   });
 
   describe('when the scene has no authoritativeMultiplayer key', () => {
-    it('should read as off even when the auth-server SDK is present, so the scene opts in explicitly', () => {
-      mocks.authServerSupported = true;
-      const result = toSceneComponent(getScene({ parcels: ['0,0'], base: '0,0' }));
-      expect(result.multiplayerServer).toBe(false);
-    });
-
-    it('should read as off when the auth-server SDK is absent', () => {
+    it('should read as off', () => {
       const result = toSceneComponent(getScene({ parcels: ['0,0'], base: '0,0' }));
       expect(result.multiplayerServer).toBe(false);
     });
   });
 
   describe('when the scene has an explicit authoritativeMultiplayer false', () => {
-    it('should read as off even when the auth-server SDK is present', () => {
-      mocks.authServerSupported = true;
+    it('should read as off', () => {
       const result = toSceneComponent(
         getScene({ parcels: ['0,0'], base: '0,0' }, { authoritativeMultiplayer: false }),
       );
@@ -274,7 +232,7 @@ describe('toSceneComponent', () => {
   });
 
   describe('when scene.json holds an entry the write path would reject', () => {
-    it('should not surface it, so the panel cannot show access it never granted', () => {
+    it('should not surface it', () => {
       const result = toSceneComponent(
         getScene({ parcels: ['0,0'], base: '0,0' }, {
           logsPermissions: ['0x5aAeb6053f3e94c9b9a09f33669435e7ef1beaed'],
@@ -326,7 +284,6 @@ describe('toSceneComponent', () => {
 
   describe('when scene.json has spawn ranges alongside multiplayer and logs permissions', () => {
     it('should read and write every field back unchanged', () => {
-      mocks.authServerSupported = true;
       const address = '0x0000000000000000000000000000000000000001';
       const spawnPoints = [
         {

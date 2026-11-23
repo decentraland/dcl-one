@@ -1,5 +1,9 @@
 import type { Entity, PBAvatarBase, PBAvatarEquippedData, TransformType } from '@dcl/ecs';
-import { BaseComponentNames } from './constants';
+import type { BaseComponentNames } from './constants';
+
+// The package scripts load this file with Node, which cannot resolve `./constants`. So the file
+// has no import that stays at run time, and the compiler checks the name against the constant.
+const TRIGGERS: typeof BaseComponentNames.TRIGGERS = 'asset-packs::Triggers';
 
 export type AssetPackData = {
   id: string;
@@ -48,6 +52,10 @@ export type AssetData = {
   // A built-in avatar animation every scene can already play by this name (e.g. 'wave'). The
   // asset ships only its thumbnails: there is nothing to add to a scene.
   builtInEmote?: string;
+  // The lowest @dcl/sdk version a scene needs to run this asset (e.g. '7.32.0'), for one whose
+  // script uses components that older SDKs don't have. The editor refuses to place it in a scene
+  // on an older SDK and offers to update the scene.
+  minSdkVersion?: string;
 };
 
 export type AssetDataWithoutComposite = Omit<AssetData, 'composite'>;
@@ -105,8 +113,9 @@ export function isLegacyAssetData(value: any): value is LegacyAssetData {
 }
 
 export function getTriggerComponent(value: AssetData): TriggerData | undefined {
-  return value.composite.components.find(c => c.name === BaseComponentNames.TRIGGERS)?.data[0]
-    ?.json as TriggerData | undefined;
+  return value.composite.components.find(c => c.name === TRIGGERS)?.data[0]?.json as
+    | TriggerData
+    | undefined;
 }
 
 export function assertValidTriggerComponent(assetName: string, trigger: TriggerData) {
@@ -117,6 +126,18 @@ export function assertValidTriggerComponent(assetName: string, trigger: TriggerD
       }
     });
   });
+}
+
+// A full `major.minor.patch`: the editor compares only that form, so '7.32' would never block.
+const SDK_VERSION = /^\d+\.\d+\.\d+$/;
+
+export function assertValidMinSdkVersion(assetName: string, minSdkVersion: unknown) {
+  if (minSdkVersion === undefined) return;
+  if (typeof minSdkVersion !== 'string' || !SDK_VERSION.test(minSdkVersion)) {
+    throw new Error(
+      `Invalid minSdkVersion on "${assetName}": ${JSON.stringify(minSdkVersion)}. Use a full version such as "7.32.0".`,
+    );
+  }
 }
 
 export type Asset = AssetData & { contents: Record<string, string> };
@@ -224,5 +245,5 @@ export type ActionCallback = () => void;
  * }
  * ```
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line no-unused-vars
 export type Slider<Min extends number, Max extends number, Step extends number = 1> = number;

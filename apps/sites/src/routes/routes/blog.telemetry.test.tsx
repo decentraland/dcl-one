@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
 import { createRoutesStub, redirect, useLoaderData } from "react-router";
@@ -17,10 +18,10 @@ vi.hoisted(() => {
 
 const track = vi.hoisted(() => vi.fn());
 vi.mock("@/core/lib/telemetry/track", () => ({ track }));
-vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
+vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children?: ReactNode }) => <>{children}</> }));
 
-import { BlogIndexView } from "@/features/blog/BlogIndexView";
-import { BlogPostView } from "@/features/blog/BlogPostView";
+import { BlogIndexView } from "@/pages/blog/BlogIndexView";
+import { BlogPostView } from "@/pages/blog/BlogPostView";
 import { installFakeCms } from "@/data/lib/blog/cms.test-utils";
 import { loadBlogAuthor, loadBlogCategory, loadBlogHome, loadBlogPost, loadBlogSearch, type BlogOutcome } from "@/data/lib/blog/pages";
 
@@ -64,142 +65,211 @@ const Stub = createRoutesStub([
 const calls = (event: string) => track.mock.calls.filter(([name]) => name === event).map(([, props]) => props);
 
 function renderAt(url: string) {
-  return render(<Stub initialEntries={[url]} />);
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <Stub initialEntries={[url]} />
+    </QueryClientProvider>,
+  );
 }
 
-beforeEach(() => {
-  installFakeCms();
-});
+const BLOG_HOME_HEADING = { level: 1, name: "The Decentraland Blog" } as const;
 
-afterEach(() => {
-  cleanup();
-  track.mockClear();
-  vi.unstubAllEnvs();
-  vi.unstubAllGlobals();
-});
+describe("blog telemetry", () => {
+  let user: ReturnType<typeof userEvent.setup>;
 
-describe("blog list telemetry", () => {
-  it("fires lp_blog_viewed once with the CMS total, and not again for Load more or a search", async () => {
-    const user = userEvent.setup();
-    renderAt("/blog");
-    await screen.findByRole("heading", { level: 1, name: "The Decentraland Blog" });
-    await waitFor(() =>
-      expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]),
-    );
-
-    await user.click(screen.getByRole("link", { name: "Load more" }));
-    await screen.findByRole("heading", { level: 3, name: "News 9" });
-    expect(screen.queryByRole("link", { name: "Load more" })).toBeNull();
-
-    const [box] = screen.getAllByRole("searchbox", { name: "Search articles" });
-    await user.type(box!, "news{Enter}");
-    await screen.findByText("9 articles for “news”");
-    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]);
+  beforeEach(() => {
+    installFakeCms();
+    user = userEvent.setup();
   });
 
-  it("fires it for each category and author view, with that list's total", async () => {
-    const user = userEvent.setup();
-    renderAt("/blog");
-    await screen.findByRole("heading", { level: 1, name: "The Decentraland Blog" });
-    const nav = screen.getByRole("navigation", { name: "Blog categories" });
-    await user.click(within(nav).getByRole("link", { name: "Announcements" }));
-    await screen.findByRole("heading", { level: 1, name: "Announcements" });
-    await waitFor(() =>
-      expect(calls("lp_blog_viewed")).toEqual([
-        { post_count: 11 },
-        { post_count: 9 },
-      ]),
-    );
-
+  afterEach(() => {
     cleanup();
-    track.mockClear();
-    renderAt("/blog/author/jane-doe");
-    await screen.findByRole("heading", { level: 1, name: "Jane Doe" });
-    await waitFor(() =>
-      expect(calls("lp_blog_viewed")).toEqual([{ post_count: 1 }]),
-    );
+    vi.resetAllMocks();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
-  it("fires nothing for an unknown category or an unavailable blog", async () => {
-    renderAt("/blog/nope");
-    await screen.findByRole("heading", { level: 1, name: "Category not found" });
-    cleanup();
-    vi.stubEnv("BLOG_CMS_URL", "");
-    renderAt("/blog");
-    await screen.findByRole("heading", { level: 1, name: "The blog is temporarily unavailable" });
-    expect(track).not.toHaveBeenCalled();
-  });
+  describe("when the blog home is viewed", () => {
+    beforeEach(async () => {
+      renderAt("/blog");
+      await screen.findByRole("heading", BLOG_HOME_HEADING);
+    });
 
-  it("fires lp_blog_post_clicked with the slug from the featured card and a grid card, and not from a tab", async () => {
-    const user = userEvent.setup();
-    renderAt("/blog");
-    await user.click(await screen.findByRole("link", { name: "First Post" }));
-    await screen.findByRole("heading", { level: 1, name: "First Post" });
-    expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "first-post" }]);
+    it("should fire lp_blog_viewed once with the CMS total", async () => {
+      await waitFor(() =>
+        expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]),
+      );
+    });
 
-    track.mockClear();
-    cleanup();
-    renderAt("/blog");
-    const nav = await screen.findByRole("navigation", { name: "Blog categories" });
-    await user.click(within(nav).getByRole("link", { name: "Platform" }));
-    await screen.findByRole("heading", { level: 1, name: "Platform" });
-    await user.click(await screen.findByRole("link", { name: "Second Post" }));
-    await screen.findByRole("heading", { level: 1, name: "Second Post" });
-    expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
-  });
-});
+    describe("and the reader loads more and then searches", () => {
+      beforeEach(async () => {
+        await waitFor(() => expect(calls("lp_blog_viewed")).toHaveLength(1));
+        await user.click(screen.getByRole("link", { name: "Load more" }));
+        await screen.findByRole("heading", { level: 3, name: "News 9" });
+      });
 
-describe("blog post telemetry", () => {
-  it("fires lp_blog_post_viewed once, and lp_blog_post_clicked plus a new view for a related card", async () => {
-    const user = userEvent.setup();
-    renderAt("/blog/platform/first-post");
-    await screen.findByRole("heading", { level: 1, name: "First Post" });
-    await waitFor(() =>
-      expect(calls("lp_blog_post_viewed")).toEqual([{ slug: "first-post" }]),
-    );
+      it("should load the last page, leaving no Load more, and not fire lp_blog_viewed again", async () => {
+        expect(screen.queryByRole("link", { name: "Load more" })).toBeNull();
 
-    const related = screen.getByRole("region", { name: /More on|More from/ });
-    await user.click(within(related).getByRole("link", { name: "Second Post" }));
-    await screen.findByRole("heading", { level: 1, name: "Second Post" });
+        const box = screen.getByRole("combobox", { name: "Search articles" });
+        await user.type(box, "news{Enter}");
+        await screen.findByText("9 articles for “news”");
+        expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]);
+      });
+    });
 
-    await waitFor(() => {
-      expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
-      expect(calls("lp_blog_post_viewed")).toEqual([
-        { slug: "first-post" },
-        { slug: "second-post" },
-      ]);
+    describe("and the reader opens a category", () => {
+      beforeEach(async () => {
+        const nav = screen.getByRole("navigation", { name: "Blog categories" });
+        await user.click(within(nav).getByRole("link", { name: "Announcements" }));
+        await screen.findByRole("heading", { level: 1, name: "Announcements" });
+      });
+
+      it("should fire lp_blog_viewed for the category with its total", async () => {
+        await waitFor(() =>
+          expect(calls("lp_blog_viewed")).toEqual([
+            { post_count: 11 },
+            { post_count: 9 },
+          ]),
+        );
+      });
+    });
+
+    describe("and the reader clicks the featured card", () => {
+      beforeEach(async () => {
+        await user.click(await screen.findByRole("link", { name: "First Post" }));
+        await screen.findByRole("heading", { level: 1, name: "First Post" });
+      });
+
+      it("should fire lp_blog_post_clicked with its slug", () => {
+        expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "first-post" }]);
+      });
+    });
+
+    describe("and the reader opens a category tab and clicks a grid card", () => {
+      beforeEach(async () => {
+        const nav = await screen.findByRole("navigation", { name: "Blog categories" });
+        await user.click(within(nav).getByRole("link", { name: "Platform" }));
+        await screen.findByRole("heading", { level: 1, name: "Platform" });
+        await user.click(await screen.findByRole("link", { name: "Second Post" }));
+        await screen.findByRole("heading", { level: 1, name: "Second Post" });
+      });
+
+      it("should fire lp_blog_post_clicked with the card's slug, and not for the tab", () => {
+        expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
+      });
     });
   });
 
-  it("sends no click for the back link, the author link or a link in the body, and no view for a missing post", async () => {
-    const user = userEvent.setup();
-    renderAt("/blog/platform/first-post");
-    const article = (await screen.findByRole("heading", { level: 1, name: "First Post" })).closest("article")!;
-    expect(within(article).getByRole("link", { name: "the docs" }).getAttribute("target")).toBe("_blank");
-    await user.click(within(article).getByRole("link", { name: "Jane Doe" }));
-    await screen.findByRole("heading", { level: 1, name: "Jane Doe" });
-    expect(calls("lp_blog_post_clicked")).toEqual([]);
+  describe("when an author's list is viewed", () => {
+    beforeEach(async () => {
+      renderAt("/blog/author/jane-doe");
+      await screen.findByRole("heading", { level: 1, name: "Jane Doe" });
+    });
 
-    cleanup();
-    renderAt("/blog/platform/first-post");
-    await user.click(await screen.findByRole("link", { name: "Back to blog" }));
-    await screen.findByRole("heading", { level: 1, name: "The Decentraland Blog" });
-    expect(calls("lp_blog_post_clicked")).toEqual([]);
-
-    cleanup();
-    track.mockClear();
-    renderAt("/blog/platform/nope");
-    await screen.findByRole("heading", { level: 1, name: "Post not found" });
-    expect(track).not.toHaveBeenCalled();
+    it("should fire lp_blog_viewed with that list's total", async () => {
+      await waitFor(() =>
+        expect(calls("lp_blog_viewed")).toEqual([{ post_count: 1 }]),
+      );
+    });
   });
 
-  it("renders no blocks the CMS has no data for (takeaways, CTA, FAQ, author bio)", async () => {
-    renderAt("/blog/platform/first-post");
-    const article = (await screen.findByRole("heading", { level: 1 })).closest("article")!;
-    for (const name of [/takeaway/i, /faq|frequently asked/i, /about the author/i, /get started|sign up|download/i]) {
-      expect(within(article).queryByRole("heading", { name })).toBeNull();
-    }
-    expect(within(article).queryByRole("button", { name: /get started|sign up|download/i })).toBeNull();
-    expect(article.querySelector("details, dl")).toBeNull();
+  describe("when an unknown category is viewed", () => {
+    beforeEach(async () => {
+      renderAt("/blog/nope");
+      await screen.findByRole("heading", { level: 1, name: "Category not found" });
+    });
+
+    describe("and then the blog becomes unavailable", () => {
+      beforeEach(async () => {
+        cleanup();
+        vi.stubEnv("BLOG_CMS_URL", "");
+        renderAt("/blog");
+        await screen.findByRole("heading", { level: 1, name: "The blog is temporarily unavailable" });
+      });
+
+      it("should fire nothing for either", () => {
+        expect(track).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe("when a post is viewed", () => {
+    let article: HTMLElement;
+
+    beforeEach(async () => {
+      renderAt("/blog/platform/first-post");
+      article = (await screen.findByRole("heading", { level: 1, name: "First Post" })).closest("article")!;
+    });
+
+    it("should fire lp_blog_post_viewed once", async () => {
+      await waitFor(() =>
+        expect(calls("lp_blog_post_viewed")).toEqual([{ slug: "first-post" }]),
+      );
+    });
+
+    it("should open a link in the body in a new tab", () => {
+      expect(within(article).getByRole("link", { name: "the docs" }).getAttribute("target")).toBe("_blank");
+    });
+
+    it("should render no blocks the CMS has no data for (takeaways, CTA, FAQ, author bio)", () => {
+      for (const name of [/takeaway/i, /faq|frequently asked/i, /about the author/i, /get started|sign up|download/i]) {
+        expect(within(article).queryByRole("heading", { name })).toBeNull();
+      }
+      expect(within(article).queryByRole("button", { name: /get started|sign up|download/i })).toBeNull();
+      expect(article.querySelector("details, dl")).toBeNull();
+    });
+
+    describe("and the reader clicks a related card", () => {
+      beforeEach(async () => {
+        await waitFor(() => expect(calls("lp_blog_post_viewed")).toHaveLength(1));
+        const related = screen.getByRole("region", { name: /More on|More from/ });
+        await user.click(within(related).getByRole("link", { name: "Second Post" }));
+        await screen.findByRole("heading", { level: 1, name: "Second Post" });
+      });
+
+      it("should fire lp_blog_post_clicked and a new view", async () => {
+        await waitFor(() => {
+          expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
+          expect(calls("lp_blog_post_viewed")).toEqual([
+            { slug: "first-post" },
+            { slug: "second-post" },
+          ]);
+        });
+      });
+    });
+
+    describe("and the reader clicks the author link", () => {
+      beforeEach(async () => {
+        await user.click(within(article).getByRole("link", { name: "Jane Doe" }));
+        await screen.findByRole("heading", { level: 1, name: "Jane Doe" });
+      });
+
+      it("should send no click", () => {
+        expect(calls("lp_blog_post_clicked")).toEqual([]);
+      });
+    });
+
+    describe("and the reader clicks the back link", () => {
+      beforeEach(async () => {
+        await user.click(await screen.findByRole("link", { name: "Back to blog" }));
+        await screen.findByRole("heading", BLOG_HOME_HEADING);
+      });
+
+      it("should send no click", () => {
+        expect(calls("lp_blog_post_clicked")).toEqual([]);
+      });
+    });
+  });
+
+  describe("when a missing post is viewed", () => {
+    beforeEach(async () => {
+      renderAt("/blog/platform/nope");
+      await screen.findByRole("heading", { level: 1, name: "Post not found" });
+    });
+
+    it("should send no view", () => {
+      expect(track).not.toHaveBeenCalled();
+    });
   });
 });
