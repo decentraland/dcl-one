@@ -147,9 +147,11 @@ whatever `PLACES_MIRROR_UPSTREAM` says. A Genesis place is keyed there by upstre
 UUID only after `run places`: with the mirror off and no places import, the catalogue holds
 only the node's derived rows, keyed by the UUIDv5 of the base parcel, and an imported
 community place comes back as its bare `{id, addedBy, addedAt}` row. The rows resolve as
-soon as places is imported, in any order; the load reports how many UUID ids the catalogue
-lacks. A place upstream disabled (redeployed elsewhere, undeployed) stays bare, as upstream
-serves it.
+soon as places is imported, in any order. The load reports the UUID ids the catalogue
+lacks under their exact stored spelling (the node's lookup), except world-scene ids. Some
+ids stay bare whatever is imported, as upstream serves them: a world scene's UUID (only its
+world name is a destination) and a place upstream disabled (redeployed elsewhere,
+undeployed), which the places import skips, so it is reported too.
 
 ## Community thumbnails
 

@@ -950,9 +950,11 @@ pages of 100 communities. Five lifetime counters on `social.communities` retain
 photos, ended events, event attendees, ended streams and ended voice chats. The
 ranking job updates local authoritative communities only. Mirrored ranking scores
 remain upstream facts. `ranking_tracking_since` bounds local event occurrences
-eligible for collection; zero counter defaults do not reconstruct history. An
-authoritative cutover must import the lifetime counters, collection watermark and
-local producer receipts together before enabling local ranking ownership.
+eligible for collection; zero counter defaults do not reconstruct history. The
+social-service-ea import copies the lifetime counters and moves
+`ranking_tracking_since` to the moment it read them, so the collector counts only
+occurrences that end later; it imports no producer receipts. See "Community ranking"
+in `tooling/migration/sources/social-service-ea/MAPPING.md`.
 
 The existing leased event collector keeps a scalar source-key cursor and a
 recurrence ordinal window. It selects 100 event keys through the existing primary
