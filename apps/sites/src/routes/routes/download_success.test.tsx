@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { StrictMode, type ComponentProps } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,8 +73,9 @@ describe("Download success", () => {
   });
 
   describe("when opening the macOS install page", () => {
-    it("should show all three instructions, screenshots and a working retry destination", () => {
+    it("should show all three instructions, screenshots and a working retry destination", async () => {
       show("?os=macos");
+      await waitFor(() => expect(requests).toHaveLength(1));
       expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
         "Your download has started!",
       );
@@ -112,12 +113,13 @@ describe("Download success", () => {
       );
       await user.click(screen.getByRole("option", { name: "Español" }));
       await screen.findByRole("button", { name: "Change language: Español" });
-      expect(requests).toHaveLength(1);
+      await waitFor(() => expect(requests).toHaveLength(1));
     });
   });
   describe("when opening the Windows page", () => {
-    it("should use Setup Wizard instructions and request the Windows artifact", () => {
+    it("should use Setup Wizard instructions and request the Windows artifact", async () => {
       show("?os=windows&arch=arm64");
+      await waitFor(() => expect(requests).toHaveLength(1));
       expect(screen.getByText(/Follow the Setup Wizard/)).toBeTruthy();
       expect(requests).toEqual([
         "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.exe",
@@ -125,8 +127,9 @@ describe("Download success", () => {
     });
   });
   describe("when parameters are invalid", () => {
-    it("should choose the source macOS defaults without accepting a download host", () => {
+    it("should choose the source macOS defaults without accepting a download host", async () => {
       show("?os=https://evil.test&arch=invalid&url=https://evil.test");
+      await waitFor(() => expect(requests).toHaveLength(1));
       expect(requests).toEqual([
         "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
       ]);

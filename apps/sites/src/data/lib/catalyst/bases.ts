@@ -79,6 +79,16 @@ export function explorerInstallersUrl(env: BaseEnv = processEnv()): string | nul
 }
 
 /**
+ * The download gateway (decentraland/client-download-gateway) /download_success requests the installer from, so the
+ * installer carries the visitor's sign-in token or campaign id; from deployment config. Unset, the page serves the
+ * plain installer from EXPLORER_INSTALLERS_URL.
+ */
+export function explorerDownloadGatewayUrl(env: BaseEnv = processEnv()): string | null {
+  const v = envValue(env, "EXPLORER_DOWNLOAD_GATEWAY_URL");
+  return v ? trimSlash(v) : null;
+}
+
+/**
  * The JSON of the Explorer's download counts per platform, from deployment config:
  * unset, the hero shows its fallback total and /download no total.
  */

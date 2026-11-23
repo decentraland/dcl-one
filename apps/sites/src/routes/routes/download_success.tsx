@@ -5,6 +5,9 @@ import { DownloadSuccessFooter } from "@dcl/one-ui/apps/sites/download/DownloadS
 import { parseCookies } from "@/core/lib/telemetry/session";
 import { useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import { useDownloadSuccessFunnel } from "@/features/download/download-success-funnel";
+import { signInTokenFrom } from "@/features/download/installer-gateway";
+import { explorerDownloadGatewayUrl } from "@/data/lib/catalyst/bases";
+import { resolveAuthApiUrl } from "../lib/auth-deeplink";
 import { installerUrl } from "@/data/lib/download/installers";
 import { installerSelection } from "@/features/download/installers";
 import {
@@ -41,7 +44,8 @@ export function meta({ matches }: Route.MetaArgs) {
 }
 
 export function loader({ request }: Route.LoaderArgs) {
-  const params = new URL(request.url).searchParams;
+  const requestUrl = new URL(request.url);
+  const params = requestUrl.searchParams;
   const locale = sitesLanguage(
     params.get("lang") ?? parseCookies(request.headers.get("cookie")).lang,
   ).code;
@@ -58,6 +62,8 @@ export function loader({ request }: Route.LoaderArgs) {
     place: params.get("place"),
     macArch: params.get("mac_arch"),
     anonUserId: params.get("anon_user_id"),
+    gateway: explorerDownloadGatewayUrl(),
+    authApiUrl: resolveAuthApiUrl(process.env.AUTH_API_URL, requestUrl.host),
   };
 }
 
@@ -74,7 +80,7 @@ function startDownload(href: string) {
 export default function DownloadSuccessRoute({
   loaderData,
 }: Route.ComponentProps) {
-  const { os, arch, url: href, locale, year, place, macArch, anonUserId } = loaderData;
+  const { os, arch, url: href, locale, year, place, macArch, anonUserId, gateway, authApiUrl } = loaderData;
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
@@ -98,6 +104,8 @@ export default function DownloadSuccessRoute({
     place,
     macArch,
     anonUserId,
+    gateway,
+    identityId: signInTokenFrom(authApiUrl),
     sid,
     userId,
     dispatch: startDownload,

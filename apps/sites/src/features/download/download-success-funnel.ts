@@ -17,10 +17,21 @@ import {
   type FunnelPlace,
 } from "./download-funnel";
 import { deliverInstaller, installerFilename } from "./installer-delivery";
+import {
+  chooseInstallerUrl,
+  collectDeepLinkParams,
+  resolveGatewayAnonUserId,
+  resolveReferrer,
+  withInstallerQuery,
+} from "./installer-gateway";
 
 export type DownloadSuccessFunnel = FunnelSession & {
-  /** The installer this page starts. */
+  /** The plain installer for this system on the installer host; the download gateway's link replaces it when set. */
   href: string;
+  /** The download gateway's base, or null when the deployment configures none. */
+  gateway: string | null;
+  /** The sign-in token for the gateway's identity route; resolves undefined for a signed-out visitor. */
+  identityId: (signal: AbortSignal) => Promise<string | undefined>;
   os: "windows" | "macos";
   arch: FunnelArch;
   /** The page's `?place=`, `?mac_arch=` and `?anon_user_id=`, as given. */
@@ -49,34 +60,50 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
   const started = useRef<{ href: string; controller: AbortController } | null>(null);
   const attempts = useRef(new Set<AbortController>());
   const retrying = useRef(false);
+  // The id the last attempt gave the gateway, which the exit snapshot reports so its row joins that attempt's.
+  const gatewayAnonUserId = useRef<string | undefined>(undefined);
 
   const facts = () => {
     const { sid, userId, anonUserId, arch } = latest.current;
     return { sid, userId, arch, anonUserId: resolveAnonUserId(anonUserId, sid), authenticated: Boolean(userId), revisit: revisit.current ?? 0 };
   };
 
-  // Each attempt owns its cancellation, as the legacy page's AbortController did: aborting it cancels the HEAD
-  // request and the hold, and the attempt then reports no outcome.
-  const attempt = async (attemptPlace: FunnelPlace, href: string, controller = new AbortController()) => {
+  // Each attempt owns its cancellation, as the legacy page's AbortController did: aborting it cancels the sign-in
+  // token request, the HEAD request and the hold, and the attempt then reports no outcome.
+  const attempt = async (attemptPlace: FunnelPlace, controller = new AbortController()) => {
     const { signal } = controller;
     attempts.current.add(controller);
     const { sid, userId, arch, anonUserId, authenticated, revisit: visit } = facts();
-    const extra = funnelExtra(resolveMacArch(latest.current.macArch));
-    const tracker = createDownloadTracker(
-      { href, os, arch, place: attemptPlace, anonUserId, authenticated, revisit: visit, extra },
-      { sid, userId },
-    );
+    const { href: plain, gateway, identityId, dispatch, macArch } = latest.current;
+    const params = new URLSearchParams(window.location.search);
+    const deepLink = collectDeepLinkParams(params);
+    const referrer = resolveReferrer(params);
+    const anon = resolveGatewayAnonUserId(anonUserId, sid, deepLink, referrer);
+    gatewayAnonUserId.current = anon;
+    // The footer retry reads its attribution as it is clicked; the automatic attempt once its URL is known.
+    const early = attemptPlace === "download-success-footer" ? funnelExtra(resolveMacArch(macArch)) : undefined;
+    const tracker = (href: string) =>
+      createDownloadTracker(
+        { href, os, arch, place: attemptPlace, anonUserId: anon, authenticated, revisit: visit, extra: early ?? funnelExtra(resolveMacArch(macArch)) },
+        { sid, userId },
+      );
+    let current: ReturnType<typeof tracker> | null = null;
     try {
+      const url = await chooseInstallerUrl({ os, arch, fallback: plain, gateway, identityId, anonUserId: anon, signal });
+      if (signal.aborted) return;
+      const href = withInstallerQuery(url, { anon_user_id: anon, ...deepLink, ...(referrer ? { referrer } : {}) });
+      current = tracker(href);
       fired.current.startedFired = true;
-      tracker.started();
-      const delivery = await deliverInstaller(href, os, latest.current.dispatch, signal);
+      current.started();
+      const delivery = await deliverInstaller(href, os, dispatch, signal);
       if (signal.aborted) return;
       fired.current.successFired = true;
-      tracker.success(installerFilename(href), delivery);
+      current.success(installerFilename(url), delivery);
     } catch (error) {
       if (signal.aborted) return;
       fired.current.failedFired = true;
-      tracker.failed(error instanceof Error ? error.message : "Download failed");
+      // A failure before the URL was known reports the plain installer, the best link the page had.
+      (current ?? tracker(plain)).failed(error instanceof Error ? error.message : "Download failed");
     } finally {
       attempts.current.delete(controller);
     }
@@ -108,7 +135,7 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     if (started.current?.href === input.href) return;
     started.current?.controller.abort();
     started.current = { href: input.href, controller: new AbortController() };
-    void attempt(place, input.href, started.current.controller);
+    void attempt(place, started.current.controller);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input.href]);
 
@@ -117,7 +144,16 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     return onPageHidden(() => {
       const { sid, userId, arch, anonUserId, authenticated, revisit: visit } = facts();
       sendDownloadFunnelExit(
-        { os, arch, place, ...fired.current, msOnPage: Date.now() - loadedAt.current, revisit: visit, authenticated, anonUserId },
+        {
+          os,
+          arch,
+          place,
+          ...fired.current,
+          msOnPage: Date.now() - loadedAt.current,
+          revisit: visit,
+          authenticated,
+          anonUserId: gatewayAnonUserId.current ?? anonUserId,
+        },
         { sid, userId },
       );
     });
@@ -128,7 +164,7 @@ export function useDownloadSuccessFunnel(input: DownloadSuccessFunnel): (event: 
     event.preventDefault();
     if (retrying.current) return;
     retrying.current = true;
-    void attempt("download-success-footer", latest.current.href).finally(() => {
+    void attempt("download-success-footer").finally(() => {
       retrying.current = false;
     });
   };

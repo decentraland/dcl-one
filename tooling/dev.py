@@ -487,9 +487,10 @@ def runtime_env(config, refuse_exposed_relayer=True):
         # Sites' blog CMS base, taken from the shell when set (unset: the blog answers 503).
         # TODO(cms-migration): point it at the in-tree area once cms-server is migrated.
         'BLOG_CMS_URL',
-        # Sites' /download: the host of the launcher installers and the JSON of the download
-        # counts (unset: /download offers no installer and shows no total).
-        'EXPLORER_INSTALLERS_URL', 'DOWNLOAD_COUNTS_URL',
+        # Sites' /download: the host of the launcher installers, the download gateway that wraps them with the
+        # visitor's attribution and the JSON of the download counts (unset: /download offers no installer,
+        # /download_success serves the plain installer and the page shows no total).
+        'EXPLORER_INSTALLERS_URL', 'EXPLORER_DOWNLOAD_GATEWAY_URL', 'DOWNLOAD_COUNTS_URL',
     ) if key in os.environ}
     base = config['port']
     env.update({

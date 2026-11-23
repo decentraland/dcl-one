@@ -19,6 +19,9 @@ vi.mock("@/core/lib/telemetry/track", () => ({
   legacyAnalyticsReady: () => true,
   whenLegacyAnalyticsReady: (fire: () => void) => fire(),
 }));
+const auth = vi.hoisted(() => ({ identity: null as unknown, post: vi.fn() }));
+vi.mock("@/data/lib/auth/session", () => ({ getIdentity: () => auth.identity }));
+vi.mock("@/data/lib/auth/deeplink-identity", () => ({ postIdentityHandoff: auth.post }));
 vi.mock("@/core/lib/telemetry/page-view", () => ({ useAnalyticsSid: () => SID, useAnalyticsUserId: () => "" }));
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("@dcl/one-ui/components/AppChrome/chrome-auth", () => ({
@@ -27,6 +30,10 @@ vi.mock("@dcl/one-ui/components/AppChrome/chrome-auth", () => ({
 
 const SID = "0b7f4c2e-1d3a-4e5f-9a8b-7c6d5e4f3a2b";
 const INSTALLER = (os: string) => `https://installers.test/launcher-rust/Decentraland_installer.${os === "windows" ? "exe" : "dmg"}`;
+/** The installer as requested: the legacy page appends the visitor's anonymous id to whatever link it picked. */
+const REQUESTED = (os: string) => `${INSTALLER(os)}?anon_user_id=${SID}`;
+/** The URL is resolved before the attempt starts, as on the legacy page. */
+const settle = () => act(() => vi.advanceTimersByTimeAsync(0));
 
 function data(search: string) {
   const params = new URLSearchParams(search);
@@ -39,8 +46,11 @@ function data(search: string) {
     place: params.get("place"),
     macArch: params.get("mac_arch"),
     anonUserId: params.get("anon_user_id"),
+    gateway: gateway.current,
+    authApiUrl: "https://auth-api.test",
   };
 }
+const gateway: { current: string | null } = { current: null };
 
 function show(search: string) {
   window.history.replaceState({}, "", `/download_success${search}`);
@@ -90,6 +100,9 @@ beforeEach(() => {
   vi.stubGlobal("fetch", head);
 });
 afterEach(() => {
+  gateway.current = null;
+  auth.identity = null;
+  auth.post.mockReset();
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -102,9 +115,10 @@ afterEach(() => {
 describe("arriving from a download control", () => {
   it("sends arrived, then started, then success after the macOS hold, once each under StrictMode", async () => {
     show("?os=macOS&place=landing-hero&utm_source=Partner");
+    await settle();
     expect(names()).toEqual(["download_success_arrived", "download_started"]);
-    expect(requests).toEqual([INSTALLER("macos")]);
-    expect(head).toHaveBeenCalledWith(INSTALLER("macos"), expect.objectContaining({ method: "HEAD", credentials: "omit", cache: "no-store" }));
+    expect(requests).toEqual([REQUESTED("macos")]);
+    expect(head).toHaveBeenCalledWith(REQUESTED("macos"), expect.objectContaining({ method: "HEAD", credentials: "omit", cache: "no-store" }));
     await act(() => vi.advanceTimersByTimeAsync(800));
     expect(names()).toEqual(["download_success_arrived", "download_started", "download_success"]);
 
@@ -113,7 +127,7 @@ describe("arriving from a download control", () => {
     const [success] = sent("download_success");
     expect(success).toMatchObject({
       delivery_mode: "anchor_native",
-      href: INSTALLER("macos"),
+      href: REQUESTED("macos"),
       os: "macOS",
       arch: "arm64",
       place: "landing-hero",
@@ -160,6 +174,7 @@ describe("arriving from a download control", () => {
         }),
     );
     const { unmount } = show("?os=macOS&place=landing-hero");
+    await settle();
     expect(signal?.aborted).toBe(false);
     unmount();
     await act(() => vi.advanceTimersByTimeAsync(5000));
@@ -174,17 +189,20 @@ describe("arriving from a download control", () => {
       return new Promise(() => {});
     });
     const { router } = show("?os=macOS&place=landing-hero");
+    await settle();
     await act(() => router.navigate("/download_success?os=Windows&place=landing-hero"));
+    await settle();
     expect(signal?.aborted).toBe(true);
-    expect(requests).toEqual([INSTALLER("macos"), INSTALLER("windows")]);
+    expect(requests).toEqual([REQUESTED("macos"), REQUESTED("windows")]);
     await act(() => vi.advanceTimersByTimeAsync(4000));
     expect(names()).toEqual(["download_success_arrived", "download_started", "download_started", "download_success"]);
-    expect(sent("download_started").map((p) => p.href)).toEqual([INSTALLER("macos"), INSTALLER("windows")]);
-    expect(sent("download_success")[0]).toMatchObject({ href: INSTALLER("windows"), delivery_mode: "anchor_fallback" });
+    expect(sent("download_started").map((p) => p.href)).toEqual([REQUESTED("macos"), REQUESTED("windows")]);
+    expect(sent("download_success")[0]).toMatchObject({ href: REQUESTED("windows"), delivery_mode: "anchor_fallback" });
   });
 
   it("snapshots the funnel on every hide, with the outcomes fired so far", async () => {
     show("?os=macOS&place=landing-hero");
+    await settle();
     setHidden(true);
     await act(() => vi.advanceTimersByTimeAsync(800));
     setHidden(false);
@@ -205,8 +223,9 @@ describe("arriving from a download control", () => {
 });
 
 describe("expected negatives (peer plan)", () => {
-  it("a direct arrival (no known place) reports its arrival with place unknown, leaves place off the attempt and never sends an exit", () => {
+  it("a direct arrival (no known place) reports its arrival with place unknown, leaves place off the attempt and never sends an exit", async () => {
     show("?os=macOS");
+    await settle();
     setHidden(true);
     expect(sent("download_success_arrived")[0]).toMatchObject({ place: "unknown" });
     expect(sent("download_started")[0]).not.toHaveProperty("place");
@@ -257,5 +276,93 @@ describe("click to exit: one click_id across the funnel (Codex fixture)", () => 
     }
     expect(sent("download_funnel_exit")[0]).toMatchObject({ place: "download-page", download_success_fired: true });
     expect(sent("download_started")[0]).toMatchObject({ utm_source: "partner", ms_since_click: expect.any(Number) });
+  });
+});
+
+describe("the download gateway (legacy calculateCDNReleaseLinksWithIdentity)", () => {
+  const GATEWAY = "https://gateway.test";
+  beforeEach(() => {
+    gateway.current = GATEWAY;
+  });
+
+  it("sends a signed-out visitor through the anonymous route with the campaign id, without asking for a token", async () => {
+    show("?os=Windows&place=download-page");
+    await settle();
+    expect(auth.post).not.toHaveBeenCalled();
+    expect(requests).toEqual([`${GATEWAY}/anonymous/decentraland.exe?anon_user_id=${SID}`]);
+    await act(() => vi.advanceTimersByTimeAsync(4000));
+    expect(sent("download_success")[0]).toMatchObject({ filename: "decentraland.exe", href: requests[0] });
+  });
+
+  it("sends a signed-in visitor through the identity route with the token from POST /identities", async () => {
+    auth.identity = { signer: "0xabc" };
+    auth.post.mockResolvedValue({ identityId: "token-1", expiration: "" });
+    show("?os=macOS&arch=arm64&place=landing-hero");
+    await settle();
+    expect(auth.post).toHaveBeenCalledWith(auth.identity, "https://auth-api.test", { signal: expect.any(AbortSignal) });
+    expect(requests).toEqual([`${GATEWAY}/token-1/decentraland.dmg?anon_user_id=${SID}`]);
+  });
+
+  it("keeps an Intel Mac on the plain installer on the identity route, and on the gateway on the anonymous one", async () => {
+    auth.identity = { signer: "0xabc" };
+    auth.post.mockResolvedValue({ identityId: "token-1", expiration: "" });
+    show("?os=macOS&arch=amd64&place=landing-hero");
+    await settle();
+    expect(requests[0]).toBe(`${INSTALLER("macos")}?anon_user_id=${SID}`);
+    cleanup();
+    requests.length = 0;
+    auth.identity = null;
+    show("?os=macOS&arch=amd64&place=landing-hero");
+    await settle();
+    expect(requests[0]).toBe(`${GATEWAY}/anonymous/decentraland.dmg?anon_user_id=${SID}`);
+  });
+
+  it("falls back to the anonymous route when the token request fails", async () => {
+    auth.identity = { signer: "0xabc" };
+    auth.post.mockRejectedValue(new Error("Auth API responded with status 500"));
+    show("?os=Windows&place=download-page");
+    await settle();
+    expect(requests).toEqual([`${GATEWAY}/anonymous/decentraland.exe?anon_user_id=${SID}`]);
+    expect(sent("download_failed")).toHaveLength(0);
+  });
+
+  it("gives up on a token request after 5 seconds and takes the anonymous route", async () => {
+    auth.identity = { signer: "0xabc" };
+    auth.post.mockImplementation(
+      (_identity: unknown, _url: string, { signal }: { signal: AbortSignal }) =>
+        new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason))),
+    );
+    show("?os=Windows&place=download-page");
+    await settle();
+    expect(requests).toEqual([]);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(requests).toEqual([`${GATEWAY}/anonymous/decentraland.exe?anon_user_id=${SID}`]);
+  });
+
+  it("starts nothing when the visitor leaves while the token is pending", async () => {
+    auth.identity = { signer: "0xabc" };
+    let signal: AbortSignal | undefined;
+    auth.post.mockImplementation((_i: unknown, _u: string, opts: { signal: AbortSignal }) => {
+      signal = opts.signal;
+      return new Promise(() => {});
+    });
+    const { unmount } = show("?os=Windows&place=download-page");
+    await settle();
+    unmount();
+    await settle();
+    expect(signal?.aborted).toBe(true);
+    expect(requests).toEqual([]);
+    expect(names()).toEqual(["download_success_arrived"]);
+  });
+
+  it("carries the deep link and referrer the gateway bakes in, never the click_id", async () => {
+    sessionStorage.setItem("downloadFunnel:lastClick", JSON.stringify({ click_id: "c-1", clicked_at: Date.now() }));
+    show("?os=Windows&place=download-page&position=10.20&realm=foo.dcl.eth&referrer=0xAbCdEf0123456789abcdef0123456789ABCDEF01");
+    await settle();
+    expect(requests).toEqual([
+      `${GATEWAY}/anonymous/decentraland.exe?anon_user_id=${SID}&position=10%2C20&realm=foo.dcl.eth&referrer=0xabcdef0123456789abcdef0123456789abcdef01`,
+    ]);
+    expect(requests[0]).not.toContain("c-1");
+    expect(sent("download_started")[0]).toMatchObject({ click_id: "c-1", anon_user_id: SID });
   });
 });
