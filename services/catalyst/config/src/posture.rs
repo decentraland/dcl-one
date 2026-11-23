@@ -926,6 +926,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
+    ("EVENTS_SITE_URL", LINK),
     ("JUMP_IN_SITE_URL", LINK),
     ("PLACES_BASE_URL", LINK),
     ("CREDITS_CHECKOUT_CANCEL_URL", LINK),
