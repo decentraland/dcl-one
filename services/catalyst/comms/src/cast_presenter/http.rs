@@ -186,7 +186,10 @@ async fn parse_json(presenter: &Arc<Presenter>, body: bytes::Bytes) -> Result<Pa
     // The token first, so a refused one takes no slot, starts no bot and
     // costs no download; then its bot's slot for the check, the download
     // and the presentation.
-    let slot = presenter.reserve(&livekit_token).map_err(create_failure)?;
+    let slot = presenter
+        .reserve(&livekit_token)
+        .await
+        .map_err(create_failure)?;
     presenter
         .validate_credentials(&slot, &livekit_token)
         .await

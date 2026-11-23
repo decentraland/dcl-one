@@ -49,6 +49,9 @@ mod jobs;
 
 #[path = "streaming_cast.rs"]
 pub(super) mod cast;
+/// For the Cast presenter, which replaces a room's presentation only for a
+/// bot of the room's active credential.
+pub(crate) use cast::publisher_credential_current;
 pub(super) use jobs::spawn_jobs;
 
 /// The durable cleanup of one intent, for tests that retry it after a failure.
