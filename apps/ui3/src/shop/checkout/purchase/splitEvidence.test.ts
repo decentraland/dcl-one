@@ -111,8 +111,11 @@ describe('which transaction is an in-world split purchase', () => {
   })
 
   it('says nothing of a transaction to another contract, or one it can\'t read: its destination alone isn\'t where the credit went', async () => {
-    expect(await splitExecution(evidenceOf({ to: STORE, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('unknown')
-    expect(await splitExecution(evidenceOf({ to: MANAGER, input: '0xdeadbeef' }, 'success') as never, sale, '0xabc')).toBe('unknown')
+    // Read, but not as a useCredits at the manager: unreadable, which is no answer either way (never bought, never other).
+    expect(await splitExecution(evidenceOf({ to: STORE, input: relayed() }, 'success') as never, sale, '0xabc')).toBe('unreadable')
+    expect(await splitExecution(evidenceOf({ to: MANAGER, input: '0xdeadbeef' }, 'success') as never, sale, '0xabc')).toBe('unreadable')
+    // Nothing read at all is unknown.
+    expect(await splitExecution(evidenceOf(null, 'success') as never, sale, '0xabc', { sleep: async () => {} })).toBe('unknown')
   })
 
   it('reads a useCredits the buyer\'s own wallet sent (the web Shop\'s fallback) by the transaction\'s sender', async () => {
@@ -128,8 +131,8 @@ describe('which transaction is an in-world split purchase', () => {
     expect(await splitExecution(evidence(BUYER, 'reverted') as never, { ...sale, envelope: splitEnvelope(relayed()) }, '0xabc')).toBe('unknown')
     // Sent by another account: it doesn't spend this buyer's credit.
     expect(await splitExecution(evidence('0x' + 'cc'.repeat(20), 'success') as never, sale, '0xabc')).toBe('foreign')
-    // A reader that doesn't give the sender can't tell whose it is.
-    expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unknown')
+    // A reader that doesn't give the sender can't tell whose it is: unreadable, no answer either way.
+    expect(await splitExecution(evidence(undefined, 'success') as never, sale, '0xabc')).toBe('unreadable')
   })
 
   it('gives a transaction its receipt ran ahead of one more look, a moment later: a mined purchase reads as bought', async () => {

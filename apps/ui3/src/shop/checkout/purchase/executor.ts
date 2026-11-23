@@ -151,14 +151,6 @@ async function accountKind(ctx: RailContext, chainId: number): Promise<"eoa" | "
   }
 }
 
-/**
- * The page's own guard refused the request before handing it to the wallet: it never reached the wallet. Known by the
- * error's class only (`RefusedBeforeWallet`): a wallet's error with the same name or code proves nothing here.
- */
-function refusedBeforeWallet(e: unknown): boolean {
-  return e instanceof RefusedBeforeWallet;
-}
-
 function failureFor(e: unknown, kind?: GroupFailure["kind"]): GroupFailure {
   if (kind) return { kind, message: friendlyError(e, FALLBACK, { sale: true }) };
   if (isRejection(e) || isSignatureDeclined(e)) return { kind: "rejected", message: friendlyError(e, FALLBACK) };
@@ -345,16 +337,10 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     return { status: "confirmed", txHash };
   } catch (e) {
     guard.submitFinished(creditId);
-    // The caller couldn't keep the call, or its bytes, before they went: nothing was sent, and the credit goes back.
-    if (e instanceof CallNotKeptError && txHash === null) {
-      const failure: GroupFailure = { kind: "refused", message: e.message };
-      dispatchSafe(store, keyId, { type: "failed", failure });
-      return { status: "failed", failure, released: await release(deps, [creditId]) };
-    }
-    // What the account is couldn't be read before the wallet was handed anything: nothing was sent, the credit goes back,
-    // and trying again reads it anew.
-    if (e instanceof AccountUnreadError && txHash === null) {
-      const failure: GroupFailure = { kind: "error", message: e.message };
+    // Stopped before anything went: the caller couldn't keep the call or its bytes (refused), or what the account is couldn't
+    // be read (an error, which trying again reads anew). Nothing was sent, and the credit goes back.
+    if ((e instanceof CallNotKeptError || e instanceof AccountUnreadError) && txHash === null) {
+      const failure: GroupFailure = { kind: e instanceof AccountUnreadError ? "error" : "refused", message: e.message };
       dispatchSafe(store, keyId, { type: "failed", failure });
       return { status: "failed", failure, released: await release(deps, [creditId]) };
     }
@@ -377,7 +363,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     // buyer's own in the wallet (4001, ACTION_REJECTED), or the page's guard refusing the request before passing it on.
     // Anything else (a disconnect, an abort or a "cancelled" after it broadcast, a timeout) may be on its way: held, its
     // credit kept, for its caller to find out by the node's record. What the buyer is told is another matter.
-    if (kept && walletHandedOff && !isWalletRefusal(e) && !refusedBeforeWallet(e)) {
+    if (kept && walletHandedOff && !isWalletRefusal(e) && !(e instanceof RefusedBeforeWallet)) {
       guard.unobservable(creditId);
       return { status: "pending", txHash: null };
     }

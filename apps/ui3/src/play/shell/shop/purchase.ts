@@ -1197,6 +1197,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         settled(op, 'failed', {}, SPLIT_SPENT_ELSEWHERE, SPLIT_SPENT_ELSEWHERE_PART)
         return true
       }
+      // A Credits part (never a split) whose credit the node says was spent, in a transaction read but not readable as a
+      // useCredits at the manager (a smart wallet's own call, a bundle through an EntryPoint): bought, as a Credits purchase
+      // has always been found out by its credit's SETTLED. It ends the part; it starts nothing after it.
+      if (outcome === 'unreadable' && !op.split) {
+        settled(op, 'succeeded', { txHash: record.txHash })
+        return true
+      }
       return false
     }
     if (record?.status === 'EXPIRED') {

@@ -349,9 +349,16 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
         case 'eth_sendTransaction':
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
           checkTransaction(args[0], intent)
-          // A wallet on another network would spend gas there and leave the purchase pending.
-          if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
-          await ready('handedOff')
+          // Everything before the wallet is handed the transaction: whatever stops it here (a refusal, or a read of the
+          // wallet that fails or disconnects), the wallet never got it.
+          try {
+            // A wallet on another network would spend gas there and leave the purchase pending.
+            if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
+            await ready('handedOff')
+          } catch (e) {
+            if (e instanceof RefusedBeforeWallet) throw e
+            throw Object.assign(new WalletRefusal("Your wallet didn't answer before the purchase was sent, so nothing was sent. Try again.", 4100), { cause: e })
+          }
           return provider.request({ method, params })
         default:
           throw new WalletRefusal(`The Shop doesn't use ${method}.`, 4200)

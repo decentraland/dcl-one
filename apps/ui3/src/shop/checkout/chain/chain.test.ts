@@ -31,7 +31,7 @@ import {
   SignatureDeclinedError,
 } from "./metatx";
 import { createRpcReader, defaultSleep, waitForReceipt, type ChainReader } from "./rpc";
-import { accountCodeKind, sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
+import { accountCodeKind, isWalletRefusal, sendAndConfirm, TxPendingError, TxRevertedError } from "./wallet";
 
 const FIXTURES = join(__dirname, "../../../../../../services/catalyst/tests/fixtures/shop");
 const read = (p: string) => readFileSync(join(FIXTURES, p), "utf8");
@@ -452,6 +452,18 @@ describe("relaying a meta-transaction", () => {
     await expect(relay(answering(400, { ok: false, error: "invalid_transaction", message: "transaction reverted: execution reverted" }))).rejects.toMatchObject({
       reason: "relayer-unreachable",
     });
+  });
+});
+
+describe("a request the buyer turned down in the wallet", () => {
+  it("is 4001, ACTION_REJECTED or WalletConnect's 5000, itself or one level down; nothing else", () => {
+    for (const code of [4001, "ACTION_REJECTED", 5000]) {
+      expect(isWalletRefusal({ code })).toBe(true);
+      expect(isWalletRefusal({ code: -32603, cause: { code } })).toBe(true);
+    }
+    for (const e of [{ code: 4900 }, { code: 4100 }, { code: -32603, cause: { code: 4900 } }, { name: "AbortError" }, new Error("User rejected the request"), null, undefined]) {
+      expect(isWalletRefusal(e)).toBe(false);
+    }
   });
 });
 

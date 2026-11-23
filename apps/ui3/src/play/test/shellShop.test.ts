@@ -1473,6 +1473,48 @@ describe('a purchase of several items (the cart)', () => {
       expect(t.cancels).toEqual([])
     })
 
+    it('ends a part bought through a call it can’t read, by its credit’s SETTLED, as Credits purchases always were', async () => {
+      const node = recordOf()
+      const BUNDLED = '0x' + '4b'.repeat(32)
+      // An account that pays through a bundler: its transaction goes to the EntryPoint, not the manager.
+      const bundle = { to: '0x' + '5f'.repeat(20), input: '0x765e827f' as Hex, from: '0x' + '6e'.repeat(20) }
+      const t = setup({
+        items: ITEMS,
+        offers: mixed,
+        resolvers: trades,
+        run: runAs(BUNDLED, 'pending', 'pending'),
+        evidence: () =>
+          ({
+            transaction: async (_c: number, hash: string) => (hash === BUNDLED ? bundle : null),
+            receipt: async (_c: number, hash: string) => (hash === BUNDLED ? { transactionHash: hash, status: 'success', blockNumber: 1n } : null)
+          }) as never,
+        creditRecordOf: node.lookup
+      })
+      await t.checkout('7', '8')
+      ;(await t.until('confirm')).handlers.onConfirm?.()
+      await vi.waitFor(() => expect(t.sleeps.length).toBeGreaterThan(2))
+      expect(t.events.some((e) => e.state === 'succeeded')).toBe(false)
+      // The node says the credit was spent in that very transaction: the part is bought, and nothing after it starts.
+      node.settle(BUNDLED)
+      await vi.waitFor(() => expect(t.events.filter((e) => e.state === 'succeeded')).toHaveLength(1))
+      expect(t.run).toHaveBeenCalledTimes(1)
+      expect(t.cancels).toEqual([])
+    })
+
+    it('finds out a kept part still pending after a reload by its own call, and sends nothing again', async () => {
+      const storage = memoryStorage()
+      const before = setup({ storage, items: ITEMS, offers: mixed, resolvers: trades, run: runAs(OWN, 'pending', 'pending'), evidence: chainSays({}) })
+      const { operation } = await before.checkout('7', '8')
+      ;(await before.until('confirm')).handlers.onConfirm?.()
+      await vi.waitFor(() => expect(before.sleeps.length).toBeGreaterThan(1))
+      // Another page on the same browser, once the chain holds the part's own call.
+      const after = setup({ storage, items: ITEMS, offers: mixed, resolvers: trades, evidence: chainSays({ [OWN]: argsFor('accept') }) })
+      await after.shop.request('shop.capabilities', undefined)
+      await vi.waitFor(() => expect(after.events.find((e) => e.operation === operation)?.state).toBe('succeeded'))
+      expect(after.run).not.toHaveBeenCalled()
+      expect(after.cancels).toEqual([])
+    })
+
     it('keeps the bytes it sends with its call, before they go', async () => {
       const storage = memoryStorage()
       let kept: unknown = null

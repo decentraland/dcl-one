@@ -114,6 +114,8 @@ export function isPendingTxError(err: unknown): boolean {
  * What an account is by the bytecode a node read for it: `eoa` only for exactly `0x`, `contract` for one or more whole bytes
  * of hex, and `unknown` for anything else (a failed read, half a byte, not hex at all). Every reader of an account's kind
  * goes through this one classification, so an answer is never a contract in one place and inconclusive in another.
+ * An EIP-7702 delegated account (`0xef0100` and an address) is a contract here, on purpose: its sends may run through its
+ * delegate as a call to itself, so it is followed as a smart wallet is (fails safe), never kept by a call it may not carry.
  */
 export function accountCodeKind(code: unknown): "eoa" | "contract" | "unknown" {
   if (code === "0x") return "eoa";
@@ -135,6 +137,11 @@ export class RefusedBeforeWallet extends Error {
  * -32002, -32603, no code) may come after the wallet broadcast it.
  */
 export function isWalletRefusal(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null)?.code;
-  return code === 4001 || code === "ACTION_REJECTED";
+  const refused = (code: unknown): boolean => code === 4001 || code === "ACTION_REJECTED" || code === WALLETCONNECT_USER_REJECTED;
+  const e = err as { code?: unknown; cause?: { code?: unknown } | null } | null;
+  // The code itself, or one level down where a library wraps the provider's error (`cause`).
+  return refused(e?.code) || refused(e?.cause?.code);
 }
+
+/** WalletConnect's code for a request the user rejected in the wallet (its USER_REJECTED, 5000). */
+const WALLETCONNECT_USER_REJECTED = 5000;

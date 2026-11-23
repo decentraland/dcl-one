@@ -950,6 +950,19 @@ describe("a kept credits group the wallet was handed", () => {
     expect(cancels(h)).toBe(1);
   });
 
+  it("a rejection WalletConnect reports, or one a library wraps, still fails it and gives its credit back", async () => {
+    for (const error of [Object.assign(new Error("User rejected."), { code: 5000 }), Object.assign(new Error("rejected"), { code: -32603, cause: { code: 4001 } })]) {
+      const h = await harness();
+      const original = h.wallet.request.bind(h.wallet);
+      h.wallet.request = (async (args: { method: string; params?: unknown[] }) => {
+        if (args.method === "eth_sendTransaction") throw error;
+        return original(args as never);
+      }) as typeof h.wallet.request;
+      expect(await runGroup(kept(h, { gasless: false }), h.group, h.resolved)).toMatchObject({ status: "failed" });
+      expect(cancels(h)).toBe(1);
+    }
+  });
+
   it("an explicit refusal in the wallet still fails it and gives its credit back", async () => {
     const h = await harness();
     h.wallet.next = "reject";
