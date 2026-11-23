@@ -15,6 +15,8 @@ import { homeEventHref } from "@/features/home/links";
 import { homeDownloadActions } from "@/features/home/actions";
 import { googlePlayHref } from "@/features/download/google-play";
 import { withDownloadClicks } from "@/features/home/download-clicks";
+import { resolveAnonUserId } from "@/features/download/download-funnel";
+import { campaignSearch } from "@/features/download/installers";
 import { trackDownloadClick } from "@/features/download/download-click";
 import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
@@ -63,6 +65,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     downloads: downloads ?? DOWNLOADS_FALLBACK,
     platform: detectPlatform(request.headers.get("user-agent")),
     googlePlay: googlePlayHref(new URL(request.url).search),
+    // Only the page's utm_*, which its /download_success links forward.
+    search: campaignSearch(new URL(request.url).search),
     installers: explorerInstallersUrl() !== null,
     cards: whatsOnCards(cards, profiles),
     faces: Object.fromEntries(
@@ -76,7 +80,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { sid, platform, installers, downloads, cards, faces, googlePlay } = loaderData;
+  const { sid, platform, installers, downloads, cards, faces, googlePlay, search } = loaderData;
 
   const locale = useContext(SitesLocaleContext)?.locale ?? loaderData.locale;
   const copy = homeCopy[locale];
@@ -91,6 +95,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
   const { hero, hangOut, store, alternateStore, hangOutStore } = withDownloadClicks(
     homeDownloadActions(platform, downloads, installers, copy.download, googlePlay),
     (click) => trackDownloadClick(click, { sid, userId }),
+    { anonUserId: resolveAnonUserId(null, sid), search },
   );
   const labels = {
     previous: copy.slides.previous,

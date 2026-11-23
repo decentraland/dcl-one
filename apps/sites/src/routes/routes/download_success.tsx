@@ -1,8 +1,10 @@
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";
 import { DownloadSuccessFooter } from "@dcl/one-ui/apps/sites/download/DownloadSuccessFooter";
 import { parseCookies } from "@/core/lib/telemetry/session";
+import { useAnalyticsSid, useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
+import { useDownloadSuccessFunnel } from "@/features/download/download-success-funnel";
 import { installerUrl } from "@/data/lib/download/installers";
 import { installerSelection } from "@/features/download/installers";
 import {
@@ -52,13 +54,27 @@ export function loader({ request }: Route.LoaderArgs) {
     url,
     locale,
     year: new Date().getUTCFullYear(),
+    // The funnel's own query (legacy `/download_success`); each is validated where it is read.
+    place: params.get("place"),
+    macArch: params.get("mac_arch"),
+    anonUserId: params.get("anon_user_id"),
   };
+}
+
+/** Hands the installer to the browser through a hidden link, as a click on it would. */
+function startDownload(href: string) {
+  const link = document.createElement("a");
+  link.href = href;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
 }
 
 export default function DownloadSuccessRoute({
   loaderData,
 }: Route.ComponentProps) {
-  const { os, url: href, locale, year } = loaderData;
+  const { os, arch, url: href, locale, year, place, macArch, anonUserId } = loaderData;
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
@@ -67,25 +83,25 @@ export default function DownloadSuccessRoute({
   const footer = sitesFooterCopy[locale];
   const navigate = useNavigate();
   const preference = useContext(SitesLocaleContext);
-  const started = useRef<string | null>(null);
   const [browser, setBrowser] = useState<DownloadBrowser>("chrome");
   useEffect(() => {
     setBrowser(
       detectDownloadBrowser(navigator.userAgent, "brave" in navigator),
     );
   }, []);
-  useEffect(() => {
-    // Locale changes keep this attempt; a different artifact or a new mount starts another.
-    const visit = href;
-    if (started.current === visit) return;
-    started.current = visit;
-    const link = document.createElement("a");
-    link.href = href;
-    link.hidden = true;
-    document.body.append(link);
-    link.click();
-    link.remove();
-  }, [href]);
+  const sid = useAnalyticsSid();
+  const userId = useAnalyticsUserId();
+  const retry = useDownloadSuccessFunnel({
+    href,
+    os,
+    arch,
+    place,
+    macArch,
+    anonUserId,
+    sid,
+    userId,
+    dispatch: startDownload,
+  });
   const steps = success.steps[os === "windows" ? "windows" : "macOS"];
   return (
     <>
@@ -101,7 +117,7 @@ export default function DownloadSuccessRoute({
         footerLines={[
           {
             text: (link) => linkText(success.footer_retry, link),
-            link: { label: success.footer_retry_link, href },
+            link: { label: success.footer_retry_link, href, onClick: retry },
           },
           {
             text: (link) => linkText(success.footer_help, link),

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { track } from "@/core/lib/telemetry/track";
 
+import { trackDownloadClick } from "./download-click";
 import DownloadPage from "./DownloadPage";
 import { googlePlayHref } from "./google-play";
 import sitesLogo from "@dcl/one-ui/apps/sites/assets/dcl-logo.svg?url";
@@ -51,8 +52,16 @@ it("names the page with level 1 headings only, one for each layout", () => {
 
 it("links each installer button to the page that starts that installer, a click only reporting itself", () => {
   render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" />);
-  expect(screen.getByRole("link", { name: "Download for Windows" }).getAttribute("href")).toBe("/download_success?os=Windows&arch=amd64");
-  expect(screen.getByRole("link", { name: "macOS" }).getAttribute("href")).toBe("/download_success?os=macOS&arch=arm64");
+  expect(screen.getByRole("link", { name: "Download for Windows" }).getAttribute("href")).toBe("/download_success?os=Windows&place=download-page&arch=amd64");
+  expect(screen.getByRole("link", { name: "macOS" }).getAttribute("href")).toBe("/download_success?os=macOS&place=download-page&arch=arm64");
+});
+
+it("carries a UUID visitor id and the page's utm_* on those links, in the legacy order", () => {
+  const anon = "0b7f4c2e-1d3a-4e5f-9a8b-7c6d5e4f3a2b";
+  render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid={anon} search="utm_source=partner" />);
+  expect(screen.getByRole("link", { name: "Download for Windows" }).getAttribute("href")).toBe(
+    `/download_success?os=Windows&place=download-page&anon_user_id=${anon}&arch=amd64&utm_source=partner`,
+  );
 });
 
 describe("legacy download Clicks (inventory 2.1.a)", () => {
@@ -137,5 +146,54 @@ describe("the Google Play departure", () => {
   it("keeps the site's own tag without a campaign", () => {
     render(<DownloadPage primary={WINDOWS} secondary={MACOS} android downloads={null} sid="s1" />);
     expect(screen.getByRole("link", { name: /Get it on Google Play/ }).getAttribute("href")).toBe(googlePlayHref());
+  });
+});
+
+describe("download_page_exit (legacy inventory 2.2)", () => {
+  const setHidden = (hidden: boolean) => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  const exits = () => vi.mocked(track).mock.calls.filter(([event]) => event === "download_page_exit");
+  afterEach(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("reports leaving without a choice, with the time on the page and the page's utm_*, as a conversion", () => {
+    window.history.replaceState({}, "", "/download?utm_source=Partner%20X&utm_medium=email");
+    render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" userId="0xabc" />);
+    setHidden(true);
+    expect(exits()).toHaveLength(1);
+    const [, props, ctx] = exits()[0]!;
+    expect(Object.keys(props as object)).toEqual(["cta_clicked", "ms_on_page", "utm_source", "utm_medium"]);
+    expect(props).toEqual({ cta_clicked: false, ms_on_page: expect.any(Number), utm_source: "partner_x", utm_medium: "email" });
+    expect(ctx).toEqual({ sid: "s1", userId: "0xabc", legacy: true, conversion: true });
+  });
+
+  it("reports a download control clicked on this page, and fires again on every hide", async () => {
+    render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" />);
+    const link = screen.getByRole("link", { name: "Download on Epic Games" });
+    link.addEventListener("click", (e) => e.preventDefault());
+    await userEvent.setup().click(link);
+    setHidden(true);
+    setHidden(false);
+    setHidden(true);
+    expect(exits().map(([, props]) => (props as { cta_clicked: boolean }).cta_clicked)).toEqual([true, true]);
+  });
+
+  it("does not count a click made before this page mounted", () => {
+    trackDownloadClick({ place: "Landing Hero", event: "Download", download_target: "desktop_installer" }, { sid: "s1" });
+    render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" />);
+    setHidden(true);
+    expect(exits()[0]![1]).toMatchObject({ cta_clicked: false });
+  });
+
+  it("sends nothing when the page becomes visible, or after it unmounts", () => {
+    const { unmount } = render(<DownloadPage primary={WINDOWS} secondary={MACOS} android={false} downloads={null} sid="s1" />);
+    setHidden(false);
+    unmount();
+    setHidden(true);
+    expect(exits()).toHaveLength(0);
   });
 });

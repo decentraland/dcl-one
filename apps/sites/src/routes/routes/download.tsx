@@ -6,6 +6,7 @@ import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { useAnalyticsUserId } from "@/core/lib/telemetry/page-view";
 import DownloadPage from "@/features/download/DownloadPage";
 import { googlePlayHref } from "@/features/download/google-play";
+import { campaignSearch } from "@/features/download/installers";
 
 import { publicBase } from "../lib/social-meta";
 import { staticPageMeta } from "../lib/static-page-meta";
@@ -33,11 +34,12 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     android: /android/i.test(userAgent),
     downloads: await loadDownloadCounts(),
     googlePlay: googlePlayHref(url.search),
+    search: campaignSearch(url.search),
   });
 }
 
 export default function Download({ loaderData }: Route.ComponentProps) {
-  const { sid, primary, secondary, android, downloads, googlePlay } = loaderData;
+  const { sid, primary, secondary, android, downloads, googlePlay, search } = loaderData;
   const userId = useAnalyticsUserId();
   return (
     <DownloadPage
@@ -48,6 +50,7 @@ export default function Download({ loaderData }: Route.ComponentProps) {
       sid={sid}
       userId={userId}
       googlePlay={googlePlay}
+      search={search}
     />
   );
 }

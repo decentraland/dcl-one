@@ -54,8 +54,3 @@ export function downloadOptions(userAgent: string): { primary: Installer | null;
   const os = agent.os === "other" ? "windows" : agent.os;
   return { primary: agent.handheld ? null : resolveInstaller(os, links), secondary: resolveInstaller(os === "macos" ? "windows" : "macos", links) };
 }
-
-export function successHref(installer: Pick<Installer, "os" | "arch">): string {
-  return `/download_success?os=${installer.os === "windows" ? "Windows" : "macOS"}&arch=${installer.arch}`;
-}
-

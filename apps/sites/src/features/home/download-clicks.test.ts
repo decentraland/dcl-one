@@ -172,15 +172,50 @@ describe("home download clicks (legacy inventory 2.1.a)", () => {
     });
   });
 
-  it("keeps every link and label as the actions gave them", () => {
+  it("keeps every store and Epic link as the actions gave them", () => {
     const plain = homeDownloadActions(detectPlatform(MAC), "+400K", true);
     const { actions } = home(MAC);
-    expect(actions.hero.primary!.href).toBe(plain.hero.primary!.href);
-    expect(actions.hero.alternativeGroups!.flat().map((a) => a.href)).toEqual(plain.hero.alternativeGroups!.flat().map((a) => a.href));
+    expect(actions.hero.epic!.href).toBe(plain.hero.epic!.href);
+    expect(actions.hero.alternativeGroups!.flat().filter((a) => a.icon === "ios" || a.icon === "android").map((a) => a.href)).toEqual(
+      plain.hero.alternativeGroups!.flat().filter((a) => a.icon === "ios" || a.icon === "android").map((a) => a.href),
+    );
     expect(actions.hangOutStore.href).toBe(plain.store.href);
   });
 
   it("adds no alternate badge where the actions have none (a phone)", () => {
     expect(home(ANDROID).actions.alternateStore).toBeUndefined();
+  });
+});
+
+describe("home /download_success links (legacy inventory 4.3)", () => {
+  const ANON = "0b7f4c2e-1d3a-4e5f-9a8b-7c6d5e4f3a2b";
+  const link = (ua: string, ctx?: Parameters<typeof withDownloadClicks>[2]) =>
+    withDownloadClicks(homeDownloadActions(detectPlatform(ua), "+400K", true), vi.fn(), ctx);
+
+  it("puts each section's place on its main button, with no architecture, as the legacy hero did", () => {
+    const actions = link(MAC);
+    expect(actions.hero.primary!.href).toBe("/download_success?os=macOS&place=landing-hero");
+    expect(actions.hangOut.primary!.href).toBe("/download_success?os=macOS&place=come-hang-out");
+  });
+
+  it("puts the platform-switch place on the other installer", () => {
+    const actions = link(MAC);
+    const other = (groups: typeof actions.hero.alternativeGroups) => groups!.flat().find((a) => a.icon === "windows")!.href;
+    expect(other(actions.hero.alternativeGroups)).toBe("/download_success?os=Windows&place=landing-hero-platform-switch");
+    expect(other(actions.hangOut.alternativeGroups)).toBe("/download_success?os=Windows&place=come-hang-out-platform-switch");
+  });
+
+  it("adds the visitor's anonymous id, then the page's utm_*, in the legacy order", () => {
+    const actions = link(WINDOWS, { anonUserId: ANON, search: "utm_source=Partner%20X&utm_campaign=fall" });
+    expect(actions.hero.primary!.href).toBe(
+      `/download_success?os=Windows&place=landing-hero&anon_user_id=${ANON}&utm_source=partner_x&utm_campaign=fall`,
+    );
+  });
+
+  it("keeps the page's utm_* on the /download fallback and leaves it bare without them", () => {
+    const withoutInstallers = (search: string) =>
+      withDownloadClicks(homeDownloadActions(detectPlatform(WINDOWS), "+400K", false), vi.fn(), { search }).hero.primary!.href;
+    expect(withoutInstallers("utm_source=x")).toBe("/download?utm_source=x");
+    expect(withoutInstallers("")).toBe("/download");
   });
 });

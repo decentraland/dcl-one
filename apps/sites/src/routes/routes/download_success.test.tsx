@@ -63,10 +63,13 @@ describe("Download success", () => {
     ) {
       requests.push(this.href);
     });
+    // The macOS hold sizes the installer with a HEAD request; no test reaches the network.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 404 })));
   });
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe("when opening the macOS install page", () => {

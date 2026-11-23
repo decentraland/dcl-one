@@ -67,6 +67,32 @@ function uuid(): string {
   });
 }
 
+/** A click older than this is a different download intent, or a direct revisit: /download_success does not join it. */
+const MAX_CORRELATION_AGE_MS = 30 * 60 * 1000;
+
+/** The last click's correlation, if fresh and well formed; never throws. */
+export function readDownloadClickCorrelation(): Correlation | null {
+  try {
+    const raw = sessionStorage.getItem(DOWNLOAD_CLICK_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const { click_id, clicked_at } = parsed as Record<string, unknown>;
+    if (typeof click_id !== "string" || typeof clicked_at !== "number") return null;
+    if (Date.now() - clicked_at > MAX_CORRELATION_AGE_MS) return null;
+    return { click_id, clicked_at };
+  } catch {
+    return null;
+  }
+}
+
+// Whether a download control (a conversion) was clicked since /download mounted: its `download_page_exit` reads it.
+let ctaClicked = false;
+export const downloadCtaClicked = (): boolean => ctaClicked;
+export function resetDownloadCtaClicked(): void {
+  ctaClicked = false;
+}
+
 /** Stored for /download_success; blocked storage loses only that join, never the click. */
 function recordCorrelation(): Correlation {
   const correlation = { click_id: uuid(), clicked_at: Date.now() };
@@ -95,6 +121,8 @@ export function trackDownloadClick(
   { sid, userId }: DownloadClickSession,
   { conversion = true, correlate = true }: DownloadClickOptions = {},
 ): void {
+  // The legacy `useDownloadClick` marked every click, before anything else; `useTrackClick` controls did not.
+  if (conversion) ctaClicked = true;
   try {
     const calledAt = Date.now();
     const deferred = !legacyAnalyticsReady();
@@ -111,7 +139,7 @@ export function trackDownloadClick(
       const props: DownloadClickProps = {
         ...base,
         track_called_at: calledAt,
-        track_delivered_at: Date.now(),
+        track_delivered_at: conversion ? calledAt : Date.now(),
         track_deferred: deferred,
       };
       track("Click", props, {

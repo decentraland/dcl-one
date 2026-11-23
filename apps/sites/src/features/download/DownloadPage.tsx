@@ -7,9 +7,12 @@ import { VerifiedIcon } from "@dcl/one-ui/apps/sites/download/VerifiedIcon";
 import { useChromeAuth } from "@dcl/one-ui/components/AppChrome/chrome-auth";
 import SitesLayout from "../components/chrome/SitesLayout";
 
-import { successHref, type Installer } from "@/data/lib/download/installers";
+import type { Installer } from "@/data/lib/download/installers";
 
 import { trackDownloadClick, type DownloadClick } from "./download-click";
+import { resolveAnonUserId } from "./download-funnel";
+import { useDownloadPageExit } from "./download-success-funnel";
+import { legacySuccessHref } from "./installers";
 import { googlePlayHref } from "./google-play";
 
 import appleLogo from "./assets/apple-logo.svg?url";
@@ -46,6 +49,8 @@ export type DownloadPageProps = {
   userId?: string | null;
   /** The Google Play listing tagged with this visitor's campaign (`googlePlayHref`); the site's own tag by default. */
   googlePlay?: string;
+  /** The page's `utm_*` (`campaignSearch`), which its /download_success links forward. */
+  search?: string;
 };
 
 // The legacy /download page's attributes per control (decentraland/sites `DownloadOptions/DownloadOptions.tsx`,
@@ -58,11 +63,14 @@ const CLICKS = {
   googlePlay: { place: "download-page", event: "Download", download_target: "google_play", os: "Android" },
 } satisfies Record<string, DownloadClick>;
 
-type OptionsProps = Pick<DownloadPageProps, "primary" | "secondary" | "downloads" | "sid" | "userId"> & { googlePlay: string };
+type OptionsProps = Pick<DownloadPageProps, "primary" | "secondary" | "downloads" | "sid" | "userId"> & { googlePlay: string; search: string };
 
-function DownloadOptions({ primary, secondary, downloads, sid, userId, googlePlay }: OptionsProps) {
+function DownloadOptions({ primary, secondary, downloads, sid, userId, googlePlay, search }: OptionsProps) {
   if (!primary?.url) return null;
   const send = (click: DownloadClick) => () => trackDownloadClick(click, { sid, userId });
+  // The legacy page's links: `place=download-page` for both installers, with the architecture.
+  const successHref = (installer: Installer) =>
+    legacySuccessHref(installer.os, "download-page", { anonUserId: resolveAnonUserId(null, sid), arch: installer.arch, search });
   return (
     <div className={styles.actions}>
       <div className={styles.buttons}>
@@ -147,8 +155,10 @@ export default function DownloadPage({
   sid,
   userId,
   googlePlay = googlePlayHref(),
+  search = "",
 }: DownloadPageProps) {
   const auth = useChromeAuth();
+  useDownloadPageExit({ sid, userId });
   const signedIn = auth.signedIn && !!auth.account;
   const page = (
     <main className={`${styles.page} ${signedIn ? styles.signedIn : styles.signedOut}`}>
@@ -181,7 +191,7 @@ export default function DownloadPage({
             )}
             {/* The page's one heading: CSS shows this title on wide viewports and the one below on narrow ones, never both. */}
             <h1 className={styles.title}>{TITLE}</h1>
-            <DownloadOptions primary={primary} secondary={secondary} downloads={downloads} sid={sid} userId={userId} googlePlay={googlePlay} />
+            <DownloadOptions primary={primary} secondary={secondary} downloads={downloads} sid={sid} userId={userId} googlePlay={googlePlay} search={search} />
           </div>
         </div>
         <h1 className={styles.mobileTitle}>{TITLE}</h1>
