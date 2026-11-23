@@ -253,6 +253,13 @@
   min-width: 0;
 }
 
+/* Below 768px the image stacks above the details, centred in the card. */
+@media (max-width: 767.98px) {
+  .thumbnail {
+    justify-self: center;
+  }
+}
+
 /* A phone: the image spans the card from 391px down, as source. */
 @media (max-width: 390.98px) {
   .thumbnail {

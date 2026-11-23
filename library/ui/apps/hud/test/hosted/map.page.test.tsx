@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DEFAULT_REALM } from '@hud-host'
 import type { SceneToPage } from '@explorer-core/engine/protocol'
@@ -12,6 +12,7 @@ import { navigation } from '@explorer-core/features/map/navigation'
 import { eventOf, placeOf } from '@explorer-core/test/mapFixtures'
 import { MapPage } from '../../features/map/MapPage'
 import { MARKER_ART } from '../../features/map/mapArt'
+import chromeStyles from '../../features/map/MapChrome.module.css'
 import type { MapState, TravelOutcome } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 
@@ -137,6 +138,15 @@ describe('map page controls', () => {
     for (const name of ['Layers', 'Center on home', 'Center on me', 'Zoom in', 'Zoom out']) {
       expect(within(controls).getByRole('button', { name })).toBeInTheDocument()
     }
+  })
+
+  it("wraps the category chips only in the lobby's section modal", () => {
+    serve()
+    renderMap()
+    expect(screen.getByRole('group', { name: 'Categories' }).parentElement).not.toHaveClass(chromeStyles.categoriesWrap)
+    cleanup()
+    renderMap({}, true, { onTravel: vi.fn() })
+    expect(screen.getByRole('group', { name: 'Categories' }).parentElement).toHaveClass(chromeStyles.categoriesWrap)
   })
 
   it('stops zooming at the closest and the farthest view', async () => {
