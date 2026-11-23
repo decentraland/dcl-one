@@ -78,7 +78,9 @@ percentile, over the last 32 frames, of the time from the loop's end to the hand
 render worker less the frame's waits for that worker (`frame_tail`: `WAIT_RENDER` for the render
 app to come back, `WAIT_HANDOFF` for its animation frame to take the handoff), plus 6 % of the
 frame target (`TAIL_MARGIN_SHARE`). The waits shrink when the loop runs longer, so they are left
-out. Until 8 frames are measured, and with an uncapped frame rate, the web uses the grid.
+out. Until 32 frames are measured, and with an uncapped frame rate, the web uses the grid: with
+fewer frames the 90th percentile is their maximum, and a few heavy frames at the start would
+hold the loop on its floor.
 
 On the web each scene runs in a sandbox worker whose relay moves messages between the engine
 and the scene runtime (`crates/dcl_wasm/src/inner/relay.rs`, `deploy/web/engine/sandbox_worker.js`).

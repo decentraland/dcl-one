@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use web_time::Instant;
 
-/// Frames the tail estimate covers.
+/// Frames the tail estimate covers. It is used once they are all measured, so its 90th
+/// percentile always leaves out the 3 largest: with fewer frames the nearest-rank 90th percentile
+/// is the maximum, and a few heavy frames at the start would hold the loop on its floor.
 pub const TAIL_FRAMES: usize = 32;
-/// Frames measured before the estimate is used.
-pub const TAIL_MIN_FRAMES: usize = TAIL_FRAMES / 4;
 /// Added to the tail's 90th percentile, as a share of the frame target: slack for a tail beyond
 /// it that grows with the frame. (A late timer at the loop's end needs none: the loop ends its
 /// timed waits before the deadline by their lateness.)
@@ -71,9 +71,9 @@ impl TailEstimate {
         self.len = (self.len + 1).min(TAIL_FRAMES);
     }
 
-    /// The nearest-rank 90th percentile, once [`TAIL_MIN_FRAMES`] frames were measured.
+    /// The nearest-rank 90th percentile, once [`TAIL_FRAMES`] frames were measured.
     pub fn p90(&self) -> Option<Duration> {
-        if self.len < TAIL_MIN_FRAMES {
+        if self.len < TAIL_FRAMES {
             return None;
         }
         let mut sorted = self.ring;
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn the_tail_estimate_is_the_90th_percentile_of_the_last_frames() {
         let mut tail = TailEstimate::default();
-        for _ in 0..TAIL_MIN_FRAMES - 1 {
+        for _ in 0..TAIL_FRAMES - 1 {
             tail.push(ms(3.0));
         }
         assert_eq!(tail.reserve(T), None);
@@ -307,6 +307,22 @@ mod tests {
             tail.push(ms(2.0));
         }
         assert!(close(tail.p90().unwrap(), ms(2.0)));
+    }
+
+    /// The first estimate covers a full window: three heavy frames at the start do not reach the
+    /// reserve, which would hold the loop on its floor.
+    #[test]
+    fn heavy_frames_at_the_start_do_not_set_the_reserve() {
+        let mut tail = TailEstimate::default();
+        for _ in 0..3 {
+            tail.push(ms(30.0));
+        }
+        for _ in 3..TAIL_FRAMES - 1 {
+            tail.push(ms(2.0));
+            assert_eq!(tail.reserve(T), None);
+        }
+        tail.push(ms(2.0));
+        assert!(close(tail.reserve(T).unwrap(), ms(3.0)));
     }
 
     /// A burst of late wakes leaves the loop no timed wait, so nothing measures the lateness
