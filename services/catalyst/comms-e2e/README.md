@@ -213,9 +213,10 @@ no profile.
   guard: loopback, or a host `--allow-host` names. A refused deployment fails the visit before
   anyone enters; a 429 or 503 that says when to come back (`Retry-After`, up to 60 s) is sent once
   more. The report notes `profiles_deployed` (of them `profiles_replaced`, deployed over another
-  profile served for the wallet), `profiles_already_served`,
-  `profiles_sent_again_after_retry_after` and, after a deployment, how many the lambdas served
-  before the crowd entered (`profiles_served_before_entering`, waited for up to 30 s).
+  profile served for the wallet), `profiles_already_served` and
+  `profiles_sent_again_after_retry_after`, a failed visit included, and, after a deployment, how
+  many the lambdas served before the crowd entered (`profiles_served_before_entering`, waited for
+  up to 30 s).
 - What a visit leaves behind on a deployment: one profile entity per wallet of each label used,
   `ce2e-visit-00` to `ce2e-visit-NN`, in the content server's history and active entities, served
   by its lambdas to anyone who asks. A content server deletes no entity; a later deployment for the

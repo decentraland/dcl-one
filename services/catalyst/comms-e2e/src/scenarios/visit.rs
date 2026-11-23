@@ -204,7 +204,8 @@ pub struct ProfileCounts {
 
 /// Makes sure the realm serves every player's profile, [`PROFILE_WAVE`] at a time: the realm
 /// description names the content server and the lambdas, each of which this run must admit
-/// before anything is sent. Fails at the first player whose profile it could not make sure of.
+/// before anything is sent. Fails after the wave of the first player whose profile it could not
+/// make sure of, once the notes count what that wave and the ones before it did.
 async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCounts> {
     let api = ctx
         .stack()
@@ -239,6 +240,7 @@ async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCo
         );
     }
     let mut counts = ProfileCounts::default();
+    let mut failed = None;
     let indices: Vec<usize> = (0..identities.len()).collect();
     for wave in indices.chunks(PROFILE_WAVE) {
         let ensured = join_all(wave.iter().map(|&index| {
@@ -247,16 +249,9 @@ async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCo
         }))
         .await;
         for (&index, outcome) in wave.iter().zip(ensured) {
-            match outcome.with_context(|| {
-                format!(
-                    "{} could not make sure of its profile ({} of {} done)",
-                    player_name(index),
-                    counts.deployed + counts.already_served,
-                    identities.len()
-                )
-            })? {
-                Ensured::AlreadyServed => counts.already_served += 1,
-                ensured @ (Ensured::Deployed(deployed) | Ensured::Replaced(deployed)) => {
+            match outcome {
+                Ok(Ensured::AlreadyServed) => counts.already_served += 1,
+                Ok(ensured @ (Ensured::Deployed(deployed) | Ensured::Replaced(deployed))) => {
                     counts.deployed += 1;
                     if matches!(ensured, Ensured::Replaced(_)) {
                         counts.replaced += 1;
@@ -265,13 +260,28 @@ async fn ensure_profiles(ctx: &Ctx, identities: &[Identity]) -> Result<ProfileCo
                         counts.sent_again += 1;
                     }
                 }
+                Err(error) => {
+                    failed.get_or_insert((index, error));
+                }
             }
         }
+        if failed.is_some() {
+            break;
+        }
     }
+    // what was deployed stays on the server whatever comes next: counted before any failure
     ctx.note("profiles_deployed", counts.deployed);
     ctx.note("profiles_replaced", counts.replaced);
     ctx.note("profiles_already_served", counts.already_served);
     ctx.note("profiles_sent_again_after_retry_after", counts.sent_again);
+    if let Some((index, error)) = failed {
+        return Err(error.context(format!(
+            "{} could not make sure of its profile ({} of {} done)",
+            player_name(index),
+            counts.deployed + counts.already_served,
+            identities.len()
+        )));
+    }
     if counts.deployed > 0 {
         let served = wait_served(&client, &endpoints, identities).await;
         ctx.note("profiles_served_before_entering", served);

@@ -13,8 +13,8 @@ use std::time::Duration;
 use catalyst_comms_e2e::engine::{
     CrowdSize, Ctx, Outcome, RunOptions, ScenarioResult, Transport, VisitPlan, run_scenarios,
 };
-use catalyst_comms_e2e::identity::Identity;
-use catalyst_comms_e2e::profile::PROFILE_VERSION;
+use catalyst_comms_e2e::identity::{Identity, now_ms};
+use catalyst_comms_e2e::profile::{self, PROFILE_VERSION};
 use catalyst_comms_e2e::pulse::PulseBot;
 use catalyst_comms_e2e::scenarios::support::{enter_at, leave};
 use catalyst_comms_e2e::scenarios::visit::{self, CROWD_VISIT};
@@ -202,6 +202,41 @@ async fn a_run_that_does_not_name_the_visit_leaves_it_out() {
     }
     assert_eq!(stand_in.posts(), 0);
     assert_eq!(stand_in.recorded.lock().reads, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_deployment_still_counts_what_was_deployed_and_already_served() {
+    let pulse = support::in_process_pulse().await;
+    let stand_in = content::start(None).await;
+    let client = profile::client().unwrap();
+    let endpoints = profile::endpoints(&client, &stand_in.api).await.unwrap();
+    // players 0 and 1 have their profiles from an earlier visit
+    for index in 0..2 {
+        let identity = Identity::visitor("counted", index);
+        profile::deploy(
+            &client,
+            &endpoints.entities,
+            &profile::profile_deployment(&identity, index as usize, now_ms()),
+        )
+        .await
+        .unwrap();
+    }
+    // of players 2 and 3, deployed together in the first wave, one is refused
+    stand_in.answer_next(400, None);
+    let mut report = run_scenarios(
+        stack(pulse, &stand_in),
+        &[&CROWD_VISIT],
+        &options(Some(plan("counted", Vec::new()))),
+    )
+    .await;
+    let result = report.results.remove(0);
+    let Outcome::Failed { expectation, .. } = &result.outcome else {
+        panic!("passed with a deployment refused: {:?}", result.outcome);
+    };
+    assert!(expectation.contains("HTTP 400"), "{expectation}");
+    assert_eq!(note(&result, "profiles_already_served").as_u64(), Some(2));
+    assert_eq!(note(&result, "profiles_deployed").as_u64(), Some(1));
+    assert_eq!(stand_in.posts(), 4);
 }
 
 #[tokio::test(flavor = "multi_thread")]
