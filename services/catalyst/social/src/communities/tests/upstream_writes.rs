@@ -347,6 +347,14 @@ async fn rows_stored_in_another_case_keep_working_until_the_release() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{v}");
+    let gone: Vec<String> = sqlx::query_scalar(
+        "SELECT place_id FROM social.community_places WHERE community_id = $1 AND lower(place_id) = 'gone.dcl.eth'",
+    )
+    .bind(c)
+    .fetch_all(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(gone, ["Gone.DCL.eth"]);
     // a removal in any spelling reaches the stored row
     let (status, v) = hit(
         &rig.app,
