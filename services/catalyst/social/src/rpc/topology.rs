@@ -84,8 +84,10 @@ where
         } else {
             offline
         };
+        let (generation, expiry) = (snapshot.generation, snapshot.expires_at());
+        // Hold no snapshot across waits, so World transitions update the sets in place.
+        drop(snapshot);
         if batch.is_empty() {
-            let expiry = snapshot.expires_at();
             tokio::select! {
                 result = changes.changed() => { if result.is_err() { return; } }
                 _ = async { match expiry {
@@ -100,7 +102,6 @@ where
         }
         // Both statuses may have reached only some recipients before supersession.
         incomplete.extend(batch.iter().cloned());
-        let generation = snapshot.generation;
         let mut results = stream::iter(batch.into_iter().map(|wallet| {
             let mut cursor = progress.remove(&wallet).unwrap_or_default();
             if cursor.online != Some(online) {

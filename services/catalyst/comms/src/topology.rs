@@ -709,4 +709,23 @@ mod tests {
         assert!(Arc::ptr_eq(&state.snapshot().wallets, &first.wallets));
         assert_eq!(state.snapshot().generation, first.generation);
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_world_transition_updates_unshared_sets_in_place() {
+        let state = Topology::default();
+        state.apply_world_event("PA_1", A, true);
+        state.apply_world_event("PA_2", B, true);
+        let held = state.snapshot();
+        let (wallets, world) = (Arc::as_ptr(&held.wallets), Arc::as_ptr(&held.world));
+        drop(held);
+        state.apply_world_event("PA_2", B, false);
+        let after = state.snapshot();
+        assert_eq!(
+            Arc::as_ptr(&after.wallets),
+            wallets,
+            "no copy once no snapshot is held"
+        );
+        assert_eq!(Arc::as_ptr(&after.world), world);
+        assert!(!after.is_online(B));
+    }
 }

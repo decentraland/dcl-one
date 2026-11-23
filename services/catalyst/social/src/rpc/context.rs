@@ -531,12 +531,12 @@ impl Context {
 
     /// Administrative broadcasts also cannot publish a status contrary to current topology.
     pub async fn fan_connectivity(&self, address: &str, status: ConnectivityStatus) {
-        let snapshot = self.topology().snapshot();
+        let generation = self.topology().snapshot().generation;
         let _ = tokio::time::timeout(crate::comms::topology::TOPOLOGY_RECEIPT_TTL, async {
             let mut cursor = ConnectivityCursor::default();
             loop {
                 if !self.topology().deliver_if_current(
-                    snapshot.generation,
+                    generation,
                     address,
                     status == ConnectivityStatus::Online,
                     || {},
@@ -547,7 +547,7 @@ impl Context {
                     .fan_topology_page(
                         address,
                         status == ConnectivityStatus::Online,
-                        snapshot.generation,
+                        generation,
                         cursor,
                     )
                     .await

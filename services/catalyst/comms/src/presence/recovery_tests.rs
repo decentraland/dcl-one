@@ -1548,5 +1548,12 @@ async fn a_read_that_fails_after_listing_confirms_and_ends_nothing() {
         state.presence.recover_complete(&state).await,
         Err(RecoveryFailure::Source)
     ));
+    elapse(crate::topology::WORLD_OCCUPANCY_TTL + Duration::from_secs(1)).await;
+    let view = topology.snapshot();
+    assert!(
+        !view.is_online(WORLD_WALLET),
+        "a source failure confirms nothing"
+    );
+    assert!(!view.is_online(GENESIS_WALLET));
     server.abort();
 }
