@@ -22,7 +22,7 @@ import { communityPageView } from "@/features/social/community/page-view";
 import { useCommunityMembership, type Membership } from "@/features/social/community/useCommunityMembership";
 import { canViewContent, faceUrl, membersLabel, thumbnailUrl } from "@/features/social/community/view";
 
-import { CommunityEvents } from "./CommunityEvents";
+import { CommunityEventDialog, CommunityEvents, useCommunityEvents } from "./CommunityEvents";
 import { CommunityMembers } from "./CommunityMembers";
 
 const FAILED_COPY = {
@@ -34,9 +34,10 @@ const FAILED_COPY = {
 /**
  * `/social/communities/:id`: the community's card (image, name, privacy, members, owner, the member's
  * call to action and description), then its members and upcoming events side by side, or behind
- * tabs on a narrow screen. A private community shows those only to its members.
+ * tabs on a narrow screen. A private community shows those only to its members. `?event=` opens
+ * one of its events over the page; `sid` is the visitor's session, which that detail records under.
  */
-export function CommunityPage({ id, now }: { id: string; now: number }) {
+export function CommunityPage({ id, now, sid }: { id: string; now: number; sid: string }) {
   const { data: community } = useQuery({
     ...communityQuery(id),
     // Only a first load without data reaches the route's boundary; a failed refetch keeps the page.
@@ -45,14 +46,18 @@ export function CommunityPage({ id, now }: { id: string; now: number }) {
   usePageView(communityPageView(community));
   return (
     <SitesLayout active="play" overlayNav>
-      <CommunityFrame>
-        {community ? <CommunityBody community={community} now={now} /> : <CommunityLoading />}
-      </CommunityFrame>
+      {community ? (
+        <CommunityBody community={community} now={now} sid={sid} />
+      ) : (
+        <CommunityFrame>
+          <CommunityLoading />
+        </CommunityFrame>
+      )}
     </SitesLayout>
   );
 }
 
-function CommunityBody({ community: anonymous, now }: { community: CommunityInfo; now: number }) {
+function CommunityBody({ community: anonymous, now, sid }: { community: CommunityInfo; now: number; sid: string }) {
   const { identity } = useAuth();
   const membership = useCommunityMembership(anonymous, identity);
   // The member's own read adds their role and the freshest count.
@@ -60,20 +65,22 @@ function CommunityBody({ community: anonymous, now }: { community: CommunityInfo
   const visible = canViewContent(community);
   // A private community waits for the member's own read before deciding they cannot see it.
   const deciding = !visible && community.privacy === "private" && membership.state.kind === "loading";
+  const events = useCommunityEvents(community.id, { enabled: visible, now });
   return (
-    <>
+    // The detail opens outside the frame's stacking context, so it covers the site header.
+    <CommunityFrame dialog={<CommunityEventDialog state={events} sid={sid} />}>
       <CommunityCard community={community} membership={membership} showDescription={visible} />
       {visible ? (
         <CommunitySections
           members={<CommunityMembers community={community} />}
-          events={<CommunityEvents communityId={community.id} now={now} />}
+          events={<CommunityEvents state={events} />}
         />
       ) : deciding ? (
         <CommunityDeciding />
       ) : (
         <CommunityPrivateNotice />
       )}
-    </>
+    </CommunityFrame>
   );
 }
 
