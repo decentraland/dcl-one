@@ -1,5 +1,13 @@
 @layer dcl.reset, dcl.foundations, dcl.components;
 
+/* The selected bar's scale, as the Explorer HUD's scaleX: registered so it transitions. Its magnitude sizes the bar,
+   so the spring's overshoot past 0 shows as it does in the HUD. */
+@property --tab-scale {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
 /* Figma: Tabs bar / Tabs. The pill variant follows decentraland.org's events tabs (ExperiencesTabs);
    where the reference and Figma differ, the reference wins and the comment names both values. */
 @layer dcl.components {
@@ -20,9 +28,13 @@
 
   .underline {
     composes: text6c6162656c2f6d642d63617073 from '../../foundations/typography/text-styles.module.css';
+    --tab-bar: var(--dcl-primary-primary);
     height: 64px;
     padding: 0;
-    background: none;
+    /* The bar grows from and shrinks to the centre like the Explorer HUD's underline. A background stays inside
+       the tab, where a transformed bar would overshoot the edges of a scrolling TabsBar. */
+    background: linear-gradient(var(--tab-bar), var(--tab-bar)) center bottom /
+      calc(max(var(--tab-scale), -1 * var(--tab-scale)) * 100%) 4px no-repeat;
     color: var(--dcl-neutrals-silver);
   }
 
@@ -35,8 +47,10 @@
     box-shadow: inset 0 -4px 0 0 var(--dcl-transparencies-white-10);
   }
 
+  /* Left-anchored once grown: centred, Chrome antialiases the last column of a fractional-width tab. */
   .underline[aria-selected='true'] {
-    box-shadow: inset 0 -4px 0 0 var(--dcl-primary-primary);
+    --tab-scale: 1;
+    background-position: left bottom;
     color: var(--dcl-neutrals-white);
     font-size: var(--dcl-font-size-button-lg);
     font-weight: 700;
@@ -90,18 +104,89 @@
     background-color: var(--dcl-neutrals-snow);
     color: var(--dcl-neutrals-shadow);
   }
+
+  /* Motion from the Explorer HUD's tabs (apps/hud/design/Tabs.module.css). The foundations have no duration or
+     easing tokens, so the values are the HUD's: --ease-spring and its 160, 200 and 240ms. */
+  @media (prefers-reduced-motion: no-preference) {
+    .underline {
+      transition:
+        --tab-scale 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        color 140ms ease;
+    }
+
+    /* Holds the centred position while the bar grows, then anchors it (see above). */
+    .underline[aria-selected='true'] {
+      transition:
+        --tab-scale 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        background-position 0s 200ms,
+        color 140ms ease;
+    }
+
+    .pill {
+      transition:
+        transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        background-color 150ms ease,
+        color 150ms ease;
+    }
+
+    .pill:hover:not(:disabled, [aria-disabled='true']) {
+      transform: scale(1.06);
+    }
+
+    .pill[aria-selected='true'] {
+      animation: pillPop 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+  }
+
+  @keyframes pillPop {
+    0% {
+      transform: scale(0.92);
+    }
+    60% {
+      transform: scale(1.08);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* Forced colours drop background images, so a separate bar draws the selection; only it opts out, the label
+     keeps the system colours. */
+  @media (forced-colors: active) {
+    .underline[aria-selected='true'] {
+      position: relative;
+    }
+
+    .underline[aria-selected='true']::after {
+      content: '';
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      height: 4px;
+      background-color: Highlight;
+      forced-color-adjust: none;
+    }
+  }
 }
 
 @layer dcl.components {
   .routeRoot {
     composes: text6c6162656c2f6d642d63617073 from '../../foundations/typography/text-styles.module.css';
     position: relative;
+    /* Two bars: the selected one grows from the centre as the panel underline does, the hover one is instant. */
+    --tab-bar: var(--dcl-primary-primary);
     --tab-underline: transparent;
     --tab-underline-offset: 0px;
-    background-image: linear-gradient(var(--tab-underline), var(--tab-underline));
+    background-image:
+      linear-gradient(var(--tab-bar), var(--tab-bar)), linear-gradient(var(--tab-underline), var(--tab-underline));
     background-repeat: no-repeat;
-    background-size: 100% 4px;
-    background-position: left 0 bottom var(--tab-underline-offset);
+    background-size:
+      calc(max(var(--tab-scale), -1 * var(--tab-scale)) * 100%) 4px,
+      100% 4px;
+    background-position:
+      center bottom var(--tab-underline-offset),
+      left 0 bottom var(--tab-underline-offset);
     box-sizing: border-box;
     display: inline-grid;
     flex: none;
@@ -117,7 +202,10 @@
   }
   .routeRoot[aria-current='page'] {
     color: var(--dcl-neutrals-white);
-    --tab-underline: var(--dcl-primary-primary);
+    --tab-scale: 1;
+    background-position:
+      left 0 bottom var(--tab-underline-offset),
+      left 0 bottom var(--tab-underline-offset);
     font-size: var(--dcl-font-size-button-lg);
     font-weight: 700;
     line-height: 18.75px;
@@ -126,6 +214,19 @@
   .routeRoot:focus-visible {
     outline: 2px solid currentColor;
     outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .routeRoot {
+      transition:
+        --tab-scale 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        color 140ms ease;
+    }
+    .routeRoot[aria-current='page'] {
+      transition:
+        --tab-scale 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+        background-position 0s 200ms,
+        color 140ms ease;
+    }
   }
   @media (hover: hover) and (min-width: 768px) {
     .routeRoot:hover {
@@ -214,6 +315,21 @@
     .routeLabel {
       top: var(--dcl-space-8);
       transform: none;
+    }
+  }
+  /* Forced colours drop both background bars. The current route's ::before already reserves its own (widest)
+     text, so its ::after is free to become the marker; out of flow, it changes neither the width nor the label. */
+  @media (forced-colors: active) {
+    .routeRoot[aria-current='page']::after {
+      content: '';
+      position: absolute;
+      right: 0;
+      bottom: var(--tab-underline-offset);
+      left: 0;
+      height: 4px;
+      background-color: Highlight;
+      forced-color-adjust: none;
+      visibility: visible;
     }
   }
 }

@@ -9,7 +9,6 @@ export interface PinMarker {
   key: Vec2
   position: Vec2
   title: string
-  icon: string | null
 }
 
 const pins = store<PinMarker[]>([])
@@ -20,7 +19,7 @@ export function pinMarkers(list: readonly MapPinInfo[]): PinMarker[] {
     const key = { x: pin.x, y: pin.y }
     const position = parcelCenter(key)
     if (parcelWithinBounds(position) == null) return []
-    return [{ id: pin.id, key, position, title: pin.title, icon: pin.icon }]
+    return [{ id: pin.id, key, position, title: pin.title }]
   })
 }
 

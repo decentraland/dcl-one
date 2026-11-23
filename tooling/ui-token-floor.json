@@ -431,18 +431,6 @@
     "primitives": 0,
     "tokens": 14
   },
-  "apps/sites/src/features/social/community/CommunityErrorView.module.css": {
-    "primitives": 0,
-    "tokens": 10
-  },
-  "apps/sites/src/features/social/community/CommunityLists.module.css": {
-    "primitives": 0,
-    "tokens": 41
-  },
-  "apps/sites/src/features/social/community/CommunityPage.module.css": {
-    "primitives": 0,
-    "tokens": 79
-  },
   "apps/sites/src/features/social/report/ReportForm.module.css": {
     "primitives": 0,
     "tokens": 60
@@ -606,6 +594,18 @@
   "library/ui/apps/sites/profile/collectibles.module.css": {
     "primitives": 0,
     "tokens": 40
+  },
+  "library/ui/apps/sites/social/CommunityDetail.module.css": {
+    "primitives": 0,
+    "tokens": 79
+  },
+  "library/ui/apps/sites/social/CommunityError.module.css": {
+    "primitives": 0,
+    "tokens": 10
+  },
+  "library/ui/apps/sites/social/CommunityLists.module.css": {
+    "primitives": 0,
+    "tokens": 41
   },
   "library/ui/components/AppChrome/ChromeBody.module.css": {
     "primitives": 0,

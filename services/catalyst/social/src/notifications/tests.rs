@@ -734,7 +734,16 @@ async fn broadcast_is_bearer_gated_and_validated() {
             .unwrap();
     assert_eq!(rows, 1, "the retry inserted no second row");
 
+    let reserved_recipient = fresh_address();
     let cases = [
+        (
+            json!({ "type": "bid_received", "broadcastId": "event-notice:events_started:series" }),
+            "broadcastId prefix event-notice: is reserved",
+        ),
+        (
+            json!({ "type": "bid_received", "addresses": [reserved_recipient.as_str()], "broadcastId": "  event-notice:event_rejected:series  " }),
+            "broadcastId prefix event-notice: is reserved",
+        ),
         (
             json!({ "type": "made_up" }),
             "unknown notification type: made_up",
@@ -774,6 +783,16 @@ async fn broadcast_is_bearer_gated_and_validated() {
             (StatusCode::BAD_REQUEST, Some(message))
         );
     }
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address=$1")
+            .bind(&reserved_recipient)
+            .fetch_one(state.store.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        rows, 0,
+        "reserved broadcast IDs must never write a notification"
+    );
 }
 
 #[tokio::test]
