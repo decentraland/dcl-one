@@ -18,7 +18,7 @@ use common::{
         ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin,
         RequestClientWindowFocus, SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
     },
-    util::{TaskCompat, TaskExt},
+    util::{AsH160, TaskCompat, TaskExt},
 };
 use comms::profile::{
     get_default_look, get_remote_profile, CurrentUserProfile, UserProfile, DEFAULT_LOOKS,
@@ -279,8 +279,13 @@ fn update_profile_for_realm(
     if let Some(mut t) = task.take() {
         match t.complete() {
             Some(Ok(Some(mut profile))) => {
-                mark_account(&mut profile, wallet.is_guest_account());
-                current_profile.adopt_server_profile(profile)
+                if wallet
+                    .address()
+                    .is_some_and(|address| profile.content.eth_address.as_h160() == Some(address))
+                {
+                    mark_account(&mut profile, wallet.is_guest_account());
+                    current_profile.adopt_server_profile(profile);
+                }
             }
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
@@ -858,7 +863,7 @@ fn process_login_bridge(
                 });
                 current_profile.is_deployed = true;
                 current_profile.deploy_held = false;
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
             }
             SystemApi::LoginCancel => {
                 *login_task = None;
@@ -870,7 +875,7 @@ fn process_login_bridge(
                 segment_config.reset_identity();
                 current_profile.profile = None;
                 current_profile.deploy_held = false;
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
             }
             SystemApi::ForgetLogin if forget_login(&mut config) => {
                 platform::write_config_file(&*config);
@@ -923,13 +928,11 @@ fn process_login_bridge(
                 current_profile.is_deployed = deployed;
                 // held, the host shows its welcome page, which deploys the new profile
                 current_profile.deploy_held = !deployed && world_hold.is_some();
-                current_profile.revert_to = None;
+                current_profile.reset_saves();
                 if deployed && resave {
                     // as any deploying edit: peers hear the saved version number (already marked
                     // as a guest's here) until the re-save lands, and a failed one goes back to it
-                    current_profile.snapshot_for_revert();
-                    current_profile.bump_version();
-                    current_profile.is_deployed = false;
+                    current_profile.queue_guest_resave();
                 }
 
                 sender.send(Ok(()));
