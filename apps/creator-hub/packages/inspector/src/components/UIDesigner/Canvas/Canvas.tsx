@@ -240,6 +240,8 @@ const CanvasNodeActions: React.FC<{ entity: Entity }> = ({ entity }) => {
         type="button"
         className="ui-designer-node-action ui-designer-icon-btn"
         aria-label="Add child"
+        aria-haspopup="dialog"
+        aria-expanded={addOpen}
         title="Add child"
         onClick={() => setAddOpen(true)}
       >
@@ -1203,14 +1205,16 @@ const EmptyRootDropZone: React.FC = () => {
           ref={btnRef}
           type="button"
           className="ui-designer-canvas-emptyroot-add"
+          aria-haspopup="dialog"
+          aria-expanded={pickerOpen}
           onClick={() => setPickerOpen(true)}
         >
           + Add element
         </button>
         {pickerOpen ? (
           <WidgetPicker
+            parent={null}
             anchorRef={btnRef}
-            onAdd={(type, preset) => void spliceSetRootChild(type, preset)}
             onDismiss={() => setPickerOpen(false)}
           />
         ) : null}

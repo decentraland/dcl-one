@@ -106,6 +106,20 @@ export const WIDGET_CATALOG: WidgetCategory[] = [
   },
 ];
 
+/** The catalog narrowed to widgets whose label, category or a keyword contains `query`, ignoring case; categories left empty are dropped. */
+export function matchWidgets(query: string): WidgetCategory[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return WIDGET_CATALOG;
+  return WIDGET_CATALOG.map(c => ({
+    ...c,
+    items: c.category.toLowerCase().includes(q)
+      ? c.items
+      : c.items.filter(
+          i => i.label.toLowerCase().includes(q) || i.keywords?.some(k => k.includes(q)),
+        ),
+  })).filter(c => c.items.length > 0);
+}
+
 /** Flat list of all widgets, derived from the catalog. */
 export const WIDGET_LIST: WidgetDef[] = WIDGET_CATALOG.flatMap(c => c.items);
 
