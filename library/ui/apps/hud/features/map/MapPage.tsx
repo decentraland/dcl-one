@@ -218,7 +218,7 @@ export function MapPage({
           <RouteLayer destination={destination} pose={pose} active={open} />
         </MapCanvas>
 
-        <CategoryStrip selected={snap.chip} onSelect={(key) => nav.selectCategory(key)} />
+        <CategoryStrip selected={snap.chip} wrap={compact != null} onSelect={(key) => nav.selectCategory(key)} />
         {warning && (
           <WorldWarning
             onClose={() => {

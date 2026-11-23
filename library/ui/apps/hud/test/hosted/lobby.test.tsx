@@ -90,6 +90,19 @@ describe('lobby controls', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Jump In' })).toBeInTheDocument())
   })
 
+  it("keeps focus off Customize after a pointer's click and on it after a keyboard one", () => {
+    const session = fakeSession()
+    render(lobby(session))
+    const customize = screen.getByRole('button', { name: 'Customize' })
+    customize.focus()
+    fireEvent.click(customize, { detail: 1 })
+    expect(customize).not.toHaveFocus()
+    customize.focus()
+    fireEvent.click(customize, { detail: 0 })
+    expect(customize).toHaveFocus()
+    expect(session.backpack.toggle).toHaveBeenCalledTimes(2)
+  })
+
   it("jumps to a live world event only when its server is a world's name", () => {
     const session = fakeSession()
     const now = new Date()
@@ -799,6 +812,16 @@ describe('lobby layout editor', () => {
     expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c1', expect.any(Function))
     fireEvent.click(screen.getByRole('button', { name: 'View Builders' }))
     expect(vi.mocked(openCommunityModal)).toHaveBeenCalledTimes(2)
+  })
+
+  it('lists ten communities at most', () => {
+    setPref(PREF.lobbyLayout, JSON.stringify({ Version: 1, Entries: [{ Corner: 'BottomLeft', Widget: 'Communities7By2', X: 0, Y: 0 }] }))
+    const session = fakeSession()
+    session.communities.list = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: `Club ${i}`, description: '', membersCount: 3, role: 'member' as const, ownerName: 'o' }))
+    render(lobby(session))
+    const rail = screen.getByRole('group', { name: 'My Communities' })
+    expect(within(rail).getAllByRole('button', { name: /^View Club / })).toHaveLength(10)
+    expect(within(rail).getAllByRole('button', { name: /^Page / })).toHaveLength(4)
   })
 
   it('lists only the widgets off the grids and places one on a click', () => {

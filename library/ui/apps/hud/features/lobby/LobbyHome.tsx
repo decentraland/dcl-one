@@ -60,6 +60,7 @@ import type { EngineViewportRegion } from '@explorer-core/engine/protocol'
 
 const cx = (...names: Array<string | false | null | undefined>): string => names.filter(Boolean).join(' ')
 
+const RAIL_MAX_CARDS = 10
 /** Pixels a press on the avatar travels before it turns the avatar instead of opening the Backpack. */
 const DRAG_THRESHOLD = 8
 /** Pixels from the pointer. */
@@ -340,8 +341,8 @@ export function LobbyHome({
     friendsLoading: session.friends.loading,
     totalFriends: session.friends.list.length,
     locations,
-    communities: session.lobbyData.communitiesLoaded ? session.communities.list : null,
-    photos: reel.loaded ? reel.photos.slice(0, 10) : null,
+    communities: session.lobbyData.communitiesLoaded ? session.communities.list.slice(0, RAIL_MAX_CARDS) : null,
+    photos: reel.loaded ? reel.photos.slice(0, RAIL_MAX_CARDS) : null,
     busy,
     friendsAt,
     onFriendHover: (friend, e) => {
@@ -522,11 +523,13 @@ export function LobbyHome({
     setRotating(false)
     if (p.dragging) showAvatarTip(toCanvas(e.clientX, e.clientY))
   }
-  const onAvatarClick = (): void => {
+  const onAvatarClick = (e: React.MouseEvent<HTMLButtonElement>): void => {
     if (dragged.current) {
       dragged.current = false
       return
     }
+    // a pointer's click leaves no focus behind: a key pressed over the Backpack would ring the avatar
+    if (e.detail > 0) e.currentTarget.blur()
     clickButton('CUSTOMIZE', 'LOBBY')
     setAvatarTip(false)
     moveOn()
