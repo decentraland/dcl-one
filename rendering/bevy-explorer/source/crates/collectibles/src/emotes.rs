@@ -384,6 +384,15 @@ pub struct Emote {
 }
 
 impl Emote {
+    /// Whether the emote's GLB failed to load, so its clip never arrives. False while it is
+    /// still loading, and for a handle the asset server does not track.
+    pub fn load_failed(&self, asset_server: &AssetServer) -> bool {
+        matches!(
+            asset_server.get_load_state(self.gltf.id()),
+            Some(bevy::asset::LoadState::Failed(_))
+        )
+    }
+
     pub fn avatar_animation(
         &self,
         gltfs: &Assets<Gltf>,

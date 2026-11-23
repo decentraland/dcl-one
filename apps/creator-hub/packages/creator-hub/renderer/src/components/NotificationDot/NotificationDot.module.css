@@ -1,0 +1,9 @@
+.dot {
+  position: absolute;
+  top: -5px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--primary);
+}

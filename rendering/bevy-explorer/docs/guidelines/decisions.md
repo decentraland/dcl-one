@@ -70,7 +70,29 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   horizon.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
-  the extension is not the fix; the long-term answer is still open.
+  the extension is not the fix; the long-term answer is still open. A glTF emissive factor of 1
+  draws five times as bright as a lit white surface, and the strength multiplies that.
+- **A Material that names a glTF keeps the glTF's rules.** An SDK unlit material is opaque
+  unless it has an alpha texture, whose brightness scales the alpha, and an SDK PBR emissive
+  colour is drawn as it is, as in Unity. A glTF's own unlit material cuts out or blends through
+  its texture's alpha, and its emissive factor is tinted by its base colour texture. The
+  material the engine writes to a scene for a glTF has to draw the same once the scene sends it
+  back with one field changed, and the SDK fields cannot say either thing. So a Material with a
+  `gltf` reference reads `alpha_test`, the diffuse alpha and the emissive by the glTF's rules;
+  one without it, which includes `GltfNodeModifiers`, reads them by the SDK's. The imposter
+  bake applies the same alpha-texture and emissive rules, so a scene keeps its look when its
+  imposter takes over.
+  A normal map follows the texture, not the reference: an SDK `bumpTexture` has its green
+  channel pointing down the image and a glTF's normal map up, so the glTF's own normal map
+  keeps its orientation when it comes back, and a bump texture the scene puts in its place is
+  read as the SDK's.
+- **High bloom scatters at 0.5.** Unity's settings name 0.3; at 0.3 the glow around a bright
+  surface here is about half as strong as Unity draws it, and 0.5 matches its captures
+  (`BLOOM_SCATTER`).
+- **Alpha test and blend premultiplies the whole base colour.** The alpha multiplies the base
+  colour before lighting, and a metal's reflectance is its base colour, so a transparent metal's
+  reflections thin with it where Unity keeps them. Keeping them needs the diffuse and specular
+  terms split inside the lighting functions.
 - **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
   ambient keys are interpolated linearly; Unity's curve tangents are not carried.
 - **Render scale compositor.** At scale 1 the world camera draws to the window and carries the
@@ -89,10 +111,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
   (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
   bias.
-- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
-  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
-  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
-  keeps it.
+- **Sun shadow map is 2048, and Low's one cascade stops at 40 m.** Unity's main shadow
+  resolution is 1024. High's four cascades each cover a slice of the shadow distance: at 100 m
+  and 200 m, 2048 per cascade looked the same as 4096 and the frame took about 10 ms less (web,
+  Apple M1, Genesis Plaza); 1024 saved 2 ms more and softened the contact shadows. Low's single
+  cascade spreads its map over the whole shadow distance, and the bias is in texels. From 20 m
+  to 60 m, 2048 looked the same as 4096 with the sun at 10:00 and at 15:00, and at 20 m took
+  about 6 ms less. At 100 m with the sun at 15:00, the shadows of a crowd 5 to 10 m from the
+  camera were mostly gone on 2048 and all gone on 1024. With a low sun, past about 75 m the
+  avatar's shadow was a smudge at the feet on 2048 and gone on 1024. 4096 kept them, but no
+  preset reaches that far on Low, and a size that follows the setting reallocates the map as
+  the distance crosses the line. So the map is 2048 for every setting and is never resized,
+  and Low's cascade stops at 40 m (`SUN_LOW_MAX_DISTANCE`) whatever the shadow distance; past
+  it the far shadow floor (next entry) applies, and High reaches further. Spot-light shadows
+  and the lobby stage light share the sun's shadow texture array, so they are drawn at the
+  same size.
 - **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
   the shadow distance. We fade over the same squared-distance curve, but towards a partial
   shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
@@ -126,7 +159,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene, wearable or emote hash, and one for requests
-  with no hash): the player's own wearables and the emotes they play, then the player's scenes,
+  with no hash): the player's own wearables and the emotes they play or have equipped, then the
+  player's scenes,
   then the other avatars' wearables and emotes, then the
   other scenes, the last two by parcel ring, in front before behind, then raw distance; then
   requests no scene or avatar owns (no hash, or a hash nobody holds), oldest first; last, the
@@ -409,6 +443,41 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
   there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
+- **Scene message trust is enforced in the engine.** Room metadata rejects banned senders
+  across the string bus, binary bus and topics. New rooms without metadata grant ordinary peer
+  permissions. Preview and local scene development trust peers, as Unity Explorer does for
+  local scene development, so shared VideoPlayer sources sync without room admins; bans still
+  outrank that trust. Metadata arrives as full snapshots. Missing or non-array lists retain
+  their last good values defensively; explicit arrays apply their valid addresses and warn about skipped entries; an empty array clears
+  its list. An entirely unusable non-empty ban array retains known bans; an entirely unusable
+  admin array clears admin trust.
+  Binary SDK CRDT batches and state responses exclude VideoControlState and the combined physics
+  force/impulse components in both directions; incoming VideoPlayer edits require a trusted
+  development realm, a room admin or the authoritative server. This protects the video source;
+  peers can still move, hide or delete its entity. An untrusted state response omits VideoPlayer, so late joiners need a trusted sender to
+  supply it. Filtering covers SDK envelopes 1 and 3. Auth-server SDK envelopes are
+  opaque: those clients accept CRDT only from the authoritative server, but local-only component
+  filtering for that generation is unverified. Malformed recognized CRDT packets are dropped.
+  Outgoing binary payloads are limited to 13,269 bytes, reserving a sender-length byte and 42
+  address bytes in Unity Explorer's 13 KiB receiver frame. Incoming binary payloads retain the
+  30,000-byte bus limit for older peers. Strings retain 30,000 bytes; topics retain 13 KiB.
+  Rejecting banned senders' scene messages is a deliberate divergence from Unity Explorer's
+  scene pipe, which gates component trust through admin status and does not check its ban list.
+- **Scene bans retain their admission owner.** A recognized scene/world refusal or local ban
+  in room metadata unloads the matching parcel scene, without moving the player or unloading
+  portable experiences. Refusals persist per scene across parcel changes within the wallet and
+  realm session; only fresh admission for that scene clears its refusal. The shared room credential
+  lifecycle rechecks admission with a minimum fifteen-second ban retry delay and honors longer
+  server delays. A transient failure cannot clear a known ban. Successful fresh admission
+  restores the scene while the player stays on or returns to its parcel. Leaving and returning
+  preserves the retry deadline, including a longer server delay. A removed scene-room participant
+  requests fresh admission; other room types retain their existing denial behavior. Preview,
+  local and headless scene lifecycles are exempt from local-player unloading. Teleport arrival
+  onto a refused parcel completes without waiting for the deliberately absent scene root.
+  Unloading is a deliberate divergence from Unity Explorer's minimap ban mark: it prevents
+  refused scene scripts from running while the player is nearby. A later platform refusal is
+  reported independently of the retained scene/world ban, so device bans reach platform status
+  even while the user stays on a scene that already refused them.
 - **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the
@@ -661,12 +730,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   switch (on by default, for the session) shows or hides them on the full map and the minimap. A
   pin stands on the centre of its parcel, its position rounded halves to even; it is never
   clustered, its title and description are not drawn, and a click opens the place panel for its
-  parcel. It shows the scene's own icon, a content file of the scene, cut round on a white disc;
-  with no such file (another texture kind, a src that parses as a url, a missing file, or an image
-  that fails to load) it shows the default quest pin, so a scene can't make the HUD request a host
-  of its choosing. The icon resolves again only when its src changes, and a moved pin keeps its
-  icon. The title is cut to 100 characters. unity-explorer loads that icon only under
-  `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The pin doesn't pulse.
+  parcel. It always shows the default quest pin: the pin's texture is not read, so a scene can't
+  make the HUD request a host of its choosing. unity-explorer loads the scene's own icon only
+  under `alfa-map-pins-custom-icons`, and otherwise always shows its default pin. The title is cut
+  to 100 characters. The pin doesn't pulse.
   This explorer loads no global portable experience at startup: unity-explorer loads the quests'
   one (`globalpx.dcl.eth`) from `alfa-global-portable-experiences`; here it is loaded with the
   launch option (`--portables` or `?portables=`, e.g. `basiccontroller.dcl.eth;globalpx.dcl.eth`).
@@ -675,11 +742,23 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   skip the arrival spot when the player stops on it or reaches it sideways, so the route never
   ends. The arrival rule itself is the same: within about 5.6 m of the destination parcel's
   centre, then "You have arrived to your destination" and the pin goes.
-- **Home can be set, not cleared, and is one for the install.** unity-explorer's Set as Home also
-  takes the home back, and it keeps one home per wallet. Here the engine keeps one home in its
-  config, parcel 0,0 of the default realm until one is set, and the place panel's and the place
-  detail's buttons and the minimap's switch only set it: the switch reads on where the player
-  stands in their home, and can't be turned off.
+- **Home belongs to the account, and can be taken back.** As in unity-explorer, the engine keeps
+  one home per wallet address in its config, and Set as Home on the place that is home (the place
+  panel's and the place detail's buttons, the minimap's switch) takes it back. An account with
+  no home has no home pin and no Set as Home on, and starts on parcel 0,0 of the default realm.
+  Before sign-in the home is the stored sign-in's account's, else the last account's. A home an
+  install kept before homes were per account goes to the first account that signs in. A guest
+  with no account (a scene preview's `?guest=1`, `/login_guest`) has a new address each session,
+  so it is no account here: it reads the home that applies before sign-in, is not offered Set as
+  Home, and neither takes nor writes a home. A guest account signs in and keeps its home like any
+  other account.
+- **Jump back to Genesis City lands on the home parcel, else on 0,0.** The minimap's button in a
+  World travels to the default realm naming a parcel: the account's home when it is in Genesis
+  City, Genesis Plaza otherwise; `/goto genesis` always names 0,0. A realm change that names no
+  parcel keeps the player's parcel, clamped to the new realm's map, which from a World is a parcel
+  of that World's grid. unity-explorer lands the button on its start parcel, read once at launch
+  (a launch position, the home parcel, or `alfa-genesis-spawn-parcel`); here the home is read when
+  the button is pressed, so a home set during the session counts.
 - **Home is set from the map's place panel, the place detail and the minimap's menu.** The place
   detail, opened from the lobby's cards and the Places page, saves the place's base parcel (a
   World, its name) and offers start and exit navigation for a Genesis City place; a Jump in there
@@ -785,12 +864,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
   spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
   preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
-  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
-  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
-  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
-  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
-  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
-  shows as Custom.
+  has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
+  40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
+  LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and
+  HDR (always on). The preset is not stored: the HUD reads it off the settings, and any
+  difference shows as Custom.
 - **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
   of the resolved main texture, so a multisampled transparent pass with depth of field fails
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before

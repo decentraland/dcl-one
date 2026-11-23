@@ -123,6 +123,7 @@ async fn local_delta(
 
 /// Runs in the photo finalizer's transaction. All communities attached to the
 /// place receive one contribution, including inactive communities as upstream.
+/// Community place ids are stored lowercased; the photo's place matches lowercased.
 pub async fn record_photo(
     conn: &mut PgConnection,
     key: &str,
@@ -132,7 +133,7 @@ pub async fn record_photo(
     sqlx::query("WITH receipts AS (
         INSERT INTO social.community_ranking_events(kind,event_key,community_id,occurred_at)
         SELECT 'photo',$1,p.community_id,$3 FROM social.community_places p
-        JOIN social.communities c ON c.id=p.community_id AND c.origin='local' WHERE p.place_id=$2
+        JOIN social.communities c ON c.id=p.community_id AND c.origin='local' WHERE p.place_id=lower($2)
         ON CONFLICT DO NOTHING RETURNING community_id)
         UPDATE social.communities c SET ranking_photos_count=LEAST(c.ranking_photos_count::bigint+1,2147483647)::int4
         FROM receipts r WHERE c.id=r.community_id")

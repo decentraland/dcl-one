@@ -26,9 +26,9 @@ pub struct Partition(pub PartitionData);
 )]
 pub struct PartitionedDownloads(pub Vec<String>);
 
-/// The content hashes of the emotes this entity plays, filed like [`PartitionedDownloads`]: an
-/// emote's definition, model and sounds download under its own entity hash, which no scene root
-/// holds. It is a component of its own because the emotes change with playback and the outfit
+/// The content hashes of the emotes this entity plays and, on the player, the emotes they have
+/// equipped, filed like [`PartitionedDownloads`]: an emote's definition, model and sounds
+/// download under its own entity hash, which no scene root holds. It is a component of its own because the emotes change with playback and the outfit
 /// with the profile, and each list is replaced whole.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 #[component(

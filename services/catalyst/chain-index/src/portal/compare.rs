@@ -199,23 +199,30 @@ pub struct Fetched {
     pub common_upper: Option<u64>,
     /// Each block a line carried: its hash and time.
     pub headers: BTreeMap<u64, (String, u64)>,
-    /// Heights two lines gave different hashes.
+    /// Heights two lines gave different hashes, or one hash with different
+    /// times.
     pub hash_conflicts: BTreeSet<u64>,
     pub logs: BTreeMap<(u64, u32), PortalLog>,
     pub log_conflicts: BTreeSet<(u64, u32)>,
     pub bytes: usize,
     pub stopped: Option<Stop>,
+    /// The revision every complete page named (chain-lake's
+    /// [`super::REVISION_HEADER`]), `None` for a page that named none.
+    pub revisions: BTreeSet<Option<String>>,
 }
 
 impl Fetched {
     fn absorb(&mut self, page: Page) -> Result<(), PortalError> {
+        self.revisions.insert(page.revision.clone());
         self.bytes += page.bytes;
         if self.bytes > MAX_BODY_BYTES {
             return Err(PortalError::TooLarge("sample bytes"));
         }
         for h in page.headers {
             match self.headers.get(&h.number) {
-                Some((hash, _)) if *hash != h.hash => {
+                // Another hash, or the same block with another time: either
+                // would reach rows as the block's.
+                Some((hash, time)) if *hash != h.hash || *time != h.timestamp => {
                     self.hash_conflicts.insert(h.number);
                 }
                 Some(_) => {}
@@ -381,6 +388,11 @@ pub struct Outcome {
     pub compared_blocks: u64,
     /// The window's blocks not compared: fetched past the anchor, or never fetched.
     pub skipped_blocks: u64,
+    /// The RPC's logs in the compared prefix: an equal verdict over none
+    /// says nothing about the portal.
+    pub rpc_logs: usize,
+    /// The portal's logs in the compared prefix that the exact filter keeps.
+    pub portal_logs: usize,
     pub missing: usize,
     pub extra: usize,
     pub mismatch: usize,
@@ -412,6 +424,8 @@ impl Outcome {
             compared: None,
             compared_blocks: 0,
             skipped_blocks: read.reached.saturating_sub(read.from) + 1,
+            rpc_logs: 0,
+            portal_logs: 0,
             missing: 0,
             extra: 0,
             mismatch: 0,
@@ -443,13 +457,16 @@ pub fn filters(groups: &[LogGroup]) -> Result<Vec<Filter>, PortalError> {
     groups.iter().map(Filter::from_group).collect()
 }
 
-enum Kept {
+pub(crate) enum Kept {
     Match,
     ArityOnly,
     No,
 }
 
-fn kept(filters: &[Filter], log: &PortalLog) -> Kept {
+/// Whether `eth_getLogs` with `filters` returns `log` (`Match`); a log the
+/// portal returned only because its query cannot express a trailing
+/// wildcard position (`ArityOnly`, expected and dropped); or drift (`No`).
+pub(crate) fn kept(filters: &[Filter], log: &PortalLog) -> Kept {
     if filters.iter().any(|f| f.matches(&log.address, &log.topics)) {
         return Kept::Match;
     }
@@ -565,6 +582,8 @@ pub fn compare(read: &AcceptedRead, fetched: &Fetched, coverage: Coverage) -> Ou
             Kept::No => out.drift_filtered += 1,
         }
     }
+    out.rpc_logs = rpc.len();
+    out.portal_logs = portal.len();
     let unavailable = |field: &'static str, out: &mut Outcome| {
         *out.unavailable.entry(field).or_default() += 1;
     };

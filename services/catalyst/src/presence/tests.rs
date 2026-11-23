@@ -1661,3 +1661,57 @@ fn the_schema_carries_the_snapshot_relations() {
         );
     }
 }
+
+#[tokio::test]
+async fn current_bundle_retains_children_when_retention_commits_between_reads() {
+    let _lock = DB_LOCK.lock().await;
+    let Some(state) = state(FakeSources::default(), true).await else {
+        return;
+    };
+    let id = store_snapshot(&state.pool, &sample(now())).await.unwrap();
+    let mut retention = state.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE presence.scene_occupancy IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *retention)
+        .await
+        .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *retention)
+        .await
+        .unwrap();
+    let reader = tokio::spawn({
+        let state = state.clone();
+        async move { state.queries.current_bundle().await.unwrap() }
+    });
+    // The header has been read when the child SELECT blocks on this lock.
+    assert!(
+        crate::shared::test_wait::until(async || {
+            sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(blocker)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap()
+        })
+        .await
+    );
+    sqlx::query("DELETE FROM presence.snapshots WHERE id=$1")
+        .bind(id)
+        .execute(&mut *retention)
+        .await
+        .unwrap();
+    retention.commit().await.unwrap();
+    let bundle = reader.await.unwrap();
+    assert_eq!(bundle.current.as_ref().unwrap().snapshot_id, id);
+    assert_eq!(bundle.scenes.len(), 2);
+    assert_eq!(bundle.worlds.len(), 2);
+    assert_eq!(
+        count_where(
+            &state.pool,
+            "SELECT count(*) FROM presence.snapshots WHERE id=$1",
+            id
+        )
+        .await,
+        0
+    );
+}

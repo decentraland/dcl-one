@@ -201,6 +201,283 @@ async fn place_ids_replace_the_places_checking_only_the_new_ones() {
     rig.finish();
 }
 
+async fn insert_place(pool: &PgPool, c: Uuid, place: &str, added_by: &str, added_at: &str) {
+    sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by, added_at) VALUES ($1, $2, $3, $4::timestamp)")
+        .bind(place)
+        .bind(c)
+        .bind(added_by)
+        .bind(added_at)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// An owned database as one stamped before the lowercase check: mixed-case
+/// rows can still be there until the release script runs.
+async fn before_the_place_id_release(tag: &str) -> Option<crate::db::scratch::OwnedDatabase> {
+    let database =
+        crate::db::scratch::OwnedDatabase::new(tag, crate::db::scratch::Schema::Full, 4).await?;
+    sqlx::query(
+        "ALTER TABLE social.community_places DROP CONSTRAINT community_places_place_id_lowercase",
+    )
+    .execute(&database.pool)
+    .await
+    .unwrap();
+    Some(database)
+}
+
+async fn place_rows(pool: &PgPool, c: CommunityId) -> Vec<(String, String, String)> {
+    sqlx::query_as(
+        "SELECT place_id, added_by, added_at::text FROM social.community_places \
+         WHERE community_id = $1 ORDER BY place_id",
+    )
+    .bind(c)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn place_ids_are_stored_lowercased_and_once_per_case_variant() {
+    let Some(rig) = Rig::new(Settings {
+        places_ownership_check: false,
+        ..Settings::for_tests()
+    })
+    .await
+    else {
+        return;
+    };
+    let owner = wallet();
+    rig.profile(&owner, "Named owner", true).await;
+    let place = Uuid::new_v4().to_string();
+    let upper = place.to_uppercase();
+
+    // create
+    let ids = serde_json::to_vec(&json!([upper, place, "Mixed.DCL.eth"])).unwrap();
+    let (bytes, content_type) = multipart(&[
+        ("name", b"Cased places"),
+        ("description", b"description"),
+        ("placeIds", &ids),
+    ]);
+    let (status, created) = hit(
+        &rig.app,
+        Case::new("post", "/v1/communities")
+            .signed(&owner)
+            .await
+            .body(bytes, &content_type),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let c = CommunityId::parse(created["data"]["id"].as_str().unwrap()).unwrap();
+    let mut expected = vec![place.clone(), "mixed.dcl.eth".to_string()];
+    expected.sort();
+    assert_eq!(place_ids(&rig, c).await, expected);
+
+    // add
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("post", format!("/v1/communities/{c}/places"))
+            .signed(&owner)
+            .await
+            .json(&json!({ "placeIds": ["Other.DCL.eth", "OTHER.dcl.eth", upper] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{v}");
+    expected.push("other.dcl.eth".to_string());
+    expected.sort();
+    assert_eq!(place_ids(&rig, c).await, expected);
+
+    // remove in another spelling
+    let (status, v) = hit(
+        &rig.app,
+        Case::new(
+            "delete",
+            format!("/v1/communities/{c}/places/OTHER.DCL.ETH"),
+        )
+        .signed(&owner)
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{v}");
+    expected.retain(|p| p != "other.dcl.eth");
+    assert_eq!(place_ids(&rig, c).await, expected);
+
+    // the table refuses any other case
+    let refused = sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by) VALUES ('Upper.dcl.eth', $1, 'w')")
+        .bind(c)
+        .execute(&rig.pool)
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
+    rig.finish();
+}
+
+#[tokio::test]
+async fn rows_stored_in_another_case_keep_working_until_the_release() {
+    let Some(database) = before_the_place_id_release("place_ids_legacy").await else {
+        return;
+    };
+    let rig = Rig::with_pool(
+        Settings {
+            places_ownership_check: false,
+            ..Settings::for_tests()
+        },
+        State::explore_for_tests,
+        database.pool.clone(),
+    )
+    .await;
+    let owner = wallet();
+    let c = rig.community(&owner, false).await;
+    let by = owner.address.as_str();
+    for (place, at) in [
+        ("Kept.DCL.eth", "2026-01-01 00:00:00"),
+        ("kept.dcl.ETH", "2026-01-02 00:00:00"),
+        ("Gone.DCL.eth", "2026-01-03 00:00:00"),
+        ("Dropped.DCL.eth", "2026-01-04 00:00:00"),
+    ] {
+        insert_place(&rig.pool, c.as_uuid(), place, by, at).await;
+    }
+
+    // an add of a held place writes no second row
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("post", format!("/v1/communities/{c}/places"))
+            .signed(&owner)
+            .await
+            .json(&json!({ "placeIds": ["gone.dcl.eth"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{v}");
+    let gone: Vec<String> = sqlx::query_scalar(
+        "SELECT place_id FROM social.community_places WHERE community_id = $1 AND lower(place_id) = 'gone.dcl.eth'",
+    )
+    .bind(c)
+    .fetch_all(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(gone, ["Gone.DCL.eth"]);
+    // a removal in any spelling reaches the stored row
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("delete", format!("/v1/communities/{c}/places/gone.dcl.eth"))
+            .signed(&owner)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{v}");
+
+    // an edit lowercases the kept place in place: one row, its first adder and time
+    let ids = serde_json::to_vec(&json!(["KEPT.dcl.eth", "new.dcl.eth"])).unwrap();
+    let (status, v) = put(&rig, c, &owner, &[("placeIds", &ids)]).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let rows = place_rows(&rig.pool, c).await;
+    assert_eq!(
+        rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(),
+        ["kept.dcl.eth", "new.dcl.eth"]
+    );
+    assert_eq!(rows[0].2, "2026-01-01 00:00:00");
+    assert_eq!(rows[0].1, by);
+    rig.finish();
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn an_edit_keeps_a_held_place_stored_in_another_case() {
+    let Some(database) = before_the_place_id_release("place_ids_held").await else {
+        return;
+    };
+    let rig = Rig::with_pool(
+        Settings {
+            places_ownership_check: true,
+            ..Settings::for_tests()
+        },
+        State::explore_for_tests,
+        database.pool.clone(),
+    )
+    .await;
+    let owner = wallet();
+    let c = rig.community(&owner, false).await;
+    // held, with no catalogue row: only its standing passes the ownership check
+    let held = Uuid::new_v4().to_string();
+    insert_place(
+        &rig.pool,
+        c.as_uuid(),
+        &held.to_uppercase(),
+        owner.address.as_str(),
+        "2026-01-01",
+    )
+    .await;
+    let ids = serde_json::to_vec(&json!([held])).unwrap();
+    let (status, v) = put(&rig, c, &owner, &[("placeIds", &ids)]).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(place_ids(&rig, c).await, vec![held]);
+    rig.finish();
+    database.drop().await;
+}
+
+#[tokio::test]
+async fn the_place_id_release_merges_case_variants_validates_the_check_and_can_run_again() {
+    // its own database: the release rewrites the whole table
+    let Some(database) = before_the_place_id_release("place_ids_release").await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (c, d) = (Uuid::new_v4(), Uuid::new_v4());
+    sqlx::query("INSERT INTO social.communities (id, name, description, owner_address) VALUES ($1, 'c', '', 'o'), ($2, 'd', '', 'o')")
+        .bind(c)
+        .bind(d)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (community, place, by, at) in [
+        // the lowercase spelling wins over an earlier variant
+        (c, "A.dcl.eth", "other", "2026-01-01"),
+        (c, "a.dcl.eth", "owner", "2026-01-02"),
+        // no lowercase spelling: the earliest wins and is lowercased
+        (c, "B.DCL.eth", "owner", "2026-01-03"),
+        (c, "b.DCL.ETH", "other", "2026-01-04"),
+        // one community's variant leaves another's alone
+        (d, "B.dcl.eth", "other", "2026-01-05"),
+        (d, "c.dcl.eth", "owner", "2026-01-06"),
+    ] {
+        insert_place(&pool, community, place, by, at).await;
+    }
+    let release = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/community-place-ids-lowercase.sql"
+    ));
+    let expected: Vec<(Uuid, String, String)> = [
+        (c, "a.dcl.eth", "owner"),
+        (c, "b.dcl.eth", "owner"),
+        (d, "b.dcl.eth", "other"),
+        (d, "c.dcl.eth", "owner"),
+    ]
+    .into_iter()
+    .map(|(community, place, by)| (community, place.to_string(), by.to_string()))
+    .collect();
+    for run in 0..2 {
+        sqlx::raw_sql(release).execute(&pool).await.unwrap();
+        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT community_id, place_id, added_by FROM social.community_places \
+             ORDER BY community_id = $1 DESC, place_id",
+        )
+        .bind(c)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, expected, "run {run}");
+        let validated: bool = sqlx::query_scalar(
+            "SELECT convalidated FROM pg_constraint \
+             WHERE conname = 'community_places_place_id_lowercase' \
+             AND conrelid = 'social.community_places'::regclass",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(validated, "run {run}");
+    }
+    database.drop().await;
+}
+
 #[tokio::test]
 async fn going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
@@ -1061,7 +1338,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     )
     .await
     .unwrap();
-    let image = format!("http://cdn.test/social/communities/{c}/raw-thumbnail.png");
+    let image = format!("http://cdn.test/social/communities/{c}/raw-thumbnail.png?v=bafythumb");
     let started = match &*to_member.try_recv().unwrap() {
         SocialEvent::CommunityVoice(u) => u.clone(),
         _ => panic!("not a voice update"),
