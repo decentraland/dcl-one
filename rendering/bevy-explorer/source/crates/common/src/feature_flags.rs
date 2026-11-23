@@ -44,7 +44,11 @@ use crate::{
 /// and add it here. Unleash cannot rename a flag, so choose its name once. `bevy-test` has no
 /// feature behind it, for checking the read end to end. `alfa-official-wallets` carries the wallets
 /// whose names show the official badge (the avatar crate's nametags).
-pub const FLAGS: &[&str] = &["bevy-test", "alfa-official-wallets"];
+pub const FLAGS: &[&str] = &[
+    "bevy-test",
+    "alfa-official-wallets",
+    "bevy-left-drag-camera",
+];
 
 /// The application's prefix on every key of the file.
 const APP_PREFIX: &str = "explorer-";
@@ -202,6 +206,15 @@ pub struct FeatureFlags {
 }
 
 impl FeatureFlags {
+    /// Flags as the `ff` list forces them, with no service answer: for apps and tests that run
+    /// without the read.
+    pub fn from_overrides(raw: &str) -> Self {
+        Self {
+            overrides: parse_overrides(raw, FLAGS),
+            ..Default::default()
+        }
+    }
+
     pub fn source(&self) -> FlagsSource {
         self.source
     }

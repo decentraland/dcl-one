@@ -16,9 +16,12 @@ use comms::global_crdt::ForeignPlayer;
 use console::DoAddConsoleCommand;
 use system_bridge::{HoverAction, HoverEvent, ProximityEvent, SystemApi};
 
-use super::synthetic_pointer::{
-    aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
-    LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+use super::{
+    left_drag_pan::LeftDragPan,
+    synthetic_pointer::{
+        aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
+        LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+    },
 };
 use crate::{
     gltf_resolver::GltfMeshResolver,
@@ -275,6 +278,19 @@ pub struct PointerActionTarget {
     entities: HashMap<InputAction, PressCapture>,
 }
 
+impl PointerActionTarget {
+    #[cfg(test)]
+    pub(crate) fn capture_for_test(&mut self, action: InputAction, capture: PressCapture) {
+        self.entities.insert(action, capture);
+    }
+
+    /// The pointer press was captured by a scene entity that listens for `PetDrag` or
+    /// `PetDragLocked`.
+    pub fn holds_pointer_drag(&self) -> bool {
+        self.entities.contains_key(&InputAction::IaPointer)
+    }
+}
+
 #[derive(Default, Debug, Resource, Clone, PartialEq, Eq)]
 pub struct UiPointerTarget(pub UiPointerTargetValue);
 
@@ -351,8 +367,21 @@ fn update_pointer_target(
     transforms: Query<&GlobalTransform>,
     meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
     children: Query<&Children>,
+    pan: Res<LeftDragPan>,
+    input: InputManager,
 ) {
     pointer_ray.0 = None;
+
+    // a drag that turns the camera hovers nothing; the release frame already resolves normally
+    if pan.is_panning()
+        && input.is_button_down(
+            Action::Scene(CommonInputAction::IaPointer),
+            InputPriority::Scene,
+        )
+    {
+        world_target.0 = None;
+        return;
+    }
 
     let Ok((camera, camera_position)) = camera.single() else {
         // can't do much without a camera

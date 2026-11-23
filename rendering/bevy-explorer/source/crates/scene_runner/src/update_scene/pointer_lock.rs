@@ -2,12 +2,20 @@ use std::marker::PhantomData;
 
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use common::{
-    inputs::{Action, SystemAction, POINTER_SET},
-    structs::{ActiveDialog, AppConfig, CursorLocks, PrimaryCamera},
+    feature_flags::FeatureFlags,
+    inputs::{Action, CommonInputAction, SystemAction, POINTER_SET},
+    structs::{
+        ActiveDialog, AppConfig, CameraOverride, ClientWindowFocus, CursorLocks, PhotoMode,
+        PointerTargetType, PrimaryCamera,
+    },
 };
 use input_manager::{InputManager, InputPriority};
 use platform::{platform_pointer_is_locked, platform_pointer_lock_requested};
 
+use super::{
+    left_drag_pan::{self, Frame, LeftDragPan, Reason},
+    pointer_results::{PointerActionTarget, PointerTarget},
+};
 use crate::{
     initialize_scene::SuperUserScene, renderer_context::RendererSceneContext,
     update_world::AddCrdtInterfaceExt, HudFocus, InteractableArea, SceneSets,
@@ -29,6 +37,11 @@ impl Plugin for PointerLockPlugin {
             SceneComponentId::POINTER_LOCK,
             ComponentPosition::EntityOnly,
         );
+        // the pan reads what the pointer results own, which headless apps do not run
+        app.init_resource::<LeftDragPan>()
+            .init_resource::<FeatureFlags>()
+            .init_resource::<PointerTarget>()
+            .init_resource::<PointerActionTarget>();
         app.add_systems(Update, update_pointer_lock.in_set(SceneSets::Input));
     }
 }
@@ -91,6 +104,90 @@ impl CameraInteractionState<'_, '_> {
     }
 }
 
+/// What the left-button pan reads besides the input.
+#[derive(SystemParam)]
+pub struct LeftDragCamera<'w, 's> {
+    pan: ResMut<'w, LeftDragPan>,
+    flags: Res<'w, FeatureFlags>,
+    pointer_target: Res<'w, PointerTarget>,
+    action_target: Res<'w, PointerActionTarget>,
+    camera: Query<'w, 's, (&'static PrimaryCamera, Has<PhotoMode>)>,
+    // headless apps run no window focus tracking
+    focus: Option<Res<'w, ClientWindowFocus>>,
+}
+
+impl LeftDragCamera<'_, '_> {
+    /// Advances the pan one frame; returns whether it holds the camera lock.
+    fn tick(
+        &mut self,
+        input: &InputManager,
+        window: &Window,
+        dialog_open: bool,
+        camera_held_elsewhere: bool,
+    ) -> bool {
+        let pointer = Action::Scene(CommonInputAction::IaPointer);
+        let press = input.just_down(pointer, InputPriority::Scene);
+        let panning = self.pan.is_panning();
+        let (primary, photo) = self
+            .camera
+            .single()
+            .map_or((None, false), |(c, p)| (Some(c), p));
+
+        let blocked = if dialog_open {
+            Some(Reason::Dialog)
+        } else if camera_held_elsewhere {
+            Some(Reason::CameraLocked)
+        } else if primary
+            .is_some_and(|c| matches!(c.scene_override, Some(CameraOverride::Cinematic(_))))
+        {
+            Some(Reason::Cinematic)
+        } else if photo {
+            Some(Reason::PhotoMode)
+        } else if self.action_target.holds_pointer_drag() {
+            Some(Reason::SceneDrag)
+        } else if self.focus.as_deref() == Some(&ClientWindowFocus::NoFocus) {
+            Some(Reason::NoFocus)
+        } else if panning && platform_pointer_is_locked() == Some(false) {
+            Some(Reason::LockLost)
+        } else {
+            None
+        };
+
+        let frame = Frame {
+            press,
+            held: input.is_button_down(pointer, InputPriority::Scene),
+            motion: input.get_analog(POINTER_SET, InputPriority::Scroll),
+            // read on the press only: the lookup allocates
+            enabled: press && self.flags.is_on(left_drag_pan::FLAG),
+            press_refusal: if press {
+                self.press_refusal(window)
+            } else {
+                None
+            },
+            blocked,
+        };
+        self.pan.tick(&frame)
+    }
+
+    fn press_refusal(&self, window: &Window) -> Option<Reason> {
+        if self
+            .pointer_target
+            .0
+            .as_ref()
+            .is_some_and(|t| t.ty == PointerTargetType::Ui)
+        {
+            return Some(Reason::OverUi);
+        }
+        let cursor = window.cursor_position()?;
+        let margin = left_drag_pan::EDGE_MARGIN;
+        let inside = cursor.x >= margin
+            && cursor.y >= margin
+            && cursor.x <= window.width() - margin
+            && cursor.y <= window.height() - margin;
+        (!inside).then_some(Reason::NearEdge)
+    }
+}
+
 pub fn update_pointer_lock(
     mut commands: Commands,
     mut scenes: Query<(
@@ -111,6 +208,7 @@ pub fn update_pointer_lock(
     mut dialog_was_open: Local<bool>,
     interactable_area: Res<InteractableArea>,
     hud_focus: Res<HudFocus>,
+    mut left_drag: LeftDragCamera,
 ) {
     let Ok(window) = window.single() else {
         return;
@@ -178,7 +276,13 @@ pub fn update_pointer_lock(
     }
     *dialog_was_open = dialog_open;
 
-    let mut camera_locked = !dialog_open && (state == ClickState::Held || *toggle);
+    let was_panning = left_drag.pan.is_panning();
+    let panning = left_drag.tick(input_manager, window, dialog_open, *toggle);
+    if panning && !was_panning {
+        platform_pointer_lock_requested();
+    }
+
+    let mut camera_locked = !dialog_open && (state == ClickState::Held || *toggle || panning);
 
     for changed_lock in changed_pointer_locks.iter() {
         if dialog_open {
@@ -188,6 +292,7 @@ pub fn update_pointer_lock(
             continue;
         }
         info!("lock updated by scene");
+        left_drag.pan.interrupt(Reason::SceneLock);
         *toggle = changed_lock.0.is_pointer_locked;
         if *toggle {
             platform_pointer_lock_requested();
@@ -254,5 +359,347 @@ pub fn update_pointer_lock(
             SceneEntityId::CAMERA,
             &pointer_lock,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::{math::FloatOrd, platform::collections::HashSet};
+    use common::inputs::{InputIdentifier, InputMap};
+    use dcl_types::SceneId;
+    use input_manager::{CumulativeAxisData, InputPriorities};
+    use prost::Message;
+    use scene_material::SceneBounds;
+
+    use super::*;
+    use crate::update_scene::{
+        left_drag_pan::Phase,
+        pointer_results::{ActionCandidateMode, PointerTargetInfo, PressCapture},
+    };
+    use dcl_component::proto_components::sdk::components::common::InputAction;
+
+    /// The pointer moves one pixel to the right a frame while this key is down.
+    const MOTION_KEY: KeyCode = KeyCode::KeyL;
+
+    struct Rig {
+        app: App,
+        scene: Entity,
+    }
+
+    impl Rig {
+        fn new(flag_on: bool) -> Self {
+            let mut app = App::new();
+            let mut map = InputMap::default();
+            map.inputs.insert(
+                Action::System(SystemAction::PointerRight),
+                vec![InputIdentifier::Key(MOTION_KEY)],
+            );
+            app.insert_resource(map)
+                .init_resource::<Time>()
+                .init_resource::<ButtonInput<MouseButton>>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<CumulativeAxisData>()
+                .init_resource::<InputPriorities>()
+                .init_resource::<CursorLocks>()
+                .init_resource::<AppConfig>()
+                .init_resource::<InteractableArea>()
+                .init_resource::<HudFocus>()
+                .init_resource::<LeftDragPan>()
+                .init_resource::<PointerTarget>()
+                .init_resource::<PointerActionTarget>()
+                .insert_resource(FeatureFlags::from_overrides(if flag_on {
+                    left_drag_pan::FLAG
+                } else {
+                    ""
+                }))
+                .add_systems(Update, update_pointer_lock);
+            let mut window = Window::default();
+            window.set_cursor_position(Some(Vec2::new(400.0, 300.0)));
+            app.world_mut().spawn((window, PrimaryWindow));
+            app.world_mut().spawn((
+                Camera::default(),
+                GlobalTransform::default(),
+                PrimaryCamera::default(),
+            ));
+            let scene = app
+                .world_mut()
+                .spawn(RendererSceneContext::new(
+                    SceneId::DUMMY,
+                    "hash".to_owned(),
+                    "storage_root".to_owned(),
+                    false,
+                    0,
+                    "title".to_owned(),
+                    IVec2::ZERO,
+                    HashSet::from_iter([IVec2::ZERO]),
+                    vec![],
+                    SceneBounds::default(),
+                    vec![],
+                    Entity::PLACEHOLDER,
+                    0.,
+                    false,
+                    "sdk7",
+                    false,
+                    false,
+                ))
+                .id();
+            Self { app, scene }
+        }
+
+        /// One frame with the edges the held state implies, then the edges cleared as bevy does.
+        fn frame(&mut self) {
+            self.app.update();
+            self.app
+                .world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .clear();
+            self.app
+                .world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+        }
+
+        fn press(&mut self, button: MouseButton) {
+            self.app
+                .world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .press(button);
+        }
+
+        fn release(&mut self, button: MouseButton) {
+            self.app
+                .world_mut()
+                .resource_mut::<ButtonInput<MouseButton>>()
+                .release(button);
+        }
+
+        fn move_pointer(&mut self, moving: bool) {
+            let mut keys = self.app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            if moving {
+                keys.press(MOTION_KEY);
+            } else {
+                keys.release(MOTION_KEY);
+            }
+        }
+
+        /// Presses left and drags for three frames: the pan has started when it will.
+        fn drag(&mut self) {
+            self.press(MouseButton::Left);
+            self.frame();
+            self.move_pointer(true);
+            self.frame();
+            self.frame();
+        }
+
+        fn camera_locked(&self) -> bool {
+            self.app
+                .world()
+                .resource::<CursorLocks>()
+                .0
+                .contains("camera")
+        }
+
+        fn crdt_lock(&self) -> bool {
+            let context = self.app.world().get::<RendererSceneContext>(self.scene);
+            let entry = context
+                .unwrap()
+                .crdt_store
+                .lww
+                .get(&SceneComponentId::POINTER_LOCK)
+                .and_then(|state| state.last_write.get(&SceneEntityId::CAMERA))
+                .expect("the lock is always written");
+            PbPointerLock::decode(entry.data.as_slice())
+                .unwrap()
+                .is_pointer_locked
+        }
+
+        fn phase(&self) -> Phase {
+            self.app.world().resource::<LeftDragPan>().phase()
+        }
+
+        fn set_scene_lock(&mut self, locked: bool) {
+            self.app.world_mut().spawn(PointerLock(PbPointerLock {
+                is_pointer_locked: locked,
+            }));
+        }
+    }
+
+    #[test]
+    fn flag_off_left_drag_changes_nothing() {
+        let mut rig = Rig::new(false);
+        rig.drag();
+        assert!(!rig.camera_locked() && !rig.crdt_lock());
+        assert_eq!(rig.phase(), Phase::Idle);
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(!rig.camera_locked());
+    }
+
+    #[test]
+    fn a_drag_holds_the_camera_lock_until_release() {
+        let mut rig = Rig::new(true);
+        rig.drag();
+        assert!(rig.camera_locked() && rig.crdt_lock());
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(!rig.camera_locked() && !rig.crdt_lock());
+        assert_eq!(rig.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn a_click_without_motion_never_locks() {
+        let mut rig = Rig::new(true);
+        rig.press(MouseButton::Left);
+        rig.frame();
+        assert!(!rig.camera_locked());
+        rig.frame();
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(!rig.camera_locked() && !rig.crdt_lock());
+    }
+
+    #[test]
+    fn a_locked_cursor_does_not_pan() {
+        let mut rig = Rig::new(true);
+        rig.press(MouseButton::Right);
+        rig.frame();
+        rig.release(MouseButton::Right);
+        rig.frame();
+        assert!(rig.camera_locked(), "a right click toggles the lock on");
+        rig.drag();
+        assert_eq!(rig.phase(), Phase::Spent);
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(rig.camera_locked(), "the toggle is still held");
+    }
+
+    #[test]
+    fn the_right_button_and_the_pan_both_hold_the_lock() {
+        let mut rig = Rig::new(true);
+        rig.drag();
+        rig.press(MouseButton::Right);
+        rig.frame();
+        // held longer than a click, so releasing it does not toggle the lock
+        rig.app
+            .world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(300));
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(rig.camera_locked(), "the right button still holds it");
+        rig.release(MouseButton::Right);
+        rig.frame();
+        rig.frame();
+        assert!(!rig.camera_locked());
+    }
+
+    #[test]
+    fn a_scene_lock_mid_drag_outlives_the_release() {
+        let mut rig = Rig::new(true);
+        rig.drag();
+        rig.set_scene_lock(true);
+        rig.frame();
+        assert_eq!(rig.phase(), Phase::Spent);
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert!(rig.camera_locked() && rig.crdt_lock());
+    }
+
+    #[test]
+    fn a_scene_unlock_mid_drag_ends_the_pan() {
+        let mut rig = Rig::new(true);
+        rig.drag();
+        rig.set_scene_lock(false);
+        rig.frame();
+        assert!(!rig.camera_locked());
+        rig.frame();
+        assert!(!rig.camera_locked(), "the button still down does nothing");
+        assert_eq!(rig.phase(), Phase::Spent);
+    }
+
+    #[test]
+    fn a_dialog_mid_drag_ends_the_pan_for_good() {
+        let mut rig = Rig::new(true);
+        rig.drag();
+        rig.app.world_mut().resource_mut::<HudFocus>().0 = true;
+        rig.frame();
+        assert!(!rig.camera_locked());
+        rig.app.world_mut().resource_mut::<HudFocus>().0 = false;
+        rig.frame();
+        rig.frame();
+        assert!(
+            !rig.camera_locked(),
+            "closing it with the button down does not resume"
+        );
+        rig.release(MouseButton::Left);
+        rig.frame();
+        assert_eq!(rig.phase(), Phase::Idle);
+    }
+
+    #[test]
+    fn a_scene_drag_wins_over_the_pan() {
+        let mut rig = Rig::new(true);
+        rig.press(MouseButton::Left);
+        rig.frame();
+        let info = PointerTargetInfo {
+            container: Entity::PLACEHOLDER,
+            mesh_name: None,
+            distance: FloatOrd(1.0),
+            camera_distance: FloatOrd(1.0),
+            in_scene: true,
+            position: None,
+            normal: None,
+            face: None,
+            ty: PointerTargetType::World,
+        };
+        rig.app
+            .world_mut()
+            .resource_mut::<PointerActionTarget>()
+            .capture_for_test(
+                InputAction::IaPointer,
+                PressCapture {
+                    info,
+                    mode: ActionCandidateMode::Cursor,
+                    lock: false,
+                },
+            );
+        rig.move_pointer(true);
+        rig.frame();
+        rig.frame();
+        assert!(!rig.camera_locked());
+        assert_eq!(rig.phase(), Phase::Spent);
+    }
+
+    #[test]
+    fn a_press_near_the_edge_never_pans() {
+        let mut rig = Rig::new(true);
+        let mut window = rig
+            .app
+            .world_mut()
+            .query_filtered::<&mut Window, With<PrimaryWindow>>();
+        window
+            .single_mut(rig.app.world_mut())
+            .unwrap()
+            .set_cursor_position(Some(Vec2::new(4.0, 300.0)));
+        rig.drag();
+        assert!(!rig.camera_locked());
+        assert_eq!(rig.phase(), Phase::Spent);
+    }
+
+    #[test]
+    fn a_missing_window_or_camera_leaves_the_pan_idle() {
+        let mut rig = Rig::new(true);
+        let cameras: Vec<Entity> = rig
+            .app
+            .world_mut()
+            .query_filtered::<Entity, With<PrimaryCamera>>()
+            .iter(rig.app.world())
+            .collect();
+        for camera in cameras {
+            rig.app.world_mut().despawn(camera);
+        }
+        rig.drag();
+        assert_eq!(rig.phase(), Phase::Idle);
+        assert!(!rig.camera_locked());
     }
 }

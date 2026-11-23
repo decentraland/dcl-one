@@ -500,6 +500,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
   Unity's K) closes photo mode and opens the gallery, where Unity's K only closes it.
+- **Left-drag camera: reticle at the centre, no per-frame cursor warp.** unity-explorer's
+  left-button drag hides the cursor, shows its crosshair at the press point and warps the OS
+  cursor back to the press point every frame. Here the drag holds the engine's `"camera"` cursor
+  lock, as the right button does: the reticle is at the screen centre (both HUDs draw it there
+  while locked), and the cursor is not moved each frame. A page cannot move the cursor, and
+  Pointer Lock gives the same end state on web: the browser restores the pointer where the lock
+  began. Behind the `bevy-left-drag-camera` flag.
+- **Left-drag camera: a scene's drag capture wins.** When the press is captured by an entity that
+  listens for `PetDrag` or `PetDragLocked`, the press never turns the camera: the scene asked
+  for the drag. unity-explorer has no such capture.
+- **Left-drag camera starts on motion since the press.** unity-explorer starts the pan when one
+  frame's mouse motion exceeds 1 px, motion from before the press included. Here the motion
+  counts from the frame after the press and accumulates while the button is held, and the pan
+  starts once the total exceeds 1 px. A still click stays a click, and a slow drag still starts
+  at a high frame rate, where one frame's motion never reaches a pixel.
 - **Photo mode has no gamepad toggle, and its pan is on the D-pad.** unity-explorer opens the
   in-world camera with the pad's East button and pans with the bumpers (and `dpad/y`). Here East
   is the scenes' secondary action and nothing is reserved outside photo mode, so a pad binding
