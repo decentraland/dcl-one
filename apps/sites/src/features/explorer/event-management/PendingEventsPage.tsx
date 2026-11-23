@@ -50,6 +50,9 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
   const [params, setParams] = useSearchParams();
   const queue = useQuery(identity ? moderationQueueQuery(identity) : { queryKey: eventAdminKeys.queue("anonymous"), queryFn: skipToken });
   const [rejecting, setRejecting] = useState<ManagedEvent | null>(null);
+  // The review a moderation just closed. Its id leaves the URL in a later commit than the reason
+  // dialog leaves state, so without this the review would show again for that commit.
+  const [closing, setClosing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useToast();
@@ -75,7 +78,8 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
   const mayReject = (event: ManagedEvent) => mayEdit(event) && access.canApproveAny;
   const recentlyApproved = (queue.data?.recentlyApproved ?? []).filter(visible);
   const openId = params.get("id");
-  const review = openId ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
+  if (closing !== null && openId !== closing) setClosing(null);
+  const review = openId && openId !== closing ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
   const now = new Date();
 
   function select(id: string | null) {
@@ -105,6 +109,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       await moderateEvent(signer, event.id, action, reason);
       void invalidateEventsAfterWrite(client);
       if (!mounted.current) return;
+      setClosing(event.id);
       setRejecting(null);
       select(null);
       setToast({ message: action === "approve" ? adminCopy.pending.approveSuccess : adminCopy.pending.rejectSuccess, tone: "success" });
