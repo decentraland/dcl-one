@@ -581,21 +581,106 @@ fn a_build_waits_for_the_face_textures_and_masks() {
         }
     };
     let worn = [face(1, Some(2)), face(3, None)];
-    assert!(!face_images_loading(&worn, loading(&[])));
+    assert!(!face_images(&worn, loading(&[])).loading);
     // a texture or a mask still on its way holds the build
-    assert!(face_images_loading(&worn, loading(&[3])));
-    assert!(face_images_loading(&worn, loading(&[2])));
-    // a failed image does not: the face is built without it
-    assert!(!face_images_loading(&worn, |_: &Handle<Image>| Some(
-        LoadState::Failed(Arc::new(
-            bevy::asset::AssetLoadError::RequestedHandleTypeMismatch {
-                path: "face.png".into(),
-                requested: std::any::TypeId::of::<Image>(),
-                actual_asset_name: "",
-                loader_name: "",
+    assert!(face_images(&worn, loading(&[3])).loading);
+    assert!(face_images(&worn, loading(&[2])).loading);
+    // a failed image does not: the face is built without it, and the build names it
+    let failed = |ids: &'static [u128]| {
+        move |handle: &Handle<Image>| {
+            if ids.iter().any(|id| handle.id() == image(*id).id()) {
+                Some(LoadState::Failed(Arc::new(
+                    bevy::asset::AssetLoadError::RequestedHandleTypeMismatch {
+                        path: "face.png".into(),
+                        requested: std::any::TypeId::of::<Image>(),
+                        actual_asset_name: "",
+                        loader_name: "",
+                    },
+                )))
+            } else {
+                Some(LoadState::Loaded)
             }
+        }
+    };
+    assert_eq!(face_images(&worn, failed(&[])), FaceImages::default());
+    assert_eq!(
+        face_images(&worn, failed(&[2, 3])),
+        FaceImages {
+            loading: false,
+            failed: vec![
+                format!("{:?}", image(2).id()),
+                format!("{:?}", image(3).id())
+            ],
+        }
+    );
+}
+
+/// A wearable whose fetch failed is kept with the failures of the avatar for a capture to read.
+/// The build passes over it, and no fallback reads it: the next pass asks again.
+#[test]
+fn a_wearable_whose_fetch_failed_is_noted_until_the_next_pass() {
+    let mut app = app_with_avatar_scenes();
+    let body = base_wearables::default_bodyshape_urn();
+    let gltf = usable_body_gltf(app.world_mut());
+    register_test_body(app.world_mut(), body.clone(), gltf);
+    let hat = WearableUrn::new("urn:decentraland:matic:collections-v2:0xabc:0").unwrap();
+    // the content server names a file for the hat, and the file cannot load
+    app.world_mut()
+        .resource_mut::<Collectibles<Wearable>>()
+        .insert_inline(hat.clone(), "bafyabsent".to_owned());
+    let owner = app
+        .world_mut()
+        .spawn((
+            Transform::default(),
+            AvatarSelection {
+                scene: None,
+                shape: AvatarShape(PbAvatarShape {
+                    body_shape: Some(body.as_str().to_owned()),
+                    wearables: vec![hat.as_str().to_owned()],
+                    ..default()
+                }),
+                automatic_delete: true,
+                disable_dither: false,
+            },
         ))
-    )));
+        .id();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while app.world().get::<AvatarLoadFailures>(owner).is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the fetch of the hat did not fail"
+        );
+        app.world_mut()
+            .run_system_once(update_render_avatar)
+            .unwrap();
+        app.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let failures = app.world().get::<AvatarLoadFailures>(owner).unwrap();
+    assert_eq!(
+        failures.sorted(),
+        [Vec::new(), Vec::new(), vec![hat.to_string()]]
+    );
+    // the hat is passed over, not held against the avatar: the build is there without it
+    assert!(!AvatarLoadFailures::wearable_failed(Some(failures), &hat));
+    let build = avatar_build(app.world_mut(), owner);
+    let definition = app.world().get::<AvatarDefinition>(build).unwrap();
+    assert!(definition.render.wearables.is_empty());
+
+    // the avatar takes the hat off: the next pass has no fetch that failed
+    app.world_mut()
+        .get_mut::<AvatarSelection>(owner)
+        .unwrap()
+        .shape
+        .0
+        .wearables
+        .clear();
+    app.world_mut()
+        .run_system_once(update_render_avatar)
+        .unwrap();
+    let failures = app.world().get::<AvatarLoadFailures>(owner).unwrap();
+    assert_eq!(failures.sorted(), <[Vec<String>; 3]>::default());
 }
 
 #[test]
@@ -996,6 +1081,13 @@ fn exercise_gltf_fallback(
             .body_shape,
         default_body.as_str()
     );
+    // the fallback build is not the avatar that the shape names: a capture reads the failure
+    let [failed_bodies, ..] = app
+        .world()
+        .get::<AvatarLoadFailures>(owner)
+        .unwrap()
+        .sorted();
+    assert_eq!(failed_bodies, [requested.to_string()], "{failure:?}");
     app.world_mut().run_system_once(spawn_scenes).unwrap();
     reports.extend(take_load_reports(app.world(), &mut cursor));
     assert!(

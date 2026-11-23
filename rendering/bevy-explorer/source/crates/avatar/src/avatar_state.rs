@@ -4,10 +4,7 @@
 use alloy_core::primitives::Address;
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use collectibles::{
-    wearables::{WearableCategory, WearableUrn},
-    Collectibles, Emote,
-};
+use collectibles::{wearables::WearableCategory, Collectibles, Emote};
 use common::{
     structs::{EmoteMask, PrimaryUser},
     util::AsH160,
@@ -152,14 +149,10 @@ impl LoadFailures {
         let Some(failures) = failures else {
             return Self::default();
         };
-        let sorted = |urns: &bevy::platform::collections::HashSet<WearableUrn>| {
-            let mut urns: Vec<_> = urns.iter().map(ToString::to_string).collect();
-            urns.sort_unstable();
-            urns
-        };
+        let [bodies, wearables, _] = failures.sorted();
         Self {
-            bodies: sorted(&failures.bodies),
-            wearables: sorted(&failures.wearables),
+            bodies,
+            wearables,
             no_body: AvatarLoadFailures::body(Some(failures), requested_body(&selection.shape.0))
                 .is_none(),
         }
