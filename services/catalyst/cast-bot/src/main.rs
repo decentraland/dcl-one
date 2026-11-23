@@ -314,6 +314,25 @@ fn connect_failure(e: &RoomError) -> &'static str {
     }
 }
 
+/// `set_metadata`, sent once more when its answer timed out. The SDK
+/// listens for the answer only once the request went out
+/// (`LocalParticipant::set_metadata`), so an answer LiveKit sends back at once
+/// can be lost and the call times out after 5 s although the update applied.
+async fn set_metadata(room: &Room, metadata: String) -> RoomResult<()> {
+    use livekit::rtc_engine::EngineError;
+    let local = room.local_participant();
+    match local.set_metadata(metadata.clone()).await {
+        Err(RoomError::Engine(EngineError::Signal(e))) => {
+            if local.metadata() == metadata {
+                return Ok(());
+            }
+            eprintln!("cast-bot: metadata update not answered ({e}), sending it again");
+            local.set_metadata(metadata).await
+        }
+        done => done,
+    }
+}
+
 async fn run(out: Out) -> anyhow::Result<()> {
     let mut stdin = BufReader::with_capacity(1 << 20, tokio::io::stdin());
     let init: Command = match read_line(&mut stdin).await? {
@@ -414,9 +433,7 @@ async fn run(out: Out) -> anyhow::Result<()> {
                     Ok(())
                 }
                 "updateMetadata" => {
-                    room.local_participant()
-                        .set_metadata(command.metadata.unwrap_or_default())
-                        .await?;
+                    set_metadata(&room, command.metadata.unwrap_or_default()).await?;
                     Ok(())
                 }
                 "shutdown" => Ok(()),
