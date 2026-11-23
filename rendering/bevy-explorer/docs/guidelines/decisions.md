@@ -111,10 +111,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
   (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
   bias.
-- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
-  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
-  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
-  keeps it.
+- **Sun shadow map is 2048, and Low's one cascade stops at 40 m.** Unity's main shadow
+  resolution is 1024. High's four cascades each cover a slice of the shadow distance: at 100 m
+  and 200 m, 2048 per cascade looked the same as 4096 and the frame took about 10 ms less (web,
+  Apple M1, Genesis Plaza); 1024 saved 2 ms more and softened the contact shadows. Low's single
+  cascade spreads its map over the whole shadow distance, and the bias is in texels. From 20 m
+  to 60 m, 2048 looked the same as 4096 with the sun at 10:00 and at 15:00, and at 20 m took
+  about 6 ms less. At 100 m with the sun at 15:00, the shadows of a crowd 5 to 10 m from the
+  camera were mostly gone on 2048 and all gone on 1024. With a low sun, past about 75 m the
+  avatar's shadow was a smudge at the feet on 2048 and gone on 1024. 4096 kept them, but no
+  preset reaches that far on Low, and a size that follows the setting reallocates the map as
+  the distance crosses the line. So the map is 2048 for every setting and is never resized,
+  and Low's cascade stops at 40 m (`SUN_LOW_MAX_DISTANCE`) whatever the shadow distance; past
+  it the far shadow floor (next entry) applies, and High reaches further. Spot-light shadows
+  and the lobby stage light share the sun's shadow texture array, so they are drawn at the
+  same size.
 - **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
   the shadow distance. We fade over the same squared-distance curve, but towards a partial
   shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
@@ -432,6 +443,41 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   or 403 as forbidden access. The player is not moved out of a scene that refused them, as
   there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
+- **Scene message trust is enforced in the engine.** Room metadata rejects banned senders
+  across the string bus, binary bus and topics. New rooms without metadata grant ordinary peer
+  permissions. Preview and local scene development trust peers, as Unity Explorer does for
+  local scene development, so shared VideoPlayer sources sync without room admins; bans still
+  outrank that trust. Metadata arrives as full snapshots. Missing or non-array lists retain
+  their last good values defensively; explicit arrays apply their valid addresses and warn about skipped entries; an empty array clears
+  its list. An entirely unusable non-empty ban array retains known bans; an entirely unusable
+  admin array clears admin trust.
+  Binary SDK CRDT batches and state responses exclude VideoControlState and the combined physics
+  force/impulse components in both directions; incoming VideoPlayer edits require a trusted
+  development realm, a room admin or the authoritative server. This protects the video source;
+  peers can still move, hide or delete its entity. An untrusted state response omits VideoPlayer, so late joiners need a trusted sender to
+  supply it. Filtering covers SDK envelopes 1 and 3. Auth-server SDK envelopes are
+  opaque: those clients accept CRDT only from the authoritative server, but local-only component
+  filtering for that generation is unverified. Malformed recognized CRDT packets are dropped.
+  Outgoing binary payloads are limited to 13,269 bytes, reserving a sender-length byte and 42
+  address bytes in Unity Explorer's 13 KiB receiver frame. Incoming binary payloads retain the
+  30,000-byte bus limit for older peers. Strings retain 30,000 bytes; topics retain 13 KiB.
+  Rejecting banned senders' scene messages is a deliberate divergence from Unity Explorer's
+  scene pipe, which gates component trust through admin status and does not check its ban list.
+- **Scene bans retain their admission owner.** A recognized scene/world refusal or local ban
+  in room metadata unloads the matching parcel scene, without moving the player or unloading
+  portable experiences. Refusals persist per scene across parcel changes within the wallet and
+  realm session; only fresh admission for that scene clears its refusal. The shared room credential
+  lifecycle rechecks admission with a minimum fifteen-second ban retry delay and honors longer
+  server delays. A transient failure cannot clear a known ban. Successful fresh admission
+  restores the scene while the player stays on or returns to its parcel. Leaving and returning
+  preserves the retry deadline, including a longer server delay. A removed scene-room participant
+  requests fresh admission; other room types retain their existing denial behavior. Preview,
+  local and headless scene lifecycles are exempt from local-player unloading. Teleport arrival
+  onto a refused parcel completes without waiting for the deliberately absent scene root.
+  Unloading is a deliberate divergence from Unity Explorer's minimap ban mark: it prevents
+  refused scene scripts from running while the player is nearby. A later platform refusal is
+  reported independently of the retained scene/world ban, so device bans reach platform status
+  even while the user stays on a scene that already refused them.
 - **Realm entry refused during a platform ban.** The realm change reads `PlatformBanStatus`
   (`common::platform_ban`) and, while a platform ban is known, refuses every request ("You are
   banned from Decentraland"), so the lobby's pick, a link held for the
@@ -818,12 +864,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the one every saved config migrates to, except jiggle bones, which stay off by default (see the
   spring bones ADR). Anti-aliasing and depth of field differ (next entry). Bloom is Low in every
   preset, closer to Unity's look than High. Medium's sun shadow distance is 20 m, not 60 m: Medium
-  has one cascade on a 4096 map (above), so at 60 m each texel is three times as large and the
-  shadows break up. The presets leave out Unity's scene distance (in parcels, where far scenes
-  load as LODs; here imposters draw them and the load distance stays the player's), the landscape
-  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and HDR
-  (always on). The preset is not stored: the HUD reads it off the settings, and any difference
-  shows as Custom.
+  has one cascade (above), which stops at 40 m, and at 20 m its texels are half as large as at
+  40 m. The presets leave out Unity's scene distance (in parcels, where far scenes load as
+  LODs; here imposters draw them and the load distance stays the player's), the landscape
+  distance (read only at startup; its default is Medium's 1000 m), current-scene streams and
+  HDR (always on). The preset is not stored: the HUD reads it off the settings, and any
+  difference shows as Custom.
 - **Depth of field yields to MSAA.** The fork's transparent focus texture takes the sample count
   of the resolved main texture, so a multisampled transparent pass with depth of field fails
   wgpu validation. While MSAA is on, the camera has no depth of field and the stars draw before

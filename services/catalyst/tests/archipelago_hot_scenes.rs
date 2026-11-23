@@ -87,9 +87,10 @@ async fn active_content_updates_are_visible_without_a_tile_cache() {
             .and_then(catalyst::content::OrderedJson::as_str),
         Some("https://content.invalid//contents/hash")
     );
+    sqlx::query("INSERT INTO content.content_files (deployment,key,content_hash) VALUES ($1,'new.png','new-hash')").bind(id).execute(pool).await.unwrap();
     sqlx::query("UPDATE content.deployments SET entity_metadata=$1 WHERE id=$2")
         .bind(sqlx::types::Json(
-            json!({"v": scene_meta("0,0", &["0,0"], "https://new.invalid/image")}),
+            json!({"v": scene_meta("0,0", &["0,0"], "new.png")}),
         ))
         .bind(id)
         .execute(pool)
@@ -103,7 +104,7 @@ async fn active_content_updates_are_visible_without_a_tile_cache() {
             .thumbnail
             .as_ref()
             .and_then(catalyst::content::OrderedJson::as_str),
-        Some("https://new.invalid/image")
+        Some("https://content.invalid//contents/new-hash")
     );
     scratch.teardown().await;
 }
