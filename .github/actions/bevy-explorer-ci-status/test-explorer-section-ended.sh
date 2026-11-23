@@ -159,6 +159,13 @@ jobs_json 'Integration guards:completed:failure' 'Changes:completed:cancelled' >
 echo '{"status":"completed"}' > "$SCENARIO/run.1.json"
 WAIT=600 expect "the run ended before its tests were listed => false, at once" false 0
 expect_calls "an ended run ends the wait on the first read" jobs 1
+expect_calls "an idle incomplete list reads the run once" run 1
+
+new_scenario no-jobs-yet
+echo '{"jobs":[]}' > "$SCENARIO/jobs.1.json"
+echo '{"status":"queued"}' > "$SCENARIO/run.1.json"
+expect "no job listed yet, no budget => false" false 0
+expect_calls "an empty job list is idle: the run is read" run 1
 
 # 9. The wait: nothing listed, then running, then ended while the image build goes on.
 new_scenario waits-for-the-tests

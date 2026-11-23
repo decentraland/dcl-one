@@ -49,7 +49,11 @@ esac
 
 log() { echo "[explorer-section-ended $SECTION] $*" >&2; }
 
-run_status() { gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status'; }
+# A run with an open job has not ended, so only an idle run is read.
+run_status() {
+  if [ "$idle" != true ]; then echo in_progress; return; fi
+  gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '.status'
+}
 
 deadline=$(( $(date +%s) + WAIT_SECONDS ))
 attempt=1
@@ -74,8 +78,7 @@ while :; do
       echo false
       exit 0
     fi
-    run_state=in_progress
-    if [ "$idle" = true ]; then run_state=$(run_status); fi
+    run_state=$(run_status)
     if [ "$run_state" = completed ]; then
       log "the run ended with these jobs: the completed run reports"
       echo false
@@ -86,9 +89,8 @@ while :; do
     exit 0
   fi
 
-  # A run with an open job has not ended; one that ended starts no more jobs.
-  run_state=in_progress
-  if [ "$listed" != true ] && [ "$idle" = true ]; then run_state=$(run_status); fi
+  # A run that ended (cancelled, or a failed guard) starts no more jobs.
+  run_state=$(run_status)
   if [ "$run_state" = completed ]; then
     log "the run ended before its jobs were listed: the completed run reports"
     echo false
