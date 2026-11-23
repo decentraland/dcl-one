@@ -70,15 +70,59 @@ describe("MpReplayDialog", () => {
     });
   });
 
+  // jsdom has no implicit submission for a button outside the form, so this checks what the
+  // browser's Enter-to-submit relies on: the action is the form's submit button.
+  describe("when the form is submitted through its action outside it", () => {
+    it("should belong to the fields' form and send their values", () => {
+      const onSubmit = vi.fn();
+      render(<MpReplayDialog runId="r1" profiles={["lan"]} onSubmit={onSubmit} onClose={vi.fn()} />);
+      const seed = screen.getByRole("spinbutton", { name: "Seed" }) as HTMLInputElement;
+      const submit = screen.getByRole("button", { name: "Replay offline" }) as HTMLButtonElement;
+      fireEvent.change(seed, { target: { value: "9" } });
+      expect(submit.form).toBe(seed.form);
+      seed.form!.requestSubmit(submit);
+      expect(onSubmit).toHaveBeenCalledWith({ tier: "a", profile: "lan", seed: 9 });
+    });
+  });
+
+  describe("when Cancel is pressed with no request in flight", () => {
+    it("should close the dialog", async () => {
+      const onClose = vi.fn();
+      render(<MpReplayDialog runId="r1" profiles={["lan"]} onSubmit={vi.fn()} onClose={onClose} />);
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("when the backdrop is pressed", () => {
+    it("should stay open and keep the chosen tier, profile and seed", async () => {
+      const onSubmit = vi.fn();
+      const onClose = vi.fn();
+      render(<MpReplayDialog runId="r1" profiles={["lan", "3g"]} onSubmit={onSubmit} onClose={onClose} />);
+      await userEvent.click(screen.getByRole("radio", { name: /Reproduce \(live/ }));
+      await userEvent.selectOptions(screen.getByRole("combobox", { name: "Network profile" }), "3g");
+      fireEvent.change(screen.getByRole("spinbutton", { name: "Seed" }), { target: { value: "7" } });
+      const dialog = screen.getByRole("dialog");
+      fireEvent.pointerDown(dialog, { clientX: -10, clientY: -10 });
+      fireEvent.click(dialog, { clientX: -10, clientY: -10 });
+      expect(onClose).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByRole("button", { name: "Reproduce live" }));
+      expect(onSubmit).toHaveBeenCalledWith({ tier: "b", profile: "3g", seed: 7 });
+    });
+  });
+
   describe("when a request is in flight", () => {
-    it("should disable both actions and refuse Escape", () => {
+    it("should mark the submit action busy, disable Cancel and refuse Escape and a second submit", async () => {
       const onSubmit = vi.fn();
       const onClose = vi.fn();
       render(<MpReplayDialog runId="r1" profiles={["lan"]} requesting onSubmit={onSubmit} onClose={onClose} />);
-      expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+      const submit = screen.getByRole("button", { name: "Replay offline" });
+      expect(submit).toHaveAttribute("aria-busy", "true");
+      expect(submit).toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
       fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
       expect(onClose).not.toHaveBeenCalled();
+      await userEvent.click(submit);
       fireEvent.submit(screen.getByRole("radiogroup").closest("form")!);
       expect(onSubmit).not.toHaveBeenCalled();
     });

@@ -50,7 +50,7 @@
 .tierCopy {
   font-size: var(--dcl-font-size-body-sm);
   line-height: 1.5;
-  color: var(--dcl-text-secondary);
+  color: var(--dcl-text-secondary-on-brand);
 }
 
 .fields {
@@ -71,10 +71,13 @@
 .field input {
   min-width: 140px;
   padding: var(--dcl-space-8) var(--dcl-space-12);
-  border: 1px solid var(--dcl-border-default);
+  /* --dcl-border-default is about 1.2:1 on the brand surface; control edges need 3:1. */
+  border: 1px solid var(--dcl-text-secondary);
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-transparencies-white-10);
   color: var(--dcl-text-primary);
+  /* The native option list and spinner follow the dark surface, not white on white. */
+  color-scheme: dark;
   font: inherit;
   font-size: var(--dcl-font-size-body-md);
 }
@@ -90,7 +93,8 @@
   padding: var(--dcl-space-8) var(--dcl-space-12);
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-feedback-error-subtle);
-  color: var(--dcl-feedback-error);
+  /* The error red on its light tint is about 2.6:1; dark ink keeps the tint and reads at 11:1. */
+  color: var(--dcl-neutrals-charcoal);
   font-size: var(--dcl-font-size-body-sm);
 }
 

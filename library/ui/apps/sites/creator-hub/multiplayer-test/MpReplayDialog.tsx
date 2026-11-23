@@ -55,23 +55,32 @@ export default function MpReplayDialog({
       title={`Replay run ${runId}`}
       onClose={onClose}
       dismissible={!requesting}
+      // A stray press outside must not discard the chosen tier, profile and seed.
+      closeOnBackdrop={false}
       actions={
         outcome ? (
-          <Button variant="secondary" data-mp-action="close-replay" onClick={onClose}>
+          <Button variant="secondary" size="lg" data-mp-action="close-replay" onClick={onClose}>
             Close
           </Button>
         ) : (
           <>
             <Button
               variant="secondary"
+              size="lg"
               data-mp-action="close-replay"
               onClick={onClose}
               disabled={requesting}
             >
               Cancel
             </Button>
-            <Button type="submit" form={formId} data-mp-action="replay" disabled={requesting}>
-              {requesting ? 'Working\u{2026}' : tier === 'a' ? 'Replay offline' : 'Reproduce live'}
+            <Button
+              type="submit"
+              size="lg"
+              form={formId}
+              data-mp-action="replay"
+              loading={requesting}
+            >
+              {tier === 'a' ? 'Replay offline' : 'Reproduce live'}
             </Button>
           </>
         )
