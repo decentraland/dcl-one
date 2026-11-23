@@ -38,6 +38,10 @@ pub const DEFAULT_DWELL_PASSES: u32 = 3;
 
 pub const DEFAULT_ID_PREFIX: &str = "C";
 
+pub(super) fn format_cluster_id(prefix: &str, boot_id: uuid::Uuid, number: u64) -> String {
+    format!("{prefix}{}-{number}", boot_id.simple())
+}
+
 /// Passes a departed wallet's last published assignment is retained, so a new session arriving
 /// inside the window can name it as displaced. Zero disables the annotation.
 pub const DEFAULT_SESSION_RETENTION_PASSES: u64 = 300;
@@ -254,6 +258,7 @@ pub struct ClusterTracker {
 
     pass_number: u64,
     /// Existing LiveKit rooms can outlive the tracker and its counter.
+    /// This ID also scopes rooms when no assignment feed or source binding is configured.
     boot_id: uuid::Uuid,
     next_cluster_number: u64,
     /// Passes in a row that overran their share of the tick; warned from the second.
@@ -760,11 +765,10 @@ impl ClusterTracker {
     /// pass's assignments, so a freshly minted ID cannot be contested within its own pass.
     fn mint_cluster_id(&mut self) -> String {
         self.next_cluster_number += 1;
-        let id = format!(
-            "{}{}-{}",
-            self.options.id_prefix,
-            self.boot_id.simple(),
-            self.next_cluster_number
+        let id = format_cluster_id(
+            &self.options.id_prefix,
+            self.boot_id,
+            self.next_cluster_number,
         );
         self.cluster_records.insert(
             id.clone(),
