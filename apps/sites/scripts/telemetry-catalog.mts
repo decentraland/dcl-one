@@ -8,6 +8,7 @@ const APP = path.join(SITES, "src");
 const CORE = path.join(APP, "core");
 const EVENTS_DIR = path.join(CORE, "lib", "telemetry", "events");
 const EVENTS_ENTRY = path.join(CORE, "lib", "telemetry", "events.ts");
+const TRACK_FILE = path.join(CORE, "lib", "telemetry", "track.ts");
 const LOADING_PROTOCOL = path.resolve(SITES, "../ui3/src/overlay/loadingTelemetryProtocol.ts");
 const ENGINE_PROTOCOL = path.resolve(SITES, "../ui3/src/overlay/engineTelemetryProtocol.ts");
 // Maintained protocols emitted outside the sites package (the engine host and the
@@ -69,6 +70,14 @@ function loadProgram(): ts.Program {
     rootNames: [...parsed.fileNames, ...PROTOCOLS.map(([file]) => file)],
     options: parsed.options,
   });
+}
+
+/** `page()` and `identify()` in telemetry/track.ts: they take a TrackContext but send no event. */
+function isPageOrIdentify(sig: ts.Signature): boolean {
+  const decl = sig.getDeclaration();
+  if (!decl || !ts.isFunctionDeclaration(decl) || !decl.name) return false;
+  if (decl.name.text !== "page" && decl.name.text !== "identify") return false;
+  return decl.getSourceFile().fileName === TRACK_FILE;
 }
 
 function calleeName(node: ts.CallExpression): string | null {
@@ -198,6 +207,8 @@ function harvest(program: ts.Program): HarvestResult {
       const site = `${rel}:${line + 1}`;
 
       if (sig.parameters.length < 3 || !isTrackContextParam(checker, sig, 2)) return;
+      // A Segment page name or an identified user id is not an event of the contract.
+      if (isPageOrIdentify(sig)) return;
       if (isForwardedParam(checker, node.arguments[0]!)) return;
       const names =
         node.arguments[0] &&

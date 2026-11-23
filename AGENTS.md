@@ -18,6 +18,10 @@ For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
+To prove or reject a claim about multiplayer behaviour against a running stack
+(a pull request that fixes a connection problem, a decision record, a bug report), use
+[validate-multiplayer-claim](.claude/skills/validate-multiplayer-claim/SKILL.md).
+
 ## Design feasibility
 
 - Before planning or implementing runtime features, resource policies or architecture
@@ -94,11 +98,11 @@ Code that serves none of these deliverables is removed, not kept for reference:
   - The community chat message router (`catalyst-message-router`, crate `services/catalyst/message-router`) runs as its own process, holds no LiveKit secret (its token comes from the gatekeeper's `/internal/message-router/token/v1`) and reaches social by shared SQL: it reads `social.community_members` (`community_id`, `member_address`) and `social.communities` (`id`, `active`, `suspended`) and never writes them. Changing a column it reads updates this paragraph and `DATABASE.md` "Message router workload" in the same change.
   - Pulse runs in its own process unless a load measurement shows the loop is unaffected in-process.
   - The connector is part of the gatekeeper (local calls); Pulse and `serve` share the NATS subjects in `comms::protocol::bus`.
-  - Pulse alone owns the legacy Archipelago statistics population, independently of native ownership and without peer expiry. The connector forwards authenticated heartbeat/disconnect observations; its retained room assignments serve enforcement only. `comms::stats` supplies read-only complete snapshots to HTTP, content/about/realms and the presence archive; one archive pass retains one snapshot across content I/O. Hot scenes use serve's existing content pool and shared content denylist before projection and top-100 selection; thumbnails name `CONTENT_URL`, or this node's `/content` when it is unset. Preserve the accepted [local source semantics](docs/adr/2026-11-12-stats-local-content-source.md) when changing enrichment.
+  - Pulse alone owns the legacy Archipelago statistics population, independently of native ownership and without peer expiry. The connector forwards authenticated heartbeat/disconnect observations; its retained room assignments serve enforcement only. `comms::stats` supplies read-only complete snapshots to HTTP, content/about/realms and the presence archive; one archive pass retains one snapshot across content I/O. Hot scenes use serve's existing content pool and shared content denylist before projection and top-100 selection; thumbnails name `CONTENT_URL`, or this node's `/content` when it is unset, with trailing slashes stripped. Preserve the accepted [local source semantics](docs/adr/2026-11-12-stats-local-content-source.md) when changing enrichment.
   - The root owns Stats configured route compilation on the pinned embedded V8; comms owns the fallible async matcher interface. Preserve the pre-worker initialization and lifetime-wide unsafe preparation contract, and retain one owned admission permit inside submitted blocking work through native teardown ([ADR](docs/adr/2026-11-12-stats-configured-matcher.md)).
   - Ordinary `/ws` registration commits the verified session independently of SQL room work. The connector publishes completion-ranked legacy v2 intents; active native Pulse registration retains priority. Gatekeeper owns selected realm acquisition and renewal, retains exact uncertain mutations with their work credits, and conditionally reconciles them. Selected retries retire from an explicit current-source complete-view absence proof or a registered older epoch after a complete current-generation discovery pass and the operation-grant barrier. Both paths require exact SQL settlement and local identity/handle guards; complete-current-view wallets keep exact predecessors until reseeding, while absent wallets can free capacity. Unidentified sources and unfinished obligations remain retained. Sockets borrow committed bindings for delivery and never renew or release them. Fresh unknown foreign rows remain conflicts; ownership loss stops renewal and uses the existing finite lease. Preserve the coordinated maintenance cutover in the selected-room ADR.
   - Only the primary `serve` (`FLEET_JOBS_ENABLED`) serves `/ws` and the island subscriber.
-  - Social replicas derive online status from Pulse's wallet topology over NATS; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections.
+  - Social replicas derive online status from Pulse's wallet topology over NATS united with World presence (being inside a World counts as online): every `serve` applies each replica's World join and leave from `comms.room_events.v1` as it arrives, and its complete LiveKit reads correct missed events; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections. Preserve the [World presence decision](docs/adr/2026-11-21-world-presence-counts-as-online.md).
 - `storage`: the shared hash-addressed blob store.
 - `shop::credits::goals` owns seasonal MANA rewards, separately from the paid USD ledger. Its photo worker reads `camera_reel.photo_events` (`id`, `kind`, `photo_id`, `user_address`, `payload`, `created_at`) and `social.subscriptions` (`address`, `email`) through shared SQL; its policy reads `explore_api.feature_flags_local` (`app`, `name`, `value`). It never changes those rows. It commits its receipt, progress, signed grant and notification through the transaction-aware notification writer (`shared::notifications`) in one transaction. Changing a shared column updates this paragraph and `DATABASE.md` in the same change.
 - Domain ownership is not a separate deployable; keep the shared SQL and process contracts.
@@ -156,3 +160,12 @@ window; a move of a path under `apps/bevy-explorer`, `tooling/bevy-e2e-*.py` or 
 `bevy-explorer-e2e.yml`; a rename of the CI workflow, its jobs or the web artifact.
 `apps/bevy-explorer/e2e/README.md`, "Keeping the suite true", maps each change to what it touches
 and the checks to run.
+
+The comms end-to-end tool in `services/catalyst/comms-e2e` drives the same console and also
+starts `harness-util join` (`rendering/bevy-explorer/source/local-harness/presence/harness-util`)
+as its LiveKit client, so a change to either updates it in the same change: the reply of
+`/world_state`, `/pulse_state`, `/connectivity_state` or `/transport_state` (read by
+`src/explorer.rs` and `src/scenarios/explorer.rs`), a launch option it passes (`src/explorer.rs`),
+or the `join` line protocol, its stdin commands and stdout JSON events (`src/livekit.rs`). Its
+README, "What the explorer answers", lists the replies it reads; `cargo test -p
+catalyst-comms-e2e` covers the parsers, and the explorer scenarios check them against a build.

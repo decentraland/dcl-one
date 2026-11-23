@@ -13,9 +13,10 @@ export interface Home {
 
 export const NO_HOME: Home = { parcel: null, world: null }
 
-/** The home the session holds: a realm (null for the default one) and an `x,y` parcel. */
-export function homeOf(scene: { realm: string | null; parcel: string } | null): Home {
-  if (scene == null) return NO_HOME
+/** The home the session holds: a realm (null for the default one) and an `x,y` parcel; none
+ *  when the account pinned no home. */
+export function homeOf(scene: { realm: string | null; parcel: string; pinned: boolean } | null): Home {
+  if (scene == null || !scene.pinned) return NO_HOME
   if (scene.realm != null) return { parcel: null, world: scene.realm }
   return { parcel: parseParcel(scene.parcel), world: null }
 }

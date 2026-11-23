@@ -2,7 +2,10 @@ import type { BlogCardProps } from '../BlogCard/BlogCard'
 import linkStyles from '../BlogCard/BlogCardLink.module.css'
 import styles from './BlogBanner.module.css'
 
-export type BlogBannerProps = Omit<BlogCardProps, 'author' | 'variant'> & {
+export type BlogBannerProps = Omit<
+  Extract<BlogCardProps, { title: string }>,
+  'author' | 'variant' | 'loading' | 'loadingLabel'
+> & {
   summary?: string
   actionLabel: string
 }
