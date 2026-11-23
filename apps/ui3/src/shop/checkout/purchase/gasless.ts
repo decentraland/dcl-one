@@ -15,7 +15,7 @@ import type { ContractInfo } from "../chain/contracts";
 import { GaslessUnavailableError, readMetaTxNonce, relayMetaTransaction, type MetaTxTarget, type SignedCall } from "../chain/metatx";
 import { defaultSleep, waitForReceipt, type ChainReader } from "../chain/rpc";
 import { TxRevertedError } from "../chain/wallet";
-import { buildGroupUseCreditsArgs, groupPurchases, type AnyPurchase, type BuiltUseCredits } from "./credits";
+import { buildGroupUseCreditsArgs, groupPurchases, keepBuilt, type AnyPurchase, type BuiltUseCredits, type OnBuilt } from "./credits";
 import type { UseCreditsArgs } from "./encoding";
 import { encodeUseCredits } from "./encoding";
 import type { RailContext } from "./rail";
@@ -141,6 +141,8 @@ export async function buyManyGasless(
     onSignedCall?: (call: SignedCall) => void;
     onBroadcast?: (info: { txHash: Hex; salts: string[] }) => void;
     onGroupSettling?: (progress: { settled: number; total: number }) => void;
+    /** Each group's useCredits as built, before it is signed (see OnBuilt). */
+    onBuilt?: OnBuilt;
   },
 ): Promise<Hex[]> {
   if (!enabled(ctx)) throw new GaslessUnavailableError("gasless checkout disabled", "disabled");
@@ -150,6 +152,7 @@ export async function buyManyGasless(
   let seen: bigint | undefined;
   for (const [index, group] of groups.entries()) {
     const built = buildGroupUseCreditsArgs(group, ctx.buyer);
+    keepBuilt(built, opts.onBuilt);
     const target = managerTarget(built.manager);
     const { txHash, nonce } = await relayMetaTransaction({
       provider: ctx.provider,

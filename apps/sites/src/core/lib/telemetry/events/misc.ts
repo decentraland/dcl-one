@@ -1,4 +1,22 @@
 export type MiscEvents = {
+  Click: {
+    click_id?: string;
+    clicked_at?: number;
+    download_target: "app_store" | "creator_hub" | "desktop_installer" | "epic" | "google_play";
+    event?: "Download";
+    mac_arch?: "apple_silicon" | "intel" | "unknown";
+    os?: "Android" | "Windows" | "iOS" | "macOS";
+    place: "Creator Hub Success Footer" | "Creators Hero" | "Download" | "Landing Come Hang Out" | "Landing Hero" | "come-hang-out" | "come-hang-out-platform-switch" | "download-page" | "landing-hero-epic" | "landing-hero-platform-switch";
+    track_called_at: number;
+    track_deferred: boolean;
+    track_delivered_at: number;
+    utm_campaign?: string;
+    utm_content?: string;
+    utm_medium?: string;
+    utm_org?: string;
+    utm_source?: string;
+    utm_term?: string;
+  };
   catalyst_schema_drift: {
     issues_count: number;
     kind: string;

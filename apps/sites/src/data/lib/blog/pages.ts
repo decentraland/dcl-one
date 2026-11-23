@@ -68,7 +68,7 @@ function nextHref(path: string, page: number, total: number, window: (n: number)
   return `${path}?${new URLSearchParams({ ...extra, page: String(page + 1) })}`;
 }
 
-type ListView = Pick<BlogListData, "kind" | "viewKey" | "title" | "subtitle" | "activeCategory" | "emptyText">;
+type ListView = Pick<BlogListData, "kind" | "viewKey" | "title" | "subtitle" | "activeCategory" | "authorSlug" | "emptyText">;
 
 async function scopedList(cms: BlogCms, url: URL, path: string, scope: { category?: string; author?: string }, view: ListView, categories: BlogCmsCategory[]): Promise<BlogOutcome<BlogListPayload>> {
   const page = parseBlogPage(url.searchParams.get("page"));
@@ -95,6 +95,7 @@ export function loadBlogHome(request: Request, env?: BaseEnv) {
       title: "The Decentraland Blog",
       subtitle: "Stories, guides and things to do in a world built by you.",
       activeCategory: "",
+      authorSlug: null,
       emptyText: "There are no articles yet.",
     }, await cms.categories()),
   );
@@ -115,6 +116,7 @@ export function loadBlogCategory(request: Request, slug: string, env?: BaseEnv) 
       title: category.title,
       subtitle: category.description,
       activeCategory: slug,
+      authorSlug: null,
       emptyText: "There are no articles in this category yet.",
     }, categories);
   });
@@ -131,6 +133,7 @@ export function loadBlogAuthor(request: Request, slug: string, env?: BaseEnv) {
       title: author.name,
       subtitle: author.description,
       activeCategory: null,
+      authorSlug: slug,
       emptyText: "This author has no articles yet.",
     }, categories);
   });
@@ -157,6 +160,7 @@ export function loadBlogSearch(request: Request, env?: BaseEnv) {
         title: "Search results",
         subtitle: "",
         activeCategory: null,
+        authorSlug: null,
         query: q,
         posts: found.posts.map(toCard),
         total: found.total,
@@ -241,6 +245,7 @@ export function loadBlogPost(request: Request, categorySlug: string, postSlug: s
       payload: {
         state: "ok",
         post: { ...toCard(post), body: post.body, assets: images },
+        publishedDate: post.publishedDate,
         related: relatedCards,
         shareUrl: publicPageUrl(request, href, env),
         categories: menu(categories),

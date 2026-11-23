@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Profiler } from "react";
+import { Profiler, Suspense, use, type ReactNode } from "react";
+import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
@@ -32,14 +33,46 @@ const moderation = (id: string, body: unknown) => ["/events/api/events/" + id, b
  * URL change in a transition of its own, after the page's state, so a frame between the two only shows
  * up when every commit is read, not when a test polls the settled DOM.
  */
-function watchCommits() {
+function watchCommits(hold?: Promise<void>) {
   const frames: { dialogs: string[]; toast: string }[] = [];
   const record = () => frames.push({
     dialogs: [...document.querySelectorAll("[role=dialog]")].map((dialog) =>
       document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent ?? ""),
     toast: document.querySelector("[data-tone=success]")?.textContent ?? "",
   });
-  return { frames, page: <Profiler id="pending-events" onRender={record}><PendingEventsPage /></Profiler> };
+  const page = hold ? <Suspense fallback={null}><HoldBareUrl until={hold}><PendingEventsPage /></HoldBareUrl></Suspense> : <PendingEventsPage />;
+  return { frames, page: <Profiler id="pending-events" onRender={record}>{page}</Profiler> };
+}
+
+/**
+ * Holds the router's transition to the bare page URL open until `until` settles. It suspends above the
+ * page, so the held transition never renders the page and leaves no trace in its state.
+ */
+function HoldBareUrl({ until, children }: { until: Promise<void>; children: ReactNode }) {
+  if (!useLocation().search) use(until);
+  return children;
+}
+
+// Records each dialog named `name` that React adds to the page from now on, including one that a
+// later commit removes again: a synchronous query after the action sees only the final page.
+function watchDialogMounts(name: string) {
+  const mounted: string[] = [];
+  const record = (records: MutationRecord[]) => {
+    for (const { addedNodes } of records) {
+      for (const node of addedNodes) {
+        if (!(node instanceof Element)) continue;
+        const dialogs = [node, ...node.querySelectorAll("*")].filter((el) => el.getAttribute("role") === "dialog" || el.tagName === "DIALOG");
+        if (dialogs.some((dialog) => dialog.textContent?.includes(name))) mounted.push(name);
+      }
+    }
+  };
+  const observer = new MutationObserver(record);
+  observer.observe(document.body, { childList: true, subtree: true });
+  return () => {
+    record(observer.takeRecords());
+    observer.disconnect();
+    return mounted;
+  };
 }
 
 describe("when opening the Pending Events page", () => {
@@ -78,6 +111,25 @@ describe("when opening the Pending Events page", () => {
       expect(await screen.findByRole("button", { name: "Sign in" })).toBeTruthy();
       await waitFor(() => expect(openSignIn).toHaveBeenCalledWith({ redirectTo: PATH }));
       expect(signedGetJSON).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("and a pending event has a cover uploaded to the page's own http origin", () => {
+    const poster = "/events-assets-099ac00/poster/abc.png";
+
+    beforeEach(() => {
+      expect(window.location.protocol).toBe("http:");
+      api.events = [makeEvent({ image: `${window.location.origin}${poster}` })];
+    });
+
+    it("should show the cover on its card, and pass the review the same path", async () => {
+      renderAdminPage(<PendingEventsPage />, PATH);
+      const pending = await screen.findByRole("region", { name: "Pending Events" });
+      const card = (await within(pending).findByRole("link", { name: "Moon concert" })).closest("li")!;
+      expect(card.querySelector("img")?.getAttribute("src")).toBe(poster);
+      await user.click(within(pending).getByRole("link", { name: "Moon concert" }));
+      const review = await screen.findByRole("dialog", { name: "Moon concert" });
+      expect(review.querySelector("img")?.getAttribute("src")).toBe(poster);
     });
   });
 
@@ -258,6 +310,18 @@ describe("when opening the Pending Events page", () => {
     await waitFor(() => expect(readsOf(EVENTS)).toBe(2));
   });
 
+  it("should open the same review again after a moderation closed it", async () => {
+    renderAdminPage(<PendingEventsPage />, PATH);
+    await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(currentPath()).toBe(PATH));
+    // The fake queue still lists the event, as the API does until its next read settles.
+    await user.click(screen.getByRole("link", { name: "Moon concert" }));
+    expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+    expect(screen.getByRole("dialog", { name: "Moon concert" })).toBeTruthy();
+  });
+
   it("should open the review a deep link names", async () => {
     renderAdminPage(<PendingEventsPage />, `${PATH}?id=pending-one`);
     expect(await screen.findByRole("dialog", { name: "Moon concert" })).toBeTruthy();
@@ -321,10 +385,13 @@ describe("when opening the Pending Events page", () => {
     await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
     await user.click(within(reject).getByRole("checkbox", { name: /Invalid location/ }));
     await user.type(within(reject).getByRole("textbox", { name: "Other (optional)" }), "Wrong parcel");
+    const reviewMounts = watchDialogMounts("Moon concert");
     await user.click(within(reject).getByRole("button", { name: "Submit" }));
     expect(await screen.findByText("Event/Experience rejected successfully")).toBeTruthy();
     expect(postJSON).toHaveBeenCalledWith(...moderation("pending-one", { rejected: true, rejection_reason: "Invalid image, Invalid location. Wrong parcel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+    // The review the rejection replaced does not come back while the closed review leaves the URL.
+    expect(reviewMounts()).toEqual([]);
   });
 
   it("should return to the review when the rejection is cancelled", async () => {
@@ -372,7 +439,7 @@ describe("when opening the Pending Events page", () => {
       await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
       expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(currentPath()).toBe(PATH);
+      await waitFor(() => expect(currentPath()).toBe(PATH));
     });
 
     it("should close the reason dialog and report a rejection", async () => {
@@ -381,9 +448,11 @@ describe("when opening the Pending Events page", () => {
       await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reject" }));
       const reject = screen.getByRole("dialog", { name: "Reject Reason*" });
       await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
+      const reviewMounts = watchDialogMounts("Moon concert");
       await user.click(within(reject).getByRole("button", { name: "Submit" }));
       expect(await screen.findByText("Event/Experience rejected successfully")).toBeTruthy();
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(reviewMounts()).toEqual([]);
     });
 
     it("should report a failed approval and let it be tried again", async () => {
@@ -412,10 +481,13 @@ describe("when opening the Pending Events page", () => {
       await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Reject" }));
       const reject = screen.getByRole("dialog", { name: "Reject Reason*" });
       await user.click(within(reject).getByRole("checkbox", { name: /Invalid image/ }));
+      const submitted = frames.length;
       await user.click(within(reject).getByRole("button", { name: "Submit" }));
       await waitFor(() => expect(currentPath()).toBe(PATH));
       expect(screen.getByText("Event/Experience rejected successfully")).toBeTruthy();
-      expect(frames.filter((frame) => frame.toast && frame.dialogs.length)).toEqual([]);
+      const after = frames.slice(submitted);
+      expect(after.some((frame) => frame.toast === "Event/Experience rejected successfully")).toBe(true);
+      expect(after.filter((frame) => frame.toast && frame.dialogs.length)).toEqual([]);
       expect(screen.queryByRole("dialog")).toBeNull();
     });
 
@@ -423,10 +495,13 @@ describe("when opening the Pending Events page", () => {
       const { frames, page } = watchCommits();
       renderAdminPage(page, PATH, { strict });
       await user.click(await screen.findByRole("link", { name: "Moon concert" }));
+      const approving = frames.length;
       await user.click(within(screen.getByRole("dialog", { name: "Moon concert" })).getByRole("button", { name: "Approve" }));
       await waitFor(() => expect(currentPath()).toBe(PATH));
       expect(screen.getByText("Event/Experience approved successfully")).toBeTruthy();
-      expect(frames.filter((frame) => frame.toast && frame.dialogs.length)).toEqual([]);
+      const after = frames.slice(approving);
+      expect(after.some((frame) => frame.toast === "Event/Experience approved successfully")).toBe(true);
+      expect(after.filter((frame) => frame.toast && frame.dialogs.length)).toEqual([]);
       expect(screen.queryByRole("dialog")).toBeNull();
     });
 
@@ -441,6 +516,7 @@ describe("when opening the Pending Events page", () => {
       const submitted = frames.length;
       await user.click(within(reject).getByRole("button", { name: "Submit" }));
       expect((await within(reject).findByRole("alert")).textContent).toBe("Rejection not applied");
+      expect(frames.length).toBeGreaterThan(submitted);
       expect(frames.slice(submitted).every((frame) => frame.dialogs.join() === "Reject Reason*" && !frame.toast)).toBe(true);
       expect(currentPath()).toBe(`${PATH}?id=pending-one`);
     });
@@ -454,8 +530,30 @@ describe("when opening the Pending Events page", () => {
       const approving = frames.length;
       await user.click(within(review).getByRole("button", { name: "Approve" }));
       expect((await within(review).findByRole("alert")).textContent).toBe("The hangout changed. Refresh.");
+      expect(frames.length).toBeGreaterThan(approving);
       expect(frames.slice(approving).every((frame) => frame.dialogs.join() === "Moon concert" && !frame.toast)).toBe(true);
       expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+    });
+
+    it("should keep the closed review closed when another card is opened before its URL change commits", async () => {
+      api.events = [makeEvent(), makeEvent({ id: "pending-two", name: "Sun festival" })];
+      // The closed review's `?id` stays in the URL while the next card is opened.
+      let release!: () => void;
+      const { frames, page } = watchCommits(new Promise<void>((resolve) => { release = resolve; }));
+      renderAdminPage(page, `${PATH}?id=pending-one`, { strict });
+      const review = await screen.findByRole("dialog", { name: "Moon concert" });
+      await user.click(within(review).getByRole("button", { name: "Approve" }));
+      expect(await screen.findByText("Event/Experience approved successfully")).toBeTruthy();
+      expect(currentPath()).toBe(`${PATH}?id=pending-one`);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const opening = frames.length;
+      await user.click(screen.getByRole("link", { name: "Sun festival" }));
+      expect(await screen.findByRole("dialog", { name: "Sun festival" })).toBeTruthy();
+      expect(currentPath()).toBe(`${PATH}?id=pending-two`);
+      const after = frames.slice(opening);
+      expect(after.length).toBeGreaterThan(0);
+      expect(after.filter((frame) => frame.dialogs.includes("Moon concert"))).toEqual([]);
+      release();
     });
 
     it("should open the review again from its card after it was closed", async () => {
