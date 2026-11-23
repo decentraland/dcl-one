@@ -75,11 +75,16 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
   const mayReject = (event: ManagedEvent) => mayEdit(event) && access.canApproveAny;
   const recentlyApproved = (queue.data?.recentlyApproved ?? []).filter(visible);
   const openId = params.get("id");
-  const review = openId ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
+  // The router drops `?id` in a transition of its own, committed after this component's state; the review
+  // closed here stays closed until then, so it never shows again beside the action's result.
+  const [closedId, setClosedId] = useState<string | null>(null);
+  if (closedId !== null && closedId !== openId) setClosedId(null);
+  const review = openId && openId !== closedId ? [...pending, ...recentlyApproved].find((event) => event.id === openId) ?? null : null;
   const now = new Date();
 
   function select(id: string | null) {
     setError(null);
+    if (id) setClosedId(null);
     setParams((current) => {
       const next = new URLSearchParams(current);
       if (id) next.set("id", id);
@@ -88,8 +93,13 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
     }, { replace: !id, preventScrollReset: true });
   }
 
+  function close(id: string | null) {
+    setClosedId(id);
+    select(null);
+  }
+
   function closeReview() {
-    if (!busy) select(null);
+    if (!busy) close(openId);
   }
 
   async function moderate(event: ManagedEvent, action: "approve" | "reject", reason?: string) {
@@ -106,7 +116,7 @@ function PendingQueue({ access }: { access: EventAdminAccess }) {
       void invalidateEventsAfterWrite(client);
       if (!mounted.current) return;
       setRejecting(null);
-      select(null);
+      close(event.id);
       setToast({ message: action === "approve" ? adminCopy.pending.approveSuccess : adminCopy.pending.rejectSuccess, tone: "success" });
     } catch (cause) {
       if (mounted.current) setError(failure(cause));
