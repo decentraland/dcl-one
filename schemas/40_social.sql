@@ -214,6 +214,10 @@ CREATE TABLE social.private_voice_chat_participants (
 CREATE INDEX private_voice_chat_participants_status_idx
     ON social.private_voice_chat_participants (status, status_updated_at);
 
+-- Wallet-scoped live-presence probes and current-call selection.
+CREATE INDEX private_voice_chat_participants_address_idx
+    ON social.private_voice_chat_participants (address);
+
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
@@ -353,14 +357,17 @@ CREATE INDEX community_requests_community_idx
 CREATE INDEX community_requests_member_idx
     ON social.community_requests (member_address, status, created_at DESC);
 
--- place_id is explore.place.id (uuid text) or a world name; no cross-schema
--- FK: a place the mirror dropped is filtered on read.
+-- place_id is explore.place.id (uuid text) or a world name, lowercased as
+-- explore keys both; no cross-schema FK: a place the mirror dropped is
+-- filtered on read. An existing database gains the check from
+-- schemas/releases/community-place-ids-lowercase.sql.
 CREATE TABLE social.community_places (
     place_id text NOT NULL,
     community_id uuid NOT NULL REFERENCES social.communities (id) ON DELETE CASCADE,
     added_by text NOT NULL,
     added_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT community_places_pkey PRIMARY KEY (place_id, community_id)
+    CONSTRAINT community_places_pkey PRIMARY KEY (place_id, community_id),
+    CONSTRAINT community_places_place_id_lowercase CHECK (place_id = lower(place_id))
 );
 
 -- The community's places listing (ORDER BY added_at DESC) and count.
@@ -415,6 +422,10 @@ CREATE TABLE social.community_voice_chat_users (
 -- The sweep and the active-rooms/moderator-count aggregates.
 CREATE INDEX community_voice_chat_users_status_idx
     ON social.community_voice_chat_users (status, status_updated_at);
+
+-- Wallet-scoped live-presence probes before call admission.
+CREATE INDEX community_voice_chat_users_address_idx
+    ON social.community_voice_chat_users (address);
 
 -- ── scene moderation (comms-gatekeeper, place-scoped) ──────────────────────
 

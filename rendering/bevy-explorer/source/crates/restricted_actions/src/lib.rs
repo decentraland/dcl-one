@@ -2,6 +2,7 @@
 
 pub mod agent_commands;
 pub mod explorer_ui;
+mod home;
 mod item_purchase;
 mod map_pins;
 pub mod portables;
@@ -137,6 +138,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_plugins(smart_wearables::SmartWearablesPlugin);
         app.add_plugins(portables::PortablesPlugin);
         app.add_plugins(world_access::WorldAccessPlugin);
+        app.add_plugins(home::HomePlugin);
         app.add_plugins(map_pins::MapPinsPlugin);
         app.add_plugins(item_purchase::ItemPurchasePlugin);
     }
