@@ -490,6 +490,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             self.assertIn(f"if: matrix.app == '{app}'\n", contracts)
         self.assertIn('typecheck:scripts', contracts)
         self.assertIn('gen:schemas:check', contracts)
+        # Both legs share the pnpm cache key, so only the UI3 leg saves it, after the editor scene
+        # install: a store saved from the Sites leg would lack the UI3-only packages.
+        save = next(step for step in steps if step.startswith('name: Save the pnpm store from main'))
+        self.assertIn("if: matrix.app == 'ui3' && github.ref == 'refs/heads/main'", save)
+        installs = [i for i, step in enumerate(steps)
+                    if 'pnpm --dir apps/sites install' in step or 'pnpm --dir apps/ui3/editor-scene install' in step]
+        self.assertEqual(len(installs), 2)
+        self.assertLess(max(installs), steps.index(save))
 
 
 if __name__ == '__main__':
