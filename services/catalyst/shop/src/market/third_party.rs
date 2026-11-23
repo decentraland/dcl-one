@@ -718,16 +718,41 @@ async fn owned_1155(
             .collect();
         let answers = eth_call_batch(state, rpc, &calls).await?;
         for (chunk, answer) in page.chunks(MULTICALL_CHUNK).zip(answers) {
-            let balances = answer
+            if let Some(balances) = answer
                 .as_ref()
                 .and_then(|b| IERC1155::balanceOfBatchCall::abi_decode_returns(b).ok())
                 .filter(|balances| balances.len() == chunk.len())
-                .ok_or("invalid ERC-1155 balanceOfBatch response")?;
-            for ((id, _), balance) in chunk.iter().zip(balances) {
-                if !balance.is_zero() {
-                    owned.push(id.clone());
-                }
+            {
+                owned.extend(
+                    chunk
+                        .iter()
+                        .zip(balances)
+                        .filter(|(_, balance)| !balance.is_zero())
+                        .map(|((id, _), _)| id.clone()),
+                );
+                continue;
             }
+
+            // A contract may support balanceOf but reject batches or unknown IDs.
+            let calls: Vec<RpcCall> = chunk
+                .iter()
+                .map(|(_, id)| RpcCall {
+                    to: addr,
+                    data: IERC1155::balanceOfCall {
+                        account: owner,
+                        id: *id,
+                    }
+                    .abi_encode()
+                    .into(),
+                })
+                .collect();
+            let answers = eth_call_batch(state, rpc, &calls).await?;
+            owned.extend(chunk.iter().zip(answers).filter_map(|((id, _), answer)| {
+                answer
+                    .and_then(|bytes| IERC1155::balanceOfCall::abi_decode_returns(&bytes).ok())
+                    .filter(|balance| !balance.is_zero())
+                    .map(|_| id.clone())
+            }));
         }
     }
     Ok(owned)
@@ -1030,17 +1055,19 @@ impl FetchFailure {
     }
 }
 
-/// A registry network and provider name. As in lamb2, an asset URN
-/// may supply the provider prefix of a collection ID.
-pub(super) fn collection_provider(id: &str) -> Option<(&'static str, &str)> {
+/// The provider name from a collection or asset URN on a supported registry network.
+pub(super) fn collection_provider(id: &str) -> Option<&str> {
     let mut parts = id.split(':');
     if parts.next()? != "urn" || parts.next()? != "decentraland" {
         return None;
     }
     let network = parts.next()?;
-    let network = ["matic", "amoy", "mumbai"]
-        .into_iter()
-        .find(|candidate| candidate.eq_ignore_ascii_case(network))?;
+    if !["matic", "amoy", "mumbai"]
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(network))
+    {
+        return None;
+    }
     if parts.next()? != "collections-thirdparty" {
         return None;
     }
@@ -1049,7 +1076,7 @@ pub(super) fn collection_provider(id: &str) -> Option<(&'static str, &str)> {
         && !name
             .chars()
             .any(|ch| ch.is_whitespace() || ch.is_control() || matches!(ch, '?' | '#')))
-    .then_some((network, name))
+    .then_some(name)
 }
 
 /// Every third-party wearable `owner` holds through a mapped NFT, optionally
@@ -1062,15 +1089,15 @@ pub(super) fn collection_provider(id: &str) -> Option<(&'static str, &str)> {
 pub async fn fetch_all_third_party_wearables(
     state: &MarketplaceState,
     owner: &str,
-    only_provider: Option<(&str, &str)>,
+    only_provider: Option<&str>,
     on_failure: OnFailure,
 ) -> Result<Vec<TpwElement>, FetchFailure> {
     let owner = owner.to_lowercase();
     let mut providers = third_party_providers(state)
         .await
         .map_err(FetchFailure::Fetch)?;
-    if let Some((network, name)) = only_provider {
-        providers.retain(|p| collection_provider(&p.id) == Some((network, name)));
+    if let Some(name) = only_provider {
+        providers.retain(|p| collection_provider(&p.id) == Some(name));
         if providers.is_empty() && state.settings.third_party_registry_subgraph_url.is_some() {
             return Err(FetchFailure::ThirdPartyNotFound(name.to_string()));
         }
@@ -1432,7 +1459,7 @@ pub async fn third_party_integrations(State(state): State<SharedState>) -> Respo
 pub(crate) async fn owned_third_party_urns(
     state: &MarketplaceState,
     owner: &str,
-    provider: (&str, &str),
+    provider: &str,
 ) -> Result<Vec<(String, usize, Value)>, FetchFailure> {
     Ok(
         fetch_all_third_party_wearables(state, owner, Some(provider), OnFailure::Fail)
@@ -1853,9 +1880,22 @@ mod tests {
                     .index;
                 (i < U256::from(ENUM_BALANCE)).then(|| word(U256::from(1000) + i))
             }
-            IERC1155::balanceOfCall::SELECTOR if to == MULTI_1155 => Some(word(U256::ZERO)),
+            IERC1155::balanceOfCall::SELECTOR if to == MULTI_1155 => {
+                let call = IERC1155::balanceOfCall::abi_decode(data).ok()?;
+                match call.id.to::<u64>() {
+                    0 if call.account == to => Some(word(U256::ZERO)),
+                    11 | 13 if call.account == OWNER => Some(word(U256::from(1))),
+                    _ => None,
+                }
+            }
             IERC1155::balanceOfBatchCall::SELECTOR if to == MULTI_1155 => {
                 let call = IERC1155::balanceOfBatchCall::abi_decode(data).ok()?;
+                if call.ids.contains(&U256::from(99)) {
+                    return None;
+                }
+                if call.ids.contains(&U256::from(98)) {
+                    return Some(Bytes::from(Vec::<U256>::new().abi_encode()));
+                }
                 let balances: Vec<U256> = call
                     .ids
                     .iter()
@@ -2070,6 +2110,25 @@ mod tests {
         // sepolia: the probes and one `balanceOfBatch`. No `eth_getLogs`
         // (`chain_answer` refuses it), however long the chain.
         assert_eq!(posts.load(std::sync::atomic::Ordering::SeqCst), 7);
+    }
+
+    #[tokio::test]
+    async fn unusable_erc1155_batches_fall_back_to_individual_balances() {
+        let (rpc, _) = serve_chain().await;
+        let state = state_with(with_rpcs(&format!("11155111={rpc}")));
+        for rejected_id in ["98", "99"] {
+            let candidates = [candidate(
+                "sepolia",
+                MULTI_1155,
+                &["11", rejected_id],
+                false,
+            )]
+            .into_iter()
+            .collect();
+            let holdings = owned_via_rpc(&state, &OWNER.to_string(), &candidates).await;
+            assert_eq!(holdings.owned, vec![triple("sepolia", MULTI_1155, 11)]);
+            assert!(holdings.failed.is_empty());
+        }
     }
 
     #[tokio::test]

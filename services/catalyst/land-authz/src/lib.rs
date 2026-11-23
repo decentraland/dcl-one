@@ -93,9 +93,16 @@ use crate::chain_index::ChainIndex;
 use crate::jobs::{Jobs, PeriodicCfg};
 pub use indexer::{Cursor, HEAD_LAG_BLOCKS, READY_WINDOW, index_ready};
 
-// A successful fold can precede two failed passes and their retry waits
-// (120 + 120 + 240 seconds by default), leaving time for the next pass.
+// Public reads allow ten minutes. At the maximum configured interval,
+// 240 seconds to the first pass and two retries capped at 150 seconds
+// leave one minute for pass execution. Sustained failures age out the fold.
 const LAMBDAS_FOLD_WINDOW: chrono::Duration = chrono::Duration::minutes(10);
+
+fn index_schedule(interval: Duration) -> PeriodicCfg {
+    PeriodicCfg::every(interval)
+        .with_jitter(Duration::from_secs(15))
+        .with_error_backoff(Duration::from_secs(150))
+}
 pub use resolve::{LandRightLeg, ParcelPermissionFlags, ParcelRights, Store};
 
 pub const SCHEMA: &str = "land_authz";
@@ -517,9 +524,7 @@ impl LandAuthzState {
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "land-authz-index",
-            PeriodicCfg::every(self.settings.interval)
-                .with_jitter(Duration::from_secs(15))
-                .with_error_backoff(Duration::from_secs(3600)),
+            index_schedule(self.settings.interval),
             move |ctx| {
                 let state = state.clone();
                 async move { indexer::run_pass(&state, &ctx).await.map(|_| ()) }

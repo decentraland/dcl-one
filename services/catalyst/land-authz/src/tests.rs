@@ -4534,6 +4534,18 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
     db.drop().await;
 }
 
+#[test]
+fn land_index_retry_waits_fit_inside_the_public_fold_window() {
+    let schedule = index_schedule(Duration::from_secs(240));
+    let after_two_failures =
+        schedule.interval + schedule.wait_after_failure(1) + schedule.wait_after_failure(2);
+    assert_eq!(
+        LAMBDAS_FOLD_WINDOW.to_std().unwrap() - after_two_failures,
+        Duration::from_secs(60)
+    );
+    assert_eq!(schedule.wait_after_failure(10), Duration::from_secs(150));
+}
+
 #[tokio::test]
 async fn readiness_and_status_use_database_freshness_boundaries() {
     let Some(db) = ScratchDb::create().await else {

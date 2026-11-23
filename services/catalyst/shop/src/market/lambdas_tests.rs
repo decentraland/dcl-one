@@ -908,6 +908,12 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         (format!("thirdPartyCollectionId={tp_collection}"), 1),
         (
             format!(
+                "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId=urn:decentraland:amoy:collections-thirdparty:tp"
+            ),
+            1,
+        ),
+        (
+            format!(
                 "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId={tp_collection}"
             ),
             1,
@@ -1055,7 +1061,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     for uri in [
         format!("/lambdas/users/{OWNER}/third-party-wearables?pageSize=5000"),
         format!(
-            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp?pageSize=5000"
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:amoy:collections-thirdparty:tp?pageSize=5000"
         ),
     ] {
         let (status, body) = get(&state, &uri).await;

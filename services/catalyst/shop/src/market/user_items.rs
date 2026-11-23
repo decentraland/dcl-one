@@ -894,11 +894,11 @@ mod tests {
     fn third_party_collection_name_parsing() {
         assert_eq!(
             collection_provider("urn:decentraland:matic:collections-thirdparty:cryptomotors"),
-            Some(("matic", "cryptomotors"))
+            Some("cryptomotors")
         );
         assert_eq!(
             collection_provider("urn:decentraland:matic:collections-thirdparty:cryptomotors:car:1"),
-            Some(("matic", "cryptomotors"))
+            Some("cryptomotors")
         );
         assert_eq!(
             collection_provider("urn:decentraland:matic:collections-v2:0xabc:0"),
@@ -915,7 +915,7 @@ mod tests {
         );
         assert_eq!(
             collection_provider("urn:decentraland:amoy:collections-thirdparty:cryptomotors"),
-            Some(("amoy", "cryptomotors"))
+            Some("cryptomotors")
         );
         assert_eq!(
             collection_provider("urn:decentraland:matic:collections-thirdparty:"),

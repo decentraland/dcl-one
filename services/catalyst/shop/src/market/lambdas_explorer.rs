@@ -640,7 +640,7 @@ fn third_party_item(e: TpwElement) -> OwnedItem {
 /// one provider list its wearables twice and the response grows with the
 /// number of values; here a provider is listed once, which keeps the
 /// uncapped value list from multiplying the answer.
-fn third_party_providers(collection_ids: &[String]) -> Vec<(&'static str, &str)> {
+fn third_party_providers(collection_ids: &[String]) -> Vec<&str> {
     let mut seen = HashSet::new();
     collection_ids
         .iter()
@@ -712,12 +712,9 @@ async fn explorer_items(
         if q.third_party_collection_ids.is_empty() {
             String::new()
         } else {
-            let mut names: Vec<_> = third_party_providers(&q.third_party_collection_ids)
-                .into_iter()
-                .map(|(network, name)| format!("{network}:{name}"))
-                .collect();
+            let mut names = third_party_providers(&q.third_party_collection_ids);
             names.sort_unstable();
-            format!("[{}]", names.join(","))
+            json!(names).to_string()
         },
     );
     let cache_key: ExplorerKey = (
