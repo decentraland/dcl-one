@@ -239,9 +239,11 @@ pub struct WebLoop {
 #[cfg(target_arch = "wasm32")]
 impl WebLoop {
     /// Before a pass: the replies so far, which the pass drains; a reply after them ends the wait
-    /// that follows it.
+    /// that follows it. `legacy` sleeps instead, and takes no lock here.
     pub fn pass_start(&mut self) {
-        self.replies_seen = dcl_wasm::scene_replies::REPLIES.seen();
+        if self.mode.loop_waits_for_replies() {
+            self.replies_seen = dcl_wasm::scene_replies::REPLIES.seen();
+        }
     }
 
     /// Waits `wait`, until `next_pass`, for a reply. A browser's timed wait can wake a millisecond
