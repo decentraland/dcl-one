@@ -2,7 +2,7 @@ import { useEffect, useId, useReducer, useState, useSyncExternalStore, type CSSP
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 
-import { docsUrl } from "@ui/data/docs";
+import { docsUrl } from "@web-core/docs";
 import { latestPostsQuery, type BlogPostSummary } from "@/data/lib/create-landing/blog-posts";
 import { liveScenesQuery, selectLiveScenes, type HotScene } from "@/data/lib/create-landing/live-scenes";
 

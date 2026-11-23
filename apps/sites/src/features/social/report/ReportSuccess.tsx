@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { AnimatedBackground } from "@dcl/one-ui/apps/sites/shared/AnimatedBackground/AnimatedBackground";
-import SitesChrome from "@ui/web/frames/SitesChrome";
+import SitesLayout from "../../components/chrome/SitesLayout";
 
 import { GeneralDecentralandColor } from "@dcl/one-ui/foundations/icons";
 import styles from "./ReportSuccess.module.css";
@@ -22,7 +22,7 @@ export default function ReportSuccess() {
   }, [submitted, navigate]);
 
   return (
-    <SitesChrome active="legal" overlayNav>
+    <SitesLayout active="legal" overlayNav>
       <main className={styles.page}>
         <AnimatedBackground />
         {shown && (
@@ -40,6 +40,6 @@ export default function ReportSuccess() {
           </div>
         )}
       </main>
-    </SitesChrome>
+    </SitesLayout>
   );
 }

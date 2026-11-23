@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 import secrets
 import subprocess
 import time
@@ -135,6 +136,12 @@ def main():
             delivered = get(sites_url + '/play/' + path)
             assert delivered and delivered['sha256'] == play['files'][path], f'Sites serves different Explorer bytes: {path}'
         print(f"Sites serves verified Bevy producer {play['build_revision']}")
+        # The component gallery (infra/packages/ui-gallery.nix): static files ahead of the Sites routes.
+        gallery = get(sites_url + '/ui-gallery/', body='text')
+        assert gallery and 'name="robots" content="noindex"' in gallery['body'], 'Sites must serve the UI gallery at /ui-gallery/'
+        script = re.search(r'src="\./(assets/[^"]+\.js)"', gallery['body'])
+        assert script and get(sites_url + '/ui-gallery/' + script[1]), 'UI gallery assets must resolve under /ui-gallery/'
+        assert get(sites_url + '/ui-gallery/hud.html'), 'The UI gallery must ship its HUD canvas'
         realm = get(sites_url + '/play/bridge/about', body=True)
         assert realm, 'Sites must expose the bundled bridge realm'
         urn = realm['body']['configurations']['scenesUrn'][0]

@@ -5,10 +5,10 @@
 //! exists). Only fixed signature bytes are inspected, no container parsing.
 
 use bytes::Bytes;
-use sqlx::PgExecutor;
+use sqlx::PgConnection;
 
 use crate::CommunityId;
-use crate::storage::{Storage, StorageError};
+use crate::storage::{Storage, gc};
 
 /// Rejected before any storage or database work happens (upstream: 1KB floor).
 pub const MIN_THUMBNAIL_BYTES: usize = 1024;
@@ -95,24 +95,30 @@ pub fn thumbnail_hash(bytes: &[u8]) -> String {
 #[derive(Debug, thiserror::Error)]
 pub enum StoreThumbnailError {
     #[error(transparent)]
-    Storage(#[from] StorageError),
+    Store(#[from] gc::GcError),
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
 
-/// Writes the bytes to the blob store, then the hash row; the row write runs
-/// on the caller's executor so a create/update transaction carries it.
-pub async fn store_thumbnail<'a, E>(
-    executor: E,
+impl StoreThumbnailError {
+    /// The store lock stayed busy past its wait: the caller answers 503.
+    pub fn busy(&self) -> bool {
+        matches!(self, Self::Store(gc::GcError::LockTimeout))
+    }
+}
+
+/// Writes the bytes to the blob store, then the hash row, on the caller's
+/// transaction (a create/update one carries it): the blob is stored under the
+/// store lock's shared side ([`gc::store_for_row`]), held until that
+/// transaction ends, so an unlink batch either ran before it or sees the row.
+pub async fn store_thumbnail(
+    conn: &mut PgConnection,
     storage: &Storage,
     community_id: CommunityId,
     bytes: &[u8],
-) -> Result<String, StoreThumbnailError>
-where
-    E: PgExecutor<'a>,
-{
+) -> Result<String, StoreThumbnailError> {
     let hash = thumbnail_hash(bytes);
-    storage.store(&hash, Bytes::copy_from_slice(bytes)).await?;
+    gc::store_for_row(conn, storage, &hash, Bytes::copy_from_slice(bytes)).await?;
     sqlx::query(
         "INSERT INTO social.community_thumbnails (community_id, thumbnail_hash, updated_at) \
          VALUES ($1, $2, timezone('UTC', now())) \
@@ -121,7 +127,7 @@ where
     )
     .bind(community_id)
     .bind(&hash)
-    .execute(executor)
+    .execute(conn)
     .await?;
     Ok(hash)
 }

@@ -1,4 +1,7 @@
+import { landTokenId } from "@shop/land/contracts";
 import { getJSON, type RequestOpts } from "./client";
+
+export { landTokenId } from "@shop/land/contracts";
 
 export const LAND_CONTRACT = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
 export const ESTATE_CONTRACT = "0x959e104e1a4db6317fa58f8295f586e1a978c297";
@@ -21,10 +24,6 @@ type MarketNft = {
   data?: { parcel?: { estate?: { tokenId?: string; name?: string } | null } };
 };
 type MarketNftsResponse = { data?: { nft?: MarketNft; order?: MarketOrder | null }[] };
-
-export function landTokenId(x: number, y: number): string {
-  return ((BigInt.asUintN(128, BigInt(x)) << 128n) | BigInt.asUintN(128, BigInt(y))).toString();
-}
 
 export function parseParcel(coords: string | null | undefined): [number, number] | null {
   const m = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/.exec(coords ?? "");

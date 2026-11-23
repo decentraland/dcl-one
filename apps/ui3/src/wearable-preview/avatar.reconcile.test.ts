@@ -311,46 +311,204 @@ test("an initial-load failure is recovered by the next outfit swap on the same s
   container.remove();
 });
 
-test("a part whose downloads ended (the parts' timeout) is not kept, and loads when it is worn again", async () => {
-  vi.spyOn(console, "warn").mockImplementation(() => {});
-  // A pointer no other test resolved: resolved entities are cached for the module's life.
-  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:9";
-  // The wave's timeout, fired by the test.
-  const timeouts: AbortController[] = [];
-  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
-    const ctl = new AbortController();
-    timeouts.push(ctl);
-    return ctl.signal;
-  });
-  let serve = false;
-  const slowDownloads: string[] = [];
+/** Pointers whose part files stall until their request aborts; a pointer only these tests resolve. */
+function stallFiles(pointers: string[]) {
+  const stalled: string[] = [];
   const entities = globalThis.fetch;
   globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
-    if (path.endsWith(`/content/contents/h_${SLOW}`)) {
-      slowDownloads.push(path);
-      if (serve) return { ok: true, blob: async () => new Blob([path]) } as unknown as Response;
+    if (pointers.some((p) => path.endsWith(`/content/contents/h_${p}`))) {
+      stalled.push(path);
       return new Promise<Response>((_resolve, reject) =>
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
       );
     }
     return entities(url, init);
   }) as unknown as typeof fetch;
+  return stalled;
+}
+
+/** `AbortSignal.timeout` on the (fakeable) timers, so a test that runs the clock out runs these out too. */
+function timeoutsOnTheClock() {
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("timed out", "TimeoutError")), ms);
+    return controller.signal;
+  });
+}
+
+/** Object URLs the scene makes from its held copies: jsdom has none. */
+function heldObjectUrls() {
+  let made = 0;
+  const jsdomUrls = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL };
+  Object.assign(URL, { createObjectURL: vi.fn(() => `blob:held/${made++}`), revokeObjectURL: vi.fn() });
+  onTestFinished(() => {
+    Object.assign(URL, jsdomUrls);
+  });
+}
+
+test("a slow model still downloading after the wait is neither cut nor read again: its part draws from the held copy", async () => {
+  heldObjectUrls();
+  timeoutsOnTheClock();
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:9";
+  let deliver: () => void = () => {};
+  let request: RequestInit | undefined;
+  const entities = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith(`/content/contents/h_${SLOW}`)) {
+      request = init;
+      return new Promise<Response>((resolve) => {
+        deliver = () => resolve({ ok: true, blob: async () => new Blob([path]) } as unknown as Response);
+      });
+    }
+    return entities(url, init);
+  }) as unknown as typeof fetch;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 
   const { container, scene, onStatus, mountedParts } = mount([SLOW]);
-  await vi.waitFor(() => expect(slowDownloads).toHaveLength(1));
-  timeouts.at(-1)!.abort();
-  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
-  expect(mountedParts()).toEqual([partName(BODY)]);
-  // Its loader never ran: nothing downloaded the part's file a second time.
+  await vi.waitFor(() => expect(request).toBeDefined());
+  // Past the wait: the model is still on its way, and its download goes on.
+  await vi.advanceTimersByTimeAsync(12_000);
+  expect(request!.signal!.aborted).toBe(false);
   expect(loads).not.toContain(contentUrl(SLOW));
 
-  serve = true;
-  await scene.setOutfit({ body: BODY, urns: [SLOW] });
-  expect(slowDownloads).toHaveLength(2);
+  deliver();
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
   expect(mountedParts()).toEqual([partName(BODY), partName(SLOW)]);
+  expect(loadManagers.get(contentUrl(SLOW))?.resolveURL(contentUrl(SLOW))).toMatch(/^blob:held\//);
 
   scene.dispose();
+  container.remove();
+});
+
+test("a model that stalls until the parts' timeout is not read again: no loader starts once its download ended", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  timeoutsOnTheClock();
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:12";
+  const stalled = stallFiles([SLOW]);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+  const { container, scene, onStatus, mountedParts } = mount([SLOW]);
+  await vi.waitFor(() => expect(stalled).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(19_000);
+  expect(loads).not.toContain(contentUrl(SLOW));
+  // The parts' timeout ends the download and the part together: nothing reads the model again.
+  await vi.advanceTimersByTimeAsync(1_000);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
+  expect(mountedParts()).toEqual([partName(BODY)]);
+  expect(loads).not.toContain(contentUrl(SLOW));
+  expect(stalled).toHaveLength(1);
+
+  scene.dispose();
+  container.remove();
+});
+
+test("a listed file that stalls holds its part no longer than the wait: the loader gets it if the model uses it", async () => {
+  heldObjectUrls();
+  timeoutsOnTheClock();
+  // A pointer no other test resolved: resolved entities are cached for the module's life.
+  const HAT = "urn:decentraland:matic:collections-v2:0xhat:11";
+  const hat = {
+    pointers: [HAT],
+    content: [
+      { file: "model.glb", hash: `h_${HAT}` },
+      { file: "unused.png", hash: `h_${HAT}_unused` },
+    ],
+    metadata: { data: { category: "hat", representations: [{ bodyShapes: [BODY], mainFile: "model.glb", contents: ["model.glb", "unused.png"] }] } },
+  };
+  const stalled: string[] = [];
+  const entities = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith(`/content/contents/h_${HAT}_unused`)) {
+      stalled.push(path);
+      return new Promise<Response>(() => {});
+    }
+    if (path.endsWith(`/content/contents/h_${HAT}`)) return { ok: true, blob: async () => new Blob([path]) } as unknown as Response;
+    if (path.includes("/content/contents/")) return entities(url, init);
+    const asked = (JSON.parse(String(init?.body ?? "{}")) as { pointers?: string[] }).pointers ?? [];
+    return { ok: true, json: async () => asked.map((pointer) => (pointer === HAT ? hat : entityFor(pointer))) } as Response;
+  }) as unknown as typeof fetch;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+
+  const { container, scene, onStatus, mountedParts } = mount([HAT]);
+  await vi.waitFor(() => expect(stalled).toHaveLength(1));
+  expect(loads).not.toContain(contentUrl(HAT));
+  await vi.advanceTimersByTimeAsync(10_000);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
+  expect(mountedParts()).toEqual([partName(BODY), partName(HAT)]);
+  const hatLoader = loadManagers.get(contentUrl(HAT));
+  expect(hatLoader?.resolveURL(contentUrl(HAT))).toMatch(/^blob:held\//);
+  // The stalled file has no held copy: the loader would read it from the peer.
+  expect(hatLoader?.resolveURL(`${window.location.origin}/content/contents/unused.png`)).toBe(`${window.location.origin}/content/contents/h_${HAT}_unused`);
+
+  scene.dispose();
+  container.remove();
+});
+
+test("a facial texture whose download failed early and whose own read outlasts the bound costs only that feature, and is freed", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Pointers no other test resolved: resolved entities are cached for the module's life.
+  const FACE_BODY = "urn:decentraland:off-chain:base-avatars:basemale_face";
+  const EYES = "urn:decentraland:matic:collections-v2:0xeyes:1";
+  const eyes = {
+    pointers: [EYES],
+    content: ["eyes.png", "eyes_mask.png"].map((file) => ({ file, hash: `h_${EYES}_${file}` })),
+    metadata: { data: { category: "eyes", representations: [{ bodyShapes: [FACE_BODY], mainFile: "eyes.png", contents: ["eyes.png", "eyes_mask.png"] }] } },
+  };
+  const body = { ...entityFor(FACE_BODY), metadata: { data: { category: "body_shape", representations: [{ bodyShapes: [FACE_BODY], mainFile: "model.glb" }] } } };
+  // The eyes' downloads fail at once, with the wave still running: the loader reads them itself.
+  const failed: string[] = [];
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const path = String(url);
+    if (path.includes(`/content/contents/h_${EYES}`)) {
+      failed.push(path);
+      return { ok: false, status: 503, body: null } as unknown as Response;
+    }
+    if (path.includes("/content/contents/")) return { ok: false, status: 404, body: null } as unknown as Response;
+    const asked = (JSON.parse(String(init?.body ?? "{}")) as { pointers?: string[] }).pointers ?? [];
+    return { ok: true, json: async () => asked.map((p) => (p === EYES ? eyes : p === FACE_BODY ? body : entityFor(p))) } as Response;
+  }) as unknown as typeof fetch;
+  // The loader's own reads of the eyes answer only after the feature's bound.
+  const lateTextures: ((t: THREE.Texture) => void)[] = [];
+  vi.spyOn(THREE.TextureLoader.prototype, "loadAsync").mockImplementation(() => new Promise<THREE.Texture>((resolve) => lateTextures.push(resolve)));
+
+  // The feature's bound is a timer: faked from the start, so the test runs it out.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const container = document.createElement("div");
+  const onStatus = vi.fn();
+  const scene = createAvatarScene(container, { body: FACE_BODY, urns: [EYES], emote: "idle", onStatus });
+  await vi.waitFor(() => expect(failed).toHaveLength(2));
+  await vi.waitFor(() => expect(lateTextures).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(20_000);
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"));
+  const renderer = rendererInstances.at(-1)!;
+  renderer.loop!();
+  const group = renderer.lastScene?.getObjectByName("avatar");
+  expect((group?.children ?? []).map((c) => c.name)).toEqual([partName(FACE_BODY)]);
+
+  // The textures arrive after the feature gave up: nothing shows them, so they are freed.
+  const late = [new THREE.Texture(), new THREE.Texture()];
+  const freed = late.map((t) => vi.spyOn(t, "dispose"));
+  lateTextures.shift()!(late[0]!);
+  await vi.waitFor(() => expect(lateTextures).toHaveLength(1));
+  lateTextures.shift()!(late[1]!);
+  await vi.waitFor(() => expect(freed.every((f) => f.mock.calls.length === 1)).toBe(true));
+
+  scene.dispose();
+  container.remove();
+});
+
+test("a preview disposed while its files download loads none of those parts", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const SLOW = "urn:decentraland:matic:collections-v2:0xhat:10";
+  const stalled = stallFiles([SLOW]);
+  const { container, scene } = mount([SLOW]);
+  await vi.waitFor(() => expect(stalled).toHaveLength(1));
+  scene.dispose();
+  await new Promise((settled) => setTimeout(settled, 20));
+  expect(loads).not.toContain(contentUrl(SLOW));
   container.remove();
 });
 

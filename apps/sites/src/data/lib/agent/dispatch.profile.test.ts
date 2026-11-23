@@ -1,6 +1,6 @@
 import { dehydrate, QueryClient } from "@tanstack/react-query";
 import type { EntryContext } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { mapProfile } from "../catalyst/social/profile";
 import { profileKeys } from "../profile/queries";
@@ -22,25 +22,43 @@ function context(profile: unknown, cached = true): EntryContext {
 }
 
 describe("profile agent markdown", () => {
-  it("describes the profile the loader dehydrated", () => {
-    const profile = mapProfile(
-      { name: "Alice", hasClaimedName: true, description: "", avatar: { snapshots: { face256: "" } } } as never,
-      A,
-    );
+  let out: ReturnType<typeof renderAgentMarkdown>;
 
-    const out = renderAgentMarkdown(context(profile));
+  describe("when the loader dehydrated a profile", () => {
+    beforeEach(() => {
+      const profile = mapProfile(
+        { name: "Alice", hasClaimedName: true, description: "", avatar: { snapshots: { face256: "" } } } as never,
+        A,
+      );
+      out = renderAgentMarkdown(context(profile));
+    });
 
-    expect(out?.status).toBe(200);
-    expect(out?.md).toContain("Alice");
+    it("should answer with a 200 status", () => {
+      expect(out?.status).toBe(200);
+    });
+
+    it("should describe the profile", () => {
+      expect(out?.md).toContain("Alice");
+    });
   });
 
-  it("describes a wallet with no profile yet as the empty profile the page shows", () => {
-    const out = renderAgentMarkdown(context(null));
+  describe("when the wallet has no profile yet", () => {
+    beforeEach(() => {
+      out = renderAgentMarkdown(context(null));
+    });
 
-    expect(out?.md).toContain(A);
+    it("should describe it as the empty profile the page shows", () => {
+      expect(out?.md).toContain(A);
+    });
   });
 
-  it("returns nothing when the profile was not dehydrated", () => {
-    expect(renderAgentMarkdown(context(undefined, false))).toBeNull();
+  describe("when the profile was not dehydrated", () => {
+    beforeEach(() => {
+      out = renderAgentMarkdown(context(undefined, false));
+    });
+
+    it("should return nothing", () => {
+      expect(out).toBeNull();
+    });
   });
 });

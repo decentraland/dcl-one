@@ -318,7 +318,7 @@ describe('place detail', () => {
     vi.mocked(session.places.worldAccess).mockResolvedValueOnce('password')
     show(session, WORLD)
     expect(await screen.findByText('PASSWORD REQUIRED')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'ENTER PASSWORD' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enter password for Party World' })).toBeInTheDocument()
     act(() => resetPopups())
     vi.mocked(session.places.worldAccess).mockResolvedValueOnce('invited')
     act(() => openPlaceDetail({ place: WORLD, onJumpIn: () => true }))

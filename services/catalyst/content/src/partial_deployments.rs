@@ -17,19 +17,25 @@
 //! completes the upload publishes it through the write deployer, which
 //! validates it in full (content already in the store), and answers
 //! `200 {"creationTimestamp"}`. A batch for an entity already deployed answers
-//! 200 with the stored `local_timestamp`.
+//! 200 with the stored `local_timestamp` once the stored entity names nothing
+//! denylisted and the batch's chain signs the id at the entity's timestamp.
 //!
 //! Quotas, with upstream's messages and `Retry-After` on each 429: uploads
 //! per account, live uploads per parcel (and per account on a parcel), staged
 //! bytes per account and per server, batch bytes per account per minute, the
 //! scene size cap. An upload lives `PENDING_DEPLOYMENT_TTL` from its first
 //! batch; the leased `content-partial-uploads-cleanup` job deletes expired
-//! uploads and unlinks the staged blobs they wrote themselves (a receipt's
-//! `written`) that the collector would: past its age floor, outside its
-//! fixed references (asset packs, global scenes) and named by no domain
-//! ([`gc::unlink_orphans`], which knows the pending tables). A blob still
-//! younger than the floor is left to the collector: a regular deploy may be
-//! committing it (the SDK skips what `/available-content` reports).
+//! uploads and, as upstream, unlinks the staged blobs they wrote themselves
+//! (a receipt's `written`) that no domain names: no deployment, snapshot,
+//! other pending upload or fixed reference of the collector
+//! ([`gc::unlink_orphans_on`], under the exclusive store lock, held once
+//! for up to [`RECLAIM_BATCH`] uploads; the race reasoning is on
+//! `reclaim_uploads`). A store lock still busy after its wait ends the run:
+//! the next one retries, and so does any other failure. An overtaken upload
+//! that wrote no blob is deleted within its request; one that did is marked
+//! expired there ([`RELEASED_AT`]), refused as overtaken from then on, and
+//! reclaimed by the next run. Until then `/contents/{hash}` serves
+//! them, as upstream does; after it, a 404.
 //!
 //! The entity's lock is PostgreSQL's, so it holds across replicas: a
 //! session advisory lock on a connection of its own, held from a batch's
@@ -59,8 +65,8 @@
 //! keeps the in-memory upload budget; a declared batch from a source that
 //! spent its daily quota, or from an account over its byte rate, is turned
 //! away before its files are buffered ([`admit_before_files`]), on the
-//! claimed signer and entity (authentication follows). There is no shared
-//! content lock against the collector: the receipts are written before the
+//! claimed signer and entity (authentication follows). Batches take no
+//! store lock against the collector: the receipts are written before the
 //! blobs, and the collector reads them.
 
 use std::collections::{HashMap, HashSet};
@@ -77,11 +83,12 @@ use sqlx::PgPool;
 use sqlx::pool::PoolConnection;
 
 use super::entity::{Entity, EntityType, is_ipfs_v2};
+use super::validator::types::UploadedFile;
 use super::write_deployer::{
-    DeployFailure, REQUEST_TTL_FORWARDS_MS, RejectionKind, UPLOAD_HASH_JOBS, WriteDeployer,
-    bounded_upload_hash,
+    DeployFailure, REQUEST_TTL_FORWARDS_MS, RejectionKind, UPLOAD_HASH_JOBS, Upload, WriteDeployer,
+    bounded_upload_hash, store_uploaded,
 };
-use crate::auth::{AuthChain, hash_bytes_v1};
+use crate::auth::{AuthChain, AuthLinkType, hash_bytes_v1};
 use crate::config::Config;
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::storage::{Storage, gc};
@@ -94,6 +101,8 @@ pub const JOB_NAME: &str = "content-partial-uploads-cleanup";
 /// A failed publication is retried by resending the last batch.
 const INTERNAL_ERROR_RETRY_AFTER_SECS: u64 = 5;
 const EXPIRED_UPLOADS_PER_PAGE: i64 = 100;
+/// Expired uploads reclaimed under one hold of the exclusive store lock.
+const RECLAIM_BATCH: usize = 20;
 const STORE_CONCURRENCY: usize = 8;
 /// How long a batch waits for its entity's lock (another batch of the
 /// upload publishing it) before answering 503.
@@ -124,11 +133,11 @@ pub struct Limits {
     pub global_bytes: i64,
     /// `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE`.
     pub bytes_per_minute: i64,
-    /// The collector's age floor ([`gc::orphan_age_floor`]): cleanup
-    /// unlinks no younger blob.
-    pub orphan_min_age: Duration,
     /// The global scenes the collector keeps (`GLOBAL_SCENES_URN`).
     pub global_scenes_urn: Vec<String>,
+    /// How long a reclaim waits for the exclusive store lock before deferring
+    /// ([`gc::STORE_LOCK_TIMEOUT`]).
+    pub store_lock_wait: Duration,
 }
 
 impl Default for Limits {
@@ -141,8 +150,8 @@ impl Default for Limits {
             account_bytes: 1024 * 1024 * 1024,
             global_bytes: 50 * 1024 * 1024 * 1024,
             bytes_per_minute: 512 * 1024 * 1024,
-            orphan_min_age: gc::MIN_ORPHAN_AGE,
             global_scenes_urn: Vec::new(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 }
@@ -159,10 +168,6 @@ impl Limits {
             account_bytes: int(c.max_pending_bytes_per_deployer),
             global_bytes: int(c.max_pending_bytes),
             bytes_per_minute: int(c.max_partial_upload_bytes_per_minute),
-            orphan_min_age: gc::orphan_age_floor(
-                config.worlds.multipart_upload_timeout_ms,
-                config.worlds.deployment_processing_timeout_ms,
-            ),
             global_scenes_urn: config
                 .worlds_content
                 .global_scenes_urn
@@ -171,6 +176,7 @@ impl Limits {
                 .split_whitespace()
                 .map(str::to_string)
                 .collect(),
+            store_lock_wait: gc::STORE_LOCK_TIMEOUT,
         }
     }
 }
@@ -185,7 +191,8 @@ pub fn is_declared(query: Option<&str>) -> bool {
 /// claim (the chain is checked later, and a false claim only refuses the
 /// claimer's own request): with `quota_exhausted` set, only a replay of a
 /// published entity or a resume of the claimed signer's own live upload
-/// goes on (upstream's message, checked there after authentication); an
+/// goes on (upstream's message, checked there after authentication; a
+/// replay signed by a contract wallet is refused there too); an
 /// account whose byte-rate window is already over its limit waits for the
 /// window's end. Counts nothing: neither 429 is counted upstream either.
 /// A lookup that fails lets the batch on to the full checks.
@@ -250,7 +257,7 @@ pub struct Batch {
     /// The chain as the form spelled it, handed to the deployer at publication.
     pub auth_chain: Value,
     /// Files by their field name, in form order.
-    pub files: Vec<(String, Bytes)>,
+    pub files: Vec<(String, Upload)>,
     /// When the request arrived (ms): a new upload's lifetime starts here.
     pub requested_at_ms: i64,
 }
@@ -258,10 +265,13 @@ pub struct Batch {
 /// What the daily quota needs to know about a settled batch (upstream
 /// `PartialQuotaState`): an upload counts once, when its first batch creates
 /// it, and a batch refused with a 400 before joining its upload counts too.
+/// So does a replay of a deployed entity that is not answered its timestamp
+/// or that asked a contract wallet's RPC.
 #[derive(Default, Debug)]
 pub struct Admission {
     pub admitted: bool,
     pub created: bool,
+    pub counted_replay: bool,
 }
 
 /// A batch's refusal: 400 (`retry_after` unset) or 429 `{errors}`, 503
@@ -507,32 +517,41 @@ async fn pending(
 /// pool connection kept for it. Batches of one upload are serialized from
 /// accounting through publication; cleanup drops no upload while it is
 /// held. Dropped without [`EntityLock::release`] (a cancelled request), the
-/// guard closes its connection, which ends the session and so the lock.
+/// guard closes its connection, which ends the session and so the lock. One
+/// guard may hold the locks of several entities (a cleanup batch).
 struct EntityLock {
     conn: Option<PoolConnection<sqlx::Postgres>>,
-    entity_id: String,
+    entity_ids: Vec<String>,
 }
 
 impl EntityLock {
     /// Takes the lock unless another session holds it.
     async fn try_acquire(pool: &PgPool, entity_id: &str) -> sqlx::Result<Option<Self>> {
+        let lock = Self::try_acquire_free(pool, &[entity_id.to_string()]).await?;
+        Ok((!lock.entity_ids.is_empty()).then_some(lock))
+    }
+
+    /// Takes, on one session, the locks of those of `entity_ids` no other
+    /// session holds ([`Self::entity_ids`]).
+    async fn try_acquire_free(pool: &PgPool, entity_ids: &[String]) -> sqlx::Result<Self> {
+        // The guard exists before the query: an error or a cancellation closes the session.
         let mut lock = Self {
             conn: Some(pool.acquire().await?),
-            entity_id: entity_id.to_string(),
+            entity_ids: Vec::new(),
         };
         let conn = lock.conn.as_mut().expect("set above");
-        let taken: bool = sqlx::query_scalar(
-            "SELECT pg_try_advisory_lock(hashtextextended('partial_entity:' || $1, 0))",
+        lock.entity_ids = sqlx::query_scalar(
+            "SELECT id FROM unnest($1::text[]) AS id
+             WHERE pg_try_advisory_lock(hashtextextended('partial_entity:' || id, 0))",
         )
-        .bind(entity_id)
-        .fetch_one(&mut **conn)
+        .bind(entity_ids)
+        .fetch_all(&mut **conn)
         .await?;
-        if taken {
-            return Ok(Some(lock));
+        if lock.entity_ids.is_empty() {
+            // None taken: the connection goes back to the pool as it is.
+            drop(lock.conn.take());
         }
-        // Not held: the connection goes back to the pool as it is.
-        drop(lock.conn.take());
-        Ok(None)
+        Ok(lock)
     }
 
     /// Waits up to [`ENTITY_LOCK_WAIT`], polling without holding a
@@ -556,13 +575,15 @@ impl EntityLock {
         let Some(mut conn) = self.conn.take() else {
             return;
         };
-        let unlocked =
-            sqlx::query("SELECT pg_advisory_unlock(hashtextextended('partial_entity:' || $1, 0))")
-                .bind(&self.entity_id)
-                .execute(&mut *conn)
-                .await;
+        let unlocked = sqlx::query(
+            "SELECT pg_advisory_unlock(hashtextextended('partial_entity:' || id, 0))
+             FROM unnest($1::text[]) AS id",
+        )
+        .bind(&self.entity_ids)
+        .execute(&mut *conn)
+        .await;
         if let Err(e) = unlocked {
-            tracing::warn!(entity_id = %self.entity_id, error = %e, "failed to release a partial upload's lock; closing its session");
+            tracing::warn!(entity_ids = ?self.entity_ids, error = %e, "failed to release a partial upload's lock; closing its session");
             conn.close_on_drop();
         }
     }
@@ -579,7 +600,8 @@ impl Drop for EntityLock {
 /// The partial-upload path of `POST /entities` for an admitted, parsed
 /// batch. `quota_exhausted` is the daily quota's Retry-After when the
 /// client's source has spent it: only a resume of the signer's own live
-/// upload may then proceed. `admission` tells the caller what to count.
+/// upload, or a replay of a deployed entity not signed by a contract wallet,
+/// may then proceed. `admission` tells the caller what to count.
 pub async fn handle(
     deployer: &WriteDeployer,
     limits: &Limits,
@@ -617,13 +639,43 @@ async fn stage(
 ) -> Result<Outcome, Refusal> {
     let pool = deployer.pool();
     let entity_id = batch.entity_id.as_str();
-    // Deployments are idempotent: a replay gets the original timestamp
-    // without re-authentication (its chain may have expired since).
-    if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
-        return Ok(Outcome::Published(ts));
-    }
     let auth_chain: AuthChain = serde_json::from_value(batch.auth_chain.clone())
         .map_err(|e| Refusal::invalid(format!("invalid auth chain: {e}")))?;
+    // Deployments are idempotent: a replay of a stored entity whose id,
+    // content hashes and pointers are not denylisted, and whose chain signs
+    // the id, gets the original timestamp. The chain is checked at the stored
+    // entity's timestamp (a resume may carry no entity file, and an ephemeral
+    // key that expired since still signed it); nothing after the signature
+    // is. A replay is counted, as a regular one is, when it is refused or cut
+    // off by the processing timeout (`counted_replay` is set until it passes)
+    // or asked a contract wallet's RPC; a spent source's contract-wallet
+    // replay is refused before that RPC.
+    if let Some(stored) = deployer.deployed_entity(entity_id).await? {
+        admission.counted_replay = true;
+        deployer
+            .refuse_denylisted_stored(entity_id, &stored)
+            .map_err(Refusal::from_deploy)?;
+        let contract_wallet = auth_chain.iter().any(|link| {
+            matches!(
+                link.link_type,
+                AuthLinkType::EcdsaEip1654Ephemeral | AuthLinkType::EcdsaEip1654SignedEntity
+            )
+        });
+        if let Some(retry_after) = quota_exhausted
+            && contract_wallet
+        {
+            return Err(Refusal::throttled(
+                "The daily deployment quota for this client is exhausted. A replay signed by a contract wallet is checked only within the quota.",
+                retry_after,
+            ));
+        }
+        deployer
+            .check_signature(entity_id, &auth_chain, stored.entity_ms)
+            .await
+            .map_err(Refusal::from_deploy)?;
+        admission.counted_replay = contract_wallet;
+        return Ok(Outcome::Published(stored.local_ms));
+    }
     let deployer_address = auth_chain
         .first()
         .map(|link| link.payload.to_lowercase())
@@ -649,7 +701,11 @@ async fn stage(
         .iter()
         .rev()
         .find(|(name, _)| name == entity_id)
-        .map(|(_, bytes)| bytes.clone());
+        .and_then(|(_, upload)| match upload {
+            Upload::Bytes(bytes) => Some(bytes.clone()),
+            // `POST /entities` reads the part hashing to the id; this one does not.
+            Upload::Spooled(_) => None,
+        });
     let signed_at = uploaded_entity
         .as_ref()
         .filter(|bytes| bytes.len() <= MAX_ENTITY_FILE_SIZE_BYTES)
@@ -672,6 +728,7 @@ async fn stage(
     .await?;
     let Some(lock) = EntityLock::acquire(pool, entity_id).await? else {
         // A concurrent batch may have held it while publishing the entity.
+        // This batch's chain was checked against the id above.
         if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
             return Ok(Outcome::Published(ts));
         }
@@ -686,7 +743,7 @@ async fn stage(
 struct Prepared {
     entity: Entity,
     entity_bytes: Bytes,
-    files: HashMap<String, Bytes>,
+    files: HashMap<String, UploadedFile>,
     deployer_address: String,
     content_hashes: Vec<String>,
     max_scene_bytes: i64,
@@ -713,13 +770,21 @@ async fn prepare(
     }
 
     // The field names are load-bearing here: every file must hash to its key.
-    let named: Vec<(String, Bytes)> = batch.files.clone();
+    // A spooled part was hashed as it was written; only bytes are hashed here.
+    let named: Vec<(String, Upload)> = batch.files.clone();
     let hashed = bounded_upload_hash(Arc::clone(&UPLOAD_HASH_JOBS), move || {
         named
             .into_iter()
-            .map(|(key, bytes)| {
-                let computed = hash_bytes_v1(&bytes);
-                (key, computed, bytes)
+            .map(|(key, upload)| match upload {
+                Upload::Bytes(bytes) => (key, hash_bytes_v1(&bytes), UploadedFile::Bytes(bytes)),
+                Upload::Spooled(part) => (
+                    key,
+                    part.hash,
+                    UploadedFile::Spooled {
+                        len: part.len as u64,
+                        path: part.path,
+                    },
+                ),
             })
             .collect::<Vec<_>>()
     })
@@ -728,14 +793,14 @@ async fn prepare(
         errors: vec![e],
         retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
     })?;
-    let mut files: HashMap<String, Bytes> = HashMap::with_capacity(hashed.len());
-    for (key, computed, bytes) in hashed {
+    let mut files: HashMap<String, UploadedFile> = HashMap::with_capacity(hashed.len());
+    for (key, computed, file) in hashed {
         if key != computed {
             return Err(Refusal::invalid(format!(
                 "The uploaded file '{key}' does not match its content hash (computed {computed})."
             )));
         }
-        files.insert(key, bytes);
+        files.insert(key, file);
     }
 
     let entity_bytes = match uploaded_entity {
@@ -772,33 +837,20 @@ async fn prepare(
     }
 
     let seen = pending(pool, entity_id).await?;
-    if seen
+    if let Some(p) = seen
         .as_ref()
-        .is_some_and(|p| now_ms() > p.created_at + limits.ttl_ms)
+        .filter(|p| now_ms() > p.created_at + limits.ttl_ms)
     {
-        return Err(Refusal::expired());
+        return Err(lapsed(p, &entity));
     }
     // A resume by the upload's creator skips the access step: creating the
     // upload passed it, and publication runs it again.
     let resume_by_creator = seen
         .as_ref()
         .is_some_and(|p| p.deployer_address == deployer_address);
-    // The staging checks read which files came, not their bytes.
-    let staging_files: HashMap<String, Bytes> = files
-        .keys()
-        .map(|key| {
-            let bytes = if key == entity_id {
-                entity_bytes.clone()
-            } else {
-                Bytes::new()
-            };
-            (key.clone(), bytes)
-        })
-        .chain(std::iter::once((
-            entity_id.to_string(),
-            entity_bytes.clone(),
-        )))
-        .collect();
+    // The staging checks read which files came and the entity file.
+    let mut staging_files = files.clone();
+    staging_files.insert(entity_id.to_string(), entity_bytes.clone().into());
     deployer
         .validate_staging(&entity, &staging_files, auth_chain, !resume_by_creator)
         .await
@@ -882,6 +934,19 @@ async fn prepare(
 
 fn newer_entity(entity: &Entity) -> Refusal {
     Refusal::invalid(super::write_deployer::newer_entity_message(entity))
+}
+
+/// `created_at` (ms) of an overtaken upload [`release_upload`] left to the cleanup job.
+const RELEASED_AT: i64 = 0;
+
+/// The refusal for an upload past its lifetime: one released as overtaken is
+/// refused as such, so its client does not re-sign it over the newer entity.
+fn lapsed(upload: &Pending, entity: &Entity) -> Refusal {
+    if upload.created_at == RELEASED_AT {
+        newer_entity(entity)
+    } else {
+        Refusal::expired()
+    }
 }
 
 /// A resume's entity file, read back from the store; only for a chain valid
@@ -974,12 +1039,13 @@ async fn commit(
         overtaken,
     } = prepared;
     let entity_id = entity.id.as_str();
-    // Another batch may have published the entity meanwhile.
+    // Another batch may have published the entity meanwhile. `stage`
+    // checked this batch's chain against the id before preparing it.
     if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
         return Ok(Outcome::Published(ts));
     }
     if overtaken {
-        release_upload(pool, storage, limits, entity_id).await;
+        release_upload(pool, entity_id).await;
         return Err(newer_entity(&entity));
     }
     let current = pending(pool, entity_id).await?;
@@ -1031,9 +1097,9 @@ async fn commit(
     }
     // Every received byte counts toward the rate; stored files are not rewritten.
     let mut incoming_bytes: i64 = 0;
-    let mut to_store: Vec<(String, Bytes)> = Vec::new();
-    for (hash, bytes) in &files {
-        incoming_bytes += bytes.len() as i64;
+    let mut to_store: Vec<(String, UploadedFile)> = Vec::new();
+    for (hash, file) in &files {
+        incoming_bytes += file.len() as i64;
         if already_stored.contains(hash) {
             continue;
         }
@@ -1041,13 +1107,13 @@ async fn commit(
             hash.clone(),
             Receipt {
                 hash: hash.clone(),
-                size: bytes.len() as i64,
+                size: file.len() as i64,
                 stored: false,
                 charged: true,
                 written: true,
             },
         );
-        to_store.push((hash.clone(), bytes.clone()));
+        to_store.push((hash.clone(), file.clone()));
     }
     let known_scene_bytes: i64 = receipts
         .values()
@@ -1162,7 +1228,6 @@ async fn commit(
     }
     finalize(
         deployer,
-        limits,
         &entity,
         entity_bytes,
         batch.auth_chain.clone(),
@@ -1203,9 +1268,9 @@ fn store_unreadable(entity_id: &str, e: &dyn std::fmt::Display) -> Refusal {
 }
 
 /// A store failure is logged; the client sees upstream's fixed sentence.
-async fn store_files(storage: &Storage, files: Vec<(String, Bytes)>) -> Result<(), Refusal> {
-    let mut writes = stream::iter(files.into_iter().map(|(hash, bytes)| async move {
-        storage.store(&hash, bytes).await.map_err(|e| {
+async fn store_files(storage: &Storage, files: Vec<(String, UploadedFile)>) -> Result<(), Refusal> {
+    let mut writes = stream::iter(files.into_iter().map(|(hash, file)| async move {
+        store_uploaded(storage, &hash, file).await.map_err(|e| {
             tracing::error!(hash, error = %e, "failed to store a partial upload's content file");
         })
     }))
@@ -1240,7 +1305,7 @@ async fn create_upload(
         None if seen => return Err(Refusal::expired()),
         Some(existing) => {
             if now_ms() > existing.created_at + limits.ttl_ms {
-                return Err(Refusal::expired());
+                return Err(lapsed(&existing, entity));
             }
             // Reservations are charged to the creator; nobody else adds to it.
             if existing.deployer_address != deployer_address {
@@ -1515,7 +1580,6 @@ async fn reserve(
 #[allow(clippy::too_many_arguments)]
 async fn finalize(
     deployer: &WriteDeployer,
-    limits: &Limits,
     entity: &Entity,
     entity_bytes: Bytes,
     auth_chain: Value,
@@ -1605,7 +1669,7 @@ async fn finalize(
         }
         // Only an overtaken upload is released: other refusals may clear.
         DeployFailure::Rejected(RejectionKind::Superseded, errors) => {
-            release_upload(pool, deployer.storage(), limits, entity_id).await;
+            release_upload(pool, entity_id).await;
             Err(Refusal::Invalid {
                 errors,
                 retry_after: None,
@@ -1627,71 +1691,167 @@ async fn delete_pending(pool: &PgPool, entity_id: &str) {
     }
 }
 
-/// Drops an upload that can never be published, with its accounting, and
-/// unlinks the staged blobs it wrote that the collector would. Runs under
-/// the entity's lock.
-async fn release_upload(pool: &PgPool, storage: &Storage, limits: &Limits, entity_id: &str) {
-    let released = async {
-        let Some(keys) = take_upload(pool, entity_id, None).await? else {
-            return anyhow::Ok(());
-        };
-        tracing::info!(
+/// Drops an upload that can never be published. Runs under the entity's
+/// lock, after the deploy's transaction ended. An upload that wrote no blob
+/// goes with its accounting; one that did is marked released ([`RELEASED_AT`])
+/// and the cleanup job's next run reclaims it with its blobs, so the request
+/// reads no content list and never takes the store lock.
+async fn release_upload(pool: &PgPool, entity_id: &str) {
+    let released = sqlx::query_scalar::<_, bool>(
+        "WITH gone AS (
+           DELETE FROM content.pending_deployments d WHERE entity_id = $1 AND NOT $2
+             AND NOT EXISTS (SELECT 1 FROM content.pending_deployment_files f
+                             WHERE f.entity_id = d.entity_id AND f.written)
+           RETURNING entity_id
+         ), marked AS (
+           UPDATE content.pending_deployments SET created_at = 'epoch'
+           WHERE entity_id = $1 AND NOT EXISTS (SELECT 1 FROM gone)
+           RETURNING entity_id
+         )
+         SELECT EXISTS (SELECT 1 FROM gone)",
+    )
+    .bind(entity_id)
+    .bind(crate::sync_deployer::is_buffered(entity_id))
+    .fetch_one(pool)
+    .await;
+    match released {
+        Ok(true) => tracing::info!(
             entity_id,
             "released a partial upload that can never be published"
-        );
-        unlink_orphans(pool, storage, limits, &keys).await?;
-        anyhow::Ok(())
-    };
-    if let Err(e) = released.await {
-        tracing::warn!(entity_id, error = %e, "failed to release a partial upload; cleanup or the collector will reclaim it");
+        ),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(entity_id, error = %e, "failed to release a partial upload; cleanup will reclaim it")
+        }
     }
 }
 
-/// Deletes an upload (when `expired_before` is set, only if created before
-/// it) and returns the keys it wrote itself. The caller holds the entity's
-/// lock, so no batch is committing it.
-async fn take_upload(
-    pool: &PgPool,
-    entity_id: &str,
-    expired_before: Option<i64>,
-) -> sqlx::Result<Option<Vec<String>>> {
-    let mut tx = pool.begin().await?;
-    let keys: Vec<String> = sqlx::query_scalar(
-        "SELECT hash FROM content.pending_deployment_files WHERE entity_id = $1 AND written",
-    )
-    .bind(entity_id)
-    .fetch_all(&mut *tx)
-    .await?;
-    let deleted = sqlx::query(
-        "DELETE FROM content.pending_deployments WHERE entity_id = $1
-           AND ($2::float8 IS NULL OR created_at < to_timestamp($2 / 1000.0))",
-    )
-    .bind(entity_id)
-    .bind(expired_before.map(|ms| ms as f64))
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    tx.commit().await?;
-    Ok((deleted > 0).then_some(keys))
+/// What one [`reclaim_uploads`] did: uploads deleted, and uploads kept
+/// because a blob of theirs could not be unlinked.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Reclaimed {
+    removed: usize,
+    failed: usize,
 }
 
-/// Unlinks the keys the collector would: aged past its floor, outside its
-/// fixed references and named by no domain (checked right before the
-/// unlink). Answers how many went.
-async fn unlink_orphans(
+/// Deletes those of the uploads `entity_ids` created before `expired_before`
+/// (ms) and unlinks the staged blobs they wrote
+/// themselves (`written`) that no domain names. The caller holds the
+/// entities' locks, so no batch of these uploads is committing and their
+/// receipts do not change.
+///
+/// Uploads that wrote no blob are deleted without the store lock. Otherwise
+/// the world scenes' content lists, which no index serves, are read first
+/// without the store lock ([`gc::scan_scenes`]). Then, in one transaction
+/// holding the exclusive store lock (the collector's; waited for at most
+/// `wait`), the rows go, and
+/// the other references (the indexed sources, the fixed ones and the scenes
+/// written since the scan) are read and the blobs unlinked
+/// ([`gc::unlink_orphans_on`]).
+///
+/// Races: every content writer that commits a deployment takes the lock's
+/// shared side and checks there that the files its rows name are stored: a
+/// local deploy (a partial publication included), the peer-sync flush
+/// (read-through's too) and a world scene deploy; so do builder's item and
+/// project file uploads before committing the rows that name their blobs.
+/// So either such a writer has committed its rows and the check keeps the
+/// blob, or it finds the blob gone: a local deploy answers 503 for a retry
+/// that uploads it again, the sync flush leaves that entity out and records
+/// it for the retry worker, which downloads it again, and builder stores it
+/// again. Another upload's receipts are written before its blobs, so a
+/// staged blob it claims is kept (an expired one's too, until its own
+/// cleanup); one it found stored may go between its existence check and its
+/// receipt, and its completing batch's re-check reports it missing again.
+/// An upload a blob of which could not be unlinked keeps its row, and a
+/// busy store lock ([`gc::GcError::LockTimeout`]) or a failed reference read
+/// keeps every row: the next run retries them, as upstream releases the
+/// accounting only once every unlink succeeded. An upload whose entity a
+/// sync or read-through download of this process holds is skipped (checked
+/// under the lock), so that download is not sent to the retry worker. The
+/// store's other writers that commit a row naming a blob (the asset-pack
+/// catalogue build, the camera-reel import, social's thumbnails, contents,
+/// MLS blobs and profile images, worlds settings thumbnails and mirror
+/// passes, event posters, outfit thumbnails) store or re-check it under the
+/// shared side in the row's transaction ([`gc::store_for_row`]), so they are
+/// ordered the same way. Camera-reel uploads and report evidence commit their
+/// row before the blob, so the reference read keeps it, and read-through
+/// copies (explore's mirrors, the asset catalogue pull) fetch a removed blob
+/// again on its next read.
+async fn reclaim_uploads(
     pool: &PgPool,
     storage: &Storage,
     limits: &Limits,
-    keys: &[String],
-) -> anyhow::Result<usize> {
-    Ok(gc::unlink_orphans(
-        pool,
-        storage,
-        &limits.global_scenes_urn,
-        keys,
-        limits.orphan_min_age,
+    entity_ids: &[String],
+    expired_before: i64,
+    wait: Duration,
+) -> Result<Reclaimed, gc::GcError> {
+    let written: Vec<(String, String)> = sqlx::query_as(
+        "SELECT entity_id, hash FROM content.pending_deployment_files
+         WHERE entity_id = ANY($1) AND written",
     )
-    .await?)
+    .bind(entity_ids)
+    .fetch_all(pool)
+    .await?;
+    let mut keys: Vec<String> = written.iter().map(|(_, k)| k.clone()).collect();
+    keys.sort();
+    keys.dedup();
+    let delete = |ids: Vec<&String>| {
+        sqlx::query_scalar::<_, String>(
+            "DELETE FROM content.pending_deployments WHERE entity_id = ANY($1)
+               AND created_at < to_timestamp($2 / 1000.0)
+             RETURNING entity_id",
+        )
+        .bind(ids.into_iter().cloned().collect::<Vec<String>>())
+        .bind(expired_before as f64)
+    };
+    let unbuffered = || {
+        entity_ids
+            .iter()
+            .filter(|id| !crate::sync_deployer::is_buffered(id))
+            .collect::<Vec<&String>>()
+    };
+    if keys.is_empty() {
+        let removed = delete(unbuffered()).fetch_all(pool).await?.len();
+        return Ok(Reclaimed { removed, failed: 0 });
+    }
+    let scan = gc::scan_scenes(pool, &keys).await?;
+    let mut lock = gc::lock_store_exclusive_within(pool, wait).await?;
+    // Checked once the lock is held: a download that began while it was awaited counts.
+    let ids = unbuffered();
+    sqlx::query("SAVEPOINT reclaim").execute(&mut *lock).await?;
+    let gone: HashSet<String> = delete(ids)
+        .fetch_all(&mut *lock)
+        .await?
+        .into_iter()
+        .collect();
+    // Their receipts went with the rows (cascade), so only other references count.
+    let mut keys: Vec<String> = written
+        .iter()
+        .filter(|(id, _)| gone.contains(id))
+        .map(|(_, k)| k.clone())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    let pins = gc::Pins::new(storage, &limits.global_scenes_urn);
+    let not_unlinked = gc::unlink_orphans_on(&mut lock, pins, &keys, &scan).await?;
+    let broken: HashSet<&String> = written
+        .iter()
+        .filter(|(id, k)| gone.contains(id) && not_unlinked.contains(k))
+        .map(|(id, _)| id)
+        .collect();
+    if !broken.is_empty() {
+        // Those keep their rows; the others go.
+        sqlx::query("ROLLBACK TO SAVEPOINT reclaim")
+            .execute(&mut *lock)
+            .await?;
+        let kept: Vec<&String> = gone.iter().filter(|id| !broken.contains(id)).collect();
+        delete(kept).fetch_all(&mut *lock).await?;
+    }
+    lock.commit().await?;
+    Ok(Reclaimed {
+        removed: gone.len() - broken.len(),
+        failed: broken.len(),
+    })
 }
 
 /// One cleanup run: every expired upload whose lock is free (keyset pages
@@ -1744,24 +1904,45 @@ async fn reclaim_expired(
         .bind(EXPIRED_UPLOADS_PER_PAGE)
         .fetch_all(pool)
         .await?;
-        for (_, entity_id) in &page {
-            // A batch holding the lock may be publishing the upload: the next run retries it.
-            let Some(lock) = EntityLock::try_acquire(pool, entity_id).await? else {
+        for batch in page.chunks(RECLAIM_BATCH) {
+            let ids: Vec<String> = batch.iter().map(|(_, id)| id.clone()).collect();
+            // A batch holding an entity's lock may be publishing the upload: the next run retries it.
+            let lock = EntityLock::try_acquire_free(pool, &ids).await?;
+            if lock.entity_ids.is_empty() {
                 continue;
-            };
-            let reclaimed = async {
-                if let Some(keys) = take_upload(pool, entity_id, Some(cutoff)).await? {
-                    unlink_orphans(pool, storage, limits, &keys).await?;
-                }
-                anyhow::Ok(())
             }
+            let reclaimed = reclaim_uploads(
+                pool,
+                storage,
+                limits,
+                &lock.entity_ids,
+                cutoff,
+                limits.store_lock_wait,
+            )
             .await;
+            let held = lock.entity_ids.len();
             lock.release().await;
             match reclaimed {
-                Ok(()) => removed += 1,
+                Ok(done) => {
+                    removed += done.removed;
+                    failed += done.failed;
+                }
+                // Deploys kept the store lock busy: waiting again would queue them behind
+                // another exclusive request, so the run stops and the next one retries.
+                Err(gc::GcError::LockTimeout) => {
+                    tracing::info!(
+                        uploads = held,
+                        "expired partial upload cleanup deferred: the store lock is busy"
+                    );
+                    return run_result(removed, failed);
+                }
+                // A failed reference read (an unreadable content list included) fails
+                // every batch alike: the run stops with it and the next one retries. Until
+                // it clears no expired upload is reclaimed and their quotas stay taken, so
+                // it is logged as an error.
                 Err(e) => {
-                    failed += 1;
-                    tracing::warn!(entity_id, error = %e, "failed to reclaim an expired partial upload");
+                    tracing::error!(entity_ids = ?ids, error = %e, "expired partial uploads cannot be reclaimed until this clears");
+                    return Err(e.into());
                 }
             }
         }
@@ -1770,6 +1951,11 @@ async fn reclaim_expired(
         }
         after = page.last().cloned();
     }
+    run_result(removed, failed)
+}
+
+/// A run's answer: the uploads removed, or an error naming those an unlink kept.
+fn run_result(removed: usize, failed: usize) -> anyhow::Result<usize> {
     if failed > 0 {
         anyhow::bail!("{failed} expired partial upload(s) could not be reclaimed; {removed} were");
     }

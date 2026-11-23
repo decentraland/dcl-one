@@ -1,5 +1,6 @@
 // Chat translation, from the server unity-explorer uses: autotranslate-server, a LibreTranslate.
-// A message goes as its text runs only, with links, coordinates, worlds, @mentions and emoji
+// A message goes as its text runs only, with links, coordinates, worlds, @mentions, bold and
+// italic tags and emoji
 // kept back (the server drops emoji and whatever follows them in a run), all runs in one batch
 // request; the answers go back between the parts kept. Translations live for the session only:
 // nothing here is stored with the DM history. A failed request just leaves the original.
@@ -8,6 +9,7 @@ import { LANGUAGES } from '../../engine/generated'
 import type { Setting } from '../../engine/protocol'
 import { serviceUrl } from '@hud-host'
 import { PREF, getPref, setPref } from '../../lib/prefs'
+import { STYLE_TAG_PATTERN } from '../../engine/mention'
 import { parseMessage } from './chatParse'
 
 /** The server language for a BCP 47 tag ("pt-BR", "zh-TW", "de-AT"), or null if it has none. */
@@ -55,23 +57,37 @@ export function languageName(code: string): string {
 
 const EMOJI_RUN = /[\p{Extended_Pictographic}\p{Regional_Indicator}\p{Emoji_Modifier}‍️⃣]+/gu
 const LETTER = /\p{L}/u
+const STYLE_TAG_RE = new RegExp(STYLE_TAG_PATTERN, 'g')
+
+interface Part {
+  value: string
+  translate: boolean
+}
+
+/** `text` as the matches of `kept`, kept as they are, and the runs between them. */
+function cut(text: string, kept: RegExp): Part[] {
+  const parts: Part[] = []
+  let last = 0
+  for (const m of text.matchAll(kept)) {
+    const i = m.index ?? 0
+    if (i > last) parts.push({ value: text.slice(last, i), translate: true })
+    parts.push({ value: m[0], translate: false })
+    last = i + m[0].length
+  }
+  if (last < text.length) parts.push({ value: text.slice(last), translate: true })
+  return parts
+}
 
 /** A message cut into the runs sent for translation and the parts kept as they are. */
-export function splitForTranslation(text: string): { value: string; translate: boolean }[] {
-  const parts: { value: string; translate: boolean }[] = []
+export function splitForTranslation(text: string): Part[] {
+  const parts: Part[] = []
   for (const token of parseMessage(text)) {
     if (token.type !== 'text') {
       parts.push({ value: token.value, translate: false })
       continue
     }
-    let last = 0
-    for (const m of token.value.matchAll(EMOJI_RUN)) {
-      const i = m.index ?? 0
-      if (i > last) parts.push({ value: token.value.slice(last, i), translate: true })
-      parts.push({ value: m[0], translate: false })
-      last = i + m[0].length
-    }
-    if (last < token.value.length) parts.push({ value: token.value.slice(last), translate: true })
+    // a bold or italic tag shown as written (it styles no text) is kept back as a hidden one is
+    for (const part of cut(token.value, STYLE_TAG_RE)) parts.push(...(part.translate ? cut(part.value, EMOJI_RUN) : [part]))
   }
   // runs without a letter (numbers, punctuation, spaces) need no translating
   return parts.map((p) => (p.translate && !LETTER.test(p.value) ? { ...p, translate: false } : p))

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { useMachine } from "@xstate/react";
 import { useSearchParams } from "react-router";
 
-import StCastStreamer from "@ui/web/pages/StCastStreamer";
-import StCastNotFound from "@ui/web/pages/StCastNotFound";
+import CastStreamerView from "@dcl/one-ui/apps/sites/cast/StCastStreamer";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
+import SitesLayout from "../../components/chrome/SitesLayout";
+import { CastNotFoundScreen } from "../cast-not-found/CastNotFound";
 import { castMachine, resolveCastSnapshot, slugToState, stateToSlug, DEFAULT_DEVICES, type EndCastFn, type GoLiveFn, type RequestPermissionsFn, type ResolveTokenFn, type ShareScreenFn, type StopShareFn, type TrackFn } from "./machine";
 
 /** What a real session adds to the console; the story pages leave it out. */
@@ -320,7 +321,7 @@ function CastConsoleInner({
       )}
 
       {value === "invalid" && (
-        <StCastNotFound
+        <CastNotFoundScreen
           description={
             (state.context.invalidReason ?? "Invalid streaming key") +
             ". Stream links are generated on-demand by the Admin Smart Item in Decentraland scenes."
@@ -328,5 +329,13 @@ function CastConsoleInner({
         />
       )}
     </div>
+  );
+}
+
+function StCastStreamer(props: ComponentProps<typeof CastStreamerView>) {
+  return (
+    <SitesLayout active="legal">
+      <CastStreamerView {...props} />
+    </SitesLayout>
   );
 }

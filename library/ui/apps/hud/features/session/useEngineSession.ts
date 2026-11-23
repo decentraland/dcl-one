@@ -2942,9 +2942,19 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
         case 'commands':
           driverRef.current?.send({ kind: 'consoleCommand', command: 'help' })
           break
-        case 'console':
-          driverRef.current?.send({ kind: 'consoleCommand', command: cmd.command, args: cmd.args })
+        case 'console': {
+          // The typed line goes to the engine whole, so the engine splits it by its one rule
+          // (quotes, escapes, a rest-of-line argument). Both HUD hosts install the function.
+          const run = (window as Window & { engine_console_command?: (line: string) => Promise<string> }).engine_console_command
+          if (run == null) {
+            pushSystemMessage('The engine console is not available.')
+            break
+          }
+          const reply = (output: unknown) =>
+            pushSystemMessage(formatConsoleReply(cmd.command, cmd.hasArgs ? [cmd.line] : [], output instanceof Error ? output.message : String(output)))
+          run(cmd.line).then(reply, reply)
           break
+        }
         case 'system':
           pushSystemMessage(cmd.message)
           break

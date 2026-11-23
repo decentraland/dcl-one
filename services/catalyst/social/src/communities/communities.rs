@@ -25,13 +25,31 @@ use super::http::{
     get_pagination_params, handler_error as err_json,
 };
 use super::profiles::ProfileInfo;
-use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
+use super::thumbnail::{
+    StoreThumbnailError, detect_image_mime_type, store_thumbnail, validate_thumbnail,
+};
 use super::write_support::{
     ClientCommunityWriteAuthority, Refusal, acquire_membership, load_client_standing, map_db,
     parse_community_id, parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
 use crate::notifications::community::{Audience, CommunityEvent, notify};
+
+/// A thumbnail that could not be stored: 503 while the store lock is busy,
+/// otherwise 500.
+fn thumbnail_failed(e: &StoreThumbnailError) -> Response {
+    if e.busy() {
+        return err_json(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the content store is being collected; retry shortly",
+        );
+    }
+    tracing::error!(error = %e, "failed to store community thumbnail");
+    err_json(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "failed to store thumbnail",
+    )
+}
 
 const MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE: usize = 3;
 const MAX_LIMIT_FOR_MINIMAL_RESPONSE: i64 = 50;
@@ -670,13 +688,9 @@ pub async fn create_community(
         .await
     ));
     if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&mut *tx, &state.storage, id, bytes).await
+        && let Err(e) = store_thumbnail(&mut tx, &state.storage, id, bytes).await
     {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
+        return thumbnail_failed(&e);
     }
     if !place_ids.is_empty() {
         try_resp!(map_db(
@@ -930,14 +944,17 @@ pub async fn update_community(
             notify(&state.pool, event, Audience::Members).await;
         });
     }
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
-    {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
+    if let Some(bytes) = thumbnail.as_deref() {
+        let stored = async {
+            let mut tx = state.pool.begin().await?;
+            store_thumbnail(&mut tx, &state.storage, uuid, bytes).await?;
+            tx.commit().await?;
+            Ok::<_, StoreThumbnailError>(())
+        }
+        .await;
+        if let Err(e) = stored {
+            return thumbnail_failed(&e);
+        }
     }
     if let Some(ids) = &place_ids {
         try_resp!(map_db(

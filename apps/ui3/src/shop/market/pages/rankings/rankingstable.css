@@ -33,8 +33,8 @@
   flex-direction: column;
 }
 
-.site-layout:has(.shop-rk) { background: #32134c; }
-.site-layout:has(.shop-rk)::before { display: none; }
+[data-site-layout]:has(.shop-rk) { background: #32134c; }
+[data-site-layout]:has(.shop-rk)::before { display: none; }
 
 .shop-rk .shop-rk-head {
   display: flex;

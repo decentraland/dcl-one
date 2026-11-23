@@ -12,7 +12,7 @@ import { useShopWallet } from "../../wallet/context";
 import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { pickRenderer } from "../lib/pickRenderer";
 import { itemUrn } from "@shop/detail/lib/urn";
-import { fetchWearableRules, keepEquipped } from "../lib/wearable-rules";
+import { fetchWearableRules, keepEquipped, sharedEntityBase } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
 import "./itempreview.css";
@@ -32,12 +32,12 @@ const wornItemUrn = (urn: string) => {
 
 type WearerProfile = Awaited<ReturnType<typeof fetchProfile>>;
 
-async function fetchWornOutfit(profile: WearerProfile, tryOn: { urn: string; category: string } | null): Promise<OutfitData | null> {
+async function fetchWornOutfit(profile: WearerProfile, tryOn: { urn: string; category: string } | null, base: string | undefined): Promise<OutfitData | null> {
   const avatar = profile?.avatar;
   if (!avatar?.bodyShape) return null;
   const worn = [...new Set((avatar.wearables ?? []).map(wornItemUrn))];
-  // The body and the item join this read; the preview mounts them next from the same entity cache.
-  const rules = await fetchWearableRules(worn, [avatar.bodyShape, ...(tryOn ? [tryOn.urn] : [])]);
+  // The body and the item join this read; the preview, given the same base, mounts them next from the same entity cache.
+  const rules = await fetchWearableRules(worn, [avatar.bodyShape, ...(tryOn ? [tryOn.urn] : [])], base);
   const kept = new Set(keepEquipped(rules, tryOn ? [tryOn.category] : []).map((u) => u.toLowerCase()));
   const known = new Set(rules.map((r) => r.urn.toLowerCase()));
   const wearables = worn.filter((u) => kept.has(u.toLowerCase()) || !known.has(u.toLowerCase()));
@@ -71,7 +71,10 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const tryOn = isEmote ? null : { urn: urn!, category: item.wearableCategory ?? "" };
   const wearer = account ?? defaultProfileFor(urn ?? item.id);
   const profile = useShopQuery(canPreview && show3d ? ["wearer-profile", wearer] : null, (signal) => fetchProfile(wearer, { signal }), { staleMs: 5 * 60_000 });
-  const worn = useShopQuery(profile.data !== undefined ? ["worn-outfit", wearer, urn, tryOn?.category ?? null] : null, () => fetchWornOutfit(profile.data!, tryOn), { staleMs: 5 * 60_000 });
+  // One Catalyst for the outfit's rules read and the scene, so the scene finds the entities that read cached, when one
+  // peer serves the whole outfit. Otherwise each keeps its own: the rules read its network's peer, the scene its default.
+  const base = urn && profile.data !== undefined ? sharedEntityBase([urn, profile.data?.avatar?.bodyShape ?? "", ...(profile.data?.avatar?.wearables ?? [])].filter(Boolean)) : undefined;
+  const worn = useShopQuery(profile.data !== undefined ? ["worn-outfit", wearer, urn, tryOn?.category ?? null] : null, () => fetchWornOutfit(profile.data!, tryOn, base), { staleMs: 5 * 60_000 });
   const waiting = canPreview && show3d && (profile.isLoading || worn.isLoading);
   const wornShape = profileShape(worn.data ? { avatar: worn.data } : null);
   const shopperShape = avatarShape ?? (account ? wornShape : null);
@@ -96,6 +99,7 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
     <div className="shop-preview" data-status={show3d ? shownStatus : "thumbnail"}>
       {scene ? (
         <WearablePreview
+          base={base}
           urns={isEmote ? [] : [urn!]}
           body={body}
           outfit={outfit}

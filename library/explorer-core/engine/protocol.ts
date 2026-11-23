@@ -1713,6 +1713,9 @@ export interface CommunityPlace {
   likeRate?: number
   /** The signed-in user owns the place: an owner or moderator may unlink it from the card. */
   isMine?: boolean
+  /** The places service's own row (signed: with the user's votes and favourite), when it was read:
+   *  the card's hover actions, JUMP IN and Place Detail act on it. */
+  detail?: DiscoverPlace
 }
 
 /** Unlink a place from a community (page → scene → signed DELETE to the social-api). */

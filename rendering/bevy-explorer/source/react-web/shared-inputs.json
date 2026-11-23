@@ -977,7 +977,15 @@
           "kind": "directory"
         },
         {
+          "name": "figma-mapping-manifest.json",
+          "kind": "regular"
+        },
+        {
           "name": "foundations",
+          "kind": "directory"
+        },
+        {
+          "name": "gallery",
           "kind": "directory"
         },
         {
@@ -3301,6 +3309,10 @@
           "kind": "regular"
         },
         {
+          "name": "ShowcaseIndex.ts",
+          "kind": "regular"
+        },
+        {
           "name": "Skeleton.module.css",
           "kind": "regular"
         },
@@ -4535,6 +4547,10 @@
       "path": "library/ui/apps/hud/features/places",
       "entries": [
         {
+          "name": "PlaceActions.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "PlaceCard.module.css",
           "kind": "regular"
         },
@@ -5053,6 +5069,10 @@
       "path": "library/ui/apps/hud/styles",
       "entries": [
         {
+          "name": "page.css",
+          "kind": "regular"
+        },
+        {
           "name": "tokens.css",
           "kind": "regular"
         }
@@ -5079,6 +5099,10 @@
         },
         {
           "name": "cancelKey.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "chatMessageText.test.tsx",
           "kind": "regular"
         },
         {
@@ -5902,7 +5926,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "6bacb239b7e9837420c5c92ef8fb37bfee57e5e4e46b1de1c816089a49b7d54e"
+      "sha256": "40369ceb89f585c96deef8ad73df920a7dba31acf1f07d9f1773646e7977ecba"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -5962,7 +5986,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "1ac20e352d3935761c25cc4a4a35c20fd45d6d6a46d9e5aa0ca14208dccb28cc"
+      "sha256": "b263f9a37a98c043565aa8a738d0c8cad09c592398764f76d073cc7217cdd539"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/connectivity.ts",
@@ -6050,7 +6074,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
-      "sha256": "9d62fd01146da4b24ce2ae8bacb7ba420dd50d36e55436d5357babcb02a457e3"
+      "sha256": "88c07ed9fe3569e7b957ec54b55f722bee60d81322f3f6c1b27a871f797be320"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
@@ -6174,7 +6198,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
-      "sha256": "d8530674de07191bf296d069dc4863518abe30e6024423698818d678eab0df42"
+      "sha256": "8e0cfad37b090e9cd69c3e84b7ae3be65daa8c2e7690c10b1f6cc32835ba5dae"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/autopilotDrivers.test.ts",
@@ -6202,7 +6226,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "bbd2c735a2fdff85c397c7cb2f9b5529a29f4700c74c8e6d6eddcc910cff7f4b"
+      "sha256": "95734252864cd8cb6320a7e60c8b37d2b74bf4008fc9f615c299b27a40071148"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeConnectivity.test.tsx",
@@ -6282,7 +6306,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
-      "sha256": "809082502001ff082e036dea2e02552fceaff138811d99ac8c93ec56f8a0e92e"
+      "sha256": "d23e0dcdd485a6d30a20e41e71f99470d7ba1444df70be189b4f19800633b336"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSettings.test.ts",
@@ -6298,7 +6322,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
-      "sha256": "012d587a425705d13ed1ef9876c6c6a0d32f5b5918033f3d849f26ffe9712ca7"
+      "sha256": "ba569894739bb25a40af5513705b5da7ef6ca3156f4c8792e4ddc92c5407b659"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/connectivityApi.test.ts",
@@ -6393,6 +6417,10 @@
       "sha256": "679587a4d484c71c357e7775f847f7d51e3c9b53eb2dfb91b69f867684190c58"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
+      "sha256": "6b42afd746ba47678235229eca3e18e371f66f94dc17ce220cba7debdc9a175f"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
       "sha256": "3dbe90a2a7601e93446485518e5723cc6e6b50dd04ae9ee3603a6a6b689c26ac"
     },
@@ -6422,7 +6450,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "04e2ef38f58cc1f5b4b9c6d9bbc369b950f5e9ce952633aca11692371817cd4a"
+      "sha256": "7ae429f59fb2fc2fb07536be574975f5ad2d11d67187b383dbc5868c68bded73"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -6509,6 +6537,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/sharedUi.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/shellLogin.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/shopQueries.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/showcaseChunk.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/sidebar.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/untrustedExit.test.ts",
@@ -6563,11 +6592,11 @@
     },
     {
       "path": "library/explorer-core/engine/mention.ts",
-      "sha256": "528f3d3d9b5fb782901ae6f89f7bf9c09440e17ae4dde702fc17012c772a8d55"
+      "sha256": "11cf5a47f8b4ad82c18fbc58fffb0a9306c3b44e9febf567a4443eb52f24c781"
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "f3b1a967538415dd131ac55dd4a2cf9d82b350a4494bf24f35c29277356d6a57"
+      "sha256": "86ba837700a8dea54e929759bc1f4c9a3acea2badd73e9d5d422771e63f56194"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -6607,7 +6636,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "810040a69a1bfe1066f463c257564cae59cef48d1801a1073ae53d7396a94010"
+      "sha256": "7bcb38c86e6ff289c298799deae92fa8f80d011bdd5cbc21bf6c2c07b84945a8"
     },
     {
       "path": "library/explorer-core/engine/requestIds.ts",
@@ -6651,15 +6680,15 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.test.ts",
-      "sha256": "0e11d4fa58c8ad08339da734af6f9bc3ddec06954f5d2363f29270c3c3131d3c"
+      "sha256": "0ee3a04d94599146a48f751ed5310ee3bc4c4b0f729471e0669238d5dd1a8bc4"
     },
     {
       "path": "library/explorer-core/features/chat/chatCommands.ts",
-      "sha256": "f78f00948c0c4e831313841ccbbc9a211a87a44294bb7432505ef956ef2681e1"
+      "sha256": "7f625e5c3fcd9c9bcb7e7d760033e69b60c9f5c01fe96e464aa8d4950209e3bb"
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
-      "sha256": "f0cd01b6242a1f3a2d85744b4d7427b8b8508e769291f3b416b20e31ab4cd5c3"
+      "sha256": "fa145fec763af48e16b421b693e57b0be54dcd0eee2f381e9f55ef2994a76d0e"
     },
     {
       "path": "library/explorer-core/features/chat/lineIds.test.ts",
@@ -6671,7 +6700,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/translation.ts",
-      "sha256": "5f4da4df1edf9d67725224847b779c9ba9e96ea93c0b43fa45f399da0cdba275"
+      "sha256": "f7f05666183b6fbc2c5fea7a1344928256d6ddcff3795b8ffb7c9a0620c250aa"
     },
     {
       "path": "library/explorer-core/features/communities/notifications.ts",
@@ -6687,7 +6716,7 @@
     },
     {
       "path": "library/explorer-core/features/donate/tip.ts",
-      "sha256": "8d83e3410f013de8165e9d97a1d48b6745cb442a07a1da22026d2430004be463"
+      "sha256": "a50a5a09a90964f03e51e31499645c5dd5d9344c3a1014813338c264385e89b1"
     },
     {
       "path": "library/explorer-core/features/editorHost/config.ts",
@@ -6943,7 +6972,7 @@
     },
     {
       "path": "library/explorer-core/lib/hudAutomation.ts",
-      "sha256": "640bc14f946e7eaa02be8ec6fb0eccad8e1e92ec1e4bfd025b4990d5e4319e85"
+      "sha256": "576e8c80cb3a1c2ce4b397d7bccaeb0939238d265e5a92fe0ea54fe1b5c78a53"
     },
     {
       "path": "library/explorer-core/lib/hudScale.ts",
@@ -7075,7 +7104,7 @@
     },
     {
       "path": "library/explorer-core/test/donateTip.test.ts",
-      "sha256": "920446a0dcf3b0ef15f1422b584a37ddc43df345eb2595210b9ab87934107e1e"
+      "sha256": "8ade0dcb99cd2df45f3acdd47a9f911d9deda4864de509fe72d44b33bc99331c"
     },
     {
       "path": "library/explorer-core/test/emailLogin.test.ts",
@@ -7119,7 +7148,7 @@
     },
     {
       "path": "library/explorer-core/test/hudAutomation.test.ts",
-      "sha256": "81e90466c917da2efa66b641786bba4ab66e16896140767fe4d80a85a0f4c43d"
+      "sha256": "84d4394ec657ed8a7b85795db6ceaa4110754caa6ab3817bbc9c1f4b21b5d11c"
     },
     {
       "path": "library/explorer-core/test/hudScale.test.ts",
@@ -8803,11 +8832,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Button.module.css",
-      "sha256": "eb45c86cd3fe22ad59058c314ff8920aaaa9addc48abb72de9c5f0ed7f43688d"
+      "sha256": "ad08b3dd63396c9db26fc3dc7ae2734287e7ee46da20114dcbf65b718f2bf624"
     },
     {
       "path": "library/ui/apps/hud/design/Button.tsx",
-      "sha256": "7b9474b5854b9c2f6951b81a7691e45ba12834b6963348fbe1bae36cd7a3432b"
+      "sha256": "4d9a42eb909a8b650cc2f03d2070d3a33c19e1b2f19ef5874474fe728555ae59"
     },
     {
       "path": "library/ui/apps/hud/design/CharCounter.module.css",
@@ -9063,7 +9092,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "9ddc6f3ff0bf293267e910d4d185a1459f9299465be5f613d14be92c8da275b0"
+      "sha256": "9dd8e4bd0874257710125b7dcaafb802db7fcd0bf9c715e4faad10a2e85c9309"
+    },
+    {
+      "path": "library/ui/apps/hud/design/ShowcaseIndex.ts",
+      "sha256": "89b6c71c990c4dadf95a0e4fe64a976a3ae50324c3f4739e1dfc066c49bea9f8"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
@@ -9219,11 +9252,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "228d230d44a31f95e3478456084395be2291c7168b79fd1fef8dabda32bf4664"
+      "sha256": "1f5de8f949194fbfd4d42c50b4c45b16edd1b5b39aa724d4226b97db56badfd5"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "9e2a5ba39b5dacc6341bd320342c2a2d01c9589e86c821db44466748e673052a"
+      "sha256": "8475f4605ef40263c772068a820334a9ecbeef3165e50bbd9e0fa3208bd6f4c8"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ChatIcons.tsx",
@@ -9231,7 +9264,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
-      "sha256": "ae9e54ddec41bc5afcab1fab9c27d032567cdd100ce068d5bf1429cc1f98fb05"
+      "sha256": "c2350af99be1724fbabdf417fbb4af634a1fbb523d4300a3f115f3b35c742eba"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
@@ -9239,7 +9272,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "26ed3ee826b77fb4ed12f00aacdc7f086ec4c1c3bf0f5dc6486fe3aba7a34ae2"
+      "sha256": "bfa5594abae4426274539a5434258d1eb3d54367671d0742f41f2296f15246a5"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
@@ -9251,7 +9284,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiButton.tsx",
-      "sha256": "2b16fd9e2de0b8d079ee05a8458270ded4ae25a39f2b3f0dc95cdef5a2cec3e8"
+      "sha256": "65a756b83d9cae6bc5262810dee648fea096060c7dc8fcd89465b99eedcd49c3"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
@@ -9259,7 +9292,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
-      "sha256": "e97f7ec6c5bd6824da56d6a4d2a207d93eebc5a614f2aa34ba930e439df24def"
+      "sha256": "3bc7d29786e7a9a4534d3cda8e1af72e45b75bc60b67a3f7559c1285265a2b68"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiSuggestList.module.css",
@@ -9291,7 +9324,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatText.tsx",
-      "sha256": "d36b255137604cc2c16a4b74e8ba9aec3b4236836b7acc9175aecafef5bfdce2"
+      "sha256": "967b6d836c7e2d11cbdd3182989139e54b46e1467f4b3a5bdac1e9fe04e1e1fe"
     },
     {
       "path": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
@@ -9323,7 +9356,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/Announcements.tsx",
-      "sha256": "8c5c56628ede1c581c94d6137b2986fac4d2fe3352ee88d2313f4115d14d6dd4"
+      "sha256": "3251d394e5300b149c4108080f069f3a97730d814345b4d2ac1f82801c9b07c7"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
@@ -9343,11 +9376,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "8d6ab062285496a52d1f902464253a96b165921b781d12b00d8daf1a15f6f008"
+      "sha256": "7a47c01f6759392520ef603f9465605f5af279cc7199d601a21119c5b8ffa409"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "ee424616c8142c8e83912220d6cd7731ef24349042715e53078bbecbc0187991"
+      "sha256": "0840c9f8109736de1af3855293fe08ea5a0fc6d3879501924dcd564fbcf4a504"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -10010,6 +10043,10 @@
       "sha256": "a00a8ea4080c8fa8da77b02e390f0f2baf2587a2e6bd766a20401c8a0d7f9a9f"
     },
     {
+      "path": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "sha256": "a8dd4968188d565abe4fee510d55101b2f9c6b9b0cb20b229fe6619ff238f64a"
+    },
+    {
       "path": "library/ui/apps/hud/features/places/PlaceCard.module.css",
       "sha256": "955d0a076ffc8353c1fddf063269f23138b5b95a4c3e0f07f6ed164fb8e50f10"
     },
@@ -10023,7 +10060,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "9fea72bf43faee9f1643b72220d592982cab7ff578dcc31b65297e1846c12492"
+      "sha256": "fb4fdf65096cc59f269b4f9a4a8efd3c04f57801144ab17dfe3a94d7ea212d25"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -10035,7 +10072,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "sha256": "c781d57c3aa1c5738404293ef53786d4c95723f118199014e05d304527e13e4d"
+      "sha256": "4479917e3dfd577296e8a51ed345a79b18dfd2a5bcd0c6c85afebebd20415dd4"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesPicker.module.css",
@@ -10163,7 +10200,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "7c83f286d6fcb27a2249454418b39ab5fcaeab07e563e01904b7636208ab3cc7"
+      "sha256": "26671dcf3f06e971bcc72daf5f0e1d18c7e64f9cf33f4a434053082491f0b4fa"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10434,8 +10471,12 @@
       "sha256": "7606cc4147d22a04c17c27b0792f393c217b1f8c87d883e62180acc9a4a26036"
     },
     {
+      "path": "library/ui/apps/hud/styles/page.css",
+      "sha256": "6523103501d22d23cb46c7a779d0266992d75159c1a98201dc7dba0933d19cf7"
+    },
+    {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "8590e76474511e9aebd9b32a200136d84800353d00eaac6637cd7b98c459bac9"
+      "sha256": "6db5d8eda817cb9e7c1530a5d5263c1747d9daefc9f16c089c7823d4b4a273eb"
     },
     {
       "path": "library/ui/apps/hud/test/armedButton.test.tsx",
@@ -10458,8 +10499,12 @@
       "sha256": "0ff4076d5e415178ab088270681186aeb6ae90979fb6756f0bbaac62256e3de5"
     },
     {
+      "path": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "sha256": "522bb35c14d8e7f3f591f35c95cfaff3434aa4d8f894d14e96ae308da3886c97"
+    },
+    {
       "path": "library/ui/apps/hud/test/chatText.test.ts",
-      "sha256": "94b66c992600523352309fbe97b89a54c36148d6b112b6c30665ef9beb60bbee"
+      "sha256": "23e9d1606174f80044818121afb38d39e3d69c29b3ed0225677c54708c64bd25"
     },
     {
       "path": "library/ui/apps/hud/test/colorPicker.test.tsx",
@@ -10587,11 +10632,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chat.test.tsx",
-      "sha256": "2b7b8eb367836fd1256bb63a0c183d5115a2e6948e92cfdfb3beca63f1a17704"
+      "sha256": "6af91e8fd265f7c714534fb93dbf63a92401a6b5954a22c90b9bcd7c01f3cff4"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/chatTranslation.test.tsx",
-      "sha256": "2442b196641ec0d749600aebbf732e84aa3605d0f613fd94f898c9a0791f8689"
+      "sha256": "abc75106488d4ed2bd1f6bedab34c7c1d3c2c10fe62b6cd21f335d00826ea3ef"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/clicks.test.tsx",
@@ -10599,11 +10644,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
-      "sha256": "edd8566f3455f44928b96ebdb7749488eda3566b9fa6657115fee04de403e003"
+      "sha256": "925e52c27a75017129b9bbdc7062e63e8a20186895d1f8f6b0eb2fe98a6bffb9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
-      "sha256": "4e435d3b33fbe479ae7b1efe90bafc64aefa9a8cde4399221faec1646a994ad6"
+      "sha256": "e96ac43ff6d4756a921ee6353289bcc402f4480a7dfca948e2f4d5e0ad0aecf6"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
@@ -10619,7 +10664,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
-      "sha256": "6c946efb5de21992786f6f532696f3166dac3c7d55f25a99dceee4d2c8337a21"
+      "sha256": "ad8afe5ae9b7453f27d9d0c49e1071754bd411d8dab663eec57183ac8205de81"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
@@ -10847,7 +10892,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "70f5f99bc75d39ca6ce2ab8c71b289ca6497a07f63b77a31d9df5ac1468fc0c8"
+      "sha256": "fd680a4191fcf3a9d4fb6a06372cd66abfdb6be9ef1a0ba7e811dec1709ecb4b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",
@@ -11687,6 +11732,21 @@
     },
     {
       "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
+      "to": "library/explorer-core/engine/mention.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/features/chat/translation.ts",
       "to": "library/explorer-core/features/chat/chatParse.ts",
       "kind": "native:runtime"
     },
@@ -16007,17 +16067,32 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/explorer-core/lib/identity.ts",
+      "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/explorer-core/lib/identity.ts",
+      "to": "library/explorer-core/lib/hudScale.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/explorer-core/lib/identity.ts",
+      "to": "library/explorer-core/lib/hudScale.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/silhouette-1.webp",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/silhouette-1.webp",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/backpack/silhouette-1.webp",
       "kind": "test:runtime"
     },
     {
@@ -16082,6 +16157,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/lobby/default-profile-thumbnail.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
       "kind": "native:runtime"
     },
@@ -16097,647 +16187,32 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/AnchoredMenu.tsx",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
       "kind": "test:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "production:runtime"
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ArmedButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Avatar.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Button.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Button.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Button.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Checkbox.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Chip.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CodeInput.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ColorPicker.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ControlButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/CountBadge.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DateField.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DclLogo.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DclLogo.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/DclLogo.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/EquippedItemCard.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Glyphs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HeaderButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/HintsButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/IconButton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/LogoPattern.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/LogoPattern.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/LogoPattern.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MaskIcon.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/MenuPanel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/OptionMenu.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Pager.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Pager.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Pager.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Panel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Rail.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Rail.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Rail.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Select.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Skeleton.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Slider.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Spinner.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Spinner.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Spinner.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SubmitField.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tabs.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextArea.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextArea.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextArea.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/TextInput.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toast.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toggle.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toggle.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Toggle.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/Tooltip.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/VoiceBars.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/WearableCard.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/icons.tsx",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Showcase.tsx",
-      "to": "library/ui/apps/hud/design/popups.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -21763,6 +21238,36 @@
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/ui/apps/hud/features/friends/friendDialogs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "kind": "test:runtime"
     },
     {
@@ -31081,6 +30586,291 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/home.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/explorer-core/features/places/placesApi.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/link-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/events/x-icn.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/map/panel/share.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceDetail.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/places/placeDetailFormat.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/places/PlaceCard.tsx",
       "to": "library/explorer-core/features/places/placesApi.ts",
       "kind": "native:runtime"
@@ -31157,36 +30947,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/home.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/explorer-core/features/map/mapApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/explorer-core/features/map/navigation.ts",
       "kind": "native:runtime"
     },
@@ -31232,36 +30992,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/link-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/link-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/link-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/x-icn.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/x-icn.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/events/x-icn.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/icons/layer-poi.png",
       "kind": "native:runtime"
     },
@@ -31288,126 +31018,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/default-place.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/dislike-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/favourite-solid.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/home-solid.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/jump-in.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-outline.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/like-solid.png",
       "kind": "test:runtime"
     },
     {
@@ -31453,36 +31063,6 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/assets/map/panel/players.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/share.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/share.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/map/panel/share.png",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "to": "library/ui/apps/hud/assets/places/dislike-solid.png",
       "kind": "test:runtime"
     },
     {
@@ -31588,6 +31168,21 @@
     {
       "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
       "to": "library/ui/apps/hud/features/map/mapArt.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
       "kind": "test:runtime"
     },
     {
@@ -31772,21 +31367,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
-      "to": "library/explorer-core/features/places/placesApi.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "native:runtime"
     },
@@ -31813,6 +31393,21 @@
     {
       "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MenuBackdrop.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/places/PlacesPage.tsx",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
       "kind": "test:runtime"
     },
     {
@@ -38098,6 +37693,21 @@
     {
       "from": "library/ui/apps/hud/test/cancelKey.test.ts",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/chatMessageText.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/chatText.tsx",
       "kind": "test:runtime"
     },
     {
@@ -39377,6 +38987,21 @@
     },
     {
       "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
+      "to": "library/ui/apps/hud/features/chat/emojiData.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
       "to": "library/ui/apps/hud/features/communities/Announcements.tsx",
       "kind": "native:runtime"
     },
@@ -39433,6 +39058,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/communities.announcements.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
+      "to": "library/explorer-core/features/map/mapApi.ts",
       "kind": "test:runtime"
     },
     {
@@ -39733,6 +39373,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/communities.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -45677,6 +45332,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
+      "to": "library/ui/apps/hud/styles/page.css",
+      "kind": "native:css"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
+      "to": "library/ui/apps/hud/styles/page.css",
+      "kind": "production:css"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/src/styles/global.css",
       "to": "library/ui/apps/hud/styles/tokens.css",
       "kind": "native:css"
     },
@@ -47027,6 +46692,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/ShowcaseIndex.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Skeleton.tsx",
       "kind": "type"
     },
@@ -47787,6 +47457,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/places/PlaceActions.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/places/PlaceCard.tsx",
       "kind": "type"
     },
@@ -48168,6 +47843,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/cancelKey.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/chatMessageText.test.tsx",
       "kind": "type"
     },
     {

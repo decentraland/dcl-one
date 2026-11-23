@@ -108,14 +108,16 @@ pub fn is_credits_manager(chain_id: ChainId, target: Address) -> bool {
 }
 
 /// The typed routes a manager on `chain_id` executes through: its immutable
-/// `legacyMarketplace` and `collectionStore` and its allowed `marketplaces`
-/// (docs/shop/CONTRACTS.md, "Deployed state").
+/// `legacyMarketplace` and `collectionStore`, its allowed `marketplaces`
+/// (docs/shop/CONTRACTS.md, "Deployed state"), and the chain's MANA token,
+/// the one it credits and pulls a buyer's MANA in (`mana`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManagerRoutes {
     pub chain_id: ChainId,
     pub legacy_marketplace: Address,
     pub collection_store: Address,
     pub marketplaces: &'static [Address],
+    pub mana: Address,
 }
 
 pub fn manager_routes(chain_id: ChainId) -> Option<ManagerRoutes> {
@@ -135,12 +137,14 @@ pub fn manager_routes(chain_id: ChainId) -> Option<ManagerRoutes> {
             legacy_marketplace: address!("0x480a0f4e360e8964e68858dd231c2922f1df45ef"),
             collection_store: address!("0x214ffc0f0103735728dc66b61a22e4f163e275ae"),
             marketplaces: &POLYGON_MARKETPLACES,
+            mana: address!("0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4"),
         }),
         ChainId::AMOY => Some(ManagerRoutes {
             chain_id,
             legacy_marketplace: address!("0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0"),
             collection_store: address!("0xe36abc9ec616c83caaa386541380829106149d68"),
             marketplaces: &AMOY_MARKETPLACES,
+            mana: address!("0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0"),
         }),
         _ => None,
     }
@@ -722,6 +726,34 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         );
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_managers_mana_is_the_venue_books_mana() {
+        let production = crate::mana::venues::Book::production(|_| None);
+        let testnet = crate::mana::venues::Book::testnet(|_| None);
+        for (chain_id, book) in [(ChainId::POLYGON, &production), (ChainId::AMOY, &testnet)] {
+            assert_eq!(
+                manager_routes(chain_id).map(|r| r.mana),
+                book.chain(chain_id).map(|c| c.mana),
+                "{chain_id}"
+            );
+        }
+        let reads: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(format!(
+                "{}/../tests/fixtures/shop/chain-reads.json",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            manager_routes(ChainId::POLYGON).map(|r| format!("{:#x}", r.mana)),
+            reads["polygon"]["creditsManager"]["mana"]
+                .as_str()
+                .map(str::to_string),
+            "the MANA the pinned CreditsManager reads on chain"
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { revealTab } from './reveal-tab'
 
@@ -22,29 +22,57 @@ function barWith(tab: Box, scrollLeft: number) {
 afterEach(() => document.body.replaceChildren())
 
 describe('revealTab', () => {
-  it('scrolls the bar until a tab past its end edge is inside it, with the gutter beside it', () => {
-    const { bar, link } = barWith({ left: 420, right: 560 }, 0)
+  let bar: HTMLElement
+  let link: HTMLElement
 
-    revealTab(link)
+  describe('when the tab is past the end edge of the bar', () => {
+    beforeEach(() => {
+      ;({ bar, link } = barWith({ left: 420, right: 560 }, 0))
+    })
 
-    expect(bar.scrollLeft).toBe(560 - 300 + 16)
+    it('should scroll the bar until the tab is inside it, with the gutter beside it', () => {
+      revealTab(link)
+
+      expect(bar.scrollLeft).toBe(560 - 300 + 16)
+    })
   })
 
-  it('scrolls the bar back for a tab before its start edge', () => {
-    const { bar, link } = barWith({ left: 100, right: 180 }, 200)
+  describe('when the tab is before the start edge of the bar', () => {
+    beforeEach(() => {
+      ;({ bar, link } = barWith({ left: 100, right: 180 }, 200))
+    })
 
-    revealTab(link)
+    it('should scroll the bar back to the tab, with the gutter beside it', () => {
+      revealTab(link)
 
-    expect(bar.scrollLeft).toBe(100 - 16)
+      expect(bar.scrollLeft).toBe(100 - 16)
+    })
   })
 
-  it('leaves the bar alone for a tab already inside it, and does nothing without a tab or a bar', () => {
-    const { bar, link } = barWith({ left: 40, right: 120 }, 0)
+  describe('when the tab is already inside the bar', () => {
+    beforeEach(() => {
+      ;({ bar, link } = barWith({ left: 40, right: 120 }, 0))
+    })
 
-    revealTab(link)
-    revealTab(null)
-    revealTab(document.createElement('a'))
+    it('should leave the bar alone', () => {
+      revealTab(link)
 
-    expect(bar.scrollLeft).toBe(0)
+      expect(bar.scrollLeft).toBe(0)
+    })
+
+    describe('and there is no tab or the tab has no bar', () => {
+      let orphan: HTMLAnchorElement
+
+      beforeEach(() => {
+        orphan = document.createElement('a')
+      })
+
+      it('should do nothing', () => {
+        revealTab(null)
+        revealTab(orphan)
+
+        expect(bar.scrollLeft).toBe(0)
+      })
+    })
   })
 })

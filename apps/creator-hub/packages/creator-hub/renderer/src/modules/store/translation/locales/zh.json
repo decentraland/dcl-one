@@ -52,10 +52,13 @@
         "retry": "重试",
         "outdated_deps": "此场景的依赖项已过时，不支持 Bevy 渲染器。请更新它们以继续。",
         "update_deps": "更新依赖项",
-        "data_layer_crashed": "场景反复意外停止。请返回并重新打开，或查看日志。"
+        "data_layer_crashed": "场景反复意外停止。请重试、返回并重新打开，或查看日志。"
       }
     },
+    "realm_server_restarting": "多人服务器意外停止。正在重新启动，编辑器将重新加载。",
+    "realm_server_unavailable": "多人服务器无法在此电脑上运行，场景将在没有它的情况下运行。",
     "realm_restarted": "场景意外停止，已重新加载。最近几秒的更改可能未保存。",
+    "realm_restart_failed": "重新启动场景失败。正在重试。",
     "header": {
       "actions": {
         "code": "代码",
@@ -178,6 +181,15 @@
         "needs_login_managed_help": "即使显示为已连接，其保存的登录状态也可能已过期。请在“设置 → AI”中点击“退出登录”，然后点击“登录”，再重新发送你的消息。",
         "api_key_alternative": "或者使用 API 密钥：设置 {envVar}，并在“设置 → AI”中开启“{setting}”。"
       },
+      "recording": {
+        "chip": "会话录制 · {duration} · {actions} 个操作",
+        "chip_no_speech": "会话录制 · {duration} · {actions} 个操作（无语音）",
+        "remove": "丢弃录制",
+        "attachment": "会话录制 {duration}",
+        "chip_many": "{count} 段录制 · {duration} · {actions} 个操作",
+        "chip_many_no_speech": "{count} 段录制 · {duration} · {actions} 个操作（无语音）",
+        "attachment_many": "{count} 段录制 {duration}"
+      },
       "sharing": {
         "card_title": "帮助改进 AI 助手",
         "card_body": "与 Decentraland 分享你的对话，帮助改进助手。AI 模型会阅读这些对话，找出哪些有效、哪些无效。发送前，你的电脑会移除密钥、助记词、邮箱和其他常见个人信息。",
@@ -203,6 +215,46 @@
     },
     "publish": {
       "save_failed": "发布前无法保存你的场景，已停止发布以免部署旧内容。{reason}"
+    },
+    "recording": {
+      "record": "录制",
+      "record_panel": "录制语音和操作",
+      "stop": "停止录制",
+      "stop_with_time": "停止 · {time} / {limit}",
+      "live": "正在录制",
+      "discard": "放弃录制",
+      "discard_confirm": {
+        "title": "放弃这段录制？",
+        "body": "录制将停止，已记录的内容会被删除。此操作无法撤销。",
+        "cancel": "继续录制",
+        "confirm": "放弃"
+      },
+      "starting": "正在开始…",
+      "transcribing": "正在转写…",
+      "downloading": "正在下载语音模型… {percent}%",
+      "default_mic": "系统默认麦克风",
+      "tooltip_idle": "为 AI 助手录制你说的话和你的操作，最长 {minutes} 分钟。使用系统默认麦克风；如需使用其他麦克风，请在系统声音设置中更改输入设备。",
+      "tooltip_live": "正在通过 {mic} 录制；{minutes} 分钟后会自动停止。如需使用其他麦克风，请在系统声音设置中更改输入设备后重新录制。",
+      "error": "无法录制：{message}",
+      "no_transcript": "无法转写你的语音。录制仍包含你的所有操作。",
+      "limit_reached": "录制已在 {minutes} 分钟上限处停止。转写完成后会立即发送。",
+      "consent": {
+        "title": "为 AI 助手录制一段会话",
+        "intro": "边工作边说话。Creator Hub 会同时录制你的声音和编辑器操作，帮助 AI 助手结合上下文理解你的指令。例如，指着一个实体说“删除这个”，助手就能准确知道你指的是什么。",
+        "what_title": "会录制哪些内容？",
+        "what": "你的声音、鼠标移动、点击、选择、悬停、菜单、搜索、编辑以及编辑器中的其他操作。",
+        "local_title": "你的数据保存在你的电脑上",
+        "local": "只有在<b>录制</b>按钮开启时才会录制。关闭项目或 Creator Hub 会立即停止录制。",
+        "stored": "你的音频、操作记录和语音转写都保存在你的电脑上。发送录制时，只有转写文本和操作记录会发送给你的 AI 服务商，不包括音频。",
+        "first_title": "首次录制之前",
+        "download": "Creator Hub 会下载一个语音转文字模型（约 {size} MB）。",
+        "microphone": "录制使用系统默认麦克风。你可以在系统声音设置中更改。",
+        "cancel": "取消",
+        "accept": "知道了"
+      },
+      "microphone_lost": "麦克风已断开，录制已停止。转写完成后会立即发送。",
+      "record_tooltip": "录制语音和操作",
+      "send": "停止并发送"
     }
   },
   "scene_list": {
@@ -866,6 +918,7 @@
     "generic": {
       "import_scene": "导入场景...",
       "import_scene_failed": "场景导入失败",
+      "watchlist_not_saved": "无法保存你的关注列表。关闭应用后此更改将丢失。",
       "import_scene_already_imported": "场景已导入",
       "duplicate_scene": "复制场景...",
       "duplicate_scene_failed": "复制场景失败",
@@ -904,6 +957,13 @@
       "actions": {
         "view": "版本",
         "discard_all": "全部丢弃"
+      }
+    },
+    "realm_server_stopped": {
+      "title": "多人服务器反复停止，场景将在没有它的情况下运行。重试会重新启动它并重新加载编辑器。",
+      "actions": {
+        "dismiss": "关闭",
+        "retry": "重试"
       }
     },
     "external_agent_access": {

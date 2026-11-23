@@ -1770,9 +1770,25 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
           })
           .filter((m) => m != null),
-        // the mock user owns this one, so an owner or moderator can delete it from the card
+        // the mock user owns the first, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+          {
+            id: 'pl1',
+            title: 'Music Festival Main Stage',
+            thumbnail: 'https://picsum.photos/seed/mfest/420/260',
+            positions: '-66,56',
+            likeRate: 1,
+            isMine: true,
+            detail: { id: 'pl1', title: 'Music Festival Main Stage', description: '', image: 'https://picsum.photos/seed/mfest/420/260', positions: ['-66,56'], base_position: '-66,56', owner: null, like_rate: 1, user_like: true }
+          },
+          {
+            id: 'pl2',
+            title: 'Art Week World',
+            thumbnail: 'https://picsum.photos/seed/artweek/420/260',
+            positions: 'artweek.dcl.eth',
+            likeRate: 0.5,
+            detail: { id: 'pl2', title: 'Art Week World', description: '', image: 'https://picsum.photos/seed/artweek/420/260', positions: ['0,0'], owner: null, world: true, world_name: 'artweek.dcl.eth', like_rate: 0.5 }
+          }
         ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,

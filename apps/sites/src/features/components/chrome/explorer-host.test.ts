@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import type { CreatorHubHost } from "@ui/creatorhub/explorer-host";
+import type { CreatorHubHost } from "@web-core/creator-hub-host";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 
 const explorer: AuthIdentity = {
@@ -146,7 +146,7 @@ it("takes the wallet cookie back for a website tab whenever it is used after the
   const win = framedBy(undefined);
   vi.stubGlobal("window", win);
   const session = await import("@/data/lib/auth/session");
-  const { scopeWalletCookie } = await import("@ui/creatorhub/explorer-host");
+  const { scopeWalletCookie } = await import("@web-core/creator-hub-host");
   session.resyncWalletCookie();
   const off = session.claimWalletCookieOnUse(win as unknown as Window);
   const explorerTab = { cookie: "", location: { protocol: "https:" } };
