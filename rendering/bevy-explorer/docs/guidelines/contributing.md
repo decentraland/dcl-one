@@ -129,7 +129,8 @@ this engine's design using its requirements and tests.
 
 ## Before pushing
 
-- Merge main first. CI tests the merge, not the branch.
+- Update the branch from `main` before pushing. Before merging, follow
+  [PR merge verification](../../../../docs/pr-merge-verification.md).
 - `cargo fmt --all`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
   `cargo test --all`. Clippy warnings are errors in CI. `common`'s tests read the patched Bevy
   tree: write it first, from the repository root, with

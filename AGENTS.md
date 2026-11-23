@@ -12,6 +12,7 @@
 - Tracked documentation must stand alone without local plans or private ledger exports.
 - For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
+- Before merging a PR or enabling auto-merge, follow [PR merge verification](docs/pr-merge-verification.md).
 
 For formal verification of LiveKit or networking decisions, or maintenance of
 their proof evidence, use
