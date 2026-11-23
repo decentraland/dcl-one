@@ -79,13 +79,19 @@ fn style_tag_len(text: &str) -> Option<usize> {
     }
 }
 
+/// What a tag styles. Each indexes its own flag of a `[bool; 2]`.
+#[derive(Clone, Copy)]
+enum Style {
+    Bold,
+    Italic,
+}
+
 /// A bold or italic tag of a message, or the text between two.
 enum Piece<'a> {
     Text(&'a str),
     Tag {
         text: &'a str,
-        /// 0 for bold, 1 for italic.
-        style: usize,
+        style: Style,
         close: bool,
     },
 }
@@ -109,7 +115,11 @@ fn pieces(message: &str) -> Vec<Piece<'_>> {
         let letter = if close { 2 } else { 1 };
         pieces.push(Piece::Tag {
             text,
-            style: usize::from(text.as_bytes()[letter] == b'i'),
+            style: if text.as_bytes()[letter] == b'i' {
+                Style::Italic
+            } else {
+                Style::Bold
+            },
             close,
         });
         at = start + len;
@@ -135,20 +145,17 @@ fn styling(pieces: &[Piece]) -> Vec<bool> {
             Piece::Text(_) => ahead = [true; 2],
             Piece::Tag {
                 style, close: true, ..
-            } => ahead[style] = false,
-            Piece::Tag { style, .. } => styles[index] = ahead[style],
+            } => ahead[style as usize] = false,
+            Piece::Tag { style, .. } => styles[index] = ahead[style as usize],
         }
     }
     let mut on = [false; 2];
     for (styles, piece) in styles.iter_mut().zip(pieces) {
         if let Piece::Tag { style, close, .. } = *piece {
-            *styles = if close {
-                on[style]
-            } else {
-                !on[style] && *styles
-            };
+            let on = &mut on[style as usize];
+            *styles = if close { *on } else { !*on && *styles };
             if *styles {
-                on[style] = !close;
+                *on = !close;
             }
         }
     }
@@ -164,6 +171,9 @@ pub(crate) struct BubbleText {
     /// The byte offsets in `text` where a tag stood, in order. A tag ends a word as a space
     /// does, so a link beside one is coloured as the HUD reads it.
     breaks: Vec<usize>,
+    /// The byte ranges of `text` holding a tag shown as written, in order. Nothing in one is
+    /// a link: the HUD reads the whole tag as plain text.
+    shown: Vec<Range<usize>>,
 }
 
 /// `message` on one line, without the bold and italic tags that style its text, and at most
@@ -173,14 +183,16 @@ pub(crate) fn bubble_text(message: &str, max: usize) -> BubbleText {
     let pieces = pieces(message);
     let mut text = String::with_capacity(message.len());
     let mut breaks = Vec::new();
+    let mut shown = Vec::new();
     for (piece, styles) in pieces.iter().zip(styling(&pieces)) {
         match *piece {
             Piece::Text(piece) => text.extend(piece.chars().map(one_line)),
             Piece::Tag { .. } if styles => breaks.push(text.len()),
             Piece::Tag { text: tag, .. } => {
-                breaks.push(text.len());
+                let start = text.len();
                 text.extend(tag.chars().map(one_line));
-                breaks.push(text.len());
+                breaks.extend([start, text.len()]);
+                shown.push(start..text.len());
             }
         }
     }
@@ -188,9 +200,17 @@ pub(crate) fn bubble_text(message: &str, max: usize) -> BubbleText {
         text.truncate(cut);
         text.truncate(text.trim_end().len());
         breaks.retain(|at| *at < text.len());
+        shown.retain_mut(|tag| {
+            tag.end = tag.end.min(text.len());
+            tag.start < tag.end
+        });
         text.push('…');
     }
-    BubbleText { text, breaks }
+    BubbleText {
+        text,
+        breaks,
+        shown,
+    }
 }
 
 /// A chat message to show over its sender's nametag. Nothing is shown for a sender with no
@@ -320,9 +340,19 @@ fn is_url(word: &str) -> bool {
         && labels.all(label)
 }
 
-/// The message's links: URLs, parcel coordinates and @mentions.
-fn links<'a>(message: &'a str, breaks: &'a [usize]) -> impl Iterator<Item = Range<usize>> + 'a {
+/// The message's links: URLs, parcel coordinates and @mentions. A word of a tag shown as
+/// written is none.
+fn links(message: &BubbleText) -> impl Iterator<Item = Range<usize>> + '_ {
+    let BubbleText {
+        text: message,
+        breaks,
+        shown,
+    } = message;
     words(message, breaks).filter_map(move |word| {
+        let tag = shown.partition_point(|tag| tag.end <= word.start);
+        if shown.get(tag).is_some_and(|tag| tag.start <= word.start) {
+            return None;
+        }
         let text = &message[word.clone()];
         let len = if is_url(text) {
             text.len()
@@ -335,13 +365,11 @@ fn links<'a>(message: &'a str, breaks: &'a [usize]) -> impl Iterator<Item = Rang
 
 /// The message as coloured runs: its links stand out.
 pub(crate) fn message_spans(message: &BubbleText) -> Vec<Span> {
-    let BubbleText {
-        text: message,
-        breaks,
-    } = message;
+    let links = links(message);
+    let message = &message.text;
     let mut spans = Vec::new();
     let mut at = 0;
-    for link in links(message, breaks) {
+    for link in links {
         if link.start > at {
             spans.push(Span::new(&message[at..link.start], TEXT_COLOR));
         }
@@ -590,6 +618,22 @@ mod tests {
         assert_eq!(
             colours("hi</b>@Ada"),
             [("hi</b>".to_owned(), false), ("@Ada".to_owned(), true)]
+        );
+        // and what stands in its brackets is no link
+        for plain in ["a <b @Ada x>", "a <b https://dcl.org/ >", "<i 10,20 ></i>"] {
+            assert_eq!(colours(plain), [(plain.to_owned(), false)], "{plain}");
+        }
+        assert_eq!(
+            colours("</b @Ada >@Ada"),
+            [("</b @Ada >".to_owned(), false), ("@Ada".to_owned(), true)]
+        );
+        // cut inside such a tag, what is left of it still is none
+        assert_eq!(
+            colours(&format!("{}<b @Ada x>", "x".repeat(MAX_MESSAGE_CHARS - 8))),
+            [(
+                format!("{}<b @Ada…", "x".repeat(MAX_MESSAGE_CHARS - 8)),
+                false
+            )]
         );
         // whitespace as the HUD reads it
         assert_eq!(

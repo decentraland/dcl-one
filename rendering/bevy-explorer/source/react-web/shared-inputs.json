@@ -6696,7 +6696,7 @@
     },
     {
       "path": "library/explorer-core/features/chat/chatParse.ts",
-      "sha256": "2055edeb1d6f2ba040d95bc2a8bcd8a60b51b2040349417d9ac72751b5aba541"
+      "sha256": "fa145fec763af48e16b421b693e57b0be54dcd0eee2f381e9f55ef2994a76d0e"
     },
     {
       "path": "library/explorer-core/features/chat/lineIds.test.ts",

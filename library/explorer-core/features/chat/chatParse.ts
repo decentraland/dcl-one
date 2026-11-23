@@ -14,10 +14,10 @@ export type Token =
   | { type: 'tag'; value: string; style: 'b' | 'i'; close: boolean }
 
 // Tag → URL → world name → location (x,y) → @mention, scanned in one pass to keep original order.
-// The tags are the two the Unity client's chat also styles; any other tag is text. Worlds are ENS names (e.g. boedo.dcl.eth) → clickable "jump to realm". Coords
-// require both signs/commas so we don't linkify every number; mentions use the shared
-// MENTION_PATTERN. The scan is case-sensitive, for the tags and the mentions' own boundaries: the
-// URL scheme and the world suffix spell out either case.
+// Bold and italic are the only tags; any other tag is text. Worlds are ENS names (e.g.
+// boedo.dcl.eth) → clickable "jump to realm". Coords require both signs/commas so we don't linkify
+// every number; mentions use the shared MENTION_PATTERN. The scan is case-sensitive, for the tags
+// and the mentions' own boundaries: the URL scheme and the world suffix spell out either case.
 const TOKEN_RE = new RegExp(
   String.raw`(?<tag>${STYLE_TAG_PATTERN})|(?<url>[hH][tT][tT][pP][sS]?:\/\/[^\s<>"']+)|(?<world>[A-Za-z0-9][\w-]*\.(?:[dD][cC][lL]\.)?[eE][tT][hH]\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|` + MENTION_PATTERN,
   'g'
