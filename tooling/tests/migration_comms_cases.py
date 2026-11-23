@@ -41,7 +41,7 @@ class CommsMigrationCases:
         self.sql(db, 'BEGIN;\n' + self.comms_stage('scene_ban') + self.comms_load('scene_ban') + '\nCOMMIT;')
         self.assertEqual(self.sql(db,'SELECT place_id FROM social.scene_bans ORDER BY place_id;').strip(), '0,0\ntest.eth:2,0')
 
-    def test_comms_scene_admin_keys_a_genesis_scene_on_its_stored_declared_base(self):
+    def test_comms_moderation_keys_a_genesis_scene_on_its_stored_declared_base(self):
         # Content stores metadata as {"v": metadata}; the declared base is not the least parcel.
         db = self.comms_fixture()
         place = '44444444-4444-4444-8444-444444444444'
@@ -54,8 +54,10 @@ class CommsMigrationCases:
             INSERT INTO explore.place(id,base_position,raw) VALUES
                 ('%s','5,6','{"deployment_id":"genesis-declared"}');
         ''' % place)
-        self.sql(db, 'BEGIN;\n' + self.comms_stage('scene_admin', place) + self.comms_load('scene_admin') + '\nCOMMIT;')
-        self.assertEqual(self.sql(db, 'SELECT place_id FROM social.scene_admins;').strip(), '5,6')
+        for step, table in (('scene_admin', 'scene_admins'), ('scene_ban', 'scene_bans')):
+            with self.subTest(step=step):
+                self.sql(db, 'BEGIN;\n' + self.comms_stage(step, place) + self.comms_load(step) + '\nCOMMIT;')
+                self.assertEqual(self.sql(db, f'SELECT place_id FROM social.{table};').strip(), '5,6')
 
     def test_comms_moderation_aborts_on_unresolved_or_ambiguous_identity(self):
         from tooling.tests import migration_harness as harness

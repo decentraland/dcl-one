@@ -122,7 +122,7 @@ pub async fn ensure_genesis_scene_ban_release(pool: &PgPool) -> anyhow::Result<(
         "SELECT EXISTS (SELECT 1 FROM social.scene_bans b WHERE EXISTS (\
            SELECT 1 FROM content.deployments d \
             WHERE d.entity_id = b.place_id AND d.entity_type = 'scene' AND d.deleter_deployment IS NULL \
-              AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{scene,base}') IS NOT NULL))",
+              AND social.scene_base_parcel(d.entity_pointers, d.entity_metadata #>> '{v,scene,base}') IS NOT NULL))",
     )
     .fetch_one(pool)
     .await?;

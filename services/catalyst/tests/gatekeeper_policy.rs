@@ -3274,7 +3274,7 @@ mod relay_authority_policy {
              timezone('UTC', now()), '[]'::json)",
         )
         .bind(&scene)
-        .bind(sqlx::types::Json(serde_json::json!({ "scene": { "base": parcel } })))
+        .bind(sqlx::types::Json(serde_json::json!({ "v": { "scene": { "base": parcel } } })))
         .bind(vec![parcel.clone()])
         .execute(&pool)
         .await
