@@ -91,7 +91,7 @@ fn subscribe_scene_topics(mut commands: Commands, mut events: EventReader<RpcCal
 #[derive(SystemParam)]
 pub struct SceneTopicRouter<'w, 's> {
     inboxes: Query<'w, 's, &'static SceneTopicInbox>,
-    pub(crate) traffic: ResMut<'w, SceneMessageTraffic>,
+    traffic: ResMut<'w, SceneMessageTraffic>,
 }
 
 impl SceneTopicRouter<'_, '_> {
@@ -110,6 +110,24 @@ impl SceneTopicRouter<'_, '_> {
         if !delivered {
             self.traffic.receive_dropped += 1;
         }
+    }
+
+    pub(crate) fn record_banned(&mut self, is_topic: bool) {
+        self.traffic.banned_senders += 1;
+        if is_topic {
+            self.drop_topic_message();
+        }
+    }
+
+    pub(crate) fn record_invalid(&mut self, is_topic: bool) {
+        self.traffic.invalid += 1;
+        if is_topic {
+            self.drop_topic_message();
+        }
+    }
+
+    pub(crate) fn record_filtered_inbound(&mut self) {
+        self.traffic.filtered_inbound += 1;
     }
 
     pub(crate) fn drop_topic_message(&mut self) {

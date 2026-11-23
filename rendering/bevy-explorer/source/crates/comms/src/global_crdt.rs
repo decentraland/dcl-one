@@ -1380,8 +1380,9 @@ impl SceneMessageBus<'_, '_> {
         transport: Entity,
         authoritative: bool,
     ) {
+        let is_topic = scene.data.first() == Some(&(CommsMessageType::CommsData as u8));
         if !self.scene_rooms.carries(transport, &scene.scene_id) {
-            if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
+            if is_topic {
                 self.scene_topics.drop_topic_message();
             }
             return;
@@ -1392,10 +1393,7 @@ impl SceneMessageBus<'_, '_> {
             authoritative || self.preview.is_preview || self.realm.is_local(),
         ) {
             crate::scene_messages::PeerTrust::Banned => {
-                self.scene_topics.traffic.banned_senders += 1;
-                if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
-                    self.scene_topics.drop_topic_message();
-                }
+                self.scene_topics.record_banned(is_topic);
                 return;
             }
             crate::scene_messages::PeerTrust::Peer => false,
@@ -1403,14 +1401,11 @@ impl SceneMessageBus<'_, '_> {
         };
         let Some(filtered) = crate::scene_messages::filter_scene_message(&scene.data, trusted)
         else {
-            self.scene_topics.traffic.invalid += 1;
-            if scene.data.first() == Some(&(CommsMessageType::CommsData as u8)) {
-                self.scene_topics.drop_topic_message();
-            }
+            self.scene_topics.record_invalid(is_topic);
             return;
         };
         if let std::borrow::Cow::Owned(filtered) = filtered {
-            self.scene_topics.traffic.filtered_inbound += 1;
+            self.scene_topics.record_filtered_inbound();
             scene.data = filtered;
         }
         let Some((&kind, _)) = scene.data.split_first() else {

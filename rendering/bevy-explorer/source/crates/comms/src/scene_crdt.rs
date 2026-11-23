@@ -16,7 +16,7 @@ const AUTHORITATIVE_PUT_COMPONENT: u32 = 8;
 
 /// Filters SDK CRDT traffic inside a binary scene message. Other binary tags are opaque.
 /// A malformed CRDT envelope or record drops the whole packet.
-pub fn filter_scene_crdt(payload: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>> {
+pub(crate) fn filter_scene_crdt(payload: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>> {
     let body_offset = match payload.first().copied() {
         Some(CRDT_BATCH) => 1,
         Some(CRDT_STATE_RESPONSE) => 2 + usize::from(*payload.get(1)?),

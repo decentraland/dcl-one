@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn a_platform_refusal_cannot_replace_a_known_scene_or_world_refusal() {
+    fn a_platform_refusal_is_reported_while_scene_and_world_bans_stay_retained() {
         for (status, message, world) in [
             (403, SCENE_BANNED, false),
             (401, "You are banned from world example", true),

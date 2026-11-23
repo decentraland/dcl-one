@@ -416,8 +416,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Binary SDK CRDT batches and state responses exclude VideoControlState and the combined physics
   force/impulse components in both directions; incoming VideoPlayer edits require a trusted
   development realm, a room admin or the authoritative server. This protects the video source;
-  peers can still move, hide or delete its entity. A non-admin state response omits VideoPlayer, so late joiners need a trusted
-  sender to supply it. Filtering covers SDK envelopes 1 and 3. Auth-server SDK envelopes are
+  peers can still move, hide or delete its entity. An untrusted state response omits VideoPlayer, so late joiners need a trusted sender to
+  supply it. Filtering covers SDK envelopes 1 and 3. Auth-server SDK envelopes are
   opaque: those clients accept CRDT only from the authoritative server, but local-only component
   filtering for that generation is unverified. Malformed recognized CRDT packets are dropped.
   Outgoing binary payloads are limited to 13,269 bytes, reserving a sender-length byte and 42
