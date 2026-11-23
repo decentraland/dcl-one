@@ -62,15 +62,39 @@ pub fn registry() -> Vec<&'static Scenario> {
     all
 }
 
-/// The scenarios a selection names: one name, or every scenario carrying a tag.
+/// The scenarios a selection names: one name, every scenario carrying a tag, or all of them. A
+/// scenario that runs only by name ([`crate::engine::Needs::by_name`]) is selected by its name
+/// alone.
 pub fn select(name: Option<&str>, tag: Option<&str>, all: bool) -> Vec<&'static Scenario> {
     registry()
         .into_iter()
         .filter(|scenario| {
-            all || name.is_some_and(|name| scenario.name == name)
-                || tag.is_some_and(|tag| scenario.tags.contains(&tag))
+            name == Some(scenario.name) || (!scenario.needs.by_name && covers(scenario, tag, all))
         })
         .collect()
+}
+
+/// The scenarios the tag or `all` covers that [`select`] leaves out: they run only by name and
+/// the selection does not name them.
+pub fn left_out(name: Option<&str>, tag: Option<&str>, all: bool) -> Vec<&'static Scenario> {
+    registry()
+        .into_iter()
+        .filter(|scenario| {
+            scenario.needs.by_name && name != Some(scenario.name) && covers(scenario, tag, all)
+        })
+        .collect()
+}
+
+/// The scenarios a listing shows: those carrying the tag, or all of them.
+pub fn listed(tag: Option<&str>) -> Vec<&'static Scenario> {
+    registry()
+        .into_iter()
+        .filter(|scenario| covers(scenario, tag, tag.is_none()))
+        .collect()
+}
+
+fn covers(scenario: &Scenario, tag: Option<&str>, all: bool) -> bool {
+    all || tag.is_some_and(|tag| scenario.tags.contains(&tag))
 }
 
 #[cfg(test)]
@@ -117,9 +141,41 @@ mod tests {
     }
 
     #[test]
-    fn every_known_tag_selects_a_scenario() {
+    fn all_and_a_tag_leave_out_a_scenario_that_runs_only_by_name() {
+        let by_name = visit::CROWD_VISIT.name;
+        let names = |selection: Vec<&'static Scenario>| -> Vec<&'static str> {
+            selection
+                .into_iter()
+                .map(|scenario| scenario.name)
+                .collect()
+        };
+        let without = registry()
+            .iter()
+            .filter(|scenario| !scenario.needs.by_name)
+            .count();
+        assert_eq!(select(None, None, true).len(), without);
+        assert!(!names(select(None, None, true)).contains(&by_name));
+        for tag in visit::CROWD_VISIT.tags {
+            assert!(
+                !names(select(None, Some(tag), false)).contains(&by_name),
+                "{tag}"
+            );
+        }
+        assert_eq!(names(select(Some(by_name), None, false)), vec![by_name]);
+
+        assert_eq!(names(left_out(None, None, true)), vec![by_name]);
+        assert_eq!(names(left_out(None, Some("crowd"), false)), vec![by_name]);
+        assert!(left_out(None, Some("smoke"), false).is_empty());
+        assert!(left_out(Some(by_name), None, false).is_empty());
+        assert!(left_out(Some(by_name), None, true).is_empty());
+        assert_eq!(listed(None).len(), registry().len());
+        assert!(names(listed(Some("visit"))).contains(&by_name));
+    }
+
+    #[test]
+    fn every_known_tag_lists_a_scenario() {
         for tag in TAGS {
-            assert!(!select(None, Some(tag), false).is_empty(), "{tag}");
+            assert!(!listed(Some(tag)).is_empty(), "{tag}");
         }
     }
 }

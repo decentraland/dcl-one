@@ -138,7 +138,7 @@ fn main() -> ExitCode {
 fn run(arguments: Arguments) -> Result<ExitCode> {
     match arguments.command {
         Command::List { tag } => {
-            for scenario in scenarios::select(None, tag.as_deref(), tag.is_none()) {
+            for scenario in scenarios::listed(tag.as_deref()) {
                 print!("{}", listing(scenario));
             }
             Ok(ExitCode::SUCCESS)
@@ -167,6 +167,13 @@ fn run(arguments: Arguments) -> Result<ExitCode> {
                 other => bail!("unknown transport {other}: enet or webtransport"),
             };
             let selection = scenarios::select(scenario.as_deref(), tag.as_deref(), all);
+            for left in scenarios::left_out(scenario.as_deref(), tag.as_deref(), all) {
+                eprintln!(
+                    "comms-e2e: left out {}: {}",
+                    left.name,
+                    left.by_name_only().unwrap_or_default()
+                );
+            }
             if selection.is_empty() {
                 bail!("nothing selected: name a scenario, a --tag or --all (see `comms-e2e list`)");
             }
