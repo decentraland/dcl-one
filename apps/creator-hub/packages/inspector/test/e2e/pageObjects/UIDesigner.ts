@@ -101,12 +101,34 @@ class UIDesignerPageObject {
     );
   }
 
-  /** Deletes via the row's trash, which is only visible while the row is hovered. */
+  /** Picks `action` from the GUI row's right-click "GUI Options" menu. */
+  async rootMenuAction(name: string, action: 'Rename' | 'Duplicate' | 'Delete') {
+    const item = page.locator(`role=menu[name="GUI Options"] >> role=menuitem[name="${action}"]`);
+    await openThenSelect(this.rootRow(name), item, () => item.waitFor({ state: 'hidden' }), {
+      triggerButton: 'right',
+      opened: () => item.waitFor({ state: 'visible', timeout: 2_000 }),
+      reset: () => page.keyboard.press('Escape').catch(() => {}),
+      retries: 4,
+    });
+  }
+
+  /** Deletes through the row's GUI Options menu, the only place a GUI row offers delete. */
   async removeRoot(name: string) {
-    const row = this.rootRow(name);
-    await revealThenClick(row, row.locator(`[aria-label="Delete ${name}"]`), () =>
-      row.waitFor({ state: 'detached', timeout: 3_000 }),
+    await this.rootMenuAction(name, 'Delete');
+    await this.rootRow(name).waitFor({ state: 'detached', timeout: 3_000 });
+  }
+
+  /** Renames a node by double-clicking its row, then typing into the name field. */
+  async renameNodeByDoubleClick(label: string, next: string) {
+    const input = page.locator(`${TREE} input`).first();
+    await actUntil(
+      () => page.locator(`${this.nodeRowSelector(label)} .selectable-area`).dblclick(),
+      () => input.waitFor({ state: 'visible', timeout: 2_000 }),
     );
+    await input.press('ControlOrMeta+a');
+    await page.keyboard.type(next);
+    await page.keyboard.press('Enter');
+    await page.locator(this.nodeRowSelector(next)).waitFor({ state: 'attached', timeout: 10_000 });
   }
 
   /** Add a widget under the current selection via the Nodes "+" picker. */

@@ -32,7 +32,7 @@ import { UI_DESIGNER_DND_TYPE, type UIDesignerDragItem } from '../shared/dnd';
 import { useUINodeActions } from '../shared/useUINodeActions';
 import { useUINodeTree } from '../shared/useUINodeTree';
 import { WIDGET_ICONS } from '../shared/widget-catalog';
-import { DesktopIcon, EyeIcon, EyeOffIcon, LockIcon, TrashIcon, UnlockIcon } from '../icons';
+import { DesktopIcon, EyeIcon, EyeOffIcon, LockIcon, UnlockIcon } from '../icons';
 import { addPlatformBranch, spliceAddWidget, spliceMove, spliceRenameNode } from '../code/store';
 import { PLATFORMS } from '../code/platform-convention';
 import type { CodeUINode } from '../code/types';
@@ -45,6 +45,7 @@ import {
   visibleRange,
   type UINode,
 } from '../shared/tree-model';
+import { RenameField } from './RenameField';
 
 import './NodeTree.css';
 
@@ -218,6 +219,20 @@ const NodeTreeImpl: React.FC<{ filter?: string }> = ({ filter = '' }) => {
 
   const noop = useCallback(() => undefined, []);
 
+  const renderRenameField = useCallback(
+    (
+      _: UINode,
+      field: { label: string; onSubmit: (next: string) => void; onCancel: () => void },
+    ) => (
+      <RenameField
+        name={field.label}
+        onSubmit={field.onSubmit}
+        onCancel={field.onCancel}
+      />
+    ),
+    [],
+  );
+
   const renderActionArea = useCallback(
     (n: UINode, tabIndex: 0 | -1) => {
       const id = n.entity as unknown as number;
@@ -290,22 +305,10 @@ const NodeTreeImpl: React.FC<{ filter?: string }> = ({ filter = '' }) => {
           >
             {isNodeHidden ? <EyeOffIcon /> : <EyeIcon />}
           </button>
-          <button
-            type="button"
-            className="action-button ui-designer-icon-btn ui-designer-compact"
-            aria-label={`Delete ${label}`}
-            tabIndex={tabIndex}
-            onClick={e => {
-              e.stopPropagation();
-              handleRemove(n);
-            }}
-          >
-            <TrashIcon />
-          </button>
         </div>
       );
     },
-    [hiddenNodes, lockedNodes, inheritedHidden, dispatch, handleRemove],
+    [hiddenNodes, lockedNodes, inheritedHidden, dispatch],
   );
 
   const canDrag = useCallback(
@@ -321,6 +324,9 @@ const NodeTreeImpl: React.FC<{ filter?: string }> = ({ filter = '' }) => {
         <NodeTreeComponent
           value={tree}
           contextMenuLabel="Node Options"
+          contextMenuSize="compact"
+          doubleClick="rename"
+          renderRenameField={renderRenameField}
           getId={getId}
           getChildren={getChildren}
           getLabel={getLabel}

@@ -53,17 +53,6 @@
   white-space: nowrap;
 }
 
-.ui-designer-code-root-name-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--ui-designer-control-bg);
-  border: 1px solid var(--ui-designer-control-border);
-  border-radius: 3px;
-  color: var(--ui-designer-text);
-  padding: 1px 4px;
-  font: inherit;
-}
-
 .ui-designer-code-root-actions {
   display: flex;
   align-items: center;
