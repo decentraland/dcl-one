@@ -1117,7 +1117,9 @@ export class Explorer {
 
   /** A read of the scene's log lines (`/scene_logs`): pass the last read's `latestSeq` as `since`
    *  for only newer lines; `client` adds the engine's warnings and errors; `severity` is the
-   *  least shown. `dropped` is the most lines after the cursor that were evicted before this read. */
+   *  least shown. `dropped` is the most lines after the cursor that were evicted before this read or, of the
+   *  client's on the web, logged while the ring was held; it does not count what a scene wrote
+   *  before a `/reload`. */
   async sceneLogRead(options: { count?: number; since?: number; severity?: LogSeverity; client?: boolean } = {}): Promise<SceneLogPage> {
     const flags = `${options.count === undefined ? '' : ` ${options.count}`}${options.since === undefined ? '' : ` --since ${options.since}`}${options.severity ? ` --severity ${options.severity}` : ''}${options.client ? ' --client' : ''}`
     return parseSceneLogs(await this.run(`/scene_logs${flags}`))

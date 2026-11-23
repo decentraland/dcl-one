@@ -235,8 +235,11 @@ fn scene_logs_cmd(
     }
 }
 
-/// A scene's line as `/scene_logs` shows it; a scene error is an error, as the scene wrote it
-/// with `console.error`.
+/// A scene's line as `/scene_logs` shows it. A `SceneError` (what the scene wrote with
+/// `console.error`, or threw) is an error like a `SystemError`: a reader that asks for
+/// `--severity error` asks whether the scene failed, and the plain form's label tells the two
+/// apart. The stdout echo logs it at `warn` because there it is the client's own log, where a
+/// scene's mistake is not the client's error.
 fn scene_log_line((seq, log): (u64, SceneLogMessage)) -> LogLine {
     let (severity, label) = match log.level {
         SceneLogLevel::Log => (Severity::Info, "Log"),
