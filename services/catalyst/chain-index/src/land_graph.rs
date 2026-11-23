@@ -79,8 +79,8 @@ query fetchOperatorsOfParcel($x: Int, $y: Int){
 }"#;
 
 const QUERY_AUTHORIZATIONS: &str = r#"
-query fetchAuthorizations($address: String, $tokenAddress: String, $timestampFrom: BigInt) {
-  authorizations(first: 1000, where: { owner_: { address: $address }, tokenAddress: $tokenAddress, timestamp_gt: $timestampFrom }, orderBy: timestamp, orderDirection: asc) {
+query fetchAuthorizations($address: String, $tokenAddress: String, $timestampFrom: BigInt, $first: Int!) {
+  authorizations(first: $first, where: { owner_: { address: $address }, tokenAddress: $tokenAddress, timestamp_gt: $timestampFrom }, orderBy: timestamp, orderDirection: asc) {
     type
     operator
     isApproved
@@ -111,38 +111,39 @@ fn str_field(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
-fn owner_address(v: &Value) -> String {
+fn owner_address(v: &Value) -> Result<String, String> {
     v.pointer("/owner/address")
         .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string()
+        .filter(|address| !address.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "subgraph response without owner address".into())
 }
 
 /// An estate row wins the subject (the parcel's owner is then the estate
 /// registry); the parcel's own update operator, when set, overrides the
 /// estate's.
-fn resolve_operators(estates: &[Value], parcels: &[Value]) -> Option<ResolvedOperators> {
-    let first_parcel = parcels.first();
-    match estates.first() {
-        Some(e) => Some(ResolvedOperators {
-            owner: owner_address(e),
-            operator: str_field(e, "operator"),
-            update_operator: first_parcel
-                .and_then(|p| str_field(p, "updateOperator"))
-                .or_else(|| str_field(e, "updateOperator")),
-            belongs_to_estate: true,
-        }),
-        None => first_parcel.map(|p| ResolvedOperators {
-            owner: owner_address(p),
-            operator: str_field(p, "operator"),
-            update_operator: str_field(p, "updateOperator"),
-            belongs_to_estate: false,
-        }),
-    }
+fn resolve_operators(
+    estates: &[Value],
+    parcels: &[Value],
+) -> Result<Option<ResolvedOperators>, String> {
+    let estate = estates.first();
+    let parcel = parcels.first();
+    let Some(subject) = estate.or(parcel) else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedOperators {
+        owner: owner_address(subject)?,
+        operator: str_field(subject, "operator"),
+        update_operator: parcel
+            .and_then(|p| str_field(p, "updateOperator"))
+            .or_else(|| estate.and_then(|e| str_field(e, "updateOperator"))),
+        belongs_to_estate: estate.is_some(),
+    }))
 }
 
 /// Folds the owner's authorization log on one registry, in time order: an
-/// approval adds the operator to its list, a revocation removes it.
+/// approval adds the operator to its list, a revocation removes it. Unknown
+/// types, empty operators and non-boolean approvals invalidate the result.
 fn fold_authorizations(
     update_managers: &mut Vec<String>,
     approved_for_all: &mut Vec<String>,
@@ -175,6 +176,7 @@ fn fold_authorizations(
 }
 
 /// Walk the composite timestamp (block seconds * 1,000,000 + log index).
+/// See decentraland/LAND-permissions-graph@51333777:src/utils/authorization.ts:79-83.
 /// Invalid or non-advancing pages cannot establish a complete grant set.
 async fn walk_authorizations<F, Fut>(
     max_pages: usize,
@@ -231,7 +233,7 @@ async fn update_managers_and_approved_for_all(
             state,
             url,
             QUERY_AUTHORIZATIONS,
-            json!({ "address": address, "tokenAddress": token_address, "timestampFrom": timestamp_from }),
+            json!({ "address": address, "tokenAddress": token_address, "first": THE_GRAPH_PAGE_SIZE, "timestampFrom": timestamp_from }),
         ).await
     }).await
 }
@@ -261,14 +263,12 @@ pub async fn parcel_operators(
             let estates = data
                 .get("estates")
                 .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
+                .ok_or("subgraph response without estates")?;
             let parcels = data
                 .get("parcels")
                 .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let Some(resolved) = resolve_operators(&estates, &parcels) else {
+                .ok_or("subgraph response without parcels")?;
+            let Some(resolved) = resolve_operators(estates, parcels)? else {
                 return Ok::<_, String>(Arc::new(None));
             };
             let (land, estate) = registries(state);
@@ -327,14 +327,19 @@ pub async fn parcels_by_update_operator(
                     json!({ "updateOperator": operator, "first": THE_GRAPH_PAGE_SIZE, "skip": skip }),
                 )
                 .await?;
-                let parcels = data.get("parcels").and_then(Value::as_array).cloned().unwrap_or_default();
+                let parcels = data.get("parcels")
+                    .and_then(Value::as_array)
+                    .ok_or("subgraph response without parcels")?;
+                if parcels.len() > THE_GRAPH_PAGE_SIZE as usize {
+                    return Err("subgraph returned more parcels than requested".into());
+                }
                 elements.extend(parcels.iter().map(parcel_element));
                 if (parcels.len() as i64) != THE_GRAPH_PAGE_SIZE {
-                    break;
+                    return Ok(Arc::new(elements));
                 }
                 skip += THE_GRAPH_PAGE_SIZE;
             }
-            Ok::<_, String>(Arc::new(elements))
+            Err(format!("no terminal parcel page after {MAX_PAGES} pages"))
         })
         .await
 }
@@ -362,7 +367,7 @@ mod tests {
             Some("0xparcelop"),
             Some("0xparcelupdate"),
         )];
-        let r = resolve_operators(&estates, &parcels).unwrap();
+        let r = resolve_operators(&estates, &parcels).unwrap().unwrap();
         assert!(r.belongs_to_estate);
         assert_eq!(r.owner, "0xestateowner");
         assert_eq!(r.operator, None);
@@ -372,7 +377,9 @@ mod tests {
     #[test]
     fn resolve_operators_estate_update_operator_used_when_parcel_has_none() {
         let estates = vec![row("0xestateowner", None, Some("0xestateupdate"))];
-        let r = resolve_operators(&estates, &[row("0xparcelowner", None, None)]).unwrap();
+        let r = resolve_operators(&estates, &[row("0xparcelowner", None, None)])
+            .unwrap()
+            .unwrap();
         assert!(r.belongs_to_estate);
         assert_eq!(r.update_operator.as_deref(), Some("0xestateupdate"));
     }
@@ -384,7 +391,7 @@ mod tests {
             Some("0xestateop"),
             Some("0xestateupdate"),
         )];
-        let r = resolve_operators(&estates, &[]).unwrap();
+        let r = resolve_operators(&estates, &[]).unwrap().unwrap();
         assert_eq!(
             (
                 r.owner.as_str(),
@@ -397,14 +404,16 @@ mod tests {
 
     #[test]
     fn resolve_operators_plain_parcel_and_nothing() {
-        let r =
-            resolve_operators(&[], &[row("0xparcelowner", None, Some("0xparcelupdate"))]).unwrap();
+        let r = resolve_operators(&[], &[row("0xparcelowner", None, Some("0xparcelupdate"))])
+            .unwrap()
+            .unwrap();
         assert!(!r.belongs_to_estate);
         assert_eq!(
             (r.owner.as_str(), r.update_operator.as_deref()),
             ("0xparcelowner", Some("0xparcelupdate"))
         );
-        assert_eq!(resolve_operators(&[], &[]), None);
+        assert_eq!(resolve_operators(&[], &[]).unwrap(), None);
+        assert!(resolve_operators(&[], &[json!({"owner": null})]).is_err());
     }
 
     #[test]
@@ -435,7 +444,13 @@ mod tests {
             asked.push(from);
             let rows: Vec<Value> = if first {
                 (0..1000)
-                    .map(|i| authorization(first_timestamp + i, "operator", true))
+                    .map(|i| {
+                        let mut row = authorization(first_timestamp + i, "operator", true);
+                        if i == 999 {
+                            row["timestamp"] = json!((first_timestamp + i) as u64);
+                        }
+                        row
+                    })
                     .collect()
             } else {
                 vec![authorization(first_timestamp + 1000, "operator", false)]
@@ -463,19 +478,42 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("do not advance"));
-        for response in [
-            json!({}),
-            json!({ "authorizations": null }),
-            json!({ "authorizations": [{}] }),
-            json!({ "authorizations": [{ "timestamp": "invalid" }] }),
-            json!({ "authorizations": [{ "timestamp": -1 }] }),
-            json!({ "authorizations": [authorization(10, "operator", true), authorization(10, "operator", false)] }),
-            json!({ "authorizations": [authorization(10, "operator", true), authorization(9, "operator", false)] }),
+        for (response, error) in [
+            (json!({}), "subgraph response without authorizations"),
+            (
+                json!({"authorizations": null}),
+                "subgraph response without authorizations",
+            ),
+            (
+                json!({"authorizations": vec![Value::Null; THE_GRAPH_PAGE_SIZE as usize + 1]}),
+                "subgraph returned more authorizations than requested",
+            ),
+            (
+                json!({"authorizations": [{}]}),
+                "authorization has no unsigned timestamp",
+            ),
+            (
+                json!({"authorizations": [{"timestamp": "invalid"}]}),
+                "authorization has no unsigned timestamp",
+            ),
+            (
+                json!({"authorizations": [{"timestamp": -1}]}),
+                "authorization has no unsigned timestamp",
+            ),
+            (
+                json!({"authorizations": [authorization(10, "operator", true), authorization(10, "operator", false)]}),
+                "authorization timestamps do not advance",
+            ),
+            (
+                json!({"authorizations": [authorization(10, "operator", true), authorization(9, "operator", false)]}),
+                "authorization timestamps do not advance",
+            ),
         ] {
-            assert!(
+            assert_eq!(
                 walk_authorizations(2, |_| std::future::ready(Ok(response.clone())))
                     .await
-                    .is_err()
+                    .unwrap_err(),
+                error
             );
         }
         assert_eq!(
@@ -578,12 +616,70 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(
             calls[1]["variables"],
-            json!({ "address": "owner", "tokenAddress": "token", "timestampFrom": "1000" })
+            json!({ "address": "owner", "tokenAddress": "token", "first": 1000, "timestampFrom": "1000" })
         );
         let query = calls[0]["query"].as_str().unwrap();
+        assert!(query.contains("first: $first"));
         assert!(query.contains("timestamp_gt: $timestampFrom"));
         assert!(query.contains("orderBy: timestamp"));
         assert!(!query.contains("id_gt"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn incomplete_land_responses_are_retried_before_caching_an_empty_answer() {
+        use std::collections::VecDeque;
+        use std::sync::Mutex;
+
+        let replies = Arc::new(Mutex::new(VecDeque::from([
+            json!({"parcels": [row("registry", None, None)]}),
+            json!({"estates": []}),
+            json!({"estates": [], "parcels": [{"owner": null}]}),
+            json!({"estates": [], "parcels": []}),
+            json!({}),
+            json!({"parcels": []}),
+        ])));
+        let captured = replies.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move || {
+                let next = captured.lock().unwrap().pop_front().unwrap();
+                async move { axum::Json(json!({"data": next})) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::IndexSettings {
+                land_subgraph_url: Some(url),
+                ..Default::default()
+            },
+        );
+        state.allow_loopback_for_tests();
+        for error in [
+            "subgraph response without estates",
+            "subgraph response without parcels",
+            "subgraph response without owner address",
+        ] {
+            assert_eq!(parcel_operators(&state, 1, 2).await.unwrap_err(), error);
+        }
+        assert_eq!(parcel_operators(&state, 1, 2).await.unwrap(), None);
+        assert_eq!(parcel_operators(&state, 1, 2).await.unwrap(), None);
+        assert_eq!(
+            parcels_by_update_operator(&state, "operator")
+                .await
+                .unwrap_err(),
+            "subgraph response without parcels"
+        );
+        assert!(
+            parcels_by_update_operator(&state, "operator")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(replies.lock().unwrap().is_empty());
         server.abort();
     }
 

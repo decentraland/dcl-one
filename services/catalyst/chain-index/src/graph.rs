@@ -157,7 +157,7 @@ pub struct OwnedLand {
 pub struct Caches {
     /// `(owner, category)` -> every copy the owner holds across both networks.
     owned: TtlMap<(String, String), Arc<Vec<OwnedCopy>>>,
-    /// `owner` -> the ENS names the owner holds, cut off at [`MAX_PAGES`].
+    /// `owner` -> the complete ENS names read within [`MAX_PAGES`].
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
     all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
@@ -339,6 +339,22 @@ fn last_id(data: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// A short NFT page proves completion. A full page needs a usable continuation.
+fn next_nft_cursor(data: &Value, previous: &str) -> Result<Option<String>, String> {
+    let rows = data
+        .get("nfts")
+        .and_then(Value::as_array)
+        .ok_or("subgraph response without nfts")?;
+    match rows.len().cmp(&(THE_GRAPH_PAGE_SIZE as usize)) {
+        std::cmp::Ordering::Less => Ok(None),
+        std::cmp::Ordering::Greater => Err("subgraph returned more NFTs than requested".into()),
+        std::cmp::Ordering::Equal => last_id(data)
+            .filter(|id| id.as_str() > previous)
+            .map(Some)
+            .ok_or_else(|| "NFT cursor is missing or does not advance".into()),
+    }
+}
+
 fn page_len(data: &Value) -> usize {
     data.get("nfts")
         .and_then(Value::as_array)
@@ -382,13 +398,9 @@ where
     let mut out = Vec::new();
     let mut id_from = String::new();
     for _ in 0..max_pages {
-        let data = page(id_from).await?;
-        let n = page_len(&data);
-        let next = last_id(&data);
+        let data = page(id_from.clone()).await?;
+        let next = next_nft_cursor(&data, &id_from)?;
         out.push(data);
-        if (n as i64) < THE_GRAPH_PAGE_SIZE {
-            return Ok(out);
-        }
         match next {
             Some(id) => id_from = id,
             None => return Ok(out),
@@ -558,8 +570,8 @@ pub(crate) fn parse_names(data: &Value) -> Vec<OwnedName> {
         .collect()
 }
 
-/// The ENS names the owner holds, in subgraph id order, cut off at
-/// [`MAX_PAGES`]. `Ok(empty)` when no marketplace subgraph is configured.
+/// The ENS names the owner holds, in subgraph id order. An incomplete walk at
+/// [`MAX_PAGES`] returns an error. `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedName>>, String> {
     walk_names(state, &state.graph.names, owner, MAX_PAGES).await
 }
@@ -598,17 +610,14 @@ async fn walk_names(
                     json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
                 )
                 .await?;
-                let n = page_len(&data);
+                let next = next_nft_cursor(&data, &id_from)?;
                 out.extend(parse_names(&data));
-                if (n as i64) < THE_GRAPH_PAGE_SIZE {
-                    break;
-                }
-                match last_id(&data) {
+                match next {
                     Some(id) => id_from = id,
-                    None => break,
+                    None => return Ok(Arc::new(out)),
                 }
             }
-            Ok::<_, String>(Arc::new(out))
+            Err(format!("no terminal NFT page after {max_pages} pages"))
         })
         .await
 }
@@ -1182,6 +1191,16 @@ mod tests {
             .map(|i| json!({ "id": format!("0xc-{i:08}"), "urn": format!("urn:x:{i}") }))
             .collect();
         json!({ "nfts": nfts })
+    }
+
+    #[test]
+    fn nft_cursor_rejects_missing_rows_and_broken_continuations() {
+        assert!(next_nft_cursor(&json!({}), "").is_err());
+        let n = THE_GRAPH_PAGE_SIZE as usize;
+        assert!(next_nft_cursor(&json!({"nfts": vec![Value::Null; n]}), "").is_err());
+        assert!(next_nft_cursor(&page_of(0, n), "z").is_err());
+        assert!(next_nft_cursor(&page_of(0, n + 1), "").is_err());
+        assert_eq!(next_nft_cursor(&json!({"nfts":[]}), "").unwrap(), None);
     }
 
     #[tokio::test]
