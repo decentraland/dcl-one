@@ -237,6 +237,28 @@ pub fn gpu_timing_broken(change: &[MedianAndRange; 6], base: &[MedianAndRange; 6
     min(change[GPU_AVERAGE].median, base[GPU_AVERAGE].median) < MIN_PLAUSIBLE_MS
 }
 
+/// Why a GPU metric gets no verdict in Chrome on macOS: its readings there settle on one value
+/// for a whole run and differ between runs of one build, so separated runs can be chance.
+pub const GPU_TIMING_UNRELIABLE: &str = "GPU timing unreliable on Metal";
+
+/// `verdict` of metric `m`, or no verdict when it compares GPU readings that are `unreliable`.
+/// A reason that already withholds it, and a metric that never has one, stay as they are.
+pub fn without_unreliable_gpu_verdict(
+    m: usize,
+    verdict: FrameTimeVerdict,
+    unreliable: bool,
+) -> FrameTimeVerdict {
+    let compared = matches!(
+        verdict,
+        FrameTimeVerdict::Faster(_) | FrameTimeVerdict::Slower(_) | FrameTimeVerdict::WithinNoise
+    );
+    if unreliable && compared && FRAME_TIME_METRICS[m].starts_with("GPU") {
+        FrameTimeVerdict::Withheld(GPU_TIMING_UNRELIABLE)
+    } else {
+        verdict
+    }
+}
+
 /// The verdict of metric `m`. A change counts only when the builds' runs are fully separated
 /// (every change run faster, or every one slower, than every baseline run: with three runs a
 /// build, the most extreme outcome of a permutation test, one-sided p = 0.05) and the median
@@ -544,6 +566,38 @@ mod tests {
             frame_time_verdict(1, &agg(0.9, 0.9, 0.9), &b, None, false),
             FrameTimeVerdict::Withheld("implausibly small values")
         );
+    }
+
+    #[test]
+    fn unreliable_gpu_readings_get_no_verdict_and_cpu_ones_keep_theirs() {
+        let slower = FrameTimeVerdict::Slower(0.5);
+        for gpu in [3, 4] {
+            for compared in [
+                slower,
+                FrameTimeVerdict::Faster(0.5),
+                FrameTimeVerdict::WithinNoise,
+            ] {
+                assert_eq!(
+                    without_unreliable_gpu_verdict(gpu, compared, true),
+                    FrameTimeVerdict::Withheld(GPU_TIMING_UNRELIABLE)
+                );
+                assert_eq!(
+                    without_unreliable_gpu_verdict(gpu, compared, false),
+                    compared
+                );
+            }
+        }
+        assert_eq!(
+            without_unreliable_gpu_verdict(1, slower, true),
+            slower,
+            "CPU"
+        );
+        assert_eq!(
+            without_unreliable_gpu_verdict(5, FrameTimeVerdict::Informational, true),
+            FrameTimeVerdict::Informational
+        );
+        let broken = FrameTimeVerdict::Withheld("GPU timing not working");
+        assert_eq!(without_unreliable_gpu_verdict(4, broken, true), broken);
     }
 
     #[test]

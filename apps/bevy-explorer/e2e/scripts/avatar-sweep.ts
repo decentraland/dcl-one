@@ -20,8 +20,9 @@
 // `/content_request_state`: what the run downloaded and what the cache answered.
 //
 // Each line: {"step", "count", "built", "shown", "drawn", "loadSeconds", "cap", "emote", "nametags", "layout", "seed", "wearables", "samples",
-// "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
-// are {median, p95, max} over the window's samples. `/avatar_demo cap` is session-only, so the
+// "gpuSamples", "fps", "frameMs", "gpuFrameMs", "engineMemoryMiB", "hiccups"} where fps, frameMs and gpuFrameMs
+// are {median, p95, max} over the window's samples, and gpuSamples counts the samples that carried
+// a GPU frame time. `/avatar_demo cap` is session-only, so the
 // stored setting never changes; at the end the session goes back to it, and nametags and the
 // demo emote to what they were.
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
@@ -241,6 +242,7 @@ try {
             seed: seed === '' ? null : Number(seed),
             wearables: values.wearables == null ? null : basename(values.wearables),
             samples: samples.length,
+            gpuSamples: samples.filter((s) => typeof s.gpuFrameMs === 'number').length,
             fps: stats(samples.map((s) => s.fps)),
             frameMs: stats(samples.map((s) => s.frameMs)),
             gpuFrameMs: stats(samples.map((s) => s.gpuFrameMs)),

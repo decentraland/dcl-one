@@ -23,8 +23,19 @@ const MACHINES: [(&str, &str); 5] = [
     ("framework-13-i7", "Framework 13 i7"),
 ];
 
+/// The fleet's runners on macOS, where Chrome renders through Metal.
+const MACOS_RUNNERS: [&str; 1] = ["apple-m1"];
+
 /// A leg in Chrome on a machine is labelled `<runner label>-chrome`.
 const CHROME: &str = "-chrome";
+
+/// Whether `label` is a fleet leg in Chrome on macOS. A label typed by hand names no machine, so
+/// a by-hand session on a Mac is not one.
+pub fn chrome_on_macos(label: &str) -> bool {
+    label
+        .strip_suffix(CHROME)
+        .is_some_and(|runner| MACOS_RUNNERS.contains(&runner))
+}
 
 /// `intel-i5-chrome` is "Intel Core i5 (Chrome)": the parentheses keep the headline's ", " list
 /// readable. Any other label is shown as it is.

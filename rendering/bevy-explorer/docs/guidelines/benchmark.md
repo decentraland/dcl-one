@@ -146,6 +146,8 @@ run whose top 30 leave the scope out counts as 0.
     fewer than 2 usable runs. *sample counts differ*: the builds' median row counts are more than
     1.5× apart, so one did not run the whole session. *GPU timing not working* (GPU rows only): a
     build's GPU average is under 1 ms, so its GPU column is mostly zeros ([GPU time](#gpu-time)).
+    *GPU timing unreliable on Metal* (GPU rows only): a fleet leg in Chrome on macOS
+    ([GPU time](#gpu-time)).
     *implausibly small values*: a median under 1 ms.
 - **Exceptions per run** is the average number of exceptions in a run's log, counted up to the exit
   marker, so teardown errors do not count ([The run](#the-run)). It is 🔴 *more errors* or 🟢 *fewer
@@ -344,9 +346,12 @@ native and web, with no flag; the headless build has none. The CSV writer
   and registers nothing: the CSV's GPU is 0 and the panel shows a dash. The report then gives no
   GPU verdict.
 - **Metal in Chrome.** Some frames read back an end timestamp earlier than their begin, and a
-  30-second run has given a median far below its neighbours (0.1 ms against about 9 ms); the
-  cause is not known, so treat web GPU values from macOS with care and compare medians across
-  repeated runs.
+  run can sit on one value for its whole window and on another in the next run of the same
+  build (0.1 ms against about 9 ms); the cause is not known. The CSV, the panel and
+  `/performance_state` still carry the values. The report gives no GPU verdict for a fleet leg
+  in Chrome on macOS (`apple-m1-chrome`): its GPU rows read *no verdict — GPU timing unreliable
+  on Metal*. A session under a label typed by hand on a Mac still gets GPU verdicts, so compare
+  its GPU medians across repeated runs before reading them.
 - **Chrome.** It quantises timestamps unless it starts with WebGPU developer features, which the
   runner does not do: a web GPU value is a multiple of Chrome's step, 65.536 µs in the checked
   Chrome (measurements (evidence supplied for the task)), well under the verdict's 0.5 ms threshold. A
