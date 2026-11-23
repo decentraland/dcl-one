@@ -35,7 +35,7 @@ import { CommunityPage } from "./CommunityPage";
 const ID = "e99471aa-31c4-4952-abf6-99905445f43b";
 let client: QueryClient;
 
-function show(loader?: () => unknown, element: ReactNode = <CommunityPage id={ID} now={0} />) {
+function show(loader?: () => unknown, element: ReactNode = <CommunityPage id={ID} now={0} sid="" />) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createMemoryRouter(
     [

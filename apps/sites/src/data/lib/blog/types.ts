@@ -21,6 +21,8 @@ export type BlogListData = {
   subtitle: string;
   /** The tab to highlight: "" on the home, the slug on a category, null otherwise. */
   activeCategory: string | null;
+  /** The author's slug on an author's list, null otherwise. */
+  authorSlug: string | null;
   query: string;
   posts: BlogCard[];
   /** Every post the list has (the CMS total), loaded or not: what lp_blog_viewed reports. */
@@ -33,6 +35,8 @@ export type BlogListData = {
 export type BlogPostData = {
   state: "ok";
   post: BlogArticle;
+  /** The CMS's raw `publishedDate` (ISO with offset), which the page view sends; `post.publishedAt` is the display date. */
+  publishedDate: string;
   /** Null when the related posts could not be read in time: the page shows no related section. */
   related: BlogRelatedCard[] | null;
   shareUrl: string;

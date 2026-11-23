@@ -14,6 +14,7 @@ import {
   publishedAt,
   readMinutes,
   slugify,
+  toCard,
 } from "./normalize";
 import { FIRST_POST_BODY } from "./cms.test-utils";
 
@@ -68,6 +69,11 @@ describe("mapPost", () => {
 
     it("should keep the body", () => {
       expect(post?.body).toBe(FIRST_POST_BODY);
+    });
+
+    it("should keep the CMS's raw publishedDate, offset included, beside the display date", () => {
+      expect(post?.publishedDate).toBe("2026-10-05T20:00-07:00");
+      expect(post && toCard(post)).not.toHaveProperty("publishedDate");
     });
   });
 

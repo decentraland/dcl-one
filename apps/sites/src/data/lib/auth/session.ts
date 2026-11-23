@@ -5,6 +5,7 @@ import { AuthIdentitySchema } from "../persisted-schemas";
 import { isIdentityExpired } from "./expiry";
 import { recordSignIn } from "./signin-kind";
 import { clearAllShared, clearShared, clearWalletSessions, freshestShared, saveWalletSession, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
+import { signedOutElsewhere } from "./session-change";
 import type { AuthIdentity } from "./types";
 import { clearWalletCookie, serializeWalletCookie, walletInCookies } from "./wallet-cookie";
 
@@ -237,9 +238,12 @@ function onStorage(e: StorageEvent) {
     clearWalletSessions();
   }
   if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY || shared)) {
+    const before = current;
     current = readStorage();
     if (suspendedSigner && current && current.signer.toLowerCase() !== suspendedSigner) setSuspendedSigner(null);
     syncWalletCookie(getIdentity());
+    // Signed out in another tab: this tab's page views stop naming the account at once.
+    if (before && !current) signedOutElsewhere();
     emit();
   }
 }

@@ -123,9 +123,12 @@ export function readPlaceTarget(params: URLSearchParams): PlaceTarget | null {
   return null;
 }
 
-/** An event id link: any non-empty value; the events service decides whether it exists. */
-export function readEventId(params: URLSearchParams): string | null {
-  return params.get("id")?.trim() || null;
+/**
+ * The event a page URL names (`?id=` on the events page; a community page names it `?event=`): any
+ * non-empty value; the events service decides whether it exists.
+ */
+export function readEventId(params: URLSearchParams, name = "id"): string | null {
+  return params.get(name)?.trim() || null;
 }
 
 export const liveNowQuery = () =>
