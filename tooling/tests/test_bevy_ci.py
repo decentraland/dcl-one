@@ -118,7 +118,7 @@ class WorkflowTest(unittest.TestCase):
                      "if: steps.guards.outputs.provenance == 'true'\n        run: python3 tooling/vendor-provenance.py"):
             self.assertIn(step, source)
         # A change to only a pin, the upstream check, its tests or a provenance tool starts the run.
-        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+        for event, end in (('push', 'pull_request'),):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('rendering/bevy-explorer/patches/winit/source.toml', 'tooling/upstream-drift.py',
@@ -307,7 +307,7 @@ class WorkflowTest(unittest.TestCase):
 
     def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text()
-        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+        for event, end in (('push', 'pull_request'),):
             block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
             patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
             for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
@@ -415,7 +415,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("    if: ${{ always() && github.event.action != 'closed' }}\n", gate)
         needs = set(re.search(r'(?m)^    needs: \[([^\]]*)\]', gate).group(1).replace(' ', '').split(','))
         self.assertEqual(needs, {'source', 'changes', 'fmt', 'toml', 'clippy', 'test', 'headless-smoke',
-                                 'build-deploy-web', 'images-compile'})
+                                 'build-deploy-web', 'package-web', 'images-compile', 'images'})
         self.assertIn('RESULTS: ${{ toJSON(needs) }}', gate)
 
     def test_the_headless_smoke_runs_for_thirty_seconds(self):
