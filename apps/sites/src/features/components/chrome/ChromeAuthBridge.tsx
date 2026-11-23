@@ -11,7 +11,7 @@ import { watchBrowserWalletAccount } from "@/data/lib/auth/wallet-account-switch
 import { NOTIFICATIONS_PREFIX } from "@/data/lib/catalyst/bases";
 import { catalystBase } from "@/data/lib/catalyst/client";
 import { loginPath } from "@/features/auth/login/redirect";
-import { openSignIn } from "../auth/signin-store";
+import { navigateForAccountChange, openSignIn } from "../auth/signin-store";
 import { hubAccountActions } from "./explorer-host";
 import { usePrivateQueryLifecycle } from "./usePrivateQueryLifecycle";
 
@@ -33,11 +33,13 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
   useEffect(() => watchBrowserWalletAccount(window, (change) => {
     const { pathname, search, hash } = window.location;
     if (pathname.startsWith("/auth/") && pathname !== "/auth/login") return;
+    const returnTo = `${pathname}${search}${hash}`;
     if (change === "activated") {
-      window.location.reload();
+      navigateForAccountChange(returnTo, () => window.location.reload());
     } else if (pathname !== "/auth/login") {
-      const returnTo = `${pathname}${search}${hash}`;
-      void navigate(`${loginPath(returnTo)}&walletSwitch=1`, { replace: true });
+      navigateForAccountChange(returnTo, () => {
+        void navigate(loginPath(returnTo, { walletSwitch: true }), { replace: true });
+      });
     }
   }), [navigate]);
 

@@ -9,6 +9,7 @@
 import type { AuthIdentity, AuthLink } from "./types";
 
 export const SINGLE_SIGN_ON_PREFIX = "single-sign-on-";
+const WALLET_SESSION_PREFIX = "dcl:auth:wallet-session:";
 
 type SharedIdentity = {
   ephemeralIdentity: { address: string; publicKey: string; privateKey: string };
@@ -18,8 +19,8 @@ type SharedIdentity = {
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
-function key(address: string): string | null {
-  return ADDRESS.test(address) ? `${SINGLE_SIGN_ON_PREFIX}${address.toLowerCase()}` : null;
+function key(address: string, prefix = SINGLE_SIGN_ON_PREFIX): string | null {
+  return ADDRESS.test(address) ? `${prefix}${address.toLowerCase()}` : null;
 }
 
 function storage(): Storage | null {
@@ -111,15 +112,23 @@ export function clearShared(address: string): void {
 }
 
 /** Ends every shared session on this origin: a sign-out here signs the reader out of every dapp. */
-export function clearAllShared(): void {
+export function clearAllShared(exceptSigner?: string): void {
   generation++;
+  clearSessions(SINGLE_SIGN_ON_PREFIX, exceptSigner ? key(exceptSigner) : null);
+}
+
+export function clearWalletSessions(): void {
+  clearSessions(WALLET_SESSION_PREFIX);
+}
+
+function clearSessions(prefix: string, except: string | null = null): void {
   const store = storage();
   if (!store) return;
   try {
     const keys: string[] = [];
     for (let i = 0; i < store.length; i++) {
       const k = store.key(i);
-      if (k?.startsWith(SINGLE_SIGN_ON_PREFIX)) keys.push(k);
+      if (k?.startsWith(prefix) && k !== except) keys.push(k);
     }
     for (const k of keys) store.removeItem(k);
   } catch {
@@ -127,10 +136,10 @@ export function clearAllShared(): void {
   }
 }
 
-function readShared(store: Storage, k: string, now: number): AuthIdentity | null {
+function readSession(store: Storage, k: string, now: number, prefix = SINGLE_SIGN_ON_PREFIX): AuthIdentity | null {
   try {
     const identity = fromShared(JSON.parse(store.getItem(k) ?? "null"), now);
-    return identity && k === key(identity.signer) ? identity : null;
+    return identity && k === key(identity.signer, prefix) ? identity : null;
   } catch {
     return null;
   }
@@ -140,7 +149,24 @@ function readShared(store: Storage, k: string, now: number): AuthIdentity | null
 export function sharedIdentityFor(address: string, now = Date.now()): AuthIdentity | null {
   const k = key(address);
   const store = storage();
-  return k && store ? readShared(store, k, now) : null;
+  return k && store ? readSession(store, k, now) : null;
+}
+
+/** A saved wallet signature that Sites can reuse without presenting it as the shared sign-in. */
+export function saveWalletSession(identity: AuthIdentity): void {
+  const k = key(identity.signer, WALLET_SESSION_PREFIX);
+  if (!k || Date.parse(identity.expiration) <= Date.now()) return;
+  try {
+    storage()?.setItem(k, JSON.stringify(toShared(identity, identity.ephemeral.publicKey ?? "")));
+  } catch {
+    // The selected account can still be signed in even when the previous signature cannot be saved.
+  }
+}
+
+export function walletSessionFor(address: string, now = Date.now()): AuthIdentity | null {
+  const k = key(address, WALLET_SESSION_PREFIX);
+  const store = storage();
+  return k && store ? readSession(store, k, now, WALLET_SESSION_PREFIX) : null;
 }
 
 /** The freshest unexpired shared session on this origin (the account signed in last), or null. */
@@ -152,7 +178,7 @@ export function freshestShared(now = Date.now()): AuthIdentity | null {
     for (let i = 0; i < store.length; i++) {
       const k = store.key(i);
       if (!k?.startsWith(`${SINGLE_SIGN_ON_PREFIX}0x`)) continue;
-      const identity = readShared(store, k, now);
+      const identity = readSession(store, k, now);
       if (!identity) continue;
       if (!best || new Date(identity.expiration) > new Date(best.expiration)) best = identity;
     }

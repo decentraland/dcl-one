@@ -17,7 +17,7 @@ import { isIdentityExpired } from "@/data/lib/auth/expiry";
 import { beginShellBrowserSignIn, isDesktopShell } from "@/data/lib/auth/native-shell";
 import { getIdentity, getSuspendedWalletSigner, setBrowserWalletIdentity } from "@/data/lib/auth/session";
 import { browserWalletRdnsFor } from "@/data/lib/auth/signin-kind";
-import { browserWalletProvider, getConnectedAddress } from "@/data/lib/auth/wallet";
+import { browserWalletProvider, getConnectedAddress, selectWallet } from "@/data/lib/auth/wallet";
 
 import appleIcon from "./assets/apple.svg?url";
 import coinbaseIcon from "./assets/coinbase.svg?url";
@@ -231,7 +231,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   const auth = useAuth();
   const [client, setClient] = useState<Client | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
-  const [pending, setPending] = useState<{ option: ConnectionOption; walletRdns?: string } | null>(null);
+  const [pending, setPending] = useState<{ option: ConnectionOption | null; walletRdns?: string } | null>(null);
   const [showMore, setShowMore] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -251,7 +251,10 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       desktopShell: isDesktopShell(),
     });
   }, []);
-  useEffect(() => () => walletConnect.current?.abort(), []);
+  useEffect(() => () => {
+    attempt.current++;
+    walletConnect.current?.abort();
+  }, []);
   // A reader who is already signed in goes straight on, as upstream sends them.
   // The store is read directly: during hydration `useAuth` still reports the server's empty session.
   useEffect(() => {
@@ -281,7 +284,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
   }, [returnToSite]);
 
   const connect = useCallback(
-    async (option: ConnectionOption, walletRdns?: string) => {
+    async (option: ConnectionOption | null, walletRdns?: string) => {
       if (option === "email") {
         const input = document.getElementById("dcl-email-input");
         input?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -293,7 +296,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       setPending({ option, walletRdns });
       walletConnect.current?.abort();
 
-      if (SOCIAL_OPTIONS.includes(option)) {
+      if (option && SOCIAL_OPTIONS.includes(option)) {
         if (!magicApiKey) {
           setModal({ state: "error-generic", detail: "Social sign-in is not configured on this site.", pairing: null });
           return;
@@ -316,18 +319,33 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
       if (browserWallet) {
         let askedToSign = false;
         try {
-          if (walletRdns && !browserWalletProvider(walletRdns)) throw new Error("The browser wallet is unavailable.");
-          const identity = await signInWithBrowserWallet(browserWallet, SESSION_MS, (phase) => {
-            askedToSign = phase === "signing";
-            if (live()) setModal({ state: phase, detail: null, pairing: null });
-          });
-          if (walletRdns && (await getConnectedAddress()) !== identity.signer) {
-            throw new Error("Your wallet changed accounts. Try again with the account you want to use.");
+          const signIn = async () => {
+            if (!live()) return;
+            const active = walletRdns && getIdentity();
+            if (active && !isIdentityExpired(active) && browserWalletProvider(browserWallet)) {
+              selectWallet(browserWallet);
+              if ((await getConnectedAddress()) === active.signer) {
+                if (live()) finish();
+                return;
+              }
+              if (!live()) return;
+            }
+            const identity = await signInWithBrowserWallet(browserWallet, SESSION_MS, (phase) => {
+              askedToSign = phase === "signing";
+              if (live()) setModal({ state: phase, detail: null, pairing: null });
+            });
+            if (!live()) return;
+            setBrowserWalletIdentity(identity, browserWallet);
+            rememberEmail(null);
+            finish();
+          };
+          // Tabs on this origin wait for the signing tab to publish its session before asking the wallet again.
+          if (walletRdns && navigator.locks) {
+            setModal({ state: "connecting", detail: null, pairing: null });
+            await navigator.locks.request("dcl:browser-wallet-switch", signIn);
+          } else {
+            await signIn();
           }
-          if (!live()) return;
-          setBrowserWalletIdentity(identity, browserWallet);
-          rememberEmail(null);
-          finish();
         } catch (err) {
           if (live()) setModal({ ...failureState(err, askedToSign), pairing: null });
         }
@@ -367,7 +385,7 @@ export default function LoginPage({ redirectTo, layoutVariant, magicApiKey, logi
     requested.current = true;
     const signer = walletSwitch ? getSuspendedWalletSigner() : null;
     const walletRdns = signer && browserWalletRdnsFor(signer);
-    if (walletRdns) void connect(walletRdns === "com.coinbase.wallet" ? "coinbase" : "metamask", walletRdns);
+    if (typeof walletRdns === "string") void connect(null, walletRdns);
     else if (loginMethod && loginMethod !== "email" && layoutOffers(layout, loginMethod)) void connect(loginMethod);
   }, [client, layout, loginMethod, walletSwitch, connect]);
 

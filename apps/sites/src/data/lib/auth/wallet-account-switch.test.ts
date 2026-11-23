@@ -9,7 +9,7 @@ const A = `0x${"ab".repeat(20)}`;
 const B = `0x${"cd".repeat(20)}`;
 const PUBLIC_KEY = `0x${"12".repeat(65)}` as const;
 
-function identity(signer: string, lifetime = 60_000): AuthIdentity {
+function identity(signer: string, lifetime = 2 * 86_400_000): AuthIdentity {
   return {
     signer,
     expiration: new Date(Date.now() + lifetime).toISOString(),
@@ -63,7 +63,7 @@ describe("when the Sites session belongs to a browser wallet", () => {
 
   describe("and the selected account has a cached session", () => {
     beforeEach(() => {
-      localStorage.setItem(`single-sign-on-${B}`, JSON.stringify(toShared(identity(B), PUBLIC_KEY)));
+      localStorage.setItem(`single-sign-on-${B}`, JSON.stringify(toShared(identity(B, 3 * 86_400_000), PUBLIC_KEY)));
     });
 
     it("should activate the selected account and update the wallet cookie", () => {
@@ -79,10 +79,12 @@ describe("when the Sites session belongs to a browser wallet", () => {
         onChange.mockClear();
       });
 
-      it("should reuse that account's saved session", () => {
+      it("should reuse the saved session and expose it as the Explorer's sign-in", async () => {
         wallet.emit([A]);
         expect(session.getIdentity()?.signer).toBe(A);
         expect(onChange).toHaveBeenCalledExactlyOnceWith("activated");
+        const { getStoredLogin } = await import("@explorer-core/features/auth/sso");
+        expect(getStoredLogin()?.address).toBe(A);
       });
     });
   });
@@ -109,6 +111,18 @@ describe("when the Sites session belongs to a browser wallet", () => {
       expect(onChange).not.toHaveBeenCalled();
       wallet.emit([A]);
       expect(session.getIdentity()?.signer).toBe(A);
+    });
+  });
+
+  describe("and the first account probe finds a locked wallet", () => {
+    beforeEach(async () => {
+      wallet.request.mockResolvedValueOnce([]);
+      await vi.waitFor(() => expect(wallet.request).toHaveBeenCalledWith({ method: "eth_accounts" }));
+    });
+
+    it("should keep the valid session until the wallet emits a change", () => {
+      expect(session.getIdentity()?.signer).toBe(A);
+      expect(onChange).not.toHaveBeenCalled();
     });
   });
 

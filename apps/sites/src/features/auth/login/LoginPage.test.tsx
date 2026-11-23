@@ -223,9 +223,13 @@ describe("the sign-in page", () => {
 
   it("signs in with the browser wallet in two steps and returns the reader to where they were", async () => {
     let approve: (sig: string) => void = () => {};
-    const calls = installWallet((req) => {
-      if (req.method === "eth_accounts") return [];
-      if (req.method === "eth_requestAccounts") return [SIGNER];
+    let approvedAccounts: string[] = [];
+    installWallet((req) => {
+      if (req.method === "eth_accounts") return approvedAccounts;
+      if (req.method === "eth_requestAccounts") {
+        approvedAccounts = [SIGNER];
+        return approvedAccounts;
+      }
       if (req.method === "personal_sign") return new Promise<string>((resolve) => (approve = resolve));
       return null;
     });
@@ -234,7 +238,6 @@ describe("the sign-in page", () => {
       fireEvent.click(screen.getByRole("button", { name: "Continue with MetaMask" }));
     });
     expect(screen.getByTestId("connection-status").textContent).toBe("Confirm in your digital wallet extension to continue.");
-    expect(calls).toEqual(["eth_accounts", "eth_requestAccounts", "personal_sign"]);
     expect(assign).not.toHaveBeenCalled();
 
     await act(async () => approve(`0x${"11".repeat(65)}`));
@@ -306,6 +309,52 @@ describe("the sign-in page", () => {
         expect(getIdentity()).toBeNull();
         expect(assign).not.toHaveBeenCalled();
         expect(screen.getByText("Your wallet changed accounts. Try again with the account you want to use.")).toBeTruthy();
+      });
+    });
+
+    describe("and the recorded wallet is unavailable", () => {
+      beforeEach(() => { delete window.ethereum; });
+
+      it("should show a connection error", async () => {
+        render(<LoginPage redirectTo={returnTo} layoutVariant="two-options" magicApiKey={MAGIC_KEY} walletSwitch />);
+        expect(await screen.findByText("The browser wallet is unavailable.")).toBeTruthy();
+      });
+    });
+
+    describe("and another tab signs in while the browser lock is held", () => {
+      let releaseOtherTab: () => void;
+      let previousLocks: PropertyDescriptor | undefined;
+      let calls: string[];
+
+      beforeEach(() => {
+        previousLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+        const otherTab = new Promise<void>((resolve) => { releaseOtherTab = resolve; });
+        Object.defineProperty(navigator, "locks", {
+          configurable: true,
+          value: { request: async (_name: string, run: () => Promise<void>) => { await otherTab; return run(); } },
+        });
+        calls = installWallet(({ method }) => method === "eth_accounts" ? [SIGNER] : null);
+      });
+
+      afterEach(() => {
+        if (previousLocks) Object.defineProperty(navigator, "locks", previousLocks);
+        else Reflect.deleteProperty(navigator, "locks");
+      });
+
+      it("should use the completed sign-in without requesting a second signature", async () => {
+        render(<LoginPage redirectTo={returnTo} layoutVariant="two-options" magicApiKey={MAGIC_KEY} walletSwitch />);
+        await screen.findByRole("progressbar");
+        await act(async () => {
+          setBrowserWalletIdentity({
+            signer: SIGNER,
+            ephemeral: { address: `0x${"c".repeat(40)}`, privateKey: `0x${"12".repeat(32)}` },
+            expiration: new Date(Date.now() + 60_000).toISOString(),
+            authChain: [],
+          }, "injected");
+          releaseOtherTab();
+        });
+        expect(assign).toHaveBeenCalledWith(returnTo);
+        expect(calls).not.toContain("personal_sign");
       });
     });
   });

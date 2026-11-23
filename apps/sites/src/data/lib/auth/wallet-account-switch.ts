@@ -1,13 +1,13 @@
 import { isIdentityExpired } from "./expiry";
 import {
   getIdentity,
-  getWebsiteIdentity,
+  getSavedWebsiteIdentity,
   setBrowserWalletIdentity,
   subscribe,
   suspendWalletIdentity,
 } from "./session";
-import { browserWalletRdnsFor, recordSignIn } from "./signin-kind";
-import { sharedIdentityFor } from "./single-sign-on";
+import { browserWalletRdnsFor, recordSignIn, UNRECORDED_BROWSER_WALLET } from "./signin-kind";
+import { sharedIdentityFor, walletSessionFor } from "./single-sign-on";
 import { browserWalletProvider, selectWallet } from "./wallet";
 
 const ADDRESS = /^0x[\da-f]{40}$/i;
@@ -28,10 +28,10 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
   let unbind: (() => void) | undefined;
 
   function bind() {
-    const identity = getWebsiteIdentity();
+    const identity = getSavedWebsiteIdentity();
     const signer = identity?.signer.toLowerCase();
     const recordedRdns = signer ? browserWalletRdnsFor(signer) : null;
-    const rdns = recordedRdns === undefined ? "injected" : recordedRdns;
+    const rdns = recordedRdns === UNRECORDED_BROWSER_WALLET ? "injected" : recordedRdns;
     if (signer && signer === boundSigner && rdns === boundRdns) return;
     unbind?.();
     unbind = undefined;
@@ -46,7 +46,7 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
 
       let live = true;
       let sawEvent = false;
-      let trusted = recordedRdns !== undefined;
+      let trusted = recordedRdns !== UNRECORDED_BROWSER_WALLET;
       let pendingAccount: string | null = null;
       const apply = (accounts: unknown) => {
         if (!live || !trusted) return;
@@ -57,11 +57,13 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
           suspendWalletIdentity();
           return;
         }
-        const saved = getWebsiteIdentity();
+        const saved = getSavedWebsiteIdentity();
         if (saved?.signer.toLowerCase() !== signer) return;
         if (account === signer && getIdentity() && !isIdentityExpired(saved)) return;
 
-        const next = account === signer && !isIdentityExpired(saved) ? saved : sharedIdentityFor(account);
+        const next = account === signer && !isIdentityExpired(saved)
+          ? saved
+          : sharedIdentityFor(account) ?? walletSessionFor(account);
         if (next) {
           setBrowserWalletIdentity(next, rdns, true);
           onChange("activated");
@@ -97,7 +99,7 @@ export function watchBrowserWalletAccount(win: Window, onChange: (change: Wallet
             recordSignIn(signer, "web3", rdns);
             selectWallet(rdns);
           }
-          apply(accounts);
+          if (exposedAccount(accounts)) apply(accounts);
         })
         .catch(() => {});
     } catch {

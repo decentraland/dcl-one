@@ -4,7 +4,7 @@ import { AuthIdentitySchema } from "../persisted-schemas";
 
 import { isIdentityExpired } from "./expiry";
 import { recordSignIn } from "./signin-kind";
-import { clearAllShared, clearShared, freshestShared, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
+import { clearAllShared, clearShared, clearWalletSessions, freshestShared, saveWalletSession, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
 import type { AuthIdentity } from "./types";
 import { clearWalletCookie, serializeWalletCookie, walletInCookies } from "./wallet-cookie";
 
@@ -62,7 +62,7 @@ function readOwn(): AuthIdentity | null {
 function writeStorage(
   identity: AuthIdentity | null,
   previous: AuthIdentity | null,
-  keepPrevious: boolean,
+  walletSwitch: boolean,
 ): void {
   if (typeof window === "undefined") return;
   try {
@@ -73,8 +73,15 @@ function writeStorage(
     }
   } catch {
   }
-  if (!identity) clearAllShared();
-  else if (!keepPrevious && previous && previous.signer !== identity.signer) clearShared(previous.signer);
+  if (!identity) {
+    clearWalletSessions();
+    clearAllShared();
+  } else if (walletSwitch) {
+    if (previous && previous.signer !== identity.signer) saveWalletSession(previous);
+    clearAllShared(identity.signer);
+  } else if (previous && previous.signer !== identity.signer) {
+    clearShared(previous.signer);
+  }
   if (identity) storeShared(identity);
   syncWalletCookie(identity);
 }
@@ -101,7 +108,7 @@ function ensureHydrated() {
 
 export function getIdentity(): AuthIdentity | null {
   ensureHydrated();
-  return hostIdentity === undefined && current?.signer.toLowerCase() === suspendedSigner ? null : current;
+  return !hostOwnsSession() && current?.signer.toLowerCase() === suspendedSigner ? null : current;
 }
 
 function setSuspendedSigner(signer: string | null): void {
@@ -114,32 +121,32 @@ function setSuspendedSigner(signer: string | null): void {
 }
 
 /** Keeps the saved session available to the wallet watcher while this tab is signed out. */
-export function getWebsiteIdentity(): AuthIdentity | null {
+export function getSavedWebsiteIdentity(): AuthIdentity | null {
   ensureHydrated();
-  return hostIdentity === undefined ? current : null;
+  return hostOwnsSession() ? null : current;
 }
 
 export function getSuspendedWalletSigner(): string | null {
   ensureHydrated();
-  return hostIdentity === undefined && !getIdentity() ? suspendedSigner : null;
+  return !hostOwnsSession() && !getIdentity() ? suspendedSigner : null;
 }
 
 export function suspendWalletIdentity(): void {
-  const active = getWebsiteIdentity();
+  const active = getSavedWebsiteIdentity();
   if (!active || !getIdentity()) return;
   setSuspendedSigner(active.signer.toLowerCase());
   syncWalletCookie(null);
   emit();
 }
 
-function updateIdentity(identity: AuthIdentity | null, keepPrevious: boolean): void {
+function updateIdentity(identity: AuthIdentity | null, walletSwitch: boolean): void {
   if (hostIdentity !== undefined) throw new Error("Use the explorer to change accounts.");
   ensureHydrated();
   const previous = current;
   if (suspendedSigner) setSuspendedSigner(null);
   current = identity;
   hydrated = true;
-  writeStorage(identity, previous, keepPrevious);
+  writeStorage(identity, previous, walletSwitch);
   emit();
 }
 
@@ -150,7 +157,7 @@ export function setIdentity(identity: AuthIdentity | null): void {
 /** A wallet-driven switch keeps the previous signature reusable. */
 export function setBrowserWalletIdentity(identity: AuthIdentity, rdns: string, fromWalletEvent = false): void {
   if (hostOwnsSession()) throw new Error("Use the explorer to change accounts.");
-  const suspended = getWebsiteIdentity() !== null && getIdentity() === null;
+  const suspended = getSuspendedWalletSigner() !== null;
   recordSignIn(identity.signer, "web3", rdns);
   updateIdentity(identity, fromWalletEvent || suspended);
 }
@@ -227,9 +234,11 @@ function onStorage(e: StorageEvent) {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {
     }
+    clearWalletSessions();
   }
   if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY || shared)) {
     current = readStorage();
+    if (suspendedSigner && current && current.signer.toLowerCase() !== suspendedSigner) setSuspendedSigner(null);
     syncWalletCookie(getIdentity());
     emit();
   }
