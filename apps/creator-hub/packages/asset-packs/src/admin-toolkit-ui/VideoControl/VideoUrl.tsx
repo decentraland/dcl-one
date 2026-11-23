@@ -6,14 +6,14 @@ import { COLORS, RADIUS, SPACING, TYPE } from '../theme';
 import { SectionHeader, FieldLabel, Icon } from '../Primitives';
 import { PillButton } from '../Controls';
 import { VolumeSlider } from './VolumeSlider';
-import { createVideoPlayerControls, isVideoUrl } from './utils';
+import { CAST_SRC_PREFIX, createVideoPlayerControls, isVideoUrl } from './utils';
 
 const VIDEO_PLAYER_HELP_URL =
   'https://docs.decentraland.org/creator/scene-editor/interactivity/video-screen';
 
 // A stream or DCL Cast source is not a URL the admin can edit, so the field starts empty for it.
 function toInputURL(src: string | undefined): string {
-  return !src || src.startsWith('livekit-video://') ? '' : src;
+  return !src || src.startsWith(CAST_SRC_PREFIX) ? '' : src;
 }
 
 export function VideoControlURL({
