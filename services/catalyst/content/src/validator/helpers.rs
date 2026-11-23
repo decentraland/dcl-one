@@ -149,23 +149,6 @@ pub fn navmap_thumbnail_error(
     metadata: &serde_json::Value,
     has_file: impl Fn(&str) -> bool,
 ) -> Option<String> {
-    navmap_thumbnail_check(metadata, has_file, true)
-}
-
-/// The reference's rule, for a synced scene: a truthy value names a file the
-/// deployment includes, whatever its spelling.
-pub(super) fn synced_navmap_thumbnail_error(
-    metadata: &serde_json::Value,
-    has_file: impl Fn(&str) -> bool,
-) -> Option<String> {
-    navmap_thumbnail_check(metadata, has_file, false)
-}
-
-fn navmap_thumbnail_check(
-    metadata: &serde_json::Value,
-    has_file: impl Fn(&str) -> bool,
-    relative_only: bool,
-) -> Option<String> {
     let value = metadata.get("display")?.get("navmapThumbnail")?;
     let thumbnail = match value {
         serde_json::Value::Null => return None,
@@ -180,7 +163,7 @@ fn navmap_thumbnail_check(
             ));
         }
     };
-    if relative_only && !is_relative_thumbnail_path(thumbnail) {
+    if !is_relative_thumbnail_path(thumbnail) {
         return Some(format!(
             "Scene thumbnail '{thumbnail}' must be a relative path to a \
              file included in the deployment."
@@ -308,6 +291,8 @@ mod tests {
         assert!(!is_relative_thumbnail_path("thumb\u{0}nail.png"));
         assert!(!is_relative_thumbnail_path("thumb\u{1b}nail.png"));
         assert!(!is_relative_thumbnail_path("\u{feff}thumbnail.png"));
+        assert!(!is_relative_thumbnail_path("\u{a0}thumbnail.png"));
+        assert!(!is_relative_thumbnail_path("thumbnail.png\u{3000}"));
     }
 
     #[test]

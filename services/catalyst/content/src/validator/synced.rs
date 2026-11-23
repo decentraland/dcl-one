@@ -16,8 +16,6 @@
 //!   answer for that block: undecidable).
 //! - items, as the reference validator: no thumbnail check, and pointers
 //!   naming one collections-v1 asset by address and by name count as one.
-//! - a scene's navmap thumbnail, as the reference validator: any spelling of
-//!   a file the entity includes.
 //! - a timestamp more than `REQUEST_TTL_FORWARDS_MS` ahead of this node's
 //!   clock is undecided until the clock catches up; more than a day ahead,
 //!   refused.

@@ -18,8 +18,8 @@ use super::checker::{
 use super::error::ValidationResponse;
 use super::helpers::{
     avatar_has_snapshots, navmap_thumbnail_error, profile_has_emotes,
-    should_validate_face_thumbnail, slot_key, synced_navmap_thumbnail_error,
-    validate_profile_emote_urns, validate_profile_wearable_urns,
+    should_validate_face_thumbnail, slot_key, validate_profile_emote_urns,
+    validate_profile_wearable_urns,
 };
 use super::image_metadata::{check_face256_thumbnail_image, check_wearable_thumbnail_image};
 use super::scene_parcels::validate_scene_parcels_match_pointers;
@@ -120,9 +120,8 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`: only the local pointer-ownership
     /// rule of the access step runs.
     pub ignore_blockchain_access: bool,
-    /// An entity a peer serves, judged as the reference does: the item
-    /// thumbnail is not checked, an item's equivalent pointers count as one,
-    /// and a scene's navmap thumbnail only has to name an included file.
+    /// An entity a peer serves: the item thumbnail is not checked and an
+    /// item's equivalent pointers count as one, as the reference does.
     /// A new deploy also needs integer emote and outfit slots, stricter than
     /// the reference's number; a synced entity keeps the numeric reading.
     pub synced: bool,
@@ -758,7 +757,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         if entity.timestamp >= adr_timestamps::ADR_236
             && let Some(metadata) = &entity.metadata
         {
-            let result = validate_scene_navmap_thumbnail(metadata, &entity.content, self.synced);
+            let result = validate_scene_navmap_thumbnail(metadata, &entity.content);
             if !result.is_ok() {
                 return result;
             }
@@ -1083,15 +1082,8 @@ fn validate_ipfs_hashing(entity: &Entity) -> ValidationResponse {
 fn validate_scene_navmap_thumbnail(
     metadata: &serde_json::Value,
     content: &[ContentMapping],
-    synced: bool,
 ) -> ValidationResponse {
-    let has_file = |file: &str| content.iter().any(|c| c.file == file);
-    let error = if synced {
-        synced_navmap_thumbnail_error(metadata, has_file)
-    } else {
-        navmap_thumbnail_error(metadata, has_file)
-    };
-    match error {
+    match navmap_thumbnail_error(metadata, |file| content.iter().any(|c| c.file == file)) {
         Some(message) => ValidationResponse::fail(message),
         None => ValidationResponse::Ok,
     }
@@ -1234,34 +1226,31 @@ mod tests {
     fn navmap_thumbnail_relative_embedded_path_passes() {
         let metadata = thumbnail_metadata(serde_json::json!("thumbnail.png"));
         assert!(
-            validate_scene_navmap_thumbnail(&metadata, &scene_content("thumbnail.png"), false)
-                .is_ok()
+            validate_scene_navmap_thumbnail(&metadata, &scene_content("thumbnail.png")).is_ok()
         );
     }
 
     #[test]
     fn navmap_thumbnail_absent_null_or_empty_is_skipped() {
         let absent = serde_json::json!({ "display": {} });
-        assert!(validate_scene_navmap_thumbnail(&absent, &scene_content("x.png"), false).is_ok());
+        assert!(validate_scene_navmap_thumbnail(&absent, &scene_content("x.png")).is_ok());
         let null = thumbnail_metadata(serde_json::Value::Null);
-        assert!(validate_scene_navmap_thumbnail(&null, &scene_content("x.png"), false).is_ok());
+        assert!(validate_scene_navmap_thumbnail(&null, &scene_content("x.png")).is_ok());
         let empty = thumbnail_metadata(serde_json::json!(""));
-        assert!(validate_scene_navmap_thumbnail(&empty, &scene_content("x.png"), false).is_ok());
+        assert!(validate_scene_navmap_thumbnail(&empty, &scene_content("x.png")).is_ok());
         let falsey = thumbnail_metadata(serde_json::json!(false));
-        assert!(validate_scene_navmap_thumbnail(&falsey, &scene_content("x.png"), false).is_ok());
+        assert!(validate_scene_navmap_thumbnail(&falsey, &scene_content("x.png")).is_ok());
         let zero = thumbnail_metadata(serde_json::json!(0));
-        assert!(validate_scene_navmap_thumbnail(&zero, &scene_content("x.png"), false).is_ok());
+        assert!(validate_scene_navmap_thumbnail(&zero, &scene_content("x.png")).is_ok());
         let zero_float = thumbnail_metadata(serde_json::json!(0.0));
-        assert!(
-            validate_scene_navmap_thumbnail(&zero_float, &scene_content("x.png"), false).is_ok()
-        );
+        assert!(validate_scene_navmap_thumbnail(&zero_float, &scene_content("x.png")).is_ok());
     }
 
     #[test]
     fn navmap_thumbnail_array_value_is_rejected() {
         let payload = "https://x\"><script>alert(1)</script><meta name=\"y";
         let metadata = thumbnail_metadata(serde_json::json!([payload]));
-        match validate_scene_navmap_thumbnail(&metadata, &scene_content("x.png"), false) {
+        match validate_scene_navmap_thumbnail(&metadata, &scene_content("x.png")) {
             ValidationResponse::Failed { errors } => {
                 assert_eq!(errors.len(), 1);
                 assert!(
@@ -1280,7 +1269,7 @@ mod tests {
     #[test]
     fn navmap_thumbnail_number_value_is_rejected() {
         let metadata = thumbnail_metadata(serde_json::json!(5));
-        match validate_scene_navmap_thumbnail(&metadata, &scene_content("x.png"), false) {
+        match validate_scene_navmap_thumbnail(&metadata, &scene_content("x.png")) {
             ValidationResponse::Failed { errors } => {
                 assert_eq!(
                     errors[0],
@@ -1297,7 +1286,7 @@ mod tests {
         for bad in ["https://evil.com/x.png", "//evil.com/x.png", "/etc/passwd"] {
             let metadata = thumbnail_metadata(serde_json::json!(bad));
             assert!(
-                !validate_scene_navmap_thumbnail(&metadata, &scene_content(bad), false).is_ok(),
+                !validate_scene_navmap_thumbnail(&metadata, &scene_content(bad)).is_ok(),
                 "{bad} must be rejected"
             );
         }
@@ -1306,7 +1295,7 @@ mod tests {
     #[test]
     fn navmap_thumbnail_missing_from_content_is_rejected() {
         let metadata = thumbnail_metadata(serde_json::json!("thumbnail.png"));
-        match validate_scene_navmap_thumbnail(&metadata, &scene_content("other.png"), false) {
+        match validate_scene_navmap_thumbnail(&metadata, &scene_content("other.png")) {
             ValidationResponse::Failed { errors } => {
                 assert_eq!(
                     errors[0],
@@ -1316,33 +1305,6 @@ mod tests {
             }
             other => panic!("non-embedded thumbnail must be rejected, got {other}"),
         }
-    }
-
-    #[test]
-    fn synced_navmap_thumbnail_only_needs_an_included_file() {
-        for spelling in [
-            "/thumbnail.png",
-            "https://x/t.png",
-            " thumbnail.png",
-            "a<b.png",
-        ] {
-            let metadata = thumbnail_metadata(serde_json::json!(spelling));
-            let content = scene_content(spelling);
-            assert!(
-                validate_scene_navmap_thumbnail(&metadata, &content, true).is_ok(),
-                "{spelling:?} is a synced scene's included file"
-            );
-            assert!(
-                !validate_scene_navmap_thumbnail(&metadata, &content, false).is_ok(),
-                "{spelling:?} is refused on a local deploy"
-            );
-        }
-        let metadata = thumbnail_metadata(serde_json::json!("thumbnail.png"));
-        assert!(
-            !validate_scene_navmap_thumbnail(&metadata, &scene_content("other.png"), true).is_ok()
-        );
-        let array = thumbnail_metadata(serde_json::json!(["x.png"]));
-        assert!(!validate_scene_navmap_thumbnail(&array, &scene_content("x.png"), true).is_ok());
     }
 
     mod access_deadline {
