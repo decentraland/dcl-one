@@ -108,8 +108,11 @@ scene must wait for a thread: only priority scenes bypass the `scene_threads` li
 are outstanding, it sleeps so that the next pass starts `SCENE_REPLY_POLL` (250 µs) after this
 one started, or at the deadline if that is sooner. On native no sleep ends closer to the
 deadline than the spin sleeper's accuracy, because a native sleep can wake that late; the loop
-spins through that last stretch. The loop's schedule runs on the single-threaded executor: a
-pass is a chain of systems that mostly find nothing to do.
+spins through that last stretch. On the web a timed wait can end a millisecond or more late, so
+in every `?sceneLoop=` mode but `legacy` a reply also ends the wait: each relay counts what it
+forwards to the engine and wakes the loop (`dcl_wasm::scene_replies`). A reply that arrives
+before the deadline is then received in the same frame. The loop's schedule runs on the
+single-threaded executor: a pass is a chain of systems that mostly find nothing to do.
 
 Priority: the scenes the player is in (the one they stand in,
 plus portables and global scenes) are 0; any other scene is its squared distance from the

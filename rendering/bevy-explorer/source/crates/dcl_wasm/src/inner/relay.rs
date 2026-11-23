@@ -35,6 +35,7 @@ use super::{
 use crate::{
     relay_wake::{self, RelayWake},
     scene_loop_mode,
+    scene_replies::REPLIES,
     tick_limits::tick_limit_broken,
 };
 
@@ -114,12 +115,16 @@ impl Relay {
             let _ = self.renderer_sender.try_send(SceneResponse::Error(format!(
                 "scene ended by the relay: {reason}"
             )));
+            REPLIES.replied();
         }
     }
 
     fn forward(&mut self, response: SceneResponse) -> bool {
         let sent = self.renderer_sender.try_send(response).is_ok();
-        if !sent {
+        if sent {
+            // wakes the engine's scene loop if it waits for a reply
+            REPLIES.replied();
+        } else {
             count(|s| s.failures += 1.0);
         }
         sent

@@ -553,10 +553,11 @@ fn run_scene_loop(world: &mut World) {
         frame_target_duration,
     );
     loop_schedule.next_frame_end = next_frame_end;
+    #[cfg(target_arch = "wasm32")]
+    let mode = dcl_wasm::scene_loop_mode::get();
     // web: in the deadline mode, from the frame's start once the frame's tail is measured
     #[cfg(target_arch = "wasm32")]
     let target_end_time = {
-        let mode = dcl_wasm::scene_loop_mode::get();
         let pacing = world.resource::<loop_pacing::WebLoopPacing>();
         let reserve = pacing.tail.reserve();
         match (
@@ -596,6 +597,9 @@ fn run_scene_loop(world: &mut World) {
                 || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
     {
         let pass_start = Instant::now();
+        // web: the replies so far, before this pass drains them; one after this ends the wait
+        #[cfg(target_arch = "wasm32")]
+        let replies_seen = dcl_wasm::scene_replies::REPLIES.seen();
         schedule.run(world);
         run_once = true;
         scene_schedule_run_count += 1;
@@ -610,8 +614,14 @@ fn run_scene_loop(world: &mut World) {
                 // the sleep the sleeper's accuracy is for
                 #[cfg(not(target_arch = "wasm32"))]
                 spin_sleep::native_sleep(wait);
+                // a browser's timed wait can wake a millisecond or more late, past the
+                // deadline, so a reply that arrives meanwhile ends the wait
                 #[cfg(target_arch = "wasm32")]
-                std::thread::sleep(wait);
+                if mode.loop_waits_for_replies() {
+                    dcl_wasm::scene_replies::REPLIES.wait(replies_seen, wait);
+                } else {
+                    std::thread::sleep(wait);
+                }
             }
         }
     }

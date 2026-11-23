@@ -1,7 +1,8 @@
 //! The web scene loop's scheduling mode. `both`, the default, wakes a sandbox worker's relay when
 //! the engine sends its scene a tick (`inner::relay`) instead of on its 1 ms poll, and ends the
 //! engine's scene loop from the frame's start (scene_runner `loop_pacing`). For diagnostics,
-//! `relay` and `deadline` do one of the two and `legacy` neither.
+//! `relay` and `deadline` do one of the two and `legacy` neither. Every mode but `legacy` also
+//! ends the scene loop's wait for replies when one arrives (`scene_replies`).
 //! Only the relays of the scenes the engine wakes ([`wakes_scene`]: the scenes the player is in,
 //! portable experiences among them) wait for its send; any other scene's relay keeps the poll.
 //! Set from the page (`?sceneLoop=`); the relays read it from engine memory each step, so a
@@ -47,6 +48,12 @@ impl SceneLoopMode {
     /// The scene loop's deadline comes from the frame's start.
     pub fn frame_deadline(self) -> bool {
         matches!(self, Self::Deadline | Self::Both)
+    }
+
+    /// The engine's scene loop, with replies outstanding, waits until one arrives
+    /// (`scene_replies`) instead of sleeping for a fixed poll. Every mode but `legacy`.
+    pub fn loop_waits_for_replies(self) -> bool {
+        self != Self::Legacy
     }
 
     pub fn from_u8(value: u8) -> Self {
@@ -124,6 +131,9 @@ mod tests {
         assert_eq!(SceneLoopMode::from_u8(9), SceneLoopMode::Legacy);
         assert!(SceneLoopMode::Both.relay_wake() && SceneLoopMode::Both.frame_deadline());
         assert!(!SceneLoopMode::Legacy.relay_wake() && !SceneLoopMode::Legacy.frame_deadline());
+        assert!(SceneLoopMode::Relay.loop_waits_for_replies());
+        assert!(SceneLoopMode::Deadline.loop_waits_for_replies());
+        assert!(!SceneLoopMode::Legacy.loop_waits_for_replies());
         assert_eq!(SceneLoopMode::default(), SceneLoopMode::Both);
     }
 
