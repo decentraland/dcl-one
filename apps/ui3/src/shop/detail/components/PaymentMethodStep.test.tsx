@@ -10,7 +10,7 @@ import PaymentMethodStep, { type StepRail, type StepRails } from "./PaymentMetho
 const display = { name: "Rainbow Hat", rarity: "epic", category: "wearable" } as CartLineDisplay;
 const CREDITS: StepRails["credits"] = { credits: 12 };
 const MANA: StepRails["mana"] = { manaWei: manaWei(23n * 10n ** 17n) };
-const SPLIT: StepRails["combined"] = { creditsCents: usdCents(30), credits: 3, manaWei: manaWei(17n * 10n ** 17n) };
+const SPLIT: StepRails["combined"] = { priceCents: usdCents(115), creditsCents: usdCents(30), credits: 3, manaWei: manaWei(17n * 10n ** 17n) };
 const NONE: StepRails = { credits: null, mana: null, combined: null };
 
 function step(rails: StepRails, extra: { initial?: StepRail | null; balanceCredits?: number | null } = {}) {

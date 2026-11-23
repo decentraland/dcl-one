@@ -5,7 +5,10 @@
 //! ownership through `ownerOf`/`balanceOf` in JSON-RPC batches, every
 //! question asked at the block of the entity timestamp and again at the
 //! block five minutes before it. Blocks come from a binary search over the
-//! RPC ([`dcl_http::jsonrpc::BlockSearch`]).
+//! RPC ([`dcl_http::jsonrpc::BlockSearch`]); each block it reads is asked up
+//! to [`BLOCK_READ_ATTEMPTS`] times, a transient error or an empty answer (a
+//! replica behind the chain) retried after a jittered backoff. The
+//! `eth_call`s are asked once.
 //!
 //! The vendored contract data is in `contracts/` with its provenance
 //! (`upstream.lock.json`). A call that cannot be decided (no RPC, a failing
@@ -27,17 +30,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::error::ValidatorError;
-use crate::http::Outbound;
 use crate::http::jsonrpc::{
-    BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
+    BlockError, BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
 };
+use crate::http::{Outbound, RetryDecision, retry_with_backoff};
 
 pub use items::v1_collection_contract;
-
-/// A collection URN naming no item the ownership check can ask about.
-pub(crate) fn is_malformed_item(urn: &str) -> bool {
-    matches!(items::item_ref(urn), items::ItemRef::Malformed)
-}
 
 sol! {
     interface Checker {
@@ -63,9 +61,13 @@ pub fn checker_bytecode() -> &'static str {
     CHECKER_BYTECODE.trim()
 }
 
-/// Distinct item URNs asked about per check; more refuses the check. An
-/// avatar wears at most 18 wearable categories and 10 emotes, an outfits
-/// entity about ten avatars of those; `@dcl/schemas` caps neither list.
+/// Distinct item URNs asked about per check; more refuses the check (400).
+/// Every item is an `eth_call` to the operator's RPC, and any signer can name
+/// any number of them: `@dcl/schemas` caps neither a profile's avatars nor an
+/// outfit's wearables, and the reference validator asks about every one. The
+/// bound keeps one signed deploy from driving that RPC without limit; no
+/// entity the clients build reaches it (an avatar wears at most 18 wearable
+/// categories and 10 emotes, an outfits entity ten avatars of those).
 pub(crate) const MAX_ITEMS_ASKED: usize = 200;
 /// Distinct third-party NFT contracts asked about per check; more refuses
 /// the check. Their standard probes are batched, so this matches the item cap.
@@ -119,6 +121,13 @@ const BLOCKS_MEMO_CAP: usize = 4096;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// The longest one access check takes before it is undecided.
 const CHECK_DEADLINE: Duration = Duration::from_secs(30);
+/// Reads of one block before its error stands, and the first wait between
+/// them: 100-200 ms, then 200-400 ms.
+const BLOCK_READ_ATTEMPTS: u32 = 3;
+const BLOCK_READ_BASE_MS: u64 = 100;
+/// One block read's timeout: every attempt and its backoff (under 16 s) fit
+/// in [`CHECK_DEADLINE`] with an `eth_call` after them.
+const BLOCK_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// An address as the vendored JSON spells it.
 #[derive(Debug, Clone, Copy)]
@@ -227,6 +236,68 @@ fn call_params(to: Address, data: &[u8], block: BlockTag, overrides: Option<&Val
     Value::Array(params)
 }
 
+/// Whether a failed block read may succeed when asked again: the node
+/// unreachable or overloaded, a 2xx body that is not JSON (cut off on the
+/// way), a JSON-RPC internal or server error, or a replica that has not seen
+/// the block yet. A rate limit (HTTP 429, or EIP-1474's -32005 "limit
+/// exceeded") is not asked again within the check, nor is an answer that
+/// will not change (a refused endpoint, a bad key or path, invalid params,
+/// EIP-1474's resource not found, transaction rejected, method or version
+/// not supported, a block without a usable number or timestamp).
+fn transient(e: &BlockError) -> bool {
+    match e {
+        BlockError::Missing(_) => true,
+        BlockError::Shape(_) => false,
+        BlockError::Rpc(RpcError::Transport(_) | RpcError::Malformed(_)) => true,
+        BlockError::Rpc(RpcError::Status(s)) => *s == 408 || (500..600).contains(s),
+        BlockError::Rpc(RpcError::Response { code, .. }) => {
+            *code == -32603
+                || ((-32099..=-32000).contains(code)
+                    && ![-32001, -32003, -32004, -32005, -32006].contains(code))
+        }
+        BlockError::Rpc(RpcError::Refused(_)) => false,
+    }
+}
+
+/// One block, read again after a [`transient`] error, each wait doubling with
+/// up to as much again in jitter.
+async fn read_block(http: &Outbound, url: &str, tag: BlockTag) -> Result<BlockInfo, BlockError> {
+    let rpc = Rpc::new(http, url).with_timeout(BLOCK_READ_TIMEOUT);
+    let rpc = &rpc;
+    let mut attempt = 0;
+    // `after` always carries the jittered wait, overriding the helper's own
+    // ladder, so the `base_ms` passed here is nominal.
+    let answer = retry_with_backoff(
+        "block read",
+        BLOCK_READ_ATTEMPTS,
+        BLOCK_READ_BASE_MS,
+        || {
+            attempt += 1;
+            let last = attempt == BLOCK_READ_ATTEMPTS;
+            let base = BLOCK_READ_BASE_MS << (attempt - 1);
+            let wait = Duration::from_millis(base + rand::random::<u64>() % base);
+            async move {
+                Ok(match rpc.block(tag).await {
+                    Err(e) if !last && transient(&e) => {
+                        tracing::debug!(error = %e, ?tag, attempt, "block read failed, asking again");
+                        RetryDecision::Retry {
+                            after: Some(wait),
+                            rate_limited: false,
+                        }
+                    }
+                    answer => RetryDecision::Done(answer),
+                })
+            }
+        },
+    )
+    .await;
+    // The last attempt answers `Done`, so the budget never runs out first.
+    answer
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| Err(RpcError::Transport("block read gave no answer".into()).into()))
+}
+
 /// One chain's RPC and the blocks read from it.
 struct Chain {
     http: Outbound,
@@ -255,9 +326,8 @@ impl Chain {
     }
 
     async fn block_at(&self, timestamp: i64) -> Result<Option<BlockInfo>, ValidatorError> {
-        let rpc = self.rpc();
         self.search
-            .block_at(timestamp, |tag| rpc.block(tag))
+            .block_at(timestamp, |tag| read_block(&self.http, &self.url, tag))
             .await
             .map_err(|e| query_failed(&format!("{} block lookup", self.name), e))
     }

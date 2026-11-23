@@ -212,6 +212,19 @@ function sameCoupon(coupon: ListingCoupon, priced: PurchaseOffer["coupon"]): boo
   );
 }
 
+/**
+ * The MANA a MANA-priced (ERC-20) listing's sale moves, after its coupon, as the contract computes it
+ * (`amount - floor(amount * ppm / 1e6)`). Null for a USD-pegged listing, whose MANA is only fixed when the marketplace
+ * reads its feed at settlement, and for a price it cannot read.
+ */
+export function tradeManaPrice(trade: SignedTrade, coupon: ListingCoupon | undefined): ManaWei | null {
+  const price = trade.received[0];
+  const amount = price?.amount ?? price?.value;
+  if (!price || !amount || price.assetType !== ASSET_TYPE.ERC20) return null;
+  const wei = BigInt(amount) as ManaWei;
+  return coupon ? discountedMana(wei, coupon.discount) : wei;
+}
+
 function tradePriceMatches(trade: SignedTrade, coupon: ListingCoupon | undefined, quote: Quote): boolean {
   const price = trade.received[0];
   const amount = price?.amount ?? price?.value;
@@ -223,8 +236,7 @@ function tradePriceMatches(trade: SignedTrade, coupon: ListingCoupon | undefined
     return expected === quote.quoted;
   }
   if (price.assetType !== ASSET_TYPE.ERC20) return true;
-  const wei = BigInt(amount) as ManaWei;
-  return (coupon ? discountedMana(wei, coupon.discount) : wei) === quote.amount;
+  return tradeManaPrice(trade, coupon) === quote.amount;
 }
 
 /**

@@ -20,9 +20,11 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
-use super::checker::{BlockchainChecker, validate_item_access, validate_profile_access};
+use super::checker::{
+    BlockchainChecker, validate_item_access, validate_outfits_access, validate_profile_access,
+};
 use super::fake_chain::{self, FakeChain, Query, Reply};
-use super::types::OwnedDeployment;
+use super::types::{OwnedDeployment, UploadedFile};
 use super::*;
 use crate::auth::hash_bytes_v1;
 use crate::http::Outbound;
@@ -86,23 +88,15 @@ async fn signed(
     uploads: &[Vec<u8>],
 ) -> (
     Entity,
-    HashMap<String, bytes::Bytes>,
+    HashMap<String, UploadedFile>,
     crate::auth::AuthChain,
     String,
 ) {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
+    use catalyst_shared::test_keys::{ENTITY_KEY, address_of, signed_chain};
     let bytes = serde_json::to_vec(&entity).unwrap();
     let id = hash_bytes_v1(&bytes);
-    let key: PrivateKeySigner = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        .parse()
-        .unwrap();
-    let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
-    let signer = format!("{:#x}", key.address());
-    let chain = serde_json::from_value(json!([
-        {"type": "SIGNER", "payload": signer},
-        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
-    ]))
-    .unwrap();
+    let signer = address_of(ENTITY_KEY);
+    let chain = signed_chain(ENTITY_KEY, &id).await;
     let parsed = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
     let mut files = HashMap::from([(id.clone(), bytes.into())]);
     for upload in uploads {
@@ -594,12 +588,30 @@ fn random_address() -> String {
     format!("0x{}", &hex[..40])
 }
 
+fn outfits(owner: &str, wearables: &[&str]) -> OwnedDeployment {
+    OwnedDeployment::new(Entity {
+        id: "bafkreioutfits".into(),
+        entity_type: EntityType::Outfits,
+        pointers: vec![format!("{owner}:outfits")],
+        timestamp: TS,
+        content: vec![],
+        version: "v3".into(),
+        metadata: Some(json!({ "outfits": [{ "slot": 0, "outfit": {
+            "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+            "eyes": { "color": { "r": 0, "g": 0, "b": 0 } },
+            "hair": { "color": { "r": 0, "g": 0, "b": 0 } },
+            "skin": { "color": { "r": 0, "g": 0, "b": 0 } },
+            "wearables": wearables,
+        }}], "namesForExtraSlots": [] })),
+    })
+}
+
 /// Items with a token are asked by `ownerOf`, assets and off-chain items are
-/// not asked, and an active escrow lease stands in for a token the wearer does
-/// not hold (the overlay's SQL runs on the scratch database, so the whole
-/// check skips without it).
+/// not asked, and an active escrow lease stands in, until its unlock, for a
+/// token the wearer does not hold only with `CONTENT_ESCROW_LEASE_OWNERSHIP_ENABLED` (the overlay's
+/// SQL runs on the scratch database, so the whole check skips without it).
 #[tokio::test]
-async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
+async fn owned_items_come_from_the_chain_and_the_opt_in_escrow_overlay() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
     let (storage, tmp) = temp_storage("items").await;
     let owner = random_address();
@@ -621,7 +633,15 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
         other => panic!("{other:?}"),
     })
     .await;
-    let s = sources(pool.clone(), storage.clone(), over(&chain));
+    let chain_only = sources(pool.clone(), storage.clone(), over(&chain));
+    let leasing = sources(
+        pool.clone(),
+        storage.clone(),
+        Settings {
+            escrow_lease_ownership: true,
+            ..over(&chain)
+        },
+    );
 
     let unowned = format!("urn:decentraland:matic:collections-v2:{theirs}:0:3");
     let leased_token = format!("urn:decentraland:matic:collections-v2:{escrowed}:0:9");
@@ -636,15 +656,18 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
     let refs: Vec<&str> = wearables.iter().map(String::as_str).collect();
     let mut d = profile(&owner, "", &refs);
     d.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
-    assert_eq!(
-        validate_profile_access(&d.view(), &s, &owner)
-            .await
-            .into_result(),
-        rejected(&[&format!(
-            "The following items ({unowned}, {leased_token}) are not owned by the address {owner}."
-        )]),
-        "a held token passes; assets and off-chain items are not asked"
-    );
+    let both_unowned = rejected(&[&format!(
+        "The following items ({unowned}, {leased_token}) are not owned by the address {owner}."
+    )]);
+    for s in [&chain_only, &leasing] {
+        assert_eq!(
+            validate_profile_access(&d.view(), s, &owner)
+                .await
+                .into_result(),
+            both_unowned,
+            "a held token passes; assets and off-chain items are not asked"
+        );
+    }
 
     sqlx::query(
         "INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES \
@@ -656,19 +679,43 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
     .await
     .unwrap();
     assert_eq!(
-        validate_profile_access(&d.view(), &s, &owner)
+        validate_profile_access(&d.view(), &chain_only, &owner)
+            .await
+            .into_result(),
+        both_unowned,
+        "without the opt-in an active escrow lease is no ownership"
+    );
+    assert_eq!(
+        validate_profile_access(&d.view(), &leasing, &owner)
             .await
             .into_result(),
         rejected(&[&format!(
             "The following items ({unowned}) are not owned by the address {owner}."
         )]),
-        "an active escrow lease is ownership of its token"
+        "with the opt-in an active escrow lease is ownership of its token"
+    );
+    let leased_outfit = outfits(&owner, &[&leased_token]);
+    assert_eq!(
+        validate_outfits_access(&leased_outfit.view(), &chain_only, &owner)
+            .await
+            .into_result(),
+        rejected(&[&format!(
+            "The following wearables ({leased_token}) are not owned by the address {owner}."
+        )]),
+        "outfits wearing a leased item are refused without the opt-in"
+    );
+    assert_eq!(
+        validate_outfits_access(&leased_outfit.view(), &leasing, &owner)
+            .await
+            .into_result(),
+        Ok(()),
+        "outfits wearing a leased item pass with the opt-in"
     );
     let bought_now = format!("urn:decentraland:matic:collections-v2:{recent}:0:1");
     let mut d2 = profile(&owner, "", &[&bought_now, &leased_token]);
     d2.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
     assert_eq!(
-        validate_profile_access(&d2.view(), &s, &owner)
+        validate_profile_access(&d2.view(), &leasing, &owner)
             .await
             .into_result(),
         Ok(()),
@@ -681,13 +728,44 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
         .await
         .unwrap();
     assert_eq!(
-        validate_profile_access(&d.view(), &s, &owner)
+        validate_profile_access(&d.view(), &leasing, &owner)
             .await
             .into_result(),
-        rejected(&[&format!(
-            "The following items ({unowned}, {leased_token}) are not owned by the address {owner}."
-        )]),
+        both_unowned,
         "a revoked lease grants nothing"
+    );
+    // The release worker leaves a lease `active` past its unlock when it
+    // cannot release it (no token id, no collection, no broker).
+    sqlx::query(
+        "INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES \
+         ($1, $2, '9', 'wearable', timezone('UTC', now()) - interval '1 second')",
+    )
+    .bind(&owner)
+    .bind(format!("urn:decentraland:matic:collections-v2:{escrowed}:0"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        validate_profile_access(&d.view(), &leasing, &owner)
+            .await
+            .into_result(),
+        both_unowned,
+        "an active lease past its unlock grants nothing"
+    );
+    sqlx::query(
+        "UPDATE shop.usage_grants SET status = 'released', \
+         unlock_at = timezone('UTC', now()) + interval '2 days' WHERE grantee_address = $1",
+    )
+    .bind(&owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        validate_profile_access(&d.view(), &leasing, &owner)
+            .await
+            .into_result(),
+        both_unowned,
+        "a released lease grants nothing"
     );
 
     let l2_unset = sources(
@@ -712,6 +790,45 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
         .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
     pool.close().await;
+}
+
+/// Without the opt-in the item check never reads `shop.usage_grants`: over a
+/// database that cannot be reached it still answers from the chain, while
+/// the opt-in leaves it undecided.
+#[tokio::test]
+async fn the_item_check_reads_no_lease_without_the_opt_in() {
+    let (storage, tmp) = temp_storage("no-lease").await;
+    let mine = "0xaaa0000000000000000000000000000000000001";
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let worn = format!("urn:decentraland:matic:collections-v2:{mine}:1:42");
+    let mut d = profile(OWNER, "", &[&worn]);
+    d.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
+    let chain_only = sources(lazy_pool(), storage.clone(), over(&chain));
+    assert_eq!(
+        validate_profile_access(&d.view(), &chain_only, OWNER)
+            .await
+            .into_result(),
+        Ok(())
+    );
+    let leasing = sources(
+        lazy_pool(),
+        storage,
+        Settings {
+            escrow_lease_ownership: true,
+            ..over(&chain)
+        },
+    );
+    assert_eq!(
+        validate_profile_access(&d.view(), &leasing, OWNER)
+            .await
+            .into_result(),
+        unavailable(&["Error checking item ownership."])
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 fn wearable(pointer: &str) -> OwnedDeployment {

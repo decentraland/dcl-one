@@ -54,6 +54,32 @@
 //!   still bootstrapping would be marked processed by a peer and replaced
 //!   later, and the replacement is skipped as already covered.
 //!
+//! `Syncing` means a bootstrap pass over every peer ended, not that every
+//! peer finished it: a peer that was unreachable or did not fully deploy is
+//! retried in the background (`sync::orchestrator`), and generation does not
+//! wait for it, because a peer can stay away for any length of time. A
+//! window can therefore be written without that peer's entities. An entity
+//! that lands after its window was written (that peer catching up, a failed
+//! deployment retried) is stamped with a new `local_timestamp`, and reaches
+//! the peers of this node as follows, for a peer running this tree's sync
+//! client (`sync::snapshots`, `sync::orchestrator`):
+//! * A peer streaming this node's pointer changes receives it there: they
+//!   are served in `local_timestamp` order.
+//! * The first pass after it landed regenerates its window while the entity
+//!   is active, up to one interval later, with the earlier file in
+//!   `replacedSnapshotHashes`. A peer that never processed the earlier file
+//!   deploys the new one.
+//! * A peer that reads `/snapshots` before that pass starts its pointer
+//!   changes 20 minutes before the newest listed window's end, which is
+//!   earlier than the entity landed, and receives it there.
+//! * A peer that marked the earlier file processed and bootstraps again once
+//!   the new file is listed skips the new file as already covered. Its
+//!   pointer changes start 20 minutes before the later of its own cursor and
+//!   the newest listed window's end; when the entity landed before that,
+//!   this node does not deliver it to that peer, which then has it only from
+//!   another peer it syncs from. The rebuild does not change this: its rows
+//!   list the files they replace too.
+//!
 //! A window the deleter repair superseded rows in carries `outdated = true`
 //! (its generation time is left as it was, so `/snapshots` keeps publishing
 //! the real one) and is regenerated at the job's next tick.

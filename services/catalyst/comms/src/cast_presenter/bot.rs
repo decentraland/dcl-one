@@ -21,8 +21,8 @@
 //! - Events: `dataReceived {identity, payload}` (base64 packet; only from
 //!   the room metadata's presenters and carrying `presentation:`, so scene
 //!   traffic never crosses), `roomMetadata {metadata}`, `participantCount
-//!   {count}` (remote participants) and `disconnected {reason}`, after which
-//!   the bot exits.
+//!   {count}` (the audience: remote participants but presentation bots and
+//!   the RTMP ingress) and `disconnected {reason}`, after which the bot exits.
 //!
 //! One reader takes the bot's stdout and never waits on the session: replies
 //! complete their commands at once, the room's metadata and participant
@@ -65,7 +65,7 @@ pub struct RoomData {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoomState {
     pub metadata: String,
-    /// Remote participants in the room.
+    /// The room's audience: no presentation bot, no RTMP ingress.
     pub participants: usize,
 }
 
@@ -97,6 +97,18 @@ pub struct Connected {
     pub link: Arc<dyn BotLink>,
     pub data: mpsc::Receiver<RoomData>,
     pub room: watch::Receiver<RoomState>,
+}
+
+/// Who makes the room service calls for a bot that ended without leaving:
+/// the gatekeeper, which holds the LiveKit key.
+pub trait Rooms: Send + Sync {
+    fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_>;
+}
+
+impl Rooms for crate::gatekeeper::CommsState {
+    fn room_service(&self) -> crate::shared::livekit::RoomServiceClient<'_> {
+        Self::room_service(self)
+    }
 }
 
 /// Starts bots.

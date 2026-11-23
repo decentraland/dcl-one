@@ -27,6 +27,19 @@ pub enum RecoveryFailure {
     RoomDisappeared,
 }
 
+impl RecoveryFailure {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Deadline => "deadline",
+            Self::Changed => "changed",
+            Self::Budget => "budget",
+            Self::Unresolved => "unresolved",
+            Self::RoomDisappeared => "room_disappeared",
+        }
+    }
+}
+
 #[derive(Default)]
 struct ScanBudget {
     rooms: usize,
@@ -57,6 +70,8 @@ impl ScanBudget {
 
 /// One observation's result before it is published.
 struct Candidate {
+    /// Before enumeration: an event applied after it is newer than this read.
+    started: Instant,
     rooms: Vec<RecoveredRoom>,
     refused: Vec<String>,
     observed: Observation,
@@ -228,6 +243,9 @@ impl Presence {
         // previously untracked room during the read cannot be lost at commit.
         let unknown_generation = self.state.lock().unknown_generation;
         let started = Observation::now();
+        if background {
+            *self.partial.lock() = Some((started.mono, Vec::new()));
+        }
         let (before, refused) = self
             .inventory(&source, state.scenes.as_ref(), background, scope)
             .await?;
@@ -301,6 +319,17 @@ impl Presence {
                     .map(|p| p.identity.len() + p.sid.len())
                     .sum::<usize>();
             budget.include(room.participants.len(), bytes)?;
+            if background
+                && room.is_world
+                && let Some((_, seen)) = self.partial.lock().as_mut()
+            {
+                seen.extend(
+                    room.participants
+                        .iter()
+                        .filter(|p| counts_as_player(&p.identity))
+                        .map(|p| (p.sid.clone(), p.identity.clone())),
+                );
+            }
             rooms.push(room);
         }
         drop(reads);
@@ -324,8 +353,9 @@ impl Presence {
             .map(|r| &r.observed)
             .min_by_key(|o| o.mono)
             .cloned()
-            .unwrap_or(started);
+            .unwrap_or_else(|| started.clone());
         Ok(Candidate {
+            started: started.mono,
             rooms,
             refused,
             observed,
@@ -343,7 +373,27 @@ impl Presence {
 
     /// One complete pass. On error, retain membership AND original source time.
     pub async fn recover_complete(&self, state: &CommsState) -> Result<(), RecoveryFailure> {
+        let result = self.recover_complete_attempt(state).await;
+        let partial = self.partial.lock().take();
+        // A read that failed for any reason but LiveKit itself still saw these sessions
+        // live: confirm them, ending nothing it did not reach.
+        if let Err(error) = &result
+            && !matches!(error, RecoveryFailure::Source)
+            && let (Some(topology), Some((started, seen))) = (self.topology.get(), partial)
+        {
+            topology.observe_world(
+                started,
+                seen.iter()
+                    .map(|(sid, identity)| (sid.as_str(), identity.as_str())),
+                false,
+            );
+        }
+        result
+    }
+
+    async fn recover_complete_attempt(&self, state: &CommsState) -> Result<(), RecoveryFailure> {
         let Candidate {
+            started,
             rooms,
             refused,
             observed,
@@ -360,6 +410,10 @@ impl Presence {
                 "LiveKit rooms this node does not resolve are left out of the occupancy"
             );
         }
+        // Social needs no admission certification: events newer than `started` win
+        // over this read, and the next pass corrects the rest.
+        self.observe_world(&rooms, started, true);
+        self.partial.lock().take();
         let mut current = self.state.lock();
         if !Self::clean(&current, unknown, &generations) {
             return Err(RecoveryFailure::Changed);
@@ -542,16 +596,23 @@ impl Presence {
     pub(crate) fn spawn_recovery(
         self: &Arc<Self>,
         state: Arc<CommsState>,
+        events: crate::gatekeeper::bus::NatsSubscription,
         jobs: &crate::jobs::Jobs,
     ) {
         let presence = self.clone();
         jobs.spawn("comms-occupancy-recovery", move |ctx| async move {
+            let _events = events;
             let mut retry = Duration::from_secs(1);
             loop {
                 let result = tokio::select! {
                     _ = ctx.cancel.cancelled() => return Ok(()),
                     result = presence.recover_complete(&state) => result,
                 };
+                metrics::counter!(
+                    "comms_presence_recovery_passes_total",
+                    "result" => result.as_ref().map_or_else(RecoveryFailure::reason, |()| "ok")
+                )
+                .increment(1);
                 let delay = match result {
                     Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); retry = Duration::from_secs(1); Duration::from_secs(30) },
                     Err(error) => { ctx.error(error.to_string()); let delay = retry + Duration::from_millis(rand::random::<u64>() % 1001); retry = retry.saturating_mul(2).min(Duration::from_secs(5)); delay },

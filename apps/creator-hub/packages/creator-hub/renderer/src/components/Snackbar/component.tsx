@@ -11,6 +11,7 @@ import { NewDependencyVersion } from './DependencyVersion';
 import { SdkSkills } from './SdkSkills';
 import { Deploy } from './Deploy';
 import { ExternalAgentAccess } from './ExternalAgentAccess';
+import { RealmServerStopped } from './RealmServerStopped';
 
 import styles from './component.module.css';
 
@@ -53,6 +54,13 @@ export function SnackbarComponent() {
         );
       case 'external-agent-access':
         return <ExternalAgentAccess onClose={close(notification.id)} />;
+      case 'realm-server-stopped':
+        return (
+          <RealmServerStopped
+            onClose={close(notification.id)}
+            path={notification.path}
+          />
+        );
       default:
         return null;
     }

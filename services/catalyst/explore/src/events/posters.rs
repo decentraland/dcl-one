@@ -265,13 +265,16 @@ async fn upload(
             .await
             .map_err(|e| ApiError::internal(format!("poster hash task: {e}")))?
     };
-    let stored = async {
-        if !storage.exist(&cid).await? {
-            storage.store(&cid, poster.data.clone()).await?;
-        }
-        Ok::<_, crate::storage::StorageError>(())
+    // Stored under the store lock's shared side, held until the row commits:
+    // an unlink batch either ran before the existence check or sees the row.
+    let mut tx = state.pool.begin().await?;
+    let stored =
+        crate::storage::gc::store_for_row(&mut tx, &storage, &cid, poster.data.clone()).await;
+    if let Err(crate::storage::gc::GcError::LockTimeout) = stored {
+        return Err(ApiError::service_unavailable(
+            "The content store is being collected; retry shortly",
+        ));
     }
-    .await;
     if let Err(e) = stored {
         tracing::error!(error = %e, "poster blob store failed");
         return Err(bucket_unavailable(
@@ -291,8 +294,9 @@ async fn upload(
     .bind(&cid)
     .bind(mime)
     .bind(size as i64)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Json(poster_response(
         state.settings.configured_public_base.as_deref(),
         kind,

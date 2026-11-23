@@ -15,7 +15,7 @@ To enter the virtual world, download Decentraland on your device of choice:
 * [Desktop app](https://decentraland.org/download/) — for Windows and macOS.
 * [Mobile app](/docs/player/mobile-app/) — for iOS and Android.
 
-Once you've installed it and logged into your Decentraland account, you can start exploring Decentraland's Genesis City (pictured above), and it's archipelago of off-map Worlds. The same account, avatar, and inventory work across every client.
+Once you've installed it and logged into your Decentraland account, you can start exploring Decentraland's Genesis City (pictured above), and its off-map Worlds. The same account, avatar, and inventory work across every client.
 
 ## Genesis City vs. Worlds: Decentraland's Landscape Explained
 

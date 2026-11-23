@@ -8,7 +8,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
-import { EmojiPicker } from './EmojiPicker'
+import { EmojiPicker, useCloseEmojiPanelOnOutsidePress } from './EmojiPicker'
 import { EmojiButton } from './EmojiButton'
 import { EmojiSuggestList, emojiSuggestionAt, moveSelection, tokenAtCaret } from './EmojiSuggestList'
 import { ConversationMenu, MENU_LAYER } from './ConversationMenu'
@@ -179,7 +179,7 @@ function NewSeparator(): React.JSX.Element {
   )
 }
 
-const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world }
+const MSG_STYLES = { url: styles.url, mention: styles.mention, location: styles.location, world: styles.world, bold: styles.bold, italic: styles.italic }
 
 /** "Ana, Bo and you reacted with :fire:" — who reacted with one emoji, for its pill's tooltip. */
 export function reactionLabel(reaction: MessageReaction, me?: string): string {
@@ -1084,17 +1084,8 @@ export function Chat({
     }
   }
 
-  // The emoji panel closes on a press outside it (the emoji button toggles it itself).
-  useEffect(() => {
-    if (!picker) return
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as HTMLElement
-      if (pickerRef.current?.contains(t) || t.closest('[aria-label="Emoji"]')) return
-      setPicker(false)
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [picker])
+  const emojiRef = useRef<HTMLButtonElement>(null)
+  useCloseEmojiPanelOnOutsidePress(picker, pickerRef, emojiRef, () => setPicker(false))
 
   // A click anywhere in the panel that isn't a control focuses the input — unless it selected text to copy.
   const focusFromPanel = (e: React.MouseEvent): void => {
@@ -1312,7 +1303,7 @@ export function Chat({
         )}
         {focused && draft.length > 0 && <CharRing len={draft.length} />}
         {!bare && blockedState == null && (
-          <EmojiButton className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
+          <EmojiButton ref={emojiRef} className={styles.emojiBtn} open={picker} onToggle={toggleEmoji} />
         )}
       </form>
 

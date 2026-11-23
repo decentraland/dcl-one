@@ -1,5 +1,5 @@
 //! Helpers shared by the write-path tests: a signed auth chain, a throwaway
-//! storage tree, a one-route content server and the optional test database.
+//! storage tree, one-route content servers and the optional test database.
 
 use std::sync::Arc;
 
@@ -8,31 +8,12 @@ use axum::http::HeaderValue;
 use crate::auth::{AuthChain, AuthLink, AuthLinkType};
 use crate::storage::Storage;
 
-const TEST_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const EPHEMERAL_KEY: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
-/// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY) over `entity_id` from a fixed test key.
+/// A two-link chain (SIGNER, ECDSA_SIGNED_ENTITY) over `entity_id` from the shared test key.
 pub(crate) async fn signed_chain(entity_id: &str) -> AuthChain {
-    use alloy::signers::{Signer, local::PrivateKeySigner};
-
-    let key: PrivateKeySigner = TEST_KEY.parse().unwrap();
-    let signature = key
-        .sign_message(entity_id.as_bytes())
+    catalyst_shared::test_keys::signed_chain(catalyst_shared::test_keys::ENTITY_KEY, entity_id)
         .await
-        .unwrap()
-        .to_string();
-    vec![
-        AuthLink {
-            link_type: AuthLinkType::SIGNER,
-            payload: format!("{:#x}", key.address()),
-            signature: None,
-        },
-        AuthLink {
-            link_type: AuthLinkType::EcdsaSignedEntity,
-            payload: entity_id.to_string(),
-            signature: Some(signature),
-        },
-    ]
 }
 
 /// A contract-wallet chain as a peer serves it: SIGNER (a contract), an
@@ -89,6 +70,15 @@ pub(crate) async fn temp_storage(tag: &str) -> (Arc<Storage>, std::path::PathBuf
     (Arc::new(storage), tmp)
 }
 
+/// Removes a test's directory when dropped, so a test that panics leaves no tree behind.
+pub(crate) struct RemoveOnDrop(pub std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub(crate) async fn spawn_content_server(
     body: Vec<u8>,
     encoding: Option<&'static str>,
@@ -140,4 +130,29 @@ pub(crate) async fn redirecting_peer(
         );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     (port, hits)
+}
+
+/// A loopback peer whose `/contents/{hash}` answers `blobs[hash]`, 404 otherwise.
+pub(crate) async fn blob_peer(
+    blobs: std::collections::HashMap<String, Vec<u8>>,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use axum::extract::Path;
+    use axum::response::IntoResponse;
+    let blobs = Arc::new(blobs);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/contents/{hash}",
+        axum::routing::get(move |Path(hash): Path<String>| {
+            let blobs = blobs.clone();
+            async move {
+                match blobs.get(&hash) {
+                    Some(bytes) => bytes.clone().into_response(),
+                    None => axum::http::StatusCode::NOT_FOUND.into_response(),
+                }
+            }
+        }),
+    );
+    let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), handle)
 }

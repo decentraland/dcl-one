@@ -1,5 +1,6 @@
 use bevy::ecs::system::RunSystemOnce;
 use common::structs::ServerConfiguration;
+use comms::SetCurrentScene;
 
 use super::*;
 
@@ -16,7 +17,11 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
+    world.init_resource::<CurrentRealm>();
+    world.init_resource::<comms::SceneAdmission>();
+    world.init_resource::<wallet::Wallet>();
     world.init_resource::<Time>();
+    world.init_resource::<AppConfig>();
     world.insert_resource(SceneLoadDistance {
         load: 20.0,
         unload: 10.0,
@@ -209,6 +214,70 @@ fn live_scene_is_kept_to_ring_two_at_a_zero_load_distance() {
         .contains_key("neighbour"));
 }
 
+fn zero_load_distance(world: &mut World, live_scene_ring: u16) {
+    world.insert_resource(SceneLoadDistance {
+        load: 0.0,
+        unload: 0.0,
+        load_imposter: 0.0,
+    });
+    world.resource_mut::<AppConfig>().live_scene_ring = live_scene_ring;
+}
+
+#[test]
+fn live_ring_zero_runs_only_the_players_own_scene() {
+    let mut world = lifecycle_world();
+    zero_load_distance(&mut world, 0);
+    spawn_current_scene(&mut world, SceneLoading::Failed);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    // the neighbour, in ring 1, stays out
+    assert!(spawned_hashes(&world).is_empty());
+}
+
+#[test]
+fn a_wider_live_ring_goes_live_and_keeps_one_ring_further() {
+    let mut world = lifecycle_world();
+    zero_load_distance(&mut world, 2);
+
+    // parcel (-1,0), on no scene: the neighbour is in ring 2
+    move_player(&mut world, -8.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(spawned_hashes(&world).contains(&"neighbour".to_owned()));
+
+    let mut world = lifecycle_world();
+    zero_load_distance(&mut world, 2);
+    let neighbour = spawn_live_neighbour(&mut world);
+
+    // parcel (-2,0): ring 3, the keep ring
+    move_player(&mut world, -24.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_ok());
+
+    // parcel (-3,0): ring 4
+    move_player(&mut world, -40.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
+}
+
+#[test]
+fn an_out_of_range_live_ring_is_clamped() {
+    let mut world = lifecycle_world();
+    // past the setting's 0 to 3 range, as a hand-edited config could hold
+    zero_load_distance(&mut world, u16::MAX);
+    let neighbour = spawn_live_neighbour(&mut world);
+
+    // parcel (-3,0): ring 4, the keep ring of ring 3
+    move_player(&mut world, -40.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_ok());
+
+    // parcel (-4,0): ring 5
+    move_player(&mut world, -56.0);
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
+}
+
 /// Nine scenes in a row east of the player, who stands on a parcel with no scene of its own, all
 /// inside the load distance; the first wave is spawned.
 fn first_wave_world() -> World {
@@ -360,6 +429,118 @@ fn a_smart_wearable_loads_from_its_content_file_while_the_current_scene_loads() 
         .resource::<LiveScenes>()
         .scenes
         .contains_key("wearable-sw-male"));
+}
+
+#[test]
+fn scene_ban_unloads_only_the_matching_scene_until_admitted() {
+    let mut world = lifecycle_world();
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    world.insert_resource(wallet);
+    world.insert_resource(CurrentRealm::default());
+    let current = spawn_current_scene(&mut world, SceneLoading::SceneEntity);
+    world.insert_resource(
+        comms::SceneAdmission::from_refusal(
+            403,
+            Some("User is banned from this scene"),
+            false,
+            "current",
+        )
+        .for_session("", address),
+    );
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(current).is_err());
+    assert!(!world.resource::<CurrentSceneLoading>().0);
+    assert_eq!(spawned_hashes(&world), vec!["neighbour"]);
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+
+    for x in [24.0, 8.0, 24.0, 8.0] {
+        move_player(&mut world, x);
+        world.run_system_once(process_scene_lifecycle).unwrap();
+        assert!(!world
+            .resource::<LiveScenes>()
+            .scenes
+            .contains_key("current"));
+        assert!(!spawned_hashes(&world).iter().any(|hash| hash == "current"));
+    }
+
+    world.insert_resource(comms::SceneAdmission::allowed("current"));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("current"));
+}
+
+#[test]
+fn returning_from_another_scene_targets_the_unloaded_banned_parcel() {
+    let mut app = App::new();
+    setup_lifecycle(app.world_mut());
+    let mut wallet = wallet::Wallet::default();
+    wallet.finalize_as_guest_with_seed([1; 32]);
+    let address = wallet.address().unwrap();
+    app.insert_resource(wallet)
+        .insert_resource(
+            comms::SceneAdmission::from_refusal(
+                403,
+                Some("User is banned from this scene"),
+                false,
+                "current",
+            )
+            .for_session("", address),
+        )
+        .add_event::<SetCurrentScene>()
+        .add_systems(Update, crate::update_scene_room);
+    app.world_mut()
+        .resource_mut::<CurrentRealm>()
+        .config
+        .realm_name = Some("realm".into());
+    let entity = spawn_live_neighbour(app.world_mut());
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(RendererSceneContext::new(
+            SceneId(entity),
+            "neighbour".into(),
+            String::new(),
+            false,
+            0,
+            "Neighbour".into(),
+            IVec2::X,
+            [IVec2::X].into_iter().collect(),
+            Vec::new(),
+            SceneBounds::default(),
+            Vec::new(),
+            entity,
+            0.0,
+            false,
+            "",
+            false,
+            false,
+        ));
+    for (x, expected) in [
+        (24.0, "neighbour"),
+        (8.0, "current"),
+        (24.0, "neighbour"),
+        (8.0, "current"),
+    ] {
+        move_player(app.world_mut(), x);
+        app.update();
+        let events = app.world().resource::<Events<SetCurrentScene>>();
+        let mut reader = events.get_cursor();
+        assert_eq!(reader.read(events).last().unwrap().scene_id, expected);
+        assert!(!app
+            .world()
+            .resource::<LiveScenes>()
+            .scenes
+            .contains_key("current"));
+    }
 }
 
 #[test]

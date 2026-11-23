@@ -631,27 +631,10 @@ fn on_page_envelope(
     {
         let id = env.get("id").and_then(|i| i.as_u64()).unwrap_or_default();
         let line = env.get("line").and_then(|l| l.as_str()).unwrap_or("");
-        let mut parts = line.split_whitespace();
-        let Some(cmd) = parts.next() else {
-            console_reply(
-                &mut commands,
-                state.hud,
-                id,
-                Err("empty command".to_owned()),
-            );
-            return;
-        };
-        let cmd = if cmd.starts_with('/') {
-            cmd.to_owned()
-        } else {
-            format!("/{cmd}")
-        };
         let (sx, rx) = RpcResultSender::channel();
-        let _ = bridge.sender.send(SystemApi::ConsoleCommand(
-            cmd,
-            parts.map(String::from).collect(),
-            sx,
-        ));
+        let _ = bridge
+            .sender
+            .send(SystemApi::ConsoleLine(line.to_owned(), sx));
         state.pending_console.push((id, rx));
         return;
     }

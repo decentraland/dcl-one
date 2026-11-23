@@ -23,10 +23,12 @@ const NAME_TABS: TabItem<Tab>[] = [
   { id: 'custom', label: 'NON-UNIQUE USERNAME' }
 ]
 
-export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.Element | null {
   const session = useSession()
   const { ownedNames, saving, saveError, save, dismissSaveError } = session.profile
   const profile = session.profile.data
+  const editorAddress = useRef(profile?.address.toLowerCase())
+  const accountChanged = profile != null && profile.address.toLowerCase() !== editorAddress.current
   const currentName = profile?.name ?? ''
   const { base } = splitName(currentName)
   // Derived from the address rather than read off the current name, which carries no suffix at all
@@ -53,9 +55,9 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
   // Close once a save has actually landed — a rejected deploy comes back as an error to show here.
   const wasSaving = useRef(false)
   useEffect(() => {
-    if (wasSaving.current && !saving && saveError == null) onClose()
+    if (accountChanged || (wasSaving.current && !saving && saveError == null)) onClose()
     wasSaving.current = saving
-  }, [saving, saveError, onClose])
+  }, [accountChanged, saving, saveError, onClose])
 
   // A claimed NAME can only be picked once the list has arrived; a typed one must be deployable.
   // The typed field holds only the part before the '#', so it is compared against that part of the
@@ -64,6 +66,12 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
   const valid = tab === 'unique' ? chosen !== '' : isValidName(chosen)
   const unchanged = chosen === (tab === 'unique' ? currentName : base)
   const canSave = valid && !unchanged && !saving
+  if (accountChanged) return null
+  if (profile == null) return saveError == null ? null : (
+    <ModalShell title="Edit Username" onClose={onClose} width={520} bodyClassName={styles.body}>
+      <p role="alert">{saveError}</p>
+    </ModalShell>
+  )
 
   return (
     <ModalShell

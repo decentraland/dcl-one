@@ -1,4 +1,4 @@
-import { placeViewerOf, type PlaceViewer } from "@ui/data/catalyst/places";
+import { placeViewerOf, type PlaceViewer } from "@web-core/place-view";
 
 import { postJSON, signedGetJSON } from "../client";
 import { ApiDataSchema, PlaceRowSchema } from "../generated-schemas/places";

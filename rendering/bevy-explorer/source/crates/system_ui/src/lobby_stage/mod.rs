@@ -953,6 +953,34 @@ mod tests {
         assert!(bottom < floor_y + 1.0);
     }
 
+    /// With the lobby camera's target 55% down the frame, the dissolve starts behind every prop: one
+    /// half sunk in the floor shows nothing through it.
+    #[test]
+    fn the_floor_is_solid_over_the_game_world_props() {
+        let preset = presets::preset("game-world");
+        let fov = 26.2f32.to_radians();
+        let pitch = (1.0f32 / 6.0).atan() - (0.1 * (fov * 0.5).tan()).atan();
+        let camera = GlobalTransform::from(
+            Transform::from_xyz(0.0, 1.8, 6.0).with_rotation(Quat::from_rotation_x(-pitch)),
+        );
+        let floor_y = ORIGIN_ABOVE_FEET + FLOOR_Y;
+        let rest = Vec3::Y * ORIGIN_ABOVE_FEET + BACKDROP_POSITION;
+        let fit = fit(&camera, fov, 16.0 / 9.0, floor_y, rest, None, preset).unwrap();
+
+        // as lobby_floor.wgsl
+        let opacity = |along: f32| {
+            let t = ((along - fit.blend_start) / (fit.blend_end - fit.blend_start)).clamp(0.0, 1.0);
+            let blend = t * t * (3.0 - 2.0 * t);
+            let hardened = (blend - 0.5) / (1.0 - preset.blend_hardness).max(0.001) + 0.5;
+            1.0 - hardened.clamp(0.0, 1.0)
+        };
+        assert!(!preset.props.is_empty());
+        for prop in preset.props {
+            let along = prop.position.dot(fit.blend_axis);
+            assert_eq!(opacity(along), 1.0, "{} at {}", prop.model, prop.position);
+        }
+    }
+
     #[test]
     fn key_light_brightness_matches_the_source_after_exposure() {
         let exposure = Exposure::default().exposure();

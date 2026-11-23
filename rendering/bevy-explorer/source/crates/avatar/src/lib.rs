@@ -78,6 +78,7 @@ pub mod pause_hidden;
 pub mod point_at_ik;
 #[cfg(feature = "explorer")]
 pub mod point_at_marker;
+mod processing_timing;
 pub mod spring_bones;
 mod two_bone_ik;
 
@@ -180,6 +181,7 @@ impl Plugin for AvatarRenderPlugin {
         app.init_resource::<SessionGraphics>();
         // read by emote playback; the Explorer's input crate initialises it too
         app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
+        app.add_plugins(processing_timing::AvatarProcessingTimingPlugin);
         app.add_plugins(MaskMaterialPlugin);
         app.add_plugins(AvatarAnimationPlugin);
         app.add_plugins(spring_bones::SpringBonesPlugin);
@@ -1479,11 +1481,12 @@ fn process_avatar(
     mut meshes: ResMut<Assets<Mesh>>,
     gltfs: Res<Assets<Gltf>>,
     attach_points: Query<&AttachPoints>,
-    (config, inverse_bindposes, mut mat_cache, mut mask_cache): (
+    (config, inverse_bindposes, mut mat_cache, mut mask_cache, mut run): (
         Res<AppConfig>,
         Res<Assets<SkinnedMeshInverseBindposes>>,
         ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
         ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
+        ResMut<processing_timing::AvatarProcessingRun>,
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
@@ -1503,6 +1506,8 @@ fn process_avatar(
         EventWriter<AvatarLoadReport>,
     ),
 ) {
+    let started = bevy::platform::time::Instant::now();
+    let mut processed = 0;
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
         let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)
@@ -1518,6 +1523,7 @@ fn process_avatar(
             debug!("not loaded...");
             continue;
         }
+        processed += 1;
 
         // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
         let aabb_bounds = (
@@ -2121,6 +2127,10 @@ fn process_avatar(
             state: LoadingState::Finished,
         });
     }
+    *run = processing_timing::AvatarProcessingRun {
+        spent: started.elapsed(),
+        processed,
+    };
 }
 
 // derive the scene material for an avatar's gltf material, sharing the asset
@@ -2354,6 +2364,7 @@ fn set_avatar_visibility(
         With<AvatarProcessed>,
     >,
     beyond_max: Query<(), With<BeyondMaxAvatars>>,
+    shown: Query<&InheritedVisibility>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     config: Res<AppConfig>,
     session: Res<SessionGraphics>,
@@ -2363,11 +2374,16 @@ fn set_avatar_visibility(
     };
     let max_avatars = session.max_avatars(&config);
 
+    // an avatar whose player is hidden for another reason (a block or ban, an avatar modifier
+    // area, its scene) draws nothing, so it takes no slot from one that would show. The cap
+    // itself hides the build, below its player, so it never feeds back into this
+    let counts = |player: Entity| shown.get(player).is_ok_and(|shown| shown.get());
     let default_layer = RenderLayers::layer(0);
     let mut distances = q
         .iter()
-        .filter(|(_, _, maybe_layer, _)| {
+        .filter(|(_, _, maybe_layer, player)| {
             maybe_layer.is_none_or(|layer| layer.intersects(&default_layer))
+                && counts(player.parent())
         })
         .map(|(t, ..)| (t.translation() - player_pos).length_squared())
         .collect::<Vec<_>>();

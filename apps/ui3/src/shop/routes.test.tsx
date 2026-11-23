@@ -114,6 +114,20 @@ describe("aliases keep asset identity, the query and the return destination", ()
     expect(resolveShopAlias("/shop/estates/nope")).toBeNull();
   });
 
+  it.each(["/shop/estates/%E0", "/shop/parcels/%E0/2", "/shop/parcels/1/%"])(
+    "should treat the malformed escape in %s as no alias instead of throwing",
+    (pathname) => {
+      expect(resolveShopAlias(pathname)).toBeNull();
+    },
+  );
+
+  it("should name the given network's registries for a parcel and an estate", () => {
+    const contracts = { land: "0x" + "a".repeat(40), estate: "0x" + "b".repeat(40) };
+
+    expect(resolveShopAlias("/shop/parcels/1/2", "", "", { contracts })).toBe(`/shop/token/${contracts.land}/${landTokenId(1, 2)}`);
+    expect(resolveShopAlias("/shop/estates/7", "", "", { contracts })).toBe(`/shop/token/${contracts.estate}/7`);
+  });
+
   it("builds canonical links", () => {
     expect(shopPath("itemDetail", { contractAddress: "0xabc", itemId: 7 })).toBe("/shop/item/0xabc/7");
     expect(shopPath("tokenBuyStatus", { contractAddress: "0xabc", tokenId: "42" })).toBe("/shop/token/0xabc/42/buy/status");

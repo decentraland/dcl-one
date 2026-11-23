@@ -7,12 +7,12 @@
 //!   (`shared::signed_fetch::candidate_paths`: the path the request arrived
 //!   on, `/comms-gatekeeper/x` behind the gateway, and the proxy's
 //!   `x-original-path`) with the comms-gatekeeper posture: a 60 s
-//!   freshness window on the explorer/scene routes, the `signer` allow-list
+//!   freshness window on every route, the `signer` allow-list
 //!   the route declares, the 6.x payload first and the legacy (folded) one
 //!   only when every key in [`CANONICAL_METADATA_KEYS`] is delivered in its
 //!   declared spelling;
 //! - the platform moderator credential (`MODERATOR_TOKEN` bearer, or a
-//!   signed fetch by a `PLATFORM_USER_MODERATORS` wallet);
+//!   signed fetch by a wallet in the live `platform_user_moderators` flag);
 //! - the platform service credential (`COMMS_GATEKEEPER_AUTH_TOKEN` bearer)
 //!   in front of the voice routes and the world ban-status route.
 //!
@@ -61,9 +61,6 @@ pub const CANONICAL_METADATA_KEYS: &[&str] = &[
     "realm.hostname",
     "realm.serverName",
 ];
-
-/// The moderator gate authorizes on `signer` only.
-const MODERATOR_METADATA_KEYS: &[&str] = &["signer"];
 
 #[derive(Debug)]
 pub struct SignedFetchError {
@@ -415,13 +412,15 @@ pub enum ModeratorMode {
 /// What the moderator gate needs from the settings.
 pub struct ModeratorCredentials<'a> {
     pub token: Option<&'a str>,
-    pub addresses: &'a [Address],
+    pub addresses: std::borrow::Cow<'a, [Address]>,
 }
 
 /// Upstream's user-moderation gate: the `MODERATOR_TOKEN` bearer (a write
 /// names its operator in `?moderator=`), else a signed fetch by a wallet in
-/// `PLATFORM_USER_MODERATORS` (legacy payload only over `signer`, the scene
-/// signer refused). Every refusal is the same 401.
+/// `addresses`, read per request from the `platform_user_moderators` flag
+/// (`CommsState::platform_moderators`; current payload only, as upstream: its callers
+/// sign empty metadata; the scene signer refused). Every refusal is the same
+/// 401.
 pub async fn authorize_moderator(
     creds: &ModeratorCredentials<'_>,
     headers: &HeaderMap,
@@ -452,7 +451,7 @@ pub async fn authorize_moderator(
         path,
         &[],
         &[SCENE_SIGNER],
-        MODERATOR_METADATA_KEYS,
+        &[],
         SIGNED_FETCH_WINDOW_SECS,
         validator,
     )
@@ -911,7 +910,7 @@ mod tests {
         let listed = Address::parse(&address_of(KEY)).unwrap();
         let creds = ModeratorCredentials {
             token: Some("mod-token"),
-            addresses: std::slice::from_ref(&listed),
+            addresses: std::slice::from_ref(&listed).into(),
         };
         let mut bearer = HeaderMap::new();
         bearer.insert(
@@ -1054,6 +1053,60 @@ mod tests {
             .code,
             401
         );
+        // As upstream: the 60 s window and the current payload only.
+        let current = signed_as(
+            KEY,
+            Shape::V6,
+            "get",
+            "/bans",
+            r#"{"note":"Hi"}"#,
+            r#"{"note":"Hi"}"#,
+        )
+        .await;
+        assert_eq!(
+            authorize_moderator(
+                &creds,
+                &current,
+                "get",
+                &SignedPath::local("/bans"),
+                ModeratorMode::Read,
+                None,
+                None
+            )
+            .await
+            .unwrap(),
+            listed.as_str()
+        );
+        let stale = (chrono::Utc::now().timestamp_millis() - 120 * 1000).to_string();
+        let legacy = signed_as(
+            KEY,
+            Shape::Legacy,
+            "get",
+            "/bans",
+            r#"{"note":"Hi"}"#,
+            r#"{"note":"Hi"}"#,
+        )
+        .await;
+        for refused in [
+            signed_at(KEY, Shape::V6, "get", "/bans", "{}", "{}", &stale).await,
+            legacy,
+        ] {
+            assert_eq!(
+                authorize_moderator(
+                    &creds,
+                    &refused,
+                    "get",
+                    &SignedPath::local("/bans"),
+                    ModeratorMode::Read,
+                    None,
+                    None
+                )
+                .await
+                .unwrap_err()
+                .code,
+                401
+            );
+        }
         let mut wrong_bearer = HeaderMap::new();
         wrong_bearer.insert("authorization", HeaderValue::from_static("Bearer other"));
         assert_eq!(

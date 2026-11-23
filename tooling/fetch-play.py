@@ -70,6 +70,8 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
     # and final publication checks get only four retries; `attempts` caps the
     # tries in either mode. No writes are repeated. A rate limit backs off from
     # one minute, a server error from two seconds; both double up to a cap.
+    # A rate limit gets four retries even inside a wait: the wait is for a Bevy
+    # build, and the repository's token budget can stay spent for the rest of the hour.
     attempt = 0
     while True:
         timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
@@ -81,9 +83,12 @@ def read(request, deadline=None, limit=60, attempts=None, transient=transient_re
             stderr = exc.stderr.decode(errors='replace') if isinstance(exc.stderr, bytes) else (exc.stderr or '')
             if isinstance(exc, subprocess.CalledProcessError) and stderr:
                 print(stderr, file=sys.stderr, end='')
-            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
-                attempt >= 4 if deadline is None else time.monotonic() >= deadline)
             limited = isinstance(exc, subprocess.CalledProcessError) and rate_limited(stderr)
+            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
+                attempt >= 4 if deadline is None or limited else time.monotonic() >= deadline)
+            if exhausted and limited:
+                print('GitHub kept rate limiting this repository token; rerun this job once its API budget resets.',
+                      file=sys.stderr, flush=True)
             if exhausted or not (isinstance(exc, subprocess.TimeoutExpired) or limited or transient(stderr)):
                 raise
             delay = min(240, 60 * 2 ** min(attempt, 2)) if limited else min(30, 2 ** min(attempt + 1, 5))
