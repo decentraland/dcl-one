@@ -303,7 +303,10 @@ owner, player and scene-server grants retain their own authorization rules.
 Genesis scenes need a valid scope too. Use one permission core with explicit
 owner/player/host operations. Guests get scoped storage capabilities, never SQL
 access or other scenes' environment values. Mirroring cannot overwrite local
-saves or grant host authority. Keep live CRDT/tick state in the scene runtime;
+saves or grant host authority. One exception: a newer upstream scene that replaces
+a local publish keeps that scene's place identity, and so reaches its storage, by
+the overlap rule below
+([last deploy wins](docs/adr/2026-11-23-worlds-mirror-last-deploy-wins.md)). Keep live CRDT/tick state in the scene runtime;
 persist only what the restart contract requires. Test cross-scene/player
 isolation, redeploy, revocation and restart.
 

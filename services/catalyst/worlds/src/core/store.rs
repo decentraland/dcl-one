@@ -49,8 +49,8 @@ pub use access::{
 pub(crate) use publication::publish_lock_key;
 pub use publication::{
     deploy_scene, deploy_scene_with, deploy_scene_with_on, effective_base_parcel, ensure_world,
-    entity_timestamp_ms, entity_timestamp_number, evict_retired_scenes, newer_scene_deployed,
-    undeploy_scene, undeploy_world, world_disabled,
+    entity_timestamp_ms, entity_timestamp_number, evict_retired_scenes, local_scene_stands,
+    newer_scene_deployed, retire_local_scenes, undeploy_scene, undeploy_world, world_disabled,
 };
 pub(super) use publication::{entity_timestamp, entity_timestamp_value};
 pub use queries::{

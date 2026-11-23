@@ -529,6 +529,9 @@ pub(super) struct ListedScene {
     pub(super) chain_bytes: usize,
     /// `size` (a decimal string upstream), `None` unless a non-negative integer.
     pub(super) size: Option<i64>,
+    /// The listed entity's `timestamp`, unchecked: it only spares a world this node keeps local
+    /// its downloads, and the write decides on the fetched entity.
+    pub(super) timestamp: Option<f64>,
 }
 
 impl ListedScene {
@@ -557,8 +560,40 @@ impl ListedScene {
             chain,
             chain_bytes,
             size: size.filter(|s| *s >= 0),
+            timestamp: crate::core::store::entity_timestamp_number(&row["entity"]),
         }
     }
+}
+
+/// When an upstream deployment counts as made, for the last-deploy-wins rule against local
+/// publishes: the entity's `timestamp`, never later than the listed deploy time (`updatedAt`,
+/// else `createdAt`) nor than `now_ms`, so a future-dated entity cannot hold a world; the listed
+/// time alone without a timestamp, and `None` without either.
+pub(super) fn deployed_ms(
+    timestamp: Option<f64>,
+    created_at: Option<chrono::NaiveDateTime>,
+    updated_at: Option<chrono::NaiveDateTime>,
+    now_ms: f64,
+) -> Option<f64> {
+    let listed = updated_at
+        .or(created_at)
+        .map(|t| t.and_utc().timestamp_millis() as f64);
+    let at = match (timestamp, listed) {
+        (Some(ts), Some(listed)) => ts.min(listed),
+        (ts, listed) => ts.or(listed)?,
+    };
+    Some(at.min(now_ms))
+}
+
+/// The upstream's newest deployment of `scenes` as `(deployed_ms, entity id)`, greatest time
+/// first and byte-wise greatest id on a tie, as a publish orders them.
+pub(super) fn newest_deployment<'a>(
+    scenes: impl IntoIterator<Item = (Option<f64>, &'a str)>,
+) -> Option<(f64, &'a str)> {
+    scenes
+        .into_iter()
+        .filter_map(|(at, id)| Some((at?, id)))
+        .max_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(b.1)))
 }
 
 /// The listed chain and deployer of a scene a pass stores, kept only when the chain is ECDSA
