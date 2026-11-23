@@ -185,9 +185,12 @@ pub fn judge_stop(seen: &[StopSeen], command_took: Duration) -> Result<(), Strin
     }
     let graceful = DisconnectReason::Graceful.code();
     let command_ms = command_took.as_millis() as u64;
-    if seen.iter().all(|peer| peer.code.is_none()) {
+    // A Pulse that stopped leaves no signed-in peer connected: told or not, each one's
+    // connection ends within its own timeout, which the watch outlasts.
+    let mut signed_in = seen.iter().filter(|peer| peer.signed_in).peekable();
+    if signed_in.peek().is_some() && signed_in.all(|peer| peer.code.is_none()) {
         return Err(format!(
-            "the stop command did not stop Pulse: it returned after {command_ms} ms and no peer's connection had ended {} s later",
+            "the stop command did not stop Pulse: it returned after {command_ms} ms and no signed-in peer's connection had ended {} s later",
             AFTER_COMMAND.as_secs()
         ));
     }
@@ -637,9 +640,17 @@ mod tests {
 
     #[test]
     fn a_command_after_which_no_connection_ended_did_not_stop_pulse() {
+        // Pulse was never stopped: the signed-in peers stay, and the one that never signs in is
+        // ended by Pulse's own timeout while the watch goes on
         let untouched = vec![
             stopped("signed-in-0", true, None, None),
-            stopped("not-signed-in", false, None, None),
+            stopped("signed-in-1", true, None, None),
+            stopped(
+                "not-signed-in",
+                false,
+                Some(DisconnectReason::AuthTimeout.code()),
+                Some(29_833),
+            ),
         ];
         let failure = judge_stop(&untouched, Duration::from_millis(23)).unwrap_err();
         assert!(
@@ -647,6 +658,7 @@ mod tests {
             "{failure}"
         );
         assert!(!failure.contains("must be told"), "{failure}");
+        assert!(!failure.contains("took too long"), "{failure}");
         // one peer left connected among others that ended is still a word on Pulse
         let graceful = DisconnectReason::Graceful.code();
         let mixed = vec![
