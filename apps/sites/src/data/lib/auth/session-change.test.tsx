@@ -18,8 +18,9 @@ import {
   beginSignOut,
   markSessionChanged,
   postAuthCallback,
-  sessionChangeApplied,
+  resetSessionChangeForTests,
   sessionChangePending,
+  signedOutElsewhere,
   useSessionChangeRevalidation,
 } from "./session-change";
 
@@ -36,7 +37,7 @@ function Root() {
 describe("session change", () => {
   beforeEach(() => {
     restoreTrackedUser();
-    if (sessionChangePending()) sessionChangeApplied();
+    resetSessionChangeForTests();
   });
   afterEach(() => {
     cleanup();
@@ -47,7 +48,7 @@ describe("session change", () => {
     const fetchMock = vi.fn(async () => Response.json({ ok: false }, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
     const response = await postAuthCallback({ token: "expired" });
-    expect(response?.status).toBe(401);
+    expect(response).toEqual({ ok: false, status: 401 });
     expect(fetchMock).toHaveBeenCalledWith(AUTH_CALLBACK_PATH, expect.objectContaining({ method: "POST", body: '{"token":"expired"}' }));
     expect(sessionChangePending()).toBe(true);
   });
@@ -63,6 +64,17 @@ describe("session change", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
     await postAuthCallback({ token: "good" });
     expect(trackedUserDropped()).toBe(false);
+  });
+
+  it.each([
+    ["a success", 200],
+    ["a refusal", 401],
+  ])("releases the answer's body on %s, which no caller reads", async (_label, status) => {
+    const answer = Response.json({ ok: status === 200 }, { status });
+    const cancel = vi.spyOn(answer.body!, "cancel");
+    vi.stubGlobal("fetch", vi.fn(async () => answer));
+    expect(await postAuthCallback({ token: "t" })).toEqual({ ok: status === 200, status });
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("does not mark a post that never reached the server", async () => {
@@ -82,8 +94,18 @@ describe("session change", () => {
           shouldRevalidate: ({ currentUrl, nextUrl, defaultShouldRevalidate }) =>
             sessionChangePending() || (currentUrl.pathname !== nextUrl.pathname && defaultShouldRevalidate),
           Component: Root,
+          // As the app's root error page, it replaces the component that mounts the hook.
+          ErrorBoundary: () => <p>error page</p>,
           HydrateFallback: () => null,
-          children: [{ path: "*", Component: () => null }],
+          children: [
+            {
+              path: "broken",
+              loader: () => {
+                throw new Error("page failed");
+              },
+            },
+            { path: "*", Component: () => null },
+          ],
         },
       ],
       { initialEntries: ["/events"] },
@@ -123,6 +145,78 @@ describe("session change", () => {
     const { loads, router } = renderRoot();
     await waitFor(() => expect(loads.count).toBe(2));
     await waitFor(() => expect(sessionChangePending()).toBe(false));
+    router.dispose();
+  });
+
+  it("applies a change once the hook mounts again after the root error page, so later navigations keep root's data", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { loads, view, router } = renderRoot();
+    await view.findByText("mounted");
+
+    act(() => markSessionChanged());
+    // The navigation reloads root's data, but its page fails and the error page replaces the hook.
+    await act(() => router.navigate("/broken"));
+    await view.findByText("error page");
+    expect(loads.count).toBe(2);
+
+    await act(() => router.navigate("/events"));
+    await view.findByText("mounted");
+    await waitFor(() => expect(sessionChangePending()).toBe(false));
+    const afterRecovery = loads.count;
+    await act(() => router.navigate("/places"));
+    expect(loads.count).toBe(afterRecovery);
+    router.dispose();
+    vi.mocked(console.error).mockRestore();
+  });
+
+  it("keeps the change when root's own reload fails, and applies it on the next one that succeeds", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let failRoot = false;
+    const router = createMemoryRouter(
+      [
+        {
+          id: "root",
+          path: "/",
+          loader: () => {
+            if (failRoot) throw new Error("root failed");
+            return { at: Date.now() };
+          },
+          shouldRevalidate: () => sessionChangePending(),
+          Component: Root,
+          ErrorBoundary: () => <p>error page</p>,
+          HydrateFallback: () => null,
+          children: [{ path: "*", Component: () => null }],
+        },
+      ],
+      { initialEntries: ["/events"] },
+    );
+    const view = render(<RouterProvider router={router} />);
+    await view.findByText("mounted");
+
+    act(() => markSessionChanged());
+    failRoot = true;
+    await act(() => router.navigate("/places"));
+    await view.findByText("error page");
+    expect(sessionChangePending()).toBe(true);
+
+    failRoot = false;
+    await act(() => router.navigate("/help"));
+    await view.findByText("mounted");
+    await waitFor(() => expect(sessionChangePending()).toBe(false));
+    router.dispose();
+    vi.mocked(console.error).mockRestore();
+  });
+
+  it("leaves the account out and reloads root's data in place after a sign-out in another tab", async () => {
+    const { loads, view, router } = renderRoot();
+    await view.findByText("mounted");
+
+    act(() => signedOutElsewhere());
+    expect(trackedUserDropped()).toBe(true);
+    await waitFor(() => expect(loads.count).toBe(2));
+    await waitFor(() => expect(sessionChangePending()).toBe(false));
+    // No server answer reached this tab, so the account stays left out until a sign-in here.
+    expect(trackedUserDropped()).toBe(true);
     router.dispose();
   });
 

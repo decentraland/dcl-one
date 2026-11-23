@@ -31,7 +31,7 @@ import { StatusPage } from "@dcl/one-ui/apps/sites/status/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@/core/lib/embed";
 import { ThumbnailPublicBase } from "@dcl/one-ui/components/AppChrome/thumbnail-public-base";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
-import { pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { isPublicResponsePath, pageSid, parseCookies, publicResponseContext, readVerifiedWallet, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { useNotFoundPageView, useRoutePageView } from "@/core/lib/telemetry/page-view";
 import { sitesSegmentPublicConfig } from "@/core/lib/telemetry/public-config.server";
 import { SitesLocaleContext, sitesLanguage, type SitesLocale, type SitesLocaleHandle } from "@dcl/one-ui/apps/sites/chrome/sites-locale";
@@ -100,7 +100,8 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   };
 }
 
-const CREATOR_PATH = /^\/(create|creator-hub)(\/|$)/;
+// Case-insensitive, as React Router matches routes.
+const CREATOR_PATH = /^\/(create|creator-hub)(\/|$)/i;
 function isCreatorPath(pathname: string): boolean {
   return CREATOR_PATH.test(pathname);
 }
@@ -125,6 +126,11 @@ export function shouldRevalidate({
   }
   if (currentUrl.pathname === nextUrl.pathname) {
     return false;
+  }
+  // Leaving a publicly cacheable page (the docs) for one that is not: root's data there has no
+  // session, which page views need, so it is read again.
+  if (isPublicResponsePath(currentUrl.pathname) && !isPublicResponsePath(nextUrl.pathname)) {
+    return true;
   }
   // Entering the Creator Hub reads the committee seat the page before it did not.
   if (isCreatorPath(nextUrl.pathname) && !isCreatorPath(currentUrl.pathname)) {

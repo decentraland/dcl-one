@@ -19,7 +19,7 @@ export function blogListPageView(data: BlogListPayload): PageView | null {
     }
     case "author": {
       const title = `Posts by ${data.title}`;
-      return { name: title, properties: { title, author: data.title, authorSlug: data.viewKey?.replace(/^author:/, "") } };
+      return { name: title, properties: { title, author: data.title, authorSlug: data.authorSlug } };
     }
     case "category":
       return { name: data.title, properties: { title: data.title, categorySlug: data.activeCategory } };

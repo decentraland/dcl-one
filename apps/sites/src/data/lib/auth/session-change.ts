@@ -57,6 +57,16 @@ export function sessionChangeApplied(): void {
   if (pending && requested === pending) pending = 0;
 }
 
+/** Test-only: forgets every change, request and pending reload, as a fresh document starts. */
+export function resetSessionChangeForTests(): void {
+  generation = 0;
+  pending = 0;
+  requested = 0;
+  revalidateRoot = null;
+  reloadBeforeMount = false;
+  signOutAnswered = 0;
+}
+
 /**
  * A sign-out starts: page views leave the account out from now on, without waiting for the server,
  * and root's data is read again on the next navigation. Call it before posting the sign-out.
@@ -68,14 +78,27 @@ export function beginSignOut(): void {
 }
 
 /**
+ * Another tab signed the account out: it posted the sign-out, which cleared the verified-wallet
+ * cookie this tab shares. Page views here leave the account out from now on, and root's data is
+ * read again in place.
+ */
+export function signedOutElsewhere(): void {
+  beginSignOut();
+  markSessionChanged({ revalidate: true });
+}
+
+/** What a caller learns from `/auth/callback`'s answer; its body is never read. */
+export type AuthCallbackAnswer = { ok: boolean; status: number };
+
+/**
  * Posts to `/auth/callback`, which sets or clears the verified-wallet cookie on every answer it
  * gives; a post that got an answer marks the session changed, one that failed on the way (offline,
- * aborted) does not, since no cookie changed. Resolves to the answer, or null.
+ * aborted) does not, since no cookie changed. Resolves to the answer's status, or null.
  */
 export async function postAuthCallback(
   body: { token: string } | { signout: true },
   opts: { keepalive?: boolean; revalidate?: boolean } = {},
-): Promise<Response | null> {
+): Promise<AuthCallbackAnswer | null> {
   let response: Response;
   try {
     response = await fetch(AUTH_CALLBACK_PATH, {
@@ -89,22 +112,26 @@ export async function postAuthCallback(
     // out) and the reload beginSignOut asked for.
     return null;
   }
+  void response.body?.cancel().catch(() => {});
+  const answer = { ok: response.ok, status: response.status };
   markSessionChanged({ revalidate: opts.revalidate });
   // Only a successful answer settles the change: after a failed one (a 5xx, a gateway error) the
   // cookie may be unchanged, so a sign-out keeps the account left out and a sign-in restores nothing.
-  if (!response.ok) return response;
+  if (!answer.ok) return answer;
   if ("signout" in body) signOutAnswered = generation;
   else {
     // A sign-in replaces whatever sign-out was in progress.
     signOutAnswered = 0;
     restoreTrackedUser();
   }
-  return response;
+  return answer;
 }
 
 /**
  * Mounted once, inside the router: lets a session change reload the page's data in place, and marks
- * the change applied when root's data reloads.
+ * the change applied when root's data reloads. Mounted again after the root error page gave way
+ * (`App` unmounts while it shows), it applies a change a reload was asked for: root's data in hand
+ * came from a navigation that ran the root loader while the change was pending.
  */
 export function useSessionChangeRevalidation(): void {
   const revalidator = useRevalidator();
@@ -113,6 +140,7 @@ export function useSessionChangeRevalidation(): void {
   useEffect(() => {
     const revalidate = () => void latest.current.revalidate();
     revalidateRoot = revalidate;
+    if (requested) sessionChangeApplied();
     if (reloadBeforeMount) {
       reloadBeforeMount = false;
       revalidate();

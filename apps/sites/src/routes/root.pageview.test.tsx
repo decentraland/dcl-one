@@ -1,7 +1,8 @@
 import { createMemoryRouter, RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { postAuthCallback, sessionChangeApplied, sessionChangePending } from "@/data/lib/auth/session-change";
+import { isPublicResponsePath, markPublicResponse } from "@/core/lib/telemetry/session";
+import { postAuthCallback, resetSessionChangeForTests, sessionChangeApplied, sessionChangePending } from "@/data/lib/auth/session-change";
 
 import { loader, shouldRevalidate } from "./root";
 
@@ -17,9 +18,12 @@ const WALLET = "0x4444444444444444444444444444444444444444";
 // The browser's cookies as the server sees them on the next request: `/auth/callback` sets or clears
 // `dcl_wallet_verified`, and the visitor then navigates.
 let cookies = "";
-const rootLoader = vi.fn(({ request }: { request: Request }) =>
-  loader({ request: new Request(request.url, { headers: { cookie: cookies } }), params: {}, context: new RouterContextProvider() } as never),
-);
+const rootLoader = vi.fn(({ request }: { request: Request }) => {
+  const context = new RouterContextProvider();
+  // What routes/docs.$.tsx's middleware does before root's loader runs on a docs request.
+  if (isPublicResponsePath(new URL(request.url).pathname)) markPublicResponse(context);
+  return loader({ request: new Request(request.url, { headers: { cookie: cookies } }), params: {}, context } as never);
+});
 
 async function start(initial: string) {
   const router = createMemoryRouter(
@@ -57,7 +61,7 @@ describe("the root data the page view reads, across sign-in and sign-out", () =>
     rootLoader.mockClear();
     cookies = "sid=visitor-sid";
     // No change left over from another test.
-    if (sessionChangePending()) sessionChangeApplied();
+    resetSessionChangeForTests();
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -140,5 +144,25 @@ describe("the root data the page view reads, across sign-in and sign-out", () =>
     await router.navigate("/events?tab=live");
     expect(rootLoader).toHaveBeenCalledTimes(1);
     expect(rootData(router).analyticsUserId).toBeNull();
+  });
+
+  it.each(["/docs/sdk/intro", "/DOCS/sdk/intro"])("reads the session after leaving %s, whose root data has none, for the blog", async (docs) => {
+    cookies = `sid=visitor-sid; dcl_wallet_verified=${WALLET}`;
+    const router = await start(docs);
+    expect(rootData(router)).toMatchObject({ sid: null, analyticsUserId: null });
+    await router.navigate("/blog");
+    expect(rootLoader).toHaveBeenCalledTimes(2);
+    expect(rootData(router)).toMatchObject({ sid: "visitor-sid", analyticsUserId: WALLET });
+  });
+
+  it("does not reload root's data between docs pages, or when entering the docs", async () => {
+    const router = await start("/docs/sdk/intro");
+    await router.navigate("/docs/sdk/next");
+    expect(rootLoader).toHaveBeenCalledTimes(1);
+    await router.navigate("/blog");
+    expect(rootLoader).toHaveBeenCalledTimes(2);
+    await router.navigate("/docs/sdk/intro");
+    expect(rootLoader).toHaveBeenCalledTimes(2);
+    expect(rootData(router).sid).toBe("visitor-sid");
   });
 });

@@ -21,6 +21,8 @@ export type BlogListData = {
   subtitle: string;
   /** The tab to highlight: "" on the home, the slug on a category, null otherwise. */
   activeCategory: string | null;
+  /** The author's slug on an author's list, null otherwise. */
+  authorSlug: string | null;
   query: string;
   posts: BlogCard[];
   /** Every post the list has (the CMS total), loaded or not: what lp_blog_viewed reports. */

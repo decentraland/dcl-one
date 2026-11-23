@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -25,12 +25,14 @@ const net = vi.hoisted(() => ({
 }));
 const auth = vi.hoisted(() => ({ identity: null as null | { signer: string } }));
 const signIn = vi.hoisted(() => ({ openSignIn: vi.fn() }));
+const page = vi.hoisted(() => vi.fn());
 const reminders = vi.hoisted(() => ({ failed: null as string | null, onSignIn: null as null | (() => void) }));
 
 vi.mock("@/data/lib/catalyst/social/community-detail", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/community-detail")>()),
   ...net,
 }));
+vi.mock("@/core/lib/telemetry/track", () => ({ page, adoptSitesSegmentConfig: vi.fn() }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: auth.identity }) }));
 vi.mock("@/features/components/auth/signin-store", () => signIn);
 vi.mock("@/features/components/chrome/SitesLayout", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
@@ -96,9 +98,11 @@ let client: QueryClient;
 
 function show(path = `/social/communities/${ID}`) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const router = createMemoryRouter([{ path: "/social/communities/:id", element: <CommunityPage id={ID} now={0} /> }], {
-    initialEntries: [path],
-  });
+  // Under a root route with a session, as in the app, so the page view goes out.
+  const router = createMemoryRouter(
+    [{ id: "root", path: "/", loader: () => ({ sid: "s" }), HydrateFallback: () => null, children: [{ path: "/social/communities/:id", element: <CommunityPage id={ID} now={0} /> }] }],
+    { initialEntries: [path] },
+  );
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
@@ -142,6 +146,19 @@ type Member = { memberAddress: string; role: string; name: string; profilePictur
 type Router = ReturnType<typeof show>;
 
 describe("CommunityPage", () => {
+  describe("while the community has not been read", () => {
+    beforeEach(() => {
+      net.fetchCommunity.mockImplementation(() => new Promise(() => {}));
+      show();
+    });
+
+    it("should send no page view", async () => {
+      await waitFor(() => expect(net.fetchCommunity).toHaveBeenCalled());
+      await act(async () => {});
+      expect(page).not.toHaveBeenCalled();
+    });
+  });
+
   describe("when the visitor is signed out", () => {
     describe("and the community is public", () => {
       beforeEach(() => {
@@ -161,6 +178,15 @@ describe("CommunityPage", () => {
           expect(screen.getByText("Owner")).toBeTruthy();
           expect(await screen.findByText("No Upcoming Events")).toBeTruthy();
           expect(screen.getByRole("tab", { name: "Members", selected: true })).toBeTruthy();
+        });
+
+        it("should send one page view named after the community", async () => {
+          await waitFor(() => expect(page).toHaveBeenCalledOnce());
+          expect(page).toHaveBeenCalledWith(
+            "Decentraland Foundation",
+            { communityId: ID, privacy: "public", membersCount: 1340 },
+            { sid: "s" },
+          );
         });
 
         describe("and the visitor clicks Sign in to join", () => {
