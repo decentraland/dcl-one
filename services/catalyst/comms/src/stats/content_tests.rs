@@ -10,10 +10,10 @@ fn hot_scene_fields_preserve_null_coercion_duplicate_counts_and_raw_urls() {
         json!({"id":"z","metadata":{"scene":{"base":"  -12x,+3,wat,0x10","parcels":["1,2","1,2"]},"display":{"title":null,"navmapThumbnail":"thumb","description":false},"contact":{"name":7},"source":{"projectId":["raw"]}},"content":[{"file":"thumb","hash":"first"},{"file":"thumb","hash":"second"}]}),
         json!({"id":"a","metadata":{"scene":{"base":"4","parcels":[]}}}),
     ];
-    let out = content::hot_scenes(&scenes, &[("1,2".into(), 2)], "https://content/").unwrap();
+    let out = content::hot_scenes(&scenes, &[("1,2".into(), 2)], "https://content").unwrap();
     assert_eq!(
         out,
-        r#"[{"id":"z","name":null,"baseCoords":[-12,3,null,0],"usersTotalCount":4,"parcels":[[1,2],[1,2]],"thumbnail":"https://content//contents/first","creator":7,"projectId":["raw"],"description":false},{"id":"a","baseCoords":[4],"usersTotalCount":0,"parcels":[]}]"#
+        r#"[{"id":"z","name":null,"baseCoords":[-12,3,null,0],"usersTotalCount":4,"parcels":[[1,2],[1,2]],"thumbnail":"https://content/contents/first","creator":7,"projectId":["raw"],"description":false},{"id":"a","baseCoords":[4],"usersTotalCount":0,"parcels":[]}]"#
     );
 }
 #[test]
@@ -216,10 +216,10 @@ async fn database_projection_matches_active_entities_order_and_sees_immediate_ch
     let hot = content::hot_scenes(
         &docs,
         &[(pointers[0].clone(), 1), (pointers[1].clone(), 1)],
-        "content/",
+        "content",
     )
     .unwrap();
-    assert!(hot.contains("content//contents/hash"));
+    assert!(hot.contains("content/contents/hash"));
     sqlx::query("UPDATE content.deployments SET entity_metadata=jsonb_set(entity_metadata::jsonb,'{v,display,title}','\"after\"'::jsonb)::json WHERE entity_id=$1").bind(&ids[0]).execute(&pool).await.unwrap();
     assert_eq!(
         source.fetch(&wanted).await.unwrap()[0]
