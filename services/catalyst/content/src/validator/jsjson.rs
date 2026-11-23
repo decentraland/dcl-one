@@ -216,6 +216,16 @@ pub(super) fn write(value: &LegacyValue, out: &mut String) {
     }
 }
 
+/// `keys` (distinct) in JS property order, as `Object.keys` lists them:
+/// integer-like keys first, ascending, then the rest in insertion order.
+pub(super) fn property_order<'a>(keys: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    let (mut indexed, rest): (Vec<_>, Vec<_>) =
+        keys.into_iter().partition(|k| array_index(k).is_some());
+    indexed.sort_by_key(|k| array_index(k));
+    indexed.extend(rest);
+    indexed
+}
+
 /// `JSON.stringify` of an object built from `entries` (distinct keys) in
 /// insertion order: integer-like keys first, ascending, then the rest.
 pub(super) fn write_object<'a>(
