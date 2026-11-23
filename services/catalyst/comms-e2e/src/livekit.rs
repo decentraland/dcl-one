@@ -1210,7 +1210,13 @@ mod tests {
                 .unwrap();
             String::from_utf8_lossy(&output.stdout).contains(&format!(" {pid} "))
         } else {
-            std::path::Path::new(&format!("/proc/{pid}")).exists()
+            std::process::Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "pid="])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("ps checks processes on Unix")
+                .success()
         }
     }
 }
