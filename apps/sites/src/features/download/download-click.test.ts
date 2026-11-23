@@ -6,6 +6,7 @@ import { dropTrackedUser, restoreTrackedUser } from "@/core/lib/telemetry/tracke
 
 import { DOWNLOAD_CLICK_STORAGE_KEY, trackDownloadClick, type DownloadClick } from "./download-click";
 import { legacyMacArch } from "./legacy-mac-arch";
+import { createLegacyTrackScope } from "@/core/lib/telemetry/legacy-click";
 
 // The document's readiness (its first page view) is driven here; `download-click.wire.test.ts` covers the real gates.
 let ready = true;
@@ -20,12 +21,21 @@ function becomeReady() {
 vi.mock("@/core/lib/telemetry/track", () => ({
   track: vi.fn(),
   legacyAnalyticsReady: vi.fn(() => ready),
-  whenLegacyAnalyticsReady: vi.fn((fire: () => void) => (ready ? fire() : pending.push(fire))),
+  whenLegacyAnalyticsReady: vi.fn((fire: () => void) => {
+    if (ready) {
+      fire();
+      return () => {};
+    }
+    pending.push(fire);
+    return () => {
+      pending = pending.filter((queued) => queued !== fire);
+    };
+  }),
 }));
 vi.mock("./legacy-mac-arch", () => ({ legacyMacArch: vi.fn(() => null) }));
 
 const CLICK: DownloadClick = { place: "Landing Hero", event: "Download", download_target: "desktop_installer" };
-const SESSION = { sid: "sid-1" };
+const SESSION = { sid: "sid-1", scope: createLegacyTrackScope() };
 
 function sent() {
   expect(track).toHaveBeenCalledTimes(1);
@@ -124,18 +134,18 @@ describe("trackDownloadClick", () => {
   });
 
   it("sends the verified wallet as userId", () => {
-    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xAbC" });
+    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xAbC", scope: SESSION.scope });
     expect(sent().ctx).toEqual({ sid: "sid-1", userId: "0xAbC", legacy: true, conversion: true });
   });
 
   it("sends no userId for an anonymous visitor", () => {
-    trackDownloadClick(CLICK, { sid: "sid-1", userId: "" });
+    trackDownloadClick(CLICK, { sid: "sid-1", userId: "", scope: SESSION.scope });
     expect(sent().ctx).not.toHaveProperty("userId");
   });
 
   it("sends no userId once a sign-out has started", () => {
     dropTrackedUser();
-    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xabc" });
+    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xabc", scope: SESSION.scope });
     expect(sent().ctx).not.toHaveProperty("userId");
   });
 
@@ -189,7 +199,7 @@ describe("trackDownloadClick track_deferred (the legacy isInitialized)", () => {
 
   it("reads the sign-out at delivery, not at the click, for a held click", () => {
     ready = false;
-    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xabc" }, { conversion: false, correlate: false });
+    trackDownloadClick(CLICK, { sid: "sid-1", userId: "0xabc", scope: SESSION.scope }, { conversion: false, correlate: false });
     dropTrackedUser();
     becomeReady();
     expect(sent().ctx).toEqual({ sid: "sid-1", legacy: true });
