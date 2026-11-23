@@ -1408,10 +1408,10 @@ describe('a purchase of several items (the cart)', () => {
     const FOREIGN = '0x' + 'f0'.repeat(32)
     const OWN = '0x' + 'c4'.repeat(32)
     /** The node's record of the first group's credit: none yet, until `settle` names the hash it indexed. */
-    const recordOf = () => {
+    const recordOf = (credit = 'credit-accept') => {
       let indexed: string | null = null
       const lookup: ShellShopServices['creditRecordOf'] = async (_buyer, creditId) =>
-        indexed && creditId === 'credit-accept' ? ({ id: creditId, status: 'SETTLED', usdCents: 100, createdAt: 1, txHash: indexed } as never) : null
+        indexed && creditId === credit ? ({ id: creditId, status: 'SETTLED', usdCents: 100, createdAt: 1, txHash: indexed } as never) : null
       return { lookup, settle: (hash: string) => (indexed = hash) }
     }
     /** The first group as the executor runs it: kept, then handed off as `hash`, its checkout written to `step`, answered `status`. */
@@ -1498,7 +1498,8 @@ describe('a purchase of several items (the cart)', () => {
         // Said where the purchase is shown, with CHECK AGAIN; never a success, so its items stay in the cart.
         const said = await vi.waitFor(() => {
           const last = t.shown.at(-1)!
-          expect(last.view).toMatchObject({ step: 'pending', check: 'ready', message: expect.stringMatching(/couldn't verify the purchase of these items/) })
+          // One item of the cart in this part: said as one, and that it stays in the cart.
+          expect(last.view).toMatchObject({ step: 'pending', check: 'ready', message: "Your Credits were recorded as spent, but we couldn't verify the purchase of this item. It stays in your cart until it can be verified." })
           return last
         })
         expect(createLedger(() => storage).load(BUYER).find((r) => r.id === operation)).toMatchObject({ state: 'pending', unverified: true })
@@ -1518,6 +1519,49 @@ describe('a purchase of several items (the cart)', () => {
         expect(after.cancels).toEqual([])
       }
     )
+
+    it('says it couldn’t verify a part whose own bytes reverted and whose credit was then recorded spent in a call it can’t read', async () => {
+      const storage = memoryStorage()
+      const node = recordOf()
+      const REVERTED = '0x' + 'a7'.repeat(32)
+      // A: the part's own bytes, reverted. B: a bundle through an EntryPoint, where the node later records the credit spent.
+      const chain: ShellShopServices['manaEvidence'] = () =>
+        ({
+          transaction: async (_c: number, hash: string) =>
+            hash === REVERTED || hash === OWN ? { to: TRUSTED.address, input: encodeUseCredits(argsFor('accept')), from: BOOK.buyer } : hash === BUNDLED ? bundle : null,
+          receipt: async (_c: number, hash: string) =>
+            hash === REVERTED ? { transactionHash: hash, status: 'reverted', blockNumber: 1n } : hash === BUNDLED || hash === OWN ? { transactionHash: hash, status: 'success', blockNumber: 1n } : null
+        }) as never
+      const t = setup({ storage, items: ITEMS, offers: mixed, resolvers: trades, run: runAs(REVERTED, 'pending', 'pending'), evidence: chain, creditRecordOf: node.lookup })
+      const { operation } = await t.checkout('7', '8')
+      ;(await t.until('confirm')).handlers.onConfirm?.()
+      await vi.waitFor(() => expect(t.sleeps.length).toBeGreaterThan(1))
+      node.settle(BUNDLED)
+      await vi.waitFor(() => expect(t.shown.at(-1)?.view).toMatchObject({ step: 'pending', check: 'ready', message: expect.stringMatching(/couldn't verify the purchase of this item/) }))
+      expect(createLedger(() => storage).load(BUYER).find((r) => r.id === operation)).toMatchObject({ state: 'pending', unverified: true })
+      // After a reload, still said; and once the node shows the part's own call, bought once.
+      const after = setup({ storage, items: ITEMS, offers: mixed, resolvers: trades, evidence: chain, creditRecordOf: node.lookup })
+      await after.shop.request('shop.capabilities', undefined)
+      await vi.waitFor(() => expect(after.sleeps.length).toBeGreaterThan(1))
+      expect(after.events.some((e) => e.operation === operation && e.state === 'succeeded')).toBe(false)
+      expect(createLedger(() => storage).load(BUYER).find((r) => r.id === operation)).toMatchObject({ unverified: true })
+      node.settle(OWN)
+      await vi.waitFor(() => expect(after.events.filter((e) => e.operation === operation && e.state === 'succeeded')).toHaveLength(1))
+      expect(t.run).toHaveBeenCalledTimes(1)
+      expect(after.run).not.toHaveBeenCalled()
+      expect([...t.cancels, ...after.cancels]).toEqual([])
+    })
+
+    it('says an unverified item bought on its own as one item, without a cart', async () => {
+      // The one item, bought on its own, is the store's mint: its group's credit.
+      const node = recordOf('credit-storeBuy')
+      const t = setup({ run: runAs(BUNDLED, 'pending', 'pending'), evidence: bundled('success'), creditRecordOf: node.lookup })
+      await t.buy()
+      ;(await t.until('confirm')).handlers.onConfirm?.()
+      await vi.waitFor(() => expect(t.sleeps.length).toBeGreaterThan(1))
+      node.settle(BUNDLED)
+      await vi.waitFor(() => expect(t.shown.at(-1)?.view).toMatchObject({ step: 'pending', message: "Your Credits were recorded as spent, but we couldn't verify the purchase of this item." }))
+    })
 
     it('buys an unverified part once, when the node then shows its own call', async () => {
       const node = recordOf()

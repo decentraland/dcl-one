@@ -186,8 +186,14 @@ export function createDialogSlot(ui: ShellShopUi): DialogSlot {
 
 /** A split whose credit the node says another transaction spent: not this item, and not Credits to give back. */
 const SPLIT_SPENT_ELSEWHERE = "This purchase's Credits were spent by another transaction, so this item wasn't bought here."
-/** A Credits part whose credit was recorded spent in a transaction this page can't read as its purchase (`unverified`). */
-const UNVERIFIED = "Your Credits were recorded as spent, but we couldn't verify the purchase of these items. They stay in your cart until it can be verified."
+/**
+ * A Credits part whose credit was recorded spent in a transaction this page can't read as its purchase (`unverified`): what
+ * it bought, and, from the cart, that it stays there.
+ */
+const unverifiedMessage = (op: Pick<OperationRecord, 'items' | 'cart'>): string => {
+  const several = op.items.reduce((n, l) => n + l.quantity, 0) > 1
+  return `Your Credits were recorded as spent, but we couldn't verify the purchase of ${several ? 'these items' : 'this item'}.${op.cart ? (several ? ' They stay in your cart until it can be verified.' : ' It stays in your cart until it can be verified.') : ''}`
+}
 const SPLIT_SPENT_ELSEWHERE_PART = 'its Credits were spent by another transaction, so it wasn’t bought here.'
 const SPLIT_APPROVING_ELSEWHERE = 'A purchase with Credits and MANA, or its MANA approval, is in progress in another window. Nothing was charged here.'
 const SPLIT_ITEM_HELD = 'A purchase of this item with Credits and MANA is still confirming. Nothing was charged here.'
@@ -838,7 +844,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (!op.mana) {
       if (op.unverified) {
         // CHECK AGAIN looks once more: it cancels nothing and signs nothing.
-        const view = (check: 'ready' | 'checking'): void => show(op, { step: 'pending', check, message: UNVERIFIED }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
+        const view = (check: 'ready' | 'checking'): void => show(op, { step: 'pending', check, message: unverifiedMessage(op) }, { onClose: () => hide(op), onCheckAgain: () => void checkAgain(op, view) })
         view('ready')
         return
       }
@@ -1172,6 +1178,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     op.expiredSince = undefined
     if (record?.status !== 'SETTLED' || !record.txHash) return { kind: 'held' }
     const outcome = await splitExecution(svc.manaEvidence(), sale, record.txHash)
+    // A Credits part (never a split) spent in a transaction this page can't read as its call: held, and said so.
+    if (outcome === 'unreadable' && !op.split) unverified(op)
     return outcome === 'bought' ? { kind: 'bought', txHash: record.txHash } : outcome === 'other' ? { kind: 'elsewhere' } : { kind: 'held' }
   }
 
