@@ -320,7 +320,7 @@ function PlaceDetail({ place, onJumpIn, onClose }: PlaceDetailOptions & { onClos
           <Toggle label="Like" on={votes.like} iconOn={likeSolid} iconOff={likeOutline} disabled={busy.vote} onClick={() => vote(votes.like ? null : true, LIKE_ERROR)} />
           <Toggle label="Dislike" on={votes.dislike} iconOn={dislikeSolid} iconOff={dislikeOutline} disabled={busy.vote} onClick={() => vote(votes.dislike ? null : false, DISLIKE_ERROR)} />
           <Toggle label="Favorite" on={votes.favorite} iconOn={favouriteSolid} iconOff={favouriteOutline} disabled={busy.favorite} onClick={favorite} />
-          <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} onClick={toggleHome} />
+          {session.map.canPinHome && <Toggle label="Set as Home" on={isHome} iconOn={homeSolid} iconOff={homeOutline} onClick={toggleHome} />}
           <Button size="bare" radius="md" variant="faint" className={styles.share} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, place, referrer)}>
             <MaskIcon src={shareIcon} size={24} />
           </Button>

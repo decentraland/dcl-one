@@ -6338,7 +6338,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/lobbySession.test.tsx",
-      "sha256": "b801ed5589dc0c8fefdef4884363cd5efd9002f4935c164728b4b761cccb6fd6"
+      "sha256": "406a6ef914e598ff4b40dbbbb5c72eabbd5089584cfd59ec624220b65fbeed00"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/localGuest.test.ts",
@@ -6567,7 +6567,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "a42e1d3bdad4292d1edbff46baf3fe6d749635d5eb444503db8a8b18467ed756"
+      "sha256": "f3b1a967538415dd131ac55dd4a2cf9d82b350a4494bf24f35c29277356d6a57"
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
@@ -9843,7 +9843,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "4e84754b7e6a0c754b0878137a282e2fa180ee2e8478e0cf0ac1c2d10b08a282"
+      "sha256": "243bc171faa892278922ec199868b93115a3b75d3d5924ab02a23f18dc1018b4"
     },
     {
       "path": "library/ui/apps/hud/features/map/MapToolbar.tsx",
@@ -9875,7 +9875,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/PlaceInfo.tsx",
-      "sha256": "a80141c23b800ae329d755443ab7421b4c5b083931352a6e29a8cdf6e30befc3"
+      "sha256": "96e1e5341d09fec4c539cc88cbacb7577c969903c2bf20f69d39b4be5a53f4c7"
     },
     {
       "path": "library/ui/apps/hud/features/map/panel/RightPanel.tsx",
@@ -9939,7 +9939,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "bd1502d130e2a718b8fd9683c839768a3b3e84b83a68e1b6d458700b88ffcfa8"
+      "sha256": "e414694f71ab5c879195bb2a7542469239173e4506916ebd49c3f84b29f80bba"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -10023,7 +10023,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/places/PlaceDetail.tsx",
-      "sha256": "6c28365a2835d3df585e5a13f1fabc2a2caa11eaf5763ca003f8924ea34e2592"
+      "sha256": "9fea72bf43faee9f1643b72220d592982cab7ff578dcc31b65297e1846c12492"
     },
     {
       "path": "library/ui/apps/hud/features/places/PlacesBrowser.tsx",
@@ -10163,7 +10163,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "e3f3ac026cbe8d085f6fe6728f46ad5c067e709e49825c03bf1ccbd5acf9dfed"
+      "sha256": "7c83f286d6fcb27a2249454418b39ab5fcaeab07e563e01904b7636208ab3cc7"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -10503,7 +10503,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "f174281763ec813fc93cd2aa8e684b0f518d350f22927f8320922720d7c32517"
+      "sha256": "60a1fd80b9f056dc774195c5f203e3ee0904a37b54111624ccea1de459896f28"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -10719,7 +10719,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/home.session.test.tsx",
-      "sha256": "74a2c32767a691ad2fa500b4aaf5f751b3456e022c63524474f0561ea6a8734b"
+      "sha256": "49d0e9f6133fc9e6907052cd6bd118d76a9484f9292b75d3400cfff0ac4b0a07"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
@@ -10775,7 +10775,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/map.page.test.tsx",
-      "sha256": "1028250eb2ce7b8982e4a74d31d02820fa04830ae9de51c9af1f9eeefd846f55"
+      "sha256": "da858bca3632447e77ffa5a98e250b37c9ed8f8c9546bd7a496bc9a50c15839f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/mapPanel.test.tsx",
@@ -10787,7 +10787,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/minimap.render.test.tsx",
-      "sha256": "fd7ffc89c2b4576f52e4d05ebbe0d217cd36c0111393a29d80246a0553cb76d7"
+      "sha256": "29a5693550db0fa7b55b34bd77a1c1e941184123654280b5d063287f7764528f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nameEdit.test.tsx",
@@ -10847,7 +10847,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placeDetail.test.tsx",
-      "sha256": "260fe8cc863ab7d21c7aed491f42e1a1e5060e3d8b34897b0ebe6014025519d8"
+      "sha256": "70f5f99bc75d39ca6ce2ab8c71b289ca6497a07f63b77a31d9df5ac1468fc0c8"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/placesDiscovery.test.tsx",

@@ -480,6 +480,7 @@ pub fn op_set_home_scene(state: Rc<RefCell<impl State>>, realm: String, parcel: 
             realm,
             parcel,
             pinned: true,
+            pinnable: true,
         }))
         .unwrap();
 }

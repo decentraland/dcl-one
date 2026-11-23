@@ -312,7 +312,8 @@ State, in every build:
   balance, wallet or scene-written text appears. `/item_purchase_cancel` drops the request in flight: an open one reports
   `Dismissed` to its scene, and the HUD's confirmation stays up with its later reports ignored.
 - `/home_state`: the home as JSON, the Home debug section's source: `account` (the signed-in
-  wallet address, the key of its home; `null` before sign-in), `pinned` (that account's home as
+  wallet address, the key of its home; `null` before sign-in and for a guest with no account),
+  `pinned` (that account's home as
   `<realm> x,y`; `null` when it has none), `startup` (the home the engine starts in: the stored
   sign-in's account's, else the last account's), `lastAccount` (the account a home was last read
   for) and `unadopted` (true while the config still holds a home kept for no account, which the

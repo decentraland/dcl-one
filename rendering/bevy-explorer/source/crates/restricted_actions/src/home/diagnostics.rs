@@ -2,11 +2,13 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{home_account, AppConfig, PinnedHome};
+use common::structs::{AppConfig, PinnedHome};
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use serde_json::{json, Value};
 use system_bridge::SystemApi;
 use wallet::Wallet;
+
+use super::signed_in_account;
 
 pub(super) struct HomeDebugPanelPlugin;
 
@@ -28,10 +30,6 @@ impl Plugin for HomeDebugPanelPlugin {
                 inputs: &[],
             });
     }
-}
-
-fn signed_in_account(wallet: &Wallet) -> Option<String> {
-    wallet.address().map(|address| home_account(&address))
 }
 
 /// Read the signed-in account's home and the home that applies at startup, as JSON.

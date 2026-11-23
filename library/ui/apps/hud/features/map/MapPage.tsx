@@ -271,7 +271,7 @@ export function MapPage({
               isHome={placeIsHome(snap.place.place, snap.place.origin)}
               navigating={isRouteTo(destination, snap.place.place)}
               onPlaceChange={(place) => nav.updatePlace(place)}
-              onHome={() => snap.place != null && toggleHome(snap.place.place, snap.place.origin)}
+              onHome={map.canPinHome ? () => snap.place != null && toggleHome(snap.place.place, snap.place.origin) : undefined}
               onStartNavigation={() => navigation.start(snap.place?.place ?? null)}
               onStopNavigation={navigation.stop}
               onJumpIn={jumpInPlace}

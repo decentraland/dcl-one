@@ -672,7 +672,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   panel's and the place detail's buttons, the minimap's switch) takes it back. An account with
   no home has no home pin and no Set as Home on, and starts on parcel 0,0 of the default realm.
   Before sign-in the home is the stored sign-in's account's, else the last account's. A home an
-  install kept before homes were per account goes to the first account that signs in.
+  install kept before homes were per account goes to the first account that signs in. A guest
+  with no account (a scene preview's `?guest=1`, `/login_guest`) has a new address each session,
+  so it is no account here: it reads the home that applies before sign-in, is not offered Set as
+  Home, and neither takes nor writes a home. A guest account signs in and keeps its home like any
+  other account.
 - **Jump back to Genesis City lands on the home parcel, else on 0,0.** The minimap's button in a
   World travels to the default realm naming a parcel: the account's home when it is in Genesis
   City, Genesis Plaza otherwise; `/goto genesis` always names 0,0. A realm change that names no

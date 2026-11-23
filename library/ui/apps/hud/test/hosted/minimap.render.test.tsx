@@ -159,6 +159,17 @@ describe('minimap menu', () => {
     expect(screen.queryByRole('switch', { name: 'Set as Home' })).toBeNull()
   })
 
+  it('offers no Set as Home to a guest with no account', async () => {
+    const session = fakeSession()
+    session.map = { ...session.map, canPinHome: false }
+    await renderSettled(
+      <Minimap minimap={{ ...session.minimap, linkRealm: DEFAULT_REALM }} map={session.map} sceneTitle="" setEngineViewport={vi.fn()} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Minimap settings' }))
+    expect(screen.getByRole('menuitem', { name: 'Copy Link' })).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Set as Home' })).toBeNull()
+  })
+
   it("copies a Genesis City parcel's link with the player's address", async () => {
     const writeText = vi.fn(async () => {})
     stubClipboard(writeText)

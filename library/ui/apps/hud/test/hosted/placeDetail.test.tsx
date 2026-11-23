@@ -120,6 +120,13 @@ describe('place detail', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('offers no Set as Home to a guest with no account', () => {
+    const session = fakeSession()
+    show({ ...session, map: { ...session.map, canPinHome: false } }, PLAZA)
+    expect(screen.getByRole('button', { name: 'Favorite' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Set as Home' })).toBeNull()
+  })
+
   it("makes the place home by its base parcel", () => {
     const session = fakeSession()
     const update = show(session, PLAZA)

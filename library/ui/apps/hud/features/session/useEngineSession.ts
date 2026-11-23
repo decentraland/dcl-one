@@ -481,6 +481,8 @@ export interface MapState {
   /** The account's home: its realm (null for the default one) and parcel, or with `pinned` false where an
    *  account with no home starts; the engine's answer, else the boot copy. */
   home: { realm: string | null; parcel: string; pinned: boolean } | null
+  /** False for a guest with no account: the engine keeps no home for it. */
+  canPinHome: boolean
   /** Make a parcel of `realm` home; shown at once, then confirmed by the engine. */
   setHome: (realm: string, parcel: { x: number; y: number }) => void
   clearHome: () => void
@@ -1665,6 +1667,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
   // The lobby reopened in-world: over the running world, under the panels it opens.
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [home, setHome] = useState<{ realm: string | null; parcel: string; pinned: boolean } | null>(null)
+  const [canPinHome, setCanPinHome] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const eventsOpenSource = useRef<EventsOpenSource | null>(null)
   const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
@@ -2492,6 +2495,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
           break
         case 'homeScene':
           setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}`, pinned: msg.pinned })
+          setCanPinHome(msg.pinnable)
           break
         case 'travelResult':
           if (msg.ok) travelCount.traveled()
@@ -4310,6 +4314,7 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
     lastLoginType.current = null
     setSignedInAs(null)
     setHome(null)
+    setCanPinHome(false)
     welcomeRef.current = null
     guestPick.current = null
     setQueuedGuest(false)
@@ -5148,10 +5153,11 @@ export function useEngineSession(createDriver: () => LoginDriver, host: SessionH
       changeRealm: (realm: string): TravelOutcome => pick({ kind: 'world', realm }) ?? (changeRealm(realm), 'sent'),
       teleportToPlace: (x: number, y: number): TravelOutcome => pick({ kind: 'parcel', x, y }) ?? (teleportToPlace(x, y), 'sent'),
       home: homeScene(),
+      canPinHome,
       setHome: setHomeScene,
       clearHome: clearHomeScene
     }
-  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, setHomeScene, clearHomeScene, pickDestination, closeAllPanels])
+  }, [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace, homeScene, canPinHome, setHomeScene, clearHomeScene, pickDestination, closeAllPanels])
   const minimapSlice = useMemo(
     () => ({
       pose: poseRef,

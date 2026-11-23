@@ -6,4 +6,9 @@ export type HomeScene = { realm: string, parcel: Vector2,
  * False when the account has no home: `realm` and `parcel` are then where it starts, the
  * default realm on 0,0.
  */
-pinned: boolean, };
+pinned: boolean, 
+/**
+ * False when no account is signed in or the session is a guest with no account: setting and
+ * clearing a home then change nothing.
+ */
+pinnable: boolean, };

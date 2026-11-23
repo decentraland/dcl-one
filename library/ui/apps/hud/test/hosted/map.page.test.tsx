@@ -435,6 +435,16 @@ describe('map place panel', () => {
     expect(vi.mocked(map.clearHome)).toHaveBeenCalledTimes(1)
   })
 
+  it('offers no Set as Home to a guest with no account, and still marks the home it starts in', async () => {
+    serve({ search: [PLAZA], places: [PLAZA] })
+    renderMap({ home: { realm: null, parcel: '-20,60', pinned: true }, canPinHome: false })
+    expect(document.querySelector('[data-marker="home"]')).not.toBeNull()
+    await search('plaza')
+    await userEvent.click(await within(panel()).findByRole('button', { name: /Genesis Plaza/ }))
+    expect(await within(panel()).findByRole('button', { name: 'Dislike' })).toBeInTheDocument()
+    expect(within(panel()).queryByRole('button', { name: 'Set as Home' })).toBeNull()
+  })
+
   it('shows no home for an account that pinned none', async () => {
     serve({ search: [PLAZA], places: [PLAZA] })
     renderMap({ home: { realm: null, parcel: '0,0', pinned: false } })

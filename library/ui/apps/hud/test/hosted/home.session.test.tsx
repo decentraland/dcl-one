@@ -18,8 +18,21 @@ describe('home in the session', () => {
     expect(h.session().homeScene()).toEqual({ realm: null, parcel: '-20,60', pinned: true })
 
     // the engine's answer stands, whatever the page showed
-    act(() => h.driver.emit({ kind: 'homeScene', realm: 'mansion.dcl.eth', parcel: { x: 0, y: 0 }, pinned: true }))
+    act(() => h.driver.emit({ kind: 'homeScene', realm: 'mansion.dcl.eth', parcel: { x: 0, y: 0 }, pinned: true, pinnable: true }))
     expect(h.session().map.home).toEqual({ realm: 'mansion.dcl.eth', parcel: '0,0', pinned: true })
+  })
+
+  it('offers Set as Home only once the engine says a home can be pinned', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    expect(h.session().map.canPinHome).toBe(false)
+
+    act(() => h.driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 3, y: 4 }, pinned: true, pinnable: false }))
+    expect(h.session().map.home).toEqual({ realm: null, parcel: '3,4', pinned: true })
+    expect(h.session().map.canPinHome).toBe(false)
+
+    act(() => h.driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 3, y: 4 }, pinned: true, pinnable: true }))
+    expect(h.session().map.canPinHome).toBe(true)
   })
 
   it('takes the home back, and holds no home once the engine says the account has none', async () => {
@@ -30,7 +43,7 @@ describe('home in the session', () => {
     expect(h.driver.last('clearHomeScene')).toEqual({ kind: 'clearHomeScene' })
     expect(h.session().map.home).toEqual({ realm: null, parcel: '0,0', pinned: false })
 
-    act(() => h.driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false }))
+    act(() => h.driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false, pinnable: true }))
     expect(h.session().map.home).toEqual({ realm: null, parcel: '0,0', pinned: false })
   })
 
@@ -46,13 +59,13 @@ describe('home in the session', () => {
     act(() => h.session().login.exploreAsGuest())
     await waitFor(() => expect(driver.calls).toContain('loginGuest'))
     expect(driver.sentOf('getHomeScene')).toHaveLength(1)
-    act(() => driver.emit({ kind: 'homeScene', realm: 'theirs.dcl.eth', parcel: { x: 5, y: 6 }, pinned: true }))
+    act(() => driver.emit({ kind: 'homeScene', realm: 'theirs.dcl.eth', parcel: { x: 5, y: 6 }, pinned: true, pinnable: true }))
     expect(h.session().homeScene()).toEqual({ realm: 'theirs.dcl.eth', parcel: '5,6', pinned: true })
 
     await act(async () => signedIn())
     await waitFor(() => expect(h.session().login.busy).toBe(false))
     expect(driver.sentOf('getHomeScene')).toHaveLength(2)
-    act(() => driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false }))
+    act(() => driver.emit({ kind: 'homeScene', realm: DEFAULT_REALM, parcel: { x: 0, y: 0 }, pinned: false, pinnable: true }))
     expect(h.session().homeScene()).toEqual({ realm: null, parcel: '0,0', pinned: false })
 
     act(() => h.session().pickDestination(null))

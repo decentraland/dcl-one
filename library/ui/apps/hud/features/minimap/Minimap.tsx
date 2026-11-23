@@ -421,7 +421,7 @@ export const Minimap = memo(function Minimap({
                 style={style}
                 onStyle={pickStyle}
                 hideStyle={!inGenesis}
-                home={linkRealm != null ? { on: homeHere, onSet: setHomeHere, onClear: clearHome } : undefined}
+                home={linkRealm != null && map.canPinHome ? { on: homeHere, onSet: setHomeHere, onClear: clearHome } : undefined}
                 onCopyLink={linkRealm != null ? copyLink : undefined}
                 onReloadScene={reload}
               />
