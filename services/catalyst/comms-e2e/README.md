@@ -179,7 +179,7 @@ run names it; its crowd is the crowd scenarios' (`CE2E_CROWD_PLAYERS`, at most 3
 |---|---|
 | `CE2E_VISIT_REALM` | The realm name exactly as the clients there send it to Pulse: a realm's `/about` `configurations.realmName` |
 | `CE2E_VISIT_PARCEL` | The parcel, `x,y`, the crowd stands around (on a grid 2 m apart, at most 30 players) |
-| `CE2E_VISIT_SECONDS` | How long it stays, walking back and forth, before it leaves (120 unless given, 1 to 900); give `--deadline` above it |
+| `CE2E_VISIT_SECONDS` | How long it stays, walking back and forth, before it leaves (120 unless given, 1 to 900). The stay and 90 s for profiles, entering and leaving must fit in `--deadline`, or the visit is refused before anyone enters |
 | `CE2E_VISIT_EXPECT` | Wallets, comma-separated, every player must catch a Pulse join event of |
 | `CE2E_VISIT_LABEL` | The crowd's label (`ce2e-visit` unless given; 1 to 32 lowercase letters, digits and dashes): its wallets come from it |
 

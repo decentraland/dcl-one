@@ -2,8 +2,8 @@
 //! crowd makes sure of its profiles before it enters, goes where another client already stands,
 //! every player catches that client's join, the client catches every player's, each announcing
 //! the profile, and the crowd leaves the way clients do. A wallet the crowd never meets fails the
-//! run by name; a refused deployment fails it before anyone enters; a run that does not name
-//! it leaves it out.
+//! run by name; a refused deployment, or a stay the deadline cannot hold, fails it before anyone
+//! enters; a run that does not name it leaves it out.
 
 mod support;
 
@@ -202,6 +202,44 @@ async fn a_run_that_does_not_name_the_visit_leaves_it_out() {
     }
     assert_eq!(stand_in.posts(), 0);
     assert_eq!(stand_in.recorded.lock().reads, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stay_that_cannot_fit_in_the_deadline_is_refused_before_anyone_enters() {
+    let pulse = support::in_process_pulse().await;
+    let stand_in = content::start(None).await;
+    let (client_ctx, client, _) = client_there(pulse).await;
+    let mut short = options(Some(VisitPlan {
+        seconds: 20,
+        ..plan("too-long", Vec::new())
+    }));
+    short.scenario_deadline = Duration::from_secs(15);
+    let mut report = run_scenarios(stack(pulse, &stand_in), &[&CROWD_VISIT], &short).await;
+    let result = report.results.remove(0);
+    let Outcome::Failed { expectation, .. } = &result.outcome else {
+        panic!("a 20 s stay ran in a 15 s deadline: {:?}", result.outcome);
+    };
+    assert!(expectation.contains("--deadline"), "{expectation}");
+    // the README states the margin as the code has it
+    assert!(
+        include_str!("../README.md").contains(&format!(
+            "{} s for profiles, entering and leaving",
+            visit::DEADLINE_MARGIN.as_secs()
+        )),
+        "the README states another margin"
+    );
+    assert!(
+        expectation.contains(&format!(
+            "--deadline {}",
+            20 + visit::DEADLINE_MARGIN.as_secs()
+        )),
+        "{expectation}"
+    );
+    // nothing was written and nobody entered
+    assert_eq!(stand_in.posts(), 0);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(client.view().joins, 0, "{:?}", client.view().wallets());
+    leave(&client_ctx, client).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]

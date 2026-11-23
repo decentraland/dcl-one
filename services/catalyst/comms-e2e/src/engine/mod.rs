@@ -169,6 +169,7 @@ struct CtxInner {
     one_source_address: std::sync::atomic::AtomicBool,
     crowd: Mutex<CrowdSize>,
     visit: Mutex<Option<VisitPlan>>,
+    deadline: Mutex<Option<Duration>>,
     allowed_hosts: Mutex<Vec<String>>,
     timeline: Timeline,
     seeded: Mutex<Seeded>,
@@ -223,6 +224,7 @@ impl Ctx {
                 one_source_address: std::sync::atomic::AtomicBool::new(false),
                 crowd: Mutex::new(CrowdSize::default()),
                 visit: Mutex::new(None),
+                deadline: Mutex::new(None),
                 allowed_hosts: Mutex::new(Vec::new()),
                 timeline: Timeline::new(),
                 seeded: Mutex::new(Seeded::new(seed)),
@@ -310,6 +312,16 @@ impl Ctx {
     /// Sets the visit plan `crowd-visit` follows in this context.
     pub fn set_visit(&self, visit: Option<VisitPlan>) {
         *self.inner.visit.lock() = visit;
+    }
+
+    /// The longest this repeat may take (`--deadline`), when a run set it.
+    pub fn deadline(&self) -> Option<Duration> {
+        *self.inner.deadline.lock()
+    }
+
+    /// Sets the longest this repeat may take.
+    pub fn set_deadline(&self, deadline: Duration) {
+        *self.inner.deadline.lock() = Some(deadline);
     }
 
     /// Sets the hosts outside loopback this run admits (`--allow-host`), for the addresses a
@@ -544,6 +556,7 @@ pub async fn run_scenarios(
                 }
                 ctx.set_crowd(options.crowd);
                 ctx.set_visit(options.visit.clone());
+                ctx.set_deadline(options.scenario_deadline);
                 ctx.set_allowed_hosts(&options.allowed_hosts);
                 ctx.record(
                     "runner",

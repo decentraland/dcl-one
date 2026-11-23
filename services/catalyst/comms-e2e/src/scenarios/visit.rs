@@ -65,6 +65,12 @@ const PROFILE_WAVE: usize = 4;
 /// waiting further.
 const SERVED_DEADLINE: Duration = Duration::from_secs(30);
 
+/// What a visit takes besides its stay, which the scenario's deadline (`--deadline`) must hold
+/// too: making sure of the profiles, waiting up to [`SERVED_DEADLINE`] for them to be served,
+/// entering and leaving. A plan whose stay and this margin do not fit is refused before anyone
+/// enters, so the deadline never ends a visit mid-walk, before the crowd has left.
+pub const DEADLINE_MARGIN: Duration = Duration::from_secs(90);
+
 /// How long the crowd stays unless the plan says otherwise, and the longest it may.
 pub const DEFAULT_SECONDS: u64 = 120;
 const MOST_SECONDS: u64 = 900;
@@ -528,6 +534,21 @@ async fn visit(ctx: Ctx) -> Result<()> {
     let plan = ctx
         .visit()
         .ok_or_else(|| anyhow!("the run names no place to visit"))?;
+    let stay_and_margin = Duration::from_secs(plan.seconds) + DEADLINE_MARGIN;
+    if let Some(deadline) = ctx
+        .deadline()
+        .filter(|deadline| stay_and_margin > *deadline)
+    {
+        bail!(
+            "a stay of {} s and {} s for profiles, entering and leaving do not fit in the \
+             scenario's deadline of {} s: give --deadline {} or more, or a shorter \
+             {SECONDS_VARIABLE}",
+            plan.seconds,
+            DEADLINE_MARGIN.as_secs(),
+            deadline.as_secs(),
+            stay_and_margin.as_secs()
+        );
+    }
     let players = players_of_run(&ctx)?;
     if players > MOST_PLAYERS_IN_A_PARCEL {
         bail!(
