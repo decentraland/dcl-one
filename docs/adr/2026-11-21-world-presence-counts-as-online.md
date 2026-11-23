@@ -28,11 +28,16 @@ rooms (lobby and scene rooms), keyed by participant sid. The replica whose webho
 verifies a `participant_joined` or `participant_left` applies it at once and
 publishes it on `comms.room_events.v1`; every `serve` applies what it receives. This
 includes a leave the webhook's own session ordering supersedes, such as an old
-session's late leave.
+session's late leave. Only a room whose LiveKit name is its canonical name is
+applied and published, the same rooms a complete read counts; its events still
+reach the access log and badges.
 
-- A sid joins at most once, so its leave is final whatever order the two arrive in.
-  A join that arrives after its leave (or is redelivered) never brings the player
-  back, and a duplicate changes nothing. Left sessions are remembered for 5 minutes.
+- A sid joins at most once, so an event leave is final whatever order the two arrive
+  in. A join that arrives after its leave (or is redelivered) never brings the player
+  back, and a duplicate changes nothing. Event leaves are remembered for 5 minutes,
+  at most 200,000 of them, the oldest forgotten first.
+- Each wallet keeps a count of its live sessions; only its first session and its
+  last leave change the published set, so other events cost no set work.
 - A player in several World rooms has one session per room and stays online until
   the last one leaves. A reconnect is a new sid, so the old session's late leave
   does not take the player offline.
@@ -46,14 +51,18 @@ rooms, and then:
 
 - confirms the sessions it lists and adds any it finds that no event announced
   (missed events, restarts);
-- ends present sessions it does not list, unless an event changed them after the
-  read started, so a newer event always wins;
-- never revives a session whose leave was applied.
+- ends live sessions it does not list, unless an event changed them after the read
+  started, so a newer event always wins. A session a read ended is forgotten, not
+  final: a later read or join that lists it brings it back;
+- never revives a session whose leave an event applied.
 
 A read that a webhook overtook still corrects drift this way, even though admission
-refuses to certify it.
+refuses to certify it. A read that fails after listing rooms for any reason but
+LiveKit itself (changed inventory, budget, deadline) confirms and adds the sessions
+it listed and ends none.
 
-**Bound.** A session that no event or read has confirmed for 90 s stops counting.
+**Bound.** A session that no event or read has confirmed for 90 s stops counting;
+sessions expire from a deadline-ordered queue.
 That is the age at which `/live-data` and `/wallet/{w}/connected-world` stop
 answering from the read. While reads succeed, they confirm every present session
 every 30 s. When they keep failing, a fresh join still counts for its first 90 s,
@@ -62,8 +71,9 @@ and an unconfirmed session ends at most 90 s after its last confirmation, never
 
 Receiving an event wakes no read: the events themselves keep every replica current,
 and the 30 s read is only the correction. The webhook replica's earlier re-read
-after its own webhook is the existing admission invalidation and is unchanged. No `peer.<id>.world.join` /
-`.leave` subject is published, because no consumer of it exists in this tree.
+after its own webhook is the existing admission invalidation and is unchanged. No
+`peer.<id>.world.join` / `.leave` subject is published, because no consumer of it
+exists in this tree.
 
 ## Consequences
 
@@ -74,13 +84,20 @@ after its own webhook is the existing admission invalidation and is unchanged. N
   about 30 s later.
 - A player moving from Genesis into a World can leave the islands snapshot shortly
   before the World join arrives, so friends may briefly get offline then online.
-- Memory is bounded: present sessions follow live participants, left sessions are
-  dropped after 5 minutes, and at most 200,000 sessions are held.
+- Memory is bounded: live sessions follow live participants up to 200,000, and event
+  leaves are kept for 5 minutes up to 200,000. A join past the live cap is dropped;
+  drops are counted in `comms_world_presence_dropped_total{reason}`.
+- `comms_presence_recovery_passes_total{result}` gives the complete read failure rate,
+  and `comms_world_presence_sessions` / `comms_world_presence_wallets` the World size.
 - A wallet in a LiveKit room this node refuses to resolve produces no event and no
   read entry, so it is not counted as online.
-- If complete reads keep failing (LiveKit down, or room inventory changing during
-  every read), players who joined more than 90 s earlier go offline until a read
-  succeeds.
+- If LiveKit stays unreachable, players who joined more than 90 s earlier go offline
+  until a read succeeds. A read that fails after listing still confirms what it
+  listed; past the read budget (4,096 rooms or 100,000 participants) the rooms it
+  did not reach go unconfirmed.
+- This is the first publisher on `comms.room_events.v1`, Genesis scene rooms
+  included. Any NATS client allowed to publish on it can set World presence, the
+  same trust as `engine.islands` for island presence.
 - A deployment that restricts NATS permissions grants `serve` both publish and
   subscribe on `comms.room_events.v1`.
 

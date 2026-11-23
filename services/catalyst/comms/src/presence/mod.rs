@@ -139,9 +139,14 @@ pub struct Presence {
     admission_flight: tokio::sync::Semaphore,
     waiters: tokio::sync::Semaphore,
     dirty: tokio::sync::Notify,
-    // Social's online view; each complete observation replaces its World wallets.
+    // Social's online view: World room events and every read's World participants.
     topology: std::sync::OnceLock<Arc<crate::topology::Topology>>,
+    // The World participants the background read in flight has listed so far.
+    partial: Mutex<Option<PartialRead>>,
 }
+
+/// A read's start and the `(sid, identity)` World participants it has listed.
+type PartialRead = (Instant, Vec<(String, String)>);
 impl Default for Presence {
     fn default() -> Self {
         Self {
@@ -152,6 +157,7 @@ impl Default for Presence {
             waiters: tokio::sync::Semaphore::new(64),
             dirty: tokio::sync::Notify::new(),
             topology: std::sync::OnceLock::new(),
+            partial: Mutex::new(None),
         }
     }
 }
@@ -188,7 +194,7 @@ impl Presence {
         if self.topology.set(topology).is_ok() {
             let complete = self.complete();
             if let Some(observed) = &complete.observed {
-                self.observe_world(&complete.rooms, observed.mono);
+                self.observe_world(&complete.rooms, observed.mono, true);
             }
         }
     }
@@ -211,7 +217,7 @@ impl Presence {
     }
 
     /// A complete read of every World room that started at `started`.
-    fn observe_world(&self, rooms: &[RecoveredRoom], started: Instant) {
+    fn observe_world(&self, rooms: &[RecoveredRoom], started: Instant, complete: bool) {
         let Some(topology) = self.topology.get() else {
             return;
         };
@@ -221,7 +227,7 @@ impl Presence {
             .flat_map(|r| &r.participants)
             .filter(|p| counts_as_player(&p.identity))
             .map(|p| (p.sid.as_str(), p.identity.as_str()));
-        topology.observe_world(started, participants);
+        topology.observe_world(started, participants, complete);
     }
 
     fn complete(&self) -> Arc<Complete> {
@@ -448,7 +454,7 @@ impl Presence {
         state.generations.entry(room.into()).or_insert(0);
         let complete = state.complete.clone();
         drop(state);
-        self.observe_world(&complete.rooms, Instant::now());
+        self.observe_world(&complete.rooms, Instant::now(), true);
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn peer_left(&self, identity: &str, room: &str, _: bool) {
@@ -461,7 +467,7 @@ impl Presence {
         let complete = state.complete.clone();
         drop(state);
         if complete.observed.is_some() {
-            self.observe_world(&complete.rooms, Instant::now());
+            self.observe_world(&complete.rooms, Instant::now(), true);
         }
     }
 }

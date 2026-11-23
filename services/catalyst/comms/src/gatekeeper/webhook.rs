@@ -416,7 +416,7 @@ pub async fn livekit_webhook(
             Err(error) if state.room_event_store.is_some() => return Err(error),
             Err(_) => None,
         };
-        if let Some(room_event) = &room_event
+        if let Some((room_event, _)) = &room_event
             && state.room_event_store.is_some()
         {
             store_room_event(&state, room_event).await?;
@@ -427,7 +427,7 @@ pub async fn livekit_webhook(
             }
         }
         drop((_first, _second));
-        if let Some(room_event) = &room_event {
+        if let Some((room_event, true)) = &room_event {
             share_room_event(&state, room_event).await;
         }
         return Ok(axum::http::StatusCode::OK.into_response());
@@ -465,7 +465,7 @@ pub async fn livekit_webhook(
     }
     dispatch(&state, &event).await?;
     let room_event = room_event(&state, &event).await?;
-    if let Some(room_event) = &room_event {
+    if let Some((room_event, _)) = &room_event {
         if let Err(error) = store_room_event(&state, room_event).await {
             state
                 .webhooks
@@ -488,19 +488,20 @@ pub async fn livekit_webhook(
         .applied(&event, deadline);
     // Applied and unlocked first: a slow publish cannot get the event redelivered.
     drop((_first, _second));
-    if let Some(room_event) = &room_event {
+    if let Some((room_event, true)) = &room_event {
         share_room_event(&state, room_event).await;
     }
     Ok(axum::http::StatusCode::OK.into_response())
 }
 
 /// The participant event the store and the sink consume, with one resolved
-/// identity. A world scene's complete name is resolved without guessing a
-/// hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
+/// identity, and whether the room carries its canonical name (the only rooms
+/// occupancy reads count). A world scene's complete name is resolved without
+/// guessing a hyphen boundary; a failed resolution leaves the webhook unapplied for retry.
 async fn room_event(
     state: &CommsState,
     event: &ValidatedEvent,
-) -> Result<Option<crate::protocol::bus::room_events::RoomEvent>, ApiError> {
+) -> Result<Option<(crate::protocol::bus::room_events::RoomEvent, bool)>, ApiError> {
     use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, RoomType};
     let Some(participant) = event.participant() else {
         return Ok(None);
@@ -515,35 +516,39 @@ async fn room_event(
     else {
         return Ok(None);
     };
-    Ok(Some(RoomEvent {
-        kind: if event.joined() {
-            RoomEventKind::Joined
-        } else {
-            RoomEventKind::Left
-        } as i32,
-        room: room.clone(),
-        room_type: if parsed.realm.is_world() {
-            RoomType::World
-        } else {
-            RoomType::Scene
-        } as i32,
-        realm_name: parsed
-            .realm
-            .world()
-            .map(|w| w.key())
-            .unwrap_or_else(|| parsed.realm.as_str())
-            .to_owned(),
-        scene_id: parsed
-            .scene_id
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("")
-            .to_owned(),
-        identity: participant.identity.clone(),
-        participant_sid: participant.sid.clone(),
-        event_time_ms: event.at as u64,
-        event_id: event.id.clone(),
-    }))
+    let canonical = parsed.room == *room;
+    Ok(Some((
+        RoomEvent {
+            kind: if event.joined() {
+                RoomEventKind::Joined
+            } else {
+                RoomEventKind::Left
+            } as i32,
+            room: room.clone(),
+            room_type: if parsed.realm.is_world() {
+                RoomType::World
+            } else {
+                RoomType::Scene
+            } as i32,
+            realm_name: parsed
+                .realm
+                .world()
+                .map(|w| w.key())
+                .unwrap_or_else(|| parsed.realm.as_str())
+                .to_owned(),
+            scene_id: parsed
+                .scene_id
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            identity: participant.identity.clone(),
+            participant_sid: participant.sid.clone(),
+            event_time_ms: event.at as u64,
+            event_id: event.id.clone(),
+        },
+        canonical,
+    )))
 }
 
 /// Applies the event to this replica's World presence, then publishes it for every

@@ -4920,3 +4920,165 @@ async fn a_verified_room_event_is_applied_and_published_and_a_refused_publish_is
         "applied here even when the publish is refused"
     );
 }
+
+/// One replica whose webhook feeds an attached online view over `bus`.
+fn presence_webhook_state(
+    bus: Arc<super::bus::InProcessBus>,
+    scenes: Arc<dyn crate::interfaces::SceneIdentity>,
+) -> (
+    axum::Router,
+    Arc<crate::topology::Topology>,
+    Arc<RecordingSink>,
+) {
+    let sink = Arc::new(RecordingSink::default());
+    let state = Arc::new(
+        CommsState::new(
+            PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
+                .expect("a lazy pool never connects"),
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            scenes,
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+        .with_bus(bus)
+        .with_room_event_sink(sink.clone()),
+    );
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    (super::router(state), topology, sink)
+}
+
+async fn signed_participant_event(
+    app: &axum::Router,
+    id: &str,
+    kind: &str,
+    room: &str,
+    sid: &str,
+    at: i64,
+) {
+    use super::webhook::test_support::webhook_jwt;
+    let settings = Settings::for_tests();
+    let body = serde_json::to_vec(&serde_json::json!({ "id": id, "createdAt": at, "event": kind, "room": { "name": room }, "participant": { "identity": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sid": sid } })).unwrap();
+    let jwt = webhook_jwt(
+        &body,
+        &settings.livekit.api_key,
+        &settings.livekit.api_secret,
+    );
+    assert_eq!(post_webhook(app, Some(&jwt), &body).await, StatusCode::OK);
+}
+
+/// An old session's leave that the webhook's own ordering supersedes (the
+/// player reconnected) is still applied and published, and leaves the newer
+/// session online.
+#[tokio::test]
+async fn a_superseded_late_leave_is_published_and_the_reconnected_wallet_stays_online() {
+    use crate::protocol::bus::room_events::{RoomEvent, RoomEventKind, SUBJECT};
+    let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let (app, topology, _) =
+        presence_webhook_state(bus.clone(), Arc::new(known_lobby_scenes("w.dcl.eth")));
+    let room = "world-w.dcl.eth";
+    signed_participant_event(
+        &app,
+        "join-a",
+        "participant_joined",
+        room,
+        "PA_a",
+        1718900000,
+    )
+    .await;
+    signed_participant_event(
+        &app,
+        "join-b",
+        "participant_joined",
+        room,
+        "PA_b",
+        1718900001,
+    )
+    .await;
+    signed_participant_event(
+        &app,
+        "late-leave-a",
+        "participant_left",
+        room,
+        "PA_a",
+        1718900002,
+    )
+    .await;
+    let published: Vec<_> = bus
+        .published()
+        .into_iter()
+        .filter(|(subject, _)| subject == SUBJECT)
+        .map(|(_, payload)| RoomEvent::decode(&payload).unwrap())
+        .collect();
+    assert_eq!(published.len(), 3);
+    assert_eq!(published[2].event_id, "late-leave-a");
+    assert_eq!(published[2].kind, RoomEventKind::Left as i32);
+    assert!(topology.snapshot().is_online(wallet), "PA_b is still live");
+}
+
+/// A room whose LiveKit name is not its canonical name is one occupancy reads
+/// refuse; its events still reach the access log but never online status.
+#[tokio::test]
+async fn an_event_in_a_room_reads_refuse_is_neither_applied_nor_published() {
+    /// Resolves every room to the world's canonical scene room under another name.
+    struct Renamed;
+    #[async_trait::async_trait]
+    impl crate::interfaces::SceneIdentity for Renamed {
+        async fn classify_room(
+            &self,
+            _: &str,
+        ) -> Result<crate::rooms::RoomClassification, crate::rooms::ResolveError> {
+            let world = crate::world_identity::WorldName::parse("w.dcl.eth").unwrap();
+            Ok(crate::rooms::RoomClassification::Canonical(
+                crate::rooms::ResolvedRoom {
+                    room: "w1:9:w.dcl.ethbafycanonical".into(),
+                    realm: crate::world_identity::RealmId::World(world),
+                    scene_id: Some(crate::world_identity::SceneId::parse("bafycanonical").unwrap()),
+                    deployment: None,
+                },
+            ))
+        }
+        async fn resolve(
+            &self,
+            _: crate::rooms::RoomRequest<'_>,
+        ) -> Result<crate::rooms::ResolvedRoom, crate::rooms::ResolveError> {
+            Err(crate::rooms::ResolveError::UnresolvedRoom("fixture".into()))
+        }
+        async fn world_scene(
+            &self,
+            _: &crate::world_identity::WorldName,
+            _: &crate::world_identity::SceneId,
+        ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+            Ok(None)
+        }
+        async fn world_active_scene(
+            &self,
+            _: &crate::world_identity::WorldName,
+        ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
+            Ok(None)
+        }
+    }
+    let bus = Arc::new(super::bus::InProcessBus::new());
+    let (app, topology, sink) = presence_webhook_state(bus.clone(), Arc::new(Renamed));
+    signed_participant_event(
+        &app,
+        "legacy-join",
+        "participant_joined",
+        "scene-w.dcl.eth-bafylegacy",
+        "PA_legacy",
+        1718900000,
+    )
+    .await;
+    assert_eq!(
+        sink.0.lock().unwrap().len(),
+        1,
+        "the access log still gets it"
+    );
+    assert!(bus.published().is_empty());
+    assert!(topology.snapshot().wallets.is_empty());
+}

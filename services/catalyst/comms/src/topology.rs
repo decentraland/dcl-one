@@ -5,7 +5,8 @@
 //! never union publisher state. World presence applies every replica's LiveKit room
 //! events as they arrive; this replica's complete LiveKit reads correct missed ones.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
@@ -16,120 +17,186 @@ use crate::protocol::bus::{BusError, topology::decode_islands, wallet_token};
 pub const TOPOLOGY_RECEIPT_TTL: Duration = Duration::from_secs(5);
 /// A World session no event or complete read confirmed for this long stops counting.
 pub const WORLD_OCCUPANCY_TTL: Duration = crate::presence::PUBLIC_TTL;
-/// How long a left session is remembered, so a delayed join cannot revive it.
-const WORLD_TOMBSTONE_TTL: Duration = Duration::from_secs(300);
-/// Sessions held at once; events past it are dropped until reads or expiry free room.
-const MAX_WORLD_SESSIONS: usize = 200_000;
+/// How long an event leave is remembered, so a delayed join cannot revive it.
+const WORLD_LEFT_TTL: Duration = Duration::from_secs(300);
+/// Live sessions held at once; joins past it are dropped and counted.
+const MAX_WORLD_LIVE: usize = 200_000;
+/// Remembered leaves; the oldest is forgotten first.
+const MAX_WORLD_LEFT: usize = 200_000;
 
 fn fresh(at: Option<Instant>, ttl: Duration) -> bool {
     at.is_some_and(|at| at.elapsed() < ttl)
 }
 
-/// One LiveKit participant session (keyed by its sid) in a World room. A sid joins at
-/// most once, so its leave is terminal whatever order the two arrive in.
-struct WorldSession {
+/// One live LiveKit participant session (keyed by its sid) in a World room.
+struct LiveSession {
     wallet: String,
-    present: bool,
-    /// The last event or complete read that confirmed this state.
+    /// The last event or complete read that confirmed it.
     confirmed: Instant,
-    /// When an event last changed it; a read started before then cannot override it.
+    /// When an event last created or refreshed it; a read started before then cannot end it.
     changed: Instant,
+    /// Tells this session's expiry entries from a reused sid's.
+    incarnation: u64,
 }
 
+/// World sessions. A sid joins at most once, so an event leave is final; a session a read
+/// missed or that expired is simply forgotten and comes back when listed or joined again.
 #[derive(Default)]
 struct WorldSessions {
-    sessions: HashMap<String, WorldSession>,
+    live: HashMap<String, LiveSession>,
+    /// Live sessions per wallet; only a 0 <-> 1 move changes the wallet's presence.
+    per_wallet: HashMap<String, u32>,
+    /// One entry per live session, re-armed lazily on a later confirmation.
+    expiry: BinaryHeap<Reverse<(Instant, u64, String)>>,
+    left: HashSet<String>,
+    left_order: VecDeque<(Instant, String)>,
+    incarnations: u64,
 }
 
+/// A wallet whose World presence started (`true`) or ended.
+type Transition = (String, bool);
+
 impl WorldSessions {
-    fn apply(&mut self, sid: &str, wallet: String, joined: bool, now: Instant) -> bool {
-        match self.sessions.get_mut(sid) {
-            Some(session) if !session.present => false,
-            Some(session) if joined => {
-                session.confirmed = now;
-                false
-            }
-            Some(session) => {
-                session.present = false;
-                session.confirmed = now;
-                session.changed = now;
-                true
-            }
-            None => {
-                if self.sessions.len() >= MAX_WORLD_SESSIONS {
-                    self.collect(now);
-                    if self.sessions.len() >= MAX_WORLD_SESSIONS {
-                        tracing::warn!("World presence session cap reached; event dropped");
-                        return false;
-                    }
-                }
-                let session = WorldSession {
-                    wallet,
-                    present: joined,
-                    confirmed: now,
-                    changed: now,
-                };
-                self.sessions.insert(sid.to_owned(), session);
-                joined
-            }
+    fn add(&mut self, sid: &str, wallet: String, at: Instant, out: &mut Vec<Transition>) {
+        if self.live.len() >= MAX_WORLD_LIVE {
+            metrics::counter!("comms_world_presence_dropped_total", "reason" => "live_cap")
+                .increment(1);
+            return;
+        }
+        self.incarnations += 1;
+        let incarnation = self.incarnations;
+        self.expiry.push(Reverse((
+            at + WORLD_OCCUPANCY_TTL,
+            incarnation,
+            sid.to_owned(),
+        )));
+        let count = self.per_wallet.entry(wallet.clone()).or_insert(0);
+        *count += 1;
+        if *count == 1 {
+            out.push((wallet.clone(), true));
+        }
+        let session = LiveSession {
+            wallet,
+            confirmed: at,
+            changed: at,
+            incarnation,
+        };
+        self.live.insert(sid.to_owned(), session);
+    }
+
+    fn end(&mut self, sid: &str, out: &mut Vec<Transition>) {
+        let Some(session) = self.live.remove(sid) else {
+            return;
+        };
+        let count = self.per_wallet.get_mut(&session.wallet).expect("counted");
+        *count -= 1;
+        if *count == 0 {
+            self.per_wallet.remove(&session.wallet);
+            out.push((session.wallet, false));
         }
     }
 
-    /// One complete read of every World room, started at `started`: confirms what it saw
-    /// and ends what it missed, except sessions an event changed after it started.
-    fn observe(&mut self, started: Instant, seen: Vec<(String, String)>, now: Instant) {
+    fn remember_left(&mut self, sid: &str, now: Instant) {
+        if !self.left.insert(sid.to_owned()) {
+            return;
+        }
+        self.left_order.push_back((now, sid.to_owned()));
+        while self.left.len() > MAX_WORLD_LEFT {
+            let Some((_, oldest)) = self.left_order.pop_front() else {
+                break;
+            };
+            self.left.remove(&oldest);
+            metrics::counter!("comms_world_presence_dropped_total", "reason" => "left_cap")
+                .increment(1);
+        }
+    }
+
+    /// Ends sessions past their TTL and forgets old leaves.
+    fn collect(&mut self, now: Instant, out: &mut Vec<Transition>) {
+        while let Some(Reverse((deadline, incarnation, _))) = self.expiry.peek()
+            && *deadline <= now
+        {
+            let (incarnation, sid) = (*incarnation, self.expiry.pop().unwrap().0.2);
+            let Some(session) = self.live.get(&sid).filter(|s| s.incarnation == incarnation) else {
+                continue;
+            };
+            let until = session.confirmed + WORLD_OCCUPANCY_TTL;
+            if until > now {
+                self.expiry.push(Reverse((until, incarnation, sid)));
+            } else {
+                self.end(&sid, out);
+            }
+        }
+        while let Some((at, _)) = self.left_order.front()
+            && now.saturating_duration_since(*at) >= WORLD_LEFT_TTL
+        {
+            let (_, sid) = self.left_order.pop_front().unwrap();
+            self.left.remove(&sid);
+        }
+    }
+
+    fn apply(
+        &mut self,
+        sid: &str,
+        wallet: String,
+        joined: bool,
+        now: Instant,
+        out: &mut Vec<Transition>,
+    ) {
+        self.collect(now, out);
+        if self.left.contains(sid) {
+            return;
+        }
+        if !joined {
+            self.end(sid, out);
+            self.remember_left(sid, now);
+        } else if let Some(session) = self.live.get_mut(sid) {
+            session.confirmed = now;
+            session.changed = now;
+        } else {
+            self.add(sid, wallet, now, out);
+        }
+    }
+
+    /// One read that started at `started` and listed `seen`: confirms and adds what it
+    /// listed; when `complete`, also ends live sessions it missed that no event changed
+    /// after it started.
+    fn observe(
+        &mut self,
+        started: Instant,
+        seen: Vec<(String, String)>,
+        complete: bool,
+        now: Instant,
+        out: &mut Vec<Transition>,
+    ) {
+        self.collect(now, out);
         let mut listed = HashSet::with_capacity(seen.len());
         for (sid, wallet) in seen {
-            match self.sessions.get_mut(&sid) {
-                Some(session) if !session.present => {}
+            if self.left.contains(&sid) {
+                continue;
+            }
+            match self.live.get_mut(&sid) {
                 Some(session) => session.confirmed = session.confirmed.max(started),
-                None => {
-                    if self.sessions.len() < MAX_WORLD_SESSIONS {
-                        let session = WorldSession {
-                            wallet,
-                            present: true,
-                            confirmed: started,
-                            changed: started,
-                        };
-                        self.sessions.insert(sid.clone(), session);
-                    }
-                }
+                None => self.add(&sid, wallet, started, out),
             }
             listed.insert(sid);
         }
-        for (sid, session) in &mut self.sessions {
-            if session.present && session.changed <= started && !listed.contains(sid) {
-                session.present = false;
-                session.confirmed = now;
-                session.changed = now;
+        if complete {
+            let missed: Vec<String> = self
+                .live
+                .iter()
+                .filter(|(sid, s)| s.changed <= started && !listed.contains(*sid))
+                .map(|(sid, _)| sid.clone())
+                .collect();
+            for sid in missed {
+                self.end(&sid, out);
             }
         }
-        self.collect(now);
+        self.collect(now, out);
     }
 
-    fn collect(&mut self, now: Instant) {
-        self.sessions.retain(|_, s| {
-            let ttl = if s.present {
-                WORLD_OCCUPANCY_TTL
-            } else {
-                WORLD_TOMBSTONE_TTL
-            };
-            now.saturating_duration_since(s.confirmed) < ttl
-        });
-    }
-
-    /// The wallets of live sessions and the next instant one of them expires.
-    fn wallets(&self, now: Instant) -> (BTreeSet<String>, Option<Instant>) {
-        let mut wallets = BTreeSet::new();
-        let mut expires = None::<Instant>;
-        for session in self.sessions.values().filter(|s| s.present) {
-            let until = session.confirmed + WORLD_OCCUPANCY_TTL;
-            if until > now {
-                wallets.insert(session.wallet.clone());
-                expires = Some(expires.map_or(until, |at| at.min(until)));
-            }
-        }
-        (wallets, expires)
+    fn next_expiry(&self) -> Option<Instant> {
+        self.expiry.peek().map(|Reverse((at, _, _))| *at)
     }
 }
 
@@ -206,18 +273,52 @@ impl Topology {
         self.changed.subscribe()
     }
 
-    /// Recomputes the union when a source changed or crossed an expiry; bumps the
-    /// generation only when the effective wallet set changed.
-    fn settle(&self, state: &mut State, islands_changed: bool, world_changed: bool) {
+    fn bump(&self, view: &mut WalletTopology) {
+        view.generation += 1;
+        self.changed.send_replace(view.generation);
+    }
+
+    /// Applies World presence transitions to the World set and, where the islands do
+    /// not already hold the wallet, to the union. Costs nothing without a transition.
+    fn apply_transitions(&self, state: &mut State, transitions: Vec<Transition>) {
+        let view = &mut state.view;
+        view.world_expires_at = state.world.next_expiry();
+        let mut changed = false;
+        for (wallet, online) in transitions {
+            let world = Arc::make_mut(&mut view.world);
+            if online {
+                world.insert(wallet.clone());
+            } else {
+                world.remove(&wallet);
+            }
+            if state.islands_live && view.islands.contains(&wallet) {
+                continue;
+            }
+            let wallets = Arc::make_mut(&mut view.wallets);
+            changed |= if online {
+                wallets.insert(wallet)
+            } else {
+                wallets.remove(&wallet)
+            };
+        }
+        metrics::gauge!("comms_world_presence_sessions").set(state.world.live.len() as f64);
+        metrics::gauge!("comms_world_presence_wallets").set(view.world.len() as f64);
+        if changed {
+            self.bump(view);
+        }
+    }
+
+    /// Expires due World sessions and, when the islands changed or crossed their expiry,
+    /// rebuilds the union; bumps the generation only when the wallet set changed.
+    fn settle(&self, state: &mut State, islands_changed: bool) {
         let now = Instant::now();
-        let world_due = state.view.world_expires_at.is_some_and(|at| at <= now);
-        if world_changed || world_due {
-            let (world, expires) = state.world.wallets(now);
-            state.view.world = Arc::new(world);
-            state.view.world_expires_at = expires;
+        if state.view.world_expires_at.is_some_and(|at| at <= now) {
+            let mut transitions = Vec::new();
+            state.world.collect(now, &mut transitions);
+            self.apply_transitions(state, transitions);
         }
         let islands_live = state.view.islands_live();
-        if !islands_changed && !world_changed && !world_due && islands_live == state.islands_live {
+        if !islands_changed && islands_live == state.islands_live {
             return;
         }
         state.islands_live = islands_live;
@@ -228,10 +329,11 @@ impl Topology {
             (true, false) => Arc::new(view.islands.union(&view.world).cloned().collect()),
         };
         if wallets != view.wallets {
-            view.generation += 1;
-            self.changed.send_replace(view.generation);
+            view.wallets = wallets;
+            self.bump(view);
+        } else {
+            view.wallets = wallets;
         }
-        view.wallets = wallets;
     }
 
     pub fn receive(&self, payload: &[u8]) -> Result<(), BusError> {
@@ -253,10 +355,10 @@ impl Topology {
             return Ok(());
         }
         // Expiry is an effective transition even when the next frame repeats the set.
-        self.settle(&mut current, false, false);
+        self.settle(&mut current, false);
         current.view.islands = islands;
         current.view.received_at = Some(received_at);
-        self.settle(&mut current, true, false);
+        self.settle(&mut current, true);
         Ok(())
     }
 
@@ -270,17 +372,22 @@ impl Topology {
             return;
         }
         let mut current = self.current.lock().unwrap();
-        let changed = current.world.apply(sid, wallet, joined, Instant::now());
-        self.settle(&mut current, false, changed);
+        let mut transitions = Vec::new();
+        current
+            .world
+            .apply(sid, wallet, joined, Instant::now(), &mut transitions);
+        self.apply_transitions(&mut current, transitions);
     }
 
-    /// One complete read of every World room, started at `started`, listing each
-    /// participant as `(sid, identity)`. Sessions it missed end unless an event changed
-    /// them after it started; a leave it predates stays final.
+    /// One read of World rooms, started at `started`, listing each participant as
+    /// `(sid, identity)`. It confirms and adds what it listed (never what an event left).
+    /// A `complete` read of every World room also ends the live sessions it missed,
+    /// unless an event changed them after it started.
     pub fn observe_world<'a>(
         &self,
         started: Instant,
         participants: impl IntoIterator<Item = (&'a str, &'a str)>,
+        complete: bool,
     ) {
         let seen = participants
             .into_iter()
@@ -288,8 +395,11 @@ impl Topology {
             .filter_map(|(sid, identity)| Some((sid.to_owned(), wallet_token(identity)?)))
             .collect();
         let mut current = self.current.lock().unwrap();
-        current.world.observe(started, seen, Instant::now());
-        self.settle(&mut current, false, true);
+        let mut transitions = Vec::new();
+        current
+            .world
+            .observe(started, seen, complete, Instant::now(), &mut transitions);
+        self.apply_transitions(&mut current, transitions);
     }
 
     /// Tests: `wallets` online for the test's length, with no receipt to expire on a
@@ -299,14 +409,14 @@ impl Topology {
         let mut current = self.current.lock().unwrap();
         current.view.islands = Arc::new(wallets.into_iter().filter_map(wallet_token).collect());
         current.view.received_at = Some(Instant::now() + Duration::from_secs(24 * 60 * 60));
-        current.view.generation += 1;
-        self.settle(&mut current, true, false);
-        self.changed.send_replace(current.view.generation);
+        self.settle(&mut current, true);
+        let view = &mut current.view;
+        self.bump(view);
     }
 
     pub fn snapshot(&self) -> WalletTopology {
         let mut current = self.current.lock().unwrap();
-        self.settle(&mut current, false, false);
+        self.settle(&mut current, false);
         current.view.clone()
     }
 
@@ -320,7 +430,7 @@ impl Topology {
         deliver: impl FnOnce(),
     ) -> bool {
         let mut current = self.current.lock().unwrap();
-        self.settle(&mut current, false, false);
+        self.settle(&mut current, false);
         if current.view.generation != generation || current.view.is_online(wallet) != online {
             return false;
         }
@@ -332,7 +442,7 @@ impl Topology {
     /// Compare its generation and current status again at queue consumption.
     pub fn queued_status_is_current(&self, generation: u64, wallet: &str, online: bool) -> bool {
         let mut current = self.current.lock().unwrap();
-        self.settle(&mut current, false, false);
+        self.settle(&mut current, false);
         generation <= current.view.generation && current.view.is_online(wallet) == online
     }
 }
@@ -499,6 +609,7 @@ mod tests {
                 ("PA_restarted", A),
                 ("PA_unseen", "0xcccccccccccccccccccccccccccccccccccccccc"),
             ],
+            true,
         );
         let view = state.snapshot();
         assert!(
@@ -509,7 +620,7 @@ mod tests {
         assert!(view.is_online("0xcccccccccccccccccccccccccccccccccccccccc"));
         // A later read without B, started after B's join, ends it.
         tokio::time::advance(Duration::from_millis(10)).await;
-        state.observe_world(Instant::now(), []);
+        state.observe_world(Instant::now(), [], true);
         assert!(!online(&state, B));
         assert!(state.snapshot().wallets.is_empty());
     }
@@ -532,7 +643,7 @@ mod tests {
         assert!(!online(&state, A), "no read confirmed it for the whole TTL");
         assert!(online(&state, B), "B's own TTL has not passed");
         // A read that lists it confirms it again.
-        state.observe_world(Instant::now(), [("PA_2", B)]);
+        state.observe_world(Instant::now(), [("PA_2", B)], true);
         tokio::time::advance(WORLD_OCCUPANCY_TTL / 2 + Duration::from_secs(1)).await;
         assert!(online(&state, B));
     }
@@ -544,7 +655,58 @@ mod tests {
         state.apply_world_event("PA_1", A, true);
         assert!(changes.has_changed().unwrap());
         changes.mark_unchanged();
-        state.observe_world(Instant::now(), [("PA_1", A)]);
+        state.observe_world(Instant::now(), [("PA_1", A)], true);
         assert!(!changes.has_changed().unwrap(), "same set, no transition");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_session_a_read_missed_comes_back_when_a_later_read_lists_it() {
+        let state = Topology::default();
+        state.apply_world_event("PA_1", A, true);
+        tokio::time::advance(Duration::from_millis(10)).await;
+        state.observe_world(Instant::now(), [], true);
+        assert!(!online(&state, A), "the read missed it");
+        tokio::time::advance(Duration::from_millis(10)).await;
+        state.observe_world(Instant::now(), [("PA_1", A)], true);
+        assert!(online(&state, A), "only an event leave is final");
+        state.apply_world_event("PA_1", A, false);
+        tokio::time::advance(Duration::from_millis(10)).await;
+        state.observe_world(Instant::now(), [("PA_1", A)], true);
+        assert!(!online(&state, A));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_join_refreshing_an_expired_session_brings_it_back() {
+        let state = Topology::default();
+        state.apply_world_event("PA_1", A, true);
+        tokio::time::advance(WORLD_OCCUPANCY_TTL).await;
+        state.apply_world_event("PA_1", A, true);
+        assert!(online(&state, A));
+        tokio::time::advance(WORLD_OCCUPANCY_TTL - Duration::from_secs(1)).await;
+        assert!(online(&state, A), "the refresh restarted its TTL");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_partial_read_confirms_what_it_listed_and_ends_nothing() {
+        let state = Topology::default();
+        state.apply_world_event("PA_a", A, true);
+        state.apply_world_event("PA_b", B, true);
+        tokio::time::advance(WORLD_OCCUPANCY_TTL / 2).await;
+        state.observe_world(Instant::now(), [("PA_a", A)], false);
+        assert!(online(&state, B), "a partial read ends nothing");
+        tokio::time::advance(WORLD_OCCUPANCY_TTL / 2).await;
+        assert!(online(&state, A), "confirmed by the partial read");
+        assert!(!online(&state, B), "nothing confirmed it");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_the_first_live_session_and_the_last_leave_move_the_published_set() {
+        let state = Topology::default();
+        state.apply_world_event("PA_1", A, true);
+        let first = state.snapshot();
+        state.apply_world_event("PA_2", A, true);
+        state.apply_world_event("PA_1", A, false);
+        assert!(Arc::ptr_eq(&state.snapshot().wallets, &first.wallets));
+        assert_eq!(state.snapshot().generation, first.generation);
     }
 }

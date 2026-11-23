@@ -1405,6 +1405,19 @@ async fn webhook(app: &Router, id: &str, kind: &str, sid: &str) {
     assert_eq!(response.status(), axum::http::StatusCode::OK);
 }
 
+async fn advance_until_pass(jobs: &[crate::jobs::Jobs], pass: u64) {
+    for _ in 0..10 {
+        elapse(Duration::from_secs(6)).await;
+        for _ in 0..100 {
+            if jobs.iter().all(|jobs| passes(jobs) >= pass) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+    panic!("recovery workers did not finish pass {pass}");
+}
+
 #[tokio::test]
 async fn world_events_reach_every_replica_at_once_and_complete_reads_correct_drift() {
     let (first, source, server) = fixture().await;
@@ -1461,12 +1474,9 @@ async fn world_events_reach_every_replica_at_once_and_complete_reads_correct_dri
     source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_2".into())];
     webhook(&app, "EV_join_2", "participant_joined", "PA_2").await;
     source.rooms.lock()[0].2.clear();
-    // The webhook replica's own invalidation shortens its wait; let it start first.
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    elapse(Duration::from_secs(31)).await;
-    for jobs in &jobs {
-        wait_pass(jobs, 2).await;
-    }
+    // Whichever wait each replica is in (the webhook replica's own invalidation
+    // shortens its), advance until both have read again, well inside the TTL.
+    advance_until_pass(&jobs, 2).await;
     assert!(
         topologies
             .iter()
@@ -1508,5 +1518,35 @@ async fn a_read_a_webhook_overtook_still_feeds_the_online_view() {
     ));
     assert_eq!(state.presence.last_updated(), "1970-01-01T00:00:00.000Z");
     assert!(topology.snapshot().is_online(WORLD_WALLET));
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_read_that_fails_after_listing_confirms_and_ends_nothing() {
+    let (state, source, server) = fixture().await;
+    source.rooms.lock()[0].2 = vec![(WORLD_WALLET.into(), "PA_listed".into())];
+    let topology = Arc::new(crate::topology::Topology::default());
+    state.presence.attach_topology(topology.clone());
+    // Announced by an event, absent from LiveKit's listing.
+    topology.apply_world_event("PA_unlisted", GENESIS_WALLET, true);
+    // The inventory changes between enumerations: the read fails after its rosters.
+    source.sid_changed.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Changed)
+    ));
+    let view = topology.snapshot();
+    assert!(view.is_online(WORLD_WALLET), "listed: confirmed");
+    assert!(
+        view.is_online(GENESIS_WALLET),
+        "unlisted: not ended by a failed read"
+    );
+    // LiveKit itself down: nothing is confirmed.
+    source.sid_changed.store(false, Ordering::SeqCst);
+    source.fail.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        state.presence.recover_complete(&state).await,
+        Err(RecoveryFailure::Source)
+    ));
     server.abort();
 }
