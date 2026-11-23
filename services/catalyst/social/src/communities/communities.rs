@@ -697,6 +697,8 @@ pub async fn create_community(
             sqlx::query(
                 "INSERT INTO social.community_places (place_id, community_id, added_by) \
                  SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
+                 WHERE NOT EXISTS (SELECT 1 FROM social.community_places e \
+                   WHERE e.community_id = $2 AND lower(e.place_id) = p) \
                  ON CONFLICT (place_id, community_id) DO NOTHING",
             )
             .bind(&place_ids)
@@ -953,16 +955,29 @@ pub async fn update_community(
         }
     }
     if let Some(ids) = &place_ids {
-        try_resp!(map_db(
+        let replaced: sqlx::Result<()> = async {
+            let mut tx = state.pool.begin().await?;
+            // drops the unlisted places and all but one spelling of a listed one
             sqlx::query(
-                "DELETE FROM social.community_places WHERE community_id = $1 AND place_id <> ALL($2)"
+                "DELETE FROM social.community_places t USING ( \
+                   SELECT place_id, row_number() OVER (PARTITION BY lower(place_id) \
+                     ORDER BY place_id <> lower(place_id), added_at, place_id) AS rank \
+                   FROM social.community_places WHERE community_id = $1) r \
+                 WHERE t.community_id = $1 AND t.place_id = r.place_id \
+                   AND (r.rank > 1 OR lower(t.place_id) <> ALL($2))",
             )
             .bind(uuid)
             .bind(ids)
-            .execute(&state.pool)
-            .await
-        ));
-        try_resp!(map_db(
+            .execute(&mut *tx)
+            .await?;
+            // a kept row keeps its adder and time
+            sqlx::query(
+                "UPDATE social.community_places SET place_id = lower(place_id) \
+                 WHERE community_id = $1 AND place_id <> lower(place_id)",
+            )
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query(
                 "INSERT INTO social.community_places (place_id, community_id, added_by) \
                  SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
@@ -971,9 +986,12 @@ pub async fn update_community(
             .bind(ids)
             .bind(uuid)
             .bind(&signer)
-            .execute(&state.pool)
-            .await
-        ));
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await
+        }
+        .await;
+        try_resp!(map_db(replaced));
     }
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
         // The source bulk acceptance owns its transaction. Failure rolls back

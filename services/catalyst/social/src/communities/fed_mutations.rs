@@ -627,6 +627,7 @@ pub(super) async fn places_add(ctx: &Ctx<'_>, id: &str) -> Response {
         }
         sqlx::query(
             "INSERT INTO social.community_places (place_id, community_id, added_by) SELECT t.pid, $1, $2 FROM unnest($3::text[]) AS t(pid) \
+             WHERE NOT EXISTS (SELECT 1 FROM social.community_places e WHERE e.community_id = $1 AND lower(e.place_id) = t.pid) \
              ON CONFLICT (place_id, community_id) DO NOTHING",
         )
         .bind(community)

@@ -217,7 +217,9 @@ Cast upgrade:
 Community place id upgrade: after the new binaries replace every old API replica, run
 `psql -v ON_ERROR_STOP=1 -f schemas/releases/community-place-ids-lowercase.sql`
 with the administrative role. It merges community place rows whose ids differ only in case
-and lowercases the rest; it is safe while the API serves and safe to run again.
+and lowercases the rest, then adds and validates a check that keeps place ids lowercase
+(an old replica's mixed-case write fails afterwards). It is safe while the API serves,
+holds an exclusive lock on the table for its first run and is safe to run again.
 Keep the pre-run database backup: rollback must restore it.
 
 World-admission upgrade: the release script

@@ -164,6 +164,11 @@ the published LAND manager index or its configured document source. Without a
 document source, only ownership at that parcel grants authority; scene-admin
 roles do not grant storage authority.
 
+Adding a Genesis place to a community reads the same LAND state: the place
+belongs to the owner of its base parcel (or of the estate that holds it), never
+to the owner its scene metadata names
+([decision](docs/adr/2026-11-21-community-genesis-place-owner.md)).
+
 Storage collaborators are wallets in an active local world deployment's or
 active Genesis deployment's `metadata.logsPermissions`; Genesis deployments
 accepted through peer sync are eligible too. Per-key and list `/values*` and `/players*`
@@ -1059,15 +1064,22 @@ provider equivalence.
 
 `social.community_places.place_id` holds a places catalogue id or a world name,
 lowercased on every write (REST add, community create and edit, federated add)
-because explore keys both lowercased. Removal and the edit's held-place diff match
-`lower(place_id)`, so a row written before this rule still answers. The release
-script `schemas/releases/community-place-ids-lowercase.sql` collapses case
-variants of one id in a community to one row (the lowercase spelling, else the
-earliest added) and lowercases the survivor. It is rerunnable and needs no
-maintenance window; run it after the updated binaries replace every old replica,
-and again after a TS import run that predates this rule. Rollback needs the
-matching backup. A Genesis place belongs to its LAND owner, never to the owner the scene
-metadata names ([decision](docs/adr/2026-11-21-community-genesis-place-owner.md)).
+because explore keys both lowercased. Until the release below runs, a row written
+before this rule still answers: an add skips a place held in another case, removal
+and the edit's held-place diff match `lower(place_id)`, and an edit lowercases the
+places it keeps in place (adder and time kept) in the same transaction as its
+removals and inserts.
+
+The release script `schemas/releases/community-place-ids-lowercase.sql` collapses
+case variants of one id in a community to one row (the lowercase spelling, else
+the earliest added) and lowercases the survivor. It also adds the check
+`community_places_place_id_lowercase` (`place_id = lower(place_id)`, declared in
+`schemas/40_social.sql` for a new database) as `NOT VALID` when missing and
+validates it after the merge, so no later writer stores another case. Run it after the updated
+binaries replace every old replica: an old replica's mixed-case write fails once
+the check exists. It needs no maintenance window, sets a 10 s `lock_timeout`,
+holds an exclusive lock on the table while its first run adds the check, and is
+rerunnable. Rollback needs the matching backup.
 
 ## Shared social registry profile facts
 
