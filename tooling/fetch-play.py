@@ -493,8 +493,8 @@ def fetch(wait=0, production=False, receipt=None):
                              'Rerun this job when it has. ')
             elif own_only:
                 if hint is None:
-                    recovery += ('No trusted Bevy CI run of this PR\'s head uploaded a build of these inputs '
-                                 '(runs of fork PRs are never trusted). ')
+                    recovery += ('No trusted Bevy CI run of this PR\'s head uploaded a usable build of these inputs '
+                                 '(runs of fork PRs are never trusted). Start or rerun this PR\'s Bevy CI, then this job. ')
             else:
                 recovery += ('Refresh main with: gh workflow run bevy-explorer-ci.yml --ref main. '
                              'Wait for its successful web build, then retry with matching inputs. ')

@@ -1390,7 +1390,8 @@ class PlayImportTests(unittest.TestCase):
 
     def test_an_engine_pr_without_its_own_run_says_so(self):
         error, reads, _ = self.engine_pr([], 'base inputs')
-        self.assertIn("No trusted Bevy CI run of this PR's head uploaded a build of these inputs", error)
+        self.assertIn("No trusted Bevy CI run of this PR's head uploaded a usable build of these inputs", error)
+        self.assertIn("Start or rerun this PR's Bevy CI, then this job.", error)
         self.assertNotIn('newest 1,000 runs', error)
         self.assertEqual(len(reads), 1)
 
