@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -36,12 +36,12 @@ const copy = ACCOUNT_COPY.magicDeletion;
 describe("DeleteMagicAccount", () => {
   let client: QueryClient;
   let user: ReturnType<typeof userEvent.setup>;
-  let onSignOut: ReturnType<typeof vi.fn>;
+  let onSignOut: Mock<() => void>;
 
   beforeEach(() => {
     client = new QueryClient();
     user = userEvent.setup();
-    onSignOut = vi.fn();
+    onSignOut = vi.fn<() => void>();
 
   });
 
