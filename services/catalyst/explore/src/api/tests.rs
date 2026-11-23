@@ -2163,6 +2163,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
         [
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
+            "auth-api-socket-push",
             "explorer-denylist-mirror",
             "explorer-denylist-reload",
             "explorer-flags-mirror",

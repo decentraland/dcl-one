@@ -316,7 +316,7 @@ export class AuthServerProvider {
     const socket =
       base && path
         ? io(base.origin, { path: `${path}/socket.io`, transports: ['websocket'] })
-        : io(url);
+        : io(url, { transports: ['websocket'] });
 
     await new Promise<void>(resolve => {
       const onConnect = () => {
