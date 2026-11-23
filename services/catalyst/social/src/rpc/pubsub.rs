@@ -68,11 +68,9 @@ pub enum SocialEvent {
     CommunityVoice(CommunityVoiceChatUpdate),
     CommunityMember(CommunityMemberConnectivityUpdate),
     TopologyCommunityMember(CommunityMemberConnectivityUpdate, u64),
-    /// A membership change (join ONLINE; leave, kick, ban OFFLINE) or a
-    /// deletion (each member OFFLINE): its recipients were chosen when it was
-    /// published, so it is delivered as published, with no presence or
-    /// co-member check (upstream `communityMemberStatusHandler`,
-    /// `communityDeletedUpdateHandler`).
+    /// A membership change or community deletion. The affected wallet uses it to
+    /// update its community list. Other recipients receive it only when it agrees
+    /// with their community's current online roster.
     CommunityMemberStatus(CommunityMemberConnectivityUpdate),
 }
 

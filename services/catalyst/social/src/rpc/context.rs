@@ -402,7 +402,7 @@ impl Context {
         online: bool,
         generation: u64,
     ) -> crate::rpc::drpc::stream_protocol::DeliveryGuard {
-        self.delivery_guard(recipient, actor, online, generation, None)
+        self.delivery_guard(recipient, actor, online, Some(generation), None)
     }
 
     fn delivery_guard(
@@ -410,7 +410,7 @@ impl Context {
         recipient: String,
         actor: String,
         online: bool,
-        generation: u64,
+        topology_generation: Option<u64>,
         community: Option<uuid::Uuid>,
     ) -> crate::rpc::drpc::stream_protocol::DeliveryGuard {
         let ctx = self.clone();
@@ -422,23 +422,33 @@ impl Context {
                 let Ok(_permit) = ctx.0.connectivity_operations.acquire().await else {
                     return Err(());
                 };
-                let allowed = match community {
-                    Some(community) => {
-                        ctx.db()
-                            .connectivity_member_allowed(&actor, &recipient, community)
-                            .await
-                    }
-                    None => {
-                        ctx.db()
-                            .connectivity_friend_allowed(&actor, &recipient)
-                            .await
-                    }
+                let allowed = if let Some(community) = community {
+                    let Some(actor_is_member) = ctx
+                        .db()
+                        .connectivity_community_membership(&actor, &recipient, community)
+                        .await
+                        .map_err(|_| ())?
+                    else {
+                        return Ok(false);
+                    };
+                    actor_is_member
+                } else {
+                    ctx.db()
+                        .connectivity_friend_allowed(&actor, &recipient)
+                        .await
+                        .map_err(|_| ())?
                 };
-                let allowed = allowed.map_err(|_| ())?;
-                Ok(allowed
-                    && ctx
-                        .topology()
-                        .queued_status_is_current(generation, &actor, online))
+                Ok(match topology_generation {
+                    Some(generation) => {
+                        allowed
+                            && ctx
+                                .topology()
+                                .queued_status_is_current(generation, &actor, online)
+                    }
+                    // Membership changes report the community roster. A former member
+                    // is removed from that roster even if they are still in-game.
+                    None => online == (allowed && ctx.is_online(&actor)),
+                })
             })
         })
     }
@@ -453,16 +463,30 @@ impl Context {
                 recipient.to_string(),
                 update.member.as_ref()?.address.clone(),
                 update.status == ConnectivityStatus::Online as i32,
-                *generation,
+                Some(*generation),
                 Some(update.community_id.parse().ok()?),
             )),
             SocialEvent::CommunityMember(update) => Some(self.delivery_guard(
                 recipient.to_string(),
                 update.member.as_ref()?.address.clone(),
                 update.status == ConnectivityStatus::Online as i32,
-                self.topology().snapshot().generation,
+                Some(self.topology().snapshot().generation),
                 Some(update.community_id.parse().ok()?),
             )),
+            SocialEvent::CommunityMemberStatus(update) => {
+                let actor = update.member.as_ref()?.address.clone();
+                // A self update tells the client to add or remove the community tab.
+                if recipient.eq_ignore_ascii_case(&actor) {
+                    return Some(Arc::new(|| Box::pin(async { Ok(true) })));
+                }
+                Some(self.delivery_guard(
+                    recipient.to_string(),
+                    actor,
+                    update.status == ConnectivityStatus::Online as i32,
+                    None,
+                    Some(update.community_id.parse().ok()?),
+                ))
+            }
             _ => None,
         }
     }

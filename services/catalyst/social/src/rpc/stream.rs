@@ -906,26 +906,41 @@ fn spawn_stream(
     );
     crate::shared::task::spawn(async move {
         // Upstream waits for the socket to drain before each event.
-        let mut hand_off = async |data: Value| {
-            buffered.wait_for(|waiting| *waiting == 0).await.is_ok()
-                && tx.send(Outgoing::Event { serial, data }).await.is_ok()
-        };
         if stream == Stream::FriendConnectivity {
             for friend in online_friends(&ctx, &me).await {
-                if !hand_off(json!({ "address": friend, "status": "online" })).await {
+                if buffered.wait_for(|waiting| *waiting == 0).await.is_err() {
+                    return;
+                }
+                let data = json!({ "address": friend, "status": "online" });
+                if tx.send(Outgoing::Event { serial, data }).await.is_err() {
                     return;
                 }
             }
         }
-        while let Ok(event) = queue.recv().await {
+        'events: while let Ok(event) = queue.recv().await {
             if matches!(&*event, SocialEvent::ConnectivityResync) {
                 break;
             }
-            let Some(data) = event_data(&ctx, &me, stream, &event).await else {
-                continue;
-            };
-            if !hand_off(data).await {
-                return;
+            loop {
+                if buffered.wait_for(|waiting| *waiting == 0).await.is_err() {
+                    return;
+                }
+                let Some(data) = event_data(&ctx, &me, stream, &event).await else {
+                    continue 'events;
+                };
+                // A presence check can await SQL. Retry it after any new backpressure.
+                if *buffered.borrow() != 0 {
+                    continue;
+                }
+                match tx.try_send(Outgoing::Event { serial, data }) {
+                    Ok(()) => break,
+                    Err(mpsc::error::TrySendError::Closed(_)) => return,
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        if tx.reserve().await.is_err() {
+                            return;
+                        }
+                    }
+                }
             }
         }
         let _ = tx.send(Outgoing::Completed { serial }).await;
@@ -1058,16 +1073,11 @@ async fn event_data(ctx: &Context, me: &str, stream: Stream, event: &SocialEvent
             }
             Some(json!({ "address": friend.address, "status": connectivity_name(update.status)? }))
         }
-        (Stream::CommunityMemberConnectivity, SocialEvent::CommunityMemberStatus(update)) => {
-            Some(json!({
-                "communityId": update.community_id,
-                "memberAddress": update.member.as_ref()?.address,
-                "status": connectivity_name(update.status)?,
-            }))
-        }
         (
             Stream::CommunityMemberConnectivity,
-            SocialEvent::CommunityMember(update) | SocialEvent::TopologyCommunityMember(update, _),
+            SocialEvent::CommunityMember(update)
+            | SocialEvent::TopologyCommunityMember(update, _)
+            | SocialEvent::CommunityMemberStatus(update),
         ) => {
             if !allowed(ctx.event_delivery_guard(me, event)?).await {
                 return None;

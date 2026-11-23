@@ -260,22 +260,8 @@ impl SocialServiceImpl {
                         }
                         let update = match &*event {
                             SocialEvent::TopologyCommunityMember(update, _)
-                            | SocialEvent::CommunityMember(update) => update.clone(),
-                            SocialEvent::CommunityMemberStatus(update) => {
-                                // delivered as published: a bounded stream
-                                // sends guarded items only, so its guard
-                                // always admits it
-                                let admit: crate::rpc::drpc::stream_protocol::DeliveryGuard =
-                                    std::sync::Arc::new(|| Box::pin(async { Ok(true) }));
-                                if yielder
-                                    .yield_confirmed(update.clone(), admit)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                                continue;
-                            }
+                            | SocialEvent::CommunityMember(update)
+                            | SocialEvent::CommunityMemberStatus(update) => update.clone(),
                             _ => continue,
                         };
                         let Some(guard) = ctx.event_delivery_guard(&me, &event) else {

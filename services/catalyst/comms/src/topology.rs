@@ -24,16 +24,12 @@ const MAX_WORLD_LIVE: usize = 200_000;
 /// Remembered leaves; the oldest is forgotten first.
 const MAX_WORLD_LEFT: usize = 200_000;
 
-fn fresh(at: Option<Instant>, ttl: Duration) -> bool {
-    at.is_some_and(|at| at.elapsed() < ttl)
-}
-
 /// One live LiveKit participant session (keyed by its sid) in a World room.
 struct LiveSession {
     wallet: String,
     /// The last event or complete read that confirmed it.
     confirmed: Instant,
-    /// When an event last created or refreshed it; a read started before then cannot end it.
+    /// When the session was first observed; a read started before then cannot end it.
     changed: Instant,
     /// Tells this session's expiry entries from a reused sid's.
     incarnation: u64,
@@ -150,10 +146,7 @@ impl WorldSessions {
         if !joined {
             self.end(sid, out);
             self.remember_left(sid, now);
-        } else if let Some(session) = self.live.get_mut(sid) {
-            session.confirmed = now;
-            session.changed = now;
-        } else {
+        } else if !self.live.contains_key(sid) {
             self.add(sid, wallet, now, out);
         }
     }
@@ -208,32 +201,22 @@ pub struct WalletTopology {
     pub received_at: Option<Instant>,
     pub generation: u64,
     islands: Arc<BTreeSet<String>>,
+    islands_expires_at: Option<Instant>,
     world: Arc<BTreeSet<String>>,
     world_expires_at: Option<Instant>,
 }
 
 impl WalletTopology {
     pub fn is_online(&self, wallet: &str) -> bool {
-        let wallet = wallet.to_ascii_lowercase();
-        (fresh(self.received_at, TOPOLOGY_RECEIPT_TTL) && self.islands.contains(&wallet))
-            || self.world.contains(&wallet)
+        self.wallets.contains(&wallet.to_ascii_lowercase())
     }
 
-    /// The next instant a source's membership may expire; `None` when none will.
+    /// The earliest expiry in this snapshot. A deadline that has passed wakes the worker.
     pub fn expires_at(&self) -> Option<Instant> {
-        let now = Instant::now();
-        [
-            self.received_at.map(|at| at + TOPOLOGY_RECEIPT_TTL),
-            self.world_expires_at,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|at| *at > now)
-        .min()
-    }
-
-    fn islands_live(&self) -> bool {
-        fresh(self.received_at, TOPOLOGY_RECEIPT_TTL) && !self.islands.is_empty()
+        [self.islands_expires_at, self.world_expires_at]
+            .into_iter()
+            .flatten()
+            .min()
     }
 }
 
@@ -257,6 +240,7 @@ impl Default for Topology {
                     received_at: None,
                     generation: 0,
                     islands: Arc::default(),
+                    islands_expires_at: None,
                     world: Arc::default(),
                     world_expires_at: None,
                 },
@@ -278,10 +262,21 @@ impl Topology {
         self.changed.send_replace(view.generation);
     }
 
+    /// Reschedule expiry when a source advances the deadline without changing membership.
+    fn wake_for_earlier_expiry(&self, previous: Option<Instant>, view: &WalletTopology) {
+        if view
+            .expires_at()
+            .is_some_and(|next| previous.is_none_or(|previous| next < previous))
+        {
+            self.changed.send_replace(view.generation);
+        }
+    }
+
     /// Applies World presence transitions to the World set and, where the islands do
-    /// not already hold the wallet, to the union. Costs nothing without a transition.
+    /// not already hold the wallet, to the union.
     fn apply_transitions(&self, state: &mut State, transitions: Vec<Transition>) {
         let view = &mut state.view;
+        let previous_expiry = view.expires_at();
         view.world_expires_at = state.world.next_expiry();
         let mut changed = false;
         for (wallet, online) in transitions {
@@ -305,6 +300,8 @@ impl Topology {
         metrics::gauge!("comms_world_presence_wallets").set(view.world.len() as f64);
         if changed {
             self.bump(view);
+        } else {
+            self.wake_for_earlier_expiry(previous_expiry, view);
         }
     }
 
@@ -317,12 +314,17 @@ impl Topology {
             state.world.collect(now, &mut transitions);
             self.apply_transitions(state, transitions);
         }
-        let islands_live = state.view.islands_live();
+        let view = &mut state.view;
+        let previous_expiry = view.expires_at();
+        view.islands_expires_at = view
+            .received_at
+            .map(|at| at + TOPOLOGY_RECEIPT_TTL)
+            .filter(|&deadline| deadline > now && !view.islands.is_empty());
+        let islands_live = view.islands_expires_at.is_some();
         if !islands_changed && islands_live == state.islands_live {
             return;
         }
         state.islands_live = islands_live;
-        let view = &mut state.view;
         let wallets = match (islands_live, view.world.is_empty()) {
             (false, _) => view.world.clone(),
             (true, true) => view.islands.clone(),
@@ -333,6 +335,7 @@ impl Topology {
             self.bump(view);
         } else {
             view.wallets = wallets;
+            self.wake_for_earlier_expiry(previous_expiry, view);
         }
     }
 
@@ -533,6 +536,59 @@ mod tests {
 
     const B: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+    #[tokio::test(start_paused = true)]
+    async fn a_held_snapshot_keeps_the_same_pulse_membership_after_expiry() {
+        let state = Topology::default();
+        state.receive(&frame(&[A])).unwrap();
+        state.apply_world_event("PA_world", B, true);
+        let held = state.snapshot();
+        tokio::time::advance(TOPOLOGY_RECEIPT_TTL).await;
+        assert!(held.wallets.contains(A));
+        assert!(held.is_online(A));
+        let current = state.snapshot();
+        assert!(!current.is_online(A));
+        assert!(current.is_online(B));
+        assert!(!state.queued_status_is_current(held.generation, A, true));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_snapshot_deadline_still_wakes_the_worker_after_it_passes() {
+        let state = Topology::default();
+        state.apply_world_event("PA_world", A, true);
+        let deadline = Instant::now() + WORLD_OCCUPANCY_TTL;
+        tokio::time::advance(WORLD_OCCUPANCY_TTL - Duration::from_millis(1)).await;
+        let held = state.snapshot();
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert!(held.is_online(A));
+        assert_eq!(held.expires_at(), Some(deadline));
+        let current = state.snapshot();
+        assert!(!current.is_online(A));
+        assert_eq!(current.expires_at(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_duplicate_join_does_not_supersede_a_complete_read() {
+        let state = Topology::default();
+        state.apply_world_event("PA_old", A, true);
+        tokio::time::advance(Duration::from_millis(1)).await;
+        let started = Instant::now();
+        tokio::time::advance(Duration::from_millis(1)).await;
+        state.apply_world_event("PA_old", A, true);
+        state.apply_world_event("PA_new", B, true);
+
+        state.observe_world(started, [], true);
+
+        let current = state.snapshot();
+        assert!(
+            !current.is_online(A),
+            "the duplicate did not change the session"
+        );
+        assert!(
+            current.is_online(B),
+            "the first join is newer than the read"
+        );
+    }
+
     fn online(state: &Topology, wallet: &str) -> bool {
         state.snapshot().is_online(wallet)
     }
@@ -657,6 +713,31 @@ mod tests {
         changes.mark_unchanged();
         state.observe_world(Instant::now(), [("PA_1", A)], true);
         assert!(!changes.has_changed().unwrap(), "same set, no transition");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_earlier_pulse_expiry_wakes_the_worker_without_a_wallet_change() {
+        let state = Topology::default();
+        state.apply_world_event("PA_world", A, true);
+        let initial = state.snapshot();
+        let mut changes = state.changes();
+
+        state.receive(&frame(&[A])).unwrap();
+        state.apply_world_event("PA_world", A, false);
+
+        let handoff = state.snapshot();
+        assert!(handoff.is_online(A));
+        assert_eq!(handoff.generation, initial.generation);
+        assert!(
+            changes.has_changed().unwrap(),
+            "the worker needs an earlier timer"
+        );
+        assert!(handoff.expires_at() < initial.expires_at());
+        changes.mark_unchanged();
+        tokio::time::sleep_until(handoff.expires_at().unwrap()).await;
+        let expired = state.snapshot();
+        assert!(!expired.is_online(A));
+        assert!(expired.generation > handoff.generation);
     }
 
     #[tokio::test(start_paused = true)]

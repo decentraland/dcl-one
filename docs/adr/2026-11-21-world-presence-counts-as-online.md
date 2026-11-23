@@ -20,8 +20,12 @@ World joins and leaves take effect as they happen, as in the legacy service.
 `comms::topology::Topology`, the one presence source social reads, unites Pulse
 islands (expiring 5 s after the last receipt) with a World presence source. A wallet
 is online while either holds it, so a wallet in both an island and a World is online
-once and goes offline only when it is in neither. The topology generation, and with
-it every connectivity notice, moves only when that union changes.
+once and goes offline only when it is in neither. The topology generation advances
+only when that union changes.
+
+Community connectivity streams use that same union with community membership to
+report the online roster to other members. The affected wallet receives its own
+membership changes so its client can add or remove the community tab.
 
 **Events.** The World presence source holds LiveKit participant sessions in World
 rooms (lobby and scene rooms), keyed by participant sid. The replica whose webhook
@@ -34,8 +38,9 @@ reach the access log and badges.
 
 - A sid joins at most once, so an event leave is final whatever order the two arrive
   in. A join that arrives after its leave (or is redelivered) never brings the player
-  back, and a duplicate changes nothing. Event leaves are remembered for 5 minutes,
-  at most 200,000 of them, the oldest forgotten first.
+  back. A duplicate join for a live session leaves its confirmation time intact.
+  Event leaves are remembered for 5 minutes, at most 200,000 of them, the oldest
+  forgotten first.
 - Each wallet keeps a count of its live sessions; only its first session and its
   last leave change the published set, so other events cost no set work.
 - A player in several World rooms has one session per room and stays online until

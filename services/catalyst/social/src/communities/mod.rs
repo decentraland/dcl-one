@@ -407,9 +407,9 @@ impl State {
         let _ = self.updates.set(updates);
     }
 
-    /// A join (`online`) or a leave, kick or ban reaches the community's
-    /// members on open community-member connectivity streams and the member
-    /// itself (upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL`).
+    /// A join or removal reaches the affected member as a membership change.
+    /// Co-members on open connectivity streams see the corresponding roster change
+    /// when membership and topology agree with it.
     pub async fn member_status_changed(
         &self,
         community_id: CommunityId,
