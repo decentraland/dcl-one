@@ -111,8 +111,9 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), names.len(), "a name twice in {names:?}");
-        // the README's groups: pulse 15 (crowd-visit among them), connections 9, explorer 17
-        assert_eq!(names.len(), 41, "{names:?}");
+        // the README's groups: pulse 16 (pulse-handshake-clock and crowd-visit among them),
+        // connections 9, explorer 17
+        assert_eq!(names.len(), 42, "{names:?}");
     }
 
     #[test]
