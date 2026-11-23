@@ -18,6 +18,8 @@ import { withDownloadClicks } from "@/features/home/download-clicks";
 import { resolveAnonUserId } from "@/features/download/download-funnel";
 import { campaignSearch } from "@/features/download/installers";
 import { trackDownloadClick } from "@/features/download/download-click";
+import { homeClicks } from "@/features/home/clicks";
+import { trackLegacyClick } from "@/core/lib/telemetry/legacy-click";
 import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
 import {
@@ -97,6 +99,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     (click) => trackDownloadClick(click, { sid, userId }),
     { anonUserId: resolveAnonUserId(null, sid), search },
   );
+  const clicks = homeClicks((click) => trackLegacyClick(click, { sid, userId }));
   const labels = {
     previous: copy.slides.previous,
     next: copy.slides.next,
@@ -129,9 +132,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
           title={copy.whatsOn.title}
           labels={copy.whatsOn}
           carouselLabels={labels}
-          viewAll={{ label: copy.whatsOn.view_all, href: "/events" }}
+          viewAll={{ label: copy.whatsOn.view_all, href: "/events", onClick: clicks.viewAll }}
           background={<AnimatedBackground />}
           cards={cards}
+          onCardClick={clicks.whatsOnCard}
+          onJumpInClick={clicks.whatsOnJumpIn}
         />
         <CatchTheVibe
           title={copy.vibe}
@@ -147,11 +152,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
               avatarUrl: faces[clip.address] ?? undefined,
             },
           }))}
-          hangOut={{ label: copy.hangOutNow, href: "/play/" }}
+          hangOut={{ label: copy.hangOutNow, href: "/play/", onClick: clicks.hangOut }}
         />
         <WeeklyRituals
           title={copy.rituals.title}
           labels={labels}
+          onCardClick={clicks.ritual}
           cards={WEEKLY_RITUALS.map((ritual) => ({
             id: ritual.id,
             title: copy.rituals[ritual.id],
